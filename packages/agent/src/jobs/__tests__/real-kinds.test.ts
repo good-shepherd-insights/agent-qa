@@ -165,6 +165,48 @@ describe('the real post-run kinds (388 D-04)', () => {
     })
   })
 
+  // WR-03. The fold answers `complete: false` for candidate refusals, a cap exceeded,
+  // unresolved canaries, a failed outcome projection and requeues — and in every one of them it
+  // writes NO receipt. A handler that published `bundle-committed` anyway would name a
+  // checkpoint for an event that did not happen, and the chain terminal built from that
+  // checkpoint is the durable record three surfaces render.
+  it('reports an incomplete fold as retryable and publishes no bundle-committed', async () => {
+    const { context, published } = contextFor({ runId: RUN_ID, executionContext: 'local-headless' })
+    const outcome = await createRealJobKindRegistry({
+      loadCompletedRunHandoff: () => HANDOFF,
+      curateRun: async () => ({ curated: 0, deprecated: 0, complete: false }),
+    }).require('curate-memory').handler(context)
+
+    if (outcome.status !== 'retryable') {
+      throw new Error(`expected retryable, got ${outcome.status}`)
+    }
+    expect(outcome.reason).toBe(
+      'the curation fold did not complete and wrote no receipt; the stage will retry under its '
+        + 'declared bound',
+    )
+    // The POSITIVE half of the absence claim: the handler really did run far enough to publish
+    // its first checkpoint, so "no bundle-committed" is a fact about the gate rather than about
+    // an empty recorder or a handler that returned before doing anything at all.
+    expect(published.map((entry) => entry.checkpointId)).toEqual(['candidates-authored'])
+  })
+
+  it('publishes bundle-committed with the counts when the fold completed', async () => {
+    // The ACCEPT half, unchanged from before the gate: a complete fold still lands the job
+    // `complete` with its counts on the checkpoint the chain terminal reads.
+    const { context, published } = contextFor({ runId: RUN_ID, executionContext: 'local-headless' })
+    const outcome = await createRealJobKindRegistry({
+      loadCompletedRunHandoff: () => HANDOFF,
+      curateRun: async () => ({ curated: 4, deprecated: 2, complete: true }),
+    }).require('curate-memory').handler(context)
+
+    if (outcome.status !== 'complete') throw new Error(`expected complete, got ${outcome.status}`)
+    expect(outcome.next).toEqual([])
+    expect(published).toEqual([
+      { checkpointId: 'candidates-authored', value: { runId: RUN_ID } },
+      { checkpointId: 'bundle-committed', value: { runId: RUN_ID, curated: 4, deprecated: 2 } },
+    ])
+  })
+
   it('keeps the scripted stand-ins when no capabilities are bound', async () => {
     // NEGATIVE CONTROL for the two cases above: the assertions there would be satisfied just
     // as well by a build that had replaced the stand-ins outright, which would break every
