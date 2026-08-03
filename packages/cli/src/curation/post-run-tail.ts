@@ -387,6 +387,10 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           agentQaRoot: opts.agentQaRoot,
           runId: opts.runId,
           chainJobIds: ownChainJobIds,
+          // The run's own masker, spread on the same conditional idiom the fold is threaded
+          // with above: the chip's error text crosses the same disclosure boundary the fold's
+          // does, and it may not be the one output that skipped the masker (WR-08).
+          ...(opts.maskingContext === undefined ? {} : { maskingContext: opts.maskingContext }),
           now: () => ops().now(),
         })
         // Pitfall 7, the daemon's sequence verbatim (host.ts:1759): adopt the epoch the lease

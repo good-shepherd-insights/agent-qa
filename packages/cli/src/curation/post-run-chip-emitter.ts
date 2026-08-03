@@ -36,6 +36,7 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import type {
   ChipEventPayload,
   JobKind,
+  MaskingContext,
   RunEventEnvelope,
   RunEventType,
 } from '@vostride/agent-qa-schema'
@@ -126,9 +127,28 @@ export interface CreatePostRunChipEmitterOptions {
    * exists to make impossible.
    */
   readonly chainJobIds: readonly string[]
+  /**
+   * The run's own masker, the same one the fold is threaded with.
+   *
+   * OPTIONAL because a tail may legitimately carry none, and the bound below still applies —
+   * absence must degrade the redaction, never the discipline.
+   */
+  readonly maskingContext?: MaskingContext
   /** The tail's one wall clock, so envelope stamps and budget arithmetic share a source. */
   readonly now?: () => number
 }
+
+/**
+ * How much of a failure reason a chip may carry.
+ *
+ * The chip's `error` is a diagnostic POINTER, not a transcript: it exists so a surface can say
+ * which stage failed and roughly why, and the full text is already in the tail's warn log where
+ * a human is looking when they care. A constant with a stated reason rather than a knob (386
+ * D-15): the number that matters is "short enough that a runaway exception cannot flood a log
+ * every attached surface streams", and no project's answer to that differs. Retune here if a
+ * real diagnosis is ever found truncated — 500 is roughly five lines of message.
+ */
+const CHIP_ERROR_MAX_LENGTH = 500
 
 /**
  * The seq the run's log stopped at.
@@ -165,6 +185,18 @@ export function createPostRunChipEmitter(
 ): PostRunChipEmitter {
   const eventsPath = completedRunEventsPath(options.agentQaRoot, options.runId)
   const now = options.now ?? Date.now
+  /**
+   * The one free-form-text field this file writes to disk, masked THEN bounded.
+   *
+   * Masked first and bounded second, in that order and not the other: a slice applied first
+   * could cut a secret in half and hand the masker a token it no longer recognises, which is the
+   * quiet way a redaction stops firing. `handler-threw: ${error.message}` (engine.ts) is text
+   * from anywhere inside the curation drain, the knowledge store or a provider client — the
+   * whole rest of a chip payload is counts and identifiers (D-11), and this joins that
+   * discipline rather than being the exception to it (T-388-17 / WR-08).
+   */
+  const chipError = (reason: string): string =>
+    (options.maskingContext?.mask(reason) ?? reason).slice(0, CHIP_ERROR_MAX_LENGTH)
   // Read ONCE, at construction: the emitter is the only writer of this file from here on, so
   // re-reading per append would be asking a file what this object already knows — and would
   // make the trail's ordering depend on nobody else appending, which is the assumption the
@@ -220,7 +252,7 @@ export function createPostRunChipEmitter(
       const willRetry = outcome.disposition === 'retry-scheduled'
       append(chips.failed, {
         runId: options.runId,
-        ...(outcome.reason === undefined ? {} : { error: outcome.reason }),
+        ...(outcome.reason === undefined ? {} : { error: chipError(outcome.reason) }),
         ...(willRetry ? { willRetry: true } : {}),
       })
     },
