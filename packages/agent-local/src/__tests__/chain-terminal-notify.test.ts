@@ -150,7 +150,11 @@ interface Harness {
 }
 
 async function createHarness(options?: {
-  readonly curateRun?: () => Promise<{ curated: number; deprecated: number }>
+  readonly curateRun?: () => Promise<{
+    curated: number
+    deprecated: number
+    complete: boolean
+  }>
 }): Promise<Harness> {
   const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-chain-notify-'))
   roots.push(agentQaRoot)
@@ -165,7 +169,7 @@ async function createHarness(options?: {
       curateRun: async (input) => {
         curateCalls.push({ runId: input.runId, executionContext: input.executionContext })
         return options?.curateRun === undefined
-          ? { curated: 1, deprecated: 0 }
+          ? { curated: 1, deprecated: 0, complete: true }
           : await options.curateRun()
       },
     },

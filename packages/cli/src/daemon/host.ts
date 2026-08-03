@@ -1805,7 +1805,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
               info: (message: string) => logger.info(message),
             },
           })
-          return { curated: folded.curated, deprecated: folded.deprecated }
+          // WR-03 / D-01: the same three fields the CLI binding returns. Which process holds
+          // the lease must not change what the notification row says about the fold.
+          return { curated: folded.curated, deprecated: folded.deprecated, complete: folded.complete }
         },
       },
       ...(runExecution === undefined ? {} : { runExecution }),

@@ -182,7 +182,7 @@ function fixture(): Fixture {
       model: () => TEST_MODEL,
       idSource: DIGEST_JOB_ID_SOURCE,
       postRun: {
-        curateRun: async () => ({ curated: 2, deprecated: 1 }),
+        curateRun: async () => ({ curated: 2, deprecated: 1, complete: true }),
       },
     })
     hosts.push(host)

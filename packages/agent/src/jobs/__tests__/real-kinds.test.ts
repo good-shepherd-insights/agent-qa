@@ -56,7 +56,9 @@ const HANDOFF: CompletedRunHandoff = {
 
 const CAPABILITIES: PostRunJobCapabilities = {
   loadCompletedRunHandoff: () => HANDOFF,
-  curateRun: async () => ({ curated: 0, deprecated: 0 }),
+  // Never invoked by the analyze-run cases below; `complete: true` is the shape the widened
+  // contract requires (WR-03), not a claim any assertion here turns on.
+  curateRun: async () => ({ curated: 0, deprecated: 0, complete: true }),
 }
 
 /** A scripted context: the handler's two capabilities, recorded rather than performed. */

@@ -142,7 +142,7 @@ interface Fixture {
 }
 
 function fixture(behaviour: {
-  curateRun?: () => Promise<{ curated: number; deprecated: number }>
+  curateRun?: () => Promise<{ curated: number; deprecated: number; complete: boolean }>
   /** Burn the whole drain budget after the first job, leaving the chain mid-flight. */
   stopAfterFirstJob?: boolean
   /** The run's masker, threaded to the fold today and to the chip's error field from 388-07. */
@@ -206,7 +206,7 @@ function fixture(behaviour: {
               idSource: DIGEST_JOB_ID_SOURCE,
               postRun: {
                 curateRun: behaviour.curateRun
-                  ?? (async () => ({ curated: 2, deprecated: 1 })),
+                  ?? (async () => ({ curated: 2, deprecated: 1, complete: true })),
               },
             })
             hosts.push(host)

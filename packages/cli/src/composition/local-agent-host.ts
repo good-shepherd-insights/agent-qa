@@ -336,7 +336,12 @@ export interface ComposeCliLocalAgentInput {
       readonly runId: string
       readonly executionContext: unknown
       readonly deadlineMs?: number
-    }) => Promise<{ readonly curated: number; readonly deprecated: number }>
+    }) => Promise<{
+      readonly curated: number
+      readonly deprecated: number
+      /** The fold's own completeness, carried rather than dropped (WR-03). */
+      readonly complete: boolean
+    }>
   }
 }
 

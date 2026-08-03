@@ -167,7 +167,7 @@ function fixture(): Fixture {
               postRun: {
                 curateRun: async (input) => {
                   curateCalls.push(input.runId)
-                  return { curated: 1, deprecated: 0 }
+                  return { curated: 1, deprecated: 0, complete: true }
                 },
               },
             })

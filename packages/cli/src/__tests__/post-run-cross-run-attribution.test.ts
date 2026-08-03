@@ -159,7 +159,11 @@ interface Fixture {
 }
 
 function fixture(behaviour: {
-  curateRun?: (input: { runId: string }) => Promise<{ curated: number; deprecated: number }>
+  curateRun?: (input: { runId: string }) => Promise<{
+    curated: number
+    deprecated: number
+    complete: boolean
+  }>
   /** Burn the whole drain budget the moment the FIRST pumped job lands, whoever's it was. */
   stopAfterFirstJob?: boolean
 } = {}): Fixture {
@@ -215,7 +219,7 @@ function fixture(behaviour: {
               clock: orderedClock(input.baseMs ?? Date.parse('2026-01-01T00:00:00.000Z')),
               postRun: {
                 curateRun: behaviour.curateRun
-                  ?? (async () => ({ curated: 2, deprecated: 1 })),
+                  ?? (async () => ({ curated: 2, deprecated: 1, complete: true })),
               },
             })
             hosts.push(host)

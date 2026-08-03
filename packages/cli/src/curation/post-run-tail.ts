@@ -129,7 +129,12 @@ export interface PostRunTailHostInput {
     readonly runId: string
     readonly executionContext: unknown
     readonly deadlineMs?: number
-  }) => Promise<{ readonly curated: number; readonly deprecated: number }>
+  }) => Promise<{
+    readonly curated: number
+    readonly deprecated: number
+    /** The fold's own completeness, carried rather than dropped (WR-03). */
+    readonly complete: boolean
+  }>
 }
 
 /**
@@ -286,7 +291,10 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       ...(opts.signal === undefined ? {} : { signal: opts.signal }),
       log: opts.log,
     })
-    return { curated: folded.curated, deprecated: folded.deprecated }
+    // WR-03: the fold already told us whether it wrote a receipt. Dropping `complete` here is
+    // what let `incompleteWarning` print "curation incomplete; it will resume" while the
+    // durable notification row recorded the same stage as `done`.
+    return { curated: folded.curated, deprecated: folded.deprecated, complete: folded.complete }
   }
 
   const openHost = (): LocalAgentHost => {

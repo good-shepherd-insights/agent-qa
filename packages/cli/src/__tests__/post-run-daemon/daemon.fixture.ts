@@ -53,7 +53,7 @@ const MODEL: JobModelCapability = {
 }
 
 /** What the substituted fold reports, so a completed chain has honest, pinned counts. */
-export const FIXTURE_CURATION_COUNTS = { curated: 2, deprecated: 1 } as const
+export const FIXTURE_CURATION_COUNTS = { curated: 2, deprecated: 1, complete: true } as const
 
 /** The gate is polled rather than watched: a rename under a watcher is the flakier of the two. */
 const POLL_MS = 25

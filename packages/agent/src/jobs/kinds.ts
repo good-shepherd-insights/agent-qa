@@ -186,11 +186,26 @@ export interface PostRunJobCapabilities {
    * is a permanent condition of that run, never a transient one worth retrying.
    */
   loadCompletedRunHandoff(runId: string): CompletedRunHandoff
+  /**
+   * The per-run fold, and the fold's own report of whether it FINISHED (WR-03).
+   *
+   * `complete` is not a nicety on the side of the counts: the v51 fold answers `false` for
+   * candidate refusals, a cap exceeded, unresolved canaries, a failed outcome projection and
+   * requeues, and in every one of those cases it writes NO receipt so the run refolds later.
+   * Both production bindings used to return the counts alone, which is how a fold that refused
+   * became a stage the durable notification row called `done` — the one place in this phase
+   * where the record overstated what happened. It is part of the contract precisely so a
+   * binding cannot drop it silently: omit it and the binding stops typechecking.
+   */
   curateRun(input: {
     readonly runId: string
     readonly executionContext: unknown
     readonly deadlineMs?: number
-  }): Promise<{ readonly curated: number; readonly deprecated: number }>
+  }): Promise<{
+    readonly curated: number
+    readonly deprecated: number
+    readonly complete: boolean
+  }>
 }
 
 /** The claim shape analyze-run is enqueued with (D-06). Anything else is unreadable input. */

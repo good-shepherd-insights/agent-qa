@@ -153,7 +153,7 @@ function createHarness(): Harness {
     knowledgeRoot: () => join(agentQaRoot, 'knowledge'),
     model: () => TEST_MODEL,
     clock: createSteppingClock(),
-    postRun: { curateRun: async () => ({ curated: 2, deprecated: 1 }) },
+    postRun: { curateRun: async () => ({ curated: 2, deprecated: 1, complete: true }) },
   })
   hosts.push(host)
   return {
