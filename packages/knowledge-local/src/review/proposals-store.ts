@@ -23,7 +23,11 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { KnowledgeProposalV1Schema, ForgetReceiptV1Schema } from '@vostride/agent-qa-schema'
+import {
+  KnowledgeProposalV1Schema,
+  ForgetReceiptV1Schema,
+  ProposalIdSchema,
+} from '@vostride/agent-qa-schema'
 import type { ForgetReceiptV1, KnowledgeProposalV1 } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
@@ -103,6 +107,11 @@ export function writePendingProposal(
   const directory = proposalsDir(agentQaRoot)
   mkdirSync(directory, { recursive: true })
   const validated = KnowledgeProposalV1Schema.parse(proposal)
+  // IN-03. See the note at `claimPendingProposal`; this is the write half of the same boundary.
+  // Redundant TODAY by one schema field — `KnowledgeProposalV1Schema.proposalId` is this same
+  // refinement — and kept because the redundancy is a fact about a neighbouring schema rather
+  // than about this module. The id becomes a path on the line below either way.
+  ProposalIdSchema.parse(validated.proposalId)
   writeFileAtomically(
     pendingPath(agentQaRoot, validated.proposalId),
     `${JSON.stringify(validated, undefined, 2)}\n`,
@@ -258,6 +267,14 @@ export function claimPendingProposal(
   proposalId: string,
   hooks?: ClaimResolutionHooks,
 ): ConsumeProposalOutcome {
+  // IN-03. THE SHAPE CHECK LIVES WHERE THE JOINING HAPPENS. `join()` below turns this string into
+  // a `renameSync` target, so an id carrying `../` is a caller-supplied arbitrary-path primitive;
+  // executed against the unguarded store, `../../escaped` renamed a file two directories up and
+  // returned its contents as a consumed proposal. `knowledge.proposal.apply` already refuses such
+  // an id at the function layer — one package away, on ONE of the paths a caller can reach this
+  // module by, and this module is the one that does the joining. Before any syscall, so a refused
+  // id leaves no probe behind either.
+  ProposalIdSchema.parse(proposalId)
   const first = resolveClaim(agentQaRoot, proposalId, hooks)
   if (first.kind !== 'not-found') return first
   // THE BOUNDED RE-ENTRY, and the bound is structural rather than a counter somebody could raise:
