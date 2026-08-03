@@ -1088,3 +1088,151 @@ describe('cited-id integrity: the fallback is total over DeltaOrigin (CR-02′)'
     ).not.toContain('tombstoned')
   })
 })
+
+// The expectation table below is declared INDEPENDENTLY of `AUTONOMOUS_DEPRECATE_BY_ORIGIN` on
+// 387-14's pattern-3 discipline: importing the production mapping and asserting against itself
+// would be a tautology no mutation could red. Probe m3 (flipping the `user` member's VALUE to
+// 'downgrade') has to red the user row, which is what proves the walk pins values rather than
+// merely observing that a table exists.
+//
+// RED BASELINE, observed against unmodified disposition.ts before the table landed (the check
+// read `input.delta.origin !== 'agent'`, a hand-picked single member of DELTA_ORIGINS):
+//
+//   FAIL  src/curator/__tests__/disposition.test.ts > the autonomy floor is total over
+//         DeltaOrigin (WR-03) > import-origin Deprecate of an ACTIVE record → downgraded
+//   AssertionError: a machine-authored Deprecate may not remove standing knowledge on its own
+//     authority: expected { kind: 'apply', delta: { …(7) } } to match object
+//     { kind: 'downgraded', …(2) }
+//     - "kind": "downgraded"     - "reason": "autonomous-deprecate"     + "kind": "apply"
+//
+//   Test Files  1 failed (1)
+//        Tests  1 failed | 40 passed (41)
+//
+// The agent, system and user rows and the non-active control were GREEN throughout. That is the
+// preservation half of the claim and the reason they are in the walk rather than left implicit:
+// a table that over-broadened into 'downgrade' for `user` would break `reject`/`forget`, the two
+// review verbs this phase exists for, and the user row is what reds if it does.
+describe('the autonomy floor is total over DeltaOrigin (WR-03)', () => {
+  const primary: Anchor = { t: 'el', role: 'button', name: 'Sign in' }
+  const page: Anchor = { t: 'page', route: '/login' }
+
+  type AutonomyFloorOutcome = 'downgraded' | 'passes-floor'
+
+  /**
+   * What each origin is ALLOWED to do to standing knowledge, declared locally.
+   *
+   * `satisfies Record<DeltaOrigin, …>` here is the corpus's own totality, independent of
+   * production's: a fifth origin added to the union is a compile error in BOTH tables, and a row
+   * that exists in one but not the other cannot silently appear.
+   *
+   * This table answers "may this author tombstone a record the store is standing behind?". It is
+   * deliberately NOT the same question as `AUTHORED_CHECKPOINT_ORIGIN_ADMISSION` in
+   * author-contract.ts, which answers "may this origin arrive as DRAIN-AUTHORED curator output?".
+   * `system` is 'allow' here and 'rejected' there, and the two are consistent because rollback's
+   * and the canary's system-origin deltas reach `disposeDelta` through plain in-process
+   * checkpoints (rollback.ts `maintenanceCheckpoint`, knowledge-store.ts `bridgeDelta`) and never
+   * through the drain's authored-checkpoint boundary. See 387-20 D-3.
+   */
+  const EXPECTED_FLOOR_BY_ORIGIN = {
+    agent: 'downgraded',
+    import: 'downgraded',
+    system: 'passes-floor',
+    user: 'passes-floor',
+  } satisfies Record<DeltaOrigin, AutonomyFloorOutcome>
+
+  function deprecateOf(origin: DeltaOrigin, targetId: RecordId): Delta {
+    return {
+      kind: 'Deprecate',
+      origin,
+      scope,
+      citedIds: [targetId],
+      precondition: [observed(targetId)],
+      targetId,
+      reason: `floor-walk-${origin}`,
+    }
+  }
+
+  for (const origin of DELTA_ORIGINS) {
+    const expected = EXPECTED_FLOOR_BY_ORIGIN[origin]
+    it(`${origin}-origin Deprecate of an ACTIVE record → ${expected}`, () => {
+      const victim = publishActive([primary, page])
+      const delta = deprecateOf(origin, victim.id)
+
+      const outcome = disposeDelta({
+        delta,
+        checkpoint: checkpoint(delta, [victim.id], [observed(victim.id)]),
+        profile: { mode: 'drain-to-active' },
+        knowledgeRoot,
+        candidate: candidate([primary, page]),
+        drainState: drainState(),
+      })
+
+      if (expected === 'downgraded') {
+        expect(
+          outcome,
+          'a machine-authored Deprecate may not remove standing knowledge on its own authority',
+        ).toMatchObject({
+          kind: 'downgraded',
+          reason: 'autonomous-deprecate',
+          original: delta,
+        })
+      } else {
+        // A POSITIVE assertion, not merely "not downgraded by the floor": the review verbs need
+        // this delta to reach `apply`, and asserting the whole outcome is what makes an
+        // over-broadened table red here instead of quietly changing which arm they land on.
+        expect(
+          outcome,
+          'reject/forget and rollback maintenance depend on this Deprecate passing disposition',
+        ).toMatchObject({ kind: 'apply', delta })
+      }
+    })
+  }
+
+  /**
+   * The floor's PRECONDITION, drawn from outside the floor's own domain: an already-deprecated
+   * target never reaches the origin question at all, because `lookup(targetId)?.status` is not
+   * 'active'. The row is `agent` — the origin the floor downgrades hardest — so if the table
+   * consult ever lost the active-target gate this case would report it.
+   *
+   * The outcome is a cited-id-integrity downgrade rather than an apply: `deltaTargetIds` folds a
+   * Deprecate's `targetId` into the cited set, and a deprecated cited record is one of
+   * `CITED_ID_INTEGRITY_CONDITIONS`. Asserting the exact reason is the point — asserting only
+   * `reason !== 'autonomous-deprecate'` would pass against any other downgrade the floor
+   * accidentally introduced.
+   */
+  it('a Deprecate of an ALREADY-DEPRECATED target never reaches the floor (agent origin)', () => {
+    const victim = publishActive([primary, page])
+    const appended = appendOutcomeEvent(
+      {
+        knowledgeRoot,
+        productKey: 'storefront',
+        auditBaseDir: join(root, '.agent-qa'),
+        commitArtifacts: 'none',
+      },
+      victim.id,
+      BundleOutcomeEventSchema.parse({
+        type: 'deprecated',
+        evidenceToken: `floor-precondition-${victim.id}`,
+        curationJobId: `floor-precondition-job-${victim.id}`,
+        buildOrdinal: 42,
+        reason: 'the reviewer removed it',
+      }),
+    )
+    if (appended.kind !== 'appended') throw new Error(`fixture deprecate failed: ${appended.kind}`)
+
+    const delta = deprecateOf('agent', victim.id)
+    const outcome = disposeDelta({
+      delta,
+      checkpoint: checkpoint(delta, [victim.id], [observed(victim.id)]),
+      profile: { mode: 'drain-to-active' },
+      knowledgeRoot,
+      candidate: candidate([primary, page]),
+      drainState: drainState(),
+    })
+
+    expect(
+      outcome,
+      'the idempotency path is not the autonomy floor\'s business',
+    ).toMatchObject({ kind: 'downgraded', reason: 'cited-id-integrity' })
+  })
+})
