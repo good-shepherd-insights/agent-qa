@@ -438,6 +438,7 @@ export type {
 } from './curator/commit.js'
 export {
   BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN,
+  UserDeltaCitationIntegrityError,
   disposeDelta,
 } from './curator/disposition.js'
 export type {

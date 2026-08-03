@@ -166,10 +166,26 @@ export interface ApplyReviewInput {
  * The delta kind a review verb emits when it means "this record stops standing".
  *
  * BOTH `reject` and `forget` emit it (propose-review.ts:183-195 — identical `Deprecate` deltas
- * differing only in the recorded reason), which is precisely why the already-tombstoned guard
- * below reads the DELTA rather than the verb. A guard scoped to one member of the emitting set
- * leaves the hazard reachable through every other member, and that is the root-cause shape this
- * round is closing in three places (CR-02 here; CR-04's status table in `memory-status.ts`).
+ * differing only in the recorded reason), so the guard below is keyed on the kind rather than on
+ * either verb's name.
+ *
+ * WHAT THE GUARD BELOW IS, and the previous version of this comment got it wrong, so it is
+ * stated plainly: it is an IDEMPOTENCY short-circuit. A deprecating proposal over an already
+ * tombstoned target has nothing left to destroy, and the honest answer is a receipt naming the
+ * state that already holds rather than a second destructive change (FUNC-04's adjacency edge,
+ * D-19's "nothing silently partial").
+ *
+ * WHAT IT IS NOT: the owner of the unauthored-mint hazard. This comment used to claim the guard's
+ * kind-scoping was what stopped a clone being minted, and round 1's verifier measured that claim
+ * false by reproducing the identical mint through `accept` — which emits a `Confirm` and walks
+ * straight past everything in this file. The hazard lives one layer down, at the curator's
+ * `checkCitedIdIntegrity`, whose id domain is `deltaTargetIds` = cited ids ∪ target/victim/
+ * conflict ids — strictly wider than `targetRecordIds` below, which reads only `delta.targetId`.
+ * Every review delta of every verb passes through that one check funnel regardless of its kind,
+ * which is why the closure had to land there and not here: see
+ * `UserDeltaCitationIntegrityError` and the origin-keyed fallback table beside it in
+ * `curator/disposition.ts`, where a user-authored delta whose citation cannot be honoured is
+ * refused by type instead of degraded into minted content.
  */
 const DEPRECATE_DELTA_KIND = 'Deprecate'
 
@@ -320,9 +336,31 @@ async function settleClaim(
 }
 
 /**
+ * A leaseholder never delegates, and the input may not claim to be both (WR-04).
+ *
+ * The two fields are mutually exclusive by MEANING: `writerAuthority` says "I hold the lease and
+ * will commit in this process", `delegate` says "somebody else holds it and here is how to reach
+ * them". Supplying both was previously refused only by reading the code — the authority branch
+ * is taken first and returns, so a caller that passed both silently got the in-process commit and
+ * never learned its delegate was ignored. A source-scan-only rule is one refactor away from being
+ * untrue; this makes it structural, and it fires BEFORE the claim so a rejected input never
+ * renames a proposal it is not going to apply.
+ */
+function assertSingleWritePath(input: ApplyReviewInput): void {
+  if (input.writerAuthority !== undefined && input.delegate !== undefined) {
+    throw new TypeError(
+      'applyReview received both `writerAuthority` and `delegate`. A leaseholder never ' +
+        'delegates: holding the writer lease is exactly what makes an in-process commit the ' +
+        'only available path, so supply one or the other and never both.',
+    )
+  }
+}
+
+/**
  * Apply a minted proposal. Race-safe, idempotent, receipt-bearing.
  */
 export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewResult> {
+  assertSingleWritePath(input)
   const claim = await settleClaim(input)
   if (claim.kind === 'already-applied') {
     return {
@@ -372,20 +410,22 @@ async function commitAndPublish(
   authority: { readonly leaseId: string; readonly epoch: number },
 ): Promise<ApplyReviewResult> {
   try {
-    // FUNC-04's adjacency edge, decided BEFORE the commit rather than hoped for after it — and
-    // scoped to the DELTA KIND, which is what CR-02 cost us for scoping it to one verb.
+    // FUNC-04's adjacency edge, decided BEFORE the commit rather than hoped for after it.
     //
     // Deprecating an already-tombstoned record must be "a receipt naming the already-tombstoned
-    // state, never a second destructive change". Committing the Deprecate anyway does not merely
-    // no-op: the commit path publishes a fresh `candidate` bundle carrying the target's own
-    // anchors, scope and summary, re-addressed under the review verb's `user` origin class —
-    // a verbatim CLONE of the fact the reviewer just rejected, and `isEligibleCandidate`
-    // (serving/brief-selection.ts:142-151) re-admits a `candidate` row into serving. So the
-    // second rejection RESURRECTS what the first one rejected. Measured against reject→reject and
-    // forget→reject alike, which is the whole point: `reject` and `forget` emit the SAME delta,
-    // so a guard reading `proposal.verb` protected one caller and left the other exposed to a
-    // sequence — reject the same record twice — that is the most ordinary mistake a review queue
-    // invites. Idempotency lives here, over the target's STATE, not only over the proposal id.
+    // state, never a second destructive change", and that is ALL this branch does. Idempotency
+    // lives here, over the target's STATE rather than only over the proposal id, because
+    // rejecting the same record twice is the most ordinary repetition a review queue invites.
+    //
+    // CORRECTED, because the earlier version of this comment claimed more than it delivers: this
+    // branch is NOT what stops an unauthored clone being minted. It cannot be — it is reachable
+    // only for a proposal that deprecates, and round 1's verifier reproduced the identical mint
+    // through `accept`, whose `Confirm` never enters here. The mint is the curator's response to
+    // a cited-id-integrity failure, and it is refused at that check now, for every review delta
+    // of every kind, by `UserDeltaCitationIntegrityError`. What is true and worth keeping: the
+    // clone really is a verbatim copy of the target's anchors, scope and summary republished as
+    // a fresh `candidate`, which `isEligibleCandidate` (serving/brief-selection.ts:142-151)
+    // re-admits into serving — that is why the refusal, not merely a no-op, is the right answer.
     if (deprecatesRecords(proposal) && alreadyTombstoned(input.knowledgeRoot, proposal)) {
       const already: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
       if (proposal.verb !== 'forget') {

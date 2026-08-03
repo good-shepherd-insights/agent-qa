@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { appendOutcomeEvent } from '../../bundle-append.js'
 import { publishBundle, type BundleStoreConfig } from '../../bundle-publish.test-helper.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
+import { UserDeltaCitationIntegrityError } from '../../curator/disposition.js'
 import { listBundles } from '../../list-bundles.js'
 import { openIndexReaderConnection, vecTableName } from '../../index-open.js'
 import { rebuildIndex } from '../../index-rebuild.js'
@@ -949,7 +950,9 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
                 + 'confirmation it did not perform',
             ).toBe('rejected')
             const error = settled.kind === 'rejected' ? settled.error as Error : undefined
+            expect(error).toBeInstanceOf(UserDeltaCitationIntegrityError)
             expect(error?.name).toBe('UserDeltaCitationIntegrityError')
+            expect((error as UserDeltaCitationIntegrityError | undefined)?.recordId).toBe(recordId)
             // NOTHING was published as applied: the caller is never told `applied` for a
             // confirmation that confirmed nothing.
             expect(readAppliedProposal(agentQaRoot, proposalId)).toBeUndefined()
@@ -1021,5 +1024,34 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(rowsFor(recordId)[0]?.counters.confirmed).toBe(1)
     expect(bundleDirCount()).toBe(dirsBefore)
     expect(new Set(rowsFor(recordId).map((row) => row.dir)).size).toBe(1)
+  })
+
+  it('refuses an input claiming BOTH writerAuthority and delegate (WR-04)', async () => {
+    const recordId = publish('checkout button')
+    const proposalId = proposeForget(recordId)
+
+    let delegateCalls = 0
+    await expect(applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId,
+      writerAuthority: { leaseId: 'lease-that-does-not-exist', epoch: 1 },
+      delegate: async () => {
+        delegateCalls += 1
+        throw new Error('the delegate must never be reached')
+      },
+    })).rejects.toBeInstanceOf(TypeError)
+
+    // The refusal is STRUCTURAL and happens before anything is touched: the delegate was never
+    // called, and — the half that matters — the proposal was never claimed, so a caller that
+    // fixes its input finds the proposal exactly as applicable as before.
+    expect(delegateCalls).toBe(0)
+    expect(readPendingProposal(agentQaRoot, proposalId)?.proposalId).toBe(proposalId)
+    expect(readAppliedProposal(agentQaRoot, proposalId)).toBeUndefined()
+
+    // EACH FIELD ALONE still works, and neither half is duplicated here: `delegate` alone is
+    // covered by 'delegates instead of stealing when a live holder exists, and waits BOUNDED'
+    // above, and `writerAuthority` alone by the daemon-authority suite in
+    // knowledge-proposal-apply's tests (387-10). What this case adds is only the conjunction.
   })
 })

@@ -13,6 +13,7 @@ import {
   type BundleStatus,
   type CanaryOutcome,
   type Delta,
+  type DeltaOrigin,
   type DistilledObservation,
   type GuardrailPolicy,
   type MeasurementObservation,
@@ -195,6 +196,14 @@ type TruthLookup = (id: RecordId) => BundleTruth | undefined
 type CheckFailure =
   | { kind: 'downgrade'; reason: string; fallback?: 'drift-unknown' }
   | { kind: 'requeue'; reason: string }
+  /**
+   * REFUSE the delta outright rather than degrade it into something else.
+   *
+   * The arm carries the failing `recordId` because the other two do not need one and this one
+   * does: the refusal is reported to a person who addressed a specific record, and "the citation
+   * check failed" without saying which id it failed on is an answer they cannot act on.
+   */
+  | { kind: 'refuse'; reason: string; recordId: RecordId }
 
 type CheckVerdict = { kind: 'pass' } | CheckFailure
 
@@ -576,6 +585,76 @@ function disposeMeasurementDrift(
   }
 }
 
+/**
+ * The typed refusal a USER-authored delta receives when its cited-id integrity check fails.
+ *
+ * Thrown rather than returned, and out of the check funnel rather than out of the commit, so it
+ * fires before any canonical byte moves for this delta: `disposeDelta` runs the six §7.3.1 checks
+ * ahead of every append, projection and promotion, so a refusal here leaves the store exactly as
+ * it was. `applyReview`'s `commitAndPublish` catches it, restores the proposal to pending and
+ * rethrows, which is how the caller gets a typed answer instead of a receipt for work nobody did.
+ */
+export class UserDeltaCitationIntegrityError extends Error {
+  constructor(readonly recordId: RecordId, readonly deltaKind: Delta['kind']) {
+    super(
+      `The record ${recordId} this ${deltaKind} cites is tombstoned or cannot be resolved in ` +
+        'this store, so the instruction is REFUSED rather than converted into minted content. ' +
+        'Nothing was committed and the record is unchanged.',
+    )
+    this.name = 'UserDeltaCitationIntegrityError'
+  }
+}
+
+/**
+ * What a cited-id-integrity failure falls back to, decided by WHO authored the delta.
+ *
+ * Total over the origin vocabulary by construction: the `satisfies` below makes a fifth origin
+ * member a compile error AT THIS TABLE, so no future member can silently inherit a fallback
+ * nobody chose for it. That is the whole mechanism — the class of defect this closes is "a guard
+ * scoped to the members somebody happened to think of", and the only fix that class cannot
+ * reopen is handing the enumeration to something that cannot forget a member.
+ *
+ * WHY each member is what it is:
+ *
+ *   agent   — the curation pipeline proposed this change from its own observations. A broken
+ *             citation means the pipeline reasoned over a record that no longer stands, and
+ *             degrading its proposal into a clarification candidate a person can adjudicate is
+ *             exactly the right answer. This is the drain path's long-standing behaviour and it
+ *             is PRESERVED unchanged.
+ *   import  — bulk-ingested content, pipeline-authored in every sense that matters here: nobody
+ *             is waiting on a typed answer for one record, and a clarification candidate is the
+ *             reviewable artifact the importer wants.
+ *   system  — maintenance deltas (rollback's Deprecate, the canary Confirm). Same reasoning:
+ *             machine-authored content, and a refusal would turn a maintenance sweep into a hard
+ *             failure over one stale citation.
+ *   user    — a human INSTRUCTION about records that already exist. There is no content here to
+ *             degrade: minting from it publishes a verbatim clone of the cited record under a
+ *             fresh content address as a `candidate`, which serving re-admits — so an `accept`
+ *             over a record the same person had already rejected RESURRECTED the fact they
+ *             removed and reported success (CR-02′). The store cannot grant the instruction, so
+ *             it says so.
+ */
+const CITED_ID_INTEGRITY_FALLBACK_BY_ORIGIN = {
+  agent: 'mint-unknown',
+  import: 'mint-unknown',
+  system: 'mint-unknown',
+  user: 'refuse',
+} as const satisfies Record<DeltaOrigin, 'mint-unknown' | 'refuse'>
+
+/**
+ * The ONE site the fallback mapping is consulted, shared by every failure condition the check
+ * has. Deliberately not inlined at either return site: the check fails for four distinct reasons
+ * — an id outside the persisted neighbour set, a record absent from the bundle tree, a
+ * `deprecated` record, and a scope mismatch — and they are ONE failure domain ("this delta cites
+ * something this store cannot stand behind"). Discriminating at one of them and not the others is
+ * the same one-axis-out mistake as scoping a guard to one verb of a set.
+ */
+function citedIdIntegrityFailure(delta: Delta, recordId: RecordId): CheckFailure {
+  return CITED_ID_INTEGRITY_FALLBACK_BY_ORIGIN[delta.origin] === 'refuse'
+    ? { kind: 'refuse', reason: 'cited-id-integrity', recordId }
+    : { kind: 'downgrade', reason: 'cited-id-integrity' }
+}
+
 function checkCitedIdIntegrity(
   input: DisposeDeltaInput,
   lookup: TruthLookup,
@@ -583,7 +662,7 @@ function checkCitedIdIntegrity(
   const persistedNeighbors = new Set<RecordId>(input.checkpoint.neighborIds)
   for (const id of deltaTargetIds(input.delta)) {
     if (!persistedNeighbors.has(id)) {
-      return { kind: 'downgrade', reason: 'cited-id-integrity' }
+      return citedIdIntegrityFailure(input.delta, id)
     }
     const truth = lookup(id)
     if (
@@ -591,7 +670,7 @@ function checkCitedIdIntegrity(
       || truth.status === 'deprecated'
       || !sameScope(truth.bundle.frontmatter.scope, input.delta.scope)
     ) {
-      return { kind: 'downgrade', reason: 'cited-id-integrity' }
+      return citedIdIntegrityFailure(input.delta, id)
     }
   }
   return PASS
@@ -1124,6 +1203,13 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
     const verdict = check()
     if (verdict.kind === 'requeue') {
       return { kind: 'requeue-resynthesis', reason: verdict.reason }
+    }
+    if (verdict.kind === 'refuse') {
+      // No outcome arm carries a refusal on purpose: `DispositionOutcome` is the vocabulary of
+      // things that CHANGE the store, and a refusal changes nothing. Throwing keeps the caller
+      // from having to remember to check for a fifth arm — the mistake that produced the defect
+      // this refusal exists for.
+      throw new UserDeltaCitationIntegrityError(verdict.recordId, dispositionInput.delta.kind)
     }
     if (verdict.kind === 'downgrade') {
       return {
