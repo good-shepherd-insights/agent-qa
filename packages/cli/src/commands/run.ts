@@ -98,7 +98,16 @@ export function requireSingleInvocationProduct(
   )
 }
 
-const curationTailLog = {
+/**
+ * Every post-run line's CHANNEL, in one place — and exported because the channel is a promise.
+ *
+ * JOBQ-06 says post-processing never gates the verdict or the navigation, and the operational
+ * form of that promise is that no post-run line ever lands on stdout, where the reporter and
+ * the navigation live. Both members here write to stderr for that reason. Exported so the
+ * byte-proof binds THIS object rather than a copy of it: a proof against a re-declared log
+ * would keep passing on the day somebody routes a close-out line to `console.log`.
+ */
+export const curationTailLog = {
   warn(message: string): void {
     console.warn(pc.yellow(`Warning: ${message}`))
   },
