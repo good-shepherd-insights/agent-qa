@@ -215,10 +215,16 @@ describe('a turn that injected ZERO cautions still lands the reader cut ledger (
  * single backstop drain inside `finish()` — the file's own single terminal funnel — never an
  * enumeration of the exit sites, which is the failure mode this whole arc exists to end.
  */
-function allCut(...truncated: TraceLine[]): ServedCautions {
+/**
+ * A staged composite whose block renders NOTHING. `served` are lines the reader handed over for a
+ * turn that never came; `cutCandidates` are the ones it had already dropped. Both must reach
+ * evidence as candidates — a line the reader served to a turn that never ran was still not shown
+ * to anybody, and `cut` builds either side because the two differ only in which array they sit in.
+ */
+function stagedServe(served: TraceLine[], cutCandidates: TraceLine[]): ServedCautions {
   return servedCautions(
     { cautions: [], budgetUsed: 0, admissions: [] },
-    { schemaVersion: 1, servedLines: [], truncated },
+    { schemaVersion: 1, servedLines: served, truncated: cutCandidates },
   )
 }
 
@@ -251,15 +257,24 @@ describe('a step that ENDS before its staged ledger is consumed still lands it (
     // WR-10's three gates: the composite was staged correctly and the recorder would have
     // accumulated it correctly; the step simply RETURNED at the remaining-budget exit before the
     // consuming turn ran, and nothing drained what was staged.
-    const served = await endsAtBudget([allCut(cut('caution-cut-a', 4, 0.31), cut('caution-cut-b', 5, 0.22))], 1)
+    const served = await endsAtBudget([stagedServe(
+      // A line the reader SERVED for the turn that never came. Its presence is what makes the
+      // honesty assertion below non-vacuous: with a served-lines-empty trace, no implementation
+      // could populate `servedLines` at all, so the assertion would hold for a reason having
+      // nothing to do with the drain (found by probing this case's own controls — m4).
+      [cut('caution-served-x', 1, 0.88)],
+      [cut('caution-cut-a', 4, 0.31), cut('caution-cut-b', 5, 0.22)],
+    )], 1)
 
     // The step really did end at the budget, not at a replan that happened to work.
     expect(served.status).toBe('failed')
     expect(served.error).toContain('Sub-action limit reached')
 
     const persisted = served.evidence?.retrievalTrace
+    // Non-injected served lines first, then the reader's own cuts — the recorder's uniform split,
+    // applied to the terminal turn with no special case.
     expect(persisted?.truncated.map(({ recordId }) => recordId))
-      .toEqual(['caution-cut-a', 'caution-cut-b'])
+      .toEqual(['caution-served-x', 'caution-cut-a', 'caution-cut-b'])
     // Nothing was rendered into any turn, so nothing may be claimed as served testimony
     // (D-2 / 387-04 probe r4, carried to the terminal turn).
     expect(persisted?.servedLines).toEqual([])
@@ -273,7 +288,7 @@ describe('a step that ENDS before its staged ledger is consumed still lands it (
     // the LAST staging is missing. A control that asserted "truncated is non-empty" would have
     // passed here while the terminal step's own ledger was still being dropped.
     const served = await endsAtBudget(
-      [allCut(cut('staged-a-cut', 4, 0.31)), allCut(cut('staged-b-cut', 6, 0.19))],
+      [stagedServe([], [cut('staged-a-cut', 4, 0.31)]), stagedServe([], [cut('staged-b-cut', 6, 0.19)])],
       2,
     )
 
@@ -288,7 +303,7 @@ describe('a step that ENDS before its staged ledger is consumed still lands it (
     // so the recorder's non-empty-injection gate never fires and the brief cannot move. As with
     // Shape A, the comparison is against a REAL budget-exit run that carried no cut candidates —
     // the two runs differ only in what the reader's caution trace held.
-    const laden = await endsAtBudget([allCut(cut('caution-cut-a', 4, 0.31))], 1)
+    const laden = await endsAtBudget([stagedServe([], [cut('caution-cut-a', 4, 0.31)])], 1)
     const baseline = await endsAtBudget([noCautions()], 1)
 
     expect(laden.evidence?.servedBrief.channel3).toHaveLength(0)
