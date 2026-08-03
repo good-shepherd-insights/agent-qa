@@ -1,11 +1,9 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { KnowledgePort } from '@vostride/agent-qa-agent'
 import {
   asEvidenceToken,
   canonicalJson,
-  committedFileText,
   deriveEvidenceToken,
   evaluatePromotionGate,
   eventDedupKey,
@@ -295,6 +293,49 @@ function currentAuthority(
   }
 }
 
+/**
+ * Bridge one port delta into the commit path's job shape — computing the claimed-candidate
+ * ADDRESS and materializing NOTHING.
+ *
+ * WHY THE BRIDGE WRITES NOTHING (CR-02″). This function used to create the candidate's artifacts
+ * directory and write its `payload.json` before returning (those two statements, and this file's
+ * whole `node:fs` import with them, are gone — the corpus greps this file for a filesystem write
+ * and expects to find none), and `commitWithProfile` calls it BEFORE `operation(...)` — which is
+ * where `disposeDelta` runs the
+ * §7.3.1 checks. So a delta the store REFUSES had already left a claimed curation candidate on
+ * disk, seeded from `addressFields` with the cited record's own `summarySeed`, `anchors`,
+ * `bodySeed` and `kind`. Nothing unwound it on the throw: `reconcileOnDrainStart` requeued that
+ * directory under the next lease (`requeueClaimedWithinCurrentAuthority` takes every
+ * `/^[0-9a-f]{64}$/` name with no provenance filter) and the curator re-authored the fact a
+ * reviewer had just removed, one drain later, as `origin: 'agent'`.
+ *
+ * The repair is NOT an unwind. An unwind enumerates the artifacts today's bridge happens to
+ * write, so the next check that throws from a new position leaks whatever the enumeration missed
+ * — the same one-axis-out shape this phase has paid for repeatedly. Writing nothing is a
+ * property of the path instead of a property of a cleanup: a thrown check at ANY position now
+ * leaves no residue, because there was never anything to leave.
+ *
+ * WHAT MAKES IT SAFE — the port path has no on-disk consumer of the claimed form, each half
+ * verified by reading:
+ *   - procedure drafts, the ONE disposition reader of `job.candidateDir`
+ *     (`disposition.ts` procedureEvidence), are refused by `commitWithProfile` BEFORE this
+ *     function is called, pinned by knowledge-store.test.ts's "rejects before materializing any
+ *     claimed candidate" case;
+ *   - `addressFields` sets `artifactInventory: []`, so `commit.ts`'s `artifactInputs` maps over
+ *     an empty list and `preCopyArtifacts` copies nothing;
+ *   - every completed outcome ends in `markDone` → `writeJobState('done')` →
+ *     `removeClaimedCandidate`, whose `rmSync(…, { force: true })` and `removeEmptyDir` are both
+ *     no-ops on an absent directory.
+ * The job keeps `candidateDir` / `payloadPath` / `artifactsDir` because `CommitCurationJob`'s
+ * type requires them and the drain's own run-sourced candidates — which DO exist on disk — flow
+ * through the same shape. Here they name an address, not a file.
+ *
+ * THE MECHANISM THAT REDS THIS. The claim above is not prose: reintroducing the two write
+ * statements reds `apply-review.test.ts`'s "a refused accept leaves the WHOLE knowledge root
+ * byte-identical (CR-02″)" with the leaked `memory/queue/claimed/…/payload.json` printed in the
+ * diff, and reds its sibling adoption case with `jobsRequeued` back at 1. Probe m1 of 387-17 is
+ * exactly that mutation, run and recorded.
+ */
 function bridgeDelta(
   config: CreateLocalKnowledgeStoreConfig,
   delta: Delta,
@@ -316,8 +357,6 @@ function bridgeDelta(
   const candidateDir = claimedCandidateDir(config.knowledgeRoot, leaseId, candidateId)
   const artifactsDir = join(candidateDir, 'artifacts')
   const payload: CurationCandidatePayload = { candidateId, ...fields }
-  mkdirSync(artifactsDir, { recursive: true })
-  writeFileSync(join(candidateDir, 'payload.json'), committedFileText(payload), 'utf8')
 
   const authorship = syntheticAuthorship(config, delta)
   return {

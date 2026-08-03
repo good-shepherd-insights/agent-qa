@@ -213,6 +213,24 @@ describe('KnowledgePort procedure authoring boundary (WR-02/D-02)', () => {
         summary: 'Supported public-store fact',
       },
     })
+
+    // …and the SUCCESS path materializes no claimed tree either (387-17, CR-02″).
+    //
+    // The refusal case above pins that a REJECTED delta writes nothing. This is the other half,
+    // and it was found by measurement rather than by reasoning: with `bridgeDelta` made
+    // write-free, `preCopyArtifacts` still passed `job.candidateDir`-nested preflight path to
+    // `copyArtifacts`, whose opening `mkdirSync(…, { recursive: true })` re-created the whole
+    // `memory/queue/claimed/<lease>/<candidateId>/` chain for a job with NOTHING to copy.
+    // `markDone` removed the candidate and the lease dir on the way out, so the only survivor was
+    // `memory/queue/claimed` itself — invisible to every bundle-tree gate and to a files-only
+    // listing, which is precisely the blind spot CR-02″ lived in one round earlier.
+    //
+    // OBSERVED before the `preCopyArtifacts` empty short-circuit landed: `existsSync(claimedRoot)`
+    // was `true` here. Removing that short-circuit reds this line.
+    expect(
+      existsSync(claimedRoot(knowledgeRoot)),
+      'a port-bridged commit that succeeds must leave no claimed queue tree behind either',
+    ).toBe(false)
   })
 })
 

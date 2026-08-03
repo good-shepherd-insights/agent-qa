@@ -496,13 +496,37 @@ function omissionPreSkipped(
   }))
 }
 
+/**
+ * Pre-copy the job's artifacts into the preflight dir — and touch the filesystem only if it has
+ * artifacts to copy.
+ *
+ * THE EMPTY SHORT-CIRCUIT IS NOT A MICRO-OPTIMISATION, it is what makes 387-17's write-free
+ * `bridgeDelta` true on the SUCCESS path. `copyArtifacts` opens with an unconditional
+ * `mkdirSync(destArtifactsDir, { recursive: true })`, and `preflightDir` lives INSIDE
+ * `job.candidateDir` — so for a knowledge-port job, whose `candidateDir` deliberately no longer
+ * exists, that one recursive mkdir re-created the entire `memory/queue/claimed/<lease>/<id>/…`
+ * chain. `markDone` then removed the candidate and its lease dir again, but `memory/queue/claimed`
+ * itself survived: MEASURED as `existsSync(claimedRoot) === true` after a successful port-bridged
+ * fact `Add`. The corpus's whole-root digest counts directories, so that is residue, and the
+ * regression case in knowledge-store.test.ts now reds if it comes back.
+ *
+ * PROVABLY INERT FOR THE DRAIN, which is the sibling-input half. A drain job's `candidateDir` is
+ * a real directory that the queue wrote long before commit, its artifacts dir is created by this
+ * call only to be removed by `commitCurationDelta`'s `finally`, and the result returned here for
+ * an empty input list is the same object `copyArtifacts` builds for one: nothing copied, the
+ * pre-skipped omissions passed straight through, and `evidenceIncomplete` derived from them by
+ * the same rule. A job WITH artifacts is untouched by this branch.
+ */
 function preCopyArtifacts(
   job: CommitCurationJob,
   preflightDir: string,
 ): ArtifactCopyResult<'capture-blacklist'> {
-  return copyArtifacts(artifactInputs(job), join(preflightDir, 'artifacts'), {
-    preSkipped: omissionPreSkipped(job),
-  })
+  const inputs = artifactInputs(job)
+  const preSkipped = omissionPreSkipped(job)
+  if (inputs.length === 0) {
+    return { copied: [], skipped: preSkipped, evidenceIncomplete: preSkipped.length > 0 }
+  }
+  return copyArtifacts(inputs, join(preflightDir, 'artifacts'), { preSkipped })
 }
 
 function publisherArtifacts(

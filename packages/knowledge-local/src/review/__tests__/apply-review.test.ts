@@ -37,7 +37,8 @@ import { listBundles } from '../../list-bundles.js'
 import { openIndexReaderConnection, vecTableName } from '../../index-open.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
-import { claimedRoot, listQueuedCandidates } from '../../queue/curation-queue.js'
+import { listQueuedCandidates } from '../../queue/curation-queue.js'
+import { claimedRoot } from '../../queue/queue-layout.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,
@@ -99,20 +100,32 @@ function hashTree(root: string): string {
 }
 
 /**
- * The digest's own input domain, spelled out — asserted BEFORE the digest so a leak is NAMED.
+ * The digest's own input domain, spelled out — asserted BEFORE the digest so a change is NAMED.
  *
  * `hashTree` answers "did anything change" with one opaque hex string; a corpus whose only
  * statement is that string reports a leak as `expected 'a1b2…' to be 'c3d4…'`, which tells the
- * next reader nothing about WHERE. This listing is the same walk with the contents dropped, and
- * asserting it first means the failure output prints the leaked path itself.
+ * next reader nothing about WHERE. This listing carries exactly what the digest carries — every
+ * directory by path, every file by path and content hash — so asserting it first makes the
+ * failure output print the offending entry itself.
+ *
+ * DIRECTORIES ARE ENTRIES HERE, and that is not decoration: the first draft of this helper listed
+ * files only, and it went green against a bridge that no longer wrote `payload.json` but whose
+ * caller still materialized an EMPTY `memory/queue/claimed/` on the way past. A files-only
+ * listing would have reported the residue as "nothing to see" while the digest disagreed with it.
  */
-function treeFiles(root: string): string[] {
+function treeEntries(root: string): string[] {
   const found: string[] = []
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name)
-      if (entry.isDirectory()) walk(path)
-      else found.push(relative(root, path))
+      if (entry.isDirectory()) {
+        found.push(`D:${relative(root, path)}`)
+        walk(path)
+        continue
+      }
+      found.push(
+        `F:${relative(root, path)}:${createHash('sha256').update(readFileSync(path)).digest('hex')}`,
+      )
     }
   }
   walk(root)
@@ -1133,9 +1146,26 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
   //     → AssertionError: a refusal must leave the next drain nothing to adopt: expected 1 to be 0
   //
   // (the leaked payload.json is the candidate the requeue then adopts — one leak, two cases. The
-  // lease uuid and the candidate content address vary per run; every other path in the listing was
-  // byte-identical across the refusal, which is why the digest half is an equality and not a
-  // tolerance.)
+  // lease uuid and the candidate content address vary per run.)
+  //
+  // WHY THE FIRST CASE HOLDS THE LEASE ITSELF. With the leak fixed, the digest STILL moved, and
+  // the second measurement named the reason: `.epoch` and `.writer-authority.sqlite`, and nothing
+  // else. `acquireWriterLease` advances the fencing epoch on every acquisition, so an apply that
+  // takes its own lease moves those two bytes whether it commits, refuses, or does nothing at
+  // all. Leaving them inside the window would force the invariant to become "equal except for
+  // this list", and a hand-written exclusion list is the exact shape this phase keeps paying for.
+  // The lease is therefore acquired by the FIXTURE and handed in through `writerAuthority` (the
+  // holder branch — same `commitAndPublish`, same store, same bridge), which takes the lease
+  // lifecycle out of the measured window instead of carving it out of the assertion. The
+  // acquire-and-release CONTROL below proves the exclusion is really the lease's own doing rather
+  // than an assumption: a bare lease round-trip, committing nothing, must move the digest and
+  // must move NOTHING under `memory/`. The ordinary acquiring path is covered end-to-end by the
+  // adoption case that follows, which asserts over the queue tree directly.
+
+  /** Entries under `memory/` — the curation state, as opposed to root-level lease bookkeeping. */
+  function curationEntries(entries: string[]): string[] {
+    return entries.filter((entry) => entry.slice(2).startsWith('memory/'))
+  }
 
   it('a refused accept leaves the WHOLE knowledge root byte-identical (CR-02″)', async () => {
     const recordId = publish('checkout button')
@@ -1147,38 +1177,68 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     })
     expect(tombstoning.outcome, 'the tombstoning apply is fixture, not subject').toBe('applied')
 
-    const proposalId = proposeAccept(recordId)
-    const filesBefore = treeFiles(knowledgeRoot)
-    const treeBefore = hashTree(knowledgeRoot)
+    // CONTROL — what the lease lifecycle alone costs, MEASURED rather than assumed. A bare
+    // acquire-and-release commits nothing; if it moved no bytes there would be no reason to hold
+    // the lease across the window below, and if it moved curation state the window would be
+    // hiding something.
+    const beforeBareLease = treeEntries(knowledgeRoot)
+    const bare = acquireWriterLease(knowledgeRoot)
+    if (bare.kind !== 'acquired') throw new Error('fixture could not take the lease')
+    releaseLease({ knowledgeRoot, leaseId: bare.leaseId })
+    const afterBareLease = treeEntries(knowledgeRoot)
+    expect(
+      afterBareLease,
+      'taking and dropping the lease must move SOMETHING, or holding it across the window '
+        + 'below would be pointless ceremony',
+    ).not.toEqual(beforeBareLease)
+    expect(
+      curationEntries(afterBareLease),
+      'and it must move nothing under memory/ — the exclusion is lease bookkeeping, not a '
+        + 'carve-out that could be hiding curation state',
+    ).toEqual(curationEntries(beforeBareLease))
 
-    const refusal = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
-      .catch((error: unknown) => error)
-    expect(refusal).toBeInstanceOf(UserDeltaCitationIntegrityError)
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('fixture could not take the lease')
+    try {
+      const proposalId = proposeAccept(recordId)
+      const entriesBefore = treeEntries(knowledgeRoot)
+      const treeBefore = hashTree(knowledgeRoot)
 
-    expect(
-      treeFiles(knowledgeRoot),
-      'a refused apply may not leave a file ANYWHERE under the knowledge root — the queue tree '
-        + 'is inside the invariant, not outside it',
-    ).toEqual(filesBefore)
-    expect(
-      hashTree(knowledgeRoot),
-      'the refusal must be byte-identical over the whole root: paths, sizes and contents',
-    ).toBe(treeBefore)
-    // The specific shape the leak took, named so a regression reads as itself rather than as a
-    // digest mismatch. This is a consequence of the invariant above, never a substitute for it.
-    expect(
-      existsSync(claimedRoot(knowledgeRoot)),
-      'the write-free bridge materializes no claimed candidate, so the tree never appears',
-    ).toBe(false)
+      const refusal = await applyReview({
+        agentQaRoot,
+        knowledgeRoot,
+        proposalId,
+        writerAuthority: { leaseId: lease.leaseId, epoch: lease.epoch },
+      }).catch((error: unknown) => error)
+      expect(refusal).toBeInstanceOf(UserDeltaCitationIntegrityError)
 
-    // POTENCY, measured over THIS root and THIS digest rather than asserted about hashing in
-    // general: without it a digest taken over the wrong directory would report success forever.
-    // One byte, deliberately written, must move it.
-    writeFileSync(join(knowledgeRoot, 'potency-probe.txt'), 'x', 'utf8')
-    expect(
-      hashTree(knowledgeRoot),
-      'the invariant must be FALSIFIABLE over this exact root, or it measures nothing',
-    ).not.toBe(treeBefore)
+      expect(
+        treeEntries(knowledgeRoot),
+        'a refused apply may not leave a file OR a directory anywhere under the knowledge root '
+          + '— the queue tree is inside the invariant, not outside it',
+      ).toEqual(entriesBefore)
+      expect(
+        hashTree(knowledgeRoot),
+        'the refusal must be byte-identical over the whole root: paths, sizes and contents',
+      ).toBe(treeBefore)
+      // The specific shape the leak took, named so a regression reads as itself rather than as a
+      // digest mismatch. A consequence of the invariant above, never a substitute for it.
+      expect(
+        existsSync(claimedRoot(knowledgeRoot)),
+        'the write-free bridge materializes no claimed candidate, so the tree never appears',
+      ).toBe(false)
+
+      // POTENCY, measured over THIS root and THIS digest rather than asserted about hashing in
+      // general: without it a digest taken over the wrong directory would report success forever.
+      // One byte, deliberately written, must move it.
+      writeFileSync(join(knowledgeRoot, 'potency-probe.txt'), 'x', 'utf8')
+      expect(
+        hashTree(knowledgeRoot),
+        'the invariant must be FALSIFIABLE over this exact root, or it measures nothing',
+      ).not.toBe(treeBefore)
+    } finally {
+      releaseLease({ knowledgeRoot, leaseId: lease.leaseId })
+    }
   })
 
   it('the next drain adopts NOTHING from a refused accept (CR-02″ requeue half)', async () => {
