@@ -82,6 +82,35 @@ function declarationFor(kind: JobKind): JobKindDeclaration {
   return registry.require(kind)
 }
 
+/**
+ * The kinds a permanent failure of `kind` actually CONTINUES INTO, asked of the producer.
+ *
+ * Read from the fallback rather than from `allowedSuccessors`, and 388 D-04 is why: the two
+ * are deliberately no longer the same list. The declaration keeps triage-issues so the issue
+ * engine can fill the slot without a topology change; the fallback produces only
+ * curate-memory, so no triage job is ever enqueued and the issues chip's `reserved` status is
+ * structurally true. A matrix that kept expecting the declared set would be asserting a chain
+ * the product deliberately does not build.
+ *
+ * MEASURED CONSEQUENCE, recorded rather than papered over: with one continuation, the "a
+ * PARTIAL continuation set is never visible" arm of the atomicity claim below is no longer
+ * reachable through any real kind — analyze-run was the only kind with a fallback producer at
+ * all, and every other kind halts its chain. What still has teeth, and is what `failAndChain`
+ * exists for, is the other arm: a terminal parent with NO continuation is never visible. The
+ * multi-continuation arm returns by itself the day a second successor is produced, because
+ * this is asked of the producer rather than restated here.
+ */
+function continuationKindsFor(kind: JobKind, jobId: string, payload: unknown): readonly JobKind[] {
+  const disposition = declarationFor(kind).onPermanentFailure
+  if (disposition === 'halt-chain') return []
+  return disposition({
+    job: { id: jobId, kind } as unknown as Parameters<typeof disposition>[0]['job'],
+    payload,
+    // Only the KINDS are read here, and no producer's kind set depends on the reason text.
+    reason: 'asking the producer which continuations it makes',
+  }).map((request) => request.kind)
+}
+
 function jobRows(snapshot: KillMatrixSnapshot): readonly Record<string, unknown>[] {
   return snapshot.outcome.tables.find((table) => table.table === 'jobs')?.rows ?? []
 }
@@ -367,8 +396,11 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
     const checkpointId = declaration.checkpointSchedule[0]!
     const paths = makeRoot('failure-path-record')
     const jobId = String(await seedJob(paths.agentQaRoot, kind, PAYLOAD))
-    const successors = declaration.allowedSuccessors
-    expect(successors.length).toBeGreaterThan(1)
+    const successors = continuationKindsFor(kind, jobId, PAYLOAD)
+    // Non-vacuity: a failure that continued into nothing would satisfy every assertion below
+    // by having nothing to satisfy. The bound is 1 rather than 2 since 388 D-04 — see
+    // continuationKindsFor for what that costs and what it does not.
+    expect(successors.length).toBeGreaterThan(0)
     const selector = verbCrashSelector('failAndChain', 'before', jobId)
 
     const marker = await crashAt(paths, paths.marker, selector, {
@@ -465,8 +497,11 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
     const checkpointId = declaration.checkpointSchedule[0]!
     const paths = makeRoot('failure-path-atomic')
     const jobId = String(await seedJob(paths.agentQaRoot, kind, PAYLOAD))
-    const successors = declaration.allowedSuccessors
-    expect(successors.length).toBeGreaterThan(1)
+    const successors = continuationKindsFor(kind, jobId, PAYLOAD)
+    // Non-vacuity: a failure that continued into nothing would satisfy every assertion below
+    // by having nothing to satisfy. The bound is 1 rather than 2 since 388 D-04 — see
+    // continuationKindsFor for what that costs and what it does not.
+    expect(successors.length).toBeGreaterThan(0)
     const selector = verbCrashSelector('failAndChain', 'after', jobId)
 
     const marker = await crashAt(paths, paths.marker, selector, {

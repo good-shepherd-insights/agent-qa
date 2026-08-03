@@ -797,16 +797,20 @@ describe('the six real kinds, driven through the engine', () => {
     ])
   })
 
-  it('proceeds with unknown verdicts when analyze-run permanently fails', async () => {
+  // 388 D-04 narrows what this produces, and the narrowing is why the case above still says
+  // both kinds while this one says one. The DECLARATION keeps triage-issues (the case above
+  // drives the stand-in, which maps over the declared set); the permanent-failure INSTANCES
+  // do not, because a dead analysis was the single path in the shipped build that enqueued a
+  // triage job — on exactly the runs whose analysis had already failed, where the issues chip
+  // then read `reserved` while a triage job existed and ran. The two cases now measure the
+  // declaration/instance split from opposite sides rather than agreeing with each other.
+  it('proceeds with unknown verdicts, and only into curate-memory, when analyze-run permanently fails', async () => {
     await harness.queue.enqueue('analyze-run', { fail: 'permanent', reason: 'no model' }, 'run-1')
     const outcome = await harness.queue.runNextJob({ fence: harness.fence })
 
     expect(outcome).toMatchObject({ disposition: 'failed', reason: 'no model' })
     const continuation = harness.store.rows().filter((row) => row.kind !== 'analyze-run')
-    expect(continuation.map((row) => row.kind).sort()).toEqual([
-      'curate-memory',
-      'triage-issues',
-    ])
+    expect(continuation.map((row) => row.kind).sort()).toEqual(['curate-memory'])
     for (const row of continuation) {
       expect(row.payload).toMatchObject({ verdicts: 'unknown' })
     }

@@ -119,12 +119,33 @@ function standInHandler(
  * them the same successors a successful one would, marked as carrying no verdicts. Nothing
  * here reaches a model, and nothing here can: what it is given is the failed job, the payload
  * that job was handed, and the reason.
+ *
+ * "The same successors a successful one would" is now load-bearing rather than incidental
+ * (388 D-04). It maps over the PRODUCED set, not the declared one — the shipped 385 version
+ * mapped over the declaration, which meant a dead analysis was the one case that enqueued a
+ * triage job. That build's issues chip would have read `reserved` while a triage job existed
+ * and ran, and the chain-terminal check would have waited on a job D-04 says never exists —
+ * on exactly the runs whose analysis had already failed.
+ *
+ * The extra carries the run's identity and posture forward for the same reason the success
+ * path does (Pitfall 6): the successor may be claimed by the daemon, which resolves posture
+ * from `payload.executionContext` (386 D-09/D-12), and curation cannot fold a run directory
+ * it was never told about. The unknown-verdicts marker travels with them so the chain
+ * terminal can report the analysis stage honestly from a job that succeeded afterwards.
  */
 function analyzeRunFallback(input: FallbackContinuationInput): readonly ChainedJobRequest[] {
+  const payload = asRecord(input.payload)
   return successorsOf(
-    { kind: 'analyze-run', allowedSuccessors: ANALYZE_RUN_SUCCESSORS },
+    { kind: 'analyze-run', allowedSuccessors: ANALYZE_RUN_PRODUCED_SUCCESSORS },
     String(input.job.id),
-    { verdicts: UNKNOWN_VERDICTS_MARKER, failureReason: input.reason },
+    {
+      ...(typeof payload.runId === 'string' ? { runId: payload.runId } : {}),
+      ...(payload.executionContext === undefined
+        ? {}
+        : { executionContext: payload.executionContext }),
+      verdicts: UNKNOWN_VERDICTS_MARKER,
+      failureReason: input.reason,
+    },
   )
 }
 
