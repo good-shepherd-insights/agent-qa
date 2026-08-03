@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vites
 
 import {
   AUTHORED_CHECKPOINT_SCHEMA_VERSION,
+  CITED_ID_INTEGRITY_CONDITIONS,
   appendMeasurementObservation,
   appendOutcomeEvent,
   authoredCheckpointSchema,
@@ -32,6 +33,7 @@ import {
   writeMeasurementBaseline,
   type AuthoredDeltaCheckpoint,
   type AuthorOutcome,
+  type CitedIdIntegrityCondition,
   type CurationJobView,
   type CuratorAuthor,
   type NeighborRecord,
@@ -915,18 +917,7 @@ describe('cited-id integrity: the fallback is total over DeltaOrigin (CR-02′)'
    * store cannot stand behind", and a vanished record, an unpersisted neighbour or a record
    * addressed at a scope it does not carry is that fact just as much as a tombstoned one.
    */
-  type CitedIdIntegrityCondition =
-    | 'not-a-persisted-neighbor'
-    | 'missing-from-disk'
-    | 'deprecated'
-    | 'scope-mismatch'
-
-  const FAILURE_CONDITIONS = [
-    'not-a-persisted-neighbor',
-    'missing-from-disk',
-    'deprecated',
-    'scope-mismatch',
-  ] as const satisfies readonly CitedIdIntegrityCondition[]
+  const FAILURE_CONDITIONS = CITED_ID_INTEGRITY_CONDITIONS
 
   function confirmCiting(origin: DeltaOrigin, targetId: RecordId): Delta {
     return {
@@ -978,9 +969,9 @@ describe('cited-id integrity: the fallback is total over DeltaOrigin (CR-02′)'
    *
    * BOTH of the check's return sites are reached across this walk, and the split is exactly two:
    * `not-a-persisted-neighbor` takes the early return that fires before the record is even looked
-   * up, and the other three share the or-ed second return. The earlier version of this note said
-   * "all three return sites", counting conditions as if each had its own — the miscount that let
-   * the fourth condition hide inside the second return without anybody noticing it was there.
+   * up, and the other three share the or-ed second return. The earlier version of this note
+   * claimed one return site per condition and counted three of them — the miscount that let the
+   * fourth condition hide inside the second return without anybody noticing it was there.
    */
   const CONDITION_FIXTURES = {
     'not-a-persisted-neighbor': () => {

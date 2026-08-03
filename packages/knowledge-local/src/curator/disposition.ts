@@ -201,9 +201,16 @@ type CheckFailure =
    *
    * The arm carries the failing `recordId` because the other two do not need one and this one
    * does: the refusal is reported to a person who addressed a specific record, and "the citation
-   * check failed" without saying which id it failed on is an answer they cannot act on.
+   * check failed" without saying which id it failed on is an answer they cannot act on. It
+   * carries the `condition` for the same reason one level down — which of the four ways the
+   * store cannot stand behind that id fired.
    */
-  | { kind: 'refuse'; reason: string; recordId: RecordId }
+  | {
+      kind: 'refuse'
+      reason: string
+      recordId: RecordId
+      condition: CitedIdIntegrityCondition
+    }
 
 type CheckVerdict = { kind: 'pass' } | CheckFailure
 
@@ -586,20 +593,63 @@ function disposeMeasurementDrift(
 }
 
 /**
+ * Every way `checkCitedIdIntegrity` can decide this store cannot stand behind a cited id.
+ *
+ * The registry exists so the count stops being something a comment or a corpus has to keep in
+ * step. Round 2 measured what happens when it is not one: the check's second return is a
+ * three-way disjunction, the corpus and the doc comment both said "three conditions", and
+ * carving `scope-mismatch` out of the refusal for every origin left 3 files / 70 tests green.
+ * A fifth member added here is a compile error at `citedIdIntegrityFailure`'s derivation and at
+ * the corpus's `satisfies Record<CitedIdIntegrityCondition, …>` fixture table.
+ */
+export const CITED_ID_INTEGRITY_CONDITIONS = [
+  'not-a-persisted-neighbor',
+  'missing-from-disk',
+  'deprecated',
+  'scope-mismatch',
+] as const
+
+export type CitedIdIntegrityCondition = (typeof CITED_ID_INTEGRITY_CONDITIONS)[number]
+
+/**
  * The typed refusal a USER-authored delta receives when its cited-id integrity check fails.
  *
  * Thrown rather than returned, and out of the check funnel rather than out of the commit, so it
- * fires before any canonical byte moves for this delta: `disposeDelta` runs the six §7.3.1 checks
- * ahead of every append, projection and promotion, so a refusal here leaves the store exactly as
- * it was. `applyReview`'s `commitAndPublish` catches it, restores the proposal to pending and
- * rethrows, which is how the caller gets a typed answer instead of a receipt for work nobody did.
+ * fires before any canonical byte moves for this delta: `disposeDelta` runs `checkCitedIdIntegrity`
+ * first of the six §7.3.1 checks, ahead of every append, projection and promotion.
+ * `applyReview`'s `commitAndPublish` catches it, restores the proposal to pending and rethrows,
+ * which is how the caller gets a typed answer instead of a receipt for work nobody did.
+ *
+ * WHAT MAKES "NOTHING MOVED" TRUE, and it is not this sentence. The previous version of this
+ * comment asserted whole-store neutrality as free-standing prose, naming no mechanism, and the
+ * round-2 verifier measured that claim FALSE: the delta had already reached disposition through
+ * `knowledge-store.ts`'s bridge, which materialized a claimed curation candidate on disk before
+ * `commitWithProfile` ever called into the commit, and the throw left it there for the next
+ * drain's reconcile to requeue (CR-02″). Two mechanisms now establish the claim, and each of them
+ * reds if it is removed:
+ *
+ *   1. `bridgeDelta` is WRITE-FREE (`curator/knowledge-store.ts`). It computes the candidate's
+ *      address and materializes nothing, so a check that throws at any position has nothing to
+ *      leave behind. Reintroducing its two write statements reds the case in (2).
+ *   2. `review/__tests__/apply-review.test.ts` asserts `hashTree(knowledgeRoot)` and the tree's
+ *      full entry listing — QUEUE TREE INCLUDED — are identical across a refused `accept`, with
+ *      a potency control proving the digest is falsifiable over that exact root.
+ *
+ * The scope of the guarantee is the knowledge root. The writer lease's own fencing state
+ * (`.epoch`, `.writer-authority.sqlite`) advances on acquisition regardless of what the caller
+ * then does, which is why the case above holds the lease across its measurement rather than
+ * excusing those two names.
  */
 export class UserDeltaCitationIntegrityError extends Error {
-  constructor(readonly recordId: RecordId, readonly deltaKind: Delta['kind']) {
+  constructor(
+    readonly recordId: RecordId,
+    readonly deltaKind: Delta['kind'],
+    readonly condition: CitedIdIntegrityCondition,
+  ) {
     super(
-      `The record ${recordId} this ${deltaKind} cites is tombstoned or cannot be resolved in ` +
-        'this store, so the instruction is REFUSED rather than converted into minted content. ' +
-        'Nothing was committed and the record is unchanged.',
+      `The record ${recordId} this ${deltaKind} cites is one this store cannot stand behind ` +
+        `(${condition}), so the instruction is REFUSED rather than converted into minted ` +
+        'content. Nothing was committed and the record is unchanged.',
     )
     this.name = 'UserDeltaCitationIntegrityError'
   }
@@ -643,15 +693,22 @@ const CITED_ID_INTEGRITY_FALLBACK_BY_ORIGIN = {
 
 /**
  * The ONE site the fallback mapping is consulted, shared by every failure condition the check
- * has. Deliberately not inlined at either return site: the check fails for four distinct reasons
- * — an id outside the persisted neighbour set, a record absent from the bundle tree, a
- * `deprecated` record, and a scope mismatch — and they are ONE failure domain ("this delta cites
+ * has. Deliberately not inlined at either return site: the check fails for the four reasons
+ * `CITED_ID_INTEGRITY_CONDITIONS` enumerates, and they are ONE failure domain ("this delta cites
  * something this store cannot stand behind"). Discriminating at one of them and not the others is
  * the same one-axis-out mistake as scoping a guard to one verb of a set.
+ *
+ * The `condition` is carried THROUGH this site rather than derived here, and that is what keeps
+ * the funnel a funnel: the caller knows which disjunct fired, this function knows what to do
+ * about it, and neither has to learn the other's job.
  */
-function citedIdIntegrityFailure(delta: Delta, recordId: RecordId): CheckFailure {
+function citedIdIntegrityFailure(
+  delta: Delta,
+  recordId: RecordId,
+  condition: CitedIdIntegrityCondition,
+): CheckFailure {
   return CITED_ID_INTEGRITY_FALLBACK_BY_ORIGIN[delta.origin] === 'refuse'
-    ? { kind: 'refuse', reason: 'cited-id-integrity', recordId }
+    ? { kind: 'refuse', reason: 'cited-id-integrity', recordId, condition }
     : { kind: 'downgrade', reason: 'cited-id-integrity' }
 }
 
@@ -662,15 +719,22 @@ function checkCitedIdIntegrity(
   const persistedNeighbors = new Set<RecordId>(input.checkpoint.neighborIds)
   for (const id of deltaTargetIds(input.delta)) {
     if (!persistedNeighbors.has(id)) {
-      return citedIdIntegrityFailure(input.delta, id)
+      return citedIdIntegrityFailure(input.delta, id, 'not-a-persisted-neighbor')
     }
     const truth = lookup(id)
-    if (
-      truth === undefined
-      || truth.status === 'deprecated'
-      || !sameScope(truth.bundle.frontmatter.scope, input.delta.scope)
-    ) {
-      return citedIdIntegrityFailure(input.delta, id)
+    // The second return's three disjuncts, named in the order they are tested. Splitting them
+    // only this far is deliberate: the ANSWER stays one answer (the funnel above), and all that
+    // is recovered here is which fact produced it — which the refusal then has to say out loud,
+    // because "tombstoned or unresolvable" was false for the third disjunct and sent operators
+    // looking for a tombstone a scope-mismatched record does not have.
+    if (truth === undefined) {
+      return citedIdIntegrityFailure(input.delta, id, 'missing-from-disk')
+    }
+    if (truth.status === 'deprecated') {
+      return citedIdIntegrityFailure(input.delta, id, 'deprecated')
+    }
+    if (!sameScope(truth.bundle.frontmatter.scope, input.delta.scope)) {
+      return citedIdIntegrityFailure(input.delta, id, 'scope-mismatch')
     }
   }
   return PASS
@@ -1209,7 +1273,11 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
       // things that CHANGE the store, and a refusal changes nothing. Throwing keeps the caller
       // from having to remember to check for a fifth arm — the mistake that produced the defect
       // this refusal exists for.
-      throw new UserDeltaCitationIntegrityError(verdict.recordId, dispositionInput.delta.kind)
+      throw new UserDeltaCitationIntegrityError(
+        verdict.recordId,
+        dispositionInput.delta.kind,
+        verdict.condition,
+      )
     }
     if (verdict.kind === 'downgrade') {
       return {
