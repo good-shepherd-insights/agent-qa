@@ -23,6 +23,7 @@ import { invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agen
 import {
   composeLocalAgent,
   DIGEST_JOB_ID_SOURCE,
+  DRAIN_BUDGET_MS,
   type LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
@@ -159,6 +160,8 @@ interface Fixture {
 
 function fixture(behaviour: {
   curateRun?: (input: { runId: string }) => Promise<{ curated: number; deprecated: number }>
+  /** Burn the whole drain budget the moment the FIRST pumped job lands, whoever's it was. */
+  stopAfterFirstJob?: boolean
 } = {}): Fixture {
   const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-388-07-'))
   roots.push(agentQaRoot)
@@ -216,7 +219,28 @@ function fixture(behaviour: {
               },
             })
             hosts.push(host)
-            return host
+            if (behaviour.stopAfterFirstJob !== true) return host
+            // Spend the ENTIRE budget the instant the first job lands, which is the only honest
+            // way to reach a starved own-chain against real handlers: the pump's next deadline
+            // check is the thing under observation, not a mocked queue. The spread carries
+            // `idSource` through, so the tail still derives its chain from the queue's own source.
+            return {
+              ...host,
+              jobs: async () => {
+                const jobs = await host.jobs()
+                return {
+                  ...jobs,
+                  queue: {
+                    ...jobs.queue,
+                    runNextJob: async (queueInput: Parameters<typeof jobs.queue.runNextJob>[0]) => {
+                      const outcome = await jobs.queue.runNextJob(queueInput)
+                      if (outcome.ran) clock.value += DRAIN_BUDGET_MS
+                      return outcome
+                    },
+                  },
+                }
+              },
+            } as unknown as LocalAgentHost
           },
           ...input.overrides,
         },
@@ -327,5 +351,75 @@ describe('the chip trail is scoped to the run whose tail is draining (ANLZ-05, D
     // …and each answers about the run it was ASKED about, with its own notification row.
     expect(statusA.notification?.runId).toBe(RUN_A)
     expect(statusB.notification?.runId).toBe(RUN_B)
+  })
+})
+
+/**
+ * The exact parenthetical a starved own-chain earns, stated once (WR-01).
+ *
+ * Pinned as a constant in the test rather than imported from the renderer: the claim is about
+ * what a user READS, and a test that imported the string would agree with any wording the
+ * renderer later drifted to.
+ */
+const BACKLOG_PARENTHETICAL = ' (queued behind other runs; the daemon or a later run will drain)'
+
+describe('a starved own-chain is reported as backlog-exhausted, never a bare pending (WR-01)', () => {
+  it('reports backlog-exhausted when the budget was spent entirely on another run\'s work',
+    async () => {
+      const f = fixture({ stopAfterFirstJob: true })
+      const tailA = runPostRunTail(f.options(RUN_A, {
+        baseMs: Date.parse('2026-01-01T00:00:00.000Z'),
+      }))
+      await tailA.enqueue()
+      await tailA.finish({ detached: true })
+
+      const tailB = runPostRunTail(f.options(RUN_B, {
+        baseMs: Date.parse('2026-01-01T01:00:00.000Z'),
+      }))
+      f.info.mockClear()
+      await tailB.enqueue()
+      await tailB.drain()
+
+      // One job ran and it was A's: B's own chain was never claimed, and the posture says so
+      // rather than reporting the drain that never reached this run's work.
+      expect(tailB.report().jobsRun).toBe(1)
+      expect(tailB.report().drain).toBe('backlog-exhausted')
+      // Nothing of B's ran, and the guard dropped what did — so B's log is untouched.
+      expect(readFileSync(f.eventsPath(RUN_B), 'utf8')).toBe(fixtureBytes(RUN_B))
+
+      await tailB.finish()
+      const status = await readStatusThroughTheOp(f.agentQaRoot, RUN_B)
+      expect(status.chips).toEqual({
+        analysis: 'pending',
+        curation: 'pending',
+        issues: 'reserved',
+      })
+      // Token for token, in the ONE chip vocabulary: the parenthetical is posture and the words
+      // around it are the op's, exactly as the handed-off line is built (D-08/D-14).
+      expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
+        `post-processing — analysis: pending${BACKLOG_PARENTHETICAL}`
+        + ` · curation: pending${BACKLOG_PARENTHETICAL}`
+        + ' · issues: reserved',
+      ])
+      // The posture is the TAIL's, never the DTO's — the same rule the daemon parenthetical obeys.
+      expect(JSON.stringify(status)).not.toContain('queued behind other runs')
+    })
+
+  it('keeps budget-exhausted when the budget ran out mid this run\'s OWN chain', async () => {
+    // The differential leg: identical fixture, identical clock burn — the only thing that differs
+    // is WHOSE job the pump reached first. Here run B is the only run in the store, so the first
+    // job burned is B's own analyze-run and the drain was starved by its own work, not a backlog.
+    const f = fixture({ stopAfterFirstJob: true })
+    const tailB = runPostRunTail(f.options(RUN_B, {
+      baseMs: Date.parse('2026-01-01T01:00:00.000Z'),
+    }))
+    await tailB.enqueue()
+    await tailB.drain()
+
+    expect(tailB.report().jobsRun).toBe(1)
+    expect(tailB.report().drain).toBe('budget-exhausted')
+    // …and its own observed stage DID emit, which is what makes the two legs differ by one fact.
+    const appended = readEvents(f.eventsPath(RUN_B)).slice(fixtureEventLines(RUN_B).length)
+    expect(appended.map((event) => event.type)).toEqual(['analysisStarted', 'analysisCompleted'])
   })
 })

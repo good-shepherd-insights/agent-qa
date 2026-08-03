@@ -235,7 +235,9 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
       runNextJob: vi.fn(async () => ({
         ran: true,
         disposition: 'completed',
-        job: { id: 'job_endless' },
+        // THIS run's own chain head, endlessly re-claimed: the budget ran out while the pump was
+        // on this run's work, which is `budget-exhausted` and not a backlog.
+        job: { id: String(OWN_CHAIN.analyzeRun) },
       })),
     })
     // Every clock read advances by half the budget, so the third boundary check is past it.
@@ -248,6 +250,58 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     expect(tail.report().drain).toBe('budget-exhausted')
     expect(h.runNextJob.mock.calls.length).toBeLessThan(4)
   })
+
+  it('reports backlog-exhausted when the budget went entirely to other runs\' jobs (WR-01)',
+    async () => {
+      // The differential twin of the test above: same clock, same dispositions, same bound. The
+      // ONE thing that differs is the id the pump kept claiming — a foreign one — and that is the
+      // only input the posture is allowed to turn on.
+      const h = harness({
+        runNextJob: vi.fn(async () => ({
+          ran: true,
+          disposition: 'completed',
+          job: { id: 'job_some_other_run' },
+        })),
+      })
+      let reads = 0
+      ;(h.operations as { now: () => number }).now = () => 1_000 + (reads++) * 30_000
+      const tail = runPostRunTail(options(h))
+      await tail.enqueue()
+      await tail.drain()
+
+      expect(tail.report().drain).toBe('backlog-exhausted')
+    })
+
+  it('keeps `drained` when the queue simply emptied, backlog or not', async () => {
+    // An empty queue means this run's enqueued chain WAS reached — the rows are gone because
+    // somebody ran them, so a starvation posture here would report a backlog that does not exist.
+    const h = harness({ runNextJob: vi.fn(async () => ({ ran: false, reason: 'no-job' })) })
+    const tail = runPostRunTail(options(h))
+    await tail.enqueue()
+    await tail.drain()
+
+    expect(tail.report().drain).toBe('drained')
+    expect(tail.report().jobsRun).toBe(0)
+  })
+
+  it('keeps `drained` when an abort ends the pump before this run\'s chain was reached',
+    async () => {
+      // An aborted drain is not a starved one. The user asked this process to stop; telling them
+      // their work is queued behind a backlog would name a cause the run never observed.
+      const controller = new AbortController()
+      const h = harness({
+        runNextJob: vi.fn(async () => {
+          controller.abort()
+          return { ran: true, disposition: 'completed', job: { id: 'job_some_other_run' } }
+        }),
+      })
+      const tail = runPostRunTail({ ...options(h), signal: controller.signal })
+      await tail.enqueue()
+      await tail.drain()
+
+      expect(h.runNextJob).toHaveBeenCalledTimes(1)
+      expect(tail.report().drain).toBe('drained')
+    })
 
   it('logs ONE warning and resolves when the enqueue fails, still reporting (JOBQ-06/D-07)', async () => {
     const h = harness({
