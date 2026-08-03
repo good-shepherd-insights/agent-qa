@@ -175,6 +175,13 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   // shared run-dir slug — the suite/single paths now construct it, so the mock exposes both.
   RUNS_SUBDIR: 'runs',
   slugBranch: (name: string) => String(name),
+  // 388-02: the post-run tail derives the handoff path and reads it before enqueueing
+  // analyze-run. These unit runs write no handoff, so the read refuses — which is exactly the
+  // D-07 warn-only leg, and the exit-code assertions below are what prove it stays warn-only.
+  HANDOFF_FILE: 'handoff.json',
+  loadCompletedRunHandoff: () => {
+    throw new Error('no completed run handoff in this unit fixture')
+  },
 }))
 
 vi.mock('@vostride/agent-qa-core', () => {

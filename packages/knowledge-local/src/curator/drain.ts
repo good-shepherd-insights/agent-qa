@@ -150,7 +150,8 @@ interface DrainReportBase {
    * packages and a required field would make every one of them a compile error over a number
    * they have no opinion about. The real drain always sets it, so a production report saying
    * `deprecated: 0` is a measurement rather than an absence — which is what the post-run
-   * chain's notification (D-11) needs to distinguish "deprecated nothing" from "never ran".
+   * chain's notification (D-11) needs in order to tell a drain that deprecated nothing apart
+   * from a drain that never ran at all.
    */
   deprecated?: number
   downgraded: number

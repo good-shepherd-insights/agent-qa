@@ -52,10 +52,10 @@ import {
   type SafetyHookRunner,
 } from '@vostride/agent-qa-safety'
 import {
-  runCurationTail,
   runVerdictFirstCurationTail,
   type CurationTailModelDeps,
 } from '../curation/curation-tail.js'
+import { runPostRunTail } from '../curation/post-run-tail.js'
 import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { createShutdownController } from './shutdown-controller.js'
@@ -2238,21 +2238,27 @@ async function executeSuites(
       const verdictExitCode = mapVerdictToExitCode(
         shutdownRequested ? 'cancelled' : verdict,
       )
+      // 388-02 D-01: ONE shared post-run tail serves both of this command's tail sites
+      // (Pitfall 1). The enqueue leg runs even under `--detach`; only the in-process chain
+      // drain is detach-gated. Neither can replace the code frozen on the line above.
+      const postRunTail = runPostRunTail({
+        runId,
+        agentQaRoot: resolvePath(configDir, '.agent-qa'),
+        configPath: resolvePath(configFilePath),
+        knowledgeConfig: config.knowledge,
+        configDir,
+        auditSink,
+        maskingContext,
+        modelDeps: preparedSuites[0]!.curationModelDeps,
+        policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+        signal: curationAbortController.signal,
+        log: curationTailLog,
+      })
       return await runVerdictFirstCurationTail({
         exitCode: verdictExitCode,
         detach: opts.detach === true,
-        runTail: () => runCurationTail({
-          runId,
-          agentQaRoot: resolvePath(configDir, '.agent-qa'),
-          knowledgeConfig: config.knowledge,
-          configDir,
-          auditSink,
-          maskingContext,
-          modelDeps: preparedSuites[0]!.curationModelDeps,
-          policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
-          signal: curationAbortController.signal,
-          log: curationTailLog,
-        }),
+        enqueue: () => postRunTail.enqueue(),
+        runTail: () => postRunTail.drain(),
         onUnexpectedError: () => {
           curationTailLog.warn(
             'Post-verdict knowledge curation incomplete; it will resume on the next run.',
@@ -3492,23 +3498,28 @@ export function createRunCommand(): Command {
             )
             const exitCode =
               verdictExitCode !== 0 ? verdictExitCode : (suitesFailed ? 1 : 0)
+            // 388-02: the same shared tail as the multi-suite site above. The `--all` fold
+            // happens BEFORE the freeze on the line above and is untouched by this rework.
+            const postRunTail = runPostRunTail({
+              runId: singleRunId,
+              agentQaRoot: resolvePath(configDir, '.agent-qa'),
+              configPath: configFilePath,
+              knowledgeConfig: config.knowledge,
+              configDir,
+              auditSink,
+              maskingContext,
+              ...(singleCurationModelDeps === undefined
+                ? {}
+                : { modelDeps: singleCurationModelDeps }),
+              policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+              signal: curationAbortController.signal,
+              log: curationTailLog,
+            })
             return await runVerdictFirstCurationTail({
               exitCode,
               detach: opts.detach === true,
-              runTail: () => runCurationTail({
-                runId: singleRunId,
-                agentQaRoot: resolvePath(configDir, '.agent-qa'),
-                knowledgeConfig: config.knowledge,
-                configDir,
-                auditSink,
-                maskingContext,
-                ...(singleCurationModelDeps === undefined
-                  ? {}
-                  : { modelDeps: singleCurationModelDeps }),
-                policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
-                signal: curationAbortController.signal,
-                log: curationTailLog,
-              }),
+              enqueue: () => postRunTail.enqueue(),
+              runTail: () => postRunTail.drain(),
               onUnexpectedError: () => {
                 curationTailLog.warn(
                   'Post-verdict knowledge curation incomplete; it will resume on the next run.',

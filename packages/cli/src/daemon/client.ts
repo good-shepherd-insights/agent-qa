@@ -85,10 +85,22 @@ type DaemonStreamInterruptionReason =
   | 'daemon-unavailable'
   | 'resume-attempts-exhausted'
 
+/**
+ * Fields assigned in the body rather than declared as constructor parameter properties.
+ *
+ * 388-02: the daemon child boots `daemon/host.ts` under `--experimental-strip-types`, which
+ * refuses a parameter property outright (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`) — so the syntax
+ * used here decides whether a module is reachable from the daemon's boot graph at all. The
+ * post-run tail put `nudgeDaemon` on that graph; the honest fix is to make this file
+ * strip-safe rather than to route the import around it and leave the trap armed.
+ */
 export class DaemonStreamInterruptedError extends Error {
+  readonly lastEventId: number | undefined
+  readonly reason: DaemonStreamInterruptionReason
+
   constructor(
-    readonly lastEventId: number | undefined,
-    readonly reason: DaemonStreamInterruptionReason,
+    lastEventId: number | undefined,
+    reason: DaemonStreamInterruptionReason,
     cause?: unknown,
   ) {
     super(
@@ -96,6 +108,8 @@ export class DaemonStreamInterruptedError extends Error {
         (lastEventId === undefined ? '' : ` after event ${lastEventId}`),
       cause === undefined ? undefined : { cause },
     )
+    this.lastEventId = lastEventId
+    this.reason = reason
     this.name = 'DaemonStreamInterruptedError'
   }
 }

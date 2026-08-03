@@ -50,6 +50,7 @@ import {
   countRemainingCurationWork,
   deriveWriterLeaseFreshness,
   drainQueue,
+  DRAIN_BUDGET_MS,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,
@@ -190,6 +191,14 @@ export type {
 
 // Surface hosts reach worker lifecycle vocabulary through this one legal composition edge.
 export {
+  /**
+   * THE one-shot post-run budget (388-02 D-03), reached through the same edge.
+   *
+   * Re-exported rather than restated: the CLI's post-run tail runs the agent-job chain under
+   * the identical bound the curation drain has always used, and a surface that spelled `60_000`
+   * of its own would be the second knob the user explicitly refused.
+   */
+  DRAIN_BUDGET_MS,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,

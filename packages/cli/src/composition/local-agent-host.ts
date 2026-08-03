@@ -15,7 +15,11 @@
 import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 
-import type { ConfigReaderPort, StartedRun } from '@vostride/agent-qa-agent'
+import type {
+  ConfigReaderPort,
+  JobModelCapability,
+  StartedRun,
+} from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-local'
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
@@ -311,6 +315,29 @@ export interface ComposeCliLocalAgentInput {
    * substitutes it to exercise the routing without a socket.
    */
   applyDelegate?: ApplyDelegate
+  /**
+   * The queue's model capability. Defaults to the project's configured job model.
+   *
+   * Overridable because the post-run tail (388-02) opens the queue for work that authors
+   * through no provider at all, and eagerly resolving credentials it will never use would
+   * make "no LLM configured" mean "no post-run chain".
+   */
+  model?: () => JobModelCapability | Promise<JobModelCapability>
+  /**
+   * What the post-run chain's real handlers may do (388 D-01).
+   *
+   * A passthrough, deliberately: `curateRun` needs the writer lease, a knowledge root, a
+   * guardrail policy and the run's curation author, and the only place in this process where
+   * all four already meet is the run tail that holds them. Composing one here would be a
+   * second assembly of the same four facts.
+   */
+  postRun?: {
+    curateRun: (input: {
+      readonly runId: string
+      readonly executionContext: unknown
+      readonly deadlineMs?: number
+    }) => Promise<{ readonly curated: number; readonly deprecated: number }>
+  }
 }
 
 /**
@@ -355,6 +382,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     }),
     // Deferred, and never called by a host that only invokes a function op: the queue is opened by
     // `jobs()` and nothing else resolves a provider handle.
-    model: () => resolveCliJobModel(input.configPath),
+    model: input.model ?? (() => resolveCliJobModel(input.configPath)),
+    ...(input.postRun === undefined ? {} : { postRun: input.postRun }),
   })
 }

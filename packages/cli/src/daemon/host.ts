@@ -40,6 +40,13 @@ import {
 
 import { createShutdownController } from '../commands/shutdown-controller.js'
 import {
+  completedRunDir,
+  completedRunHandoffPath,
+  createCurationAuditSink,
+  curateCompletedRun,
+  defaultCurationTailOperations,
+} from '../curation/curation-tail.js'
+import {
   appendDrainSessionReceipt,
   type DrainSessionReceipt,
 } from './drain-receipts.js'
@@ -1768,6 +1775,39 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       config: input.config,
       knowledgeRoot: () => input.knowledgeRoot,
       model: () => model,
+      // 388 D-01: a `curate-memory` job this daemon claims must perform the SAME v51 per-run
+      // fold the CLI tail performs, or the canonical pipeline would have two bodies and the
+      // curation chip would depend on which process happened to hold the lease. The authority
+      // handed in is the lease this process already owns — the 387-08 D-18 idiom — because a
+      // holder that re-acquires is told `held` by itself and has nobody to delegate to.
+      postRun: {
+        curateRun: async ({ runId: curatedRunId, deadlineMs }) => {
+          const policy = input.policy
+          const factory = input.author
+          if (factory === undefined || policy === undefined) {
+            throw new Error('Daemon curation requires an author factory and guardrail policy')
+          }
+          const curationOperations = defaultCurationTailOperations()
+          const folded = await curateCompletedRun({
+            runDir: completedRunDir(input.agentQaRoot, curatedRunId),
+            handoff: curationOperations.loadCompletedRunHandoff(
+              completedRunHandoffPath(input.agentQaRoot, curatedRunId),
+            ),
+            knowledgeRoot: input.knowledgeRoot,
+            agentQaRoot: input.agentQaRoot,
+            auditSink: createCurationAuditSink(input.agentQaRoot),
+            policy,
+            author: await (authorPromise ??= Promise.resolve(factory())),
+            authority: { leaseId: acquired.leaseId, epoch: acquired.epoch },
+            ...(deadlineMs === undefined ? {} : { deadlineMs }),
+            log: {
+              warn: (message: string) => logger.error(message),
+              info: (message: string) => logger.info(message),
+            },
+          })
+          return { curated: folded.curated, deprecated: folded.deprecated }
+        },
+      },
       ...(runExecution === undefined ? {} : { runExecution }),
       // 387-08 D-18 / D-5: this process IS the writer-lease holder, so an apply it performs hands
       // in the authority it already owns rather than asking for a lease it cannot be granted

@@ -26,7 +26,7 @@ import {
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
 import type { AuditSink } from '@vostride/agent-qa-safety'
-import { runSafetyScope } from '@vostride/agent-qa-safety-local'
+import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   GuardrailPolicy,
   MaskingContext,
@@ -150,6 +150,28 @@ function defaultOperations(): CurationTailOperations {
  */
 export function defaultCurationTailOperations(): CurationTailOperations {
   return defaultOperations()
+}
+
+/**
+ * The one runs-dir derivation, published (388-02).
+ *
+ * `slugBranch` is what makes a runId of `../../etc` address nothing outside the runs directory
+ * (T-361-01), and a second site spelling this join would be a second thing to keep traversal-safe.
+ * Published from HERE rather than re-imported at each caller because the FUNC-02 surface firewall
+ * forbids new CLI files from naming `@vostride/agent-qa-runner-local` at all — so one derivation
+ * is not merely tidier, it is the only shape the boundary permits.
+ */
+export function completedRunDir(agentQaRoot: string, runId: string): string {
+  return join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+}
+
+export function completedRunHandoffPath(agentQaRoot: string, runId: string): string {
+  return join(completedRunDir(agentQaRoot, runId), HANDOFF_FILE)
+}
+
+/** The project-level audit sink a fold outside a run's own tail records against. */
+export function createCurationAuditSink(agentQaRoot: string): AuditSink {
+  return new JsonlAuditSink(agentQaRoot)
 }
 
 function listCompletedRunDirs(agentQaRoot: string): string[] {
@@ -508,7 +530,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
     ...defaultOperations(),
     ...opts.operations,
   }
-  const currentRunDir = join(opts.agentQaRoot, RUNS_SUBDIR, slugBranch(opts.runId))
+  const currentRunDir = completedRunDir(opts.agentQaRoot, opts.runId)
   let currentHandoff: ReturnType<typeof loadCompletedRunHandoff>
   try {
     currentHandoff = operations.loadCompletedRunHandoff(

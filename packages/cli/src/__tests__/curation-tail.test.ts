@@ -1567,7 +1567,13 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
     expect(source).toContain(
       ".option('--detach', 'skip the post-verdict knowledge curation tail')",
     )
-    expect(source.match(/runCurationTail\(/g)).toHaveLength(2)
+    // 388-02: the shared tail the two sites invoke is now `runPostRunTail` — the v51 curation
+    // fold is reached THROUGH it (as `curate-memory`'s body and as the prior-run sweep), so
+    // `run.ts` names it no more. The claim this case makes is unchanged: BOTH verdict sites go
+    // through the one helper, and a site that grew its own tail again fails right here.
+    expect(source.match(/runPostRunTail\(/g)).toHaveLength(2)
+    expect(source.match(/runCurationTail\(/g)).toBeNull()
+    expect(source.match(/runVerdictFirstCurationTail\(/g)).toHaveLength(2)
   })
 })
 
