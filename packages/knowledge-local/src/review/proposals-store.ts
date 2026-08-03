@@ -203,20 +203,40 @@ function findClaimMarker(agentQaRoot: string, proposalId: string): string | unde
 }
 
 /**
- * The one test seam on the claim resolution, and it exists because a measurement demanded it.
+ * The test seam on the claim resolution. It has two positions and each was demanded by a
+ * measurement rather than added for symmetry.
  *
- * `onAfterFirstRead` runs once, between the resolution's first applied read and its claim scan —
- * the exact window a racing winner publishes into. Everything about that window is otherwise
+ * `onAfterFirstRead` runs between the resolution's first applied read and its claim scan — the
+ * exact window a racing winner publishes into. Everything about that window is otherwise
  * syscall-width, so no test could stand inside it, and round 2's verifier measured the
  * consequence: deleting the arm that serves the window left both review suites fully green. AN
  * UNDRIVABLE WINDOW ARM IS AN UNPINNABLE ONE, and the seam is the cheapest way to make it
  * drivable without a second implementation of the resolution living in the tests.
  *
- * Production callers pass nothing. The parameter is optional and the hook is invoked through
- * optional chaining, so the shipped path is the same sequence of syscalls it was without it.
+ * `onAfterClaimScan` runs between the scan and the re-reads below it, and it exists on the same
+ * ground one round later. The interleave that defeats the re-reads needs THREE participants — a
+ * winner handing the proposal back, then a third participant claiming the restored pending name
+ * before the re-reads get to it — and its only event sits in that gap. No existing position can
+ * express it: `onAfterFirstRead` fires before the scan, so an event placed there is a state the
+ * scan itself observes. Without this position the re-entry below is one more arm no corpus can
+ * redden, which is precisely the defect the first position was added to end.
+ *
+ * TWO IS WHERE IT STOPS, and the bound is the window's own shape rather than restraint: a
+ * resolution that runs first-read · scan · re-reads has exactly two gaps a third party can rename
+ * into. An injected filesystem would cover these and everything else, at the price of a second
+ * implementation of this resolution living in the tests — the thing the seam exists to avoid.
+ *
+ * BOTH FIRE ONCE PER PASS, and the resolution below runs up to two passes. A caller that needs a
+ * one-shot event disarms its own hook (the corpus cases do, and then assert the invocation count
+ * is 2 while the action count is 1 — which is the visible evidence that a second pass ran with no
+ * fixture event inside it).
+ *
+ * Production callers pass nothing. The parameters are optional and the hooks are invoked through
+ * optional chaining, so the shipped path is the same sequence of syscalls it was without them.
  */
 export interface ClaimResolutionHooks {
   readonly onAfterFirstRead?: () => void
+  readonly onAfterClaimScan?: () => void
 }
 
 /**
@@ -265,6 +285,7 @@ export function claimPendingProposal(
     if (applied !== undefined) return { kind: 'already-applied', record: applied }
     hooks?.onAfterFirstRead?.()
     const marker = findClaimMarker(agentQaRoot, proposalId)
+    hooks?.onAfterClaimScan?.()
     const published = readAppliedProposal(agentQaRoot, proposalId)
     if (published !== undefined) return { kind: 'already-applied', record: published }
     if (marker !== undefined) return { kind: 'apply-in-flight', claimPath: marker }

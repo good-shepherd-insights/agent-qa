@@ -13,6 +13,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -571,6 +572,110 @@ describe('the proposals store is durable across processes and atomic under a rac
     // which re-asks and claims the restored proposal on its next poll. The store does not grow a
     // second recovery mechanism beside the one the caller already has.
     expect(outcome.kind).toBe('apply-in-flight')
+  })
+
+  // ── CR-03″: the gap BETWEEN the scan and the re-reads, which needs a THIRD participant ───────
+  //
+  // The block above establishes SINGLE-RETIREMENT totality: one rename retiring one marker cannot
+  // hide a proposal from the post-scan re-reads, because every such rename leaves a durable name
+  // on disk at the instant the scan runs. True, and it is not the same statement as "no
+  // interleaving can hide a proposal" — the scan is not atomic with the re-reads, so a name that
+  // IS on disk when the scan runs can be consumed before a re-read reaches it. Two renames by two
+  // different participants, one in each gap, is the cheapest schedule that does it.
+  //
+  // What makes the answer a mechanism instead of another sentence: the resolution re-enters
+  // ITSELF once before it will say not-found, and each pass is headed by the claim rename, the
+  // only atomic operation on this path. `onAfterClaimScan` is what makes the schedule drivable at
+  // all — the same measurement-demands-it ground as `onAfterFirstRead`.
+
+  it('never answers not-found when a THIRD participant claims the restored name (CR-03″)', () => {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    const recordId = publishAndRead(knowledgeRoot, agentQaRoot)
+    const minted = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'accept', input: { target: { grain: 'record', recordId } } },
+    })
+    if (minted.kind !== 'proposed') throw new Error('expected a proposal')
+    const id = minted.proposal.proposalId
+    const dir = proposalsDir(agentQaRoot)
+
+    // W wins the claim, and its commit is about to fail.
+    expect(claimPendingProposal(agentQaRoot, id).kind).toBe('consumed')
+
+    // C is the THIRD participant and lives in another process, so its claim carries a pid that is
+    // not ours. It is parked by hand for the reason stated at the top of this block: this
+    // module's own renames only move a claim filed under THIS pid, so a foreign holder is a state
+    // the fixture has to construct rather than one it can drive through the module.
+    const foreignPid = process.pid + 1
+    const foreignClaim = join(dir, `${id}.json.claimed.${foreignPid}`)
+
+    let firstReadCalls = 0
+    let firstReadActions = 0
+    let scanCalls = 0
+    let scanActions = 0
+
+    const outcome = claimPendingProposal(agentQaRoot, id, {
+      // GAP 1 — W's commit refuses and it hands the proposal back. This is the second
+      // marker-retiring rename (387-16 D-1): the marker is retired and the pending name lands in
+      // the same operation, so after it there is a proposal on disk and no marker at all.
+      onAfterFirstRead: () => {
+        firstReadCalls += 1
+        if (firstReadActions > 0) return
+        firstReadActions += 1
+        restorePendingProposal(agentQaRoot, id)
+      },
+      // GAP 2 — C claims the restored pending name, AFTER the scan that just found no marker and
+      // BEFORE the re-reads that would have found the pending file. Each durable name this
+      // resolution knows how to look for was on disk one syscall before the read that looks for
+      // it, and neither is there now. Single-retirement totality is untouched by this and does
+      // not cover it: there were two retirements, by two participants, one per gap.
+      onAfterClaimScan: () => {
+        scanCalls += 1
+        if (scanActions > 0) return
+        scanActions += 1
+        renameSync(join(dir, `${id}.json`), foreignClaim)
+      },
+    })
+
+    // The fixture really drove the schedule: C holds the proposal under a foreign pid, and
+    // neither name this store answers from exists. Without these three lines the assertion below
+    // could be satisfied by an interleave that never happened.
+    expect(existsSync(foreignClaim), 'C must really hold the proposal for the arm to find it')
+      .toBe(true)
+    expect(readPendingProposal(agentQaRoot, id)).toBeUndefined()
+    expect(readAppliedProposal(agentQaRoot, id)).toBeUndefined()
+
+    // RED BASELINE, observed against the seam-added-but-SINGLE-PASS resolution (both hook
+    // positions present, the bounded re-entry not), transcribed from the failing run:
+    //
+    //   × never answers not-found when a THIRD participant claims the restored name (CR-03″)
+    //     → AssertionError: a proposal parked under a foreign claim is not one this store never
+    //       minted: expected 'not-found' to be 'apply-in-flight' // Object.is equality
+    //         Expected: "apply-in-flight"
+    //         Received: "not-found"
+    //
+    // `not-found` for a file sitting on disk, fully applicable, is the repudiation this whole
+    // arc is about: `settleClaim` maps it to an immediate ProposalNotFoundError with no retry.
+    expect(
+      outcome.kind,
+      'a proposal parked under a foreign claim is not one this store never minted',
+    ).toBe('apply-in-flight')
+    if (outcome.kind !== 'apply-in-flight') throw new Error('unreachable')
+    // …and the answer NAMES C's file. An arm that answered `apply-in-flight` whenever it was
+    // confused would satisfy the line above; naming the parked path means the second pass's own
+    // scan is what produced the answer (WR-06).
+    expect(outcome.claimPath).toBe(foreignClaim)
+
+    // THE VISIBLE EVIDENCE THAT A SECOND PASS RAN. Both hooks stay attached for the whole call
+    // and are invoked once per pass; each acts only on its first invocation. So `2 calls / 1
+    // action` reads as: two full passes ran, and pass 2 ran against disk state alone with no
+    // fixture event inside it — it answered from the atomic rename and the scan, not from
+    // anything this test did while it was running.
+    expect(firstReadCalls, 'the first-read seam fires once per pass; two passes ran').toBe(2)
+    expect(scanCalls, 'the post-scan seam fires once per pass; two passes ran').toBe(2)
+    expect(firstReadActions, 'the restore happened exactly once, in gap 1 of pass 1').toBe(1)
+    expect(scanActions, 'C claimed exactly once, in gap 2 of pass 1').toBe(1)
   })
 
   it('still answers apply-in-flight and not-found with the seam in place (CR-03′ controls)', () => {
