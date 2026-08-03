@@ -84,12 +84,29 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
+/**
+ * Build the in-process disposition checkpoint that carries ONE delta of ANY origin.
+ *
+ * Structural validation comes from `authoredCheckpointSchema` rather than
+ * `parseAuthoredCheckpoint`, and the difference is exactly one thing: the latter additionally
+ * applies `AUTHORED_CHECKPOINT_ORIGIN_ADMISSION`, the DRAIN's origin admission, which admits
+ * only `agent`. Nothing structural is given up here — it is the same schema, one refinement
+ * short.
+ *
+ * That is the right boundary for this corpus because it is the boundary the production callers
+ * use. A user-origin Deprecate reaches `disposeDelta` through `bridgeDelta` (knowledge-store.ts)
+ * and a system-origin one through `maintenanceCheckpoint` (rollback.ts); both build an
+ * `AuthoredDeltaCheckpoint` as a plain object and neither parses at the drain boundary. Routing
+ * these fixtures through `parseAuthoredCheckpoint` would have modelled a path that does not
+ * exist and made 16 rows of this file unconstructible the moment that boundary narrowed —
+ * measured, not hypothesised (387-20 D-2).
+ */
 function checkpoint(
   delta: Delta,
   neighborIds: RecordId[],
   preconditions: CompareAndSet[],
 ): AuthoredDeltaCheckpoint {
-  const parsed = parseAuthoredCheckpoint({
+  const parsed = authoredCheckpointSchema.parse({
     schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
     deltas: [delta],
     neighborIds,
