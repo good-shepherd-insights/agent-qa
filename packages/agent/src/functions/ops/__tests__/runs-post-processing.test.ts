@@ -13,10 +13,15 @@
 // The durable half — a real sqlite store, real rows, and the pin that a status read leaves no
 // database behind — lives in `agent-local`, because this package cannot reach a store at all.
 
-import { asJobId, FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import {
+  asJobId,
+  FunctionScopeSchema,
+  POST_PROCESSING_CHIP_STATUSES,
+} from '@vostride/agent-qa-schema'
 import type {
   FunctionCaller,
   JobStatus,
+  PostProcessingChipStatus,
   PostProcessingChips,
   PostProcessingStatus,
   RunNotification,
@@ -143,7 +148,60 @@ async function statusFor(
   ) as PostProcessingStatus
 }
 
+/**
+ * The whole mapping, keyed by every status a job row can hold.
+ *
+ * A `Record<JobStatus, …>` rather than a list of cases, and the type is the exhaustiveness:
+ * a status added to the job contract makes THIS table a compile error, which is the only form
+ * of "we covered every member" that survives the vocabulary growing. A hand-written array with
+ * a length assertion beside it would agree with the union today and drift on the first member
+ * added, which is exactly when the table stops being a table of everything.
+ */
+const CHIP_BY_STATUS: Record<
+  JobStatus,
+  { readonly unclaimed: PostProcessingChipStatus; readonly claimed: PostProcessingChipStatus }
+> = {
+  queued: { unclaimed: 'pending', claimed: 'running' },
+  authored: { unclaimed: 'pending', claimed: 'running' },
+  bundling: { unclaimed: 'pending', claimed: 'running' },
+  committing: { unclaimed: 'pending', claimed: 'running' },
+  // Terminal: the claim was released by the transaction that ended the job, so the two columns
+  // agree — and they are still both stated, because a projection that consulted the claim on a
+  // terminal row would pass a table that only listed one of them.
+  done: { unclaimed: 'done', claimed: 'done' },
+  failed: { unclaimed: 'failed', claimed: 'failed' },
+  cancelled: { unclaimed: 'failed', claimed: 'failed' },
+}
+
 describe('projectPostProcessingChips is total over the durable chain state (D-14)', () => {
+  it('maps EVERY job status, claimed and unclaimed, identically for all three stages', () => {
+    const produced = new Set<PostProcessingChipStatus>()
+
+    for (const [status, expected] of Object.entries(CHIP_BY_STATUS)) {
+      for (const claimed of [false, true]) {
+        const cell = claimed ? expected.claimed : expected.unclaimed
+        const label = `${status}${claimed ? ' (claimed)' : ''}`
+        const only = row(status as JobStatus, claimed)
+
+        // Asserted per STAGE and not once, because the three differ only in what an ABSENCE
+        // says: a present row must read the same everywhere, and a projection that special-cased
+        // `issues` would satisfy a single-stage table forever.
+        expect(projectPostProcessingChips({ analyzeRun: only }).analysis, label).toBe(cell)
+        expect(projectPostProcessingChips({ curateMemory: only }).curation, label).toBe(cell)
+        expect(projectPostProcessingChips({ triageIssues: only }).issues, label).toBe(cell)
+        produced.add(cell)
+      }
+    }
+    // The two absences, folded into the SAME collection rather than asserted beside it, so the
+    // coverage claim below is about what the projection actually emits.
+    const empty = projectPostProcessingChips(undefined)
+    produced.add(empty.analysis).add(empty.issues)
+
+    // Every member of the one vocabulary is reachable, derived on both sides: no member is
+    // declared-but-unproducible, and no case below quietly stops exercising one.
+    expect([...produced].sort()).toEqual([...POST_PROCESSING_CHIP_STATUSES].sort())
+  })
+
   it('reports pending/pending/reserved when the project holds no queue database at all', () => {
     expect(projectPostProcessingChips(undefined)).toEqual({
       analysis: 'pending',

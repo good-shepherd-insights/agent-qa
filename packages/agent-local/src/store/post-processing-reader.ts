@@ -62,7 +62,7 @@ function toRow(row: Record<string, unknown> | undefined): PostProcessingJobRow |
 }
 
 /**
- * Bind the `runs.postProcessing` port over this project's queue database.
+ * Bind the `runs.postprocessing` port over this project's queue database.
  *
  * The port's own contract forbids materializing anything, and this implementation honours it
  * structurally rather than carefully: `existsSync` short-circuits before a handle is
