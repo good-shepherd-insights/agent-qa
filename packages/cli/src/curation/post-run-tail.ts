@@ -39,6 +39,7 @@ import {
   type CurationWriterAuthority,
   type RunCurationTailOptions,
 } from './curation-tail.js'
+import { createPostRunChipEmitter } from './post-run-chip-emitter.js'
 
 /**
  * What became of the durable hand-off.
@@ -90,6 +91,7 @@ export interface PostRunTailOperations {
   nudgeDaemon: typeof nudgeDaemon
   curateCompletedRun: typeof curateCompletedRun
   runCurationTail: typeof runCurationTail
+  createChipEmitter: typeof createPostRunChipEmitter
   /** The one wall clock, read only at tail boundaries. */
   now(): number
 }
@@ -139,6 +141,7 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
     nudgeDaemon,
     curateCompletedRun,
     runCurationTail,
+    createChipEmitter: createPostRunChipEmitter,
     now: Date.now,
   }
 }
@@ -308,6 +311,20 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         }
         acquiredLeaseId = acquired.leaseId
         heldAuthority = { leaseId: acquired.leaseId, epoch: acquired.epoch }
+        /**
+         * The ONLY construction site (D-13).
+         *
+         * Inside the acquired-lease branch, after the hand-off and refusal legs have already
+         * returned, because this is the one branch that observes `runNextJob` outcomes at all.
+         * A detached run never reaches `drain`; a handed-off run returned above; a refused
+         * lease returned above. So "the daemon emits nothing" is not a rule this file checks —
+         * it is a consequence of where this line sits.
+         */
+        const chips = ops().createChipEmitter({
+          agentQaRoot: opts.agentQaRoot,
+          runId: opts.runId,
+          now: () => ops().now(),
+        })
         const jobs = await host.jobs()
         // Pitfall 7, the daemon's sequence verbatim (host.ts:1759): adopt the epoch the lease
         // just minted, then reclaim rows a dead holder left claimed. Both are safe here for
@@ -323,6 +340,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           if (opts.signal?.aborted === true) break
           const outcome = await jobs.queue.runNextJob({ fence })
           if (!outcome.ran) break
+          // Emitted from the outcome the pump just RECEIVED, before anything is decided about
+          // it: the chip says what the queue durably did, not what this loop does next.
+          chips.observe(outcome)
           jobsRun += 1
           if (outcome.disposition === 'retry-scheduled') {
             // Never sleep the run process on a backoff. The row stays queued and whoever

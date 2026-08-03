@@ -20,6 +20,7 @@ import {
 } from '@vostride/agent-qa-agent-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import {
+  EVENTS_FILE,
   HANDOFF_FILE,
   RUNS_SUBDIR,
   loadCompletedRunHandoff,
@@ -167,6 +168,17 @@ export function completedRunDir(agentQaRoot: string, runId: string): string {
 
 export function completedRunHandoffPath(agentQaRoot: string, runId: string): string {
   return join(completedRunDir(agentQaRoot, runId), HANDOFF_FILE)
+}
+
+/**
+ * The run's own event log, published for the same reason and on the same terms (388-04).
+ *
+ * `EVENTS_FILE` is the runner-local constant the writer that CREATED this file used, so the
+ * post-run chip emitter appends to the file the run wrote rather than to a name that merely
+ * matches it today.
+ */
+export function completedRunEventsPath(agentQaRoot: string, runId: string): string {
+  return join(completedRunDir(agentQaRoot, runId), EVENTS_FILE)
 }
 
 /** The project-level audit sink a fold outside a run's own tail records against. */

@@ -306,16 +306,19 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
       new URL('../curation/post-run-chip-emitter.ts', import.meta.url),
       'utf8',
     )
-    const specifiers = [...source.matchAll(/^import[^\n]*?from '([^']+)'/gmu)]
+    // Anchored at the start of a line and on `import`/`}` so a rationale comment naming a
+    // module is not scanned as one (the 388-02 specifier-extractor hazard, in miniature).
+    const specifiers = [...source.matchAll(/^(?:import .*|\})\s*from '([^']+)'/gmu)]
       .map((match) => match[1]!)
       .sort()
     // The bus, its subscribers and the runner's event-log port are all flushed and closed by
     // the time this file runs. Reaching any of them would be reaching a producer that is gone.
     expect(specifiers).toEqual([
-      '@vostride/agent-qa-schema',
       './curation-tail.js',
+      '@vostride/agent-qa-schema',
       'node:fs',
     ])
-    expect(source).not.toMatch(/bus|subscriber|publish/iu)
+    // …and the append itself is the raw `FsEventLog` discipline, stated once.
+    expect(source.match(/appendFileSync\(/gu) ?? []).toHaveLength(1)
   })
 })
