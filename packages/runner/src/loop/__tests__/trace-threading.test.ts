@@ -349,6 +349,67 @@ function withDrainBelowTheFold(text: string): string {
   return `${lifted.slice(0, foldEnd)}\n      ${DRAIN_CALL}\n${lifted.slice(foldEnd)}`
 }
 
+/**
+ * WR-06 (387-19). The backstop comment in `index.ts` discloses that the funnel covers terminal
+ * RETURNS and that throw-shaped exits leave `executeStep` without reaching `finish()`. Under the
+ * round-3 rule a disclosure written in prose is a hypothesis; this is the mechanism that makes it
+ * a fact a test can red.
+ *
+ * It pins the SHAPE of the accepted throw statements and never their COUNT (387-15 D-1). A count
+ * is the hand-picked member set this whole arc exists to end: it would red on a legitimate further
+ * site that conforms perfectly, and the only repair would be to bump the number. The control below
+ * adds exactly such a site and asserts this scan stays silent about it.
+ *
+ * Two shapes are accepted, which is what the comment claims and what the file has:
+ *   - a RE-RAISE — `throw <ident>` immediately preceded by the abort re-check idiom
+ *     (`const x = checkAbort()` then `if (x) return x`), i.e. the error is re-raised only because
+ *     it was NOT an abort. The identifier is backreferenced, so a re-check binding one name and
+ *     returning another is not a guard.
+ *   - a CONSTRUCTED throw — `throw new Ctor(`, a fresh error for a violated invariant, where there
+ *     is likewise no StepResult to attach evidence to.
+ * A third shape falsifies the disclosure, so it reds here and the comment gets rewritten with it.
+ *
+ * Two stated limits, so nobody reads this as more than it is. (1) It does NOT claim the throws are
+ * covered by the drain — they are not; it pins that the exception stays the disclosed one.
+ * (2) `statementsOf` strips comments but not string literals, so a `throw` inside a quoted string
+ * would be scanned as a statement. index.ts has none today; if one appears, this scan reds and the
+ * stripping is what needs widening.
+ */
+const RE_RAISE = /^throw\s+([A-Za-z_$][\w$]*)\s*;?\s*\}*\s*$/
+const CONSTRUCTED_THROW = /^throw\s+new\s+[A-Za-z_$][\w$]*\s*\(/
+/** The abort re-check must sit IMMEDIATELY above the re-raise: anchored at the window's end, with
+ *  the bound identifier backreferenced through the test and the return. Whitespace is collapsed and
+ *  the separators are optional, so the SHAPE is what is pinned and not the file's current line
+ *  breaks — a conforming re-raise written on one line is accepted (controlled for below). */
+const ABORT_RECHECK = /const (\w+) = checkAbort\(\);? if \( ?\1 ?\) \{? ?return \1;? ?\}? ?$/
+/** Wide enough for the idiom (~90 chars once whitespace is collapsed) with room to spare; the
+ *  regex anchors from `const … = checkAbort()`, so a window that slices mid-token is harmless. */
+const IDIOM_WINDOW = 240
+
+function throwIdiomViolations(text: string): string[] {
+  const violations: string[] = []
+  const throwStatements = /\bthrow\b[^\n]*/g
+  let match: RegExpExecArray | null
+  while ((match = throwStatements.exec(text)) !== null) {
+    const statement = match[0].trim()
+    if (CONSTRUCTED_THROW.test(statement)) continue
+    if (!RE_RAISE.test(statement)) {
+      violations.push(`throw shape outside the disclosed set: ${statement}`)
+      continue
+    }
+    const preceding = text.slice(Math.max(0, match.index - IDIOM_WINDOW), match.index)
+      .replace(/\s+/g, ' ')
+    if (!ABORT_RECHECK.test(preceding)) {
+      violations.push(`re-raise outside the abort re-check idiom: ${statement}`)
+    }
+  }
+  return violations
+}
+
+function throwStatementsOf(text: string, shape: RegExp): string[] {
+  return (text.match(/\bthrow\b[^\n]*/g) ?? []).map((s) => s.trim()).filter((s) => shape.test(s))
+}
+
 describe('the terminal drain sits at the ONE funnel every exit routes through (387-15)', () => {
   const source = statementsOf(readFileSync(join(loopDir, 'index.ts'), 'utf8'))
 
@@ -413,5 +474,55 @@ describe('the terminal drain sits at the ONE funnel every exit routes through (3
     expect(occurrences(source, 'recorder.recordServedCautions([], pendingCautions.trace)')).toBe(1)
     // Exactly two call sites in the whole file — a third would be a serve nobody attributed.
     expect(occurrences(source, 'recorder.recordServedCautions(')).toBe(2)
+  })
+
+  it('every throw-shaped exit is a re-raise after a missed abort re-check (387-19)', () => {
+    // The disclosure in the backstop comment, measured. No count is pinned anywhere below.
+    expect(throwIdiomViolations(source)).toEqual([])
+
+    // NON-VACUITY: an empty file would satisfy the line above. Both disclosed arms are populated,
+    // asserted as "there is at least one", never as "there are N" — the number is free to move.
+    expect(throwStatementsOf(source, RE_RAISE).length).toBeGreaterThan(0)
+    expect(throwStatementsOf(source, CONSTRUCTED_THROW).length).toBeGreaterThan(0)
+    // The re-raises do not all share one identifier, so the scan cannot be passing by matching a
+    // single hard-coded name: `throw err` is the common spelling, `throw verifyError` is not.
+    expect(new Set(throwStatementsOf(source, RE_RAISE)).size).toBeGreaterThan(1)
+
+    // POSITIVE CONTROL 1 — the realistic wrong edit: an existing site's abort re-check deleted, so
+    // an abort would be re-raised as a failure instead of returning the cancellation.
+    const unguarded = source.replace(
+      'const abortDuringVerify = checkAbort()\n        if (abortDuringVerify) return abortDuringVerify\n        throw verifyError',
+      'throw verifyError',
+    )
+    expect(unguarded).not.toBe(source) // the mutation landed; a no-op replace would prove nothing
+    expect(throwIdiomViolations(unguarded)).toEqual([
+      're-raise outside the abort re-check idiom: throw verifyError',
+    ])
+
+    // POSITIVE CONTROL 2 — the new exit a later reader adds without the idiom.
+    expect(throwIdiomViolations(`${source}\n  } catch (err) {\n    throw err\n  }\n`))
+      .toEqual(['re-raise outside the abort re-check idiom: throw err'])
+
+    // POSITIVE CONTROL 3 — a throw shape outside the disclosed set. It reds not because it is
+    // wrong but because the comment no longer describes the file, which is the whole point.
+    expect(throwIdiomViolations(`${source}\n    throw makeStepError()\n`))
+      .toEqual(['throw shape outside the disclosed set: throw makeStepError()'])
+
+    // NEGATIVE CONTROL (387-15 D-1, made mechanical) — a FURTHER conforming site must stay silent.
+    // This is the assertion that proves the scan pins a shape and not a membership list; if it ever
+    // has to be deleted to make the scan pass, the scan has become the thing D-1 refused.
+    const oneMoreConformingSite = `${source}\n  } catch (err) {\n    const abortLater = checkAbort()\n    if (abortLater) return abortLater\n    throw err\n  }\n`
+    expect(throwIdiomViolations(oneMoreConformingSite)).toEqual([])
+    expect(throwStatementsOf(oneMoreConformingSite, RE_RAISE).length)
+      .toBe(throwStatementsOf(source, RE_RAISE).length + 1)
+
+    // NEGATIVE CONTROL 2 — the same conforming site written on ONE line. A scan that reddened here
+    // would be pinning this file's line breaks rather than the idiom, which is D-1's failure mode
+    // wearing a different hat: the repair would be to edit the guard for a legitimate addition.
+    // Measured: the first draft of this scan DID red here, reporting the trailing brace as an
+    // unrecognised shape, and the classifier was widened rather than this control dropped.
+    expect(throwIdiomViolations(
+      `${source}\n  try { risky() } catch (err) { const abortInline = checkAbort(); if (abortInline) return abortInline; throw err }\n`,
+    )).toEqual([])
   })
 })
