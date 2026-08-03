@@ -90,6 +90,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID',
   'MissingIdempotencyKeyError',
   'REAL_JOB_KIND_DECLARATIONS',
+  // 388 plan 03: the chip-truth op's id, on the same footing as the apply id above. Plan 04's
+  // exit summary line dispatches through the registry and has to put a name on the wire; the
+  // alternative is a literal in the CLI, which is a second declaration of a capability's name.
+  // A string is not a dispatch handle — naming an op still buys nothing without a registry, a
+  // caller and the gate.
+  'RUNS_POST_PROCESSING_FUNCTION_ID',
   'RunNotFoundError',
   'RunNotRecordedError',
   'StaleJobStoreEpochError',
@@ -249,6 +255,15 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'KnowledgeReviewPort',
   'OptionalFunctionDepKey',
   'PersistencePort',
+  // 388 plan 03: the durable chip-truth read port and the two shapes it answers with. Types,
+  // so none of them carries a database across the barrel — the only value that implements the
+  // port is built by a composition in the one package sqlite is legal in. They are here for the
+  // reason the other ports are: a composition root has to be able to NAME what it supplies, and
+  // `postProcessing` is an OPTIONAL member, so a host that omits it is making a statement rather
+  // than forgetting.
+  'PostProcessingChainState',
+  'PostProcessingJobRow',
+  'PostProcessingReaderPort',
   'PostRunJobCapabilities',
   'RanJobOutcomeBase',
   'RecoverAbandonedClaimsInput',

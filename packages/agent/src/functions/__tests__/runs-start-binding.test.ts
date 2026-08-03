@@ -70,6 +70,7 @@ const RUN_CALLER: FunctionCaller = {
 const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   'runs.get': { runId: 'run-alpha' },
   'runs.events': { runId: 'run-alpha' },
+  'runs.postprocessing': { runId: 'run-alpha' },
   'knowledge.accept.propose': { target: { grain: 'record', recordId: 'rec-x' } },
   'knowledge.reject.propose': { target: { grain: 'record', recordId: 'rec-x' }, reason: 'no' },
   'knowledge.forget.propose': { target: { grain: 'record', recordId: 'rec-x' } },

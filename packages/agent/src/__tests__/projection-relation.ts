@@ -37,6 +37,7 @@ import { knowledgeRejectProposeSpec } from '../functions/ops/knowledge-reject-pr
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
+import { runsPostProcessingSpec } from '../functions/ops/runs-post-processing.js'
 import { runsStartSpec } from '../functions/ops/runs-start.js'
 
 /** The live half of the pair: the zod contracts a spec declares, before any projection. */
@@ -69,6 +70,11 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,
   'runs.list': runsListSpec,
+  // 388 D-14. Paired here the day it is registered, which is exactly what the growth seam is
+  // for: its output contract is the first in this map with a nested optional object, so an
+  // unchecked projection would have been the first place a `notification` could quietly stop
+  // appearing in a published catalogue.
+  'runs.postprocessing': runsPostProcessingSpec,
   'runs.start': runsStartSpec,
 }
 

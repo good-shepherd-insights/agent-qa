@@ -132,6 +132,7 @@ import { createKnowledgeReaderPort } from './knowledge-review-reader.js'
 import type { SightMemoryEntities } from './knowledge-review-reader.js'
 import { buildRunPorts } from './run-composition.js'
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
+import { createPostProcessingReader } from '../store/post-processing-reader.js'
 import { AGENT_JOB_STORE_DB_FILE, createSqliteJobStore } from '../store/sqlite-job-store.js'
 import type { SqliteJobStore } from '../store/sqlite-job-store.js'
 
@@ -977,6 +978,19 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         ...(input.resolveWriterAuthority === undefined
           ? {}
           : { resolveWriterAuthority: input.resolveWriterAuthority }),
+      }),
+      // 388 D-14: chip truth, on EVERY local host and not gated on `postRun`. The two are
+      // different questions and conflating them would be the bug: `postRun` says whether this
+      // host can DO the chain's work, while this says whether it can SEE what the chain did —
+      // and a host that never drains anything (a status query, a listing, the CLI after a
+      // handed-off tail) is exactly the caller that most needs to read durable state.
+      //
+      // Given the SAME id source the queue below is built with, so the rows projected are the
+      // rows enqueued. It opens nothing here: the reader constructs no handle until it is asked
+      // a question, and never one that could create the database (Pitfall 4).
+      postProcessing: createPostProcessingReader({
+        agentQaRoot: input.agentQaRoot,
+        idSource: input.idSource ?? DIGEST_JOB_ID_SOURCE,
       }),
       // Present iff this host can execute a run. The registry reads the SAME record to
       // decide what `runs.start` lists as, so the declaration and the dispatch cannot

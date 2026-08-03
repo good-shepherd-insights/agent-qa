@@ -18,6 +18,7 @@ import type {
   ForgetReceiptV1,
   FunctionScope,
   InspectRecordView,
+  JobStatus,
   KnowledgeAcceptInput,
   KnowledgeBundleSummary,
   KnowledgeForgetInput,
@@ -33,9 +34,13 @@ import type {
   RecordChange,
   RiskActionDescriptor,
   RunId,
+  RunNotification,
   RunsStartInput,
   StepEvidence,
 } from '@vostride/agent-qa-schema'
+
+import type { ChainJobIds } from '../jobs/chain-identity.js'
+import type { JobIdSource } from '../jobs/engine.js'
 
 /**
  * How an op returns its result (D-08).
@@ -84,7 +89,7 @@ export type FunctionBindingStatus = 'bound' | 'unbound'
  * become conditionally bound on something the deps record does not declare, so "which
  * compositions can run this op" is answerable by reading two lines.
  */
-export type OptionalFunctionDepKey = 'runInvocation' | 'knowledgeReview'
+export type OptionalFunctionDepKey = 'runInvocation' | 'knowledgeReview' | 'postProcessing'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -451,6 +456,70 @@ export interface EntityDirectoryPort {
 }
 
 /**
+ * One post-run chain job as the chip projection needs to see it (Phase 388, D-14).
+ *
+ * Two fields, because two is what the mapping asks: the published status, and whether somebody
+ * currently holds the job. The claim is a separate axis rather than a status member on purpose
+ * — the store keeps it in a column for exactly that reason (385) — and it is what makes
+ * `running` distinguishable from `pending` without inventing a state the job contract does not
+ * name. Everything else on a row (attempts, timestamps, the payload) is state a CHIP has no
+ * business rendering, so the port does not carry it across.
+ */
+export interface PostProcessingJobRow {
+  readonly status: JobStatus
+  /** Whether a drainer holds this job right now. `false` covers queued and terminal alike. */
+  readonly claimed: boolean
+}
+
+/**
+ * What one run's post-run chain has durably recorded, by member (Phase 388, D-14).
+ *
+ * Every member is OPTIONAL, and each absence is a real, different situation: no analyze-run row
+ * means nothing was ever enqueued for this run; no curate-memory row means the analysis has not
+ * chained yet; no triage-issues row is the reserved slot (D-04/D-15). Padding any of them with a
+ * synthetic row would erase exactly the distinction the projection reads.
+ */
+export interface PostProcessingChainState {
+  readonly analyzeRun?: PostProcessingJobRow
+  readonly curateMemory?: PostProcessingJobRow
+  readonly triageIssues?: PostProcessingJobRow
+  /** The chain-terminal record, once the terminal transaction wrote it (D-09). */
+  readonly notification?: RunNotification
+}
+
+/**
+ * Injected read port over the durable post-run chain state (Phase 388, D-14).
+ *
+ * OPTIONAL on {@link FunctionDeps}, so a host with no queue storage lists `runs.postProcessing`
+ * as `unbound` BY NAME rather than answering a confident all-pending about a chain it has no
+ * way to see.
+ *
+ * The port carries the host's `idSource` rather than resolving ids itself, and that placement
+ * is the load-bearing part. Chain identity is DERIVED (RESEARCH Pattern 2), and it must be
+ * derived through the same source the host's queue enqueued with — a reader that owned its own
+ * derivation would address rows under other ids the moment a composition configured a different
+ * source, and would report `pending` about a chain that had already finished. So the function
+ * layer derives, once, through `chainJobIdsForRun`, and the port only reads what it is handed.
+ *
+ * Reads are fence-free by design: reading claims no authority, so a status query neither adopts
+ * an epoch nor competes with the drainer that holds one.
+ */
+export interface PostProcessingReaderPort {
+  /** The id source THIS host's queue derives job ids with. */
+  readonly idSource: JobIdSource
+  /**
+   * Durable state for the three ids given, or `undefined` when this project holds no queue
+   * database at all.
+   *
+   * `undefined` is a distinct answer from an empty state and both are honest: the first says
+   * nothing has ever been enqueued here, the second says this chain's rows are not among the
+   * ones that have. An implementation MUST NOT bring a database into existence to answer —
+   * a status read that materialized a queue would make asking a question change the answer.
+   */
+  readChain(ids: ChainJobIds, runId: string): Promise<PostProcessingChainState | undefined>
+}
+
+/**
  * Injected read port over the resolved project configuration.
  *
  * The port's name says what its security contract is: it yields a config whose
@@ -525,4 +594,12 @@ export interface FunctionDeps {
   entities: EntityDirectoryPort
   runInvocation?: RunInvocationPort
   knowledgeReview?: KnowledgeReviewPort
+  /**
+   * 388 D-14: the durable post-run chain read. The third optional member, and it joins for the
+   * reason the other two did rather than by analogy — a host with no queue storage genuinely
+   * cannot answer "what became of that run's analysis", and the alternative to reporting that
+   * by name is answering `pending` about a chain it has never been able to see, which is a
+   * wrong answer wearing a correct one's clothes.
+   */
+  postProcessing?: PostProcessingReaderPort
 }

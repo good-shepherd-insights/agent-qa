@@ -594,6 +594,14 @@ describe('agent-qa fn (generic function invoker)', () => {
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      // 388 D-14: BOUND on every local host, and NOT gated on whether this one drains the
+      // chain — the two are different questions, and a host that only ever reads is exactly
+      // the caller that most needs durable chip truth. Read-tier, so it survives safe mode.
+      'runs.postprocessing': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       // BOUND since 385 plan 10 (D-16). Not because a literal was flipped — because this
       // composition supplies a run executor, and `bindingStatus` reports what THIS host can
       // do. The same capability still lists `unbound` from a composition without one, which

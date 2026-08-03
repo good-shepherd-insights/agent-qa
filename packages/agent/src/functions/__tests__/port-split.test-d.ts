@@ -53,7 +53,11 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // Pinned as an exact union so an optional dep can never arrive without that reporting: adding
 // `knowledgeReview?` to `FunctionDeps` and forgetting this union would leave the mutating verbs
 // unable to declare what they are bound through.
-expectTypeOf<OptionalFunctionDepKey>().toEqualTypeOf<'runInvocation' | 'knowledgeReview'>()
+// 388 D-14 extends the union BY NAME rather than relaxing the equality: `postProcessing` is the
+// third optional member, and the pin is what forced this line to be edited in the same change
+// that added it — which is the whole mechanism.
+expectTypeOf<OptionalFunctionDepKey>()
+  .toEqualTypeOf<'runInvocation' | 'knowledgeReview' | 'postProcessing'>()
 
 // Every member of that union must actually be an optional member of the deps record — the half
 // that would otherwise let the union name a dep nobody supplies.

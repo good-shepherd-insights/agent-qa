@@ -1,6 +1,10 @@
 import { z } from 'zod'
 
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
+import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '../notification/run-notification'
+import type { RunNotification } from '../notification/run-notification'
+import { POST_PROCESSING_CHIP_STATUSES } from '../notification/post-processing-status'
+import type { PostProcessingChips, PostProcessingStatus } from '../notification/post-processing-status'
 import { RUN_EVENT_TYPES } from '../run/bus-events'
 import type { RunEventEnvelope, RunEventPayload } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
@@ -200,6 +204,73 @@ export const RunsGetInputSchema = z.object({
 }).strict()
 
 export type RunsGetInput = z.infer<typeof RunsGetInputSchema>
+
+/**
+ * `runs.postProcessing` addresses one run's post-run chain (Phase 388, D-14).
+ *
+ * The same one-field shape `runs.get` takes, and deliberately so: chip truth is a fact about a
+ * RUN, derived from that run's id alone (RESEARCH Pattern 2). A filter, a job id or a stage
+ * name on this contract would be a second way to address a chain, and the whole projection
+ * rests on there being exactly one.
+ */
+export const RunsPostProcessingInputSchema = z.object({
+  runId: runIdSchema,
+}).strict()
+
+export type RunsPostProcessingInput = z.infer<typeof RunsPostProcessingInputSchema>
+
+/**
+ * The chain-terminal notification as a WIRE contract (Phase 388, D-09/D-11).
+ *
+ * A second validator over the record `guardRunNotification` also checks, and the duplication
+ * is bounded rather than accidental: both are declared against the ONE `RunNotification` type
+ * — this one by `satisfies`, that one by its return — so a field added to the record without a
+ * home in both is a compile error rather than a divergence somebody has to notice. They are
+ * two validators because they answer at two boundaries: the guard reads BYTES another build
+ * may have written into a sqlite column, and this one describes the shape a surface receives
+ * and the JSON-Schema projection a catalogue publishes.
+ */
+export const RunNotificationSchema = z.object({
+  schemaVersion: z.literal(CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION),
+  runId: z.string(),
+  outcome: z.enum(['done', 'failed']),
+  verdictSummary: z.object({
+    total: z.number().int().nonnegative(),
+    // Partial on purpose (D-11): a class that did not occur is an ABSENT key, never a zero,
+    // so "this class did not happen" and "this build does not know that class" stay different
+    // bytes.
+    byClass: z.partialRecord(z.enum(verdictClassValues), z.number().int().nonnegative()),
+  }).strict(),
+  stages: z.object({
+    analysis: z.object({ status: z.enum(['done', 'failed']) }).strict(),
+    curation: z.object({
+      status: z.enum(['done', 'failed']),
+      curated: z.number().int().nonnegative().optional(),
+      deprecated: z.number().int().nonnegative().optional(),
+    }).strict(),
+    issues: z.object({ status: z.literal('reserved') }).strict(),
+  }).strict(),
+}).strict() satisfies z.ZodType<RunNotification>
+
+const PostProcessingChipsSchema = z.object({
+  analysis: z.enum(POST_PROCESSING_CHIP_STATUSES),
+  curation: z.enum(POST_PROCESSING_CHIP_STATUSES),
+  issues: z.enum(POST_PROCESSING_CHIP_STATUSES),
+}).strict() satisfies z.ZodType<PostProcessingChips>
+
+/**
+ * The `runs.postProcessing` result: the three chips, plus the chain's one record once it
+ * exists (Phase 388, D-14/D-15).
+ *
+ * `notification` is OPTIONAL rather than nullable because absence is the ordinary state of a
+ * chain still in flight. A surface that had to distinguish `null` from missing would be
+ * learning a second spelling of "not yet"; the chips already say what stage the run is at.
+ */
+export const PostProcessingStatusSchema = z.object({
+  runId: z.string(),
+  chips: PostProcessingChipsSchema,
+  notification: RunNotificationSchema.optional(),
+}).strict() satisfies z.ZodType<PostProcessingStatus>
 
 /**
  * The `runs.start` input (D-09/D-10). The op registers with this full contract in 384 and

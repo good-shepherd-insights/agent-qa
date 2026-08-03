@@ -585,6 +585,10 @@ export {
   RunsGetInputSchema,
   RunsStartInputSchema,
   RunsEventsInputSchema,
+  // 388 D-14: the chip-truth read op's two contracts, and the notification's wire shape.
+  RunsPostProcessingInputSchema,
+  RunNotificationSchema,
+  PostProcessingStatusSchema,
   RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION,
   RunStartAcknowledgementSchema,
   RUN_EVENT_ENVELOPE_SCHEMA_VERSION,
@@ -608,6 +612,7 @@ export type {
   RunsGetInput,
   RunsStartInput,
   RunsEventsInput,
+  RunsPostProcessingInput,
   RunStartAcknowledgement,
   KnowledgeBundleSummary,
   KnowledgeBundlesListInput,

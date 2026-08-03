@@ -203,6 +203,10 @@ const ALL_FUNCTION_IDS = [
   'runs.events',
   'runs.get',
   'runs.list',
+  // 388 D-14: read-tier like its `runs.` siblings, so it too survives safe-mode filtering and
+  // the filter assertion below sharpens rather than merely lengthens — `runs.start` plus the
+  // four knowledge-write verbs are still exactly the ids that drop out.
+  'runs.postprocessing',
   'runs.start',
 ] as const
 

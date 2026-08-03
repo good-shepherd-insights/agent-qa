@@ -24,6 +24,19 @@ export {
   FunctionScopeError,
   UnknownFunctionError,
 } from './functions/invoke.js'
+// 388 D-14 adds `PostProcessingChainState`, `PostProcessingJobRow` and
+// `PostProcessingReaderPort` below: the durable chip-truth read port and the two shapes it
+// answers with. Types, so none of them carries a database across this barrel — the only value
+// that ever implements the port is built by a composition in the one package sqlite is legal
+// in, and `invokeFunction` is still the only dispatch. They are here so a composition root can
+// NAME what it supplies; `postProcessing` is an OPTIONAL member, so a host that omits it is
+// making a statement rather than forgetting.
+//
+// The rationale lives ABOVE the clause and not inside it, and that is load-bearing rather than
+// stylistic: the arch barrel pin strips comments before it grows a multi-line clause, a
+// stripped comment line becomes a blank one, and a blank line ENDS the clause — so a comment
+// between two names here does not annotate the export, it deletes every export in the
+// statement from the pinned set.
 export type {
   ConfigReaderPort,
   EntityDirectoryPort,
@@ -38,6 +51,9 @@ export type {
   KnowledgeReaderPort,
   KnowledgeReviewPort,
   OptionalFunctionDepKey,
+  PostProcessingChainState,
+  PostProcessingJobRow,
+  PostProcessingReaderPort,
   ReplayedRunEvent,
   RunInvocationPort,
   RunsReaderPort,
@@ -64,6 +80,11 @@ export { AmbiguousStepAddressError } from './functions/ops/knowledge-brief-why.j
 // the spec that answers to it. An ID is not a dispatch handle: naming a capability still buys
 // nothing without a registry, a caller and the gate.
 export { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from './functions/ops/knowledge-review-ids.js'
+// 388 D-14: the second op id a surface must be able to NAME, on exactly the footing above. The
+// CLI's exit summary line (plan 04) dispatches chip truth through the registry, and the
+// alternative is a string literal in the CLI — a second declaration of a capability's name,
+// free to drift from the spec that answers to it. An ID is not a dispatch handle.
+export { RUNS_POST_PROCESSING_FUNCTION_ID } from './functions/ops/runs-post-processing.js'
 
 // The human display boundary (v48 masking discipline): surfaces render function-layer
 // results as prose, and prose is the sole unmasking surface.

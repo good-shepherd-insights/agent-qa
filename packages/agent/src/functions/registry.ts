@@ -27,6 +27,7 @@ import { knowledgeRejectProposeSpec } from './ops/knowledge-reject-propose.js'
 import { runsEventsSpec } from './ops/runs-events.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
+import { runsPostProcessingSpec } from './ops/runs-post-processing.js'
 import { runsStartSpec } from './ops/runs-start.js'
 import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from './spec.js'
 
@@ -71,6 +72,13 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // hole in the catalog, and `invokeFunction` refuses it by name. `composeLocalAgent()` in
   // `@vostride/agent-qa-agent-local` is the binding site.
   runsStartSpec as FunctionSpec,
+  // 388 D-14: THE chip-truth read. Registered here rather than beside a surface because it is
+  // the single producer three surfaces share — the CLI's exit summary line, 392's chat and M5's
+  // dashboard are all thin clients of this one op, and the 397 parity suite inherits it by
+  // being in the catalogue. Bound through the OPTIONAL `postProcessing` dep, so a host with no
+  // durable queue lists it `unbound` BY NAME instead of answering all-pending about a chain it
+  // cannot see.
+  runsPostProcessingSpec as FunctionSpec,
   knowledgeBundlesListSpec as FunctionSpec,
   // 387 KREV-01: the read half of the review-verb family. All three bind through the REQUIRED
   // `knowledge` port, so — unlike the mutating half 387-08 registers through the optional

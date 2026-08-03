@@ -90,6 +90,11 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   'runs.events': 'bound',
   'runs.get': 'bound',
   'runs.list': 'bound',
+  // 388 D-14: UNBOUND here, and for a third distinct reason — this fixture supplies no durable
+  // queue storage at all. A host that cannot see the queue must say so by name rather than
+  // answer all-pending about a chain it has never been able to observe, so this row is a claim
+  // about the composition and not about the op.
+  'runs.postprocessing': 'unbound',
   // D-09: declared in full, bound by nothing in this composition. 386 flips one field.
   'runs.start': 'unbound',
 }
@@ -153,6 +158,10 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   'runs.events': { runId: FIXTURE_RUN_ID },
   'runs.get': { runId: FIXTURE_RUN_ID },
   'runs.list': {},
+  // 388 D-14: a PARSING input for a capability this composition cannot run, on the 387-08
+  // reasoning above — validation precedes the binding check, so a sample that failed the
+  // contract would make the unbound-refusal leg report an input error and certify nothing.
+  'runs.postprocessing': { runId: FIXTURE_RUN_ID },
   'runs.start': {},
 }
 
