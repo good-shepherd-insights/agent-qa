@@ -1726,15 +1726,19 @@ describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
       'utf8',
     )
 
+    // 388-02: the expression is pinned byte-identically at its new home. Extracting the
+    // per-run fold out of the sweep loop moved it two nesting levels out, so the CONTINUATION
+    // indentation is the only thing that changed — the operand list and its order are the
+    // thing this test exists to hold, and both are untouched.
     expect(source).toContain(
       `complete = candidates.refused === 0
-            && candidates.capExceeded === 0
-            && canaries.refused === 0
-            && canaries.unresolved === 0
-            && !projectionFailed
-            && (drain.kind === 'drained' || drain.kind === 'handed-off')
-            && drain.failures === 0
-            && drain.requeued === 0`,
+        && candidates.capExceeded === 0
+        && canaries.refused === 0
+        && canaries.unresolved === 0
+        && !projectionFailed
+        && (drain.kind === 'drained' || drain.kind === 'handed-off')
+        && drain.failures === 0
+        && drain.requeued === 0`,
     )
   })
 

@@ -143,6 +143,16 @@ export interface DrainNoop {
 interface DrainReportBase {
   jobsProcessed: number
   committed: number
+  /**
+   * Committed deltas whose kind was `Deprecate` (388-02).
+   *
+   * OPTIONAL because the drain report is constructed by fault-injection fakes across four
+   * packages and a required field would make every one of them a compile error over a number
+   * they have no opinion about. The real drain always sets it, so a production report saying
+   * `deprecated: 0` is a measurement rather than an absence — which is what the post-run
+   * chain's notification (D-11) needs to distinguish "deprecated nothing" from "never ran".
+   */
+  deprecated?: number
   downgraded: number
   withheld: number
   quarantined: number
@@ -326,6 +336,7 @@ function emptyReport(): DrainReportBase {
   return {
     jobsProcessed: 0,
     committed: 0,
+    deprecated: 0,
     downgraded: 0,
     withheld: 0,
     quarantined: 0,
@@ -711,6 +722,11 @@ function incrementEmbedCrashAndRequeue(
   )
 }
 
+/** A commit that landed a `Deprecate` delta retired a record; nothing else did. */
+function countDeprecation(report: DrainReportBase, deltaKind: string): void {
+  if (deltaKind === 'Deprecate') report.deprecated = (report.deprecated ?? 0) + 1
+}
+
 function mapCommitOutcome(
   report: DrainReportBase,
   outcome: CommitCurationOutcome,
@@ -723,10 +739,12 @@ function mapCommitOutcome(
     case 'applied':
     case 'converted-confirm':
       report.committed += 1
+      countDeprecation(report, outcome.deltaKind)
       return 'continue'
     case 'downgraded':
       report.committed += 1
       report.downgraded += 1
+      countDeprecation(report, outcome.deltaKind)
       return 'continue'
     case 'withheld':
       report.withheld += 1
