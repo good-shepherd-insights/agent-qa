@@ -143,8 +143,14 @@ export type ConsumeProposalOutcome =
   | { kind: 'consumed'; proposal: KnowledgeProposalV1 }
   | { kind: 'already-applied'; record: AppliedProposalRecord }
   /**
-   * SOMEBODY ELSE HOLDS THE CLAIM AND IS MID-APPLY. Distinct from `not-found`, and the
-   * distinction is the whole arm.
+   * SOMEBODY ELSE IS HANDLING THIS PROPOSAL. Distinct from `not-found`, and the distinction is
+   * the whole arm.
+   *
+   * Two states reach it, and the arm covers both because a caller acts identically on them: the
+   * usual one is another process holding the claim mid-apply, and the second is that process
+   * having just handed the claim BACK — the pending name reappeared after this resolution started
+   * looking, so there is nothing to report as missing and nothing yet to take. Both are answered
+   * by re-asking, which is what the wait loop above this module already does.
    *
    * The claim is taken by renaming the pending name away FIRST and the applied name is written
    * LAST, so for the entire duration of `store.commit()` neither name exists. Without this arm a
@@ -226,20 +232,36 @@ export function claimPendingProposal(
     renameSync(pendingPath(agentQaRoot, proposalId), claimed)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    // ORDER: applied → claim marker → applied AGAIN → not-found.
+    // ORDER: applied → claim scan → BOTH durable names again → not-found.
     //
-    // The second applied read is not belt-and-braces. `publishAppliedProposal` writes the applied
-    // file and only THEN retires the claim marker, so a winner that publishes between the first
-    // read and the scan leaves both a missing applied (as this caller saw it) and a still-present
-    // marker — and answering `apply-in-flight` there would make a completed apply look ongoing,
-    // sending the caller into a wait for work that is already durable. Re-reading closes that
-    // sliver in the only direction that can be wrong.
+    // TOTALITY BY ORDERING, and the ground is not an enumeration of interleaves — it is a
+    // property of the only two renames in this module that retire a claim marker.
+    //
+    //   `publishAppliedProposal` makes the applied file durable BEFORE it retires the marker.
+    //   `restorePendingProposal` retires the marker and lands the pending name in ONE rename.
+    //
+    // So a scan that sees no marker has seen a marker that was either never there or retired —
+    // and every retirement leaves one of the two durable names already on disk at the instant the
+    // scan runs. Re-reading BOTH names AFTER the scan therefore cannot miss a proposal that
+    // exists, whatever the interleaving was; a future rename that retires markers inherits the
+    // property only by making its own durable name land first, which is the rule to keep.
+    //
+    // The re-reads sit below the scan and serve EVERY exit under it, not just one. The previous
+    // shape put a re-read inside the marker-present arm alone and its comment claimed that closed
+    // the sliver in the one direction that could be wrong; there were two directions, one served,
+    // and the arm had no test that could redden it (WR-05, measured).
     const applied = readAppliedProposal(agentQaRoot, proposalId)
     if (applied !== undefined) return { kind: 'already-applied', record: applied }
     hooks?.onAfterFirstRead?.()
-    if (claimMarkerPresent(agentQaRoot, proposalId)) {
-      const published = readAppliedProposal(agentQaRoot, proposalId)
-      if (published !== undefined) return { kind: 'already-applied', record: published }
+    const marker = claimMarkerPresent(agentQaRoot, proposalId)
+    const published = readAppliedProposal(agentQaRoot, proposalId)
+    if (published !== undefined) return { kind: 'already-applied', record: published }
+    if (marker) return { kind: 'apply-in-flight' }
+    // No marker and no applied file: if the pending name is back, the retirement was a RESTORE
+    // and this proposal is applicable again. Answering `apply-in-flight` hands it to the caller's
+    // existing bounded retry loop, which re-asks and takes the claim on its next poll — rather
+    // than growing a second recovery mechanism in here beside the one that already works.
+    if (readPendingProposal(agentQaRoot, proposalId) !== undefined) {
       return { kind: 'apply-in-flight' }
     }
     return { kind: 'not-found' }
