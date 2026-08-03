@@ -77,8 +77,26 @@ export interface RunStartedPayload {
 }
 
 /**
- * `runFinished`: always last, exactly once. `disposition` is fixed to `'detached'` in
- * M1 — no post-processing producer exists yet (Ratified 2026-07-05).
+ * `runFinished`: the last VERDICT-SCOPED event, exactly once.
+ *
+ * "Always last" until Phase 388, and the wording is relaxed rather than the guarantee (388
+ * D-13/D-16). It remains the last thing the run bus ever publishes and the last line of the
+ * run's log at the moment the exit code is frozen — `finalSeq` is still its own seq, and every
+ * bus subscriber has already been flushed. What may now follow it IN THE FILE is a
+ * postProcessing chip envelope, appended directly to `events.jsonl` by the in-process post-run
+ * tail and continuing this seq. That producer is not on the bus at all, so no subscriber can
+ * observe an event after the one it was promised was last.
+ *
+ * Only the in-process leg appends. When the daemon drains the chain instead, nothing is
+ * emitted onto the run bus and durable job state is the only truth — which is the 386 D-16
+ * two-receipt rule: a second process never writes a finished run's log.
+ *
+ * `disposition` stays the literal `'detached'`, deliberately. It describes how the RUN was
+ * disposed of, not what happened to its post-processing, and widening it to carry a
+ * post-processing member would make a fact about the chain readable off a field every
+ * consumer already reads as a fact about the run. Chip status is answered by
+ * `runs.postprocessing` over durable state (D-14), which is the answer that survives a closed
+ * socket.
  */
 export interface RunFinishedPayload {
   aggregateVerdict: RunStatus
@@ -256,8 +274,14 @@ export interface TestRetryScheduledPayload {
 
 /**
  * The shared post-processing chip payload shape (spec §2.2: `{ runId, error, willRetry }`).
- * DEFINED in bus schema v1; emitted by no M1 producer — the analysis/curation/issue
- * milestones land the producers (append-only enum).
+ * DEFINED in bus schema v1; the producer lands in Phase 388 (D-13) — appended to
+ * `events.jsonl` by the in-process post-run tail, continuing `runFinished.finalSeq`.
+ *
+ * The shape is UNCHANGED by 388 and that is a decision rather than an omission: `live-view.md`
+ * §4.3 ratifies richer per-chip summaries, and the bus enum is append-only (§2.2), so those
+ * fields are additive later at no cost. What 388 emits is the minimal honest envelope, because
+ * anything richer would be a second place chip semantics are stated — and the one place they
+ * are stated is `projectPostProcessingChips`, over durable rows a surface can re-read.
  */
 export interface ChipEventPayload {
   runId: string
