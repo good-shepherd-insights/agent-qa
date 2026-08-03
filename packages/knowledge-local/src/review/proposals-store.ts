@@ -258,14 +258,39 @@ export function claimPendingProposal(
   proposalId: string,
   hooks?: ClaimResolutionHooks,
 ): ConsumeProposalOutcome {
+  const first = resolveClaim(agentQaRoot, proposalId, hooks)
+  if (first.kind !== 'not-found') return first
+  // THE BOUNDED RE-ENTRY, and the bound is structural rather than a counter somebody could raise:
+  // there is one extra call here and no loop, so "exactly one re-entry" is a fact about the
+  // control flow instead of a value to keep in step with a comment. Read the ORDER note inside
+  // `resolveClaim` for what the second pass buys and what it does not.
+  return resolveClaim(agentQaRoot, proposalId, hooks)
+}
+
+/**
+ * ONE full pass of the claim resolution: the atomic rename, and — if it lost — the four exits.
+ *
+ * Split out of `claimPendingProposal` only so the not-found exit can be re-entered from the top.
+ * The public signature is unchanged and no caller can reach a single pass: an outcome this
+ * function returns as `not-found` is a proposal `claimPendingProposal` has not answered about yet.
+ */
+function resolveClaim(
+  agentQaRoot: string,
+  proposalId: string,
+  hooks?: ClaimResolutionHooks,
+): ConsumeProposalOutcome {
   const claimed = `${pendingPath(agentQaRoot, proposalId)}.claimed.${process.pid}`
   try {
     renameSync(pendingPath(agentQaRoot, proposalId), claimed)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    // ORDER: applied → claim scan → BOTH durable names again → not-found.
+    // ORDER: applied → claim scan → BOTH durable names again → not-found, and not-found ONLY
+    // AFTER THIS WHOLE PASS HAS RUN TWICE.
     //
-    // TOTALITY BY ORDERING, and the ground is not an enumeration of interleaves — it is a
+    // Two claims live here and they are different sizes. They are kept apart on purpose, because
+    // running them together is what shipped a false conclusion at this site for three rounds.
+    //
+    // (1) SINGLE-RETIREMENT TOTALITY. The ground is not an enumeration of interleaves — it is a
     // property of the only two renames in this module that retire a claim marker.
     //
     //   `publishAppliedProposal` makes the applied file durable BEFORE it retires the marker.
@@ -273,14 +298,51 @@ export function claimPendingProposal(
     //
     // So a scan that sees no marker has seen a marker that was either never there or retired —
     // and every retirement leaves one of the two durable names already on disk at the instant the
-    // scan runs. Re-reading BOTH names AFTER the scan therefore cannot miss a proposal that
-    // exists, whatever the interleaving was; a future rename that retires markers inherits the
-    // property only by making its own durable name land first, which is the rule to keep.
+    // scan runs. Re-reading BOTH names AFTER the scan therefore cannot miss a proposal that ONE
+    // retirement moved. A future rename that retires markers inherits the property only by making
+    // its own durable name land first, which is the rule to keep.
     //
     // The re-reads sit below the scan and serve EVERY exit under it, not just one. The previous
     // shape put a re-read inside the marker-present arm alone and its comment claimed that closed
     // the sliver in the one direction that could be wrong; there were two directions, one served,
     // and the arm had no test that could redden it (WR-05, measured).
+    //
+    // (2) WHAT (1) DOES NOT GIVE. The scan is not atomic with the re-reads, so a name that IS on
+    // disk when the scan runs can be consumed before a re-read reaches it. Concretely, with three
+    // participants: the winner hands the proposal back (marker retired, pending name landed), so
+    // the scan finds no marker; a third participant then claims that restored pending name; both
+    // re-reads find nothing. (1) is still true, and the universal conclusion drawn from it at this
+    // site for three rounds — that no interleaving at all could hide a proposal that exists — does
+    // not follow from it.
+    //
+    // THE ANSWER IS A MECHANISM, NOT A SENTENCE: `claimPendingProposal` re-enters this entire
+    // function once and answers not-found only if the SECOND pass also finds nothing. Pass 2
+    // cannot be told pass 1's stale story, because it re-derives every fact from disk: if the
+    // pending name came back it CLAIMS it (consumed); if somebody holds it the scan finds their
+    // marker (apply-in-flight); if the winner published, the first read finds the applied file
+    // (already-applied). That covers a marker-retiring rename NOBODY HAS WRITTEN YET by
+    // construction rather than by census, which is the difference between (1) and (2) as a rule a
+    // future reader can apply — and it is a MEASURED difference: deleting the re-entry reds the
+    // three-participant case with the not-found answer and leaves every case (1) owns green.
+    //
+    // WHAT IS NOT MEASURED, SEPARATED OUT RATHER THAN BUNDLED IN. Each pass is headed by the
+    // rename above — the only atomic operation on this path — so pass 2 TAKES the pending name
+    // instead of checking for it and acting later. That is the right shape for real concurrency
+    // and it is a HYPOTHESIS here, not a tested claim: making the re-entry skip the rename and
+    // start at the first applied read leaves this module's whole corpus green, measured. It has
+    // to. Pass 2 runs only when pass 1's last read found no pending name, and no event can occur
+    // between that read and this rename, so in ONE process pass 2's rename can only ever throw
+    // ENOENT. Its value is across real elapsed time between two processes, which this suite's
+    // stated in-process limit puts outside what it measures. Keep the rename — a read-only second
+    // pass would be check-then-act where this is take — and do not read it as pinned.
+    //
+    // (3) THE RESIDUAL, WRITTEN AS THE HYPOTHESIS IT IS. A schedule that renames into the gaps of
+    // BOTH passes can still produce a false not-found. Nothing here rules that out and no test
+    // here measures it; the honest status is unproven-and-believed-rare, not closed. It costs no
+    // data — the proposal is on disk under some name and re-invoking apply resolves it — which is
+    // why it ships disclosed. The case that reds this mechanism if it is removed is the
+    // three-participant interleave in `propose-apply.test.ts` (search `onAfterClaimScan`); a
+    // further narrowing needs a further pass and a case that drives it, not another sentence here.
     const applied = readAppliedProposal(agentQaRoot, proposalId)
     if (applied !== undefined) return { kind: 'already-applied', record: applied }
     hooks?.onAfterFirstRead?.()

@@ -561,8 +561,14 @@ describe('the proposals store is durable across processes and atomic under a rac
     //   × does not report not-found when the winner RESTORES inside the window (CR-03′ sibling)
     //     → AssertionError: the pending name is back on disk; nothing here is missing
     //       expected 'not-found' not to be 'not-found'
+    // 387-18 extends this case with the SECOND seam position, attached and INERT — it is the
+    // no-third-claimer control for the three-participant case below. Same interleave, nobody in
+    // gap 2: the answer must still never be not-found, and the resolution must reach it on pass
+    // ONE (the count below), so the re-entry is not what is rescuing this case.
+    let scanFired = 0
     const outcome = claimPendingProposal(agentQaRoot, id, {
       onAfterFirstRead: () => { restorePendingProposal(agentQaRoot, id) },
+      onAfterClaimScan: () => { scanFired += 1 },
     })
 
     expect(readPendingProposal(agentQaRoot, id)).toEqual(minted.proposal)
@@ -572,6 +578,7 @@ describe('the proposals store is durable across processes and atomic under a rac
     // which re-asks and claims the restored proposal on its next poll. The store does not grow a
     // second recovery mechanism beside the one the caller already has.
     expect(outcome.kind).toBe('apply-in-flight')
+    expect(scanFired, 'the pending re-read answers on pass 1; nothing re-enters here').toBe(1)
   })
 
   // ── CR-03″: the gap BETWEEN the scan and the re-reads, which needs a THIRD participant ───────
@@ -691,21 +698,41 @@ describe('the proposals store is durable across processes and atomic under a rac
 
     // THE OVER-BROADENING CONTROLS. A resolution that answered `already-applied` — or anything
     // other than these two — whenever its window was driven would satisfy every case above. Both
-    // run WITH the seam attached and inert, so the seam itself is not what changes the answer.
+    // run WITH BOTH seam positions attached and inert, so the seam itself is not what changes the
+    // answer.
+    //
+    // THE INVOCATION COUNTS BELOW ARE ALSO PASS COUNTS, and they differ between the two controls
+    // for a reason worth reading rather than normalising: 387-18's bounded re-entry re-runs the
+    // whole resolution ONLY when the first pass reaches the not-found exit. A control that
+    // terminates on pass 1 still counts 1. The parked control does; the unknown-id control does
+    // not, and its 2 is the visible evidence that the second pass ran and also found nothing.
+    // Each count was measured by running, not derived — the parked control's stayed 1 unchanged.
     expect(claimPendingProposal(agentQaRoot, id).kind).toBe('consumed')
-    let parkedFired = 0
+    let parkedFirstRead = 0
+    let parkedScan = 0
     expect(
-      claimPendingProposal(agentQaRoot, id, { onAfterFirstRead: () => { parkedFired += 1 } }).kind,
+      claimPendingProposal(agentQaRoot, id, {
+        onAfterFirstRead: () => { parkedFirstRead += 1 },
+        onAfterClaimScan: () => { parkedScan += 1 },
+      }).kind,
     ).toBe('apply-in-flight')
-    expect(parkedFired).toBe(1)
+    expect(parkedFirstRead, 'the marker is found on pass 1, so no re-entry happens').toBe(1)
+    expect(parkedScan, 'the marker is found on pass 1, so no re-entry happens').toBe(1)
 
-    let unknownFired = 0
+    let unknownFirstRead = 0
+    let unknownScan = 0
     expect(
       claimPendingProposal(agentQaRoot, 'prop_00000000-0000-4000-8000-000000000000', {
-        onAfterFirstRead: () => { unknownFired += 1 },
+        onAfterFirstRead: () => { unknownFirstRead += 1 },
+        onAfterClaimScan: () => { unknownScan += 1 },
       }).kind,
     ).toBe('not-found')
-    expect(unknownFired).toBe(1)
+    // CHANGED BY 387-18, and named rather than quietly loosened (this file's assertion previously
+    // read `toBe(1)`). A not-found answer now requires TWO complete resolutions to find nothing,
+    // the second entered through the atomic claim rename, so an id that names nothing runs the
+    // seam twice by construction. A 1 here would mean the re-entry did not happen.
+    expect(unknownFirstRead, 'not-found costs two full passes since 387-18').toBe(2)
+    expect(unknownScan, 'not-found costs two full passes since 387-18').toBe(2)
   })
 
   it('puts a claimed proposal BACK when the work it was claimed for fails', () => {
