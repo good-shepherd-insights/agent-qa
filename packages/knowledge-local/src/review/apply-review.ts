@@ -23,6 +23,8 @@
 // There is no code path in this file that acquires when a live holder exists, because there is no
 // second acquisition primitive for one to use.
 
+import { relative } from 'node:path'
+
 import type {
   Delta,
   ForgetReceiptV1,
@@ -88,26 +90,40 @@ export const APPLY_IN_FLIGHT_POLL_MS = 25
 /**
  * The typed refusal when another caller holds the claim and has not finished (CR-03).
  *
- * `claimPath` is the parked claim file, when the resolution found one, and it is in the message
- * rather than only on the object because the loudest reason to hit this refusal is an ORPHANED
- * claim — a winner that crashed mid-commit — whose only recovery until Phase 391's reaper lands
- * is a human renaming that file back (D-17, WR-03). An operator who has to read this package's
- * source to learn the naming scheme has been disclosed to in name only (WR-06).
+ * THE CLAIM FILE IS NAMED, because the loudest reason to hit this refusal is an ORPHANED claim —
+ * a winner that crashed mid-commit — whose only recovery until Phase 391's reaper lands is a
+ * human renaming that file back (D-17, WR-03). An operator who has to read this package's source
+ * to learn the naming scheme has been disclosed to in name only (WR-06).
+ *
+ * IT IS NAMED TWICE, IN TWO FORMS, and the split is the whole of IN-02. This message is what
+ * crosses `knowledge.proposal.apply`'s function boundary uncaught, so it can be serialized into a
+ * tool result a model provider reads — and an absolute path carries the host's home directory
+ * and username there for no operator benefit whatsoever. So:
+ *
+ *   - `displayPath` — the claim relative to `agentQaRoot` — is what the MESSAGE renders. Same
+ *     filename, same recovery instruction, nothing about this machine's layout.
+ *   - `claimPath` — absolute — stays on the FIELD, unchanged, for tooling that has to open it.
+ *
+ * The relativization is done by `settleClaim`, which holds `agentQaRoot`, rather than taught to
+ * this class: an error that knew about roots would need one supplied at every construction site,
+ * and a second copy of "what is this path relative to" is exactly where a drift starts.
  */
 export class ProposalApplyInFlightError extends Error {
   constructor(
     readonly proposalId: string,
     readonly waitedMs: number,
     readonly claimPath?: string,
+    displayPath?: string,
   ) {
+    const shown = displayPath ?? claimPath
     super(
       `Another process is mid-apply of ${proposalId} and did not finish within ${waitedMs}ms. ` +
         'Nothing was lost and nothing was applied twice: the proposal is claimed, not missing. ' +
         'Retrying returns the winner\'s receipt if the apply completed, or finds the proposal ' +
         'pending again if the winner refused and put it back.' +
-        (claimPath === undefined
+        (shown === undefined
           ? ''
-          : ` The claim is parked at ${claimPath}. A winner that died mid-commit leaves it there ` +
+          : ` The claim is parked at ${shown}. A winner that died mid-commit leaves it there ` +
             `until Phase 391's reaper can decide the winner is gone; renaming it back to ` +
             `${proposalId}.json re-opens the proposal for apply.`),
     )
@@ -350,8 +366,17 @@ async function settleClaim(
     if (Date.now() >= deadline) {
       // The arm's own data reaches the refusal: whichever claim file the LAST resolution actually
       // found is the one an operator has to deal with, so it is read off the outcome rather than
-      // reconstructed here where a second copy of the naming scheme could drift (WR-06).
-      throw new ProposalApplyInFlightError(input.proposalId, waitMs, claim.claimPath)
+      // reconstructed here where a second copy of the naming scheme could drift (WR-06). The
+      // display form is derived from that same value — never re-derived from the proposal id —
+      // for the same reason (IN-02).
+      throw new ProposalApplyInFlightError(
+        input.proposalId,
+        waitMs,
+        claim.claimPath,
+        claim.claimPath === undefined
+          ? undefined
+          : relative(input.agentQaRoot, claim.claimPath),
+      )
     }
     await new Promise((resolve) => setTimeout(resolve, APPLY_IN_FLIGHT_POLL_MS))
   }
