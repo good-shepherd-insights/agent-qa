@@ -866,6 +866,23 @@ describe('disposeDelta measurement mechanism #9 (DCAY-02)', () => {
 //       expected [Function] to throw an error
 //   (same failure for each of the three failure conditions; the agent/import/system rows were
 //   GREEN throughout, which is the preservation half of the claim and the reason they are here.)
+//
+// SECOND RED BASELINE, 387-17, observed against the shipped origin mapping when the condition
+// axis was added — the four user rows and the directed message case, transcribed from the run:
+//
+//   × user-origin Confirm whose cited id is not-a-persisted-neighbor → refuses
+//     → AssertionError: the refusal must name the condition it actually failed on:
+//       expected undefined to be 'not-a-persisted-neighbor'
+//   (…the same for missing-from-disk, deprecated and scope-mismatch)
+//   × the refusal message names the record, the delta kind and the failing condition
+//     → AssertionError: expected 'The record fact-el-button-sign-in-f8b263d47587b23a this Confirm
+//       cites is tombstoned or cannot be resolved in this store, …' to contain 'scope-mismatch'
+//
+// Note what did NOT red: the scope-mismatch ROW's refusal itself was green from the first run.
+// The shipped mapping already refused it — it was simply never EXECUTED, which is why round 2's
+// carve-out mutation could delete that behaviour and leave 70 tests green. That row is therefore
+// a coverage widening rather than a defect reproduction, and its load is measured by probe m1
+// rather than by its own first run. The stated limit belongs here, not in a claim about it.
 describe('cited-id integrity: the fallback is total over DeltaOrigin (CR-02′)', () => {
   const primary: Anchor = { t: 'el', role: 'button', name: 'Sign in' }
   const page: Anchor = { t: 'page', route: '/login' }
@@ -880,15 +897,36 @@ describe('cited-id integrity: the fallback is total over DeltaOrigin (CR-02′)'
   } satisfies Record<DeltaOrigin, CitedIdIntegrityOutcome>
 
   /**
-   * The THREE ways `checkCitedIdIntegrity` can fail, all of which the refusal must cover.
+   * The ways `checkCitedIdIntegrity` can fail — COUNTED BY THE REGISTRY, not by this comment.
+   *
+   * The previous version of this block said "the THREE ways", and it was wrong when it was
+   * written: the check's second return is a three-way disjunction (`truth === undefined ||
+   * status === 'deprecated' || !sameScope(…)`), so there were always four. Round 2's verifier
+   * proved the omission by mutation — carving `scope-mismatch` out of the refusal for EVERY
+   * origin left 3 files / 70 tests green, because no row in this corpus ever reached it.
+   *
+   * So the walk is driven by a registry rather than by a list somebody keeps in step. A fifth
+   * condition added to the union reds this walk by EXISTING: the fixture table below is
+   * `satisfies Record<CitedIdIntegrityCondition, …>`, so a member with no fixture is a compile
+   * error, and a fixture naming no member is the same.
    *
    * Scoping the refusal to `status === 'deprecated'` alone would be the same one-axis-out error
    * this phase keeps paying for: the check's failure domain is "this delta cites something this
-   * store cannot stand behind", and a vanished record or an unpersisted neighbor is that fact
-   * just as much as a tombstoned one. Mutation probe m3 exists to catch a narrowing here, and
-   * these rows are what make it red.
+   * store cannot stand behind", and a vanished record, an unpersisted neighbour or a record
+   * addressed at a scope it does not carry is that fact just as much as a tombstoned one.
    */
-  const FAILURE_CONDITIONS = ['deprecated', 'missing-from-disk', 'not-a-persisted-neighbor'] as const
+  type CitedIdIntegrityCondition =
+    | 'not-a-persisted-neighbor'
+    | 'missing-from-disk'
+    | 'deprecated'
+    | 'scope-mismatch'
+
+  const FAILURE_CONDITIONS = [
+    'not-a-persisted-neighbor',
+    'missing-from-disk',
+    'deprecated',
+    'scope-mismatch',
+  ] as const satisfies readonly CitedIdIntegrityCondition[]
 
   function confirmCiting(origin: DeltaOrigin, targetId: RecordId): Delta {
     return {
@@ -922,18 +960,59 @@ describe('cited-id integrity: the fallback is total over DeltaOrigin (CR-02′)'
     if (appended.kind !== 'appended') throw new Error(`fixture deprecate failed: ${appended.kind}`)
   }
 
+  /** A scope key no fixture bundle is published under, so `sameScope` cannot accidentally hold. */
+  const OTHER_SCOPE: ScopeKey = { tier: 'product', key: 'checkout-lane' }
+
+  /**
+   * How each condition is REACHED, declared locally and per-member.
+   *
+   * Only the keys come from the production vocabulary; every fixture and every expectation here
+   * is the corpus's own, on the 387-14 pattern-3 discipline — a table that imported production
+   * values to assert against would be a tautology no mutation could red.
+   *
+   * `scope-mismatch` is the member round 2 proved missing, and it is the only one that fails on a
+   * record this store can READ perfectly well: the bundle is intact, active, and in the persisted
+   * neighbour set, and the delta simply addresses it at a scope it does not carry. The other
+   * three all break the record's availability in some way, which is why a corpus built from them
+   * alone could believe availability was the whole failure domain.
+   *
+   * BOTH of the check's return sites are reached across this walk, and the split is exactly two:
+   * `not-a-persisted-neighbor` takes the early return that fires before the record is even looked
+   * up, and the other three share the or-ed second return. The earlier version of this note said
+   * "all three return sites", counting conditions as if each had its own — the miscount that let
+   * the fourth condition hide inside the second return without anybody noticing it was there.
+   */
+  const CONDITION_FIXTURES = {
+    'not-a-persisted-neighbor': () => {
+      const victim = publishActive([primary, page])
+      return { victim, delta: confirmCiting('agent', victim.id), neighborIds: [] as RecordId[] }
+    },
+    'missing-from-disk': () => {
+      const victim = publishActive([primary, page])
+      rmSync(victim.dir, { recursive: true, force: true })
+      return { victim, delta: confirmCiting('agent', victim.id), neighborIds: [victim.id] }
+    },
+    deprecated: () => {
+      const victim = publishActive([primary, page])
+      deprecate(victim.id)
+      return { victim, delta: confirmCiting('agent', victim.id), neighborIds: [victim.id] }
+    },
+    'scope-mismatch': () => {
+      const victim = publishActive([primary, page], 40, OTHER_SCOPE)
+      return { victim, delta: confirmCiting('agent', victim.id), neighborIds: [victim.id] }
+    },
+  } satisfies Record<CitedIdIntegrityCondition, () => {
+    victim: { id: RecordId; dir: string }
+    delta: Delta
+    neighborIds: RecordId[]
+  }>
+
   for (const origin of DELTA_ORIGINS) {
     const expected = EXPECTED_OUTCOME_BY_ORIGIN[origin]
     for (const condition of FAILURE_CONDITIONS) {
       it(`${origin}-origin Confirm whose cited id is ${condition} → ${expected}`, () => {
-        const victim = publishActive([primary, page])
+        const { victim, neighborIds } = CONDITION_FIXTURES[condition]()
         const delta = confirmCiting(origin, victim.id)
-        // Only the LAST condition withholds the id from the persisted neighbour set; the other
-        // two present it and break the bundle tree instead, so all three return sites of the
-        // check are reached across the walk rather than only the one the fix was written for.
-        if (condition === 'deprecated') deprecate(victim.id)
-        if (condition === 'missing-from-disk') rmSync(victim.dir, { recursive: true, force: true })
-        const neighborIds = condition === 'not-a-persisted-neighbor' ? [] : [victim.id]
 
         const dispose = () => disposeDelta({
           delta,
@@ -954,6 +1033,13 @@ describe('cited-id integrity: the fallback is total over DeltaOrigin (CR-02′)'
           expect((thrown as Error).name).toBe('UserDeltaCitationIntegrityError')
           expect((thrown as { recordId?: RecordId }).recordId).toBe(victim.id)
           expect((thrown as { deltaKind?: string }).deltaKind).toBe('Confirm')
+          // WHICH condition fired, per row. Asserting merely that the field EXISTS would pass
+          // against an error that carried the same token for all four, which is the difference
+          // between naming the failure and appearing to.
+          expect(
+            (thrown as { condition?: string }).condition,
+            'the refusal must name the condition it actually failed on',
+          ).toBe(condition)
         } else {
           // PRESERVED, and this half is drawn from OUTSIDE the refusal's own assumption: the
           // pipeline's clarification-candidate behaviour is untouched. A mapping that
@@ -972,4 +1058,42 @@ describe('cited-id integrity: the fallback is total over DeltaOrigin (CR-02′)'
       })
     }
   }
+
+  /**
+   * The MESSAGE tells the truth for every member of the domain — one directed case, not a row.
+   *
+   * The old message said the cited record "is tombstoned or cannot be resolved in this store",
+   * which is FALSE for exactly the condition round 2 found missing: a scope-mismatched record is
+   * neither tombstoned nor unresolvable, it is perfectly readable and addressed wrongly. A
+   * message that names half its domain sends an operator looking for a tombstone that is not
+   * there. This case is directed rather than per-row because what it pins is the phrasing, and a
+   * per-row copy of it would just re-assert the same three interpolations four times.
+   */
+  it('the refusal message names the record, the delta kind and the failing condition', () => {
+    const { victim } = CONDITION_FIXTURES['scope-mismatch']()
+    const delta = confirmCiting('user', victim.id)
+
+    let thrown: unknown
+    try {
+      disposeDelta({
+        delta,
+        checkpoint: checkpoint(delta, [victim.id], [observed(victim.id)]),
+        profile: { mode: 'drain-to-active' },
+        knowledgeRoot,
+        candidate: candidate([primary, page]),
+        drainState: drainState(),
+      })
+    } catch (error) { thrown = error }
+
+    const message = (thrown as Error | undefined)?.message ?? ''
+    expect(message).toContain(victim.id)
+    expect(message).toContain('Confirm')
+    expect(message, 'the condition token is what makes the message actionable').toContain(
+      'scope-mismatch',
+    )
+    expect(
+      message,
+      'the old phrasing claimed a tombstone that a scope-mismatched record does not have',
+    ).not.toContain('tombstoned')
+  })
 })
