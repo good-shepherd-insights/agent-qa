@@ -63,6 +63,17 @@ export type PostRunDrainOutcome =
   | 'handed-off'
   | 'drained'
   | 'budget-exhausted'
+  /**
+   * The pump spent its bound or its budget entirely on OTHER runs' work and never claimed any
+   * member of this run's chain.
+   *
+   * Distinct from `budget-exhausted`, which says this run's own chain was mid-flight when the
+   * clock ran out. The queue is a global FIFO, so a backlog of detached runs can consume the
+   * whole budget before this run's `analyze-run` is reachable — and a report that called that
+   * `drained` would tell a user their analysis is `pending` with no indication that anything
+   * will ever pick it up (WR-01).
+   */
+  | 'backlog-exhausted'
   | 'retry-scheduled'
   | 'refused'
 
@@ -384,24 +395,56 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         const fence = await jobs.store.adoptEpoch(acquired.epoch)
         await jobs.queue.recoverAbandonedClaims({ fence })
         drainOutcome = 'drained'
+        /**
+         * Did the pump ever reach a member of THIS run's chain?
+         *
+         * Read from the same `ownChainJobIds` the emitter's drop-guard reads — one derivation per
+         * drain, two readers. A second spelling here would be a second answer to "is this our
+         * work", and the posture the user is told would be free to disagree with the trail.
+         */
+        let ownChainObserved = false
+        /**
+         * How the pump left the loop. Named, because the posture below is only honest for two of
+         * the four exits: a queue that EMPTIED means this run's enqueued chain was reached (the
+         * rows are gone because somebody ran them), and an ABORT means the user stopped this
+         * process — neither is starvation, and reporting a backlog for either would name a cause
+         * the run never observed.
+         */
+        let pumpExit: 'bound' | 'budget' | 'empty' | 'aborted' | 'retry' = 'bound'
         for (let pumped = 0; pumped < CHAIN_PUMP_BOUND; pumped += 1) {
           if (ops().now() >= drainDeadlineMs) {
             drainOutcome = 'budget-exhausted'
+            pumpExit = 'budget'
             break
           }
-          if (opts.signal?.aborted === true) break
+          if (opts.signal?.aborted === true) {
+            pumpExit = 'aborted'
+            break
+          }
           const outcome = await jobs.queue.runNextJob({ fence })
-          if (!outcome.ran) break
+          if (!outcome.ran) {
+            pumpExit = 'empty'
+            break
+          }
           // Emitted from the outcome the pump just RECEIVED, before anything is decided about
           // it: the chip says what the queue durably did, not what this loop does next.
           chips.observe(outcome)
+          if (ownChainJobIds.includes(String(outcome.job.id))) ownChainObserved = true
           jobsRun += 1
           if (outcome.disposition === 'retry-scheduled') {
             // Never sleep the run process on a backoff. The row stays queued and whoever
             // holds the lease next — the daemon, or the next run's tail — picks it up.
             drainOutcome = 'retry-scheduled'
+            pumpExit = 'retry'
             break
           }
+        }
+        // WR-01: the bound or the budget was spent, and none of it on this run. The user is owed
+        // the reason their work is still pending, not just the fact.
+        if (!ownChainObserved
+          && (pumpExit === 'bound' || pumpExit === 'budget')
+          && (drainOutcome === 'drained' || drainOutcome === 'budget-exhausted')) {
+          drainOutcome = 'backlog-exhausted'
         }
         // The prior-run janitor, under the REMAINder of the same budget and the same lease
         // (Pitfall 11). This run's own directory is already receipted by the fold the chain
@@ -461,7 +504,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         }
         // D-08: work stays queued. The statuses are durable; the parenthetical is posture.
         opts.log.info?.(
-          renderPostProcessingSummaryLine(status, drainOutcome === 'handed-off'),
+          renderPostProcessingSummaryLine(status, postureOf(drainOutcome)),
         )
       } catch (error) {
         opts.log.warn(summaryFailureWarning(opts.runId, error))
@@ -487,6 +530,28 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
 const SUMMARY_SEPARATOR = ' · '
 
 /**
+ * What THIS process knows about a pending stage's future — the only thing durable state cannot
+ * say for itself.
+ *
+ * `none` is the honest answer for `--detach`, a refusal and a drain that simply ended: nobody in
+ * this process promised anything, so nothing is promised on their behalf.
+ */
+export type PostRunPendingPosture = 'handed-off' | 'backlog-exhausted' | 'none'
+
+/** What the parenthetical says under each posture. `none` says nothing, deliberately. */
+const PENDING_POSTURE_SUFFIX: Record<PostRunPendingPosture, string> = {
+  'handed-off': ' (daemon will drain)',
+  'backlog-exhausted': ' (queued behind other runs; the daemon or a later run will drain)',
+  none: '',
+}
+
+function postureOf(outcome: PostRunDrainOutcome): PostRunPendingPosture {
+  if (outcome === 'handed-off') return 'handed-off'
+  if (outcome === 'backlog-exhausted') return 'backlog-exhausted'
+  return 'none'
+}
+
+/**
  * The D-08 exit summary — ONE line, in the ONE chip vocabulary (D-14).
  *
  * Two rules, and the second is the whole reason this takes two arguments:
@@ -495,22 +560,23 @@ const SUMMARY_SEPARATOR = ' · '
  *     control-flow word from `PostRunTailReport`, not "queued" where the vocabulary says
  *     `pending`. A surface that re-spells one of five words is a surface that will eventually
  *     disagree with the dashboard about a row neither of them got wrong.
- *   - "(daemon will drain)" is NOT in the DTO and cannot be. `pending` honestly means "no work
- *     has happened", and durable state has no way to know whether a daemon is about to change
- *     that or whether nobody ever will. That fact lives in THIS process's posture — it handed
- *     the chain off and nudged — so it is rendered from `handedOff` and never derived from a
- *     status, in either direction.
+ *   - The parenthetical is NOT in the DTO and cannot be. `pending` honestly means "no work has
+ *     happened", and durable state has no way to know whether a daemon is about to change that,
+ *     whether a backlog is in the way, or whether nobody ever will. That fact lives in THIS
+ *     process's POSTURE — it handed the chain off and nudged, or it spent its whole budget on
+ *     other runs' jobs — so it is rendered from `posture` and never derived from a status, in
+ *     either direction.
  *
  * The parenthetical attaches per STAGE rather than per line: whichever stages are still
- * `pending` are the ones the daemon will drain, and a stage that already finished must not be
+ * `pending` are the ones somebody will drain, and a stage that already finished must not be
  * annotated with a future.
  */
 export function renderPostProcessingSummaryLine(
   status: PostProcessingStatus,
-  handedOff: boolean,
+  posture: PostRunPendingPosture,
 ): string {
   const stage = (label: string, chip: string): string => {
-    const suffix = handedOff && chip === 'pending' ? ' (daemon will drain)' : ''
+    const suffix = chip === 'pending' ? PENDING_POSTURE_SUFFIX[posture] : ''
     return `${label}: ${chip}${suffix}`
   }
   return `post-processing — ${[
