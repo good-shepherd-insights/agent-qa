@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import { invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import {
   composeLocalAgent,
   DIGEST_JOB_ID_SOURCE,
@@ -25,11 +26,13 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
   type GuardrailPolicy,
+  type PostProcessingStatus,
   type RunEventEnvelope,
   type Verdict,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import {
   runPostRunTail,
   type PostRunTailOperations,
@@ -320,5 +323,136 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
     ])
     // …and the append itself is the raw `FsEventLog` discipline, stated once.
     expect(source.match(/appendFileSync\(/gu) ?? []).toHaveLength(1)
+  })
+})
+
+/**
+ * Read the SAME op the tail renders from, through a second composition.
+ *
+ * A second host is what makes the token-equality claim non-circular: if the line were built
+ * from anything the tail held in memory, the values compared here — which came out of a cold
+ * registry over the same database — would be free to disagree with it.
+ */
+async function readStatusThroughTheOp(
+  agentQaRoot: string,
+): Promise<PostProcessingStatus> {
+  const host = composeLocalAgent({
+    agentQaRoot,
+    config: TEST_CONFIG,
+    knowledgeRoot: () => join(agentQaRoot, 'knowledge'),
+    model: () => TEST_MODEL,
+    idSource: DIGEST_JOB_ID_SOURCE,
+  })
+  try {
+    return await invokeFunction(
+      host.registry,
+      RUNS_POST_PROCESSING_FUNCTION_ID,
+      { runId: RUN_ID },
+      CLI_FUNCTION_CALLER,
+    ) as PostProcessingStatus
+  } finally {
+    await host.close()
+  }
+}
+
+describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
+  it('renders the queued-work summary from the op, token for token (D-08/D-14)', async () => {
+    const f = fixture()
+    const tail = runPostRunTail(f.options({
+      acquireWriterLease: () => ({ kind: 'held', holder: { pid: 4242 } }),
+      nudgeDaemon: async () => undefined,
+    } as unknown as Partial<PostRunTailOperations>))
+    await tail.enqueue()
+    await tail.drain()
+    await tail.finish()
+
+    expect(tail.report().drain).toBe('handed-off')
+    const status = await readStatusThroughTheOp(f.agentQaRoot)
+    const line = f.info.mock.calls.map(([message]) => String(message))
+      .find((message) => message.startsWith('post-processing —'))
+    expect(line).toBeDefined()
+
+    // ONE vocabulary, not three spellings: the rendered statuses ARE the op's chip values.
+    expect(line).toBe(
+      `post-processing — analysis: ${status.chips.analysis} (daemon will drain)`
+      + ` · curation: ${status.chips.curation} (daemon will drain)`
+      + ` · issues: ${status.chips.issues}`,
+    )
+    // …and the values it rendered are the durable ones, not a control-flow word.
+    expect(status.chips).toEqual({
+      analysis: 'pending',
+      curation: 'pending',
+      issues: 'reserved',
+    })
+    // The "(daemon will drain)" half is NOT in the DTO — it is the tail's own posture.
+    expect(JSON.stringify(status)).not.toContain('daemon will drain')
+  })
+
+  it('drops the daemon parenthetical under --detach, where nobody promised to drain', async () => {
+    const f = fixture()
+    const tail = runPostRunTail(f.options())
+    await tail.enqueue()
+    await tail.finish({ detached: true })
+
+    expect(tail.report().drain).toBe('detached')
+    expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
+      'post-processing — analysis: pending · curation: pending · issues: reserved',
+    ])
+  })
+
+  it('prints the human notification line at chain terminal, from the row (D-09/D-12)',
+    async () => {
+      const f = fixture()
+      const tail = runPostRunTail(f.options())
+      await tail.enqueue()
+      await tail.drain()
+      await tail.finish()
+
+      const status = await readStatusThroughTheOp(f.agentQaRoot)
+      const notification = status.notification!
+      expect(notification).toBeDefined()
+
+      const lines = f.info.mock.calls.map(([message]) => String(message))
+      const human = lines.find((message) => message.includes(RUN_ID))
+      expect(human).toBeDefined()
+      // Counts come from the ROW, not from anything the drain remembered.
+      expect(human).toContain(`${notification.stages.curation.curated!} curated`)
+      expect(human).toContain(`${notification.stages.curation.deprecated!} deprecated`)
+      expect(human).toContain(`verdicts ${notification.verdictSummary.total}`)
+      expect(human).toContain(`analysis: ${notification.stages.analysis.status}`)
+      expect(human).toContain('issues: reserved')
+      // A terminal chain says the terminal thing, not the queued-work thing.
+      expect(lines.some((message) => message.startsWith('post-processing —'))).toBe(false)
+    })
+
+  it('names the handoff on disk as the manual re-queue path when the enqueue fails (D-07)',
+    async () => {
+      const f = fixture()
+      const tail = runPostRunTail(f.options({
+        loadCompletedRunHandoff: () => {
+          throw new Error('the handoff store is unreachable')
+        },
+      }))
+      await tail.enqueue()
+      await tail.finish()
+
+      expect(f.warn).toHaveBeenCalledTimes(1)
+      const warning = String(f.warn.mock.calls[0]![0])
+      expect(warning).toContain(RUN_ID)
+      expect(warning).toContain('verdict and exit code are unaffected')
+      expect(warning).toContain(join(f.agentQaRoot, RUNS_SUBDIR, slugBranch(RUN_ID), HANDOFF_FILE))
+      // Nothing is queued, so nothing may claim to be.
+      expect(f.info).not.toHaveBeenCalled()
+    })
+
+  it('reads status through the op and never opens the queue database itself (D-14)', () => {
+    const source = readFileSync(
+      new URL('../curation/post-run-tail.ts', import.meta.url),
+      'utf8',
+    )
+    expect(source).toContain('renderPostProcessingSummaryLine')
+    expect(source).toContain('RUNS_POST_PROCESSING_FUNCTION_ID')
+    // The CLI never reads `agent-jobs.db` for status — that is the op's job and only the op's.
+    expect(source).not.toMatch(/sqlite|DatabaseSync|agent-jobs\.db/u)
   })
 })
