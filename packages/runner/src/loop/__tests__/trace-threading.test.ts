@@ -324,6 +324,31 @@ describe('a step that ENDS before its staged ledger is consumed still lands it (
  * designed to make irrelevant, and pinning it would red on an innocuous tenth exit that the
  * funnel already covers.
  */
+const DRAIN_CALL = 'recorder.recordServedCautions([], pendingCautions.trace)'
+const FOLD_CALL = 'recorder.finalize('
+
+/**
+ * The ordering claim as ONE expression, so the assertion that it holds on the real source and the
+ * assertions that it rejects are literally the same test of the same thing (WR-05, 387-19).
+ *
+ * `both present` is part of the predicate, not a separate precondition: a text missing either
+ * needle has no ordering to be right about, and the control below relies on that arm.
+ */
+function drainPrecedesFold(text: string): boolean {
+  const drain = text.indexOf(DRAIN_CALL)
+  const fold = text.indexOf(FOLD_CALL)
+  return drain > -1 && fold > -1 && drain < fold
+}
+
+/** The plausible wrong placement, built by surgery on the REAL source: the drain lifted out of
+ *  position and re-inserted immediately after the fold. Never a hand-written synthetic source —
+ *  the control has to reject the file that could actually exist. */
+function withDrainBelowTheFold(text: string): string {
+  const lifted = text.replace(DRAIN_CALL, 'recorder.recordCautionsLater()')
+  const foldEnd = lifted.indexOf(FOLD_CALL) + FOLD_CALL.length
+  return `${lifted.slice(0, foldEnd)}\n      ${DRAIN_CALL}\n${lifted.slice(foldEnd)}`
+}
+
 describe('the terminal drain sits at the ONE funnel every exit routes through (387-15)', () => {
   const source = statementsOf(readFileSync(join(loopDir, 'index.ts'), 'utf8'))
 
@@ -354,14 +379,29 @@ describe('the terminal drain sits at the ONE funnel every exit routes through (3
     expect(drain).toBeGreaterThan(readTraceDrain)
     expect(fold).toBeGreaterThan(drain)
 
-    // POSITIVE CONTROL: the ordering scan can reject. A drain placed after the fold is exactly
-    // the plausible wrong placement, and the indices invert when it is.
-    const misplaced = source.replace(
-      'recorder.recordServedCautions([], pendingCautions.trace)',
-      'recorder.recordCautionsLater()',
-    ) + '\n  recorder.recordServedCautions([], pendingCautions.trace)\n'
-    expect(misplaced.indexOf('recorder.recordServedCautions([], pendingCautions.trace)'))
-      .toBeGreaterThan(misplaced.indexOf('recorder.finalize('))
+    // The same ordering, stated once as a predicate so the controls below can run THIS expression
+    // rather than a re-derivation of it.
+    expect(drainPrecedesFold(source)).toBe(true)
+
+    // POSITIVE CONTROL (WR-05, 387-19): what a positive control exists for is to show the scan can
+    // REJECT, and the construction this replaces could not. It appended the drain needle to the END
+    // of the string it then searched, so the needle's index was necessarily the largest in it —
+    // measured true over the real source, over a nonsense string, over a source with the drain
+    // already below the fold, and over the EMPTY STRING. Four inputs, four passes, one of them
+    // containing no source at all.
+    //
+    // The replacement runs `drainPrecedesFold` — the same expression asserted above — over the real
+    // source with the drain moved below the fold. Both needles are still present exactly once, so
+    // the rejection is attributable to ORDER and not to a botched surgery that deleted one of them;
+    // that is asserted, not assumed.
+    const misplaced = withDrainBelowTheFold(source)
+    expect(occurrences(misplaced, DRAIN_CALL)).toBe(1)
+    expect(occurrences(misplaced, FOLD_CALL)).toBe(1)
+    expect(drainPrecedesFold(misplaced)).toBe(false)
+
+    // The input the old control passed on. A predicate that answers "the drain is in the right
+    // place" about a text with no drain in it is not measuring placement.
+    expect(drainPrecedesFold('')).toBe(false)
   })
 
   it('the drain is a SECOND sanctioned call shape, not a licence for a third', () => {
