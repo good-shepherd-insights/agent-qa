@@ -808,6 +808,16 @@ export interface LocalAgentJobs {
   readonly kinds: JobKindRegistry
   /** The capability the queue was constructed with, exposed so a host can assert what it bound. */
   readonly model: JobModelCapability
+  /**
+   * The id source the queue was constructed with.
+   *
+   * Exposed because a caller that watches this queue's outcomes must be able to derive the same
+   * ids the enqueue addressed — the push half of a run's chip trail and the pull half of its
+   * status have to agree about which rows belong to which run. Publishing the SOURCE makes that
+   * agreement structural; re-deriving a default at the call site would make it a convention, and
+   * a convention is exactly what breaks the first time a host is composed with a different one.
+   */
+  readonly idSource: JobIdSource
 }
 
 /** Refusal returned when durable capabilities are requested after their composition was closed. */
@@ -1021,17 +1031,22 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     let jobs: LocalAgentJobs
     try {
       const kinds = input.jobKinds ?? createRealJobKindRegistry(postRunCapabilities(input))
+      // Resolved ONCE and used for both the queue and the published field: the value a watcher
+      // derives ids from has to be the value the queue mints them with, and two spellings of the
+      // same default is how those two drift.
+      const idSource = input.idSource ?? DIGEST_JOB_ID_SOURCE
       jobs = {
         queue: createAgentJobQueue({
           store,
           registry: kinds,
           clock,
-          idSource: input.idSource ?? DIGEST_JOB_ID_SOURCE,
+          idSource,
           model,
         }),
         store,
         kinds,
         model,
+        idSource,
       }
     } catch (error) {
       store.close()

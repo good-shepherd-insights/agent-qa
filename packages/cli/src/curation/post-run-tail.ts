@@ -22,7 +22,11 @@
 // through `curation-tail.ts`, which is ledgered for exactly those specifiers. That is not
 // ceremony: it is what keeps the run tail's reach identical to the reach the tail already had.
 
-import { invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import {
+  chainJobIdsForRun,
+  invokeFunction,
+  RUNS_POST_PROCESSING_FUNCTION_ID,
+} from '@vostride/agent-qa-agent'
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
@@ -342,6 +346,23 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         }
         acquiredLeaseId = acquired.leaseId
         heldAuthority = { leaseId: acquired.leaseId, epoch: acquired.epoch }
+        const jobs = await host.jobs()
+        /**
+         * This run's chain ids, derived ONCE per drain, from the queue's OWN id source.
+         *
+         * The same `chainJobIdsForRun` the read op derives from (`runs-post-processing.ts`), and
+         * the same `idSource` the enqueue above minted with — so the push half of this run's chip
+         * trail and the pull half of its status cannot address different rows. The array is a
+         * local because two readers need exactly this value: the emitter's drop-guard and the
+         * pump's own-chain tracker. Re-deriving for the second reader would be a second answer to
+         * a question with one.
+         */
+        const chainIds = chainJobIdsForRun(opts.runId, jobs.idSource)
+        const ownChainJobIds = [
+          String(chainIds.analyzeRun),
+          String(chainIds.curateMemory),
+          String(chainIds.triageIssues),
+        ]
         /**
          * The ONLY construction site (D-13).
          *
@@ -354,9 +375,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         const chips = ops().createChipEmitter({
           agentQaRoot: opts.agentQaRoot,
           runId: opts.runId,
+          chainJobIds: ownChainJobIds,
           now: () => ops().now(),
         })
-        const jobs = await host.jobs()
         // Pitfall 7, the daemon's sequence verbatim (host.ts:1759): adopt the epoch the lease
         // just minted, then reclaim rows a dead holder left claimed. Both are safe here for
         // the same reason they are safe there — exactly one fence-holder exists at a time.

@@ -8,6 +8,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
 
+import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
+import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import type { GuardrailPolicy, MaskingContext } from '@vostride/agent-qa-schema'
 
@@ -23,6 +25,14 @@ const configDir = '/workspace/project'
 const configPath = '/workspace/project/agent-qa.config.yaml'
 const knowledgeRoot = '/workspace/project/agent-qa-knowledge'
 const runId = 'run-post-run-tail'
+/**
+ * The ids THIS run's chain addresses, derived the way the tail derives them.
+ *
+ * The fakes below claim jobs by id now, because the tail scopes what it emits and what it counts
+ * as its own by id (388-07). A stand-in id invented here would model a job no run could enqueue,
+ * and every own-chain assertion made against it would be measuring the fixture.
+ */
+const OWN_CHAIN = chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE)
 
 const handoff = {
   runId,
@@ -69,6 +79,10 @@ function harness(overrides: {
       jobs: async () => ({
         queue: { enqueue, runNextJob, recoverAbandonedClaims },
         store: { adoptEpoch },
+        // The real handle publishes the source its queue mints ids with, and the tail derives
+        // this run's chain from it. A fake without one would let the tail's derivation pass on
+        // a shape production never hands it.
+        idSource: DIGEST_JOB_ID_SOURCE,
       }),
       close,
     })),
@@ -164,8 +178,8 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
 
   it('drains the chain in-process through the full authority dance when the lease is free', async () => {
     const ran = [
-      { ran: true, disposition: 'completed', job: { id: 'job_analyze' } },
-      { ran: true, disposition: 'completed', job: { id: 'job_curate' } },
+      { ran: true, disposition: 'completed', job: { id: String(OWN_CHAIN.analyzeRun) } },
+      { ran: true, disposition: 'completed', job: { id: String(OWN_CHAIN.curateMemory) } },
       { ran: false, reason: 'no-job' },
     ]
     let call = 0
@@ -204,7 +218,7 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
       reason: 'transient',
       retryDelayMs: 30_000,
       attemptsRemaining: 2,
-      job: { id: 'job_analyze' },
+      job: { id: String(OWN_CHAIN.analyzeRun) },
     }))
     const h = harness({ runNextJob })
     const tail = runPostRunTail(options(h))

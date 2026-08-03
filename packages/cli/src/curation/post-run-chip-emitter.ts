@@ -16,6 +16,14 @@
 //      only truth — a second process never writes a finished run's log (386 D-16). That is
 //      expressed as control flow rather than as a condition re-checked here: a leg that never
 //      builds an emitter cannot forget to guard one.
+//   3. RUN-SCOPED. The pump this emitter listens to is a GLOBAL FIFO: it claims the oldest
+//      queued job in the store, which is routinely another run's. A claimed job whose id is not
+//      in `chainJobIds` — the three ids THIS run's chain addresses, derived by the tail through
+//      the one shared derivation the read op also uses — yields ZERO envelopes here. The
+//      membership set is the only scoping input: never the kind, never the payload, never a
+//      pattern over a field of the outcome being guarded. Kind alone cannot answer "whose chain
+//      was that", and an emitter that guesses would put another run's transitions into this
+//      run's log while durable state said otherwise (T-388-16).
 //
 // It appends DIRECTLY, and never through the run bus or its subscribers. By the time a chip
 // exists the bus has published `runFinished`, every subscriber has been flushed and the exit
@@ -85,7 +93,14 @@ const STAGE_CHIPS: Partial<Record<JobKind, StageChipKinds>> = {
  */
 export interface ObservedJobOutcome {
   readonly ran: boolean
-  readonly job?: { readonly kind: JobKind }
+  /**
+   * The job AS CLAIMED — its id as well as its kind.
+   *
+   * The id is the only discriminator that answers "whose chain did the pump just watch". It was
+   * absent for exactly one round, and the emitter dispatched on kind alone: enough to pick a
+   * chip, never enough to pick a run.
+   */
+  readonly job?: { readonly id: string; readonly kind: JobKind }
   readonly disposition?: 'completed' | 'retry-scheduled' | 'cancelled' | 'failed'
   readonly handlerInvoked?: boolean
   readonly reason?: string
@@ -101,6 +116,16 @@ export interface PostRunChipEmitter {
 export interface CreatePostRunChipEmitterOptions {
   readonly agentQaRoot: string
   readonly runId: string
+  /**
+   * The three ids THIS run's chain addresses; anything else is another run's work.
+   *
+   * Arrives as DATA rather than as a derivation performed here, and that is the whole shape of
+   * the fix: the tail derives it once through `chainJobIdsForRun` — the same function the read
+   * op derives from — and hands it down. Two copies of the hash input would be two chains that
+   * review identically and address different rows, which is the failure the shared derivation
+   * exists to make impossible.
+   */
+  readonly chainJobIds: readonly string[]
   /** The tail's one wall clock, so envelope stamps and budget arithmetic share a source. */
   readonly now?: () => number
 }
@@ -163,7 +188,14 @@ export function createPostRunChipEmitter(
   return {
     observe(outcome: ObservedJobOutcome): void {
       if (!outcome.ran) return
-      const kind = outcome.job?.kind
+      const job = outcome.job
+      // An outcome that cannot be ATTRIBUTED must not be emitted. Silence here is a stage whose
+      // durable row still answers for it; a chip is a claim, and a claim with no claimant is the
+      // one thing this file may never append.
+      if (job === undefined) return
+      // Rule 3. The pump is a global FIFO, so this is the common case rather than the odd one.
+      if (!options.chainJobIds.includes(String(job.id))) return
+      const kind = job.kind
       if (kind === undefined) return
       const chips = STAGE_CHIPS[kind]
       // A kind outside the chain — `chat`, `consolidate`, `propose-improvements` — is not a
