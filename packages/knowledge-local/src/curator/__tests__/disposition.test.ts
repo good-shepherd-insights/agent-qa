@@ -4,11 +4,13 @@ import { join } from 'node:path'
 
 import {
   BundleOutcomeEventSchema,
+  DELTA_ORIGINS,
   asEvidenceToken,
   asRecordId,
   type Anchor,
   type CompareAndSet,
   type Delta,
+  type DeltaOrigin,
   type MeasurementBaseline,
   type MeasurementObservation,
   type RecordId,
@@ -19,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vites
 import {
   AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   appendMeasurementObservation,
+  appendOutcomeEvent,
   authoredCheckpointSchema,
   deriveBundleTrust,
   disposeDelta,
@@ -836,4 +839,137 @@ describe('disposeDelta measurement mechanism #9 (DCAY-02)', () => {
       },
     })
   })
+})
+
+// ── CR-02′: what a cited-id-integrity failure FALLS BACK TO is decided by origin ──────────────
+//
+// `checkCitedIdIntegrity` used to have exactly one answer for every delta that failed it:
+// downgrade to `MintUnknown`. For a pipeline-authored delta that is the right answer — a broken
+// citation legitimately degrades an agent's proposed change into a clarification candidate a
+// person can look at. For a delta a PERSON authored it fabricates authorship: the mint is a
+// verbatim clone of the cited record's own content, republished as a fresh `candidate`, and a
+// human's `accept` over a record they had already rejected therefore RESURRECTED the fact they
+// removed and reported success (CR-02′, reproduced end-to-end in apply-review.test.ts).
+//
+// So the fallback is chosen from a TOTAL mapping over `DELTA_ORIGINS` rather than from a
+// hand-picked member set, and this corpus walks the same runtime registry: every origin the
+// vocabulary has gets an executed row, and a fifth origin reds this walk by existing.
+//
+// The expectation table below is declared INDEPENDENTLY of the production mapping on purpose —
+// importing `CITED_ID_INTEGRITY_FALLBACK_BY_ORIGIN` and asserting against itself would be a
+// tautology, and mutation probe m1 (flipping the `user` member to `mint-unknown`) has to red.
+//
+// RED BASELINE, observed against unmodified disposition.ts before the mapping landed:
+//
+//   × user-origin Confirm citing a deprecated record → refuses
+//     → AssertionError: a user delta must be REFUSED rather than converted into minted content:
+//       expected [Function] to throw an error
+//   (same failure for each of the three failure conditions; the agent/import/system rows were
+//   GREEN throughout, which is the preservation half of the claim and the reason they are here.)
+describe('cited-id integrity: the fallback is total over DeltaOrigin (CR-02′)', () => {
+  const primary: Anchor = { t: 'el', role: 'button', name: 'Sign in' }
+  const page: Anchor = { t: 'page', route: '/login' }
+
+  type CitedIdIntegrityOutcome = 'refuses' | 'downgrades-to-mint-unknown'
+
+  const EXPECTED_OUTCOME_BY_ORIGIN = {
+    agent: 'downgrades-to-mint-unknown',
+    user: 'refuses',
+    import: 'downgrades-to-mint-unknown',
+    system: 'downgrades-to-mint-unknown',
+  } satisfies Record<DeltaOrigin, CitedIdIntegrityOutcome>
+
+  /**
+   * The THREE ways `checkCitedIdIntegrity` can fail, all of which the refusal must cover.
+   *
+   * Scoping the refusal to `status === 'deprecated'` alone would be the same one-axis-out error
+   * this phase keeps paying for: the check's failure domain is "this delta cites something this
+   * store cannot stand behind", and a vanished record or an unpersisted neighbor is that fact
+   * just as much as a tombstoned one. Mutation probe m3 exists to catch a narrowing here, and
+   * these rows are what make it red.
+   */
+  const FAILURE_CONDITIONS = ['deprecated', 'missing-from-disk', 'not-a-persisted-neighbor'] as const
+
+  function confirmCiting(origin: DeltaOrigin, targetId: RecordId): Delta {
+    return {
+      kind: 'Confirm',
+      origin,
+      scope,
+      citedIds: [targetId],
+      precondition: [observed(targetId)],
+      targetId,
+      evidenceToken: asEvidenceToken(`confirm-${origin}-${targetId}`),
+    }
+  }
+
+  function deprecate(recordId: RecordId): void {
+    const appended = appendOutcomeEvent(
+      {
+        knowledgeRoot,
+        productKey: 'storefront',
+        auditBaseDir: join(root, '.agent-qa'),
+        commitArtifacts: 'none',
+      },
+      recordId,
+      BundleOutcomeEventSchema.parse({
+        type: 'deprecated',
+        evidenceToken: `disposition-deprecated-${recordId}`,
+        curationJobId: `disposition-deprecated-job-${recordId}`,
+        buildOrdinal: 42,
+        reason: 'the reviewer removed it',
+      }),
+    )
+    if (appended.kind !== 'appended') throw new Error(`fixture deprecate failed: ${appended.kind}`)
+  }
+
+  for (const origin of DELTA_ORIGINS) {
+    const expected = EXPECTED_OUTCOME_BY_ORIGIN[origin]
+    for (const condition of FAILURE_CONDITIONS) {
+      it(`${origin}-origin Confirm whose cited id is ${condition} → ${expected}`, () => {
+        const victim = publishActive([primary, page])
+        const delta = confirmCiting(origin, victim.id)
+        // Only the LAST condition withholds the id from the persisted neighbour set; the other
+        // two present it and break the bundle tree instead, so all three return sites of the
+        // check are reached across the walk rather than only the one the fix was written for.
+        if (condition === 'deprecated') deprecate(victim.id)
+        if (condition === 'missing-from-disk') rmSync(victim.dir, { recursive: true, force: true })
+        const neighborIds = condition === 'not-a-persisted-neighbor' ? [] : [victim.id]
+
+        const dispose = () => disposeDelta({
+          delta,
+          checkpoint: checkpoint(delta, neighborIds, [observed(victim.id)]),
+          profile: { mode: 'drain-to-active' },
+          knowledgeRoot,
+          candidate: candidate([primary, page]),
+          drainState: drainState(),
+        })
+
+        if (expected === 'refuses') {
+          let thrown: unknown
+          expect(
+            () => { try { dispose() } catch (error) { thrown = error; throw error } },
+            'a user delta must be REFUSED rather than converted into minted content: minting '
+              + 'from a human instruction about existing records fabricates authorship',
+          ).toThrow()
+          expect((thrown as Error).name).toBe('UserDeltaCitationIntegrityError')
+          expect((thrown as { recordId?: RecordId }).recordId).toBe(victim.id)
+          expect((thrown as { deltaKind?: string }).deltaKind).toBe('Confirm')
+        } else {
+          // PRESERVED, and this half is drawn from OUTSIDE the refusal's own assumption: the
+          // pipeline's clarification-candidate behaviour is untouched. A mapping that
+          // over-broadened into the drain path would red here, not in the user rows.
+          const outcome = dispose()
+          expect(outcome).toMatchObject({
+            kind: 'downgraded',
+            reason: 'cited-id-integrity',
+            original: delta,
+          })
+          expect(
+            outcome.kind === 'downgraded' ? outcome.delta.kind : undefined,
+            'the pipeline fallback is still a MintUnknown clarification candidate',
+          ).toBe('MintUnknown')
+        }
+      })
+    }
+  }
 })
