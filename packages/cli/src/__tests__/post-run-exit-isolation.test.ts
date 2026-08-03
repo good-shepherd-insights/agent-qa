@@ -53,7 +53,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { curationTailLog } from '../commands/run.js'
 import { runVerdictFirstCurationTail } from '../curation/curation-tail.js'
 import {
-  defaultPostRunTailOperations,
   runPostRunTail,
   type PostRunTailHostInput,
   type PostRunTailOperations,
@@ -139,12 +138,6 @@ const FIXTURE_EVENT_LINES = [
     payload: { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: 3 },
   },
 ] as unknown as RunEventEnvelope[]
-
-/**
- * The shipped operation table, so the two legs this file records rather than replaces
- * (`acquireWriterLease`, `readPostProcessingStatus`) still do the production thing.
- */
-const SHIPPED: PostRunTailOperations = defaultPostRunTailOperations()
 
 const roots: string[] = []
 const hosts: LocalAgentHost[] = []
@@ -314,20 +307,10 @@ async function runScenario(
     const verdictScopedStdout = channels.stdout
     const verdictScopedStderr = channels.stderr
 
-    // 4. The tail, bound exactly as both run.ts sites bind it.
-    const tail = runPostRunTail(f.options({
-      ...input.operations,
-      acquireWriterLease: (root) => {
-        order.push('drain')
-        return (input.operations?.acquireWriterLease ?? SHIPPED.acquireWriterLease)(root)
-      },
-      readPostProcessingStatus: async (host, runId) => {
-        order.push('finish')
-        return await (
-          input.operations?.readPostProcessingStatus ?? SHIPPED.readPostProcessingStatus
-        )(host, runId)
-      },
-    }))
+    // 4. The tail, bound exactly as both run.ts sites bind it. Each leg records the moment the
+    //    WRAPPER called it — the ordering claim is about the wrapper's gates, so a landmark
+    //    that vanished when a leg short-circuited would let a reorder hide behind an absence.
+    const tail = runPostRunTail(f.options(input.operations))
     const unexpectedErrors: unknown[] = []
     const returned = await runVerdictFirstCurationTail({
       exitCode,
@@ -337,8 +320,14 @@ async function runScenario(
         stdoutAtEnqueue = channels.stdout
         await tail.enqueue()
       },
-      runTail: () => tail.drain(),
-      finish: (i) => tail.finish(i),
+      runTail: async () => {
+        order.push('drain')
+        await tail.drain()
+      },
+      finish: async (i) => {
+        order.push('finish')
+        await tail.finish(i)
+      },
       onUnexpectedError: (error) => {
         unexpectedErrors.push(error)
       },
@@ -506,5 +495,62 @@ describe('JOBQ-06 — an induced enqueue failure is invisible to the verdict', (
     expect(suffix).toContain(detail)
     expect(lines(suffix).length).toBeGreaterThanOrEqual(1)
     expect(failed.unexpectedErrors).toEqual([])
+  })
+})
+
+describe('JOBQ-06 — the structural halves', () => {
+  it('runs the enqueue only after the verdict output is complete and the code is frozen',
+    async () => {
+      const f = fixture()
+      const scenario = await runScenario(f)
+
+      // A behavioural pin, not a source grep: a wrapper that moved the enqueue past the drain,
+      // or past the detach gate, reorders this list.
+      expect(scenario.order).toEqual([
+        'verdict-output',
+        'exit-code-frozen',
+        'enqueue',
+        'drain',
+        'finish',
+      ])
+      // The enqueue observed a verdict-scoped output that was already whole — and nothing was
+      // appended to it afterwards, so no post-processing byte can precede a verdict byte.
+      expect(scenario.stdoutAtEnqueue).toBe(scenario.verdictScopedStdout)
+      expect(scenario.stdout).toBe(scenario.stdoutAtEnqueue)
+      expect(scenario.exitCode).toBe(mapVerdictToExitCode('failed'))
+    })
+
+  it('still enqueues before the detach short-circuit, with the close-out on the same channel',
+    async () => {
+      const f = fixture()
+      const scenario = await runScenario(f, { detach: true })
+
+      // D-03 under the final plan-04 tail shape: the enqueue and the close-out both run; the
+      // drain does not.
+      expect(scenario.order).toEqual(['verdict-output', 'exit-code-frozen', 'enqueue', 'finish'])
+      expect(scenario.stdout).toBe(scenario.verdictScopedStdout)
+      expect(scenario.exitCode).toBe(mapVerdictToExitCode('failed'))
+      expect(scenario.unexpectedErrors).toEqual([])
+      const suffix = tailSuffix(scenario.stderr, scenario.verdictScopedStderr)
+      expect(lines(suffix)).toEqual([
+        'post-processing — analysis: pending · curation: pending · issues: reserved',
+      ])
+    })
+
+  it('routes both run.ts tail sites through the one helper and no legacy per-site tail', () => {
+    const source = readFileSync(
+      new URL('../commands/run.ts', import.meta.url),
+      'utf8',
+    )
+    // Pitfall 1's regression pin: two sites, one helper, three legs each.
+    expect(source.match(/runPostRunTail\(/gu) ?? []).toHaveLength(2)
+    expect(source.match(/runVerdictFirstCurationTail\(/gu) ?? []).toHaveLength(2)
+    expect(source.match(/postRunTail\.enqueue\(\)/gu) ?? []).toHaveLength(2)
+    expect(source.match(/postRunTail\.drain\(\)/gu) ?? []).toHaveLength(2)
+    expect(source.match(/postRunTail\.finish\(/gu) ?? []).toHaveLength(2)
+    // The v51 per-site tail is named at neither site any more (388-02's extraction).
+    expect(source.match(/runCurationTail\(/gu) ?? []).toHaveLength(0)
+    // …and the navigation line this file mirrors is on stdout, where the tail never writes.
+    expect(source).toContain('console.log(`Run ID: ${runId}`)')
   })
 })
