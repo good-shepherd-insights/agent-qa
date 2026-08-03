@@ -17,7 +17,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
+import {
+  chainJobIdsForRun,
+  invokeFunction,
+  RUNS_POST_PROCESSING_FUNCTION_ID,
+} from '@vostride/agent-qa-agent'
 import type {
   ClockPort,
   ConfigReaderPort,
@@ -29,15 +33,27 @@ import {
   asRunId,
   canonicalJson,
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  FunctionScopeSchema,
   sha256hex,
 } from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff, Verdict } from '@vostride/agent-qa-schema'
+import type {
+  CompletedRunHandoff,
+  FunctionCaller,
+  PostProcessingStatus,
+  Verdict,
+} from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
 
 const RUN_ID = 'run-388-alpha'
+
+const CALLER: FunctionCaller = {
+  surface: 'test',
+  grantedScopes: [...FunctionScopeSchema.options],
+  safeMode: false,
+}
 
 const TEST_MODEL: JobModelCapability = {
   modelId: 'test:chain-terminal-notify',
@@ -147,6 +163,8 @@ interface Harness {
   readonly agentQaRoot: string
   readonly jobs: LocalAgentJobs
   readonly curateCalls: { runId: string; executionContext: unknown }[]
+  /** Kept so a case can ask the ONE read op what a surface would render (D-14). */
+  readonly host: LocalAgentHost
 }
 
 async function createHarness(options?: {
@@ -175,7 +193,7 @@ async function createHarness(options?: {
     },
   })
   hosts.push(host)
-  return { agentQaRoot, jobs: await host.jobs(), curateCalls }
+  return { agentQaRoot, jobs: await host.jobs(), curateCalls, host }
 }
 
 /**
@@ -374,6 +392,118 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     // No counts on a stage that never committed a bundle: zeros would claim it curated
     // nothing, which is a different sentence from never having got that far.
     expect(notifications[0]?.payload.stages.curation.curated).toBeUndefined()
+  })
+
+  // WR-03, the REJECT leg. Distinct from the case above in exactly one input: there the
+  // capability THREW, so the engine never saw a report at all. Here it RETURNS, successfully,
+  // and says the fold refused — which before the completeness gate landed the job `done` and
+  // wrote a notification row reading `curation: {status: 'done'}` for a fold that committed no
+  // bundle. The two cases look alike on purpose and are not the same measurement.
+  it('lands curation: failed when the fold never completes', async () => {
+    const harness = await createHarness({
+      curateRun: async () => ({ curated: 0, deprecated: 0, complete: false }),
+    })
+    const handoff = fixtureHandoff(RUN_ID)
+    writeHandoff(harness.agentQaRoot, handoff)
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+
+    const fence = await harness.jobs.store.adoptEpoch(1)
+    await harness.jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
+    await pump(harness.jobs, fence)
+
+    // The declared bound is what adjudicates, and it is spent at the CLAIM: three claims, the
+    // third terminal through failAndChain. A retryable row is immediately re-claimable (the
+    // store clears `claimed_at` and leaves the status `queued`), so the plain pump above
+    // exhausts the bound without any clock work.
+    const dump = await harness.jobs.store.dumpState()
+    expect(dump.jobs.find((row) => row.id === String(ids.analyzeRun))?.status).toBe('done')
+    expect(dump.jobs.find((row) => row.id === String(ids.curateMemory))).toMatchObject({
+      status: 'failed',
+      attempts: 3,
+    })
+    expect(harness.curateCalls).toHaveLength(3)
+
+    // The durable half of "the gate fired BEFORE the publish". Asserting only the absence would
+    // pass just as well against an empty checkpoint store or the wrong job id, so the
+    // checkpoint the handler publishes FIRST is read in the same breath as the one it must not.
+    expect(
+      await readCheckpointValue(harness.jobs, String(ids.curateMemory), 'candidates-authored'),
+    ).toEqual({ runId: RUN_ID })
+    expect(
+      await readCheckpointValue(harness.jobs, String(ids.curateMemory), 'bundle-committed'),
+    ).toBeUndefined()
+
+    const notifications = await harness.jobs.store.listNotifications()
+    expect(notifications).toHaveLength(1)
+    expect(notifications[0]?.payload).toMatchObject({
+      runId: RUN_ID,
+      outcome: 'failed',
+      stages: {
+        analysis: { status: 'done' },
+        curation: { status: 'failed' },
+        issues: { status: 'reserved' },
+      },
+    })
+    // No counts on a stage that committed no bundle: `0 curated` would be a claim about work
+    // that ran, and the fold's whole point in refusing is that it did not get there.
+    expect(notifications[0]?.payload.stages.curation.curated).toBeUndefined()
+    expect(notifications[0]?.payload.stages.curation.deprecated).toBeUndefined()
+
+    // What a surface renders, through the ONE read op (D-14). Implied by the row status above
+    // rather than independent of it — this pins that the projection is reached, not a second
+    // mapping claim (the mapping is post-processing-status.test.ts's).
+    const status = await invokeFunction(
+      harness.host.registry,
+      RUNS_POST_PROCESSING_FUNCTION_ID,
+      { runId: RUN_ID },
+      CALLER,
+    ) as PostProcessingStatus
+    expect(status.chips).toEqual({ analysis: 'done', curation: 'failed', issues: 'reserved' })
+  })
+
+  // WR-03, the ACCEPT leg. A gate that rejected everything would satisfy the case above just as
+  // well; this is the corpus case the gate must let THROUGH — and it turns on the fold's own
+  // designed recovery, which is a refold, not a repair.
+  it('recovers when a retry completes the fold', async () => {
+    let attempt = 0
+    const harness = await createHarness({
+      curateRun: async () => {
+        attempt += 1
+        return attempt === 1
+          ? { curated: 0, deprecated: 0, complete: false }
+          : { curated: 2, deprecated: 1, complete: true }
+      },
+    })
+    const handoff = fixtureHandoff(RUN_ID)
+    writeHandoff(harness.agentQaRoot, handoff)
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+
+    const fence = await harness.jobs.store.adoptEpoch(1)
+    await harness.jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
+    await pump(harness.jobs, fence)
+
+    const dump = await harness.jobs.store.dumpState()
+    expect(dump.jobs.find((row) => row.id === String(ids.curateMemory))).toMatchObject({
+      status: 'done',
+      // Two claims: the refused attempt and the one that completed. A row that landed done on
+      // its first attempt would mean the incomplete report never cost anything.
+      attempts: 2,
+    })
+    expect(harness.curateCalls).toHaveLength(2)
+
+    // The counts on the record are the COMPLETED attempt's, not the refused attempt's zeros.
+    expect(
+      await readCheckpointValue(harness.jobs, String(ids.curateMemory), 'bundle-committed'),
+    ).toEqual({ runId: RUN_ID, curated: 2, deprecated: 1 })
+
+    const notifications = await harness.jobs.store.listNotifications()
+    expect(notifications).toHaveLength(1)
+    expect(notifications[0]?.payload.outcome).toBe('done')
+    expect(notifications[0]?.payload.stages.curation).toEqual({
+      status: 'done',
+      curated: 2,
+      deprecated: 1,
+    })
   })
 
   // D-09/D-10. A host that dies after committing the terminal transaction but before anything
