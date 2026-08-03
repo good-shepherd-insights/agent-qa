@@ -483,9 +483,24 @@ export async function executeStep(
     // about, and without this drain its whole attribution ledger is lost (KREV-02, D-14).
     //
     // It lives HERE, at the single terminal funnel documented below, rather than at each exit:
-    // draining at the nine return sites would be an enumeration of a hand-picked member set that a
-    // tenth exit silently escapes. Routing through finish() is the only way a terminal exit exists
-    // in this file, so a tenth one inherits the drain by construction.
+    // draining at the individual return sites would be an enumeration of a hand-picked member set
+    // that the next exit silently escapes. Every terminal RETURN in this file routes through
+    // finish(), so a return-shaped exit nobody has written yet inherits the drain by construction.
+    //
+    // Scope, stated as narrowly as the tests measure it (WR-06, 387-19). RETURNS are the funnel's
+    // reach; the THROW-shaped exits are not covered and are outside this backstop by design, not by
+    // oversight — a throw leaves executeStep with no StepResult at all, so it abandons the step's
+    // entire evidence record and not merely this ledger. Folding them in is a behaviour change, and
+    // deliberately not one this comment pretends has happened.
+    //
+    // That exception is bounded by SHAPE, and the shape is a fact a test reds rather than a claim
+    // this comment asserts: `trace-threading.test.ts` → 'every throw-shaped exit is a re-raise
+    // after a missed abort re-check (387-19)' classifies every throw statement in this file and
+    // accepts exactly two shapes — a caught error re-raised immediately below the checkAbort()
+    // re-check (so the raise happens only because the error was NOT an abort), and a constructed
+    // `throw new …` for a violated invariant. A third shape, or a re-raise without its re-check,
+    // reds that scan. It pins no count of sites: a further conforming site is controlled for there
+    // and must stay silent, so this paragraph does not rot when one is added.
     //
     // Zero injected is the truthful argument, not a shortcut: a staged-but-never-consumed turn
     // rendered nothing, so every line the reader served is a cut candidate under the recorder's
