@@ -568,7 +568,24 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     const parked = join(proposalsDir(agentQaRoot), `${proposalId}.json.claimed.${process.pid}`)
     expect(existsSync(parked), 'the fixture must really have parked a claim to name').toBe(true)
     expect((refusal as ProposalApplyInFlightError).claimPath).toBe(parked)
-    expect((refusal as Error).message).toContain(parked)
+
+    // IN-02, 387-17: THIS SUPERSEDES 387-16's `message).toContain(parked)`, deliberately and with
+    // its contract preserved. 387-16 pinned the absolute path INTO the message because an
+    // operator who cannot see the filename cannot rename it back. That reason is unchanged — but
+    // this message is what crosses `knowledge.proposal.apply`'s function boundary uncaught, which
+    // means it can land in a tool result a model provider reads, carrying the host's home
+    // directory with it. So the two requirements are split rather than traded: the MESSAGE names
+    // the claim relative to `agentQaRoot` (same filename, same recovery instruction), and the
+    // absolute path stays on the `claimPath` FIELD above, byte-identical to what 387-16 pinned,
+    // for the operator's own tooling. The not-contains arm is the half that reds a regression.
+    const parkedRelative = relative(agentQaRoot, parked)
+    expect(parkedRelative, 'the relative form must still name the file, not just a suffix')
+      .toBe(join('proposals', `${proposalId}.json.claimed.${process.pid}`))
+    expect((refusal as Error).message).toContain(parkedRelative)
+    expect(
+      (refusal as Error).message,
+      'the host filesystem layout may not cross the function boundary inside an error message',
+    ).not.toContain(agentQaRoot)
 
     // …and the refusal changed nothing: no commit, and the winner's claim is untouched, so the
     // winner can still finish. A waiter that "recovered" by restoring the claim would have stolen
