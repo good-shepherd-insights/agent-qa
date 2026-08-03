@@ -1,0 +1,331 @@
+// The Phase 388 tracer: one finished run drives the REAL post-run chain end to end.
+//
+// Real sqlite, a real handoff document on disk, the real composition root, the real handler
+// bodies. The only injected fakes are the clock (so timestamps are assertable), the model
+// capability (nothing on this path authors) and `curateRun` — which is a CAPABILITY the
+// composition binds rather than a stub of the thing under test: `agent-local` cannot reach
+// the CLI's curation drain, and D-01 puts that binding in the run tail (plan 02). What is
+// under test here is the SEAM: enqueue -> analyze-run -> curate-memory -> exactly one
+// notification row, with deterministic chain ids and the frozen verdicts-authored shape.
+//
+// Why the assertions are on durable state rather than on returned outcomes: the whole point
+// of D-09 is that "notified exactly once" survives a crash, a second process and a replay,
+// and an assertion on a value the engine happened to return would be satisfied just as well
+// by an in-memory memo that the next process cannot see.
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
+import type {
+  ClockPort,
+  ConfigReaderPort,
+  JobCheckpointRecord,
+  JobModelCapability,
+} from '@vostride/agent-qa-agent'
+import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { canonicalJson, CURRENT_HANDOFF_SCHEMA_VERSION, sha256hex } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, Verdict } from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../composition/compose-local-agent.js'
+import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
+
+const RUN_ID = 'run-388-alpha'
+
+const TEST_MODEL: JobModelCapability = {
+  modelId: 'test:chain-terminal-notify',
+  generate: async () => {
+    throw new Error('the post-run chain never authors in 388')
+  },
+}
+
+const TEST_CONFIG: ConfigReaderPort = {
+  getMasked: () => Promise.resolve({
+    schemaVersion: 1,
+    configPath: '/tmp/chain-terminal-notify.config.yaml',
+    entries: [],
+  }),
+}
+
+/** Monotonic and fully determined, so every durable timestamp below is predictable. */
+function createSteppingClock(): ClockPort {
+  let tick = 0
+  return {
+    now() {
+      const stamp = `2026-02-02T00:00:${String(tick % 60).padStart(2, '0')}.000Z`
+      tick += 1
+      return stamp
+    },
+  }
+}
+
+/**
+ * The verdict the runner already persisted for the member it could classify (373-07).
+ *
+ * The fixture carries one member WITH this and one member WITHOUT, and that pairing is the
+ * point: a projection that dropped unclassified members, or one that overwrote a persisted
+ * verdict with its own fill, would still satisfy a fixture where every member looked alike.
+ */
+const PERSISTED_ROOT_CAUSE: Verdict = {
+  class: 'timeout',
+  producer: 'deterministic-classifier',
+  confidence: 1,
+  evidence: {
+    citedSteps: [0],
+    citedAnchors: [],
+    citedArtifacts: [],
+    rationale: 'member outcome timeout',
+  },
+  memoryMisdirectionRuledOut: true,
+  perTest: 0,
+}
+
+function fixtureHandoff(runId: string): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId,
+    scope: { tier: 'product', key: 'chain-terminal-storefront' },
+    buildOrdinal: 7,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'failed',
+    configDigests: { suiteConfigDigest: 'suite-digest', testConfigDigest: 'test-digest' },
+    startedAt: 1,
+    endedAt: 2,
+    tests: [
+      {
+        testId: 't_classified',
+        testName: 'member the classifier reached',
+        filePath: 'tests/classified.yaml',
+        testIndex: 0,
+        outcome: 'timeout',
+        steps: [],
+        rootCause: PERSISTED_ROOT_CAUSE,
+      },
+      {
+        testId: 't_unclassified',
+        testName: 'member the classifier declined',
+        filePath: 'tests/unclassified.yaml',
+        testIndex: 1,
+        outcome: 'failed',
+        steps: [],
+      },
+      {
+        testId: 't_passed',
+        testName: 'member that passed',
+        filePath: 'tests/passed.yaml',
+        testIndex: 2,
+        outcome: 'passed',
+        steps: [],
+      },
+    ],
+  } as CompletedRunHandoff
+}
+
+/** Writes the handoff exactly where the D-06 path derivation will look for it. */
+function writeHandoff(agentQaRoot: string, handoff: CompletedRunHandoff): void {
+  const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(String(handoff.runId)))
+  mkdirSync(runDir, { recursive: true })
+  writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(handoff)}\n`, 'utf8')
+}
+
+const roots: string[] = []
+const hosts: LocalAgentHost[] = []
+
+afterEach(async () => {
+  for (const host of hosts.splice(0)) await host.close()
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+interface Harness {
+  readonly agentQaRoot: string
+  readonly jobs: LocalAgentJobs
+  readonly curateCalls: { runId: string; executionContext: unknown }[]
+}
+
+async function createHarness(options?: {
+  readonly curateRun?: () => Promise<{ curated: number; deprecated: number }>
+}): Promise<Harness> {
+  const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-chain-notify-'))
+  roots.push(agentQaRoot)
+  const curateCalls: { runId: string; executionContext: unknown }[] = []
+  const host = composeLocalAgent({
+    agentQaRoot,
+    config: TEST_CONFIG,
+    knowledgeRoot: () => join(agentQaRoot, 'knowledge'),
+    model: () => TEST_MODEL,
+    clock: createSteppingClock(),
+    postRun: {
+      curateRun: async (input) => {
+        curateCalls.push({ runId: input.runId, executionContext: input.executionContext })
+        return options?.curateRun === undefined
+          ? { curated: 1, deprecated: 0 }
+          : await options.curateRun()
+      },
+    },
+  })
+  hosts.push(host)
+  return { agentQaRoot, jobs: await host.jobs(), curateCalls }
+}
+
+/**
+ * The bounded pump, shaped like the daemon's dispatcher loop: claim, run, stop when the
+ * queue reports nothing eligible. Bounded so a kind that retries forever fails the test
+ * instead of hanging it.
+ */
+async function pump(jobs: LocalAgentJobs, fence: { epoch: number }): Promise<number> {
+  for (let pumped = 0; pumped < 24; pumped += 1) {
+    const outcome = await jobs.queue.runNextJob({ fence })
+    if (!outcome.ran) return pumped
+  }
+  throw new Error('the post-run chain did not drain within the pump bound')
+}
+
+/** The value a checkpoint carries, with the engine's record envelope peeled exactly once. */
+async function readCheckpointValue(
+  jobs: LocalAgentJobs,
+  jobId: string,
+  checkpointId: string,
+): Promise<unknown> {
+  const recorded = await jobs.store.readCheckpoint(jobId as never, checkpointId)
+  if (!recorded.found) return undefined
+  return (recorded.payload as JobCheckpointRecord).value
+}
+
+describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => {
+  it('drives enqueue -> analyze-run -> curate-memory -> exactly one notification row', async () => {
+    const harness = await createHarness()
+    const handoff = fixtureHandoff(RUN_ID)
+    writeHandoff(harness.agentQaRoot, handoff)
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+
+    const fence = await harness.jobs.store.adoptEpoch(1)
+    await harness.jobs.queue.recoverAbandonedClaims({ fence })
+    const enqueued = await harness.jobs.queue.enqueue(
+      'analyze-run',
+      {
+        runId: RUN_ID,
+        handoffDigest: handoffDigest(handoff),
+        handoffSchemaVersion: handoff.schemaVersion,
+        executionContext: handoff.executionContext,
+      },
+      RUN_ID,
+    )
+    expect(String(enqueued.job.id)).toBe(String(ids.analyzeRun))
+
+    await pump(harness.jobs, fence)
+
+    // The frozen 389 shape: the persisted verdict survives verbatim, and the member the
+    // classifier declined is filled with a deterministic 'unknown' rather than dropped.
+    const authored = await readCheckpointValue(
+      harness.jobs,
+      String(ids.analyzeRun),
+      'verdicts-authored',
+    ) as { runId: string; verdicts: Verdict[] }
+    expect(authored.runId).toBe(RUN_ID)
+    expect(authored.verdicts).toHaveLength(2)
+    expect(authored.verdicts[0]).toEqual(PERSISTED_ROOT_CAUSE)
+    expect(authored.verdicts[1]).toMatchObject({
+      class: 'unknown',
+      producer: 'deterministic-classifier',
+      confidence: 0,
+      perTest: 1,
+    })
+
+    // The chain enqueued curate-memory and NOTHING else (D-04): the triage slot is declared
+    // and never filled, so its deterministically derived id must address no row at all.
+    const dump = await harness.jobs.store.dumpState()
+    const byId = new Map(dump.jobs.map((row) => [row.id, row]))
+    expect(dump.jobs).toHaveLength(2)
+    expect(byId.get(String(ids.analyzeRun))).toMatchObject({ kind: 'analyze-run', status: 'done' })
+    expect(byId.get(String(ids.curateMemory))).toMatchObject({
+      kind: 'curate-memory',
+      status: 'done',
+    })
+    expect(byId.has(String(ids.triageIssues))).toBe(false)
+
+    // The successor payload carries what the daemon needs to resolve posture per claimed job
+    // (386 D-09/D-12) — a curate-memory payload without executionContext is the DAEM-02 bug.
+    expect(harness.curateCalls).toEqual([
+      { runId: RUN_ID, executionContext: 'local-headless' },
+    ])
+
+    const notifications = await harness.jobs.store.listNotifications()
+    expect(notifications).toHaveLength(1)
+    expect(notifications[0]?.runId).toBe(RUN_ID)
+    expect(notifications[0]?.payload).toMatchObject({
+      schemaVersion: 1,
+      runId: RUN_ID,
+      outcome: 'done',
+      verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },
+      stages: {
+        analysis: { status: 'done' },
+        curation: { status: 'done', curated: 1, deprecated: 0 },
+        issues: { status: 'reserved' },
+      },
+    })
+  })
+
+  it('dedupes a second identical enqueue at the seam (385 D-08)', async () => {
+    const harness = await createHarness()
+    const handoff = fixtureHandoff(RUN_ID)
+    writeHandoff(harness.agentQaRoot, handoff)
+    const payload = {
+      runId: RUN_ID,
+      handoffDigest: handoffDigest(handoff),
+      handoffSchemaVersion: handoff.schemaVersion,
+      executionContext: handoff.executionContext,
+    }
+
+    const first = await harness.jobs.queue.enqueue('analyze-run', payload, RUN_ID)
+    const second = await harness.jobs.queue.enqueue('analyze-run', payload, RUN_ID)
+
+    expect(first.deduped).toBe(false)
+    expect(second.deduped).toBe(true)
+    expect(String(second.job.id)).toBe(String(first.job.id))
+    // Dedupe alone is a shipped 385 guarantee and would pass here with no 388 code at all.
+    // What makes this a pin on THIS phase is the address: the one row both enqueues collapse
+    // onto must be the row `chainJobIdsForRun` predicts from `runId` alone, because that
+    // derivation — not a stored chain table — is what every later reader addresses (Pattern 2).
+    expect(String(first.job.id)).toBe(String(chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE).analyzeRun))
+    const dump = await harness.jobs.store.dumpState()
+    expect(dump.jobs.filter((row) => row.kind === 'analyze-run')).toHaveLength(1)
+  })
+
+  it('fails analyze-run permanently when the handoff bytes drifted, still chaining curation', async () => {
+    const harness = await createHarness()
+    const handoff = fixtureHandoff(RUN_ID)
+    writeHandoff(harness.agentQaRoot, handoff)
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+
+    const fence = await harness.jobs.store.adoptEpoch(1)
+    await harness.jobs.queue.enqueue(
+      'analyze-run',
+      {
+        runId: RUN_ID,
+        handoffDigest: handoffDigest(handoff),
+        handoffSchemaVersion: handoff.schemaVersion,
+        executionContext: handoff.executionContext,
+      },
+      RUN_ID,
+    )
+
+    // D-06: the digest pins that the bytes analyzed are the bytes enqueued. Rewriting the
+    // document after the enqueue is exactly the drift the pin exists to catch.
+    writeHandoff(harness.agentQaRoot, { ...handoff, buildOrdinal: 8 } as CompletedRunHandoff)
+
+    await pump(harness.jobs, fence)
+
+    const dump = await harness.jobs.store.dumpState()
+    const analyze = dump.jobs.find((row) => row.id === String(ids.analyzeRun))
+    expect(analyze).toMatchObject({ kind: 'analyze-run', status: 'failed' })
+    // A dead analysis head must never leave curation waiting on it (D-20 posture).
+    expect(dump.jobs.some((row) => row.id === String(ids.curateMemory))).toBe(true)
+  })
+})
+
+/** The one digest mint, mirrored from the run tail's `curationTailHandoffDigest`. */
+function handoffDigest(handoff: CompletedRunHandoff): string {
+  return sha256hex(canonicalJson(handoff))
+}
