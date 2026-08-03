@@ -6,9 +6,18 @@
 // particular is populated with a real embedder-shaped backfill; without that, "no vec row" would
 // have been true before the verb ran and the whole half would have been measuring nothing.
 
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
@@ -23,10 +32,12 @@ import { appendOutcomeEvent } from '../../bundle-append.js'
 import { publishBundle, type BundleStoreConfig } from '../../bundle-publish.test-helper.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
 import { UserDeltaCitationIntegrityError } from '../../curator/disposition.js'
+import { reconcileOnDrainStart } from '../../journal/reconcile.js'
 import { listBundles } from '../../list-bundles.js'
 import { openIndexReaderConnection, vecTableName } from '../../index-open.js'
 import { rebuildIndex } from '../../index-rebuild.js'
 import { acquireWriterLease, releaseLease } from '../../lease/writer-lease.js'
+import { claimedRoot, listQueuedCandidates } from '../../queue/curation-queue.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,
@@ -53,6 +64,60 @@ import {
 } from '../proposals-store.js'
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
+
+/**
+ * A content hash of every regular file under a directory tree, path-relative and sorted.
+ *
+ * Paths are part of the digest, not just contents: an apply that created an empty marker file
+ * or renamed a bundle directory would leave every byte of content identical, and a
+ * contents-only digest would call that "unchanged".
+ *
+ * DELIBERATELY DUPLICATED from propose-apply.test.ts:48-74 rather than extracted to a shared
+ * module. The sibling wave-11 plan 387-18 owns that file and runs in the same wave; a shared
+ * helper would couple the two diffs for no gain, and a digest helper is exactly the kind of
+ * thing each corpus should be able to read in full without leaving its own file.
+ */
+function hashTree(root: string): string {
+  const digest = createHash('sha256')
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    )) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        digest.update(`D:${relative(root, path)}\n`)
+        walk(path)
+        continue
+      }
+      digest.update(`F:${relative(root, path)}:${statSync(path).size}:`)
+      digest.update(readFileSync(path))
+      digest.update('\n')
+    }
+  }
+  walk(root)
+  return digest.digest('hex')
+}
+
+/**
+ * The digest's own input domain, spelled out — asserted BEFORE the digest so a leak is NAMED.
+ *
+ * `hashTree` answers "did anything change" with one opaque hex string; a corpus whose only
+ * statement is that string reports a leak as `expected 'a1b2…' to be 'c3d4…'`, which tells the
+ * next reader nothing about WHERE. This listing is the same walk with the contents dropped, and
+ * asserting it first means the failure output prints the leaked path itself.
+ */
+function treeFiles(root: string): string[] {
+  const found: string[] = []
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) walk(path)
+      else found.push(relative(root, path))
+    }
+  }
+  walk(root)
+  return found.sort()
+}
 
 interface RecallRows {
   readonly fts: number
@@ -1037,6 +1102,132 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect(rowsFor(recordId)[0]?.counters.confirmed).toBe(1)
     expect(bundleDirCount()).toBe(dirsBefore)
     expect(new Set(rowsFor(recordId).map((row) => row.dir)).size).toBe(1)
+  })
+
+  // ── CR-02″: the refusal's neutrality is measured over the WHOLE knowledge root ──────────────
+  //
+  // The two cases below exist because round 2's gates could not see the leak they were written
+  // to catch. `expectNoUnauthoredMint` reads `listBundles`, and `bundleDirCount` reads
+  // `enumerateBundleDirs`; both observe the BUNDLE tree, and round 1's refusal moved the residue
+  // one directory over — into `memory/queue/claimed/`, where the knowledge-port bridge had
+  // already materialized a curation candidate seeded from the tombstoned record's own
+  // `summarySeed` / `anchors` / `bodySeed` / `kind` before disposition ever ran. Nothing unwound
+  // it on the throw, `reconcileOnDrainStart` requeued it under the next lease, and the curator
+  // re-authored the removed fact one drain later with `origin: 'agent'`.
+  //
+  // So the invariant here is the WHOLE root, not a shape of harm somebody enumerated. The bundle
+  // gates stay — they name the specific harm and print a legible diff — but the digest is what
+  // makes the next narrowing a test failure rather than an argument.
+  //
+  // RED BASELINE, observed against unmodified knowledge-store.ts (bridgeDelta still writing),
+  // transcribed from the failing run:
+  //
+  //   × a refused accept leaves the WHOLE knowledge root byte-identical (CR-02″)
+  //     → AssertionError: a refused apply may not leave a file ANYWHERE under the knowledge root
+  //       — the queue tree is inside the invariant, not outside it:
+  //       expected [ '.epoch', '.gitignore', …(10) ] to deeply equal [ '.epoch', … …(9) ]
+  //       - Expected  + Received
+  //       + "memory/queue/claimed/867e619b-7876-444a-8d26-eb89789674e8/
+  //          07491443aeead09c87ccc3fe31b96da13ec8728c516528e6f002055c1e4f030e/payload.json"
+  //   × the next drain adopts NOTHING from a refused accept (CR-02″ requeue half)
+  //     → AssertionError: a refusal must leave the next drain nothing to adopt: expected 1 to be 0
+  //
+  // (the leaked payload.json is the candidate the requeue then adopts — one leak, two cases. The
+  // lease uuid and the candidate content address vary per run; every other path in the listing was
+  // byte-identical across the refusal, which is why the digest half is an equality and not a
+  // tolerance.)
+
+  it('a refused accept leaves the WHOLE knowledge root byte-identical (CR-02″)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    const tombstoning = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeReject(recordId, 'the first decision'),
+    })
+    expect(tombstoning.outcome, 'the tombstoning apply is fixture, not subject').toBe('applied')
+
+    const proposalId = proposeAccept(recordId)
+    const filesBefore = treeFiles(knowledgeRoot)
+    const treeBefore = hashTree(knowledgeRoot)
+
+    const refusal = await applyReview({ agentQaRoot, knowledgeRoot, proposalId })
+      .catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(UserDeltaCitationIntegrityError)
+
+    expect(
+      treeFiles(knowledgeRoot),
+      'a refused apply may not leave a file ANYWHERE under the knowledge root — the queue tree '
+        + 'is inside the invariant, not outside it',
+    ).toEqual(filesBefore)
+    expect(
+      hashTree(knowledgeRoot),
+      'the refusal must be byte-identical over the whole root: paths, sizes and contents',
+    ).toBe(treeBefore)
+    // The specific shape the leak took, named so a regression reads as itself rather than as a
+    // digest mismatch. This is a consequence of the invariant above, never a substitute for it.
+    expect(
+      existsSync(claimedRoot(knowledgeRoot)),
+      'the write-free bridge materializes no claimed candidate, so the tree never appears',
+    ).toBe(false)
+
+    // POTENCY, measured over THIS root and THIS digest rather than asserted about hashing in
+    // general: without it a digest taken over the wrong directory would report success forever.
+    // One byte, deliberately written, must move it.
+    writeFileSync(join(knowledgeRoot, 'potency-probe.txt'), 'x', 'utf8')
+    expect(
+      hashTree(knowledgeRoot),
+      'the invariant must be FALSIFIABLE over this exact root, or it measures nothing',
+    ).not.toBe(treeBefore)
+  })
+
+  it('the next drain adopts NOTHING from a refused accept (CR-02″ requeue half)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    const tombstoning = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeReject(recordId, 'the first decision'),
+    })
+    expect(tombstoning.outcome).toBe('applied')
+
+    const refusal = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeAccept(recordId),
+    }).catch((error: unknown) => error)
+    expect(refusal).toBeInstanceOf(UserDeltaCitationIntegrityError)
+
+    // A DIFFERENT lease, which is the whole point: `reconcileOnDrainStart` skips its own
+    // authority's claims and recovers everybody else's, so the next drain is exactly a caller
+    // holding a lease the refusing apply did not hold.
+    const lease = acquireWriterLease(knowledgeRoot)
+    if (lease.kind !== 'acquired') throw new Error('fixture could not take the lease')
+    const replayed: string[] = []
+    try {
+      const report = reconcileOnDrainStart({
+        knowledgeRoot,
+        writerAuthority: { leaseId: lease.leaseId, epoch: lease.epoch },
+        hasIndexRow: () => true,
+        applyIndexDelta: (intent) => { replayed.push(intent.bundleId) },
+        deriveIndexRowFromBundle: (bundleId) => { replayed.push(bundleId) },
+      })
+      expect(
+        report.jobsRequeued,
+        'a refusal must leave the next drain nothing to adopt: a requeued candidate is the '
+          + 'removed fact re-entering under `origin: agent` one drain later',
+      ).toBe(0)
+    } finally {
+      releaseLease({ knowledgeRoot, leaseId: lease.leaseId })
+    }
+
+    expect(listQueuedCandidates(knowledgeRoot), 'nothing was seeded into the pending queue')
+      .toEqual([])
+    expect(replayed, 'and no index work was inherited from a commit that never happened')
+      .toEqual([])
+    // …and the record the reviewer removed is still removed, which is the positive half: a
+    // reconcile that recovered nothing because the STORE was empty would satisfy every negative.
+    expect(rowsFor(recordId)[0]?.status).toBe('deprecated')
   })
 
   it('refuses an input claiming BOTH writerAuthority and delegate (WR-04)', async () => {
