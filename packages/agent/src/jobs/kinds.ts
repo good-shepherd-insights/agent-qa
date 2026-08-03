@@ -388,6 +388,19 @@ function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandl
       runId: record.runId,
       executionContext: record.executionContext,
     })
+    // WR-03. The gate sits BEFORE the publish, not after it: `bundle-committed` is named for an
+    // event, and a fold that refused wrote no bundle. Publishing it and then reporting the
+    // failure would leave the chain terminal reading counts off a checkpoint whose event never
+    // happened. Retryable rather than permanent because the fold's own recovery IS a refold —
+    // it withheld the receipt precisely so the run folds again — and the declared bound
+    // (maxAttempts: 3, onPermanentFailure: 'halt-chain') is what decides when refolding stops.
+    if (!counts.complete) {
+      return {
+        status: 'retryable',
+        reason: 'the curation fold did not complete and wrote no receipt; the stage will retry '
+          + 'under its declared bound',
+      }
+    }
     await context.publishCheckpoint('bundle-committed', {
       runId: record.runId,
       curated: counts.curated,
