@@ -328,7 +328,139 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     // A dead analysis head must never leave curation waiting on it (D-20 posture).
     expect(dump.jobs.some((row) => row.id === String(ids.curateMemory))).toBe(true)
   })
+
+  // D-12. The chain ALWAYS terminates in a notification, and a failure is exactly when a user
+  // most needs one — a success-only notify would be silent about the runs that went worst.
+  it('notifies on the FAILURE terminal, reporting the failed stage honestly', async () => {
+    const harness = await createHarness({
+      curateRun: () => {
+        throw new Error('the knowledge root is unwritable')
+      },
+    })
+    const handoff = fixtureHandoff(RUN_ID)
+    writeHandoff(harness.agentQaRoot, handoff)
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+
+    const fence = await harness.jobs.store.adoptEpoch(1)
+    await harness.jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
+    await pump(harness.jobs, fence)
+
+    const dump = await harness.jobs.store.dumpState()
+    expect(dump.jobs.find((row) => row.id === String(ids.analyzeRun))?.status).toBe('done')
+    // The bound is spent at the CLAIM, so three claims is three attempts and the third is
+    // terminal — the permanent failure lands through failAndChain, not recordFailure.
+    expect(dump.jobs.find((row) => row.id === String(ids.curateMemory))).toMatchObject({
+      status: 'failed',
+      attempts: 3,
+    })
+
+    const notifications = await harness.jobs.store.listNotifications()
+    expect(notifications).toHaveLength(1)
+    expect(notifications[0]?.payload).toMatchObject({
+      runId: RUN_ID,
+      outcome: 'failed',
+      // Honest per stage: the analysis really did succeed, and saying otherwise would be as
+      // wrong as saying the chain finished clean.
+      stages: {
+        analysis: { status: 'done' },
+        curation: { status: 'failed' },
+        issues: { status: 'reserved' },
+      },
+    })
+    // No counts on a stage that never committed a bundle: zeros would claim it curated
+    // nothing, which is a different sentence from never having got that far.
+    expect(notifications[0]?.payload.stages.curation.curated).toBeUndefined()
+  })
+
+  // D-09/D-10. A host that dies after committing the terminal transaction but before anything
+  // downstream observed it replays that terminal on recovery. The dedupe has to be the store's
+  // — a caller-side "have I notified?" read is two decisions about one row with a window
+  // between them, and that window is exactly where the second notification gets written.
+  it('dedupes a replayed chain terminal on the unique index, byte-identically', async () => {
+    const harness = await createHarness()
+    const handoff = fixtureHandoff(RUN_ID)
+    writeHandoff(harness.agentQaRoot, handoff)
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+
+    const fence = await harness.jobs.store.adoptEpoch(1)
+    await harness.jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
+    await pump(harness.jobs, fence)
+
+    const before = await harness.jobs.store.listNotifications()
+    expect(before).toHaveLength(1)
+
+    // The replay: the SAME terminal verb, with the same record, against rows that are already
+    // terminal. This is what a recovered host does, expressed without a second process.
+    await harness.jobs.store.completeAndChain(ids.curateMemory, [], fence, {
+      dedupeKey: RUN_ID,
+      candidateJobIds: [ids.analyzeRun, ids.curateMemory, ids.triageIssues],
+      payloadJson: canonicalJson({ ...before[0]?.payload, outcome: 'failed' }),
+    })
+
+    const after = await harness.jobs.store.listNotifications()
+    expect(after).toHaveLength(1)
+    // Byte-identical, and deliberately replayed with a DIFFERENT payload: an upsert would pass
+    // a "still one row" assertion while quietly rewriting the record every replay touched.
+    expect(after[0]?.payload).toEqual(before[0]?.payload)
+    expect(after[0]?.createdAt).toBe(before[0]?.createdAt)
+  })
+
+  // The D-04 narrowing, measured end to end. A fallback that still mapped over the whole
+  // declared successor list would enqueue a triage job HERE — on exactly the runs whose
+  // analysis died — and the chain would then wait on a job that D-04 says never exists.
+  it('notifies honestly when the analysis died and curation carried on', async () => {
+    const harness = await createHarness()
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+    // No handoff written at all: the derived path addresses nothing, which is permanent.
+    const fence = await harness.jobs.store.adoptEpoch(1)
+    await harness.jobs.queue.enqueue(
+      'analyze-run',
+      {
+        runId: RUN_ID,
+        handoffDigest: 'a'.repeat(64),
+        handoffSchemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+        executionContext: 'local-headless',
+      },
+      RUN_ID,
+    )
+    await pump(harness.jobs, fence)
+
+    const dump = await harness.jobs.store.dumpState()
+    expect(dump.jobs.find((row) => row.id === String(ids.analyzeRun))?.status).toBe('failed')
+    expect(dump.jobs.find((row) => row.id === String(ids.curateMemory))?.status).toBe('done')
+    expect(dump.jobs.some((row) => row.id === String(ids.triageIssues))).toBe(false)
+    // The successor really was handed the run's identity and posture by the FALLBACK, not
+    // only by the success path.
+    expect(harness.curateCalls).toEqual([
+      { runId: RUN_ID, executionContext: 'local-headless' },
+    ])
+
+    const notifications = await harness.jobs.store.listNotifications()
+    expect(notifications).toHaveLength(1)
+    expect(notifications[0]?.payload).toMatchObject({
+      runId: RUN_ID,
+      outcome: 'failed',
+      // The chain proceeded with no verdicts and the record says so, even though the job that
+      // reported the terminal is the one that succeeded afterwards.
+      stages: {
+        analysis: { status: 'failed' },
+        curation: { status: 'done', curated: 1, deprecated: 0 },
+        issues: { status: 'reserved' },
+      },
+      verdictSummary: { total: 0, byClass: {} },
+    })
+  })
 })
+
+/** The D-06 payload the run tail will enqueue with. Minted once, used by every leg. */
+function enqueuePayload(handoff: CompletedRunHandoff): Record<string, unknown> {
+  return {
+    runId: String(handoff.runId),
+    handoffDigest: handoffDigest(handoff),
+    handoffSchemaVersion: handoff.schemaVersion,
+    executionContext: handoff.executionContext,
+  }
+}
 
 /** The one digest mint, mirrored from the run tail's `curationTailHandoffDigest`. */
 function handoffDigest(handoff: CompletedRunHandoff): string {
