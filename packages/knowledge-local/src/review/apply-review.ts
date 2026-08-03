@@ -85,14 +85,31 @@ export const APPLY_IN_FLIGHT_WAIT_MS = 5_000
  */
 export const APPLY_IN_FLIGHT_POLL_MS = 25
 
-/** The typed refusal when another caller holds the claim and has not finished (CR-03). */
+/**
+ * The typed refusal when another caller holds the claim and has not finished (CR-03).
+ *
+ * `claimPath` is the parked claim file, when the resolution found one, and it is in the message
+ * rather than only on the object because the loudest reason to hit this refusal is an ORPHANED
+ * claim — a winner that crashed mid-commit — whose only recovery until Phase 391's reaper lands
+ * is a human renaming that file back (D-17, WR-03). An operator who has to read this package's
+ * source to learn the naming scheme has been disclosed to in name only (WR-06).
+ */
 export class ProposalApplyInFlightError extends Error {
-  constructor(readonly proposalId: string, readonly waitedMs: number) {
+  constructor(
+    readonly proposalId: string,
+    readonly waitedMs: number,
+    readonly claimPath?: string,
+  ) {
     super(
       `Another process is mid-apply of ${proposalId} and did not finish within ${waitedMs}ms. ` +
         'Nothing was lost and nothing was applied twice: the proposal is claimed, not missing. ' +
         'Retrying returns the winner\'s receipt if the apply completed, or finds the proposal ' +
-        'pending again if the winner refused and put it back.',
+        'pending again if the winner refused and put it back.' +
+        (claimPath === undefined
+          ? ''
+          : ` The claim is parked at ${claimPath}. A winner that died mid-commit leaves it there ` +
+            `until Phase 391's reaper can decide the winner is gone; renaming it back to ` +
+            `${proposalId}.json re-opens the proposal for apply.`),
     )
     this.name = 'ProposalApplyInFlightError'
   }
@@ -330,7 +347,12 @@ async function settleClaim(
       // applying it right now", and since 387-12 the two are told apart rather than merged.
       throw new ProposalNotFoundError(input.proposalId)
     }
-    if (Date.now() >= deadline) throw new ProposalApplyInFlightError(input.proposalId, waitMs)
+    if (Date.now() >= deadline) {
+      // The arm's own data reaches the refusal: whichever claim file the LAST resolution actually
+      // found is the one an operator has to deal with, so it is read off the outcome rather than
+      // reconstructed here where a second copy of the naming scheme could drift (WR-06).
+      throw new ProposalApplyInFlightError(input.proposalId, waitMs, claim.claimPath)
+    }
     await new Promise((resolve) => setTimeout(resolve, APPLY_IN_FLIGHT_POLL_MS))
   }
 }

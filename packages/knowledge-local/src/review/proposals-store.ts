@@ -152,6 +152,9 @@ export type ConsumeProposalOutcome =
    * looking, so there is nothing to report as missing and nothing yet to take. Both are answered
    * by re-asking, which is what the wait loop above this module already does.
    *
+   * `claimPath` names the parked file when there IS one, and is absent in the handed-back state
+   * for the honest reason that no claim file exists to name (WR-06).
+   *
    * The claim is taken by renaming the pending name away FIRST and the applied name is written
    * LAST, so for the entire duration of `store.commit()` neither name exists. Without this arm a
    * caller arriving in that window is told the id names nothing — which is exactly the confusion
@@ -165,28 +168,36 @@ export type ConsumeProposalOutcome =
    * liveness model, which D-17 scopes to Phase 391 (the orphaned-claim reaper is WR-03); this
    * arm is the substrate 391 reaps against, not a substitute for it.
    */
-  | { kind: 'apply-in-flight' }
+  | { kind: 'apply-in-flight'; claimPath?: string }
   | { kind: 'not-found' }
 
 /**
- * Whether SOME process has this exact proposal parked under a claim name right now.
+ * The path SOME process has this exact proposal parked at right now, or `undefined`.
  *
  * A POINT LOOKUP FOR ONE ID, not an inbox. It reads the directory because that is the only way
  * to see a claim whose suffix is another process's pid, but it answers one question about one
- * id and returns a boolean — there is deliberately no way to get a LIST out of it, because
+ * id and returns at most ONE path — there is deliberately no way to get a LIST out of it, because
  * enumeration is 391's (D-17) and a listing verb that arrived here by accident would be the
  * substrate quietly growing the surface it was scoped out of.
  *
+ * It returns the path rather than a boolean for one reason: the typed refusal an orphaned claim
+ * produces has to be actionable, and until 391's reaper exists the recovery is a human renaming
+ * that file back. A refusal that made an operator derive the naming scheme by reading this module
+ * is a disclosure in name only (WR-06).
+ *
  * The prefix is `<proposalId>.json.claimed.`, which cannot collide with two neighbours it sits
  * beside: `<proposalId>.applied.json` does not start with it, and the `.json` separator means a
- * proposal id of `p1` cannot match `p12`'s claim.
+ * proposal id of `p1` cannot match `p12`'s claim. Nor does it match a RETIRED marker
+ * (`<proposalId>.applied.json.claim`), which is why a scan can see nothing where a publish just
+ * happened — the fact the resolution below is built around.
  */
-function claimMarkerPresent(agentQaRoot: string, proposalId: string): boolean {
+function findClaimMarker(agentQaRoot: string, proposalId: string): string | undefined {
   const prefix = `${proposalId}.json.claimed.`
   try {
-    return readdirSync(proposalsDir(agentQaRoot)).some((entry) => entry.startsWith(prefix))
+    const entry = readdirSync(proposalsDir(agentQaRoot)).find((name) => name.startsWith(prefix))
+    return entry === undefined ? undefined : join(proposalsDir(agentQaRoot), entry)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
   }
 }
@@ -253,10 +264,10 @@ export function claimPendingProposal(
     const applied = readAppliedProposal(agentQaRoot, proposalId)
     if (applied !== undefined) return { kind: 'already-applied', record: applied }
     hooks?.onAfterFirstRead?.()
-    const marker = claimMarkerPresent(agentQaRoot, proposalId)
+    const marker = findClaimMarker(agentQaRoot, proposalId)
     const published = readAppliedProposal(agentQaRoot, proposalId)
     if (published !== undefined) return { kind: 'already-applied', record: published }
-    if (marker) return { kind: 'apply-in-flight' }
+    if (marker !== undefined) return { kind: 'apply-in-flight', claimPath: marker }
     // No marker and no applied file: if the pending name is back, the retirement was a RESTORE
     // and this proposal is applicable again. Answering `apply-in-flight` hands it to the caller's
     // existing bounded retry loop, which re-asks and takes the claim on its next poll — rather
