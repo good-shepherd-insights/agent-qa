@@ -143,6 +143,21 @@ export async function killIfRunning(child: ChildProcess): Promise<void> {
   await exited
 }
 
+/**
+ * The other way a daemon can go: an operator stop.
+ *
+ * SIGTERM rather than SIGKILL, awaited to a real exit, because the closed-socket proof needs the
+ * socket to be genuinely gone — a killed daemon leaves its address behind and would let a later
+ * reader wonder whether anything could still have been asked.
+ */
+export async function stopDaemonGracefully(daemon: RunningDaemon): Promise<number | null> {
+  expect(daemon.child.exitCode, 'the daemon must still be running to be stopped').toBeNull()
+  const exited = once(daemon.child, 'exit')
+  expect(daemon.child.kill('SIGTERM')).toBe(true)
+  const [code] = (await exited) as [number | null, string | null]
+  return code
+}
+
 export async function stopAllPostRunDaemons(): Promise<void> {
   for (const child of running.splice(0)) await killIfRunning(child)
 }

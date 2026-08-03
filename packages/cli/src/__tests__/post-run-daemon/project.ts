@@ -14,6 +14,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync, type Dirent } from
 import { join, relative, sep } from 'node:path'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import { invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost, LocalAgentJobs } from '@vostride/agent-qa-agent-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
@@ -23,10 +24,12 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
   type GuardrailPolicy,
+  type PostProcessingStatus,
   type RunEventEnvelope,
   type Verdict,
 } from '@vostride/agent-qa-schema'
 
+import { CLI_FUNCTION_CALLER } from '../../composition/local-agent-host.js'
 import {
   runPostRunTail,
   type PostRunTailOperations,
@@ -197,6 +200,32 @@ export function openProjectHost(agentQaRoot: string, knowledgeRoot: string): Loc
       },
     },
   })
+}
+
+/**
+ * Chip truth through the ONE read op, from a SECOND composition over the same root.
+ *
+ * A fresh host per call on purpose: the claim is that a re-querying user reads the truth from
+ * durable job state, and a handle kept alive across the daemon's work would be answering partly
+ * from whatever it was holding. This composition has no daemon client, no apply delegate and no
+ * socket path — there is nothing here that could ask another process anything.
+ */
+export async function readStatusThroughTheOp(
+  agentQaRoot: string,
+  knowledgeRoot: string,
+  runId: string,
+): Promise<PostProcessingStatus> {
+  const host = openProjectHost(agentQaRoot, knowledgeRoot)
+  try {
+    return await invokeFunction(
+      host.registry,
+      RUNS_POST_PROCESSING_FUNCTION_ID,
+      { runId },
+      CLI_FUNCTION_CALLER,
+    ) as PostProcessingStatus
+  } finally {
+    await host.close()
+  }
 }
 
 export interface JobRowView {
