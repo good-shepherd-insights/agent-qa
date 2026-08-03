@@ -144,9 +144,13 @@ describe('agent job store: schema version (D-04)', () => {
   it('opens a database it created itself', () => {
     const store = openStore(root)
     try {
-      // 2 since 385 plan 05 added the cancel-request column. The number moving is the point:
-      // a database written before that column existed is refused rather than widened.
-      expect(AGENT_JOB_STORE_USER_VERSION).toBe(2)
+      // 3 since 388 plan 01 added the notifications table beside the jobs; 2 was 385 plan 05's
+      // cancel-request column. The number moving is the point: a database written before the
+      // table existed is refused by name rather than silently widened — and for THIS addition
+      // the silent widening would be worse than a missing column, because an empty
+      // notifications table answers "this run was never notified" indistinguishably from a
+      // chain that really never terminated.
+      expect(AGENT_JOB_STORE_USER_VERSION).toBe(3)
     } finally {
       store.close()
     }
@@ -731,11 +735,15 @@ describe('agent job store: the deterministic logical dump (D-03)', () => {
     const store = openStore(root, frozenClock())
     try {
       const dump = await store.logicalDump()
-      // Enumerated from the catalogue, so a table added later is covered without an edit.
+      // Enumerated from the catalogue, so a table added later is COVERED without an edit —
+      // and named here, so adding one is a visible edit rather than a silent widening of what
+      // the D-03 comparison is willing to call equal. 388's notifications table arrived
+      // exactly that way: it needed no dump code at all, and it needed this line.
       expect(dump.tables.map((table) => table.table)).toEqual([
         'job_checkpoints',
         'job_store_fence',
         'jobs',
+        'notifications',
       ])
       for (const table of dump.tables) {
         expect(table.orderBy.length).toBeGreaterThan(0)

@@ -143,6 +143,27 @@ export {
 export { CURRENT_HANDOFF_SCHEMA_VERSION } from './handoff/index'
 // 361 D-19: the one handoff version guard (SESSION-05 read-side discipline).
 export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } from './handoff/index'
+// 388 D-09/D-11/D-14/D-15: the chain-terminal notification record and THE one chip-status
+// vocabulary. Both are minted here rather than beside a consumer because each has several —
+// the notification row is read by chat and by the dashboard, and the chip words are spoken by
+// the bus, the read op and the CLI's summary line.
+export {
+  CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  POST_PROCESSING_CHIP_STATUSES,
+  RunNotificationSchemaError,
+  guardRunNotification,
+  isPostProcessingChipStatus,
+} from './notification/index'
+export type {
+  PostProcessingChipStatus,
+  PostProcessingChips,
+  PostProcessingStatus,
+  RunNotification,
+  RunNotificationOutcome,
+  RunNotificationStageStatus,
+  RunNotificationStages,
+  RunNotificationVerdictSummary,
+} from './notification/index'
 export type { RunStatus, ExecutionContext, RunId } from './run/index'
 export type {
   ArtifactRef,

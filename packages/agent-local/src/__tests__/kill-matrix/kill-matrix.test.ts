@@ -461,7 +461,16 @@ describe('kill matrix: every registered kind x declared checkpoint x before/afte
           [...resumed.jobColumns, 'id'].sort(),
         )
         expect(resumed.checkpointColumns).toEqual(CHECKPOINT_ROW_SOURCE_COLUMNS)
-        expect(resumed.tableNames).toEqual(['job_checkpoints', 'job_store_fence', 'jobs'])
+        // 388 plan 01 adds `notifications`. Named here rather than admitted by a contains
+        // check for the same reason as every other exhaustive list in this matrix: the failure
+        // mode a crash comparison has is agreeing that two states are the same because the
+        // instrument stopped looking at the table that differed.
+        expect(resumed.tableNames).toEqual([
+          'job_checkpoints',
+          'job_store_fence',
+          'jobs',
+          'notifications',
+        ])
       } finally {
         await killIfRunning(running.child)
       }

@@ -112,6 +112,7 @@ export { createMaskingContext, unmaskForHumanOutput } from '@vostride/agent-qa-s
 // route to the same names is how two spellings of one contract start to drift.
 export { JobCancellationNotRequestedError, StaleJobStoreEpochError } from './ports/index.js'
 export type {
+  ChainTerminalRecord,
   JobCancelOutcome,
   JobCheckpointRecord,
   JobCheckpointReadOutcome,
@@ -146,7 +147,14 @@ export type {
 // the contract the crash matrix iterates, and the handlers are deterministic stand-ins until
 // the phases that own each kind's semantics replace them.
 export { createRealJobKindRegistry, REAL_JOB_KIND_DECLARATIONS } from './jobs/kinds.js'
-export type { StandInJobScript } from './jobs/kinds.js'
+export type { PostRunJobCapabilities, StandInJobScript } from './jobs/kinds.js'
+// 388 Pattern 2: THE post-run chain's id derivation. A value rather than a type because the
+// chip projection, the chain-terminal check and every later reader must ADDRESS the same
+// three rows from a runId alone — two copies of this hash input would be two chains that look
+// identical in review. It reaches no storage and holds no capability: given a runId and an id
+// source it returns three strings, which is why publishing it opens nothing.
+export { chainJobIdsForRun } from './jobs/chain-identity.js'
+export type { ChainJobIds } from './jobs/chain-identity.js'
 export {
   createAgentJobQueue,
   JobCancelledError,

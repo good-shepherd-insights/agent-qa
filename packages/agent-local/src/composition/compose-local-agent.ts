@@ -32,6 +32,7 @@ import type {
   JobKindRegistry,
   JobModelCapability,
   KnowledgeReaderPort,
+  PostRunJobCapabilities,
   RunInvocationPort,
   RunsReaderPort,
   StartedRun,
@@ -111,6 +112,7 @@ import {
   HANDOFF_FILE,
   RUNS_SUBDIR,
   loadCompletedRunHandoff,
+  slugBranch,
 } from '@vostride/agent-qa-runner-local'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import {
@@ -880,6 +882,50 @@ export interface ComposeLocalAgentInput {
   readonly idSource?: JobIdSource
   /** The kind registry the queue dispatches through. Defaults to the six real declarations. */
   readonly jobKinds?: JobKindRegistry
+  /**
+   * What the post-run chain's real handlers may do (388 D-01), on the optional-operation
+   * idiom `runExecution` and `applyDelegate` already use.
+   *
+   * OPTIONAL, and the optionality is the report rather than a convenience: a host that
+   * supplies it dispatches the REAL analyze-run and curate-memory bodies, and a host that
+   * does not keeps the scripted stand-ins. Only `curateRun` is asked for — the handoff read
+   * is built here, from `agentQaRoot`, because it is a path derivation this package already
+   * owns and a caller-supplied one would be a second layout to keep in step with the writer's.
+   *
+   * `curateRun` is the caller's because it is not a local concern at all: it needs the writer
+   * lease, a knowledge root and the v51 drain, and the CLI's run tail is where all three
+   * already meet (plan 02 binds it).
+   */
+  readonly postRun?: {
+    readonly curateRun: PostRunJobCapabilities['curateRun']
+  }
+}
+
+/**
+ * The post-run handlers' capabilities, or nothing at all (388 D-01 / D-06).
+ *
+ * The handoff read is DERIVED from `runId` through the same `runs/<slug>/handoff.json` layout
+ * `FsHandoffStore` writes and `createRunsReader` enumerates — never a path carried on the job
+ * payload, which would be a stored fact free to go stale between the enqueue and the claim,
+ * and a caller-controlled string on the way to `join`. `slugBranch` is what makes a runId of
+ * `../../etc` address nothing outside the runs directory (T-361-01 precedent).
+ *
+ * `loadCompletedRunHandoff` already hard-fails typed on a missing file or an unreadable
+ * schema version, which is exactly the posture the handler wants: both are permanent
+ * conditions of that run, not transient ones worth a retry.
+ */
+function postRunCapabilities(
+  input: ComposeLocalAgentInput,
+): PostRunJobCapabilities | undefined {
+  const postRun = input.postRun
+  if (postRun === undefined) return undefined
+  return {
+    loadCompletedRunHandoff: (runId: string) =>
+      loadCompletedRunHandoff(
+        join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(runId), HANDOFF_FILE),
+      ),
+    curateRun: postRun.curateRun,
+  }
 }
 
 /**
@@ -951,7 +997,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     })
     let jobs: LocalAgentJobs
     try {
-      const kinds = input.jobKinds ?? createRealJobKindRegistry()
+      const kinds = input.jobKinds ?? createRealJobKindRegistry(postRunCapabilities(input))
       jobs = {
         queue: createAgentJobQueue({
           store,

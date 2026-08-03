@@ -237,6 +237,13 @@ export {
   mapVerdictToExitCode,
   isTestTimeoutMessage,
 } from './run/verdict.js'
+// 388 D-02: the analyze-run bridge fills a member the classifier declined to classify with
+// the SAME 'unknown' verdict the classifier itself would have minted. It resolves that value
+// from here rather than restating the six fields, because a second spelling of a verdict's
+// base is free to drift from the one 389 supersedes — and the drift would be silent, since
+// both spellings would still typecheck as a Verdict.
+export { deterministicVerdict, UNKNOWN_SIGNAL_RATIONALE } from './run/root-cause.js'
+export type { DeterministicRootCauseClass } from './run/root-cause.js'
 export type { LoopEventEmitPort } from './loop/ports.js'
 export { createRecordLedger } from './loop/record-ledger.js'
 export type { RecordAdmission, RecordLedger } from './loop/record-ledger.js'

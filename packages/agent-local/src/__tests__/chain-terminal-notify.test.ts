@@ -25,7 +25,12 @@ import type {
   JobModelCapability,
 } from '@vostride/agent-qa-agent'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { canonicalJson, CURRENT_HANDOFF_SCHEMA_VERSION, sha256hex } from '@vostride/agent-qa-schema'
+import {
+  asRunId,
+  canonicalJson,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  sha256hex,
+} from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, Verdict } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -85,7 +90,7 @@ const PERSISTED_ROOT_CAUSE: Verdict = {
 function fixtureHandoff(runId: string): CompletedRunHandoff {
   return {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
-    runId,
+    runId: asRunId(runId),
     scope: { tier: 'product', key: 'chain-terminal-storefront' },
     buildOrdinal: 7,
     executionContext: 'local-headless',
@@ -120,7 +125,7 @@ function fixtureHandoff(runId: string): CompletedRunHandoff {
         steps: [],
       },
     ],
-  } as CompletedRunHandoff
+  }
 }
 
 /** Writes the handoff exactly where the D-06 path derivation will look for it. */
@@ -313,7 +318,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
 
     // D-06: the digest pins that the bytes analyzed are the bytes enqueued. Rewriting the
     // document after the enqueue is exactly the drift the pin exists to catch.
-    writeHandoff(harness.agentQaRoot, { ...handoff, buildOrdinal: 8 } as CompletedRunHandoff)
+    writeHandoff(harness.agentQaRoot, { ...handoff, buildOrdinal: 8 })
 
     await pump(harness.jobs, fence)
 

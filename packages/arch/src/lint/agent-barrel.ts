@@ -98,6 +98,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'UndeclaredJobSuccessorError',
   'UnknownFunctionError',
   'UnknownJobKindError',
+  // 388 plan 01: the post-run chain's ONE id derivation. It joins the value list rather than
+  // the type list because addressing is a computation, not a shape — the chip projection, the
+  // chain-terminal check and every later reader must derive the same three job ids from a
+  // runId, and a second copy of that hash input would be a second chain that reviews
+  // identically. It is a pure function of a string and an injected id source: it reaches no
+  // storage, holds no capability, and dispatches nothing, so publishing it opens no path.
+  'chainJobIdsForRun',
   'createAgentJobQueue',
   'createFunctionRegistry',
   'createJobKindRegistry',
@@ -186,6 +193,14 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AuthoringReadPort',
   'BoundRecordLlmAuthorship',
   'CancelJobInput',
+  // 388 plan 01. `ChainJobIds` is what the derivation above answers with; `ChainTerminalRecord`
+  // is the optional argument the two terminal store verbs now accept, and `PostRunJobCapabilities`
+  // is what a composition root implements to make analyze-run and curate-memory REAL rather than
+  // scripted. All three are types, so none of them hands anyone a handoff reader or a curation
+  // drain — the only values that implement the last one are built by a composition, which is the
+  // whole point of naming it here.
+  'ChainJobIds',
+  'ChainTerminalRecord',
   'ClockPort',
   'ConfigReaderPort',
   'CreateAgentJobQueueOptions',
@@ -234,6 +249,7 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'KnowledgeReviewPort',
   'OptionalFunctionDepKey',
   'PersistencePort',
+  'PostRunJobCapabilities',
   'RanJobOutcomeBase',
   'RecoverAbandonedClaimsInput',
   'RecoverAbandonedClaimsOutcome',

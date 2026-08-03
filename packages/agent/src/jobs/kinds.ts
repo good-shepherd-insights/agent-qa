@@ -20,8 +20,19 @@
 // history differ from an uninterrupted one for a reason that has nothing to do with recovery,
 // and the usual repair for a failing equality assertion is to loosen it.
 
-import type { ChainedJobRequest, JobKind } from '@vostride/agent-qa-schema'
+import type {
+  ChainedJobRequest,
+  CompletedRunHandoff,
+  ExecutionContext,
+  JobHandlerOutcome,
+  JobKind,
+  PerTestOutcome,
+  Verdict,
+} from '@vostride/agent-qa-schema'
+import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import { deterministicVerdict, UNKNOWN_SIGNAL_RATIONALE } from '@vostride/agent-qa-runner'
 
+import { UNKNOWN_VERDICTS_MARKER } from './chain-identity.js'
 import { createJobKindRegistry } from './kind-registry.js'
 import type {
   FallbackContinuationInput,
@@ -113,11 +124,242 @@ function analyzeRunFallback(input: FallbackContinuationInput): readonly ChainedJ
   return successorsOf(
     { kind: 'analyze-run', allowedSuccessors: ANALYZE_RUN_SUCCESSORS },
     String(input.job.id),
-    { verdicts: 'unknown', failureReason: input.reason },
+    { verdicts: UNKNOWN_VERDICTS_MARKER, failureReason: input.reason },
   )
 }
 
 const ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory', 'triage-issues']
+
+/**
+ * The successors 388's analyze-run actually PRODUCES (D-04).
+ *
+ * Deliberately not the same list as the declaration above, and the difference is the whole
+ * of D-04: the topology declares what MAY be chained and stays auditable in one place, while
+ * the handler returns the instances that exist. `triage-issues` is reserved — declared, so
+ * the issue engine can fill it without a topology change, and never enqueued, so the issues
+ * chip's `reserved` status is structurally true rather than a promise.
+ */
+const ANALYZE_RUN_PRODUCED_SUCCESSORS: readonly JobKind[] = ['curate-memory']
+
+/**
+ * The host powers the two real post-run handlers need, injected by the composition (D-01).
+ *
+ * Both are things `agent` cannot do and must never learn to: reading a file is a host API in
+ * a storageNeutral package, and the curation drain lives two packages away behind the writer
+ * lease. Passing them as capabilities is what lets the handler bodies be real here while the
+ * bindings stay where the ownership is — and it is also the seam a test uses to drive the
+ * chain without a knowledge root.
+ *
+ * The whole interface is OPTIONAL at construction. A registry built without it keeps the
+ * scripted stand-ins byte-identically, because several shipped suites — engine semantics,
+ * kind registry, the kill matrix — drive the REAL kinds by scripting their payloads, and a
+ * build where those kinds could only do real work would have no way to express "chain here,
+ * fail permanently there" without a knowledge root and a run directory per case.
+ */
+export interface PostRunJobCapabilities {
+  /**
+   * The run's persisted handoff, addressed by `runId` alone.
+   *
+   * Hard-fails typed on a missing or malformed document rather than answering `undefined`:
+   * D-06 makes the PATH derived and the BYTES pinned, so "there is no handoff for this run"
+   * is a permanent condition of that run, never a transient one worth retrying.
+   */
+  loadCompletedRunHandoff(runId: string): CompletedRunHandoff
+  curateRun(input: {
+    readonly runId: string
+    readonly executionContext: unknown
+    readonly deadlineMs?: number
+  }): Promise<{ readonly curated: number; readonly deprecated: number }>
+}
+
+/** The claim shape analyze-run is enqueued with (D-06). Anything else is unreadable input. */
+interface AnalyzeRunPayload {
+  readonly runId: string
+  readonly handoffDigest: string
+  readonly handoffSchemaVersion: number
+  readonly executionContext: ExecutionContext | undefined
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function readAnalyzeRunPayload(value: unknown): AnalyzeRunPayload | undefined {
+  const record = asRecord(value)
+  if (typeof record.runId !== 'string' || record.runId === '') return undefined
+  if (typeof record.handoffDigest !== 'string' || record.handoffDigest === '') return undefined
+  if (typeof record.handoffSchemaVersion !== 'number') return undefined
+  return {
+    runId: record.runId,
+    handoffDigest: record.handoffDigest,
+    handoffSchemaVersion: record.handoffSchemaVersion,
+    executionContext:
+      typeof record.executionContext === 'string'
+        ? (record.executionContext as ExecutionContext)
+        : undefined,
+  }
+}
+
+/**
+ * A permanent report, phrased once.
+ *
+ * Every unreadable-input path below is PERMANENT rather than retryable, and that is A1 rather
+ * than pessimism: a payload whose shape is wrong, a handoff that is not there, bytes that
+ * drifted — none of them becomes right on a second attempt, and retrying them would spend a
+ * bound the poison-job case needs.
+ */
+function permanently(reason: string): JobHandlerOutcome {
+  return { status: 'permanent', reason }
+}
+
+/**
+ * Members whose outcome is worth a root-cause verdict.
+ *
+ * The complement of the runner's own presence rule (373-07): clean passes, skipped and
+ * cancelled members are not failures to explain. Everything else gets a verdict, which is
+ * what keeps the checkpoint's array in step with what the analysis chip claims to cover.
+ */
+function needsVerdict(test: PerTestOutcome): boolean {
+  return test.outcome !== 'passed' && test.outcome !== 'skipped' && test.outcome !== 'cancelled'
+}
+
+/**
+ * The D-02 bridge: PROJECT the verdicts the runner already persisted; never re-classify.
+ *
+ * Re-running the classifier here is not merely redundant, it is impossible to do faithfully —
+ * it reads `TestResult.retryCount`, which `PerTestOutcome` deliberately does not carry, so a
+ * handler that "re-classified" would be classifying from strictly less evidence and quietly
+ * disagreeing with the verdict already on disk. An absent verdict is filled with the same
+ * 'unknown' the classifier itself mints, so the array covers every failed member and 389 can
+ * supersede exactly the ones that carry no signal.
+ */
+function projectHandoffVerdicts(handoff: CompletedRunHandoff): Verdict[] {
+  return handoff.tests
+    .filter(needsVerdict)
+    .map((test) => test.rootCause ?? deterministicVerdict(
+      'unknown',
+      UNKNOWN_SIGNAL_RATIONALE,
+      [],
+      test.testIndex,
+    ))
+}
+
+/** Per-class counts, carried forward so the chain terminal can report them without a re-read. */
+function summarizeVerdicts(verdicts: readonly Verdict[]): {
+  total: number
+  byClass: Partial<Record<Verdict['class'], number>>
+} {
+  const byClass: Partial<Record<Verdict['class'], number>> = {}
+  for (const verdict of verdicts) {
+    byClass[verdict.class] = (byClass[verdict.class] ?? 0) + 1
+  }
+  return { total: verdicts.length, byClass }
+}
+
+/**
+ * The real analyze-run body (D-02 / D-06).
+ *
+ * Reads the run's handoff through the injected capability, refuses anything that is not the
+ * document the enqueuer measured, publishes the verdicts on the declared checkpoint, and
+ * hands curation the one successor D-04 allows. The published SHAPE — `{runId, verdicts}` —
+ * is frozen for 389, which swaps only the author behind it.
+ */
+function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler {
+  return async (context) => {
+    const payload = readAnalyzeRunPayload(context.payload)
+    if (payload === undefined) {
+      return permanently(
+        'the analyze-run payload does not name a run, a handoff digest and a handoff schema ' +
+          'version, so there is nothing for this job to analyse',
+      )
+    }
+
+    let handoff: CompletedRunHandoff
+    try {
+      handoff = capabilities.loadCompletedRunHandoff(payload.runId)
+    } catch (error) {
+      return permanently(
+        `the handoff for ${payload.runId} could not be read: ` +
+          (error instanceof Error ? error.message : String(error)),
+      )
+    }
+
+    if (handoff.schemaVersion !== payload.handoffSchemaVersion) {
+      return permanently(
+        `the handoff for ${payload.runId} declares schema version ` +
+          `${String(handoff.schemaVersion)} and the job was enqueued against ` +
+          String(payload.handoffSchemaVersion),
+      )
+    }
+    // D-06's bytes-drifted rule. The digest is the whole reason the payload carries no path:
+    // it pins that the bytes being analysed are the bytes the tail measured, whoever rewrote
+    // the file in between.
+    if (sha256hex(canonicalJson(handoff)) !== payload.handoffDigest) {
+      return permanently(
+        `the handoff for ${payload.runId} no longer digests to the bytes this job was ` +
+          'enqueued against, so analysing it would answer about a different run',
+      )
+    }
+
+    const verdicts = projectHandoffVerdicts(handoff)
+    await context.publishCheckpoint('verdicts-authored', { runId: payload.runId, verdicts })
+
+    return {
+      status: 'complete',
+      next: [
+        ...successorsOf(
+          { kind: 'analyze-run', allowedSuccessors: ANALYZE_RUN_PRODUCED_SUCCESSORS },
+          String(context.job.id),
+          {
+            // Pitfall 6: a successor payload without these two is the DAEM-02 bug class — the
+            // daemon resolves a claimed job's posture from `payload.executionContext` (386
+            // D-09/D-12), and curation cannot find a run directory it was never told about.
+            runId: payload.runId,
+            executionContext: payload.executionContext ?? handoff.executionContext,
+            verdictSummary: summarizeVerdicts(verdicts),
+          },
+        ),
+      ],
+    }
+  }
+}
+
+/**
+ * The real curate-memory body (D-01).
+ *
+ * The v51 curation fold runs INSIDE this job rather than beside it, which is what makes one
+ * canonical pipeline out of two — and what makes the curation chip incapable of lying about
+ * who did the work. The drain itself arrives as a capability: it needs the writer lease, a
+ * knowledge root and a run directory, none of which this package may name.
+ *
+ * A capability that throws is reported as nothing at all: the engine catches it, spends an
+ * attempt, and decides between a retry and a permanent failure from the declared bound. That
+ * asymmetry is deliberate — this handler cannot know whether a drain failure is transient.
+ */
+function realCurateMemoryHandler(capabilities: PostRunJobCapabilities): JobHandler {
+  return async (context) => {
+    const record = asRecord(context.payload)
+    if (typeof record.runId !== 'string' || record.runId === '') {
+      return permanently(
+        'the curate-memory payload names no run, so there is no run directory to fold and no ' +
+          'receipt to write',
+      )
+    }
+    await context.publishCheckpoint('candidates-authored', { runId: record.runId })
+    const counts = await capabilities.curateRun({
+      runId: record.runId,
+      executionContext: record.executionContext,
+    })
+    await context.publishCheckpoint('bundle-committed', {
+      runId: record.runId,
+      curated: counts.curated,
+      deprecated: counts.deprecated,
+    })
+    return { status: 'complete', next: [] }
+  }
+}
 
 /**
  * Every kind, keyed by itself.
@@ -128,7 +370,8 @@ const ANALYZE_RUN_SUCCESSORS: readonly JobKind[] = ['curate-memory', 'triage-iss
  * different drifts — a missing entry versus an entry whose own `kind` field disagrees with
  * the slot it sits in.
  */
-const DECLARATIONS = {
+function declarationsFor(capabilities?: PostRunJobCapabilities) {
+  return {
   // JOBQ-04 / C9. Chat is NOT a checkpointed job and never becomes one: its state of record
   // is the append-only session log, and the queue's checkpoint discipline covers background
   // work only. One attempt, because there is no durable progress for a second one to resume.
@@ -153,7 +396,9 @@ const DECLARATIONS = {
     maxAttempts: 3,
     backoff: { kind: 'exponential', initialDelayMs: 1_000, factor: 2, maxDelayMs: 30_000 },
     onPermanentFailure: analyzeRunFallback,
-    handler: standInHandler('analyze-run', ['verdicts-authored'], ANALYZE_RUN_SUCCESSORS),
+    handler: capabilities === undefined
+      ? standInHandler('analyze-run', ['verdicts-authored'], ANALYZE_RUN_SUCCESSORS)
+      : realAnalyzeRunHandler(capabilities),
   },
 
   // Two checkpoints, mirroring the v51 curation lifecycle: candidates are authored, then the
@@ -166,7 +411,9 @@ const DECLARATIONS = {
     maxAttempts: 3,
     backoff: { kind: 'exponential', initialDelayMs: 1_000, factor: 2, maxDelayMs: 30_000 },
     onPermanentFailure: 'halt-chain',
-    handler: standInHandler('curate-memory', ['candidates-authored', 'bundle-committed'], []),
+    handler: capabilities === undefined
+      ? standInHandler('curate-memory', ['candidates-authored', 'bundle-committed'], [])
+      : realCurateMemoryHandler(capabilities),
   },
 
   'triage-issues': {
@@ -201,11 +448,19 @@ const DECLARATIONS = {
     onPermanentFailure: 'halt-chain',
     handler: standInHandler('propose-improvements', ['proposals-authored'], []),
   },
-} satisfies Record<JobKind, JobKindDeclaration>
+  } satisfies Record<JobKind, JobKindDeclaration>
+}
 
-/** The six declarations as a list, in the order the kind vocabulary declares them. */
+/**
+ * The six declarations as a list, in the order the kind vocabulary declares them.
+ *
+ * The NO-CAPABILITY set: analyze-run and curate-memory carry their scripted stand-ins here,
+ * byte-identically to what 385 shipped. Everything registry-driven that does not compose a
+ * host — the conformance suite, the crash matrix, the kill matrix's adversarial legs — reads
+ * this list, and every one of them scripts those two kinds by payload.
+ */
 export const REAL_JOB_KIND_DECLARATIONS: readonly JobKindDeclaration[] = Object.freeze(
-  Object.values(DECLARATIONS) as readonly JobKindDeclaration[],
+  Object.values(declarationsFor()) as readonly JobKindDeclaration[],
 )
 
 /**
@@ -214,7 +469,24 @@ export const REAL_JOB_KIND_DECLARATIONS: readonly JobKindDeclaration[] = Object.
  * A fresh registry per call rather than a module-level singleton: a registry is a small,
  * cheap value, and one shared instance is how a test that registers something extra ends up
  * changing what every other test in the process sees.
+ *
+ * With `capabilities`, analyze-run and curate-memory dispatch their REAL bodies (388 D-01 /
+ * D-02); without, they keep the scripted stand-ins. The stand-ins are the HARNESS affordance,
+ * not a shipped posture: both production compositions bind capabilities — `composeLocalAgent`
+ * when the run tail supplies its curation drain (plan 02), and the daemon's own composition
+ * through the same input. A caller that gets a stand-in is a caller that asked for one.
+ *
+ * The DECLARATIONS are identical in both cases. Only the two handler slots move, so a matrix
+ * that derives its crash points from the declared schedule covers the real bodies with no
+ * harness change at all — which is the design intent 385 D-09 stated and this is the phase
+ * that spends it.
  */
-export function createRealJobKindRegistry(): JobKindRegistry {
-  return createJobKindRegistry(REAL_JOB_KIND_DECLARATIONS)
+export function createRealJobKindRegistry(
+  capabilities?: PostRunJobCapabilities,
+): JobKindRegistry {
+  return createJobKindRegistry(
+    capabilities === undefined
+      ? REAL_JOB_KIND_DECLARATIONS
+      : (Object.values(declarationsFor(capabilities)) as readonly JobKindDeclaration[]),
+  )
 }

@@ -6,6 +6,7 @@ export type { ApprovalsPort } from './approvals.js'
 export type { ClockPort } from './clock.js'
 export { JobCancellationNotRequestedError, StaleJobStoreEpochError } from './job-store.js'
 export type {
+  ChainTerminalRecord,
   JobCancelOutcome,
   JobCheckpointRecord,
   JobCheckpointReadOutcome,

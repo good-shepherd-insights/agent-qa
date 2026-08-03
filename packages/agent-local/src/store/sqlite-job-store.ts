@@ -25,6 +25,7 @@ import {
   StaleJobStoreEpochError,
 } from '@vostride/agent-qa-agent'
 import type {
+  ChainTerminalRecord,
   ClockPort,
   JobCancelOutcome,
   JobCheckpointRecord,
@@ -39,8 +40,8 @@ import type {
   JobStoreFence,
   JobStorePort,
 } from '@vostride/agent-qa-agent'
-import { canonicalJson, jobSchema, sha256hex } from '@vostride/agent-qa-schema'
-import type { Job, JobId, JobStatus } from '@vostride/agent-qa-schema'
+import { canonicalJson, guardRunNotification, jobSchema, sha256hex } from '@vostride/agent-qa-schema'
+import type { Job, JobId, JobStatus, RunNotification } from '@vostride/agent-qa-schema'
 
 import type { JobCheckpointStore } from './job-checkpoint-store.js'
 import { canonicalLogicalDump, createLogicalDump, selectOrderedRows } from './logical-dump.js'
@@ -58,8 +59,14 @@ import { JobStoreSchemaVersionError, UnknownJobRowError } from './store-errors.j
  * 2 (385 plan 05): the jobs table gained `cancel_requested_at`. This is the mechanism doing
  * exactly what D-04 designed it for — a v1 database has no such column, so rather than being
  * silently widened on open it is refused by name with the remedy in the message.
+ *
+ * 3 (388 plan 01): the notifications table and its unique index arrived beside the jobs. The
+ * bump is what stops a v2 database from being opened by this build and then answering "this
+ * run was never notified" from a table that would have been created empty underneath it —
+ * which is indistinguishable from a chain that really never terminated, and is exactly the
+ * silent widening the gate exists to refuse.
  */
-export const AGENT_JOB_STORE_USER_VERSION = 2
+export const AGENT_JOB_STORE_USER_VERSION = 3
 
 /**
  * Busy timeout for every connection to the job database.
@@ -89,8 +96,29 @@ export interface SqliteJobStoreHooks {
   readonly beforeCheckpointFilePublish?: () => void | Promise<void>
 }
 
+/** One chain-terminal notification row, with its payload guarded on the way out (388 D-09). */
+export interface JobStoreNotification {
+  readonly runId: string
+  readonly payload: RunNotification
+  readonly createdAt: string
+}
+
 export interface SqliteJobStore extends JobStorePort {
   close(): void
+
+  /**
+   * The chain-terminal notifications this database holds, ordered by run.
+   *
+   * On the implementation rather than the neutral port, beside `logicalDump`, and for the
+   * same reason: the port is the ENGINE's vocabulary and the engine never reads a
+   * notification — it writes one, once, as part of ending a job. Every reader of these rows
+   * is a surface, and 388 D-14 routes surfaces through the function layer, not through here.
+   *
+   * The payload is parsed through the schema guard rather than handed back as text: the
+   * column is bytes another build could have written, and a row that lost a stage cannot be
+   * allowed to travel as a `RunNotification`.
+   */
+  listNotifications(): Promise<readonly JobStoreNotification[]>
 
   /**
    * The D-03 comparison basis, in full: every table this database holds plus a digest per
@@ -154,6 +182,20 @@ const SCHEMA_STATEMENTS = [
      epoch          INTEGER NOT NULL,
      PRIMARY KEY (job_id, attempt, checkpoint_id)
    )`,
+  // 388 D-09: the chain-terminal record, beside the jobs it summarizes rather than in a
+  // second durable medium. `created_at` is written from the injected clock like every other
+  // timestamp in this file — a SQL-side default would leak host time into the D-03 dump and
+  // make two identical histories compare unequal.
+  `CREATE TABLE IF NOT EXISTS notifications (
+     run_id     TEXT NOT NULL,
+     payload    TEXT NOT NULL,
+     created_at TEXT NOT NULL
+   )`,
+  // D-10's dedupe is THIS line, and it is the same idiom as the jobs index above for the same
+  // reason: a crash-replayed chain terminal re-attempts the insert, and "one notification per
+  // run, ever" has to be something no caller — in this process or the next — can get wrong.
+  `CREATE UNIQUE INDEX IF NOT EXISTS notifications_run_id
+     ON notifications (run_id)`,
 ] as const
 
 /** The statuses a job never leaves. A cancel arriving at one of them moves nothing. */
@@ -265,6 +307,17 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
      ORDER BY attempt DESC
      LIMIT 1`,
   )
+  // ON CONFLICT DO NOTHING rather than a caller-side "already notified?" read: the read and
+  // the write would be two decisions about one row, and the window between them is precisely
+  // where a replayed terminal writes the second notification (D-09/D-10).
+  const insertNotification = db.prepare(
+    `INSERT INTO notifications (run_id, payload, created_at) VALUES (?, ?, ?)
+     ON CONFLICT (run_id) DO NOTHING`,
+  )
+  const selectJobStatus = db.prepare('SELECT status FROM jobs WHERE id = ?')
+  const selectNotifications = db.prepare(
+    'SELECT run_id, payload, created_at FROM notifications ORDER BY run_id ASC',
+  )
 
   function inTransaction<T>(body: () => T): T {
     db.exec('BEGIN IMMEDIATE')
@@ -353,6 +406,31 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     }
   }
 
+  /**
+   * Record the chain-terminal notification, if the chain really has terminated.
+   *
+   * Called from INSIDE both terminal transactions, and the placement is the guarantee: the
+   * statuses it reads are the ones this very transaction just wrote, so there is no instant
+   * between "the last job became terminal" and "the run was notified" for a crash to land in.
+   *
+   * The rule is stated over the candidates that EXIST rather than over a membership list,
+   * which is what lets the reserved triage slot have an id and no row without making every
+   * chain look incomplete (D-04). Its head must exist, though: a chain-member job that arrived
+   * with a run id but whose analyze-run row was never written is not a run's chain at all, and
+   * notifying for it would mint a dedupe key nothing else in the system agrees with.
+   */
+  function recordChainTerminal(chainTerminal: ChainTerminalRecord, now: string): void {
+    let headExists = false
+    for (const candidate of chainTerminal.candidateJobIds) {
+      const row = selectJobStatus.get(String(candidate))
+      if (row === undefined) continue
+      headExists ||= String(candidate) === String(chainTerminal.candidateJobIds[0])
+      if (!TERMINAL_JOB_STATUSES.includes(String(row.status) as JobStatus)) return
+    }
+    if (!headExists) return
+    insertNotification.run(chainTerminal.dedupeKey, chainTerminal.payloadJson, now)
+  }
+
   function dumpRow(row: Record<string, unknown>): JobStoreDumpRow {
     return {
       id: String(row.id),
@@ -419,6 +497,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       jobId: JobId,
       next: readonly JobInsert[],
       fence: JobStoreFence,
+      chainTerminal?: ChainTerminalRecord,
     ): Promise<JobCompleteOutcome> {
       const now = clock.now()
       return inTransaction(() => {
@@ -429,6 +508,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         // crash loses the chain while the predecessor already reads as done, and nothing
         // downstream would ever notice the successor never existed.
         const chained = next.map((request) => insertOrGet(request, now))
+        if (chainTerminal !== undefined) recordChainTerminal(chainTerminal, now)
         return { job: rowToJob(requireRow(String(jobId))), chained }
       })
     },
@@ -438,6 +518,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       disposition: Extract<JobFailureDisposition, { readonly kind: 'permanent' }>,
       next: readonly JobInsert[],
       fence: JobStoreFence,
+      chainTerminal?: ChainTerminalRecord,
     ) {
       const now = clock.now()
       return inTransaction(() => {
@@ -447,6 +528,9 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         // Parent transition and every insert share this transaction. If any insert raises,
         // inTransaction rolls the parent and all earlier successors back before surfacing it.
         const chained = next.map((request) => insertOrGet(request, now))
+        // D-12's other half. Notify rides the failure terminal on exactly the same footing as
+        // the success one, because a chain that gave up is when a user most needs to hear.
+        if (chainTerminal !== undefined) recordChainTerminal(chainTerminal, now)
         return { job: rowToJob(requireRow(String(jobId))), chained }
       })
     },
@@ -576,6 +660,14 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         // equality instrument cannot disagree about which rows exist or in what order.
         jobs: selectOrderedRows(db, 'jobs').rows.map(dumpRow),
       }
+    },
+
+    async listNotifications(): Promise<readonly JobStoreNotification[]> {
+      return selectNotifications.all().map((row) => ({
+        runId: String(row.run_id),
+        payload: guardRunNotification(JSON.parse(String(row.payload)) as unknown),
+        createdAt: String(row.created_at),
+      }))
     },
 
     async logicalDump(): Promise<LogicalDump> {

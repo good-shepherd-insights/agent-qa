@@ -18,9 +18,11 @@ import type {
   JobId,
   JobKind,
 } from '@vostride/agent-qa-schema'
+import { canonicalJson } from '@vostride/agent-qa-schema'
 
 import type { ClockPort } from '../ports/clock.js'
 import type {
+  ChainTerminalRecord,
   JobCancelOutcome,
   JobCheckpointRecord,
   JobEnqueueOutcome,
@@ -28,6 +30,11 @@ import type {
   JobStoreFence,
   JobStorePort,
 } from '../ports/job-store.js'
+import {
+  buildChainTerminalNotification,
+  chainJobIdsForRun,
+  POST_RUN_CHAIN_TERMINAL_KINDS,
+} from './chain-identity.js'
 import type {
   JobBackoffPolicy,
   JobKindDeclaration,
@@ -302,6 +309,54 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
   }
 
   /**
+   * The notification a finishing job should carry INTO its terminal transaction, if it is one
+   * (388 D-09 / D-10 / D-12).
+   *
+   * Three conditions, and each excludes a different wrong record. The kind must be one whose
+   * finish can end a post-run chain — an unrelated kind has no run and no stages to report.
+   * The payload must name a run — a chain-member job enqueued by a harness with a scripted
+   * payload is not a run's chain, and inventing a dedupe key for it would collide with a real
+   * one. And the job must be chaining NOTHING: enqueuing a successor in this very transaction
+   * is the definition of a chain that has not finished, which is also why this is decided from
+   * the inserts rather than from the kind's declared topology.
+   *
+   * What is NOT decided here is whether the chain's other members are terminal. That is a
+   * question about rows at the instant of the write, and only the store can ask it inside the
+   * transaction that answers it (385 D-05).
+   */
+  function chainTerminalFor(input: {
+    readonly job: Job
+    readonly payload: unknown
+    readonly next: readonly JobInsert[]
+    readonly finished: 'done' | 'failed'
+    readonly publishedValues: ReadonlyMap<string, unknown>
+  }): ChainTerminalRecord | undefined {
+    if (!POST_RUN_CHAIN_TERMINAL_KINDS.includes(input.job.kind)) return undefined
+    if (input.next.length > 0) return undefined
+    const record =
+      input.payload !== null && typeof input.payload === 'object' && !Array.isArray(input.payload)
+        ? (input.payload as Record<string, unknown>)
+        : {}
+    const runId = record.runId
+    if (typeof runId !== 'string' || runId === '') return undefined
+
+    const ids = chainJobIdsForRun(runId, idSource)
+    return {
+      dedupeKey: runId,
+      candidateJobIds: [ids.analyzeRun, ids.curateMemory, ids.triageIssues],
+      payloadJson: canonicalJson(
+        buildChainTerminalNotification({
+          runId,
+          finishingKind: input.job.kind,
+          finished: input.finished,
+          payload: input.payload,
+          publishedValues: input.publishedValues,
+        }),
+      ),
+    }
+  }
+
+  /**
    * Land one job permanently, running whatever continuation its kind declared (D-20).
    *
    * Validation and deterministic request construction happen before durability. The store then
@@ -315,6 +370,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
     readonly reason: string
     readonly handlerInvoked: boolean
     readonly published: readonly string[]
+    readonly publishedValues: ReadonlyMap<string, unknown>
     readonly fence: JobStoreFence
   }): Promise<RunNextJobOutcome> {
     const { job, declaration, reason, fence } = input
@@ -327,11 +383,21 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
     // declaration, and half of one already enqueued is worse than none.
     const inserts = successorRequests(declaration, requests)
 
+    // D-12: a permanent failure is a chain terminal too. Wiring notify into the completion
+    // path alone would leave the runs a user most needs to hear about silent — a curation that
+    // exhausted its attempts lands HERE and nowhere else.
     const failed = await store.failAndChain(
       job.id,
       { kind: 'permanent', reason },
       inserts,
       fence,
+      chainTerminalFor({
+        job,
+        payload: input.payload,
+        next: inserts,
+        finished: 'failed',
+        publishedValues: input.publishedValues,
+      }),
     )
 
     return {
@@ -383,6 +449,18 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
       const job = claim.job
       const declaration = registry.require(job.kind)
       const published: string[] = []
+      /**
+       * What each checkpoint this attempt published actually said.
+       *
+       * Kept beside the id list rather than read back from the store, because the one consumer
+       * — the chain-terminal notification's curation counts — is assembled microseconds before
+       * the transaction that ends the job, and a read there would be querying rows that
+       * transaction is about to change. It is per-ATTEMPT state on purpose: a resumed job that
+       * did not re-publish a step carries no value for it, and reporting the previous attempt's
+       * numbers as this one's is exactly the kind of quiet wrongness a checkpoint exists to
+       * prevent.
+       */
+      const publishedValues = new Map<string, unknown>()
 
       // D-18's bound, enforced HERE — on the claim, which is the one point a job that kills
       // its host cannot skip. Checked only when recording a failure it would never fire for a
@@ -399,6 +477,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
             `${job.attempts}), so this agent job is given up on without being run again`,
           handlerInvoked: false,
           published,
+          publishedValues,
           fence,
         })
       }
@@ -462,6 +541,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         }
         await store.publishCheckpoint(job.id, checkpointId, record, fence)
         published.push(checkpointId)
+        publishedValues.set(checkpointId, value)
       }
 
       // The context that carries the model. It is built here and handed to the authorship
@@ -541,6 +621,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
           reason,
           handlerInvoked: true,
           published,
+          publishedValues,
           fence,
         })
       }
@@ -557,10 +638,18 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
       // for `next` would complete a job whose handler had just said it failed, and the row
       // would read `done` forever after with nothing recording that anything went wrong.
       if (outcome.status === 'complete') {
+        const inserts = successorRequests(declaration, outcome.next)
         const completed = await store.completeAndChain(
           job.id,
-          successorRequests(declaration, outcome.next),
+          inserts,
           fence,
+          chainTerminalFor({
+            job,
+            payload: claim.payload,
+            next: inserts,
+            finished: 'done',
+            publishedValues,
+          }),
         )
         return {
           ran: true,
@@ -600,6 +689,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         reason: outcome.reason,
         handlerInvoked: true,
         published,
+        publishedValues,
         fence,
       })
     },

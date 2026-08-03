@@ -176,6 +176,41 @@ export class JobCancellationNotRequestedError extends Error {
   }
 }
 
+/**
+ * What a chain-terminal transition asks the store to record, if it really is terminal
+ * (Phase 388, D-09 / D-10 / D-12).
+ *
+ * The 385 D-05 split, applied to a new decision. POLICY is already resolved by the time this
+ * record exists: the engine decided which run this job belongs to, which ids the chain could
+ * have enqueued, and what the notification should say. What the STORE decides is the only
+ * part that cannot be decided outside a transaction — whether every candidate that exists is
+ * terminal at the instant of the write, and whether this run has been notified already.
+ *
+ * `payloadJson` arrives serialized rather than as a value, and that is deliberate: the record
+ * crosses a storageNeutral port into a store whose column is text, and canonical
+ * serialization is a shipped primitive. A store that serialized it would be a second place
+ * the bytes are decided, and the two would differ on the first key-order question.
+ *
+ * The parameter is OPTIONAL on both terminal verbs and defaults absent, so every existing
+ * caller — the store-contract suite, the kill matrix, every kind that is not a chain member —
+ * compiles and behaves exactly as before. A record that arrives for a chain that turns out
+ * NOT to be terminal is not an error: the store simply writes nothing.
+ */
+export interface ChainTerminalRecord {
+  /** The UNIQUE key one notification per run rests on. `runId` alone (D-10). */
+  readonly dedupeKey: string
+  /**
+   * Every job the chain COULD have enqueued, whether or not it did.
+   *
+   * Candidates rather than members, because the reserved triage slot has an id and no row
+   * (D-04). The store's rule reads over the ones that EXIST, which is what keeps the rule
+   * unchanged on the day the slot starts being filled.
+   */
+  readonly candidateJobIds: readonly JobId[]
+  /** Canonical JSON of the `RunNotification` this terminal would record. */
+  readonly payloadJson: string
+}
+
 /** One row of the deterministic logical dump (D-03). Column names, not the DTO shape. */
 export interface JobStoreDumpRow {
   readonly id: string
@@ -227,23 +262,33 @@ export interface JobStorePort {
   /**
    * Terminate one job and enqueue its declared successors in the SAME transaction. Two
    * verbs would leave a window where a crash loses the chain; one verb has no window.
+   *
+   * `chainTerminal`, when supplied, joins that same transaction (388 D-09): the notification
+   * a replayed terminal re-attempts dedupes on a unique index rather than on a caller's
+   * memory of having written it.
    */
   completeAndChain(
     jobId: JobId,
     next: readonly JobInsert[],
     fence: JobStoreFence,
+    chainTerminal?: ChainTerminalRecord,
   ): Promise<JobCompleteOutcome>
 
   /**
    * Land one permanent failure and enqueue every declared continuation in the SAME fenced
    * transaction. A stale or crashing host therefore exposes neither half or both halves,
    * never a terminal parent with a partial chain (or an orphaned chain with a live parent).
+   *
+   * Carries the same optional chain-terminal record as its sibling, and that symmetry is
+   * D-12: a failure is exactly when the user most needs to hear from the chain, so the
+   * notification cannot live on the success path alone.
    */
   failAndChain(
     jobId: JobId,
     disposition: Extract<JobFailureDisposition, { readonly kind: 'permanent' }>,
     next: readonly JobInsert[],
     fence: JobStoreFence,
+    chainTerminal?: ChainTerminalRecord,
   ): Promise<JobFailAndChainOutcome>
 
   recordFailure(
