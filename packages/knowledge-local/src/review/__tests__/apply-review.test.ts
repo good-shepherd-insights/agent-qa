@@ -11,12 +11,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
-import { BundleOutcomeEventSchema, DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
-import type { Anchor, RecordId } from '@vostride/agent-qa-schema'
+import {
+  BundleOutcomeEventSchema,
+  DEFAULT_EMBEDDING_PROFILE,
+  KNOWLEDGE_REVIEW_VERBS,
+} from '@vostride/agent-qa-schema'
+import type { Anchor, KnowledgeReviewVerb, RecordId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { appendOutcomeEvent } from '../../bundle-append.js'
 import { publishBundle, type BundleStoreConfig } from '../../bundle-publish.test-helper.js'
+import { enumerateBundleDirs } from '../../bundle-scan.js'
 import { listBundles } from '../../list-bundles.js'
 import { openIndexReaderConnection, vecTableName } from '../../index-open.js'
 import { rebuildIndex } from '../../index-rebuild.js'
@@ -165,6 +170,29 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     })
     if (outcome.kind !== 'proposed') throw new Error('expected a reject proposal')
     return outcome.proposal.proposalId
+  }
+
+  function proposeAccept(recordId: string): string {
+    const outcome = proposeReview({
+      agentQaRoot,
+      knowledgeRoot,
+      request: { verb: 'accept', input: { target: { grain: 'record', recordId } } },
+    })
+    if (outcome.kind !== 'proposed') throw new Error('expected an accept proposal')
+    return outcome.proposal.proposalId
+  }
+
+  /**
+   * How many bundle DIRECTORIES exist, measured off the filesystem rather than off the fold.
+   *
+   * Deliberately not `listBundles().length`: that walk skips a bundle whose canonical files do
+   * not strictly parse, so a mint that lands half-written would be invisible to it. The minted
+   * clone this matrix refuses is a whole new directory, and the cheapest total statement about
+   * it is a directory count taken from `enumerateBundleDirs` — the same enumeration
+   * `listBundles` composes, read one layer lower.
+   */
+  function bundleDirCount(): number {
+    return enumerateBundleDirs(knowledgeRoot).length
   }
 
   /**
@@ -806,5 +834,192 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     }
 
     expect(APPLY_DELEGATE_TIMEOUT_MS).toBeGreaterThan(1_000)
+  })
+
+  // ── CR-02′: the matrix is driven from the VERB REGISTRY, not from a list of verbs ──────────
+  //
+  // The block above walks {reject, forget}. That set was hand-picked — it is the set of verbs
+  // whose hazard had been NOTICED — and `accept` was simply absent, so `expectNoUnauthoredMint`
+  // was never applied to the third verb and the identical mint reproduced through it. Round 1's
+  // verifier measured the omission exactly: zero occurrences of `accept` in this file.
+  //
+  // The correction is mechanical rather than another case. The walk iterates
+  // `KNOWLEDGE_REVIEW_VERBS` — the RUNTIME registry in `schema/src/knowledge/proposal.ts`, which
+  // is the authority independent of anything this file writes down — and looks each verb's
+  // expected behaviour up in a table declared `satisfies Record<KnowledgeReviewVerb, …>`. A
+  // fourth verb added to the registry with no row here is a COMPILE ERROR, and a row here naming
+  // no registry member is the same. So the corpus cannot fall behind the vocabulary the way it
+  // just did; `proposalFor`'s switch is exhaustive over the same union for the same reason.
+  //
+  // RED BASELINE, observed against unmodified disposition.ts + apply-review.ts (before the
+  // origin-discriminated refusal of Task 2), transcribed from the failing run:
+  //
+  //   × accept over a target already deprecated by a prior applied reject → refuses (CR-02′)
+  //     → AssertionError: an accept over a tombstoned target must REFUSE by type, never report
+  //       a confirmation it did not perform: expected 'resolved' to be 'rejected'
+  //   × accept over a target already deprecated by a prior applied forget → refuses (CR-02′)
+  //     → (byte-identical failure)
+  //
+  // …and with that first assertion replaced by a dump, in the same run, the defect's own
+  // artifacts — printed for BOTH provenances, character for character identical:
+  //
+  //   PROBE accept reject resolved applied dirs 1 -> 2 rows
+  //     [["memory/Apply-Product/bundles/fact-el-button-checkout-969cd289e646aae2","deprecated"],
+  //      ["memory/apply-storefront/bundles/fact-el-button-checkout-ac9994c92f7366a8","candidate"]]
+  //   PROBE accept forget resolved applied dirs 1 -> 2 rows  … (the same two rows)
+  //   → AssertionError: the store must be row-for-row unchanged: any new row is a record nobody
+  //     authored: expected [ { …(13) }, { …(13) } ] to deeply equal [ { …(13) } ]
+  //
+  // The second row is the mint: a verbatim CLONE of the fact the reviewer removed, re-addressed
+  // under the scope-derived product directory (`apply-storefront/`, not the fixture's
+  // `Apply-Product/`) at a different content address, `status: 'candidate'` — which
+  // `isEligibleCandidate` re-admits into serving. Same clone id the round-0 CR-02 block names at
+  // the top of this file; the same defect, arriving through the verb the matrix did not walk.
+  //
+  // BOTH provenances of `deprecated` are walked (a prior reject and a prior forget), because a
+  // fix keyed on HOW the target got tombstoned would pass one and fail the other — the
+  // full-input-set law this phase has now paid for twice.
+
+  type TombstonedTargetExpectation = 'refuses' | 'short-circuits-applied'
+
+  /**
+   * What each review verb must do when the record it addresses is ALREADY `deprecated`.
+   *
+   * `accept` REFUSES and the other two do not, and the asymmetry is not a preference: reject and
+   * forget over a tombstone are idempotent no-ops with an honest receipt — the state they ask for
+   * already holds. An accept over a tombstone asks for the OPPOSITE of the state that holds, and
+   * the store has no way to grant it; reporting `applied` there tells a human their decision was
+   * reversed when it was not, and the path that produced the `applied` minted a clone of the very
+   * fact the earlier decision removed.
+   */
+  const TOMBSTONED_TARGET_EXPECTATION_BY_VERB = {
+    accept: 'refuses',
+    reject: 'short-circuits-applied',
+    forget: 'short-circuits-applied',
+  } satisfies Record<KnowledgeReviewVerb, TombstonedTargetExpectation>
+
+  /** The two ways a review verb can leave a record `deprecated`. Both are in the corpus. */
+  const TOMBSTONING_PROVENANCES = ['reject', 'forget'] as const
+
+  function proposalFor(verb: KnowledgeReviewVerb, recordId: string): string {
+    switch (verb) {
+      case 'accept':
+        return proposeAccept(recordId)
+      case 'reject':
+        return proposeReject(recordId, `matrix reject of ${recordId}`)
+      case 'forget':
+        return proposeForget(recordId)
+    }
+  }
+
+  async function settle(proposalId: string) {
+    return await applyReview({ agentQaRoot, knowledgeRoot, proposalId }).then(
+      (value) => ({ kind: 'resolved' as const, value }),
+      (error: unknown) => ({ kind: 'rejected' as const, error }),
+    )
+  }
+
+  for (const verb of KNOWLEDGE_REVIEW_VERBS) {
+    const expectation = TOMBSTONED_TARGET_EXPECTATION_BY_VERB[verb]
+    for (const provenance of TOMBSTONING_PROVENANCES) {
+      it(
+        `${verb} over a target already deprecated by a prior applied ${provenance} `
+          + `→ ${expectation} (CR-02′)`,
+        async () => {
+          const recordId = publish('checkout button')
+          await projectIndex()
+
+          const tombstoning = provenance === 'reject'
+            ? proposeReject(recordId, 'the first decision')
+            : proposeForget(recordId)
+          const first = await applyReview({ agentQaRoot, knowledgeRoot, proposalId: tombstoning })
+          expect(first.outcome, 'the tombstoning apply is fixture, not subject').toBe('applied')
+          expect(rowsFor(recordId)[0]?.status).toBe('deprecated')
+
+          const before = listBundles(knowledgeRoot)
+          const dirsBefore = bundleDirCount()
+
+          const proposalId = proposalFor(verb, recordId)
+          const settled = await settle(proposalId)
+
+          if (expectation === 'refuses') {
+            expect(
+              settled.kind,
+              'an accept over a tombstoned target must REFUSE by type, never report a '
+                + 'confirmation it did not perform',
+            ).toBe('rejected')
+            const error = settled.kind === 'rejected' ? settled.error as Error : undefined
+            expect(error?.name).toBe('UserDeltaCitationIntegrityError')
+            // NOTHING was published as applied: the caller is never told `applied` for a
+            // confirmation that confirmed nothing.
+            expect(readAppliedProposal(agentQaRoot, proposalId)).toBeUndefined()
+            // …and the proposal is back under its PENDING name, so a retry finds it applicable
+            // rather than vanished. A refusal that consumed the proposal would be the
+            // half-consumed data loss `restorePendingProposal` exists to prevent.
+            expect(readPendingProposal(agentQaRoot, proposalId)?.proposalId).toBe(proposalId)
+          } else {
+            expect(settled.kind).toBe('resolved')
+            expect(settled.kind === 'resolved' ? settled.value.outcome : undefined).toBe('applied')
+          }
+
+          // Identical on BOTH arms, and that is the point: whichever answer the verb gives, no
+          // record nobody authored may exist afterwards.
+          expectNoUnauthoredMint(recordId, 'deprecated', before)
+          expect(bundleDirCount(), 'a new bundle directory is a minted record').toBe(dirsBefore)
+        },
+      )
+    }
+  }
+
+  it('ADMIT: accept over a SUPERSEDED target still commits an ordinary Confirm (CR-02′)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    // Superseded through ordinary curation, never through a review verb — a tombstoned-looking
+    // status the refusal must NOT swallow. Without this the refusal is satisfiable by "refuse
+    // every accept over anything that is not `candidate`".
+    supersede(recordId)
+    expect(rowsFor(recordId)[0]?.status).toBe('superseded')
+    const confirmedBefore = rowsFor(recordId)[0]?.counters.confirmed
+    const dirsBefore = bundleDirCount()
+
+    const accepted = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeAccept(recordId),
+    })
+
+    expect(accepted.outcome).toBe('applied')
+    expect(accepted.forgetReceipt).toBeUndefined()
+    // The POSITIVE half: the Confirm really reached commit() and the fold saw it. A guard that
+    // swallowed the apply would satisfy every negative below and still be wrong.
+    expect(confirmedBefore).toBe(0)
+    expect(rowsFor(recordId)[0]?.counters.confirmed).toBe(1)
+    expect(rowsFor(recordId)[0]?.status, 'a Confirm does not un-supersede').toBe('superseded')
+    expect(bundleDirCount(), 'an ordinary Confirm mints nothing').toBe(dirsBefore)
+    expect(listBundles(knowledgeRoot).filter((row) => row.status === 'candidate')).toHaveLength(0)
+
+    // STATED LIMIT, on the 387-12 finding-3 precedent: this cell was GREEN before the fix. It is
+    // a REGRESSION PIN over the admit half, not a reproduction of anything — `superseded` never
+    // reached `checkCitedIdIntegrity`'s deprecated arm, which is exactly why the defect needed a
+    // target that is `deprecated` specifically. Its job is to red if the refusal is ever widened
+    // from "the cited-id-integrity check failed" to "the target looks tombstoned".
+  })
+
+  it('ADMIT: accept over a LIVE candidate commits normally (CR-02′, SOUND-10 extended)', async () => {
+    const recordId = publish('checkout button')
+    await projectIndex()
+    expect(rowsFor(recordId)[0]?.status).toBe('candidate')
+    const dirsBefore = bundleDirCount()
+
+    const accepted = await applyReview({
+      agentQaRoot,
+      knowledgeRoot,
+      proposalId: proposeAccept(recordId),
+    })
+
+    expect(accepted.outcome).toBe('applied')
+    expect(rowsFor(recordId)[0]?.counters.confirmed).toBe(1)
+    expect(bundleDirCount()).toBe(dirsBefore)
+    expect(new Set(rowsFor(recordId).map((row) => row.dir)).size).toBe(1)
   })
 })
