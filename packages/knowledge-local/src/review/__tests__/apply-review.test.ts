@@ -6,7 +6,7 @@
 // particular is populated with a real embedder-shaped backfill; without that, "no vec row" would
 // have been true before the verb ran and the whole half would have been measuring nothing.
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
@@ -45,6 +45,7 @@ import { FORGET_SCRUBBED_PROJECTIONS, proposeReview } from '../propose-review.js
 import {
   ProposalNotFoundError,
   claimPendingProposal,
+  proposalsDir,
   publishAppliedProposal,
   readAppliedProposal,
   readPendingProposal,
@@ -479,6 +480,18 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     expect((refusal as Error).name).toBe('ProposalApplyInFlightError')
     expect((refusal as ProposalApplyInFlightError).proposalId).toBe(proposalId)
     expect((refusal as ProposalApplyInFlightError).waitedMs).toBe(40)
+
+    // WR-06: THE REFUSAL NAMES THE PARKED FILE. An orphaned claim is disclosed-by-design until
+    // Phase 391's reaper exists (D-17, WR-03), and until then the only recovery is an operator
+    // renaming the claim back by hand — which they cannot do if the refusal makes them derive the
+    // naming scheme from the source. The expected filename is written out in full rather than
+    // read off the error, because an assertion that compared the error to itself would pass over
+    // any path at all. The test parked the claim in THIS process, so it knows the pid.
+    const parked = join(proposalsDir(agentQaRoot), `${proposalId}.json.claimed.${process.pid}`)
+    expect(existsSync(parked), 'the fixture must really have parked a claim to name').toBe(true)
+    expect((refusal as ProposalApplyInFlightError).claimPath).toBe(parked)
+    expect((refusal as Error).message).toContain(parked)
+
     // …and the refusal changed nothing: no commit, and the winner's claim is untouched, so the
     // winner can still finish. A waiter that "recovered" by restoring the claim would have stolen
     // the proposal out from under a live commit.
