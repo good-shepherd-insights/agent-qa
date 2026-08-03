@@ -627,6 +627,15 @@ export interface RunVerdictFirstCurationTailOptions {
    */
   enqueue?(): Promise<void>
   runTail(): Promise<void>
+  /**
+   * The user-facing close-out, run on BOTH paths (388-04, D-08).
+   *
+   * The detach short-circuit below returns before `runTail`, and the one posture that most
+   * needs a line about work left queued is exactly that one — so this cannot live inside the
+   * tail. It is told which gate was applied rather than inferring it, because the gate is
+   * this function's own knowledge and nothing downstream can see it.
+   */
+  finish?(input: { detached: boolean }): Promise<void>
   /** Defensive call-site boundary; runCurationTail itself already never rejects. */
   onUnexpectedError?(error: unknown): void
 }
@@ -642,11 +651,23 @@ export async function runVerdictFirstCurationTail(
       opts.onUnexpectedError?.(error)
     }
   }
-  if (opts.detach) return opts.exitCode
+  const finish = async (detached: boolean): Promise<void> => {
+    if (opts.finish === undefined) return
+    try {
+      await opts.finish({ detached })
+    } catch (error) {
+      opts.onUnexpectedError?.(error)
+    }
+  }
+  if (opts.detach) {
+    await finish(true)
+    return opts.exitCode
+  }
   try {
     await opts.runTail()
   } catch (error) {
     opts.onUnexpectedError?.(error)
   }
+  await finish(false)
   return opts.exitCode
 }

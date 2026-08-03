@@ -17,6 +17,7 @@ import { invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agen
 import {
   composeLocalAgent,
   DIGEST_JOB_ID_SOURCE,
+  DRAIN_BUDGET_MS,
   type LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
@@ -135,11 +136,14 @@ interface Fixture {
   eventsPath: string
   warn: ReturnType<typeof vi.fn>
   info: ReturnType<typeof vi.fn>
+  clock: { value: number }
   options(overrides?: Partial<PostRunTailOperations>): RunPostRunTailOptions
 }
 
 function fixture(behaviour: {
   curateRun?: () => Promise<{ curated: number; deprecated: number }>
+  /** Burn the whole drain budget after the first job, leaving the chain mid-flight. */
+  stopAfterFirstJob?: boolean
 } = {}): Fixture {
   const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-388-04-'))
   roots.push(agentQaRoot)
@@ -162,12 +166,14 @@ function fixture(behaviour: {
 
   const warn = vi.fn<(message: string) => void>()
   const info = vi.fn<(message: string) => void>()
+  const clock = { value: 1_000_000 }
 
   return {
     agentQaRoot,
     eventsPath,
     warn,
     info,
+    clock,
     options(overrides: Partial<PostRunTailOperations> = {}): RunPostRunTailOptions {
       return {
         runId: RUN_ID,
@@ -184,6 +190,7 @@ function fixture(behaviour: {
         operations: {
           resolveKnowledgeRoot: () => knowledgeRoot,
           runCurationTail: async () => undefined,
+          now: () => clock.value,
           composeHost: () => {
             const host = composeLocalAgent({
               agentQaRoot,
@@ -197,7 +204,27 @@ function fixture(behaviour: {
               },
             })
             hosts.push(host)
-            return host
+            if (behaviour.stopAfterFirstJob !== true) return host
+            // Spend the ENTIRE budget the moment the first job lands, which is the only
+            // honest way to reach `budget-exhausted` mid-chain against real handlers: the
+            // pump's next deadline check is the thing under observation, not a mocked queue.
+            return {
+              ...host,
+              jobs: async () => {
+                const jobs = await host.jobs()
+                return {
+                  ...jobs,
+                  queue: {
+                    ...jobs.queue,
+                    runNextJob: async (input: Parameters<typeof jobs.queue.runNextJob>[0]) => {
+                      const outcome = await jobs.queue.runNextJob(input)
+                      if (outcome.ran) clock.value += DRAIN_BUDGET_MS
+                      return outcome
+                    },
+                  },
+                }
+              },
+            } as unknown as LocalAgentHost
           },
           ...overrides,
         },
@@ -387,6 +414,42 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
     // The "(daemon will drain)" half is NOT in the DTO — it is the tail's own posture.
     expect(JSON.stringify(status)).not.toContain('daemon will drain')
   })
+
+  it('renders D-08\'s own example when the stages actually differ (analysis done, curation queued)',
+    async () => {
+      const f = fixture({ stopAfterFirstJob: true })
+      // First tail: the budget is spent the instant `analyze-run` lands, so the chain stops
+      // mid-flight with `curate-memory` durably queued and nothing claiming it.
+      const first = runPostRunTail(f.options())
+      await first.enqueue()
+      await first.drain()
+      expect(first.report().drain).toBe('budget-exhausted')
+
+      // Second tail, same store, lease now held by a daemon: work stays queued and somebody
+      // has been nudged. This is the ONE posture where D-08's example line is literally true.
+      const second = runPostRunTail(f.options({
+        acquireWriterLease: () => ({ kind: 'held', holder: { pid: 4242 } }),
+        nudgeDaemon: async () => undefined,
+      } as unknown as Partial<PostRunTailOperations>))
+      f.info.mockClear()
+      await second.enqueue()
+      await second.drain()
+      await second.finish()
+
+      expect(second.report().drain).toBe('handed-off')
+      const status = await readStatusThroughTheOp(f.agentQaRoot)
+      // The stages DIFFER, so a line fabricated from the tail's own posture cannot coincide
+      // with the durable one — which is what makes the token-equality claim below load-bearing.
+      expect(status.chips).toEqual({
+        analysis: 'done',
+        curation: 'pending',
+        issues: 'reserved',
+      })
+      expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
+        'post-processing — analysis: done · curation: pending (daemon will drain)'
+        + ' · issues: reserved',
+      ])
+    })
 
   it('drops the daemon parenthetical under --detach, where nobody promised to drain', async () => {
     const f = fixture()

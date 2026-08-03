@@ -22,11 +22,13 @@
 // through `curation-tail.ts`, which is ledgered for exactly those specifiers. That is not
 // ceremony: it is what keeps the run tail's reach identical to the reach the tail already had.
 
+import { invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
+import type { PostProcessingStatus, RunNotification } from '@vostride/agent-qa-schema'
 
-import { composeCliLocalAgent } from '../composition/local-agent-host.js'
+import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { nudgeDaemon } from '../daemon/client.js'
 import {
   completedRunDir,
@@ -92,6 +94,15 @@ export interface PostRunTailOperations {
   curateCompletedRun: typeof curateCompletedRun
   runCurationTail: typeof runCurationTail
   createChipEmitter: typeof createPostRunChipEmitter
+  /**
+   * Durable chip truth, through the ONE read op (D-14).
+   *
+   * Named on the table so a test can answer it without a store, and shaped as "ask this host's
+   * registry" so production has no second way to answer it. The CLI never opens the queue
+   * database for status: three surfaces render these five words and a second producer is how
+   * the dashboard and the CLI end up saying different true-looking things about one row.
+   */
+  readPostProcessingStatus(host: LocalAgentHost, runId: string): Promise<PostProcessingStatus>
   /** The one wall clock, read only at tail boundaries. */
   now(): number
 }
@@ -142,6 +153,12 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
     curateCompletedRun,
     runCurationTail,
     createChipEmitter: createPostRunChipEmitter,
+    readPostProcessingStatus: async (host, runId) => await invokeFunction(
+      host.registry,
+      RUNS_POST_PROCESSING_FUNCTION_ID,
+      { runId },
+      CLI_FUNCTION_CALLER,
+    ) as PostProcessingStatus,
     now: Date.now,
   }
 }
@@ -183,7 +200,17 @@ export interface RunPostRunTailOptions extends Pick<
 export interface PostRunTailHandle {
   enqueue(): Promise<void>
   drain(): Promise<void>
-  /** Read after both legs have settled. */
+  /**
+   * The user-facing close-out, run on EVERY leg — including the one `--detach` short-circuits.
+   *
+   * A third callable rather than a tail of `drain()` for the same reason there are two legs at
+   * all: the one posture that most needs a line about queued work is the posture where `drain`
+   * is never called. The wrapper is the only thing that knows which gate it applied, so it says
+   * so here rather than the tail guessing from a report that would read `not-attempted` for
+   * both "detached" and "the enqueue never got that far".
+   */
+  finish(input?: { readonly detached?: boolean }): Promise<void>
+  /** Read after every leg has settled. */
   report(): PostRunTailReport
 }
 
@@ -279,7 +306,11 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         enqueueOutcome = outcome.deduped ? 'deduped' : 'enqueued'
       } catch (error) {
         enqueueOutcome = 'failed'
-        opts.log.warn(enqueueFailureWarning(opts.runId, error))
+        opts.log.warn(enqueueFailureWarning(
+          opts.runId,
+          completedRunHandoffPath(opts.agentQaRoot, opts.runId),
+          error,
+        ))
       }
     },
 
@@ -389,23 +420,147 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       }
     },
 
+    async finish(input: { readonly detached?: boolean } = {}): Promise<void> {
+      if (input.detached === true && drainOutcome === 'not-attempted') {
+        // The one place `detached` is ever produced. `drain()` was never called, so nothing
+        // else in this file could have said so — and a report that called the detach posture
+        // `not-attempted` would be indistinguishable from an enqueue that failed first.
+        drainOutcome = 'detached'
+      }
+      try {
+        // Nothing was composed ⇒ the enqueue never got as far as a host, which means nothing
+        // is queued and the D-07 warning has already said everything true about this run.
+        if (host === undefined || enqueueOutcome === 'failed') return
+        const status = await ops().readPostProcessingStatus(host, opts.runId)
+        if (status.notification !== undefined && drainOutcome === 'drained') {
+          // D-09: this process ran the chain to its terminal, so the human line is the honest
+          // close-out — it reports what HAPPENED, where the summary reports what is pending.
+          opts.log.info?.(renderChainTerminalLine(status.notification))
+          return
+        }
+        // D-08: work stays queued. The statuses are durable; the parenthetical is posture.
+        opts.log.info?.(
+          renderPostProcessingSummaryLine(status, drainOutcome === 'handed-off'),
+        )
+      } catch (error) {
+        opts.log.warn(summaryFailureWarning(opts.runId, error))
+      } finally {
+        try {
+          // Idempotent, and the detach leg's only close: `enqueue` opens the store and the
+          // drain that would have closed it never ran.
+          await host?.close()
+        } catch {
+          // The process is about to exit; a handle that will not close is not worth the
+          // verdict-first guarantee.
+        }
+      }
+    },
+
     report(): PostRunTailReport {
       return { enqueue: enqueueOutcome, drain: drainOutcome, jobsRun }
     },
   }
 }
 
+/** The chip words joined by the separator D-08 pinned, in chain order. */
+const SUMMARY_SEPARATOR = ' · '
+
 /**
- * The D-07 warning. ONE line, naming the run and stating plainly what was NOT affected.
+ * The D-08 exit summary — ONE line, in the ONE chip vocabulary (D-14).
  *
- * Plan 04 owns the final wording; what must survive any rewording is that it names the run
- * (so the handoff on disk can be re-enqueued by hand) and says the verdict is untouched (so
- * nobody reads a curation warning as a test result).
+ * Two rules, and the second is the whole reason this takes two arguments:
+ *
+ *   - Every status word comes from `runs.postprocessing`, verbatim. Not a synonym, not a
+ *     control-flow word from `PostRunTailReport`, not "queued" where the vocabulary says
+ *     `pending`. A surface that re-spells one of five words is a surface that will eventually
+ *     disagree with the dashboard about a row neither of them got wrong.
+ *   - "(daemon will drain)" is NOT in the DTO and cannot be. `pending` honestly means "no work
+ *     has happened", and durable state has no way to know whether a daemon is about to change
+ *     that or whether nobody ever will. That fact lives in THIS process's posture — it handed
+ *     the chain off and nudged — so it is rendered from `handedOff` and never derived from a
+ *     status, in either direction.
+ *
+ * The parenthetical attaches per STAGE rather than per line: whichever stages are still
+ * `pending` are the ones the daemon will drain, and a stage that already finished must not be
+ * annotated with a future.
  */
-function enqueueFailureWarning(runId: string, error: unknown): string {
+export function renderPostProcessingSummaryLine(
+  status: PostProcessingStatus,
+  handedOff: boolean,
+): string {
+  const stage = (label: string, chip: string): string => {
+    const suffix = handedOff && chip === 'pending' ? ' (daemon will drain)' : ''
+    return `${label}: ${chip}${suffix}`
+  }
+  return `post-processing — ${[
+    stage('analysis', status.chips.analysis),
+    stage('curation', status.chips.curation),
+    stage('issues', status.chips.issues),
+  ].join(SUMMARY_SEPARATOR)}`
+}
+
+/**
+ * The D-09 human line, rendered from the chain-terminal row and nothing else.
+ *
+ * Fires on ANY terminal — done or failed (D-12) — because a failure is exactly when the user
+ * most needs to be told. Counts come from the row rather than from the drain that produced it:
+ * the row is what 392's chat and M5's dashboard will render, and a CLI line built from a
+ * live-process value would be a second, quieter answer to the same question.
+ *
+ * Absent curation counts print as no counts at all (D-11): a stage that never committed a
+ * bundle reports its status, and a `0 curated` would say it curated nothing, which is a
+ * different claim from never having got that far.
+ */
+export function renderChainTerminalLine(notification: RunNotification): string {
+  const { verdictSummary, stages } = notification
+  const classes = Object.entries(verdictSummary.byClass)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([className, count]) => `${className} ${count}`)
+  const verdicts = `verdicts ${verdictSummary.total}`
+    + (classes.length === 0 ? '' : ` (${classes.join(', ')})`)
+  const counts = [
+    ...(stages.curation.curated === undefined ? [] : [`${stages.curation.curated} curated`]),
+    ...(stages.curation.deprecated === undefined
+      ? []
+      : [`${stages.curation.deprecated} deprecated`]),
+  ]
+  return `post-processing ${notification.outcome} for ${notification.runId} — ${[
+    verdicts,
+    `analysis: ${stages.analysis.status}`,
+    `curation: ${stages.curation.status}`
+      + (counts.length === 0 ? '' : ` (${counts.join(', ')})`),
+    `issues: ${stages.issues.status}`,
+  ].join(SUMMARY_SEPARATOR)}`
+}
+
+/**
+ * The D-07 warning, final wording. ONE line, and every clause in it is load-bearing.
+ *
+ * It names the RUN so the loss is attributable; it says the verdict and exit code are
+ * unaffected so nobody reads a post-processing warning as a test result (JOBQ-06 in the one
+ * place a user actually meets it); and it names the handoff's PATH, because "the handoff
+ * remains on disk" is only actionable if the reader is told where on disk. The handoff is the
+ * whole input the analysis needs, so that path IS the manual re-queue path — there is no
+ * retry file and no reconciliation sweep in this build (D-07), by decision.
+ */
+function enqueueFailureWarning(runId: string, handoffPath: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error)
   return `Post-run analysis was not queued for ${runId} (${detail}); the verdict and exit code `
-    + 'are unaffected, and the run handoff remains on disk.'
+    + `are unaffected. The run handoff is still on disk at ${handoffPath}, so the analysis can `
+    + 'be queued again from there.'
+}
+
+/**
+ * A status read that fails costs the CLOSE-OUT LINE and nothing else.
+ *
+ * Warned rather than swallowed, because a line that silently disappears is how a user learns
+ * to distrust the ones that do print; and warned rather than thrown, because the exit code was
+ * frozen long before this file ran (JOBQ-06).
+ */
+function summaryFailureWarning(runId: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  return `Post-run status for ${runId} could not be read (${detail}); the queued work is `
+    + 'unaffected and is readable later through the runs post-processing status.'
 }
 
 function drainFailureWarning(runId: string, error: unknown): string {
