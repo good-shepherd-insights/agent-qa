@@ -870,11 +870,65 @@ function checkSupersessionKey(
   return PASS
 }
 
+/**
+ * Who may tombstone a record this store is currently standing behind, decided per origin.
+ *
+ * MECHANISM, stated so the claim can be reded rather than believed: totality is the `satisfies`
+ * clause below — a fifth member of `DeltaOrigin` is a compile error AT THIS TABLE — and the
+ * BEHAVIOUR of each member is pinned by the DELTA_ORIGINS walk in disposition.test.ts, whose
+ * expectations are declared independently of this literal. Neither half is prose: dropping a
+ * member fails `tsc`, flipping a member's value reds a named row.
+ *
+ * This replaces a hand-picked single-member origin comparison — one literal origin named inline,
+ * every other member admitted by omission — that sat eleven lines from
+ * `CITED_ID_INTEGRITY_FALLBACK_BY_ORIGIN`, whose own rationale calls `import` machine-authored.
+ * The file's two origin discriminations therefore disagreed about the same word. They now share
+ * one idiom and one vocabulary, which is what stops them drifting apart again.
+ *
+ * The retired comparison is DESCRIBED rather than quoted on purpose: a `grep -c` for its literal
+ * text is a live guard against it coming back, and a quotation kept here for colour would disarm
+ * that guard permanently (387-17 D-4).
+ *
+ * WHY each member is what it is:
+ *
+ *   agent   — the autonomy floor itself: a model may PROPOSE removing standing knowledge but may
+ *             not perform it, so the Deprecate degrades into a reviewable candidate. Long-standing
+ *             behaviour, PRESERVED unchanged.
+ *   import  — machine-authored by the same reasoning the fallback table above applies to it
+ *             ("bulk-ingested content, pipeline-authored in every sense that matters here"). An
+ *             importer that emits a Deprecate is a pipeline nominating a removal, which is
+ *             precisely what the floor exists to hold. This is the one BEHAVIOUR change here, and
+ *             it is latent: no production site mints `origin: 'import'` today, which is the
+ *             condition under which the old member-pick would have been wrong silently.
+ *   system  — mechanical maintenance deltas, and they must pass. `appendInverseDeprecate` in
+ *             rollback.ts is the written case: its comment records that `agent` "would be
+ *             downgraded for an active target, while `user` would incorrectly make this lifecycle
+ *             choice sovereign and permanent", and it throws if disposition does not return
+ *             `apply`. Downgrading `system` here would turn every rollback into a hard failure.
+ *   user    — the human decision the review verbs exist to carry. `reject` and `forget` emit
+ *             user-origin Deprecates over active records and depend on reaching `apply`;
+ *             downgrading them would silently convert a person's removal into a candidate the
+ *             store keeps serving.
+ *
+ * NOT the same question as `AUTHORED_CHECKPOINT_ORIGIN_ADMISSION` in author-contract.ts, which
+ * asks which origins may arrive as DRAIN-AUTHORED curator output. `system` is allowed here and
+ * rejected there without contradiction: rollback and the canary reach `disposeDelta` through
+ * in-process checkpoints (`maintenanceCheckpoint`, `bridgeDelta`), never through the drain's
+ * authored-checkpoint recovery boundary.
+ */
+const AUTONOMOUS_DEPRECATE_BY_ORIGIN = {
+  agent: 'downgrade',
+  import: 'downgrade',
+  system: 'allow',
+  user: 'allow',
+} as const satisfies Record<DeltaOrigin, 'downgrade' | 'allow'>
+
 function checkAutonomousDeprecate(
   input: DisposeDeltaInput,
   lookup: TruthLookup,
 ): CheckVerdict {
-  if (input.delta.kind !== 'Deprecate' || input.delta.origin !== 'agent') return PASS
+  if (input.delta.kind !== 'Deprecate') return PASS
+  if (AUTONOMOUS_DEPRECATE_BY_ORIGIN[input.delta.origin] === 'allow') return PASS
   return lookup(input.delta.targetId)?.status === 'active'
     ? { kind: 'downgrade', reason: 'autonomous-deprecate' }
     : PASS
