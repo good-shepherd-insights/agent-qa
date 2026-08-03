@@ -79,8 +79,8 @@ export interface RunStartedPayload {
 /**
  * `runFinished`: the last VERDICT-SCOPED event, exactly once.
  *
- * "Always last" until Phase 388, and the wording is relaxed rather than the guarantee (388
- * D-13/D-16). It remains the last thing the run bus ever publishes and the last line of the
+ * "Always last" until Phase 388, relaxed there to "last verdict-scoped event" — the wording,
+ * not the guarantee (388 D-13/D-16; dated reconciliation C13 in `.planning/REQUIREMENTS.md`). It remains the last thing the run bus ever publishes and the last line of the
  * run's log at the moment the exit code is frozen — `finalSeq` is still its own seq, and every
  * bus subscriber has already been flushed. What may now follow it IN THE FILE is a
  * postProcessing chip envelope, appended directly to `events.jsonl` by the in-process post-run
