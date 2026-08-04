@@ -41,6 +41,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import {
+  analysisFetchCommand,
   runPostRunTail,
   type PostRunTailOperations,
   type RunPostRunTailOptions,
@@ -414,7 +415,10 @@ describe('a starved own-chain is reported as backlog-exhausted, never a bare pen
       expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
         `post-processing — analysis: pending${BACKLOG_PARENTHETICAL}`
         + ` · curation: pending${CURATION_BACKLOG_PARENTHETICAL}`
-        + ' · issues: reserved',
+        + ' · issues: reserved'
+        // 389 D-12: a starved chain completed no analyze-run, so the line carries the fetch
+        // command — the sentence stays one copy-paste away whoever drains the backlog.
+        + ` · sentences: ${analysisFetchCommand(RUN_B)}`,
       ])
       // The posture is the TAIL's, never the DTO's — the same rule the daemon parenthetical obeys.
       expect(JSON.stringify(status)).not.toContain('queued behind other runs')

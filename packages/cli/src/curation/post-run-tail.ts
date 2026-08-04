@@ -23,6 +23,7 @@
 // ceremony: it is what keeps the run tail's reach identical to the reach the tail already had.
 
 import {
+  ANALYSIS_GET_FUNCTION_ID,
   chainJobIdsForRun,
   invokeFunction,
   RUNS_POST_PROCESSING_FUNCTION_ID,
@@ -31,6 +32,7 @@ import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import type {
+  AnalysisGetOutput,
   PostProcessingChips,
   PostProcessingStatus,
   RunNotification,
@@ -135,6 +137,15 @@ export interface PostRunTailOperations {
    * the dashboard and the CLI end up saying different true-looking things about one row.
    */
   readPostProcessingStatus(host: LocalAgentHost, runId: string): Promise<PostProcessingStatus>
+  /**
+   * One run's analysis, through the ONE producer (`analysis.get`, 389 D-11/SC3).
+   *
+   * Same discipline as the status read above: shaped as "ask this host's registry" so the
+   * tail can never compose a sentence of its own — the bytes it prints are the op result's
+   * bytes, which are the barrel renderer's bytes, which are what M5's run page and 392's
+   * chat will serve. A second sentence path here is exactly the drift SC3 forbids.
+   */
+  readRunAnalysis(host: LocalAgentHost, runId: string): Promise<AnalysisGetOutput>
   /** The one wall clock, read only at tail boundaries. */
   now(): number
 }
@@ -219,6 +230,12 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
       { runId },
       CLI_FUNCTION_CALLER,
     ) as PostProcessingStatus,
+    readRunAnalysis: async (host, runId) => await invokeFunction(
+      host.registry,
+      ANALYSIS_GET_FUNCTION_ID,
+      { runId },
+      CLI_FUNCTION_CALLER,
+    ) as AnalysisGetOutput,
     now: Date.now,
   }
 }
@@ -333,6 +350,16 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   let enqueueOutcome: PostRunEnqueueOutcome = 'skipped'
   let drainOutcome: PostRunDrainOutcome = 'not-attempted'
   let jobsRun = 0
+  /**
+   * Did THIS process's pump run this run's `analyze-run` to `completed`? (389 D-12.)
+   *
+   * The sentence-block trigger, and deliberately NOT derived from `drainOutcome` or from a
+   * chip status (the house rule above `renderPostProcessingSummaryLine`): a drain whose
+   * budget ran out on `curate-memory` still completed analyze-run under the one budget, and
+   * a drain that emptied an already-drained queue did not — only the pump's own observation
+   * can tell those apart honestly.
+   */
+  let analyzeRunCompleted = false
   let host: LocalAgentHost | undefined
   let knowledgeRoot: string | undefined
   /**
@@ -520,6 +547,15 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           // it: the chip says what the queue durably did, not what this loop does next.
           chips.observe(outcome)
           if (ownChainJobIds.includes(String(outcome.job.id))) ownChainObserved = true
+          if (
+            String(outcome.job.id) === String(chainIds.analyzeRun)
+            && outcome.disposition === 'completed'
+          ) {
+            // The D-12 trigger, recorded at the one place it is observable: a failed or
+            // retry-scheduled analyze-run is NOT a completed one, and no later leg may
+            // infer completion from a status word this process did not witness.
+            analyzeRunCompleted = true
+          }
           jobsRun += 1
           if (outcome.disposition === 'retry-scheduled') {
             // Never sleep the run process on a backoff. The row stays queued and whoever
@@ -588,6 +624,23 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // `not-attempted` would be indistinguishable from an enqueue that failed first.
         drainOutcome = 'detached'
       }
+      /**
+       * The D-12 sentence block, printed AFTER whichever exit line rendered — and only when
+       * this process's own pump completed analyze-run (never a wait, never a poll: the
+       * analysis either finished under the one budget or the exit line carries the fetch
+       * command instead). A failed read costs the block and nothing else; the warning names
+       * the same fetch command, so the recovery path is identical either way.
+       */
+      const printSentenceBlock = async (openedHost: LocalAgentHost): Promise<void> => {
+        if (!analyzeRunCompleted) return
+        try {
+          const analysis = await ops().readRunAnalysis(openedHost, opts.runId)
+          const block = renderAnalysisClusterBlock(analysis)
+          if (block !== '') opts.log.info?.(block)
+        } catch (error) {
+          opts.log.warn(analysisReadFailureWarning(opts.runId, error))
+        }
+      }
       try {
         // Nothing was composed ⇒ the enqueue never got as far as a host, which means nothing
         // is queued and the D-07 warning has already said everything true about this run.
@@ -596,13 +649,23 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         if (status.notification !== undefined && drainOutcome === 'drained') {
           // D-09: this process ran the chain to its terminal, so the human line is the honest
           // close-out — it reports what HAPPENED, where the summary reports what is pending.
+          // Rendered from the row and NOTHING else, so the fetch command never grafts onto
+          // it; the sentences themselves follow when this process authored them.
           opts.log.info?.(renderChainTerminalLine(status.notification))
+          await printSentenceBlock(host)
           return
         }
-        // D-08: work stays queued. The statuses are durable; the parenthetical is posture.
+        // D-08: work stays queued. The statuses are durable; the parenthetical is posture —
+        // and so is the D-12 suffix: when THIS process did not complete analyze-run, the
+        // line gains the exact fetch command (the sentence is one copy-paste away); when it
+        // did, the sentences print one line down and a fetch pointer would be noise.
         opts.log.info?.(
-          renderPostProcessingSummaryLine(status, postureOf(drainOutcome)),
+          renderPostProcessingSummaryLine(status, postureOf(drainOutcome))
+          + (analyzeRunCompleted
+            ? ''
+            : `${SUMMARY_SEPARATOR}sentences: ${analysisFetchCommand(opts.runId)}`),
         )
+        await printSentenceBlock(host)
       } catch (error) {
         opts.log.warn(summaryFailureWarning(opts.runId, error))
       } finally {
@@ -768,6 +831,58 @@ export function renderChainTerminalLine(notification: RunNotification): string {
       + (counts.length === 0 ? '' : ` (${counts.join(', ')})`),
     `issues: ${stages.issues.status}`,
   ].join(SUMMARY_SEPARATOR)}`
+}
+
+/**
+ * The exact fetch command the extended exit line carries (D-12).
+ *
+ * The REAL `agent-qa fn` invocation, byte-for-byte — `fn <id> --input <json>` is the shape
+ * `commands/fn.ts` parses, and the runId rides `JSON.stringify` so an id needing escaping
+ * cannot silently produce a command that fails on paste. The op id is the imported constant,
+ * never a re-spelled literal: `analysis.get` has ONE producer and this line points at it.
+ */
+export function analysisFetchCommand(runId: string): string {
+  return `agent-qa fn ${ANALYSIS_GET_FUNCTION_ID} --input '${JSON.stringify({ runId })}'`
+}
+
+/**
+ * The D-15 clustered presentation: one representative composed sentence per cluster, the
+ * multi-member clusters annotated with their occurrence count and member refs
+ * (`×40: TST-101, TST-102, …`), singleton clusters reading as one bare sentence.
+ *
+ * A pure string fold over the `analysis.get` output and nothing else: the sentence bytes are
+ * `representative.sentence` VERBATIM — already composed by the one barrel renderer inside
+ * the op — so the CLI block and every other surface are byte-identical by construction
+ * (SC3). Member refs print the run's own `testId`s; a degenerate member with none falls
+ * back to `#testIndex` rather than an empty ref. Empty clusters render nothing at all: a
+ * zero-failure run has no problems to enumerate and gets no header saying so.
+ */
+export function renderAnalysisClusterBlock(analysis: AnalysisGetOutput): string {
+  if (analysis.clusters.length === 0) return ''
+  const problems = analysis.clusters.length
+  const entries = analysis.clusters.map((cluster) => {
+    if (cluster.count === 1) return cluster.representative.sentence
+    const refs = cluster.members
+      .map((member) => (member.testId === '' ? `#${member.testIndex}` : member.testId))
+      .join(', ')
+    return `×${cluster.count}: ${refs}\n${cluster.representative.sentence}`
+  })
+  return `analysis — ${problems} distinct problem${problems === 1 ? '' : 's'}:\n${
+    entries.join('\n')}`
+}
+
+/**
+ * A failed analysis read costs the SENTENCE BLOCK and nothing else.
+ *
+ * Same posture as `summaryFailureWarning`: warned so the line's absence is attributable,
+ * never thrown (the exit code froze long ago — JOBQ-06), and the warning carries the same
+ * fetch command the extended exit line would have, so the reader's next step is identical
+ * whichever way the sentences failed to print.
+ */
+function analysisReadFailureWarning(runId: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  return `The analysis for ${runId} could not be read for printing (${detail}); the sentences `
+    + `remain readable via ${analysisFetchCommand(runId)}.`
 }
 
 /**

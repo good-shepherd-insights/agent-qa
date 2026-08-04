@@ -96,7 +96,10 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
       // `post-run-daemon-chain.test.ts` is what holds in place.
       expect(tail.info).toEqual([
         'post-processing — analysis: pending (daemon will drain) · curation: pending'
-        + ' (deferred to a later local run) · issues: reserved',
+        + ' (deferred to a later local run) · issues: reserved'
+        // 389 D-12: the handed-off tail completed no analyze-run in-process, so the exit
+        // line carries the exact fetch command for the sentences the daemon will author.
+        + ` · sentences: agent-qa fn analysis.get --input '{"runId":"${RUN_ID}"}'`,
       ])
       expect(tail.warn).toEqual([])
 

@@ -36,6 +36,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import {
+  analysisFetchCommand,
   runPostRunTail,
   type PostRunTailOperations,
   type RunPostRunTailOptions,
@@ -469,7 +470,10 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
     expect(line).toBe(
       `post-processing — analysis: ${status.chips.analysis} (daemon will drain)`
       + ` · curation: ${status.chips.curation} (deferred to a later local run)`
-      + ` · issues: ${status.chips.issues}`,
+      + ` · issues: ${status.chips.issues}`
+      // 389 D-12: this process did not complete analyze-run, so the line carries the one
+      // copy-paste that fetches the sentences once the daemon has drained.
+      + ` · sentences: ${analysisFetchCommand(RUN_ID)}`,
     )
     // …and the values it rendered are the durable ones, not a control-flow word.
     expect(status.chips).toEqual({
@@ -513,7 +517,11 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
       })
       expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
         'post-processing — analysis: done · curation: pending (deferred to a later local run)'
-        + ' · issues: reserved',
+        + ' · issues: reserved'
+        // 389 D-12: the SECOND tail completed nothing in-process (the first one authored the
+        // analysis), so its exit line still points at the fetch command rather than printing
+        // sentences it never drained.
+        + ` · sentences: ${analysisFetchCommand(RUN_ID)}`,
       ])
     })
 
@@ -525,7 +533,8 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
 
     expect(tail.report().drain).toBe('detached')
     expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
-      'post-processing — analysis: pending · curation: pending · issues: reserved',
+      'post-processing — analysis: pending · curation: pending · issues: reserved'
+      + ` · sentences: ${analysisFetchCommand(RUN_ID)}`,
     ])
   })
 

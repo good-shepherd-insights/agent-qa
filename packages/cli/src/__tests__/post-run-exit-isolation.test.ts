@@ -53,6 +53,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { curationTailLog } from '../commands/run.js'
 import { runVerdictFirstCurationTail } from '../curation/curation-tail.js'
 import {
+  analysisFetchCommand,
   runPostRunTail,
   type PostRunTailHostInput,
   type PostRunTailOperations,
@@ -443,8 +444,14 @@ describe('JOBQ-06 — an induced enqueue failure is invisible to the verdict', (
     expect(failed.stderr.indexOf('was not queued'))
       .toBeGreaterThanOrEqual(failed.verdictScopedStderr.length)
     // The clean run's own close-out is the other half of the divergence: the suffixes DIFFER,
-    // which is why the prefix identity above is a claim and not an artefact.
-    expect(lines(cleanSuffix)).toHaveLength(1)
+    // which is why the prefix identity above is a claim and not an artefact. Since 389 D-12
+    // the clean drain also prints the clustered sentence block after the close-out — the
+    // in-process drain completed analyze-run, so the sentences are IN the CI output, one
+    // representative per cluster, through the one `analysis.get` producer.
+    const cleanLines = lines(cleanSuffix)
+    expect(cleanLines[0]).toContain(`post-processing done for ${RUN_ID}`)
+    expect(cleanLines[1]).toBe('analysis — 2 distinct problems:')
+    expect(cleanLines).toHaveLength(4)
     expect(cleanSuffix).not.toBe(failedSuffix)
 
     // 5. Nothing escaped the tail. The wrapper's defensive boundary was never needed — a tail
@@ -537,7 +544,9 @@ describe('JOBQ-06 — the structural halves', () => {
       expect(scenario.unexpectedErrors).toEqual([])
       const suffix = tailSuffix(scenario.stderr, scenario.verdictScopedStderr)
       expect(lines(suffix)).toEqual([
-        'post-processing — analysis: pending · curation: pending · issues: reserved',
+        'post-processing — analysis: pending · curation: pending · issues: reserved'
+        // 389 D-12: nothing drained under --detach, so the line carries the fetch command.
+        + ` · sentences: ${analysisFetchCommand(RUN_ID)}`,
       ])
     })
 
