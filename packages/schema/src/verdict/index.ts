@@ -10,3 +10,5 @@ export {
 } from './analysis-artifact'
 export type { RunAnalysisArtifact } from './analysis-artifact'
 export { resolveRunVerdicts } from './resolved-verdicts'
+export { failureFingerprint } from './failure-fingerprint'
+export type { FailureFingerprintInput } from './failure-fingerprint'

@@ -89,6 +89,20 @@ export {
   anchorGraphNode,
   recordGraphNode,
 } from './identity/index'
+// 389 D-13: the exercised-anchors walk, promoted from the CLI curation tail so the agent
+// cluster function, 390's recurrence window and the tail all consume ONE spelling.
+export {
+  actionRefs,
+  classifySubActionRoute,
+  elementAnchor,
+  exercisedAnchors,
+  resolvedElementEvidence,
+  uniqueAnchors,
+} from './identity/exercised-anchors'
+export type {
+  ClassifiedRoute,
+  ResolvedElementEvidence,
+} from './identity/exercised-anchors'
 export { supersessionKey } from './identity/supersession-key'
 export {
   screenIdentityHash,
@@ -183,11 +197,13 @@ export {
   ANALYSIS_MIGRATIONS,
   AnalysisVersionError,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
+  failureFingerprint,
   guardRunAnalysisArtifact,
   resolveRunVerdicts,
   VerdictSentencePartsSchema,
 } from './verdict/index'
 export type {
+  FailureFingerprintInput,
   RunAnalysisArtifact,
   VerdictGroundingQuote,
   VerdictSentenceParts,

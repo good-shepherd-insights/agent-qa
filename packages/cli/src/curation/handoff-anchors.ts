@@ -1,143 +1,24 @@
-import {
-  elementOrdinal,
-  type Anchor,
-  type ElementInfo,
-  type StepEvidence,
-  type SubActionEvidence,
+// The anchor-extraction walk moved to schema (Phase 389, D-13) — this module re-exports it.
+//
+// `exercisedAnchors` and its helpers are pure over schema types and now have consumers on
+// both sides of the package graph (the agent-side cluster function, 390's recurrence window,
+// and this tail), so the ONE implementation lives in
+// `@vostride/agent-qa-schema`'s identity module and every existing CLI call site keeps
+// compiling unchanged through these re-exports. Only `elementNaturalKey` stays local: it is
+// this tail's own display key, consumed nowhere else.
+
+import type { ResolvedElementEvidence } from '@vostride/agent-qa-schema'
+
+export {
+  actionRefs,
+  classifySubActionRoute,
+  elementAnchor,
+  exercisedAnchors,
+  resolvedElementEvidence,
+  uniqueAnchors,
 } from '@vostride/agent-qa-schema'
-
-export interface ResolvedElementEvidence {
-  subAction: SubActionEvidence
-  element: ElementInfo
-  ordinal: number
-  locator?: string
-}
-
-export interface ClassifiedRoute {
-  navigated: boolean
-  route?: string
-}
-
-function quoteAttribute(value: string): string {
-  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')
-}
-
-function locatorForElement(element: ElementInfo): string | undefined {
-  const explicit =
-    element.attributes.selector
-    ?? element.attributes.cssSelector
-    ?? element.attributes.xpath
-  if (explicit !== undefined && explicit.trim() !== '') return explicit.trim()
-
-  const testId = element.attributes['data-testid'] ?? element.labels.testId
-  if (testId !== undefined && testId !== '') {
-    return `[data-testid="${quoteAttribute(testId)}"]`
-  }
-
-  const resourceId = element.attributes['resource-id']
-  if (resourceId !== undefined && resourceId !== '') {
-    return `[resource-id="${quoteAttribute(resourceId)}"]`
-  }
-
-  const accessibilityId = element.attributes['accessibility-id']
-  if (accessibilityId !== undefined && accessibilityId !== '') {
-    return `[accessibility-id="${quoteAttribute(accessibilityId)}"]`
-  }
-
-  const id = element.attributes.id
-  return id === undefined || id === '' ? undefined : `[id="${quoteAttribute(id)}"]`
-}
-
-export function actionRefs(subAction: SubActionEvidence): string[] {
-  const action = subAction.plannedAction
-  const refs: string[] = []
-  if ('ref' in action && typeof action.ref === 'string') refs.push(action.ref)
-  if ('fromRef' in action && typeof action.fromRef === 'string') refs.push(action.fromRef)
-  if ('toRef' in action && typeof action.toRef === 'string') refs.push(action.toRef)
-  return refs
-}
-
-function resolvedActionRefs(subAction: SubActionEvidence): string[] {
-  const grounded = (subAction.grounding?.attempts ?? []).flatMap((attempt) =>
-    attempt.outcome === 'resolved' && attempt.resolvedRef !== undefined
-      ? [attempt.resolvedRef]
-      : [],
-  )
-  return grounded.length === 0 ? actionRefs(subAction) : grounded
-}
-
-/** Shared handoff walk for evidence that resolved against the live pre-action screen. */
-export function resolvedElementEvidence(step: StepEvidence): ResolvedElementEvidence[] {
-  const byIdentity = new Map<string, ResolvedElementEvidence>()
-  for (const subAction of step.subActions) {
-    for (const ref of resolvedActionRefs(subAction)) {
-      const element = subAction.stateBefore.elements.find((candidate) => candidate.ref === ref)
-      if (element === undefined) continue
-      const ordinal = elementOrdinal(element, subAction.stateBefore.elements)
-      const identity = [
-        subAction.stateBefore.platform,
-        element.role,
-        element.nameNormalized,
-        ordinal,
-      ].join('\u0000')
-      if (!byIdentity.has(identity)) {
-        const locator = locatorForElement(element)
-        byIdentity.set(identity, {
-          subAction,
-          element,
-          ordinal,
-          ...(locator === undefined ? {} : { locator }),
-        })
-      }
-    }
-  }
-  return [...byIdentity.values()]
-}
+export type { ClassifiedRoute, ResolvedElementEvidence } from '@vostride/agent-qa-schema'
 
 export function elementNaturalKey(evidence: ResolvedElementEvidence): string {
   return `${evidence.element.role}:${evidence.element.nameNormalized}:${evidence.ordinal}`
-}
-
-export function elementAnchor(
-  evidence: ResolvedElementEvidence,
-): Extract<Anchor, { t: 'el' }> {
-  return {
-    t: 'el',
-    role: evidence.element.role,
-    name: evidence.element.nameNormalized,
-    ordinal: evidence.ordinal,
-  }
-}
-
-export function classifySubActionRoute(subAction: SubActionEvidence): ClassifiedRoute {
-  const before = subAction.stateBefore.url
-  const after = subAction.stateAfter?.url
-  if (before !== undefined && after !== undefined && before !== after) {
-    return { navigated: true, route: after }
-  }
-  return {
-    navigated: false,
-    ...(before === undefined ? {} : { route: before }),
-  }
-}
-
-export function uniqueAnchors(anchors: readonly Anchor[]): Anchor[] {
-  const seen = new Set<string>()
-  return anchors.filter((anchor) => {
-    const key = JSON.stringify(anchor)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
-/** Pin 1: typed handoff evidence currently carries element and page contact, not flow contact. */
-export function exercisedAnchors(step: StepEvidence): Anchor[] {
-  return uniqueAnchors([
-    ...resolvedElementEvidence(step).map(elementAnchor),
-    ...step.subActions.flatMap((subAction) => {
-      const { route } = classifySubActionRoute(subAction)
-      return route === undefined ? [] : [{ t: 'page' as const, route }]
-    }),
-  ])
 }
