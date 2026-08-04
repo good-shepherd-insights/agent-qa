@@ -36,10 +36,14 @@ import {
   canonicalJson,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   sha256hex,
+  slugBranch,
 } from '@vostride/agent-qa-schema'
 import { deterministicVerdict, UNKNOWN_SIGNAL_RATIONALE } from '@vostride/agent-qa-runner'
 
+import { authorRunAnalysis } from './analyze-run-author.js'
 import { UNKNOWN_VERDICTS_MARKER } from './chain-identity.js'
+import { buildEvidencePacks } from './evidence-diet.js'
+import type { EvidenceHistoryLookup } from './evidence-diet.js'
 import { createJobKindRegistry } from './kind-registry.js'
 import type {
   FallbackContinuationInput,
@@ -224,6 +228,54 @@ export interface PostRunJobCapabilities {
    * of the author, no checkpoint is recorded, and the declared bound adjudicates the retry.
    */
   persistAnalysis(artifact: RunAnalysisArtifact): void
+  /**
+   * One test's recorded outcome history, keyed the projection's way — `product` =
+   * `slugBranch(scope.key)` plus the stable test identity `filePath` + `testName`, NEVER
+   * `testId` (389 plan 02's key law). Feeds D-02's forced prior-build channel and the
+   * author's failure-history reasoning input. OPTIONAL: production hosts bind
+   * knowledge-local's `readTestOutcomeHistory` in plan 06; unbound, the author runs with a
+   * typed no-history diet — degraded, never a crash.
+   */
+  readTestHistory?(query: {
+    readonly product: string
+    readonly filePath: string
+    readonly testName: string
+  }): TestOutcomeHistoryLike | undefined
+  /**
+   * D-01's TokenAccounting substrate entering as DATA — the estimator and input budget the
+   * author's compaction ladder walks against. OPTIONAL: plan 06 binds it from the same
+   * profile resolution as the job model; unbound, the packs travel whole (no ladder) and
+   * the model call carries whatever they weigh.
+   */
+  analysisTokenBudget?: {
+    readonly estimate: (text: string) => number
+    readonly inputBudget: number
+  }
+  /**
+   * D-02's capability-gated screenshot bytes: the CASS-02 evidence-blob store read,
+   * sha-addressed within one run's directory. OPTIONAL: plan 06 binds it at the production
+   * hosts; unbound — or with a model that does not advertise vision — the author's request
+   * is text-only, the L9 graceful degradation, never an error.
+   */
+  readEvidenceBlob?(runId: string, sha: string): Uint8Array | undefined
+}
+
+/**
+ * The minimal structural mirror of knowledge-local's `TestOutcomeHistory` row (389 plan 02).
+ *
+ * Declared HERE rather than imported because the dependency points the other way — this
+ * package never names knowledge-local — and structural typing makes the real
+ * `readTestOutcomeHistory` record assignable unchanged at the plan 06 binding. It also
+ * matches `evidence-diet.ts`'s `EvidenceTestHistory` member-for-member, so one capability
+ * answer feeds both the diet's prior-build channel and the author's reasoning input.
+ */
+export interface TestOutcomeHistoryLike {
+  readonly passes: number
+  readonly failures: number
+  readonly heals: number
+  readonly flakeCount: number
+  readonly lastOutcomes: readonly { readonly buildOrdinal: number; readonly passed: boolean }[]
+  readonly lastBuildOrdinal: number | undefined
 }
 
 /** The claim shape analyze-run is enqueued with (D-06). Anything else is unreadable input. */
@@ -437,12 +489,57 @@ function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler
     // the artifact is not rewritten (the recorded-value path).
     const authored = await context.recordLlmAuthorship(
       'verdicts-authored',
-      // Plan 04 upgrades the `unknown` members with the model capability this callback
-      // receives as its argument; signature, artifact-write position and returned shape are
-      // final here.
-      async () => {
-        const verdicts = projectHandoffVerdicts(handoff)
-        const parts = verdicts.map((verdict) => templateSentenceParts(verdict, handoff))
+      // The full author (389 plan 04): the model capability arrives ONLY as this
+      // callback's argument. Unknown floor members are authored through
+      // `authorRunAnalysis` — one whole-run call, one repair, per-test degrade — and
+      // everything else passes through byte-identical; a floor with no unknown members
+      // (or no failures at all) reaches no model. Signature, artifact-write position and
+      // returned shape are final from plan 01.
+      async (model) => {
+        const floor = projectHandoffVerdicts(handoff)
+        const unknownTests = floor
+          .filter((verdict) => verdict.class === 'unknown')
+          .map((verdict) => verdict.perTest)
+
+        let verdicts = floor
+        const authoredParts = new Map<number, VerdictSentenceParts>()
+        if (unknownTests.length > 0) {
+          // The projection's product key, spelled the projection's way (plan 02 key law).
+          const product = slugBranch(handoff.scope.key)
+          const history: EvidenceHistoryLookup = (identity) =>
+            capabilities.readTestHistory?.({
+              product,
+              filePath: identity.filePath,
+              testName: identity.testName,
+            })
+          const result = await authorRunAnalysis(model, {
+            handoff,
+            floor,
+            packs: buildEvidencePacks(handoff, unknownTests, history),
+            history,
+            ...(capabilities.analysisTokenBudget === undefined
+              ? {}
+              : { tokenBudget: capabilities.analysisTokenBudget }),
+            // runId-curried so the author sees the plain `(sha) => bytes` shape.
+            ...(capabilities.readEvidenceBlob === undefined
+              ? {}
+              : {
+                  readEvidenceBlob: (sha: string) =>
+                    capabilities.readEvidenceBlob?.(payload.runId, sha),
+                }),
+          })
+          verdicts = result.verdicts
+          for (const parts of result.authoredParts) authoredParts.set(parts.perTest, parts)
+        }
+
+        // D-06's ONE producer-keyed parts rule: LLM parts for upgraded members, template
+        // parts for deterministic members — which is also what hands a degraded/unfilled
+        // `unknown` its honest "root cause undetermined" sentence.
+        const parts = verdicts.map((verdict) =>
+          verdict.producer === 'analyze-run'
+            ? authoredParts.get(verdict.perTest) ?? templateSentenceParts(verdict, handoff)
+            : templateSentenceParts(verdict, handoff),
+        )
         capabilities.persistAnalysis({
           schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
           runId: payload.runId,

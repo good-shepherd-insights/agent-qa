@@ -406,18 +406,21 @@ describe('the full author behind the frozen checkpoint (389 plan 04, ANLZ-02/ANL
     await run()
 
     expect(generateCallCount()).toBe(1)
-    expect(queries).toHaveLength(1)
-    const query = queries[0] as (typeof queries)[number]
-    // The projection's key, spelled the projection's way: product = slugBranch(scope.key),
-    // the handoff's own filePath and display testName — the fixture's testId
-    // ('t_failed_0') appears in NO field.
-    expect(Object.keys(query).sort()).toEqual(['filePath', 'product', 'testName'])
-    expect(query).toEqual({
-      product: slugBranch(handoff.scope.key),
-      filePath: 'tests/failed-0.yaml',
-      testName: 'stepped failure 0',
-    })
-    expect(Object.values(query)).not.toContain('t_failed_0')
+    // Two consumers of ONE injected lookup — the diet's prior-build channel and the
+    // author's context-tier history line — both keyed identically.
+    expect(queries.length).toBeGreaterThanOrEqual(1)
+    for (const query of queries) {
+      // The projection's key, spelled the projection's way: product = slugBranch(scope.key),
+      // the handoff's own filePath and display testName — the fixture's testId
+      // ('t_failed_0') appears in NO field.
+      expect(Object.keys(query).sort()).toEqual(['filePath', 'product', 'testName'])
+      expect(query).toEqual({
+        product: slugBranch(handoff.scope.key),
+        filePath: 'tests/failed-0.yaml',
+        testName: 'stepped failure 0',
+      })
+      expect(Object.values(query)).not.toContain('t_failed_0')
+    }
   })
 
   it('compiles with every optional capability member unbound — the between-waves posture', async () => {
