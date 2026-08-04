@@ -1781,6 +1781,13 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       // handed in is the lease this process already owns — the 387-08 D-18 idiom — because a
       // holder that re-acquires is told `held` by itself and has nobody to delegate to.
       postRun: {
+        // UF-388-01 / D-11: this process holds no per-run MaskingContext by construction, so
+        // a fold it ran would reach the candidate projection with an inactive masker and the
+        // prose redaction would degrade to a pass-through over step text that carries exact
+        // env-bound values verbatim. Declaring the unmasked posture makes the kind this
+        // binding serves unclaimable for this host, and the fold is deferred to a leg that
+        // folds with a masker ACTIVE — a masker, not necessarily the folded run's (T-388-30).
+        candidateProse: 'no-masker',
         curateRun: async ({ runId: curatedRunId, deadlineMs }) => {
           const policy = input.policy
           const factory = input.author
@@ -1805,8 +1812,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
               info: (message: string) => logger.info(message),
             },
           })
-          // WR-03 / D-01: the same three fields the CLI binding returns. Which process holds
-          // the lease must not change what the notification row says about the fold.
+          // WR-03 / D-01: the same three fields the CLI binding returns — but the two
+          // bindings are NOT equivalent, and the reason is declared one field above: only a
+          // leg folding with a masker active may claim the kind that runs the same per-run fold.
           return { curated: folded.curated, deprecated: folded.deprecated, complete: folded.complete }
         },
       },
