@@ -1,0 +1,215 @@
+import { readFileSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
+import { fileURLToPath } from 'node:url'
+
+import type { CompletedRunHandoff, ScopeKey } from '@vostride/agent-qa-schema'
+import { describe, expect, it } from 'vitest'
+
+import { ensureRunOutcomeTables } from '../../index-open.js'
+import {
+  readTestOutcomeHistory,
+  type TestOutcomeHistory,
+} from '../run-outcome-read.js'
+import {
+  applyRunOutcomes,
+  LAST_OUTCOMES_LIMIT,
+  projectRunOutcomes,
+} from '../run-outcomes.js'
+
+const SHOP_SCOPE: ScopeKey = { tier: 'product', key: 'shop-web' }
+const PRODUCT = 'shop-web'
+const FILE_PATH = 'suite/checkout.test.ts'
+const TEST_NAME = 'checkout happy path'
+
+/**
+ * Minimal handoff carrying one counted per-test outcome. Self-contained rather than
+ * imported from run-outcomes.test.ts — importing a sibling .test.ts re-runs its suite.
+ */
+function oneTestHandoff(input: {
+  runId: string
+  buildOrdinal: number
+  outcome: 'passed' | 'failed'
+  heals?: number
+  flake?: boolean
+}): CompletedRunHandoff {
+  return {
+    schemaVersion: 3,
+    runId: input.runId,
+    buildOrdinal: input.buildOrdinal,
+    scope: SHOP_SCOPE,
+    executionContext: 'ci',
+    aggregateVerdict: input.outcome,
+    configDigests: {
+      suiteConfigDigest: 'fixture-suite-config-digest',
+      testConfigDigest: 'fixture-test-config-digest',
+    },
+    startedAt: input.buildOrdinal * 1_000,
+    endedAt: input.buildOrdinal * 1_000 + 1,
+    tests: [
+      {
+        testId: 'checkout-happy-1',
+        testName: TEST_NAME,
+        filePath: FILE_PATH,
+        testIndex: 0,
+        outcome: input.outcome,
+        steps: [],
+        ...(input.flake === true
+          ? {
+              rootCause: {
+                class: 'flake',
+                producer: 'deterministic-classifier',
+                confidence: 1,
+                evidence: {
+                  citedSteps: [],
+                  citedAnchors: [],
+                  citedArtifacts: [],
+                  rationale: 'fixture flake root cause',
+                },
+                memoryMisdirectionRuledOut: true,
+                perTest: 1,
+              },
+            }
+          : {}),
+      },
+    ],
+  } as unknown as CompletedRunHandoff
+}
+
+function openDb(): DatabaseSync {
+  const db = new DatabaseSync(':memory:')
+  ensureRunOutcomeTables(db)
+  return db
+}
+
+/** Write through the projection's real writer path — the rows the reader must round-trip. */
+function fold(
+  db: DatabaseSync,
+  input: Parameters<typeof oneTestHandoff>[0],
+): void {
+  applyRunOutcomes(db, projectRunOutcomes(oneTestHandoff(input), {
+    extractAnchors: () => [],
+  }))
+}
+
+function insertRawRow(db: DatabaseSync, lastOutcomesJson: string): void {
+  db.prepare(`
+    INSERT INTO run_test_outcomes (
+      product, scope_tier, scope_key, file_path, test_name, passes, failures, heals,
+      flake_count, quarantined, last_outcomes_json, last_build_ordinal
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    PRODUCT,
+    'product',
+    PRODUCT,
+    FILE_PATH,
+    TEST_NAME,
+    4,
+    2,
+    1,
+    1,
+    0,
+    lastOutcomesJson,
+    9,
+  )
+}
+
+describe('readTestOutcomeHistory (ANLZ-03, RESEARCH Pitfall 2)', () => {
+  it('round-trips a row written by the real fold path, lastOutcomes ordinal-ascending', () => {
+    const db = openDb()
+    fold(db, { runId: 'run-b3', buildOrdinal: 3, outcome: 'failed' })
+    fold(db, { runId: 'run-b5', buildOrdinal: 5, outcome: 'passed' })
+
+    const history = readTestOutcomeHistory(db, {
+      product: PRODUCT,
+      filePath: FILE_PATH,
+      testName: TEST_NAME,
+    })
+    expect(history).toEqual({
+      passes: 1,
+      failures: 1,
+      heals: 0,
+      flakeCount: 0,
+      lastOutcomes: [
+        { buildOrdinal: 3, passed: false },
+        { buildOrdinal: 5, passed: true },
+      ],
+      lastBuildOrdinal: 5,
+    } satisfies TestOutcomeHistory)
+  })
+
+  it('answers undefined for a missing row — never a throw, never an empty object', () => {
+    const db = openDb()
+    fold(db, { runId: 'run-b1', buildOrdinal: 1, outcome: 'passed' })
+
+    expect(readTestOutcomeHistory(db, {
+      product: PRODUCT,
+      filePath: FILE_PATH,
+      testName: 'a test never folded',
+    })).toBeUndefined()
+    expect(readTestOutcomeHistory(db, {
+      product: 'other-product',
+      filePath: FILE_PATH,
+      testName: TEST_NAME,
+    })).toBeUndefined()
+  })
+
+  it('caps lastOutcomes at LAST_OUTCOMES_LIMIT entries, ascending, most-recent kept', () => {
+    const db = openDb()
+    for (let ordinal = 1; ordinal <= LAST_OUTCOMES_LIMIT + 2; ordinal += 1) {
+      fold(db, {
+        runId: `run-b${ordinal}`,
+        buildOrdinal: ordinal,
+        outcome: ordinal % 2 === 0 ? 'passed' : 'failed',
+      })
+    }
+
+    const history = readTestOutcomeHistory(db, {
+      product: PRODUCT,
+      filePath: FILE_PATH,
+      testName: TEST_NAME,
+    })
+    expect(history?.lastOutcomes).toHaveLength(LAST_OUTCOMES_LIMIT)
+    expect(history?.lastOutcomes[0]).toEqual({ buildOrdinal: 3, passed: false })
+    expect(history?.lastOutcomes.at(-1)).toEqual({
+      buildOrdinal: LAST_OUTCOMES_LIMIT + 2,
+      passed: true,
+    })
+    const ordinals = (history?.lastOutcomes ?? []).map((entry) => entry.buildOrdinal)
+    expect(ordinals).toEqual([...ordinals].sort((a, b) => a - b))
+  })
+
+  it.each([
+    ['unparseable bytes', '{not json'],
+    ['parseable non-array', '{"buildOrdinal":9,"passed":true}'],
+  ])('heals %s in last_outcomes_json to an empty window, scalars intact', (_label, json) => {
+    const db = openDb()
+    insertRawRow(db, json)
+
+    const history = readTestOutcomeHistory(db, {
+      product: PRODUCT,
+      filePath: FILE_PATH,
+      testName: TEST_NAME,
+    })
+    expect(history).toEqual({
+      passes: 4,
+      failures: 2,
+      heals: 1,
+      flakeCount: 1,
+      lastOutcomes: [],
+      lastBuildOrdinal: 9,
+    } satisfies TestOutcomeHistory)
+  })
+
+  it('is a read-only module: no INSERT/UPDATE/DELETE statement text in its source', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../run-outcome-read.ts', import.meta.url)),
+      'utf8',
+    )
+    const withoutComments = source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .join('\n')
+    expect(withoutComments).not.toMatch(/\b(?:insert|update|delete)\b/i)
+  })
+})
