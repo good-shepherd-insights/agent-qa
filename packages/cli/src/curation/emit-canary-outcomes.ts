@@ -3,6 +3,7 @@ import { isAbsolute, join } from 'node:path'
 
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import {
+  admitAnalysisArtifactForRun,
   ANALYSIS_FILE,
   canonicalJson,
   guardRunAnalysisArtifact,
@@ -58,9 +59,14 @@ function resolveAttributionClasses(
  * One run's persisted analysis artifact, loaded from the fold's OWN `runDir` through the one
  * schema guard (RESEARCH A4 — `runDir` is already on the fold's options, no new port). An
  * absent file is `undefined` — the floor; a newer schemaVersion is the guard's typed hard
- * failure, never swallowed into a silent floor.
+ * failure, never swallowed into a silent floor. A PRESENT file recording ANOTHER run's id
+ * is refused by identity (`admitAnalysisArtifactForRun`, G-389-3A) and folds to the floor:
+ * attribution never flips off another run's verdicts, the 388 cross-instance class.
  */
-function loadRunAnalysisArtifact(runDir: string): RunAnalysisArtifact | undefined {
+function loadRunAnalysisArtifact(
+  runDir: string,
+  runId: string,
+): RunAnalysisArtifact | undefined {
   let bytes: string
   try {
     bytes = readFileSync(join(runDir, ANALYSIS_FILE), 'utf8')
@@ -68,7 +74,11 @@ function loadRunAnalysisArtifact(runDir: string): RunAnalysisArtifact | undefine
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
   }
-  return guardRunAnalysisArtifact(JSON.parse(bytes))
+  const admission = admitAnalysisArtifactForRun(
+    guardRunAnalysisArtifact(JSON.parse(bytes)),
+    runId,
+  )
+  return admission.kind === 'admitted' ? admission.artifact : undefined
 }
 
 /**
@@ -412,7 +422,7 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
   // The D-10 rewire (389-06): the artifact is loaded from the fold's OWN runDir, once per
   // fold, and every class switch downstream consumes the resolved verdict — an upgraded run
   // re-folds with flipped attribution rather than a second independent observation (SC2).
-  const artifact = loadRunAnalysisArtifact(opts.runDir)
+  const artifact = loadRunAnalysisArtifact(opts.runDir, String(opts.handoff.runId))
   const projected = projectCanaryAttributions({
     handoff: opts.handoff,
     ...(artifact === undefined ? {} : { artifact }),

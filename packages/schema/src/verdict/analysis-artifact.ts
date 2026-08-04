@@ -134,3 +134,35 @@ export const guardRunAnalysisArtifact = createVersionGuard<RunAnalysisArtifact>(
   error: AnalysisVersionError,
   shape: hasCompleteArtifactShape,
 })
+
+/**
+ * The typed answer of {@link admitAnalysisArtifactForRun}: the artifact by identity when
+ * its recorded `runId` is the run being resolved, or a `run-mismatch` refusal carrying
+ * both ids — the shape a consumer folds to the deterministic floor, never adopts.
+ */
+export type AnalysisArtifactAdmission =
+  | { kind: 'admitted'; artifact: RunAnalysisArtifact }
+  | { kind: 'run-mismatch'; recordedRunId: string; resolvingRunId: string }
+
+/**
+ * The read half of the two-sided run-identity contract (G-389-3A, the 388 class).
+ *
+ * The write half derives the artifact's path FROM `artifact.runId` (the `persistAnalysis`
+ * binding), so on an intact directory the recorded id and the resolved run agree by
+ * construction. A copied, restored or foreign-written run directory breaks that agreement,
+ * and this is the ONE place the comparison is spelled: both byte boundaries (the
+ * agent-local artifact reader serving `analysis.get`/`runs.get`, and the canary fold's
+ * loader) call it immediately after {@link guardRunAnalysisArtifact}.
+ *
+ * Consumers fold `run-mismatch` to `undefined` — the run's own deterministic floor. Never
+ * adoption (the refusal exists so another run's verdicts and parts stay invisible whole),
+ * and never a hard failure (the run's deterministic answer is intact; a mismatch is not
+ * the version guard's corruption posture).
+ */
+export function admitAnalysisArtifactForRun(
+  artifact: RunAnalysisArtifact,
+  resolvingRunId: string,
+): AnalysisArtifactAdmission {
+  if (artifact.runId === resolvingRunId) return { kind: 'admitted', artifact }
+  return { kind: 'run-mismatch', recordedRunId: artifact.runId, resolvingRunId }
+}

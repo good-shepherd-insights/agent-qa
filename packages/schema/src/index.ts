@@ -193,6 +193,7 @@ export type { Verdict, VerdictEvidence } from './verdict/index'
 // by perTest (beside, never inside the frozen §A9 union), the version-guarded run analysis
 // artifact, and the ONE resolved-verdict accessor every consumer routes through.
 export {
+  admitAnalysisArtifactForRun,
   ANALYSIS_FILE,
   ANALYSIS_MIGRATIONS,
   AnalysisVersionError,
@@ -208,6 +209,7 @@ export {
   VerdictSentencePartsSchema,
 } from './verdict/index'
 export type {
+  AnalysisArtifactAdmission,
   AnalysisValidationReject,
   AnalysisValidationResult,
   FailureFingerprintInput,

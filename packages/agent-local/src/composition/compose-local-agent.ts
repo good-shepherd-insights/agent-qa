@@ -124,6 +124,7 @@ import {
 } from '@vostride/agent-qa-runner-local'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import {
+  admitAnalysisArtifactForRun,
   ANALYSIS_FILE,
   asJobId,
   DEFAULT_EMBEDDING_PROFILE,
@@ -1123,7 +1124,10 @@ function createProjectionRecurrenceProvider(
  * An absent file is `undefined` — "the analysis never ran" is a true state of a run, which
  * `analysis.get` serves as the floor. Everything else propagates: a schemaVersion newer
  * than this build reads is `guardRunAnalysisArtifact`'s typed hard failure (never swallowed
- * into a silent floor), and malformed bytes are corruption, not absence.
+ * into a silent floor), and malformed bytes are corruption, not absence. A PRESENT file
+ * recording ANOTHER run's id is refused by identity (`admitAnalysisArtifactForRun`,
+ * G-389-3A) and served as the floor — a refusal, not an absence, distinguishable by the
+ * two-leg differential: the same bytes with the id corrected are adopted.
  */
 function createAnalysisArtifactReader(agentQaRoot: string): AnalysisArtifactReaderPort {
   return {
@@ -1136,7 +1140,11 @@ function createAnalysisArtifactReader(agentQaRoot: string): AnalysisArtifactRead
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
         throw error
       }
-      return guardRunAnalysisArtifact(JSON.parse(bytes))
+      const admission = admitAnalysisArtifactForRun(
+        guardRunAnalysisArtifact(JSON.parse(bytes)),
+        runId,
+      )
+      return admission.kind === 'admitted' ? admission.artifact : undefined
     },
   }
 }
