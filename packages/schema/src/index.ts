@@ -175,6 +175,23 @@ export type {
   RecordId,
 } from './ids/index'
 export type { Verdict, VerdictEvidence } from './verdict/index'
+// 389 D-05/D-07/D-09/D-10: the verdict truth vocabulary — sentence parts joined to Verdict
+// by perTest (beside, never inside the frozen §A9 union), the version-guarded run analysis
+// artifact, and the ONE resolved-verdict accessor every consumer routes through.
+export {
+  ANALYSIS_FILE,
+  ANALYSIS_MIGRATIONS,
+  AnalysisVersionError,
+  CURRENT_ANALYSIS_SCHEMA_VERSION,
+  guardRunAnalysisArtifact,
+  resolveRunVerdicts,
+  VerdictSentencePartsSchema,
+} from './verdict/index'
+export type {
+  RunAnalysisArtifact,
+  VerdictGroundingQuote,
+  VerdictSentenceParts,
+} from './verdict/index'
 export type {
   DeltaEnvelope,
   CompareAndSet,

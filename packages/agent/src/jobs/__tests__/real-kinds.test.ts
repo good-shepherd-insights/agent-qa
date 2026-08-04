@@ -59,6 +59,9 @@ const CAPABILITIES: PostRunJobCapabilities = {
   // Never invoked by the analyze-run cases below; `complete: true` is the shape the widened
   // contract requires (WR-03), not a claim any assertion here turns on.
   curateRun: async () => ({ curated: 0, deprecated: 0, complete: true }),
+  // The 389 artifact write is order-pinned in analyze-run-artifact.test.ts; here it only has
+  // to exist so the contract typechecks, exactly like `curateRun` above.
+  persistAnalysis: () => {},
 }
 
 /** A scripted context: the handler's two capabilities, recorded rather than performed. */
@@ -84,8 +87,14 @@ function contextFor(payload: unknown): {
       publishCheckpoint: async (checkpointId: string, value: unknown) => {
         published.push({ checkpointId, value })
       },
-      recordLlmAuthorship: (async () => {
-        throw new Error('the post-run chain never authors in 388')
+      // 389's analyze-run authors through the primitive, so the scripted context carries a
+      // faithful miss-path stand-in: invoke the author once, record what it returned, hand it
+      // back. The resume path and the ordering contract are pinned in
+      // analyze-run-artifact.test.ts; nothing here reads a recorded value.
+      recordLlmAuthorship: (async (checkpointId: string, author: (model: unknown) => Promise<unknown>) => {
+        const value = await author({ modelId: 'stub', generate: async () => ({ text: '' }) })
+        published.push({ checkpointId, value })
+        return value
       }) as unknown as JobHandlerContext['recordLlmAuthorship'],
     },
   }
@@ -175,6 +184,7 @@ describe('the real post-run kinds (388 D-04)', () => {
     const outcome = await createRealJobKindRegistry({
       loadCompletedRunHandoff: () => HANDOFF,
       curateRun: async () => ({ curated: 0, deprecated: 0, complete: false }),
+      persistAnalysis: () => {},
     }).require('curate-memory').handler(context)
 
     if (outcome.status !== 'retryable') {
@@ -197,6 +207,7 @@ describe('the real post-run kinds (388 D-04)', () => {
     const outcome = await createRealJobKindRegistry({
       loadCompletedRunHandoff: () => HANDOFF,
       curateRun: async () => ({ curated: 4, deprecated: 2, complete: true }),
+      persistAnalysis: () => {},
     }).require('curate-memory').handler(context)
 
     if (outcome.status !== 'complete') throw new Error(`expected complete, got ${outcome.status}`)

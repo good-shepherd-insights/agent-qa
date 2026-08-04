@@ -27,9 +27,16 @@ import type {
   JobHandlerOutcome,
   JobKind,
   PerTestOutcome,
+  RunAnalysisArtifact,
   Verdict,
+  VerdictGroundingQuote,
+  VerdictSentenceParts,
 } from '@vostride/agent-qa-schema'
-import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import {
+  canonicalJson,
+  CURRENT_ANALYSIS_SCHEMA_VERSION,
+  sha256hex,
+} from '@vostride/agent-qa-schema'
 import { deterministicVerdict, UNKNOWN_SIGNAL_RATIONALE } from '@vostride/agent-qa-runner'
 
 import { UNKNOWN_VERDICTS_MARKER } from './chain-identity.js'
@@ -206,6 +213,17 @@ export interface PostRunJobCapabilities {
     readonly deprecated: number
     readonly complete: boolean
   }>
+  /**
+   * Put one run's analysis artifact durably on disk (389 D-09).
+   *
+   * Called INSIDE the author callback, before the verdicts-authored value is recorded — the
+   * authorship primitive records only after the callback returns, so by the time any chip can
+   * read `done` the sentence is already fetchable. Authored never overstates. The binding is
+   * the host's (`agent-local` derives the path from `runId` the same way it derives the
+   * handoff's — a job payload never carries a path); a synchronous throw here propagates out
+   * of the author, no checkpoint is recorded, and the declared bound adjudicates the retry.
+   */
+  persistAnalysis(artifact: RunAnalysisArtifact): void
 }
 
 /** The claim shape analyze-run is enqueued with (D-06). Anything else is unreadable input. */
@@ -295,12 +313,79 @@ function summarizeVerdicts(verdicts: readonly Verdict[]): {
 }
 
 /**
- * The real analyze-run body (D-02 / D-06).
+ * The one concrete next action a template sentence names, total over the verdict union
+ * (389 D-06). A `Record` rather than an if-chain so an added class is a compile error here,
+ * not an uncovered row — the 388-11 `postureOf` discipline.
+ */
+const TEMPLATE_NEXT_ACTION: Record<Verdict['class'], string> = {
+  test_bug: 'update the test to match the behaviour the app now has',
+  app_bug: 'file the failure against the application with the quoted evidence',
+  environment: 'check the environment or infrastructure dependency the run relied on',
+  flake: 'watch for recurrence before changing the test or the app',
+  config_error: 'fix the run configuration the signal names',
+  llm_error: 'retry the run; the failure originated in the model pipeline, not the app',
+  unknown: 'inspect the run manually — no deterministic signal matched',
+  timeout: 'investigate the slow dependency or raise the step timeout deliberately',
+}
+
+/**
+ * A verbatim quote of captured evidence for one member test (389 D-06).
+ *
+ * Precedence inside the first failed step (else the last step): the first sub-action error
+ * text, else the verifier's own reasoning. A test that captured ZERO steps quotes its
+ * test-level outcome through the typed no-step arm — never a fabricated stepIndex. Every
+ * branch quotes bytes the run actually recorded; templates assemble around the quote, the
+ * quote itself is never authored.
+ */
+function templateGroundingQuote(test: PerTestOutcome | undefined): VerdictGroundingQuote {
+  if (test === undefined || test.steps.length === 0) {
+    return { source: 'test-outcome', quote: test?.outcome ?? 'failed' }
+  }
+  const step = test.steps.find((candidate) => !candidate.verifierVerdict.pass)
+    ?? test.steps[test.steps.length - 1] as (typeof test.steps)[number]
+  const subActionError = step.subActions
+    .map((subAction) => subAction.result.error)
+    .find((error): error is string => typeof error === 'string' && error !== '')
+  return {
+    stepIndex: step.stepIndex,
+    quote: subActionError ?? step.verifierVerdict.reasoning,
+  }
+}
+
+/**
+ * Producer-keyed template parts for one floor verdict (389 D-06).
+ *
+ * Deterministic classes get code-authored parts derived from the hard signal that minted the
+ * class — the classifier's rationale IS that signal, so the discriminator carries it.
+ * `unknown` gets the honest "root cause undetermined" discriminator and the manual-inspection
+ * next action; plan 04's LLM upgrade replaces exactly those members through the same author
+ * callback, and nothing else changes shape.
+ */
+function templateSentenceParts(
+  verdict: Verdict,
+  handoff: CompletedRunHandoff,
+): VerdictSentenceParts {
+  const test = handoff.tests.find((candidate) => candidate.testIndex === verdict.perTest)
+  return {
+    perTest: verdict.perTest,
+    groundingQuote: templateGroundingQuote(test),
+    discriminator:
+      verdict.class === 'unknown'
+        ? 'root cause undetermined'
+        : `${verdict.class}: ${verdict.evidence.rationale}`,
+    nextAction: TEMPLATE_NEXT_ACTION[verdict.class],
+    links: [],
+  }
+}
+
+/**
+ * The real analyze-run body (D-02 / D-06 / 389 D-09).
  *
  * Reads the run's handoff through the injected capability, refuses anything that is not the
- * document the enqueuer measured, publishes the verdicts on the declared checkpoint, and
- * hands curation the one successor D-04 allows. The published SHAPE — `{runId, verdicts}` —
- * is frozen for 389, which swaps only the author behind it.
+ * document the enqueuer measured, authors the verdicts through `recordLlmAuthorship`, and
+ * hands curation the one successor D-04 allows. The recorded SHAPE — `{runId, verdicts}` —
+ * is the frozen 388 D-02 byte-shape; sentence parts live in the analysis artifact the author
+ * persists BEFORE its value is recorded, never on the checkpoint.
  */
 function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler {
   return async (context) => {
@@ -339,8 +424,31 @@ function realAnalyzeRunHandler(capabilities: PostRunJobCapabilities): JobHandler
       )
     }
 
-    const verdicts = projectHandoffVerdicts(handoff)
-    await context.publishCheckpoint('verdicts-authored', { runId: payload.runId, verdicts })
+    // The author swap (389 D-09/JOBQ-03). On a fresh pass the callback runs exactly once:
+    // floor projected, template parts authored, the artifact made durable through
+    // `persistAnalysis`, and only THEN is the returned value recorded on the declared
+    // checkpoint — the primitive awaits the record before handing the value back, so the
+    // artifact-before-checkpoint ordering is structural, not scheduled. On a resume with a
+    // recorded value, control never reaches this callback: the author is not re-invoked and
+    // the artifact is not rewritten (the recorded-value path).
+    const authored = await context.recordLlmAuthorship(
+      'verdicts-authored',
+      // Plan 04 upgrades the `unknown` members with the model capability this callback
+      // receives as its argument; signature, artifact-write position and returned shape are
+      // final here.
+      async () => {
+        const verdicts = projectHandoffVerdicts(handoff)
+        const parts = verdicts.map((verdict) => templateSentenceParts(verdict, handoff))
+        capabilities.persistAnalysis({
+          schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
+          runId: payload.runId,
+          verdicts,
+          parts,
+        })
+        return { runId: payload.runId, verdicts }
+      },
+    )
+    const verdicts = authored.verdicts
 
     return {
       status: 'complete',
