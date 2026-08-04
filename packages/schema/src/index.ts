@@ -199,10 +199,17 @@ export {
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   failureFingerprint,
   guardRunAnalysisArtifact,
+  QUOTE_SEARCHED_STEP_FIELDS,
+  QUOTE_SEARCHED_TEST_OUTCOME_FIELDS,
   resolveRunVerdicts,
+  searchedQuoteTexts,
+  searchedTestOutcomeTexts,
+  validateAnalysisAgainstHandoff,
   VerdictSentencePartsSchema,
 } from './verdict/index'
 export type {
+  AnalysisValidationReject,
+  AnalysisValidationResult,
   FailureFingerprintInput,
   RunAnalysisArtifact,
   VerdictGroundingQuote,
