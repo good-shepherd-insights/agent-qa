@@ -134,6 +134,7 @@ export { createMaskingContext, unmaskForHumanOutput } from '@vostride/agent-qa-s
 export { JobCancellationNotRequestedError, StaleJobStoreEpochError } from './ports/index.js'
 export type {
   ChainTerminalRecord,
+  ClaimNextOptions,
   JobCancelOutcome,
   JobCheckpointRecord,
   JobCheckpointReadOutcome,

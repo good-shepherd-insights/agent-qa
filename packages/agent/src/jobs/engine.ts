@@ -23,6 +23,7 @@ import { canonicalJson } from '@vostride/agent-qa-schema'
 import type { ClockPort } from '../ports/clock.js'
 import type {
   ChainTerminalRecord,
+  ClaimNextOptions,
   JobCancelOutcome,
   JobCheckpointRecord,
   JobEnqueueOutcome,
@@ -148,6 +149,16 @@ export interface CreateAgentJobQueueOptions {
    * primitive hands it to an author callback.
    */
   readonly model: JobModelCapability
+  /**
+   * The kinds this host may never claim, fixed when its queue is composed (388-09).
+   *
+   * A CONSTRUCTION option, deliberately not a member of `RunNextJobInput`: whether a host
+   * may claim a kind is a fact about the HOST — which capabilities its composition can bind
+   * — and putting it on the per-call input would make it a decision every pump site
+   * re-makes, with every pump site a place the answers could diverge. Absent means what it
+   * means today: every declared kind is this host's to take.
+   */
+  readonly unclaimableKinds?: readonly JobKind[]
 }
 
 export interface RunNextJobInput {
@@ -277,7 +288,11 @@ function defaultSummary(kind: JobKind, idempotencyKey: string): string {
 }
 
 export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJobQueue {
-  const { store, registry, clock, idSource, model } = options
+  const { store, registry, clock, idSource, model, unclaimableKinds } = options
+  // Resolved once at construction, so every pump passes the same exclusion or none at all;
+  // a queue built without the option calls `claimNext(fence)` exactly as it did before.
+  const claimOptions: ClaimNextOptions | undefined =
+    unclaimableKinds === undefined ? undefined : { excludeKinds: unclaimableKinds }
 
   function requestFor(kind: JobKind, payload: unknown, idempotencyKey: string): JobInsert {
     // An undeclared kind is refused before anything is written: the store would happily
@@ -441,7 +456,10 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
     },
 
     async runNextJob({ fence }) {
-      const claim = await store.claimNext(fence)
+      const claim =
+        claimOptions === undefined
+          ? await store.claimNext(fence)
+          : await store.claimNext(fence, claimOptions)
       if (!claim.claimed) {
         return { ran: false, reason: 'no-job' }
       }

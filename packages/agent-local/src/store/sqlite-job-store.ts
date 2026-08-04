@@ -26,6 +26,7 @@ import {
 } from '@vostride/agent-qa-agent'
 import type {
   ChainTerminalRecord,
+  ClaimNextOptions,
   ClockPort,
   JobCancelOutcome,
   JobCheckpointRecord,
@@ -247,6 +248,26 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
      ORDER BY created_at ASC, id ASC
      LIMIT 1`,
   )
+  // The exclusion path's statements, cached by placeholder ARITY so a hot claim path never
+  // re-prepares (388-09). Bound parameters only — one `?` per excluded kind — even though
+  // `JobKind` is a closed vocabulary: the bound form costs nothing and removes the question
+  // of a caller string ever reaching the SQL text (T-388-22). The predicate is the SAME
+  // WHERE plus `kind NOT IN (...)`, same ORDER BY, so the only thing an exclusion changes is
+  // which row the SELECT offers — never what claiming does to it (T-388-21/23).
+  const selectClaimableExcluding = new Map<number, ReturnType<typeof db.prepare>>()
+  function claimableStatementFor(excludedCount: number): ReturnType<typeof db.prepare> {
+    const cached = selectClaimableExcluding.get(excludedCount)
+    if (cached !== undefined) return cached
+    const placeholders = Array.from({ length: excludedCount }, () => '?').join(', ')
+    const prepared = db.prepare(
+      `SELECT * FROM jobs
+       WHERE status = 'queued' AND claimed_at IS NULL AND kind NOT IN (${placeholders})
+       ORDER BY created_at ASC, id ASC
+       LIMIT 1`,
+    )
+    selectClaimableExcluding.set(excludedCount, prepared)
+    return prepared
+  }
   const markClaimed = db.prepare(
     'UPDATE jobs SET claimed_at = ?, attempts = attempts + 1, updated_at = ? WHERE id = ?',
   )
@@ -470,11 +491,18 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
       return inTransaction(() => insertOrGet(request, now))
     },
 
-    async claimNext(fence: JobStoreFence): Promise<JobClaimOutcome> {
+    async claimNext(fence: JobStoreFence, options?: ClaimNextOptions): Promise<JobClaimOutcome> {
       const now = clock.now()
+      // Honoured in the SELECT itself, never by claiming and undoing: per D-18 the attempt
+      // is spent at the claim, and (388-09 M-2) a released row is re-offered ahead of every
+      // younger row, so claim-and-undo would burn the bound or starve the queue.
+      const excludeKinds = options?.excludeKinds ?? []
       return inTransaction(() => {
         requireFence(fence)
-        const row = selectClaimable.get()
+        const row =
+          excludeKinds.length === 0
+            ? selectClaimable.get()
+            : claimableStatementFor(excludeKinds.length).get(...excludeKinds)
         if (row === undefined) {
           return { claimed: false }
         }

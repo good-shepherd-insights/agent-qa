@@ -207,6 +207,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // whole point of naming it here.
   'ChainJobIds',
   'ChainTerminalRecord',
+  // 388 plan 09. The optional options argument `claimNext` now accepts — a TYPE, so it hands
+  // nobody a store; the exclusion it names is honoured inside the sqlite SELECT and set once
+  // at queue construction (`unclaimableKinds` on `CreateAgentJobQueueOptions`, already pinned).
+  'ClaimNextOptions',
   'ClockPort',
   'ConfigReaderPort',
   'CreateAgentJobQueueOptions',

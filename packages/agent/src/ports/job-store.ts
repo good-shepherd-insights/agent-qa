@@ -21,7 +21,7 @@
 // concurrent enqueue a dedupe, not a conflict (D-08). Authority is only ever needed to
 // CLAIM or ADVANCE work, which is exactly the set of verbs that carries the fence.
 
-import type { Job, JobEnqueueRequest, JobId, JobStatus } from '@vostride/agent-qa-schema'
+import type { Job, JobEnqueueRequest, JobId, JobKind, JobStatus } from '@vostride/agent-qa-schema'
 
 /**
  * The authority token a drain-side verb must present.
@@ -110,6 +110,21 @@ export interface JobEnqueueOutcome {
 export type JobClaimOutcome =
   | { readonly claimed: false }
   | { readonly claimed: true; readonly job: Job; readonly payload: unknown }
+
+/**
+ * What a claim may be told is not its to take (Phase 388-09, G-388-2 substrate).
+ *
+ * The exclusion is an OWNERSHIP declaration: a host names the kinds it may not claim, fixed
+ * when its queue is composed. A kind on this list must be left exactly as the claim found it
+ * — never claimed and released — because per D-18 the attempt is spent AT the claim, and
+ * (388-09 Task 1, M-2) a released row is re-offered ahead of every younger row, so a
+ * claim-then-release "refusal" either burns the row's bound or starves every other kind
+ * behind it for as long as the row exists. The only refusal that writes no receipt and
+ * costs nothing is one where the excluded row is never offered at all.
+ */
+export interface ClaimNextOptions {
+  readonly excludeKinds?: readonly JobKind[]
+}
 
 export interface JobCompleteOutcome {
   readonly job: Job
@@ -257,7 +272,17 @@ export interface JobStorePort {
   /** Fence-free by design — see the D-02/D-07 note at the top of this module. */
   enqueue(request: JobInsert): Promise<JobEnqueueOutcome>
 
-  claimNext(fence: JobStoreFence): Promise<JobClaimOutcome>
+  /**
+   * Offer the next claimable row, honouring an optional kind exclusion in the SELECTION
+   * itself — an excluded row is never claimed, so its status, claim and attempt count are
+   * untouched (see `ClaimNextOptions`).
+   *
+   * `options` is OPTIONAL for a reason worth keeping: TypeScript accepts an implementation
+   * that declares fewer parameters, so every existing store and every fake in the repo keeps
+   * compiling untouched, and the corpus of things that must change is exactly the things
+   * that must BEHAVE differently.
+   */
+  claimNext(fence: JobStoreFence, options?: ClaimNextOptions): Promise<JobClaimOutcome>
 
   /**
    * Terminate one job and enqueue its declared successors in the SAME transaction. Two
