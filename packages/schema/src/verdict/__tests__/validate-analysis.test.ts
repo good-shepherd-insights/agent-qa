@@ -18,7 +18,7 @@ import type { StepEvidence } from '../../handoff/step-evidence'
 import { asRecordId } from '../../ids/record-id'
 import { asRef } from '../../primitives/ref'
 import { asRunId } from '../../run/run-id'
-import { CURRENT_ANALYSIS_SCHEMA_VERSION } from '../analysis-artifact'
+import { CURRENT_ANALYSIS_SCHEMA_VERSION, guardRunAnalysisArtifact } from '../analysis-artifact'
 import type { RunAnalysisArtifact } from '../analysis-artifact'
 import type { VerdictSentenceParts } from '../sentence-parts'
 import type { Verdict } from '../verdict'
@@ -510,5 +510,28 @@ describe('per-test granularity: one bad test never fails its siblings', () => {
     const rejects = rejectsOf(validateAnalysisAgainstHandoff(artifact, handoff))
     expect(rejects.length).toBeGreaterThanOrEqual(2)
     expect(rejects.every((reject) => reject.perTest === 0)).toBe(true)
+  })
+})
+
+describe('perTest uniqueness ownership (WR-02 / G-389-3B): the guard owns it, not this boundary', () => {
+  const handoff = buildHandoff()
+
+  it('WR-02 non-owner pin: a duplicate-perTest artifact this validator does not re-check is refused upstream by guardRunAnalysisArtifact', () => {
+    // Two verdicts for perTest 0 with CONTRADICTING classes, each of which validates
+    // independently against the handoff — so this boundary answers ok BY DESIGN: it is the
+    // two-document check, and duplicate perTest is a one-document structural property owned
+    // by the artifact guard. This case is the executable pin that the read boundary upstream
+    // refuses the very bytes this boundary does not re-check: delete the guard's uniqueness
+    // rule and this case reds HERE, inside the non-owner's own suite.
+    const artifact = artifactOf(
+      [verdictFor(0, { class: 'unknown' } as Partial<Verdict>), verdictFor(0)],
+      [partsFor(0)],
+    )
+    expect(validateAnalysisAgainstHandoff(artifact, handoff)).toEqual({ ok: true })
+
+    const storedBytes: unknown = JSON.parse(canonicalJson(artifact))
+    expect(() => guardRunAnalysisArtifact(storedBytes)).toThrowError(
+      new TypeError('RunAnalysisArtifact failed structural validation'),
+    )
   })
 })
