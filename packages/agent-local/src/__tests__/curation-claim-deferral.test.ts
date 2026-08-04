@@ -1,0 +1,249 @@
+// Phase 388 plan 10 (G-388-2 / UF-388-01): the posture-driven claim deferral, proven on one
+// fixture with ONE input varied — the declared candidate-prose posture — and nothing else.
+//
+// Two real `composeLocalAgent` hosts over the SAME temp root and therefore the SAME sqlite
+// store: same rows, same id source, same clock construction. The host that declares its
+// curation binding folds with no `MaskingContext` in scope must never CLAIM a `curate-memory`
+// row — never claim-and-decline (the attempt is spent AT the claim, 388-09 M-1), never
+// claim-and-release (a released row is re-offered ahead of every younger row, 388-09 M-2) —
+// while the host that declares a masker active claims the very same row and folds it. The
+// positive control is the point: the deferral is scoped to the unmasked leg, and curation is
+// not disabled outright.
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
+import type { ClockPort, ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import {
+  asRunId,
+  canonicalJson,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  sha256hex,
+} from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../composition/compose-local-agent.js'
+import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
+
+const RUN_ID = 'run-388-deferral'
+
+const TEST_MODEL: JobModelCapability = {
+  modelId: 'test:curation-claim-deferral',
+  generate: async () => {
+    throw new Error('the post-run chain never authors in 388')
+  },
+}
+
+const TEST_CONFIG: ConfigReaderPort = {
+  getMasked: () => Promise.resolve({
+    schemaVersion: 1,
+    configPath: '/tmp/curation-claim-deferral.config.yaml',
+    entries: [],
+  }),
+}
+
+/** Monotonic and fully determined, so enqueue order IS `created_at` order. */
+function createSteppingClock(): ClockPort {
+  let tick = 0
+  return {
+    now() {
+      const stamp = `2026-02-02T00:00:${String(tick % 60).padStart(2, '0')}.000Z`
+      tick += 1
+      return stamp
+    },
+  }
+}
+
+function fixtureHandoff(runId: string): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: asRunId(runId),
+    scope: { tier: 'product', key: 'claim-deferral-storefront' },
+    buildOrdinal: 7,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'passed',
+    configDigests: { suiteConfigDigest: 'suite-digest', testConfigDigest: 'test-digest' },
+    startedAt: 1,
+    endedAt: 2,
+    tests: [
+      {
+        testId: 't_passed',
+        testName: 'member that passed',
+        filePath: 'tests/passed.yaml',
+        testIndex: 0,
+        outcome: 'passed',
+        steps: [],
+      },
+    ],
+  }
+}
+
+function writeHandoff(agentQaRoot: string, handoff: CompletedRunHandoff): void {
+  const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(String(handoff.runId)))
+  mkdirSync(runDir, { recursive: true })
+  writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(handoff)}\n`, 'utf8')
+}
+
+function handoffDigest(handoff: CompletedRunHandoff): string {
+  return sha256hex(canonicalJson(handoff))
+}
+
+const roots: string[] = []
+const hosts: LocalAgentHost[] = []
+
+afterEach(async () => {
+  for (const host of hosts.splice(0)) await host.close()
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+interface DeferralHarness {
+  readonly jobs: LocalAgentJobs
+  readonly curateCalls: { runId: string; executionContext: unknown }[]
+}
+
+/**
+ * The ONE varied input is the posture. Everything else — root, config, model, clock shape,
+ * id source, `curateRun` body — is identical between the two hosts a case composes.
+ */
+async function openHost(
+  agentQaRoot: string,
+  candidateProse: 'masker-active' | 'no-masker',
+): Promise<DeferralHarness> {
+  const curateCalls: { runId: string; executionContext: unknown }[] = []
+  const host = composeLocalAgent({
+    agentQaRoot,
+    config: TEST_CONFIG,
+    knowledgeRoot: () => join(agentQaRoot, 'knowledge'),
+    model: () => TEST_MODEL,
+    clock: createSteppingClock(),
+    idSource: DIGEST_JOB_ID_SOURCE,
+    postRun: {
+      curateRun: async (input) => {
+        curateCalls.push({ runId: input.runId, executionContext: input.executionContext })
+        return { curated: 1, deprecated: 0, complete: true }
+      },
+      candidateProse,
+    },
+  })
+  hosts.push(host)
+  return { jobs: await host.jobs(), curateCalls }
+}
+
+function freshRoot(): string {
+  const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-claim-deferral-'))
+  roots.push(agentQaRoot)
+  return agentQaRoot
+}
+
+/** The bounded pump, shaped like the daemon's dispatcher loop. */
+async function pump(jobs: LocalAgentJobs, fence: { epoch: number }): Promise<number> {
+  for (let pumped = 0; pumped < 24; pumped += 1) {
+    const outcome = await jobs.queue.runNextJob({ fence })
+    if (!outcome.ran) return pumped
+  }
+  throw new Error('the queue did not drain within the pump bound')
+}
+
+describe('curation claim deferral by candidate-prose posture (G-388-2 / UF-388-01)', () => {
+  it('a host declaring no masker pumps and never claims curate-memory: the row stays queued, unclaimed, attempts 0', async () => {
+    const root = freshRoot()
+    const unmasked = await openHost(root, 'no-masker')
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+
+    await unmasked.jobs.queue.enqueue(
+      'curate-memory',
+      { runId: RUN_ID, executionContext: 'local-headless' },
+      RUN_ID,
+    )
+    const fence = await unmasked.jobs.store.adoptEpoch(1)
+    await pump(unmasked.jobs, fence)
+
+    expect(unmasked.curateCalls).toHaveLength(0)
+    const dump = await unmasked.jobs.store.dumpState()
+    const row = dump.jobs.find((job) => job.id === String(ids.curateMemory))
+    expect(row).toMatchObject({ status: 'queued', claimed: false, attempts: 0 })
+  })
+
+  it('the masked host claims the SAME row the unmasked host refused — the positive control', async () => {
+    const root = freshRoot()
+    const unmasked = await openHost(root, 'no-masker')
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+
+    await unmasked.jobs.queue.enqueue(
+      'curate-memory',
+      { runId: RUN_ID, executionContext: 'local-headless' },
+      RUN_ID,
+    )
+    const unmaskedFence = await unmasked.jobs.store.adoptEpoch(1)
+    await pump(unmasked.jobs, unmaskedFence)
+    expect(unmasked.curateCalls).toHaveLength(0)
+
+    // Same store, same row, one input different: the posture.
+    const masked = await openHost(root, 'masker-active')
+    const maskedFence = await masked.jobs.store.adoptEpoch(2)
+    await pump(masked.jobs, maskedFence)
+
+    expect(masked.curateCalls).toEqual([
+      { runId: RUN_ID, executionContext: 'local-headless' },
+    ])
+    expect(unmasked.curateCalls).toHaveLength(0)
+    const dump = await masked.jobs.store.dumpState()
+    const row = dump.jobs.find((job) => job.id === String(ids.curateMemory))
+    expect(row).toMatchObject({ status: 'done', claimed: false, attempts: 1 })
+  })
+
+  it('the unmasked host still drains everything else: an older curate-memory row does not stall a younger analyze-run row', async () => {
+    const root = freshRoot()
+    const unmasked = await openHost(root, 'no-masker')
+    const handoff = fixtureHandoff(RUN_ID)
+    writeHandoff(root, handoff)
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+
+    // The deferred kind enqueued FIRST, so it is the OLDER row `selectClaimable` would offer
+    // ahead of everything younger (ORDER BY created_at ASC) if the exclusion did not hold.
+    await unmasked.jobs.queue.enqueue(
+      'curate-memory',
+      { runId: RUN_ID, executionContext: 'local-headless' },
+      RUN_ID,
+    )
+    await unmasked.jobs.queue.enqueue(
+      'analyze-run',
+      {
+        runId: RUN_ID,
+        handoffDigest: handoffDigest(handoff),
+        handoffSchemaVersion: handoff.schemaVersion,
+        executionContext: handoff.executionContext,
+      },
+      RUN_ID,
+    )
+    const fence = await unmasked.jobs.store.adoptEpoch(1)
+    await pump(unmasked.jobs, fence)
+
+    // A deferral that stalls the whole queue is not a deferral: the younger analyze-run row
+    // ran to done behind the deferred one, which itself stayed exactly as enqueued.
+    const dump = await unmasked.jobs.store.dumpState()
+    const byId = new Map(dump.jobs.map((job) => [job.id, job]))
+    expect(byId.get(String(ids.analyzeRun))).toMatchObject({
+      kind: 'analyze-run',
+      status: 'done',
+      attempts: 1,
+    })
+    expect(byId.get(String(ids.curateMemory))).toMatchObject({
+      status: 'queued',
+      claimed: false,
+      attempts: 0,
+    })
+    expect(unmasked.curateCalls).toHaveLength(0)
+  })
+
+  it('the published unclaimable set names curate-memory for the unmasked host and is empty for the masked one', async () => {
+    const unmasked = await openHost(freshRoot(), 'no-masker')
+    const masked = await openHost(freshRoot(), 'masker-active')
+    expect(unmasked.jobs.unclaimableKinds).toEqual(['curate-memory'])
+    expect(masked.jobs.unclaimableKinds).toEqual([])
+  })
+})
