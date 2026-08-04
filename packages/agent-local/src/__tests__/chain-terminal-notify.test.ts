@@ -55,11 +55,13 @@ const CALLER: FunctionCaller = {
   safeMode: false,
 }
 
+// 389-04's author swap put the unknown-floor member (`t_unclassified`) on the model path, so
+// a throwing stub now aborts the very chain these tests exercise. Answering unparseable text
+// instead makes the author degrade per-test to the byte-identical deterministic floor (plan 04's
+// proven posture) — the chain mechanics under test are unchanged from their 388 shape.
 const TEST_MODEL: JobModelCapability = {
   modelId: 'test:chain-terminal-notify',
-  generate: async () => {
-    throw new Error('the post-run chain never authors in 388')
-  },
+  generate: async () => ({ text: 'not an author payload' }),
 }
 
 const TEST_CONFIG: ConfigReaderPort = {

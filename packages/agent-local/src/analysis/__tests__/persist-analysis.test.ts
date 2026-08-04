@@ -103,11 +103,12 @@ describe('writeAnalysisArtifact: the fsynced temp-rename write helper', () => {
 
 // ————— the composition-root binding, driven through the REAL chain —————
 
+// 389-04's author swap reaches the model for the fixture's unknown-floor member; unparseable
+// text makes the author degrade per-test to the deterministic floor (plan 04's proven posture),
+// so the artifact still persists on the D-09 path this suite pins.
 const CALLER_MODEL: JobModelCapability = {
   modelId: 'test:persist-analysis',
-  generate: async () => {
-    throw new Error('the template author never reaches a model in plan 01')
-  },
+  generate: async () => ({ text: 'not an author payload' }),
 }
 
 const TEST_CONFIG: ConfigReaderPort = {
