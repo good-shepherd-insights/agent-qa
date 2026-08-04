@@ -88,9 +88,15 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
       expect(eventsWhenTailReturned).toBe(project.eventsBytes)
 
       // The close-out line the tail printed says work stays queued, in the chip vocabulary.
+      // The curation stage names a later LOCAL run, not this daemon: the production daemon
+      // declares the unmasked posture and cannot claim `curate-memory` at all. THIS test's
+      // daemon fixture deliberately declares `masker-active` so the daemon-side fold below is
+      // reachable, so it does drain curation moments later — but the line the CLI prints
+      // states the shipped contract, which the production-posture pin in
+      // `post-run-daemon-chain.test.ts` is what holds in place.
       expect(tail.info).toEqual([
         'post-processing — analysis: pending (daemon will drain) · curation: pending'
-        + ' (daemon will drain) · issues: reserved',
+        + ' (deferred to a later local run) · issues: reserved',
       ])
       expect(tail.warn).toEqual([])
 

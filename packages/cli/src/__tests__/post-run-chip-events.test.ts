@@ -466,7 +466,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
     // ONE vocabulary, not three spellings: the rendered statuses ARE the op's chip values.
     expect(line).toBe(
       `post-processing — analysis: ${status.chips.analysis} (daemon will drain)`
-      + ` · curation: ${status.chips.curation} (daemon will drain)`
+      + ` · curation: ${status.chips.curation} (deferred to a later local run)`
       + ` · issues: ${status.chips.issues}`,
     )
     // …and the values it rendered are the durable ones, not a control-flow word.
@@ -510,7 +510,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
         issues: 'reserved',
       })
       expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
-        'post-processing — analysis: done · curation: pending (daemon will drain)'
+        'post-processing — analysis: done · curation: pending (deferred to a later local run)'
         + ' · issues: reserved',
       ])
     })
@@ -526,6 +526,49 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
       'post-processing — analysis: pending · curation: pending · issues: reserved',
     ])
   })
+
+  it('never promises a daemon drain for curation, the kind no daemon may claim (WR-09)',
+    async () => {
+      // The defect this pins: the parenthetical was chosen by POSTURE alone and pasted onto
+      // whichever stages were `pending`, so a handed-off leg told the user a daemon would
+      // drain curation. Since 388-10 that is false BY CONSTRUCTION, not by timing — the
+      // production daemon declares `candidateProse: 'no-masker'`, and
+      // `UNCLAIMABLE_BY_PROSE_POSTURE` makes `curate-memory` unclaimable for exactly that
+      // posture inside the claim SELECT. Only a masked leg can drain it, and a masked leg is
+      // a local run's tail.
+      // The plain fixture, so BOTH drainable stages are still `pending` and the two
+      // parentheticals are therefore comparable — the whole point of this pin is that the
+      // same posture now renders two different promises.
+      const f = fixture()
+      const handedOff = runPostRunTail(f.options({
+        acquireWriterLease: () => ({ kind: 'held', holder: { pid: 4242 } }),
+        nudgeDaemon: async () => undefined,
+      } as unknown as Partial<PostRunTailOperations>))
+      await handedOff.enqueue()
+      await handedOff.drain()
+      await handedOff.finish()
+      expect(handedOff.report().drain).toBe('handed-off')
+
+      const line = f.info.mock.calls.map(([message]) => String(message))
+        .find((message) => message.startsWith('post-processing —'))
+      expect(line).toBeDefined()
+
+      const status = await readStatusThroughTheOp(f.agentQaRoot)
+      expect(status.chips).toMatchObject({ analysis: 'pending', curation: 'pending' })
+
+      // Read each stage's OWN parenthetical rather than the line as a whole: the analysis
+      // stage keeps its daemon promise, so a substring assertion over the whole line could
+      // not tell a fixed curation chip from an unfixed one.
+      const stages = line!.replace('post-processing — ', '').split(' · ')
+      const curationStage = stages.find((part) => part.startsWith('curation:'))
+      expect(curationStage).toBe('curation: pending (deferred to a later local run)')
+      expect(curationStage).not.toContain('daemon')
+
+      // The positive half, so this cannot pass by dropping every parenthetical: the stage a
+      // daemon DOES drain still says so, under the very same posture.
+      const analysisStage = stages.find((part) => part.startsWith('analysis:'))
+      expect(analysisStage).toBe('analysis: pending (daemon will drain)')
+    })
 
   it('prints the human notification line at chain terminal, from the row (D-09/D-12)',
     async () => {

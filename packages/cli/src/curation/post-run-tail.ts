@@ -30,7 +30,11 @@ import {
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import type { PostProcessingStatus, RunNotification } from '@vostride/agent-qa-schema'
+import type {
+  PostProcessingChips,
+  PostProcessingStatus,
+  RunNotification,
+} from '@vostride/agent-qa-schema'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { nudgeDaemon } from '../daemon/client.js'
@@ -603,11 +607,48 @@ const SUMMARY_SEPARATOR = ' · '
  */
 export type PostRunPendingPosture = 'handed-off' | 'backlog-exhausted' | 'none'
 
-/** What the parenthetical says under each posture. `none` says nothing, deliberately. */
-const PENDING_POSTURE_SUFFIX: Record<PostRunPendingPosture, string> = {
-  'handed-off': ' (daemon will drain)',
-  'backlog-exhausted': ' (queued behind other runs; the daemon or a later run will drain)',
-  none: '',
+/**
+ * Which hosts may drain a stage's kind — read off 388-10's posture contract rather than
+ * restated as a condition.
+ *
+ * `curate-memory` is unclaimable by a host that folds with no masker active
+ * (`UNCLAIMABLE_BY_PROSE_POSTURE`), and the production daemon declares exactly that posture,
+ * so no daemon will ever drain curation. The parenthetical used to be chosen by POSTURE
+ * alone and pasted onto every pending stage, which is how a handed-off leg came to promise a
+ * daemon drain for the one kind a daemon may not claim (WR-09).
+ */
+type StageDrainer = 'any-host' | 'masked-leg-only'
+
+/**
+ * A `Record` over the chip set rather than a condition on the curation stage: the chips are
+ * closed and ratified, so a fourth stage must classify its drainer HERE instead of inheriting
+ * a promise from a fall-through — the same defect class this phase already named twice.
+ */
+const STAGE_DRAINER: Record<keyof PostProcessingChips, StageDrainer> = {
+  analysis: 'any-host',
+  curation: 'masked-leg-only',
+  issues: 'any-host',
+}
+
+/**
+ * What the parenthetical says, per drainer and posture. `none` says nothing, deliberately.
+ *
+ * The `masked-leg-only` column names a later LOCAL run rather than a daemon because that is
+ * the only host that can claim the kind — and it says "local run" rather than promising a
+ * time, because a daemon holding the writer lease for its whole lifetime is exactly what a
+ * masked leg has to wait out.
+ */
+const PENDING_POSTURE_SUFFIX: Record<StageDrainer, Record<PostRunPendingPosture, string>> = {
+  'any-host': {
+    'handed-off': ' (daemon will drain)',
+    'backlog-exhausted': ' (queued behind other runs; the daemon or a later run will drain)',
+    none: '',
+  },
+  'masked-leg-only': {
+    'handed-off': ' (deferred to a later local run)',
+    'backlog-exhausted': ' (queued behind other runs; a later local run will drain)',
+    none: '',
+  },
 }
 
 /**
@@ -653,8 +694,8 @@ export function renderPostProcessingSummaryLine(
   status: PostProcessingStatus,
   posture: PostRunPendingPosture,
 ): string {
-  const stage = (label: string, chip: string): string => {
-    const suffix = chip === 'pending' ? PENDING_POSTURE_SUFFIX[posture] : ''
+  const stage = (label: keyof PostProcessingChips, chip: string): string => {
+    const suffix = chip === 'pending' ? PENDING_POSTURE_SUFFIX[STAGE_DRAINER[label]][posture] : ''
     return `${label}: ${chip}${suffix}`
   }
   return `post-processing — ${[

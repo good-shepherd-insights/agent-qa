@@ -369,6 +369,13 @@ describe('the chip trail is scoped to the run whose tail is draining (ANLZ-05, D
  */
 const BACKLOG_PARENTHETICAL = ' (queued behind other runs; the daemon or a later run will drain)'
 
+/**
+ * Curation's own, because a daemon may not claim `curate-memory` at all (388-10 / WR-09) — the
+ * one stage whose backlog is drained by a later LOCAL run and by nothing else.
+ */
+const CURATION_BACKLOG_PARENTHETICAL =
+  ' (queued behind other runs; a later local run will drain)'
+
 describe('a starved own-chain is reported as backlog-exhausted, never a bare pending (WR-01)', () => {
   it('reports backlog-exhausted when the budget was spent entirely on another run\'s work',
     async () => {
@@ -404,7 +411,7 @@ describe('a starved own-chain is reported as backlog-exhausted, never a bare pen
       // around it are the op's, exactly as the handed-off line is built (D-08/D-14).
       expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
         `post-processing — analysis: pending${BACKLOG_PARENTHETICAL}`
-        + ` · curation: pending${BACKLOG_PARENTHETICAL}`
+        + ` · curation: pending${CURATION_BACKLOG_PARENTHETICAL}`
         + ' · issues: reserved',
       ])
       // The posture is the TAIL's, never the DTO's — the same rule the daemon parenthetical obeys.
