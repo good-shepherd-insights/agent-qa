@@ -18,7 +18,6 @@ import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import type {
   ClockPort,
   ConfigReaderPort,
-  JobKind,
   JobModelCapability,
 } from '@vostride/agent-qa-agent'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
@@ -28,7 +27,9 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   sha256hex,
 } from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
+// `JobKind` is a schema type; the agent barrel never re-exported it (TS2459 under the
+// project-wide tsc, which vitest's per-file typecheck did not surface — the standing hazard).
+import type { CompletedRunHandoff, JobKind } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {

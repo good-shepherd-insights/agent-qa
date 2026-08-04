@@ -117,6 +117,7 @@ import {
 } from '@vostride/agent-qa-runner-local'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import {
+  ANALYSIS_FILE,
   asJobId,
   DEFAULT_EMBEDDING_PROFILE,
   sha256hex16,
@@ -132,6 +133,7 @@ import type {
 import { createKnowledgeReaderPort } from './knowledge-review-reader.js'
 import type { SightMemoryEntities } from './knowledge-review-reader.js'
 import { buildRunPorts } from './run-composition.js'
+import { writeAnalysisArtifact } from '../analysis/persist-analysis.js'
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
 import { createPostProcessingReader } from '../store/post-processing-reader.js'
 import { AGENT_JOB_STORE_DB_FILE, createSqliteJobStore } from '../store/sqlite-job-store.js'
@@ -998,6 +1000,14 @@ function postRunCapabilities(
         join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(runId), HANDOFF_FILE),
       ),
     curateRun: postRun.curateRun,
+    // 389 D-09: the artifact's path is DERIVED from the artifact's own runId through the
+    // same `runs/<slug>/` law as the handoff read above — `slugBranch` is the traversal
+    // guard (T-389-01), and a job payload never carries a path.
+    persistAnalysis: (artifact) =>
+      writeAnalysisArtifact(
+        join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(artifact.runId), ANALYSIS_FILE),
+        artifact,
+      ),
   }
 }
 
