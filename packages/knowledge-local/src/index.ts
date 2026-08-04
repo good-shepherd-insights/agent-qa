@@ -216,6 +216,20 @@ export type {
   RunOutcomesProjection,
   RunOutcomeTestDelta,
 } from './projection/run-outcomes.js'
+// 389 ANLZ-03 — the run-outcome projection's read side: per-test failure history keyed
+// (product, filePath, testName), plus the two pure derivations 389's consumers compose
+// (D-02 prior-build discriminator channel; D-08 live kth-failure recurrence join).
+export {
+  failureRecurrence,
+  priorBuildOutcome,
+  readTestOutcomeHistory,
+} from './projection/run-outcome-read.js'
+export type {
+  FailureRecurrence,
+  TestOutcomeEntry,
+  TestOutcomeHistory,
+  TestOutcomeIdentity,
+} from './projection/run-outcome-read.js'
 export { GC_SUPERSEDED_RETAIN_K, runKnowledgeGc } from './gc.js'
 export type {
   GateHorizon,

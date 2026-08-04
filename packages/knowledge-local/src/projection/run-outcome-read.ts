@@ -102,3 +102,49 @@ export function readTestOutcomeHistory(
     lastBuildOrdinal: row.last_build_ordinal ?? undefined,
   }
 }
+
+/**
+ * D-02's forced discriminator channel: did the same step pass on the previous build?
+ * Answers the entry with the greatest buildOrdinal STRICTLY below `currentBuildOrdinal`,
+ * or `undefined` when no prior build is in the window (empty history, a single
+ * current-build entry, or every entry at/above current) — prior-build honestly absent,
+ * never faked from the current entry.
+ */
+export function priorBuildOutcome(
+  history: TestOutcomeHistory,
+  currentBuildOrdinal: number,
+): TestOutcomeEntry | undefined {
+  let prior: TestOutcomeEntry | undefined
+  for (const entry of history.lastOutcomes) {
+    if (entry.buildOrdinal >= currentBuildOrdinal) continue
+    if (prior === undefined || entry.buildOrdinal >= prior.buildOrdinal) prior = entry
+  }
+  return prior
+}
+
+export interface FailureRecurrence {
+  /** Failed entries with buildOrdinal AT OR BELOW current — includes the current failure when recorded. */
+  kth: number
+  /** Distinct buildOrdinals observed in lastOutcomes — honest about the ≤LAST_OUTCOMES_LIMIT window. */
+  windowBuilds: number
+}
+
+/**
+ * Feeds "Kth failure in the last N builds", computed LIVE at render time (D-08) — counts
+ * derived from the window on every call, never stored prose. 390 rebinds the same seam to
+ * its fingerprint-window computation; this derivation is 389's binding, not the seam's
+ * final owner. An empty history answers {kth: 0, windowBuilds: 0}: the renderer (plan 05)
+ * turns zero-history into an explicit no-history clause, so absence stays typed.
+ */
+export function failureRecurrence(
+  history: TestOutcomeHistory,
+  currentBuildOrdinal: number,
+): FailureRecurrence {
+  const kth = history.lastOutcomes.filter(
+    (entry) => !entry.passed && entry.buildOrdinal <= currentBuildOrdinal,
+  ).length
+  const windowBuilds = new Set(
+    history.lastOutcomes.map((entry) => entry.buildOrdinal),
+  ).size
+  return { kth, windowBuilds }
+}
