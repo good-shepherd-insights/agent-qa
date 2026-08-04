@@ -18,8 +18,9 @@
 // substitutes the same one callable for the same reason. Its production wiring is pinned
 // structurally at the bottom of this file instead, where it can be stated exactly.
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { DIGEST_JOB_ID_SOURCE, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
@@ -281,5 +282,46 @@ describe('the daemon-claimed chain runs the production curation fold', () => {
     const operationKeys = [...table.matchAll(/^ {4}(\w+)[:,]/gmu)].map((match) => match[1]!)
     expect(operationKeys.sort()).toEqual(['composeLocalAgent', 'drainQueue'])
     expect(existsSync(new URL('./post-run-daemon/spawn-helpers.ts', import.meta.url))).toBe(true)
+  })
+
+  test('the daemon host declares the unmasked candidate-prose posture, exactly once', () => {
+    const raw = readFileSync(new URL('../daemon/host.ts', import.meta.url), 'utf8')
+    // Comments stripped BEFORE the scan (the idiom above): a rationale comment naming the
+    // posture value must never be countable as a second declaration.
+    const code = raw.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
+    // The pin that makes the fixture divergence honest and stated (388-10, UF-388-01): the
+    // SC4 crash legs above compose a daemon whose SUBSTITUTED fold never reaches the
+    // candidate projection and which therefore declares the MASKED posture — those legs
+    // still exercise the real dispatcher, the real store, the real lease and a real SIGKILL
+    // against a real claimed curate-memory row, the evidence 388-SECURITY.md's T-388-18 and
+    // T-388-19 rest on. PRODUCTION declares the other posture, so its host never claims the
+    // kind whose fold it cannot mask, and this assertion is what stops that difference from
+    // becoming a silent drift toward the posture the fixtures declare.
+    expect(code.match(/'no-masker'/gu) ?? []).toHaveLength(1)
+  })
+
+  test('the candidate projection has exactly one production call site — inside the safety scope', () => {
+    // What makes the daemon leg's absence claim load-bearing rather than an argument: a leg
+    // that never claims the kind never invokes the fold, and the fold is the only thing that
+    // reaches the projection — so no candidate prose can cross on that leg. Scoped to
+    // non-test sources with comment lines stripped, and pinned on the INVOCATION form (open
+    // paren) deliberately: the projection is reached through an OPERATIONS TABLE, not a
+    // direct import call. `curation-tail.ts` imports it, types it as a table member and
+    // binds it as that table's default — three appearances that are one seam declared once,
+    // not three call sites, and a bare-token pin would count them and then be "fixed" into
+    // something vacuous. Because the call goes through `operations.`, a TEST may substitute
+    // the projection — which is exactly why the pin excludes `__tests__`. Expected 2: the
+    // `export function` declaration in emit-candidates.ts and the one call inside
+    // curation-tail.ts's safety scope.
+    const srcRoot = fileURLToPath(new URL('..', import.meta.url))
+    const files = readdirSync(srcRoot, { recursive: true, encoding: 'utf8' })
+      .filter((rel) => rel.endsWith('.ts') && !rel.includes('__tests__'))
+    let invocations = 0
+    for (const rel of files) {
+      const raw = readFileSync(join(srcRoot, rel), 'utf8')
+      const code = raw.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n')
+      invocations += (code.match(/emitCurationCandidates\(/gu) ?? []).length
+    }
+    expect(invocations).toBe(2)
   })
 })
