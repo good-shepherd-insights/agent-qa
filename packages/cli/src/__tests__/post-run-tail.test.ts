@@ -230,6 +230,30 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     expect(tail.report().drain).toBe('retry-scheduled')
   })
 
+  it('reports backlog-exhausted when a foreign retry-scheduled row breaks the pump first (G-388-3)',
+    async () => {
+      // The DETECTOR, differential twin of the retry case above — same disposition, same single
+      // claim, same fixture; the ONE input that differs is the claimed id, a FOREIGN one. A
+      // foreign row's backoff broke the pump before this run's chain was ever reachable, which
+      // is the same starvation as a spent bound with a different trigger — and the shipped
+      // guard ranged past this exit, leaving a bare `pending` for starved work (T-388-18b).
+      const runNextJob = vi.fn(async () => ({
+        ran: true,
+        disposition: 'retry-scheduled',
+        reason: 'transient',
+        retryDelayMs: 30_000,
+        attemptsRemaining: 2,
+        job: { id: 'job_some_other_run' },
+      }))
+      const h = harness({ runNextJob })
+      const tail = runPostRunTail(options(h))
+      await tail.enqueue()
+      await tail.drain()
+
+      expect(runNextJob).toHaveBeenCalledTimes(1)
+      expect(tail.report().drain).toBe('backlog-exhausted')
+    })
+
   it('stops the pump at the one budget rather than following the chain forever', async () => {
     const h = harness({
       runNextJob: vi.fn(async () => ({
@@ -270,6 +294,49 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
       await tail.drain()
 
       expect(tail.report().drain).toBe('backlog-exhausted')
+    })
+
+  it('reports backlog-exhausted at the pump bound when every claimed job was foreign (a CONTROL)',
+    async () => {
+      // CONTROL, not a detector: this case passed BEFORE the exit classification existed — the
+      // shipped guard already covered the `bound` exit — and it passes after. It is here to pin
+      // the table's `bound` member so the classification cannot silently flip, not as evidence
+      // the G-388-3 fix works. Static clock, so the loop runs to its bound and falls out.
+      const h = harness({
+        runNextJob: vi.fn(async () => ({
+          ran: true,
+          disposition: 'completed',
+          job: { id: 'job_some_other_run' },
+        })),
+      })
+      const tail = runPostRunTail(options(h))
+      await tail.enqueue()
+      await tail.drain()
+
+      // CHAIN_PUMP_BOUND claims, none of them this run's.
+      expect(h.runNextJob).toHaveBeenCalledTimes(16)
+      expect(tail.report().drain).toBe('backlog-exhausted')
+    })
+
+  it('keeps `drained` at the pump bound when the pump was on this run\'s own chain (a CONTROL)',
+    async () => {
+      // CONTROL, differential twin of the case above — same static clock, same dispositions,
+      // same bound; the one input that differs is the claimed id, this run's OWN. Passed before
+      // AND after the change: it pins that observing the own chain suppresses the starvation
+      // posture, whatever the exit.
+      const h = harness({
+        runNextJob: vi.fn(async () => ({
+          ran: true,
+          disposition: 'completed',
+          job: { id: String(OWN_CHAIN.analyzeRun) },
+        })),
+      })
+      const tail = runPostRunTail(options(h))
+      await tail.enqueue()
+      await tail.drain()
+
+      expect(h.runNextJob).toHaveBeenCalledTimes(16)
+      expect(tail.report().drain).toBe('drained')
     })
 
   it('keeps `drained` when the queue simply emptied, backlog or not', async () => {
