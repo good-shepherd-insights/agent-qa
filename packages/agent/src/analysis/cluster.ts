@@ -1,0 +1,121 @@
+// Render-time pure clustering over resolved verdicts (Phase 389, D-13..D-16).
+//
+// Called inside the `analysis.get` op and nowhere else persistent (D-14): CLI, run page and
+// chat get byte-identical clusters because there is nothing here to go stale — no store, no
+// port, no cache. Groups key on the ONE exported fingerprint vocabulary (`failureFingerprint`,
+// D-13), so 390's recurrence window and this presentation can never disagree about what "the
+// same failure" means.
+//
+// D-16 — clusters mint NO identity. A cluster carries the fingerprint VALUE, its occurrence
+// count and member refs, and nothing else: no short-ID, no `agentqa://` address, no `BUG-`.
+// Durable problem identity belongs to the issue engine's identity-key model, and `BUG-` stays
+// reserved for it (387 D-03).
+
+import { exercisedAnchors, failureFingerprint } from '@vostride/agent-qa-schema'
+import type {
+  CompletedRunHandoff,
+  PerTestOutcome,
+  StepEvidence,
+  Verdict,
+} from '@vostride/agent-qa-schema'
+
+/** One member ref: the join keys a surface needs to expand a cluster, nothing more. */
+export interface AnalysisClusterMember {
+  testIndex: number
+  testId: string
+}
+
+/** Fingerprint value, count, member refs, representative ref — the whole DTO (D-16). */
+export interface AnalysisCluster {
+  fingerprint: string
+  count: number
+  /** Ordered by `testIndex`, ascending — stable across calls and processes. */
+  members: AnalysisClusterMember[]
+  /** The highest-confidence member; equal confidence breaks to the LOWEST testIndex. */
+  representative: { testIndex: number }
+}
+
+/**
+ * THE failing-step selection rule, pinned here once: the FIRST step whose verifier verdict
+ * failed, else the LAST recorded step (the timeout-after-all-verified anchor). A zero-step
+ * test has no failing step and keys through the error-signature fallback below. The same
+ * rule `templateGroundingQuote` (jobs/kinds.ts) quotes by — two spellings of "which step
+ * failed" would be two fingerprints for one failure.
+ */
+function failingStepOf(test: PerTestOutcome): StepEvidence | undefined {
+  if (test.steps.length === 0) return undefined
+  return (
+    test.steps.find((step) => !step.verifierVerdict.pass)
+    ?? test.steps[test.steps.length - 1]
+  )
+}
+
+/**
+ * The error-signature fallback source for anchorless failures (D-13's total-function leg):
+ * the failing step's first sub-action error text, else the verifier's reasoning; a step-less
+ * test answers its recorded outcome. Every branch quotes bytes the run recorded.
+ */
+function errorTextOf(step: StepEvidence | undefined, test: PerTestOutcome): string {
+  if (step === undefined) return test.outcome
+  const subActionError = step.subActions
+    .map((subAction) => subAction.result.error)
+    .find((error): error is string => typeof error === 'string' && error !== '')
+  return subActionError ?? step.verifierVerdict.reasoning
+}
+
+interface GroupedMember extends AnalysisClusterMember {
+  confidence: number
+}
+
+/**
+ * Group resolved verdicts by failure fingerprint (D-14) — a total, deterministic pure
+ * function. Identical fingerprints merge; the same anchor under two classes stays two
+ * clusters (the recipe's `::class` suffix). Output order: occurrence count descending,
+ * then fingerprint lexicographic byte order; members by testIndex ascending. Empty input
+ * answers an empty list, never a throw.
+ */
+export function clusterVerdicts(
+  resolvedVerdicts: readonly Verdict[],
+  handoff: CompletedRunHandoff,
+): AnalysisCluster[] {
+  const groups = new Map<string, GroupedMember[]>()
+  for (const verdict of resolvedVerdicts) {
+    const test = handoff.tests.find((candidate) => candidate.testIndex === verdict.perTest)
+    // A verdict whose perTest names no member test still keys deterministically: no anchors,
+    // empty error text — the fingerprint recipe is total over that too.
+    const step = test === undefined ? undefined : failingStepOf(test)
+    const anchors = step === undefined ? [] : exercisedAnchors(step)
+    const fingerprint = failureFingerprint(
+      { anchors, errorText: test === undefined ? '' : errorTextOf(step, test) },
+      verdict.class,
+    )
+    const members = groups.get(fingerprint) ?? []
+    members.push({
+      testIndex: verdict.perTest,
+      testId: test?.testId ?? '',
+      confidence: verdict.confidence,
+    })
+    groups.set(fingerprint, members)
+  }
+
+  return [...groups.entries()]
+    .map(([fingerprint, grouped]) => {
+      const members = [...grouped].sort((left, right) => left.testIndex - right.testIndex)
+      // Walking testIndex-ascending with a STRICT > keeps the first (lowest testIndex)
+      // member on equal confidence — the D-15 tie-break, deterministic by construction.
+      let representative = members[0] as GroupedMember
+      for (const member of members) {
+        if (member.confidence > representative.confidence) representative = member
+      }
+      return {
+        fingerprint,
+        count: members.length,
+        members: members.map(({ testIndex, testId }) => ({ testIndex, testId })),
+        representative: { testIndex: representative.testIndex },
+      }
+    })
+    .sort((left, right) => (
+      right.count - left.count
+      || (left.fingerprint < right.fingerprint ? -1 : left.fingerprint > right.fingerprint ? 1 : 0)
+    ))
+}

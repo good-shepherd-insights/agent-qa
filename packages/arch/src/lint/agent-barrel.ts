@@ -111,6 +111,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // identically. It is a pure function of a string and an injected id source: it reaches no
   // storage, holds no capability, and dispatches nothing, so publishing it opens no path.
   'chainJobIdsForRun',
+  // 389 plan 05: render-time pure clustering (D-14). A total deterministic function of
+  // (resolved verdicts, handoff) keyed on schema's one `failureFingerprint` vocabulary — it
+  // persists nothing, reaches no storage and mints no identity (D-16), so publishing it
+  // opens no path and no second problem-identity vocabulary.
+  'clusterVerdicts',
   'createAgentJobQueue',
   'createFunctionRegistry',
   'createJobKindRegistry',
@@ -200,6 +205,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
  */
 export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AgentJobQueue',
+  // 389 plan 05: the cluster DTO and its member ref (D-16 — fingerprint value, count, member
+  // refs, representative testIndex; deliberately NO id and NO address field, and the exact-key
+  // pin in cluster.test.ts holds that shape). Types only; the value beside them is the pure
+  // function pinned in the value list.
+  'AnalysisCluster',
+  'AnalysisClusterMember',
   'ApprovalsPort',
   'AuthoringReadPort',
   'BoundRecordLlmAuthorship',
