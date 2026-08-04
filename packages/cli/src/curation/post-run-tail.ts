@@ -237,6 +237,37 @@ export interface PostRunTailHandle {
 /** How many pump iterations are a bug rather than a chain. Three chain members plus slack. */
 const CHAIN_PUMP_BOUND = 16
 
+/**
+ * Every way the chain pump's loop can end. One spelling, one place to be read: the loop
+ * variable ranges over it, and `PUMP_EXIT_STARVES_OWN_CHAIN` must classify every member.
+ */
+type ChainPumpExit = 'bound' | 'budget' | 'empty' | 'aborted' | 'retry'
+
+/**
+ * Per exit: does reaching it WITHOUT having observed this run's own chain mean the chain was
+ * starved (WR-01 / T-388-18b)?
+ *
+ * A `Record` over the named exit type rather than another condition, deliberately: a sixth
+ * exit added to the pump fails to compile here until it is classified — the property the
+ * shipped two-member disjunction lacked, which is how the `retry` exit fell through to a
+ * bare `pending` for starved work.
+ */
+const PUMP_EXIT_STARVES_OWN_CHAIN: Record<ChainPumpExit, boolean> = {
+  // The bound was spent entirely on other runs' rows before this run's chain was reachable.
+  bound: true,
+  // The budget was spent the same way: the clock ran out on foreign work.
+  budget: true,
+  // The same story with a different trigger: a foreign row's backoff broke the pump before
+  // this run's chain was reachable — and 388-08's completeness gate made exactly that row
+  // common, because `markRetryable` clears `claimed_at` without setting `status` and there
+  // is no not-before column, so a retryable `curate-memory` stays the oldest claimable row.
+  retry: true,
+  // An emptied queue is not starvation: the rows are gone because somebody ran them.
+  empty: false,
+  // An abort is not starvation: the user stopped this process.
+  aborted: false,
+}
+
 export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   /**
    * Resolved on first use, INSIDE a leg's own try (JOBQ-06).
@@ -416,13 +447,11 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
          */
         let ownChainObserved = false
         /**
-         * How the pump left the loop. Named, because the posture below is only honest for two of
-         * the four exits: a queue that EMPTIED means this run's enqueued chain was reached (the
-         * rows are gone because somebody ran them), and an ABORT means the user stopped this
-         * process — neither is starvation, and reporting a backlog for either would name a cause
-         * the run never observed.
+         * How the pump left the loop. Whether an exit means this run's chain was starved is
+         * declared once, per member, in `PUMP_EXIT_STARVES_OWN_CHAIN` — this doc's job is to
+         * point there, not to re-enumerate a subset of the domain.
          */
-        let pumpExit: 'bound' | 'budget' | 'empty' | 'aborted' | 'retry' = 'bound'
+        let pumpExit: ChainPumpExit = 'bound'
         for (let pumped = 0; pumped < CHAIN_PUMP_BOUND; pumped += 1) {
           if (ops().now() >= drainDeadlineMs) {
             drainOutcome = 'budget-exhausted'
@@ -451,11 +480,14 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
             break
           }
         }
-        // WR-01: the bound or the budget was spent, and none of it on this run. The user is owed
-        // the reason their work is still pending, not just the fact.
-        if (!ownChainObserved
-          && (pumpExit === 'bound' || pumpExit === 'budget')
-          && (drainOutcome === 'drained' || drainOutcome === 'budget-exhausted')) {
+        // WR-01 / T-388-18b: the pump ended without ever reaching this run's chain, on an exit
+        // the table classifies as starvation. The user is owed the reason their work is still
+        // pending, not just the fact. No condition on `drainOutcome` here, deliberately: every
+        // exit the table marks as starvation is reachable only inside the pump, where the drain
+        // outcome is necessarily one of the three values the pump itself sets — the handed-off,
+        // refused, detached and not-attempted postures all return before the loop is entered —
+        // and widening a hand-written subset would reintroduce the same defect one line down.
+        if (!ownChainObserved && PUMP_EXIT_STARVES_OWN_CHAIN[pumpExit]) {
           drainOutcome = 'backlog-exhausted'
         }
         // The prior-run janitor, under the REMAINder of the same budget and the same lease
