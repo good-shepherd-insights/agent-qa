@@ -21,7 +21,7 @@ import type {
   StartedRun,
 } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
-import type { CandidateProsePosture, LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-local'
+import type { CandidateProsePosture, ComposeLocalAgentInput, LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-local'
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema, generateRunId, resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
@@ -30,7 +30,7 @@ import type { FunctionCaller, RunId, RunsStartInput } from '@vostride/agent-qa-s
 
 import { loadConfigFile, loadEnvOverrides, resolveConfig } from '../config.js'
 import { invokeViaDaemon } from '../daemon/client.js'
-import { resolveCliJobModel } from '../llm-utils.js'
+import { resolveCliAnalysisTokenBudget, resolveCliJobModel } from '../llm-utils.js'
 import { buildConfigVisibilityOracle } from './config-visibility.js'
 import { buildMaskedResolvedConfig } from './masked-config.js'
 
@@ -324,6 +324,14 @@ export interface ComposeCliLocalAgentInput {
    */
   model?: () => JobModelCapability | Promise<JobModelCapability>
   /**
+   * The analyze-run author's compaction budget factory (389-06). Defaults to the SAME
+   * named-config profile resolution the job model rides (`resolveCliAnalysisTokenBudget`
+   * — one source of truth, 386 D-15), resolved once at queue open by the shared
+   * composition. Overridable for the same reason `model` is: a harness substitutes it to
+   * exercise the ladder without a configuration file.
+   */
+  analysisTokenBudget?: ComposeLocalAgentInput['analysisTokenBudget']
+  /**
    * What the post-run chain's real handlers may do (388 D-01).
    *
    * A passthrough, deliberately: `curateRun` needs the writer lease, a knowledge root, a
@@ -395,6 +403,11 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // Deferred, and never called by a host that only invokes a function op: the queue is opened by
     // `jobs()` and nothing else resolves a provider handle.
     model: input.model ?? (() => resolveCliJobModel(input.configPath)),
+    // 389-06: the author's compaction budget, from the SAME profile resolution as the model
+    // binding one line up (386 D-15) — deferred identically, resolved once at queue open,
+    // and degrading to `undefined` (no ladder) when no LLM is configured.
+    analysisTokenBudget:
+      input.analysisTokenBudget ?? (() => resolveCliAnalysisTokenBudget(input.configPath)),
     ...(input.postRun === undefined ? {} : { postRun: input.postRun }),
   })
 }

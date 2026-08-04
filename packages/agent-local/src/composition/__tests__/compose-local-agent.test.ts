@@ -644,9 +644,11 @@ describe('composeLocalAgent (D-15)', () => {
     })
 
     it('passes the host-supplied analysisTokenBudget through untouched, absent when unsupplied', () => {
+      // The input carries a FACTORY (the model idiom, resolved once at queue open);
+      // postRunCapabilities receives the RESOLVED value and passes it through untouched.
       const budget = { estimate: (text: string) => text.length, inputBudget: 123 }
       const withBudget = postRunCapabilities(
-        capabilityInput({ analysisTokenBudget: budget }), knowledgeRootDir(),
+        capabilityInput({ analysisTokenBudget: () => budget }), knowledgeRootDir(), budget,
       )!
       expect(withBudget.analysisTokenBudget).toBe(budget)
 

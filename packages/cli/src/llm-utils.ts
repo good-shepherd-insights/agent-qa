@@ -1,5 +1,5 @@
 import { dirname, resolve as resolvePath } from 'node:path'
-import { createModel, createTokenAccounting, getProviderOptions, resolveCapabilities } from '@vostride/agent-qa-model'
+import { createModel, createTokenAccounting, getProviderOptions, resolveCapabilities, resolveVisionGate } from '@vostride/agent-qa-model'
 import { generateText } from 'ai'
 import { DEFAULT_ANTHROPIC_MODEL } from './model-defaults.js'
 import { loadProviderPluginsForRawConfig } from './provider-plugins.js'
@@ -246,20 +246,98 @@ export function buildJobModelCapability(
     getCapabilities: () => (deps.resolveCapabilitiesImpl ?? resolveCapabilities)(profile),
   })
   const generate = deps.generateTextImpl ?? generateText
+  // 389-06 D-02: the v46 vision negotiation, surfaced from the SAME resolveCapabilities the
+  // accounting consults — the capability ADVERTISES what the profile resolves, and the gate
+  // below is enforced at this host boundary even when a caller mis-gates (L9).
+  const vision = (deps.resolveCapabilitiesImpl ?? resolveCapabilities)(profile).vision
 
   return {
     modelId: `${profile.provider}:${profile.model}`,
+    vision,
     async generate(request) {
-      const result = await generate({
+      const base = {
         model,
         maxRetries: 0,
         temperature: 0,
         maxOutputTokens: accounting.getCeilings().maxOutput,
         ...(request.system === undefined ? {} : { system: request.system }),
+      }
+      // D-02's screenshot channel: images ride the SAME request as the prompt, mapped onto
+      // the SDK messages form only when `resolveVisionGate` allows attachment — one user
+      // message of a text part plus one image part per entry (the verifier turn-message
+      // precedent, runner/loop/verifier.ts). Against a text-only model the images strip and
+      // the call below is BYTE-IDENTICAL to a plain text request (L9).
+      if (
+        request.images !== undefined
+        && request.images.length > 0
+        && resolveVisionGate({ vision }).attachImage
+      ) {
+        const result = await generate({
+          ...base,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text' as const, text: request.prompt },
+                ...request.images.map((image) => ({ type: 'image' as const, image })),
+              ],
+            },
+          ],
+        })
+        return { text: result.text }
+      }
+      const result = await generate({
+        ...base,
         prompt: request.prompt,
       })
       return { text: result.text }
     },
+  }
+}
+
+/**
+ * The analyze-run author's compaction substrate, derived from the SAME profile resolution
+ * as the job model (389-06, D-01 / 386 D-15: one source of truth, no second config knob).
+ *
+ * `estimate` is the accounting's own estimator applied to one text part; `inputBudget` is
+ * the context window minus the output reservation the model call itself is charged with —
+ * both read through the identical `resolveCapabilities(profile)` the capability's ceiling
+ * uses, so budget and ceiling cannot drift.
+ */
+export function buildAnalysisTokenBudget(
+  profile: ModelProfile,
+  deps: JobModelCapabilityDeps = {},
+): { readonly estimate: (text: string) => number; readonly inputBudget: number } {
+  const accounting = (deps.createTokenAccountingImpl ?? createTokenAccounting)({
+    getCapabilities: () => (deps.resolveCapabilitiesImpl ?? resolveCapabilities)(profile),
+  })
+  const ceilings = accounting.getCeilings()
+  return {
+    estimate: (text: string) => accounting.estimate([{ role: 'user', content: text }]),
+    inputBudget: Math.max(0, ceilings.contextWindow - ceilings.maxOutput),
+  }
+}
+
+/**
+ * The CLI hosts' analysis token budget, resolved from the project's configured default LLM —
+ * the SAME named-config path `resolveCliJobModel` rides (386 D-15).
+ *
+ * Degrades to `undefined` rather than throwing: a project with no usable LLM configuration
+ * still opens its queue and drains deterministic work, and the author simply runs without a
+ * compaction ladder (plan 04's rung-0 posture). The model capability reports its own
+ * unavailability on the generate path; the budget never becomes a second failure site.
+ */
+export async function resolveCliAnalysisTokenBudget(
+  configPath: string,
+  deps: JobModelCapabilityDeps = {},
+): Promise<{ readonly estimate: (text: string) => number; readonly inputBudget: number } | undefined> {
+  try {
+    const { config } = await resolveNamedConfig(undefined, configPath)
+    const resolved = await resolveModelAuth(config.name, config)
+    const { profile } = toModelProfileAndAuth(config, resolved)
+    return buildAnalysisTokenBudget(profile, deps)
+  } catch {
+    return undefined
   }
 }
 

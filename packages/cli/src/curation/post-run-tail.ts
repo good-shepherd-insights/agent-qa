@@ -38,6 +38,7 @@ import type {
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { nudgeDaemon } from '../daemon/client.js'
+import { resolveCliJobModel } from '../llm-utils.js'
 import {
   completedRunDir,
   completedRunHandoffPath,
@@ -159,22 +160,27 @@ export interface PostRunTailHostInput {
 }
 
 /**
- * The post-run chain never authors through the QUEUE's model.
+ * The queue's model, resolved for real since 389-06 — the author swap (389-04) made
+ * `analyze-run` author its unknown-verdict members through the QUEUE's model, so the 388-era
+ * "never authors" stub would abort the very chain this tail drains.
  *
- * `analyze-run` projects verdicts the runner already persisted and `curate-memory` authors
- * through the curation author built from the run's own `modelDeps` — so a project with no
- * usable provider credentials must still get its chain. Resolving the CLI job model eagerly
- * here would have made "no LLM configured" mean "no post-run analysis ever", which is a
- * regression against a tail that has always run model-free.
+ * What survives from 388 is the DEGRADATION, moved from resolution time to generate time: a
+ * project with no usable provider credentials must still get its chain (enqueue, the
+ * deterministic floor, curation through the run's own author), so a failed model resolution
+ * composes a capability that reports the failure only if the author actually reaches it —
+ * "no LLM configured" still never means "no post-run chain", it means the honest
+ * transport-throw path for the one job that genuinely needed a model.
  */
-const POST_RUN_MODEL_UNAVAILABLE: JobModelCapability = {
-  modelId: 'unavailable:post-run-tail',
-  generate: () => {
-    throw new Error(
-      'The post-run tail composes no provider: analyze-run projects persisted verdicts and '
-      + 'curate-memory authors through the run\'s own curation model.',
-    )
-  },
+function resolvePostRunJobModel(configPath: string): Promise<JobModelCapability> {
+  return resolveCliJobModel(configPath).catch((error: unknown) => ({
+    modelId: 'unavailable:post-run-tail',
+    generate: (): Promise<never> => {
+      throw new Error(
+        'The post-run tail could not resolve the configured job model: '
+        + (error instanceof Error ? error.message : String(error)),
+      )
+    },
+  }))
 }
 
 export function defaultPostRunTailOperations(): PostRunTailOperations {
@@ -185,7 +191,7 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
     composeHost: (input) => composeCliLocalAgent({
       agentQaRoot: input.agentQaRoot,
       configPath: input.configPath,
-      model: () => POST_RUN_MODEL_UNAVAILABLE,
+      model: () => resolvePostRunJobModel(input.configPath),
       postRun: {
         curateRun: input.curateRun,
         // Derived from presence, never hard-coded (388-10): the tail declares what it HAS,

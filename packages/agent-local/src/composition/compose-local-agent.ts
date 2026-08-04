@@ -983,13 +983,17 @@ export interface ComposeLocalAgentInput {
     readonly candidateProse: CandidateProsePosture
   }
   /**
-   * D-01's TokenAccounting substrate for the analyze-run author, entering as DATA (389
-   * plan 06). OPTIONAL and host-resolved: both production hosts derive it from the SAME
-   * model-profile resolution as the job model itself (one source of truth, no second
-   * config surface — 386 D-15), and `composeLocalAgent` only passes it through. Unbound,
-   * the author's evidence packs travel whole — the plan-04 no-ladder posture.
+   * D-01's TokenAccounting substrate for the analyze-run author (389 plan 06). OPTIONAL
+   * and host-resolved: both production hosts derive it from the SAME model-profile
+   * resolution as the job model itself (one source of truth, no second config surface —
+   * 386 D-15), and `composeLocalAgent` only passes the resolved value through. A FACTORY
+   * on the exact `model` idiom — resolution may need a configuration read, and it is paid
+   * once, at queue open, never by a host that only lists the registry. A factory that
+   * answers `undefined` composes the plan-04 no-ladder posture: packs travel whole.
    */
-  readonly analysisTokenBudget?: PostRunJobCapabilities['analysisTokenBudget']
+  readonly analysisTokenBudget?: () =>
+    | Promise<PostRunJobCapabilities['analysisTokenBudget']>
+    | PostRunJobCapabilities['analysisTokenBudget']
 }
 
 /**
@@ -1143,6 +1147,8 @@ export function postRunCapabilities(
    * members below never race an async resolution mid-job.
    */
   knowledgeRoot: string,
+  /** The RESOLVED budget, awaited from the input factory at the same open (see above). */
+  analysisTokenBudget?: PostRunJobCapabilities['analysisTokenBudget'],
 ): PostRunJobCapabilities | undefined {
   const postRun = input.postRun
   if (postRun === undefined) return undefined
@@ -1172,9 +1178,7 @@ export function postRunCapabilities(
       new FsEvidenceArtifactStore({ root: input.agentQaRoot, runId }).getBlob(sha),
     // Host-resolved and passed through untouched (386 D-15): the budget derives from the
     // same profile resolution as the job model, and this composition adds no knob of its own.
-    ...(input.analysisTokenBudget === undefined
-      ? {}
-      : { analysisTokenBudget: input.analysisTokenBudget }),
+    ...(analysisTokenBudget === undefined ? {} : { analysisTokenBudget }),
   }
 }
 
@@ -1279,6 +1283,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // Resolved ONCE at queue open, the same idiom as the model above: the post-run
     // capability members read synchronously, and the knowledge root is a process fact.
     const knowledgeRoot = await input.knowledgeRoot()
+    const analysisTokenBudget = input.analysisTokenBudget === undefined
+      ? undefined
+      : await input.analysisTokenBudget()
     const store = createSqliteJobStore({
       path: join(input.agentQaRoot, AGENT_JOB_STORE_DB_FILE),
       clock,
@@ -1287,7 +1294,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     let jobs: LocalAgentJobs
     try {
       const kinds = input.jobKinds
-        ?? createRealJobKindRegistry(postRunCapabilities(input, knowledgeRoot))
+        ?? createRealJobKindRegistry(postRunCapabilities(input, knowledgeRoot, analysisTokenBudget))
       // Resolved ONCE and used for both the queue and the published field: the value a watcher
       // derives ids from has to be the value the queue mints them with, and two spellings of the
       // same default is how those two drift.

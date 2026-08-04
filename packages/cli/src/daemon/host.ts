@@ -252,6 +252,12 @@ export interface DaemonHostOptions {
   config: ConfigReaderPort
   /** Already-host-owned model factory; agent-local never constructs a provider. */
   model: () => JobModelCapability | Promise<JobModelCapability>
+  /**
+   * The analyze-run author's compaction budget factory (389-06), derived by the caller
+   * from the SAME profile resolution as `model` (386 D-15). Resolved once at queue open
+   * by the shared composition; absent or `undefined`-answering means no ladder.
+   */
+  analysisTokenBudget?: ComposeLocalAgentInput['analysisTokenBudget']
   /** Lazy so an idle daemon does not resolve curation credentials until work appears. */
   author?: () => CuratorAuthor | Promise<CuratorAuthor>
   /** Shipped guardrail policy applied to every daemon-authored curation pass. */
@@ -1775,6 +1781,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       config: input.config,
       knowledgeRoot: () => input.knowledgeRoot,
       model: () => model,
+      // 389-06: the author's compaction budget, host-derived from the same profile
+      // resolution as the model above and resolved once at queue open (386 D-15).
+      ...(input.analysisTokenBudget === undefined
+        ? {}
+        : { analysisTokenBudget: input.analysisTokenBudget }),
       // 388 D-01: a `curate-memory` job this daemon claims must perform the SAME v51 per-run
       // fold the CLI tail performs, or the canonical pipeline would have two bodies and the
       // curation chip would depend on which process happened to hold the lease. The authority
