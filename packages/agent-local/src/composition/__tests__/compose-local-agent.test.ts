@@ -590,6 +590,148 @@ describe('composeLocalAgent (D-15)', () => {
       }
     })
 
+    // ---- G-389-2: the failing-resolver degrade contract (389-08) --------------------------
+    //
+    // The doc at createProjectionRecurrenceProvider promises "a resolution failure is
+    // swallowed HERE only — the provider then answers the honest no-history clause". These
+    // three cases make that sentence a measurement. The run fixture carries TWO failed
+    // members deliberately: the sentences loop is one synchronous pass, and only a second
+    // verdict makes it mint a second root-resolution promise while the first is in flight —
+    // the defect is unreachable with one.
+
+    function twoFailureHandoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
+      return {
+        ...failedHandoff(runId, buildOrdinal),
+        tests: [
+          {
+            testId: 't_checkout',
+            testName: TEST_NAME,
+            filePath: TEST_FILE_PATH,
+            testIndex: 0,
+            outcome: 'failed',
+            steps: [],
+          },
+          {
+            testId: 't_login',
+            testName: 'login loads',
+            filePath: 'tests/login.yaml',
+            testIndex: 1,
+            outcome: 'failed',
+            steps: [],
+          },
+        ],
+      }
+    }
+
+    it('never crashes the render on a rejecting async resolver (G-389-2)', async () => {
+      // A CLI host whose async config resolution rejects, plus one analysis.get over a run
+      // with >=2 verdicts. The op must RESOLVE with the explicit no-history clause in every
+      // sentence, zero unhandled rejections may fire, and the resolver is consulted exactly
+      // twice: prime's mint plus ONE re-mint by the first join after the rejection reset —
+      // the second join in the same synchronous loop reuses the in-flight promise.
+      const runId = 'run_rejecting_resolver'
+      plantHandoff(twoFailureHandoff(runId, 1))
+
+      let resolverCalls = 0
+      const rejectingHost = compose({
+        knowledgeRoot: () => {
+          resolverCalls += 1
+          return Promise.reject(new Error('config resolution failed'))
+        },
+      })
+      const orphaned: unknown[] = []
+      const capture = (reason: unknown): void => {
+        orphaned.push(reason)
+      }
+      process.on('unhandledRejection', capture)
+      try {
+        const answer = await invokeFunction(
+          rejectingHost.registry, 'analysis.get', { runId }, CALLER,
+        ) as AnalysisAnswer
+
+        // Settle two macrotask turns so any orphaned rejection lands inside this test's
+        // lifetime rather than after the listener is removed.
+        await new Promise((resolve) => setImmediate(resolve))
+        await new Promise((resolve) => setImmediate(resolve))
+
+        expect(answer.sentences).toHaveLength(2)
+        for (const entry of answer.sentences) {
+          expect(entry.sentence).toContain('no failure history is recorded for this test')
+        }
+        expect(orphaned).toEqual([])
+        expect(resolverCalls).toBe(2)
+      } finally {
+        process.removeListener('unhandledRejection', capture)
+        await rejectingHost.close()
+      }
+    })
+
+    it('degrades a sync-throwing resolver to the no-history clause instead of failing the read', async () => {
+      // A read that needs no knowledge root must never fail on one: a resolver that throws
+      // SYNCHRONOUSLY is swallowed to the same degrade as a rejecting async one, so the
+      // wrapped runs.get hop the op awaits cannot reject on a knowledge-root problem.
+      const runId = 'run_throwing_resolver'
+      plantHandoff(twoFailureHandoff(runId, 1))
+
+      const throwingHost = compose({
+        knowledgeRoot: () => {
+          throw new Error('sync config resolution failed')
+        },
+      })
+      try {
+        const answer = await invokeFunction(
+          throwingHost.registry, 'analysis.get', { runId }, CALLER,
+        ) as AnalysisAnswer
+
+        expect(answer.sentences).toHaveLength(2)
+        for (const entry of answer.sentences) {
+          expect(entry.sentence).toContain('no failure history is recorded for this test')
+        }
+      } finally {
+        await throwingHost.close()
+      }
+    })
+
+    it('retries a failed resolution on the next query — the transient contract', async () => {
+      // The rejection handler clearing the in-flight marker is the retry-on-transient
+      // contract: a later query whose resolver now succeeds must render the seeded
+      // recurrence clause, never a provider pinned to permanent no-history. This is the
+      // pinned CONTROL the single-flight fix must keep green.
+      const runId = 'run_transient_resolver'
+      plantHandoff(twoFailureHandoff(runId, 1))
+      seedOutcome(twoFailureHandoff(runId, 1))
+
+      let failing = true
+      const transientHost = compose({
+        knowledgeRoot: () =>
+          failing
+            ? Promise.reject(new Error('transient config failure'))
+            : Promise.resolve(knowledgeRootDir()),
+      })
+      try {
+        const first = await invokeFunction(
+          transientHost.registry, 'analysis.get', { runId }, CALLER,
+        ) as AnalysisAnswer
+        expect(first.sentences).toHaveLength(2)
+        for (const entry of first.sentences) {
+          expect(entry.sentence).toContain('no failure history is recorded for this test')
+        }
+
+        failing = false
+        await new Promise((resolve) => setImmediate(resolve))
+
+        const second = await invokeFunction(
+          transientHost.registry, 'analysis.get', { runId }, CALLER,
+        ) as AnalysisAnswer
+        expect(second.sentences).toHaveLength(2)
+        for (const entry of second.sentences) {
+          expect(entry.sentence).toContain('failure 1 of this test in the last 1 builds')
+        }
+      } finally {
+        await transientHost.close()
+      }
+    })
+
     // ---- the capability members plan 04 declared, bound here (postRunCapabilities) --------
 
     function capabilityInput(
