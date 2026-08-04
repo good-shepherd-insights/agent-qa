@@ -18,6 +18,7 @@ import {
   guardRunAnalysisArtifact,
   resolveRunVerdicts,
   sha256hex,
+  slugBranch,
   VerdictSentencePartsSchema,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -30,28 +31,50 @@ import { deterministicVerdict, UNKNOWN_SIGNAL_RATIONALE } from '@vostride/agent-
 import { describe, expect, it } from 'vitest'
 
 import { createRealJobKindRegistry } from '../kinds.js'
-import type { PostRunJobCapabilities } from '../kinds.js'
+import type { PostRunJobCapabilities, TestOutcomeHistoryLike } from '../kinds.js'
 import type { JobHandlerContext } from '../kind-registry.js'
 import { buildSyntheticHandoff } from './fixtures/synthetic-handoff.js'
 
 const EVIDENCE_TEXT = 'Error: element "Submit" not found'
 const ANALYZE_JOB_ID = 'job_analyze_389_tracer'
 
+interface HarnessOptions {
+  readonly recorded?: Map<string, unknown>
+  /** Scripted model answers, one per generate call; unscripted calls answer ''. */
+  readonly modelOutputs?: readonly string[]
+  /** Every generate call throws this message — the transport-failure leg. */
+  readonly generateError?: string
+  /** Binds the OPTIONAL readTestHistory capability member when provided. */
+  readonly readTestHistory?: (query: {
+    product: string
+    filePath: string
+    testName: string
+  }) => TestOutcomeHistoryLike | undefined
+}
+
 /**
  * The jobs harness for one analyze-run invocation: stub capabilities recording call ORDER,
- * and a faithful in-memory `recordLlmAuthorship` — read the recorded value, on a miss invoke
- * the author exactly once and record what it returned before handing it back. The same
- * control flow the engine's primitive ships, over a Map instead of a store.
+ * a generate-counting scripted model, and a faithful in-memory `recordLlmAuthorship` — read
+ * the recorded value, on a miss invoke the author exactly once and record what it returned
+ * before handing it back. The same control flow the engine's primitive ships, over a Map
+ * instead of a store.
  */
-function harness(
-  handoff: CompletedRunHandoff,
-  options: { readonly recorded?: Map<string, unknown> } = {},
-) {
+function harness(handoff: CompletedRunHandoff, options: HarnessOptions = {}) {
   const recorded = options.recorded ?? new Map<string, unknown>()
   const calls: string[] = []
   const published: { checkpointId: string; value: unknown }[] = []
   const artifacts: RunAnalysisArtifact[] = []
   let authorInvocations = 0
+  let generateCalls = 0
+
+  const model = {
+    modelId: 'stub',
+    generate: async (): Promise<{ text: string }> => {
+      generateCalls += 1
+      if (options.generateError !== undefined) throw new Error(options.generateError)
+      return { text: options.modelOutputs?.[generateCalls - 1] ?? '' }
+    },
+  }
 
   const capabilities: PostRunJobCapabilities = {
     loadCompletedRunHandoff: () => handoff,
@@ -60,6 +83,9 @@ function harness(
       calls.push('persistAnalysis')
       artifacts.push(artifact)
     },
+    ...(options.readTestHistory === undefined
+      ? {}
+      : { readTestHistory: options.readTestHistory }),
   }
 
   const record = async (checkpointId: string, value: unknown): Promise<void> => {
@@ -93,7 +119,7 @@ function harness(
     ): Promise<T> => {
       if (recorded.has(checkpointId)) return recorded.get(checkpointId) as T
       authorInvocations += 1
-      const value = await author({ modelId: 'stub', generate: async () => ({ text: '' }) })
+      const value = await author(model)
       await record(checkpointId, value)
       return value
     }) as unknown as JobHandlerContext['recordLlmAuthorship'],
@@ -104,7 +130,25 @@ function harness(
     published,
     artifacts,
     authorInvocationCount: () => authorInvocations,
+    generateCallCount: () => generateCalls,
     run: () => createRealJobKindRegistry(capabilities).require('analyze-run').handler(context),
+  }
+}
+
+/** A valid authored wire entry for one stepped failure of the synthetic handoff. */
+function authoredWireEntry(testIndex: number): Record<string, unknown> {
+  return {
+    testIndex,
+    class: 'app_bug',
+    confidence: 0.85,
+    memoryMisdirectionRuledOut: true,
+    citedSteps: [0],
+    citedArtifacts: [],
+    rationale: 'the submit control is gone from the checkout DOM',
+    groundingQuote: { stepIndex: 0, quote: EVIDENCE_TEXT },
+    discriminator: 'the same step passed on the previous build',
+    nextAction: 'file the failure against the application with the quoted evidence',
+    links: [],
   }
 }
 
@@ -240,3 +284,154 @@ describe('the analyze-run tracer: artifact before checkpoint (389 D-09/D-10)', (
     ).toBe(false)
   })
 })
+
+describe('the full author behind the frozen checkpoint (389 plan 04, ANLZ-02/ANLZ-03)', () => {
+  it('upgrades unknown floor members and persists LLM parts beside template parts (D-06)', async () => {
+    const persistedFlake = deterministicVerdict('flake', 'retryCount 2 > 0', [0], 0)
+    const handoff = buildSyntheticHandoff({
+      failureCount: 2,
+      rootCauseFor: (index) => (index === 0 ? persistedFlake : undefined),
+    })
+    const output = JSON.stringify({ tests: [authoredWireEntry(1)] })
+    const { artifacts, generateCallCount, published, run } = harness(handoff, {
+      modelOutputs: [output],
+    })
+
+    const outcome = await run()
+    if (outcome.status !== 'complete') throw new Error(`expected complete, got ${outcome.status}`)
+
+    // One whole-run call authored the one unknown member.
+    expect(generateCallCount()).toBe(1)
+
+    const artifact = artifacts[0] as RunAnalysisArtifact
+    // The deterministic flake is byte-identical to the floor; the unknown upgraded.
+    expect(canonicalJson(artifact.verdicts[0])).toBe(canonicalJson(persistedFlake))
+    const upgraded = artifact.verdicts[1] as Verdict
+    expect(upgraded.class).toBe('app_bug')
+    expect(upgraded.producer).toBe('analyze-run')
+
+    // D-06's one producer-keyed parts rule: template parts for the deterministic member,
+    // the LLM's own parts for the upgraded one.
+    expect(artifact.parts.map((part) => part.perTest)).toEqual([0, 1])
+    expect(artifact.parts[0]?.discriminator).toBe('flake: retryCount 2 > 0')
+    expect(artifact.parts[1]?.discriminator).toBe('the same step passed on the previous build')
+    expect(artifact.parts[1]?.groundingQuote).toEqual({ stepIndex: 0, quote: EVIDENCE_TEXT })
+
+    // The guard admits what was persisted, and the checkpoint stays the frozen shape with
+    // the MERGED verdicts.
+    expect(guardRunAnalysisArtifact(JSON.parse(JSON.stringify(artifact)))).toEqual(artifact)
+    const value = (published[0] as { value: unknown }).value as Record<string, unknown>
+    expect(Object.keys(value).sort()).toEqual(['runId', 'verdicts'])
+    expect(value.verdicts).toEqual(artifact.verdicts)
+  })
+
+  it('zero failed tests: no model call, empty artifact still written, checkpoint still publishes (ANLZ-03)', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 0, passedCount: 2 })
+    const { artifacts, generateCallCount, published, run } = harness(handoff)
+
+    const outcome = await run()
+    if (outcome.status !== 'complete') throw new Error(`expected complete, got ${outcome.status}`)
+
+    expect(generateCallCount()).toBe(0)
+    const artifact = artifacts[0] as RunAnalysisArtifact
+    expect(artifact.verdicts).toEqual([])
+    expect(artifact.parts).toEqual([])
+    const value = (published[0] as { value: unknown }).value as Record<string, unknown>
+    expect(Object.keys(value).sort()).toEqual(['runId', 'verdicts'])
+    expect(value).toEqual({ runId: String(handoff.runId), verdicts: [] })
+  })
+
+  it('all-deterministic floor: no model call, floor verdicts with template parts', async () => {
+    const persistedFlake = deterministicVerdict('flake', 'retryCount 2 > 0', [0], 0)
+    const handoff = buildSyntheticHandoff({
+      failureCount: 1,
+      rootCauseFor: () => persistedFlake,
+    })
+    const { artifacts, generateCallCount, run } = harness(handoff)
+
+    await run()
+
+    expect(generateCallCount()).toBe(0)
+    const artifact = artifacts[0] as RunAnalysisArtifact
+    expect(artifact.verdicts).toEqual([persistedFlake])
+    expect(artifact.parts[0]?.discriminator).toBe('flake: retryCount 2 > 0')
+  })
+
+  it('author transport failure propagates — no artifact, no checkpoint, retry territory (D-03)', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const { artifacts, published, run } = harness(handoff, { generateError: 'socket hang up' })
+
+    await expect(run()).rejects.toThrow('socket hang up')
+    expect(artifacts).toHaveLength(0)
+    expect(published).toHaveLength(0)
+  })
+
+  it('degrades honestly when the model answers garbage: floor unknown with honest-unknown parts', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const { artifacts, generateCallCount, run } = harness(handoff, {
+      modelOutputs: ['not json', 'still not json'],
+    })
+
+    await run()
+
+    // One repair round-trip, then degrade — never a third call.
+    expect(generateCallCount()).toBe(2)
+    const artifact = artifacts[0] as RunAnalysisArtifact
+    expect(artifact.verdicts).toEqual([
+      deterministicVerdict('unknown', UNKNOWN_SIGNAL_RATIONALE, [], 0),
+    ])
+    expect(artifact.parts[0]?.discriminator).toBe('root cause undetermined')
+    expect(artifact.parts[0]?.nextAction).toContain('inspect the run manually')
+  })
+
+  it('keys history lookups by product + filePath + testName — never testId', async () => {
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const queries: { product: string; filePath: string; testName: string }[] = []
+    const history: TestOutcomeHistoryLike = {
+      passes: 3,
+      failures: 1,
+      heals: 0,
+      flakeCount: 0,
+      lastOutcomes: [{ buildOrdinal: 0, passed: true }],
+      lastBuildOrdinal: 0,
+    }
+    const { generateCallCount, run } = harness(handoff, {
+      modelOutputs: [JSON.stringify({ tests: [authoredWireEntry(0)] })],
+      readTestHistory: (query) => {
+        queries.push(query)
+        return history
+      },
+    })
+
+    await run()
+
+    expect(generateCallCount()).toBe(1)
+    expect(queries).toHaveLength(1)
+    const query = queries[0] as (typeof queries)[number]
+    // The projection's key, spelled the projection's way: product = slugBranch(scope.key),
+    // the handoff's own filePath and display testName — the fixture's testId
+    // ('t_failed_0') appears in NO field.
+    expect(Object.keys(query).sort()).toEqual(['filePath', 'product', 'testName'])
+    expect(query).toEqual({
+      product: slugBranch(handoff.scope.key),
+      filePath: 'tests/failed-0.yaml',
+      testName: 'stepped failure 0',
+    })
+    expect(Object.values(query)).not.toContain('t_failed_0')
+  })
+
+  it('compiles with every optional capability member unbound — the between-waves posture', async () => {
+    // The default harness binds NONE of readTestHistory / analysisTokenBudget /
+    // readEvidenceBlob; a run with an unknown member still authors (degraded diet, no
+    // ladder, text-only) and never crashes.
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const { artifacts, run } = harness(handoff, {
+      modelOutputs: [JSON.stringify({ tests: [authoredWireEntry(0)] })],
+    })
+
+    const outcome = await run()
+    if (outcome.status !== 'complete') throw new Error(`expected complete, got ${outcome.status}`)
+    expect((artifacts[0] as RunAnalysisArtifact).verdicts[0]?.producer).toBe('analyze-run')
+  })
+})
+
