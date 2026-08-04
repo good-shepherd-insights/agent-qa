@@ -7,7 +7,15 @@ import { describe, expect, it } from 'vitest'
 
 import { ensureRunOutcomeTables } from '../../index-open.js'
 import {
+  failureRecurrence as barrelFailureRecurrence,
+  priorBuildOutcome as barrelPriorBuildOutcome,
+  readTestOutcomeHistory as barrelReadTestOutcomeHistory,
+} from '../../index.js'
+import {
+  failureRecurrence,
+  priorBuildOutcome,
   readTestOutcomeHistory,
+  type TestOutcomeEntry,
   type TestOutcomeHistory,
 } from '../run-outcome-read.js'
 import {
@@ -211,5 +219,79 @@ describe('readTestOutcomeHistory (ANLZ-03, RESEARCH Pitfall 2)', () => {
       .filter((line) => !line.trimStart().startsWith('//'))
       .join('\n')
     expect(withoutComments).not.toMatch(/\b(?:insert|update|delete)\b/i)
+  })
+})
+
+/** Pure-derivation fixture: scalars derived from the entries so the shape stays honest. */
+function historyOf(entries: TestOutcomeEntry[]): TestOutcomeHistory {
+  return {
+    passes: entries.filter((entry) => entry.passed).length,
+    failures: entries.filter((entry) => !entry.passed).length,
+    heals: 0,
+    flakeCount: 0,
+    lastOutcomes: entries,
+    lastBuildOrdinal: entries.at(-1)?.buildOrdinal,
+  }
+}
+
+describe('priorBuildOutcome (D-02 forced discriminator channel)', () => {
+  const twoBuilds = historyOf([
+    { buildOrdinal: 3, passed: true },
+    { buildOrdinal: 5, passed: false },
+  ])
+
+  it('answers the greatest ordinal strictly below current — one step either side of each boundary', () => {
+    expect(priorBuildOutcome(twoBuilds, 5)).toEqual({ buildOrdinal: 3, passed: true })
+    expect(priorBuildOutcome(twoBuilds, 6)).toEqual({ buildOrdinal: 5, passed: false })
+    expect(priorBuildOutcome(twoBuilds, 4)).toEqual({ buildOrdinal: 3, passed: true })
+    expect(priorBuildOutcome(twoBuilds, 3)).toBeUndefined()
+    expect(priorBuildOutcome(twoBuilds, 2)).toBeUndefined()
+  })
+
+  it('answers typed absence for an empty history and a single current-build entry', () => {
+    expect(priorBuildOutcome(historyOf([]), 7)).toBeUndefined()
+    expect(
+      priorBuildOutcome(historyOf([{ buildOrdinal: 7, passed: false }]), 7),
+    ).toBeUndefined()
+  })
+})
+
+describe('failureRecurrence (D-08 live recurrence join)', () => {
+  const mixed = historyOf([
+    { buildOrdinal: 3, passed: false },
+    { buildOrdinal: 5, passed: false },
+    { buildOrdinal: 7, passed: true },
+  ])
+
+  it('counts kth as failed entries at or below current — one step either side of each boundary', () => {
+    expect(failureRecurrence(mixed, 5)).toEqual({ kth: 2, windowBuilds: 3 })
+    expect(failureRecurrence(mixed, 6)).toEqual({ kth: 2, windowBuilds: 3 })
+    expect(failureRecurrence(mixed, 4)).toEqual({ kth: 1, windowBuilds: 3 })
+    expect(failureRecurrence(mixed, 3)).toEqual({ kth: 1, windowBuilds: 3 })
+    expect(failureRecurrence(mixed, 2)).toEqual({ kth: 0, windowBuilds: 3 })
+  })
+
+  it('includes the current failure when recorded, and windowBuilds counts distinct ordinals only', () => {
+    const current = historyOf([{ buildOrdinal: 7, passed: false }])
+    expect(failureRecurrence(current, 7)).toEqual({ kth: 1, windowBuilds: 1 })
+
+    const flap = historyOf([
+      { buildOrdinal: 4, passed: false },
+      { buildOrdinal: 4, passed: true },
+      { buildOrdinal: 6, passed: false },
+    ])
+    expect(failureRecurrence(flap, 6)).toEqual({ kth: 2, windowBuilds: 2 })
+  })
+
+  it('answers {kth: 0, windowBuilds: 0} for an empty history — typed absence, never faked', () => {
+    expect(failureRecurrence(historyOf([]), 9)).toEqual({ kth: 0, windowBuilds: 0 })
+  })
+})
+
+describe('knowledge-local barrel export', () => {
+  it('publishes the read function and both derivations as the same symbols', () => {
+    expect(barrelReadTestOutcomeHistory).toBe(readTestOutcomeHistory)
+    expect(barrelPriorBuildOutcome).toBe(priorBuildOutcome)
+    expect(barrelFailureRecurrence).toBe(failureRecurrence)
   })
 })
