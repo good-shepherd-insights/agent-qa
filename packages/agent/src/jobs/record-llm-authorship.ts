@@ -37,6 +37,14 @@ import type { JobId } from '@vostride/agent-qa-schema'
 export interface JobModelRequest {
   readonly system?: string
   readonly prompt: string
+  /**
+   * Optional image parts riding the SAME request (389 D-02). Screenshots are
+   * capability-gated per the v46 negotiation the host binding surfaces as `vision` below:
+   * an author attaches evidence bytes here only when the capability advertises vision AND
+   * a blob reader is bound. Absent means a text-only request — the L9 graceful-degradation
+   * posture — and every pre-widening caller and stub stays assignable unchanged.
+   */
+  readonly images?: readonly Uint8Array[]
 }
 
 /** What a model answered. Text, because a caller that needs structure parses it. */
@@ -54,6 +62,14 @@ export interface JobModelOutput {
  */
 export interface JobModelCapability {
   readonly modelId: string
+  /**
+   * Whether the bound model accepts image parts (389 D-02) — the v46 capability
+   * negotiation surfaced as one flag by the host binding. OPTIONAL and absent means
+   * text-only: a text-only BYOM binding and every existing stub keep compiling and keep
+   * their L9 posture without declaring anything. Nothing else in the memoization
+   * contract moves with this flag.
+   */
+  readonly vision?: boolean
   generate(request: JobModelRequest): Promise<JobModelOutput>
 }
 

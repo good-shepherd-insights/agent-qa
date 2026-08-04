@@ -420,7 +420,7 @@ describe('the D-02 vision leg and the L9 text-only degradations', () => {
     const result = await authorRunAnalysis(
       model.capability,
       authorInput(handoff, {
-        tokenBudget: { estimate: (text) => text.length, inputBudget: 1 },
+        tokenBudget: { estimate: (text: string) => text.length, inputBudget: 1 },
       }),
     )
 
