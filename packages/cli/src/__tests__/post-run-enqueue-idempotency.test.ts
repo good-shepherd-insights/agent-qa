@@ -43,11 +43,13 @@ import {
 
 const RUN_ID = 'run-388-02-idempotency'
 
+// 389-04's author swap put unknown-floor members on the model path, so a throwing stub
+// now aborts the chain under test. Unparseable text makes the author degrade per-test to
+// the byte-identical deterministic floor (plan 04's proven posture) — chain mechanics
+// keep their 388-era shape.
 const TEST_MODEL: JobModelCapability = {
   modelId: 'test:post-run-enqueue-idempotency',
-  generate: () => {
-    throw new Error('the post-run chain never authors in 388')
-  },
+  generate: async () => ({ text: 'not an author payload' }),
 }
 
 const TEST_CONFIG: ConfigReaderPort = {

@@ -44,12 +44,15 @@ const CONFIG: ConfigReaderPort = {
   }),
 }
 
-/** The post-run chain never authors in 388: a daemon that reached a provider would be a bug. */
+/**
+ * 389-04's author swap means a daemon-claimed analyze-run legitimately reaches the model
+ * for unknown-floor members. Unparseable text makes the author degrade per-test to the
+ * byte-identical deterministic floor (plan 04's proven posture), so the chain mechanics
+ * under test keep their 388-era shape without a provider behind them.
+ */
 const MODEL: JobModelCapability = {
-  modelId: 'post-run-daemon:unused',
-  generate: () => {
-    throw new Error('the post-run chain never authors in 388')
-  },
+  modelId: 'post-run-daemon:degrading-stub',
+  generate: async () => ({ text: 'not an author payload' }),
 }
 
 /** What the substituted fold reports, so a completed chain has honest, pinned counts. */
