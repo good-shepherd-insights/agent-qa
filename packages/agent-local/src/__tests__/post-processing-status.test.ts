@@ -153,7 +153,11 @@ function createHarness(): Harness {
     knowledgeRoot: () => join(agentQaRoot, 'knowledge'),
     model: () => TEST_MODEL,
     clock: createSteppingClock(),
-    postRun: { curateRun: async () => ({ curated: 2, deprecated: 1, complete: true }) },
+    postRun: {
+      curateRun: async () => ({ curated: 2, deprecated: 1, complete: true }),
+      // True of this substitute: it returns counts without ever reaching candidate emission.
+      candidateProse: 'masker-active',
+    },
   })
   hosts.push(host)
   return {
@@ -271,6 +275,8 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
       clock: createSteppingClock(),
       postRun: {
         curateRun: () => Promise.reject(new Error('the knowledge root is unreachable')),
+        // True of this substitute: it rejects before any candidate emission could be reached.
+        candidateProse: 'masker-active',
       },
     })
     hosts.push(host)

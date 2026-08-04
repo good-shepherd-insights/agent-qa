@@ -112,10 +112,12 @@ export {
   RunProducedNoEventsError,
   SYSTEM_CLOCK,
   sweepEntityIndexProjection,
+  UNCLAIMABLE_BY_PROSE_POSTURE,
 } from './composition/compose-local-agent.js'
 export type {
   ApplyDelegate,
   ApplyReviewResult,
+  CandidateProsePosture,
   ComposeLocalAgentInput,
   CreateKnowledgeReviewInput,
   LocalAgentHost,

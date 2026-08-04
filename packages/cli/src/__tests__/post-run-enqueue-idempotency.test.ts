@@ -169,6 +169,9 @@ function fixture(): Fixture {
                   curateCalls.push(input.runId)
                   return { curated: 1, deprecated: 0, complete: true }
                 },
+                // True of this substitute: it records the call and returns counts, never
+                // reaching candidate emission at all.
+                candidateProse: 'masker-active',
               },
             })
             hosts.push(host)

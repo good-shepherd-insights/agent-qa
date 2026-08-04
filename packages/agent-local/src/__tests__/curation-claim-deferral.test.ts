@@ -154,10 +154,12 @@ describe('curation claim deferral by candidate-prose posture (G-388-2 / UF-388-0
     const unmasked = await openHost(root, 'no-masker')
     const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
 
+    // The chain's OWN successor key (`${analyzeRunId}->curate-memory`), so the enqueued row
+    // IS the row `chainJobIdsForRun` addresses — the id the daemon leg would have claimed.
     await unmasked.jobs.queue.enqueue(
       'curate-memory',
       { runId: RUN_ID, executionContext: 'local-headless' },
-      RUN_ID,
+      `${String(ids.analyzeRun)}->curate-memory`,
     )
     const fence = await unmasked.jobs.store.adoptEpoch(1)
     await pump(unmasked.jobs, fence)
@@ -173,10 +175,12 @@ describe('curation claim deferral by candidate-prose posture (G-388-2 / UF-388-0
     const unmasked = await openHost(root, 'no-masker')
     const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
 
+    // The chain's OWN successor key (`${analyzeRunId}->curate-memory`), so the enqueued row
+    // IS the row `chainJobIdsForRun` addresses — the id the daemon leg would have claimed.
     await unmasked.jobs.queue.enqueue(
       'curate-memory',
       { runId: RUN_ID, executionContext: 'local-headless' },
-      RUN_ID,
+      `${String(ids.analyzeRun)}->curate-memory`,
     )
     const unmaskedFence = await unmasked.jobs.store.adoptEpoch(1)
     await pump(unmasked.jobs, unmaskedFence)
@@ -205,10 +209,12 @@ describe('curation claim deferral by candidate-prose posture (G-388-2 / UF-388-0
 
     // The deferred kind enqueued FIRST, so it is the OLDER row `selectClaimable` would offer
     // ahead of everything younger (ORDER BY created_at ASC) if the exclusion did not hold.
+    // The chain's OWN successor key (`${analyzeRunId}->curate-memory`), so the enqueued row
+    // IS the row `chainJobIdsForRun` addresses — the id the daemon leg would have claimed.
     await unmasked.jobs.queue.enqueue(
       'curate-memory',
       { runId: RUN_ID, executionContext: 'local-headless' },
-      RUN_ID,
+      `${String(ids.analyzeRun)}->curate-memory`,
     )
     await unmasked.jobs.queue.enqueue(
       'analyze-run',

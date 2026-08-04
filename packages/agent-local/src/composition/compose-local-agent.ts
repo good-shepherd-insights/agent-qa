@@ -123,6 +123,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
+  JobKind,
   RunEventEnvelope,
   RunId,
   RunsStartInput,
@@ -818,6 +819,14 @@ export interface LocalAgentJobs {
    * a convention is exactly what breaks the first time a host is composed with a different one.
    */
   readonly idSource: JobIdSource
+  /**
+   * The kind exclusion the queue was constructed with, resolved from
+   * `UNCLAIMABLE_BY_PROSE_POSTURE` and published for the same stated reason `idSource` is:
+   * a caller that must assert what its queue was constructed with should read the value
+   * rather than re-derive a default. Empty when the host declared `'masker-active'` or was
+   * composed with no `postRun` at all.
+   */
+  readonly unclaimableKinds: readonly JobKind[]
 }
 
 /** Refusal returned when durable capabilities are requested after their composition was closed. */
@@ -852,6 +861,38 @@ export interface LocalAgentHost {
   jobs(): Promise<LocalAgentJobs>
   /** Close whatever was opened and join an open already in flight. Idempotent. */
   close(): Promise<void>
+}
+
+/**
+ * What a host's curation binding does with candidate prose (388-10, UF-388-01 / D-11).
+ *
+ * A closed union, REQUIRED wherever `postRun` is supplied: a host that cannot say what its
+ * fold does with candidate prose has not been reviewed for UF-388-01, and the typechecker is
+ * what makes that review mandatory rather than customary.
+ *
+ * - `'masker-active'` — a `MaskingContext` is ACTIVE for the duration of the fold, or the
+ *   binding never reaches candidate emission at all. This certifies only that A masker is
+ *   active — NOT that it is the masker of the run being folded. The run masker holds exact
+ *   values with no classification heuristics (`run-composition.ts:453-502`), so a fold of a
+ *   FOREIGN run's row under this run's masker is not redacted for that run's values. That
+ *   case is real today and is unscoped here (T-388-30).
+ * - `'no-masker'` — the binding folds with NO `MaskingContext` in scope. A statement about
+ *   DISCLOSURE, not about capability: the fold would run, but its prose redaction would
+ *   degrade to a pass-through, so a host declaring this may not claim the kind that runs it.
+ */
+export type CandidateProsePosture = 'masker-active' | 'no-masker'
+
+/**
+ * The chain kinds a host of each posture MAY NOT CLAIM — one table, no second spelling.
+ *
+ * A `Record` over the union rather than a condition, deliberately: this phase's named defect
+ * class is a guard whose input domain is written in prose while the code ranges over a
+ * subset, and a total `Record` stops compiling the day a third posture is added. The queue's
+ * `unclaimableKinds` is derived from this table and from nothing else.
+ */
+export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonly JobKind[]> = {
+  'masker-active': [],
+  'no-masker': ['curate-memory'],
 }
 
 export interface ComposeLocalAgentInput {
@@ -918,6 +959,13 @@ export interface ComposeLocalAgentInput {
    */
   readonly postRun?: {
     readonly curateRun: PostRunJobCapabilities['curateRun']
+    /**
+     * REQUIRED beside the binding it describes: a `postRun` that omits it must stop
+     * typechecking, because the posture is the UF-388-01 review of this binding and an
+     * unreviewed binding is exactly what let the daemon fold unmasked. See
+     * `CandidateProsePosture` for what each member does and does not certify.
+     */
+    readonly candidateProse: CandidateProsePosture
   }
 }
 
@@ -1035,6 +1083,11 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // derives ids from has to be the value the queue mints them with, and two spellings of the
       // same default is how those two drift.
       const idSource = input.idSource ?? DIGEST_JOB_ID_SOURCE
+      // Resolved ONCE from the one table, for the queue and the published field alike (388-10).
+      // A host with no `postRun` keeps today's behaviour: no exclusion.
+      const unclaimableKinds: readonly JobKind[] = input.postRun === undefined
+        ? []
+        : UNCLAIMABLE_BY_PROSE_POSTURE[input.postRun.candidateProse]
       jobs = {
         queue: createAgentJobQueue({
           store,
@@ -1042,11 +1095,13 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           clock,
           idSource,
           model,
+          ...(unclaimableKinds.length === 0 ? {} : { unclaimableKinds }),
         }),
         store,
         kinds,
         model,
         idSource,
+        unclaimableKinds,
       }
     } catch (error) {
       store.close()

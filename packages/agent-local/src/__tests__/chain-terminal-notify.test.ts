@@ -190,6 +190,9 @@ async function createHarness(options?: {
           ? { curated: 1, deprecated: 0, complete: true }
           : await options.curateRun()
       },
+      // True of this substitute: it records the call and returns counts, never reaching
+      // candidate emission at all — so no candidate prose exists for a masker to redact.
+      candidateProse: 'masker-active',
     },
   })
   hosts.push(host)

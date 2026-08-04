@@ -183,6 +183,8 @@ function fixture(): Fixture {
       idSource: DIGEST_JOB_ID_SOURCE,
       postRun: {
         curateRun: async () => ({ curated: 2, deprecated: 1, complete: true }),
+        // True of this substitute: it returns counts without ever reaching candidate emission.
+        candidateProse: 'masker-active',
       },
     })
     hosts.push(host)

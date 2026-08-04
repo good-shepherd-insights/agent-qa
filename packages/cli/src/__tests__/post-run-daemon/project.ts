@@ -198,6 +198,8 @@ export function openProjectHost(agentQaRoot: string, knowledgeRoot: string): Loc
       curateRun: () => {
         throw new Error('the reading host never curates')
       },
+      // True of this substitute: it throws on entry, so no candidate emission is reachable.
+      candidateProse: 'masker-active',
     },
   })
 }

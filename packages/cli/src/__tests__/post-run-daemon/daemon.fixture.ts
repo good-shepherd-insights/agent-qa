@@ -110,6 +110,10 @@ export async function runPostRunDaemonFixture(): Promise<void> {
     composeLocalAgent: (input: ComposeLocalAgentInput): LocalAgentHost => composeLocalAgent({
       ...input,
       postRun: {
+        // True of this substitute: it writes a marker and parks on the gate file, never
+        // reaching candidate emission — the SC4 crash legs stay honest under this posture,
+        // and Task 3's source-scan pin states the divergence from production in place.
+        candidateProse: 'masker-active',
         curateRun: async ({ runId }) => {
           curationEntries.push(runId)
           writeDurableJson(enteredMarker, {

@@ -21,7 +21,7 @@ import type {
   StartedRun,
 } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
-import type { LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-local'
+import type { CandidateProsePosture, LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-local'
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { AgentQaConfigSchema, generateRunId, resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
@@ -342,6 +342,13 @@ export interface ComposeCliLocalAgentInput {
       /** The fold's own completeness, carried rather than dropped (WR-03). */
       readonly complete: boolean
     }>
+    /**
+     * REQUIRED wherever the binding is supplied (388-10, UF-388-01): what this binding does
+     * with candidate prose. Passed through untouched — the shared composition owns what the
+     * posture MEANS (see `CandidateProsePosture`), and this host only carries the caller's
+     * declaration to it.
+     */
+    candidateProse: CandidateProsePosture
   }
 }
 

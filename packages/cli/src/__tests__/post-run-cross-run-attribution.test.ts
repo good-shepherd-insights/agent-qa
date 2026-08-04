@@ -220,6 +220,8 @@ function fixture(behaviour: {
               postRun: {
                 curateRun: behaviour.curateRun
                   ?? (async () => ({ curated: 2, deprecated: 1, complete: true })),
+                // True of every substitute this fixture accepts: none reaches candidate emission.
+                candidateProse: 'masker-active',
               },
             })
             hosts.push(host)

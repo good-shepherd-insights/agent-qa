@@ -125,6 +125,11 @@ export interface PostRunTailOperations {
 export interface PostRunTailHostInput {
   readonly agentQaRoot: string
   readonly configPath: string
+  /**
+   * The run masker this tail was handed, if any — carried so `composeHost` can DERIVE the
+   * posture from what the tail HAS rather than assert one it intends (388-10, UF-388-01).
+   */
+  readonly maskingContext?: RunCurationTailOptions['maskingContext']
   readonly curateRun: (input: {
     readonly runId: string
     readonly executionContext: unknown
@@ -165,7 +170,20 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
       agentQaRoot: input.agentQaRoot,
       configPath: input.configPath,
       model: () => POST_RUN_MODEL_UNAVAILABLE,
-      postRun: { curateRun: input.curateRun },
+      postRun: {
+        curateRun: input.curateRun,
+        // Derived from presence, never hard-coded (388-10): the tail declares what it HAS,
+        // not what it intends. Both production sites in `run.ts` pass a masking context
+        // unconditionally, so production behaviour is unchanged — and a harness that
+        // composes the tail without one gets the claim deferral rather than a silent
+        // unmasked emission. The LIMIT of the derivation: what is derived here is that A
+        // masker is active, not that it is the folded run's. `curateRun` below folds the
+        // JOB PAYLOAD's runId while passing `opts.maskingContext`, which is THIS run's
+        // masker, and the pump runs whatever `runNextJob` returns, own row or foreign — so
+        // a foreign run's row folded here is masked by the wrong masker. Pre-existing and
+        // unscoped (T-388-30); this comment must not imply otherwise.
+        candidateProse: input.maskingContext === undefined ? 'no-masker' : 'masker-active',
+      },
     }),
     acquireWriterLease: LOCAL_DAEMON_CAPABILITIES.acquireWriterLease,
     releaseLease: LOCAL_DAEMON_CAPABILITIES.releaseLease,
@@ -332,6 +350,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     host ??= ops().composeHost({
       agentQaRoot: opts.agentQaRoot,
       configPath: opts.configPath,
+      // The same conditional spread the fold is threaded with: composeHost derives the
+      // posture from this value's PRESENCE, so the tail never asserts a masker it lacks.
+      ...(opts.maskingContext === undefined ? {} : { maskingContext: opts.maskingContext }),
       curateRun,
     })
     return host
