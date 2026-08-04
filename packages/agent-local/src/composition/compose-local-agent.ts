@@ -1051,7 +1051,10 @@ interface ProjectionRecurrence {
  * A host may supply an ASYNC root resolver (the CLI layers configuration). A query that
  * arrives before the root resolves answers `undefined` — rendered as the explicit
  * no-history clause — which is why every `analysis.get` invocation primes the root through
- * the awaited `runs.get` hop before the sync join can run.
+ * the awaited `runs.get` hop before the sync join can run. A synchronously-throwing
+ * resolver is swallowed to the SAME degrade (a read that needs no knowledge root never
+ * fails on one), and minting + handler attachment are fused in `beginResolve` — the one
+ * place a root-resolution promise is created — so no promise can be orphaned (G-389-2).
  */
 function createProjectionRecurrenceProvider(
   resolveKnowledgeRoot: () => Promise<string> | string,
@@ -1059,16 +1062,21 @@ function createProjectionRecurrenceProvider(
   let root: string | undefined
   let resolving: Promise<void> | undefined
 
-  function rootNow(): string | undefined {
-    if (root !== undefined) return root
-    const answer = resolveKnowledgeRoot()
+  function beginResolve(): Promise<void> | undefined {
+    if (resolving !== undefined) return resolving // reuse the in-flight resolution; never mint a second promise
+    let answer: Promise<string> | string
+    try {
+      answer = resolveKnowledgeRoot()
+    } catch {
+      return undefined // sync throw: swallowed here, retried on the next query
+    }
     if (typeof answer === 'string') {
       root = answer
-      return root
+      return undefined
     }
     // A failed resolution clears the marker so the next query retries rather than
     // pinning the provider to permanent no-history over a transient host error.
-    resolving ??= answer.then(
+    resolving = answer.then(
       (value) => {
         root = value
       },
@@ -1076,14 +1084,21 @@ function createProjectionRecurrenceProvider(
         resolving = undefined
       },
     )
-    return undefined
+    return resolving
+  }
+
+  function rootNow(): string | undefined {
+    if (root !== undefined) return root
+    beginResolve()
+    return root
   }
 
   return {
     prime(): Promise<void> {
       if (root !== undefined) return Promise.resolve()
-      rootNow()
-      return resolving ?? Promise.resolve()
+      // Both stored handlers swallow, so prime never rejects — the awaited runs.get hop
+      // cannot fail on a knowledge-root problem.
+      return beginResolve() ?? Promise.resolve()
     },
     provider: {
       failureRecurrence(query) {
