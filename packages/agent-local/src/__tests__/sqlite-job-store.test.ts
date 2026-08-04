@@ -324,6 +324,92 @@ describe('agent job store: claim order (D-03 / Pitfall 4)', () => {
   })
 })
 
+describe('agent job store: claim exclusion (388-09, G-388-2 substrate)', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-exclusion-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function mixedInsert(id: string, kind: 'curate-memory' | 'analyze-run'): JobInsert {
+    return {
+      id: asJobId(id),
+      kind,
+      idempotencyKey: id,
+      summary: `agent job ${kind} (${id})`,
+      payload: { n: 1 },
+    }
+  }
+
+  /** Oldest claimable row is curate-memory; the next-oldest is analyze-run. */
+  async function seedMixedQueue(store: SqliteJobStore): Promise<JobStoreFence> {
+    await store.enqueue(mixedInsert('job_curate', 'curate-memory'))
+    await store.enqueue(mixedInsert('job_analyze', 'analyze-run'))
+    return store.adoptEpoch(1)
+  }
+
+  it('skips an excluded kind and offers the next eligible row, not no-job', async () => {
+    const store = openStore(root)
+    try {
+      const fence = await seedMixedQueue(store)
+      const outcome = await store.claimNext(fence, { excludeKinds: ['curate-memory'] })
+      if (!outcome.claimed) throw new Error('exclusion answered no-job over a claimable row')
+      expect(String(outcome.job.id)).toBe('job_analyze')
+      expect(outcome.job.kind).toBe('analyze-run')
+    } finally {
+      store.close()
+    }
+  })
+
+  it('leaves the skipped row exactly as it was found: queued, unclaimed, attempts 0', async () => {
+    const store = openStore(root)
+    try {
+      const fence = await seedMixedQueue(store)
+      await store.claimNext(fence, { excludeKinds: ['curate-memory'] })
+      const dump = await store.dumpState()
+      expect(dump.jobs.find((row) => row.id === 'job_curate')).toMatchObject({
+        status: 'queued',
+        claimed: false,
+        attempts: 0,
+      })
+      expect(rawRow(root, 'job_curate')?.claimed_at).toBeNull()
+    } finally {
+      store.close()
+    }
+  })
+
+  it('claims that same row with no options: the exclusion is the only input the skip turns on', async () => {
+    const store = openStore(root)
+    try {
+      const fence = await seedMixedQueue(store)
+      const outcome = await store.claimNext(fence)
+      if (!outcome.claimed) throw new Error('control claim answered no-job')
+      expect(String(outcome.job.id)).toBe('job_curate')
+      expect(outcome.job.kind).toBe('curate-memory')
+      expect(outcome.job.attempts).toBe(1)
+    } finally {
+      store.close()
+    }
+  })
+
+  it('answers {claimed: false} when every claimable row is excluded — never a throw', async () => {
+    const store = openStore(root)
+    try {
+      const fence = await seedMixedQueue(store)
+      const outcome = await store.claimNext(fence, {
+        excludeKinds: ['curate-memory', 'analyze-run'],
+      })
+      expect(outcome).toEqual({ claimed: false })
+    } finally {
+      store.close()
+    }
+  })
+})
+
 describe('agent job store: completeAndChain (JOBQ-05 ordering)', () => {
   let root: string
   let store: SqliteJobStore

@@ -12,6 +12,7 @@ import type { Job, JobId, JobKind } from '@vostride/agent-qa-schema'
 
 import type { ClockPort } from '../../ports/clock.js'
 import type {
+  ClaimNextOptions,
   JobCancelOutcome,
   JobCheckpointRecord,
   JobCheckpointReadOutcome,
@@ -50,6 +51,8 @@ export interface FakeJobStore extends JobStorePort {
   rows(): readonly Row[]
   checkpoints(): readonly { jobId: string; checkpointId: string; payload: JobCheckpointRecord }[]
   callCount(verb: 'recordFailure' | 'failAndChain'): number
+  /** What each claimNext call received as its options argument, in call order. */
+  claimNextCalls(): readonly (ClaimNextOptions | undefined)[]
 }
 
 /** The three statuses a job never leaves. A cancel arriving at one of them changes nothing. */
@@ -58,6 +61,7 @@ const TERMINAL_STATUSES: readonly Job['status'][] = ['done', 'failed', 'cancelle
 export function createFakeJobStore(clock: ClockPort): FakeJobStore {
   const rows = new Map<string, Row>()
   const published: { jobId: string; checkpointId: string; payload: JobCheckpointRecord }[] = []
+  const claimNextCallLog: (ClaimNextOptions | undefined)[] = []
   const callCounts = {
     recordFailure: 0,
     failAndChain: 0,
@@ -128,6 +132,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
     rows: () => [...rows.values()].map((row) => ({ ...row })),
     checkpoints: () => published.map((entry) => ({ ...entry })),
     callCount: (verb) => callCounts[verb],
+    claimNextCalls: () => [...claimNextCallLog],
 
     async adoptEpoch(next: number): Promise<JobStoreFence> {
       if (next < epoch) throw new StaleJobStoreEpochError(next, epoch)
@@ -139,11 +144,17 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
       return insertOrGet(request, clock.now())
     },
 
-    async claimNext(fence: JobStoreFence): Promise<JobClaimOutcome> {
+    async claimNext(
+      fence: JobStoreFence,
+      options?: ClaimNextOptions,
+    ): Promise<JobClaimOutcome> {
       requireFence(fence)
+      claimNextCallLog.push(options)
+      const excluded = new Set(options?.excludeKinds ?? [])
       const now = clock.now()
       for (const row of rows.values()) {
         if (row.status !== 'queued' || row.claimed) continue
+        if (excluded.has(row.kind)) continue
         // D-18: the attempt is spent HERE, at the claim.
         row.attempts += 1
         row.claimed = true

@@ -842,3 +842,45 @@ describe('the six real kinds, driven through the engine', () => {
     ])
   })
 })
+
+describe('construction-time unclaimable kinds (388-09, G-388-2 substrate)', () => {
+  it('passes the constructed exclusion set to the store on every runNextJob, and nothing without it', async () => {
+    const clock = createSteppingClock()
+    const store = createFakeJobStore(clock)
+    const registry = createRealJobKindRegistry()
+    const queue = createAgentJobQueue({
+      store,
+      registry,
+      clock,
+      idSource,
+      model: unusedModel,
+      unclaimableKinds: ['curate-memory'],
+    })
+    const fence = await store.adoptEpoch(1)
+    await queue.enqueue('curate-memory', {}, 'run-1')
+    await queue.enqueue('analyze-run', {}, 'run-1')
+
+    const first = await queue.runNextJob({ fence })
+    expect(first).toMatchObject({ ran: true, job: { kind: 'analyze-run' } })
+    await queue.runNextJob({ fence })
+    expect(store.claimNextCalls()).toEqual([
+      { excludeKinds: ['curate-memory'] },
+      { excludeKinds: ['curate-memory'] },
+    ])
+
+    // The queue built WITHOUT the option calls claimNext(fence) exactly as it does today.
+    const bareStore = createFakeJobStore(clock)
+    const bareQueue = createAgentJobQueue({
+      store: bareStore,
+      registry,
+      clock,
+      idSource,
+      model: unusedModel,
+    })
+    const bareFence = await bareStore.adoptEpoch(1)
+    await bareQueue.enqueue('curate-memory', {}, 'run-1')
+    const bare = await bareQueue.runNextJob({ fence: bareFence })
+    expect(bare).toMatchObject({ ran: true, job: { kind: 'curate-memory' } })
+    expect(bareStore.claimNextCalls()).toEqual([undefined])
+  })
+})
