@@ -17,6 +17,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  admitAnalysisArtifactForRun,
   AnalysisVersionError,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   guardRunAnalysisArtifact,
@@ -113,5 +114,31 @@ describe('guardRunAnalysisArtifact: perTest uniqueness on both arrays (G-389-3B 
       [partsFor(0), partsFor(1)],
     )
     expect(guardRunAnalysisArtifact(artifact)).toBe(artifact)
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// G-389-3A: the read half of the two-sided run-identity contract. The write half derives
+// the artifact's path FROM artifact.runId (persistAnalysis); this helper is the ONE place
+// the recorded id is compared against the run being resolved, consumed at both byte
+// boundaries (compose-local-agent's reader, emit-canary's loader). A mismatch is a typed
+// refusal the consumers fold to the deterministic floor — never adoption, never hard-fail.
+// ---------------------------------------------------------------------------------------
+
+describe('admitAnalysisArtifactForRun: recorded runId vs the run being resolved (G-389-3A)', () => {
+  it('admits a matching runId carrying the SAME artifact reference — identity, not a copy', () => {
+    const artifact = artifactOf([verdictFor(0)], [partsFor(0)])
+    const admission = admitAnalysisArtifactForRun(artifact, 'run-analysis-artifact-guard')
+    expect(admission.kind).toBe('admitted')
+    if (admission.kind === 'admitted') expect(admission.artifact).toBe(artifact)
+  })
+
+  it('refuses a mismatch TYPED, carrying both ids verbatim', () => {
+    const artifact = artifactOf([verdictFor(0)], [partsFor(0)])
+    expect(admitAnalysisArtifactForRun(artifact, 'run-somebody-else')).toEqual({
+      kind: 'run-mismatch',
+      recordedRunId: 'run-analysis-artifact-guard',
+      resolvingRunId: 'run-somebody-else',
+    })
   })
 })

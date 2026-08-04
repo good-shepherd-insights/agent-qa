@@ -529,6 +529,36 @@ describe('composeLocalAgent (D-15)', () => {
       expect(answer.sentences[0]!.sentence).toContain('app_bug: observed (test outcome): "failed"')
     })
 
+    it('refuses a PRESENT artifact recording another run\'s id — floor by identity, adoption once corrected (G-389-3A)', async () => {
+      // The two-sided-contract pin law: BOTH legs have the file PRESENT on run B's own
+      // path — only the recorded runId varies — which is what distinguishes the identity
+      // refusal from absence. The write half derives this path FROM artifact.runId; a
+      // copied/restored run directory is exactly a foreign runId on the resolved path.
+      const runDir = plantHandoff(failedHandoff(ANALYZED_RUN_ID, 1))
+
+      // Foreign leg: guard-admissible bytes authored for ANOTHER run, on THIS run's path.
+      writeAnalysisArtifact(join(runDir, 'analysis.json'), authoredArtifact('run_foreign_sibling'))
+      const foreign = await invokeFunction(
+        host.registry, 'analysis.get', { runId: ANALYZED_RUN_ID }, CALLER,
+      ) as AnalysisAnswer
+
+      // The run's OWN deterministic floor — never the foreign app_bug verdict or its parts.
+      expect(foreign.verdicts).toEqual([
+        { perTest: 0, testId: 't_checkout', class: 'unknown', producer: 'deterministic-classifier', confidence: 0 },
+      ])
+      expect(foreign.sentences[0]!.sentence).toContain('unknown:')
+      expect(foreign.sentences[0]!.sentence).not.toContain('app_bug')
+
+      // Control leg: the SAME artifact with runId corrected to this run, on the SAME path.
+      writeAnalysisArtifact(join(runDir, 'analysis.json'), authoredArtifact(ANALYZED_RUN_ID))
+      const adopted = await invokeFunction(
+        host.registry, 'analysis.get', { runId: ANALYZED_RUN_ID }, CALLER,
+      ) as AnalysisAnswer
+      expect(adopted.verdicts[0]).toMatchObject({
+        class: 'app_bug', producer: 'analyze-run', confidence: 0.9,
+      })
+    })
+
     it('propagates a newer artifact schema version as the typed error, never a silent floor', async () => {
       const runDir = plantHandoff(failedHandoff(ANALYZED_RUN_ID, 1))
       writeFileSync(

@@ -1182,6 +1182,33 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     for (const outcome of log) expect(outcome.runOutcome).toBe('negative')
   })
 
+  it('a foreign artifact on run B\'s OWN dir never flips B\'s attribution (G-389-3A)', () => {
+    // The two-sided-contract pin law again, at the fold's loader: the file is PRESENT on
+    // B's own runDir in BOTH legs — only the recorded runId varies. A copied/restored run
+    // directory is run A's bytes on B's path; admission by identity keeps B on its floor.
+    const dirB = tempRunDir()
+    const runB = failingHandoffFor(RUN_B)
+
+    // Foreign leg: run A's flake bytes at dirB. B's floor unknown IS attributable — the
+    // attributed emission STILL occurs; A's flake (non-attributable) is never adopted.
+    writeFileSync(join(dirB, ANALYSIS_FILE), `${canonicalJson(flakeArtifact(RUN_A))}\n`, 'utf8')
+    const foreignLog: CanaryOutcome[] = []
+    const foreignReport = foldInto(foreignLog, runB, dirB)
+    expect(foreignReport.emitted).toBe(1)
+    expect(foreignLog.map((outcome) => outcome.runId)).toEqual([RUN_B])
+    expect(foreignLog[0]!.runOutcome).toBe('negative')
+
+    // Control leg: the SAME bytes with runId corrected to RUN_B on the SAME path —
+    // adopted, unknown → flake, the emission suppressed (the supersession case's shape).
+    writeFileSync(join(dirB, ANALYSIS_FILE), `${canonicalJson(flakeArtifact(RUN_B))}\n`, 'utf8')
+    const controlLog: CanaryOutcome[] = []
+    const controlReport = foldInto(controlLog, runB, dirB)
+    expect(controlLog).toEqual([])
+    expect(controlReport.emitted).toBe(0)
+    expect(controlReport.refused).toBe(0)
+    expect(controlReport.unresolved).toBe(0)
+  })
+
   it('reads verdicts through the D-10 accessor only (source pin + grep gate)', () => {
     const source = readFileSync(
       new URL('../emit-canary-outcomes.ts', import.meta.url),
