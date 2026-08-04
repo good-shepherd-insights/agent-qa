@@ -589,10 +589,23 @@ const PENDING_POSTURE_SUFFIX: Record<PostRunPendingPosture, string> = {
   none: '',
 }
 
+/**
+ * Total over the drain-outcome union, deliberately: a new outcome must choose its posture HERE
+ * rather than inherit one from a fall-through — which is precisely how G-388-3 shipped.
+ */
+const DRAIN_OUTCOME_POSTURE: Record<PostRunDrainOutcome, PostRunPendingPosture> = {
+  'not-attempted': 'none',
+  detached: 'none',
+  'handed-off': 'handed-off',
+  drained: 'none',
+  'budget-exhausted': 'none',
+  'backlog-exhausted': 'backlog-exhausted',
+  'retry-scheduled': 'none',
+  refused: 'none',
+}
+
 function postureOf(outcome: PostRunDrainOutcome): PostRunPendingPosture {
-  if (outcome === 'handed-off') return 'handed-off'
-  if (outcome === 'backlog-exhausted') return 'backlog-exhausted'
-  return 'none'
+  return DRAIN_OUTCOME_POSTURE[outcome]
 }
 
 /**
