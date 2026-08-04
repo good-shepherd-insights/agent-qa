@@ -528,10 +528,10 @@ describe('agent-qa fn (generic function invoker)', () => {
       resultKind: declaration.resultKind,
       bindingStatus: declaration.bindingStatus,
     }]))).toEqual({
-      // 389 D-11: THE analysis read — verdicts + sentences + clusters. UNBOUND in this
-      // composition until plan 06 binds the artifact reader at the composition root; listed
-      // by name rather than absent, per D-09.
-      'analysis.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
+      // 389 D-11: THE analysis read — verdicts + sentences + clusters. BOUND since plan 06:
+      // the composition root binds the artifact reader over `agentQaRoot` in every local
+      // composition, so an artifact-less run answers the floor rather than a refusal.
+      'analysis.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'config.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.

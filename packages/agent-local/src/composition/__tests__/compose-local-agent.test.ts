@@ -666,7 +666,9 @@ describe('composeLocalAgent (D-15)', () => {
         new URL('../compose-local-agent.ts', import.meta.url),
         'utf8',
       )
-      const start = source.indexOf('function postRunCapabilities')
+      // The region spans the projection-read helper (where the plan-02 read is named)
+      // through the capability bag itself — the whole binding path a query crosses.
+      const start = source.indexOf('function readProjectedTestHistory')
       expect(start).toBeGreaterThan(-1)
       const end = source.indexOf('export function composeLocalAgent', start)
       const body = source

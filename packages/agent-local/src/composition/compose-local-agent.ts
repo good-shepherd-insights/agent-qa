@@ -13,9 +13,10 @@
 // Heavy first-party dependencies are legal in this subtree and nowhere else in this package; the
 // arch rule named composition-carveout enforces that, so the job store proper stays lean.
 
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import {
   createAgentJobQueue,
@@ -24,6 +25,7 @@ import {
 } from '@vostride/agent-qa-agent'
 import type {
   AgentJobQueue,
+  AnalysisArtifactReaderPort,
   ClockPort,
   ConfigReaderPort,
   EntityDirectoryPort,
@@ -33,6 +35,7 @@ import type {
   JobModelCapability,
   KnowledgeReaderPort,
   PostRunJobCapabilities,
+  RecurrenceProvider,
   RunInvocationPort,
   RunsReaderPort,
   StartedRun,
@@ -57,7 +60,10 @@ import {
   embedderWorkerProcessIsAlive,
   embedderWorkerSocketPath,
   enqueueCurationCandidateProjection,
+  failureRecurrence,
   foldRunOutcomes,
+  indexDbPath,
+  readTestOutcomeHistory,
   getEntityDescriptor,
   heartbeatLease,
   inspectDrainableCurationWork,
@@ -110,6 +116,7 @@ import {
 } from '@vostride/agent-qa-safety'
 import {
   FsEventLog,
+  FsEvidenceArtifactStore,
   HANDOFF_FILE,
   RUNS_SUBDIR,
   loadCompletedRunHandoff,
@@ -120,6 +127,7 @@ import {
   ANALYSIS_FILE,
   asJobId,
   DEFAULT_EMBEDDING_PROFILE,
+  guardRunAnalysisArtifact,
   sha256hex16,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -974,6 +982,144 @@ export interface ComposeLocalAgentInput {
      */
     readonly candidateProse: CandidateProsePosture
   }
+  /**
+   * D-01's TokenAccounting substrate for the analyze-run author, entering as DATA (389
+   * plan 06). OPTIONAL and host-resolved: both production hosts derive it from the SAME
+   * model-profile resolution as the job model itself (one source of truth, no second
+   * config surface — 386 D-15), and `composeLocalAgent` only passes it through. Unbound,
+   * the author's evidence packs travel whole — the plan-04 no-ladder posture.
+   */
+  readonly analysisTokenBudget?: PostRunJobCapabilities['analysisTokenBudget']
+}
+
+/**
+ * One test's recorded outcome history, read per query from the derived run-outcome
+ * projection (389 plan 02's read side) at `<knowledgeRoot>/memory/index/knowledge.db`.
+ *
+ * Absence discipline: a database that was never created, a store predating the projection
+ * tables, and an identity the projection never counted ALL answer `undefined` — the author
+ * and the renderer both carry a typed no-history posture, and faking an empty row would
+ * erase the distinction plan 02 pinned. Any OTHER read failure propagates: a corrupt store
+ * is not "no history".
+ */
+function readProjectedTestHistory(
+  knowledgeRoot: string,
+  query: { readonly product: string; readonly filePath: string; readonly testName: string },
+): ReturnType<typeof readTestOutcomeHistory> {
+  const path = indexDbPath(knowledgeRoot)
+  if (!existsSync(path)) return undefined
+  const db = new DatabaseSync(path, { readOnly: true })
+  try {
+    return readTestOutcomeHistory(db, {
+      product: query.product,
+      filePath: query.filePath,
+      testName: query.testName,
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('no such table')) return undefined
+    throw error
+  } finally {
+    db.close()
+  }
+}
+
+interface ProjectionRecurrence {
+  readonly provider: RecurrenceProvider
+  /**
+   * Resolve (and cache) the knowledge root the SYNC provider reads under. See the
+   * `runs.get` wrapper in `composeLocalAgent` for why this exists and where it is awaited.
+   */
+  prime(): Promise<void>
+}
+
+/**
+ * The D-08 recurrence seam bound to v51's run-outcome projection (`readTestOutcomeHistory`
+ * + `failureRecurrence` — plan 05 declares the seam, 390 rebinds it to its
+ * fingerprint-window computation). The join is LIVE per call: the read and the derivation
+ * run on every query and nothing about the ANSWER is cached, so a store update between two
+ * renders changes the clause (D-08). Only the knowledge ROOT — a composition-lifetime
+ * fact, not an answer — is resolved once and remembered.
+ *
+ * The read-time "current build" is the row's own `lastBuildOrdinal` (falling back to the
+ * greatest windowed ordinal): at render time the latest recorded build IS current, so
+ * `kth` counts every recorded failure in the window.
+ *
+ * A host may supply an ASYNC root resolver (the CLI layers configuration). A query that
+ * arrives before the root resolves answers `undefined` — rendered as the explicit
+ * no-history clause — which is why every `analysis.get` invocation primes the root through
+ * the awaited `runs.get` hop before the sync join can run.
+ */
+function createProjectionRecurrenceProvider(
+  resolveKnowledgeRoot: () => Promise<string> | string,
+): ProjectionRecurrence {
+  let root: string | undefined
+  let resolving: Promise<void> | undefined
+
+  function rootNow(): string | undefined {
+    if (root !== undefined) return root
+    const answer = resolveKnowledgeRoot()
+    if (typeof answer === 'string') {
+      root = answer
+      return root
+    }
+    // A failed resolution clears the marker so the next query retries rather than
+    // pinning the provider to permanent no-history over a transient host error.
+    resolving ??= answer.then(
+      (value) => {
+        root = value
+      },
+      () => {
+        resolving = undefined
+      },
+    )
+    return undefined
+  }
+
+  return {
+    prime(): Promise<void> {
+      if (root !== undefined) return Promise.resolve()
+      rootNow()
+      return resolving ?? Promise.resolve()
+    },
+    provider: {
+      failureRecurrence(query) {
+        const knowledgeRoot = rootNow()
+        if (knowledgeRoot === undefined) return undefined
+        const history = readProjectedTestHistory(knowledgeRoot, query)
+        if (history === undefined) return undefined
+        const currentBuildOrdinal =
+          history.lastBuildOrdinal
+          ?? history.lastOutcomes.reduce((max, entry) => Math.max(max, entry.buildOrdinal), 0)
+        return failureRecurrence(history, currentBuildOrdinal)
+      },
+    },
+  }
+}
+
+/**
+ * The `analysis.json` read side (389 D-10/D-11), path-derived from the artifact's own
+ * `runId` through the SAME `runs/<slug>/` law as the handoff read and the persist binding
+ * — `slugBranch` is the traversal guard (T-389-01), and no caller ever supplies a path.
+ *
+ * An absent file is `undefined` — "the analysis never ran" is a true state of a run, which
+ * `analysis.get` serves as the floor. Everything else propagates: a schemaVersion newer
+ * than this build reads is `guardRunAnalysisArtifact`'s typed hard failure (never swallowed
+ * into a silent floor), and malformed bytes are corruption, not absence.
+ */
+function createAnalysisArtifactReader(agentQaRoot: string): AnalysisArtifactReaderPort {
+  return {
+    getArtifact(runId) {
+      const path = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId), ANALYSIS_FILE)
+      let bytes: string
+      try {
+        bytes = readFileSync(path, 'utf8')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+        throw error
+      }
+      return guardRunAnalysisArtifact(JSON.parse(bytes))
+    },
+  }
 }
 
 /**
@@ -989,8 +1135,14 @@ export interface ComposeLocalAgentInput {
  * schema version, which is exactly the posture the handler wants: both are permanent
  * conditions of that run, not transient ones worth a retry.
  */
-function postRunCapabilities(
+export function postRunCapabilities(
   input: ComposeLocalAgentInput,
+  /**
+   * The RESOLVED knowledge root. `openJobs` awaits the host's resolver once at queue open
+   * — the same once-at-open idiom the model factory follows — so the SYNC capability
+   * members below never race an async resolution mid-job.
+   */
+  knowledgeRoot: string,
 ): PostRunJobCapabilities | undefined {
   const postRun = input.postRun
   if (postRun === undefined) return undefined
@@ -1008,6 +1160,21 @@ function postRunCapabilities(
         join(input.agentQaRoot, RUNS_SUBDIR, slugBranch(artifact.runId), ANALYSIS_FILE),
         artifact,
       ),
+    // Plan 02's read side over the derived projection, keyed the projection's way —
+    // (product, filePath, testName), the stable identity, NEVER a per-run explicit id.
+    // The query arrives already keyed by the author callback; this binding only reads.
+    readTestHistory: (query) => readProjectedTestHistory(knowledgeRoot, query),
+    // D-02's sha-addressed screenshot bytes: the SAME CASS-02 store the runner writes.
+    // `FsEvidenceArtifactStore.getBlob` validates the lowercase 64-hex shape BEFORE any
+    // path use (T-389-14) and answers ENOENT as honest absence; the runId becomes a path
+    // segment only through `slugBranch` inside the store's own constructor.
+    readEvidenceBlob: (runId, sha) =>
+      new FsEvidenceArtifactStore({ root: input.agentQaRoot, runId }).getBlob(sha),
+    // Host-resolved and passed through untouched (386 D-15): the budget derives from the
+    // same profile resolution as the job model, and this composition adds no knob of its own.
+    ...(input.analysisTokenBudget === undefined
+      ? {}
+      : { analysisTokenBudget: input.analysisTokenBudget }),
   }
 }
 
@@ -1027,9 +1194,25 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     resolveKnowledgeRoot: input.knowledgeRoot,
   }
 
+  // 389 plan 06: the recurrence seam and its root priming. `analysis.get` awaits
+  // `deps.runs.get` before any recurrence join runs (analysis-get.ts invoke order), so
+  // priming the root inside that awaited hop is what makes the SYNC provider correct on a
+  // host whose knowledge-root resolver is async (the CLI): by the time the join runs, the
+  // root string is cached. A resolution failure is swallowed HERE only — the provider then
+  // answers the honest no-history clause, and the knowledge verbs report their own errors
+  // through their own awaited resolutions.
+  const recurrence = createProjectionRecurrenceProvider(input.knowledgeRoot)
+  const runsReader = createRunsReader(input.agentQaRoot)
+
   const registry = createFunctionRegistry({
     deps: {
-      runs: createRunsReader(input.agentQaRoot),
+      runs: {
+        ...runsReader,
+        get: async (runId) => {
+          await recurrence.prime()
+          return runsReader.get(runId)
+        },
+      },
       // 387 D-01: this host's list verbs are live sighting sites. Every entity a listing,
       // an inspect, a diff or a show surfaces gets its permanent address the first time it
       // is surfaced — which is what "pre-existing entities get IDs the day they are first
@@ -1074,6 +1257,13 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           execution: input.runExecution,
         }),
       }),
+      // 389 D-10/D-11: the artifact read `analysis.get` binds through, and the D-08
+      // recurrence join the one renderer consults. Both are bindable from `agentQaRoot`
+      // and the knowledge root alone, so every local composition carries them — a host
+      // with no artifact on disk serves the floor, and a host with no recorded history
+      // renders the explicit no-history clause; neither is a refusal (plan 05's law).
+      analysis: createAnalysisArtifactReader(input.agentQaRoot),
+      recurrence: recurrence.provider,
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
   })
@@ -1086,6 +1276,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
 
   async function openJobs(openGeneration: number): Promise<LocalAgentJobs> {
     const model = await input.model()
+    // Resolved ONCE at queue open, the same idiom as the model above: the post-run
+    // capability members read synchronously, and the knowledge root is a process fact.
+    const knowledgeRoot = await input.knowledgeRoot()
     const store = createSqliteJobStore({
       path: join(input.agentQaRoot, AGENT_JOB_STORE_DB_FILE),
       clock,
@@ -1093,7 +1286,8 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     })
     let jobs: LocalAgentJobs
     try {
-      const kinds = input.jobKinds ?? createRealJobKindRegistry(postRunCapabilities(input))
+      const kinds = input.jobKinds
+        ?? createRealJobKindRegistry(postRunCapabilities(input, knowledgeRoot))
       // Resolved ONCE and used for both the queue and the published field: the value a watcher
       // derives ids from has to be the value the queue mints them with, and two spellings of the
       // same default is how those two drift.
