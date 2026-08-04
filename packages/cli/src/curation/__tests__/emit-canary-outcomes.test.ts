@@ -1,25 +1,32 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
 
 import { HANDOFF_FILE, loadCompletedRunHandoff } from '@vostride/agent-qa-runner-local'
 import {
+  ANALYSIS_FILE,
   asRecordId,
   asRef,
   asRunId,
+  canonicalJson,
+  CURRENT_ANALYSIS_SCHEMA_VERSION,
   normalizeAnchor,
   type Anchor,
+  type CanaryOutcome,
   type CompletedRunHandoff,
   type ElementInfo,
   type PerTestOutcome,
+  type RunAnalysisArtifact,
   type ScreenState,
   type StepEvidence,
   type StepPlanSource,
   type SubActionEvidence,
   type Verdict,
 } from '@vostride/agent-qa-schema'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const lookupSpy = vi.hoisted(() => ({
   anchorsById: new Map<string, Anchor[]>(),
@@ -1025,5 +1032,193 @@ describe('emitCanaryOutcomes procedure counters', () => {
         outcome: { kind: 'unresolved', reason: 'not-found' },
       }],
     })
+  })
+})
+
+// ————— 389-06: the D-10 attribution rewire + the SC2 cross-run supersession differential —————
+
+describe('SC2 — the cross-run supersession differential (389-06, D-10)', () => {
+  const RUN_A = 'run-supersession-aaa'
+  const RUN_B = 'run-supersession-bbb'
+  const CANDIDATE_ANCHOR: Anchor = { t: 'el', role: 'button', name: 'checkout', ordinal: 0 }
+
+  const tempDirs: string[] = []
+
+  beforeEach(() => {
+    lookupSpy.anchorsById.clear()
+    lookupSpy.invalidById.clear()
+    lookupSpy.openCalls.length = 0
+    lookupSpy.anchorsById.set(CANDIDATE, [CANDIDATE_ANCHOR])
+  })
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  })
+
+  function tempRunDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-qa-sc2-run-'))
+    tempDirs.push(dir)
+    return dir
+  }
+
+  /**
+   * One failing test (verifier-failed step 0, canary served, anchors matched), NO rootCause
+   * — the deterministic floor resolves it to the minted `unknown`, which IS attributable.
+   * Both halves of the differential are pinned BY ID (the 388 two-sided-contract law):
+   * single-run fixtures cannot see a cross-instance attribution defect.
+   */
+  function failingHandoffFor(runId: string): CompletedRunHandoff {
+    const base = handoff([step({ stepIndex: 0, pass: false })])
+    return { ...base, runId: asRunId(runId) }
+  }
+
+  /** The 389 supersession: the author upgraded the floor's unknown to flake (non-attributable). */
+  function flakeArtifact(runId: string): RunAnalysisArtifact {
+    return {
+      schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
+      runId,
+      verdicts: [{
+        class: 'flake',
+        producer: 'analyze-run',
+        confidence: 0.8,
+        evidence: {
+          citedSteps: [0],
+          citedAnchors: [],
+          citedArtifacts: [],
+          rationale: 'the same step passed on the immediate re-run',
+        },
+        memoryMisdirectionRuledOut: true,
+        perTest: 0,
+      }],
+      parts: [{
+        perTest: 0,
+        groundingQuote: { stepIndex: 0, quote: 'Checkout did not open' },
+        discriminator: 'intermittent, no persistent cause',
+        nextAction: 're-run to confirm stability',
+        links: [],
+      }],
+    }
+  }
+
+  function foldInto(log: CanaryOutcome[], input: CompletedRunHandoff, runDir: string) {
+    return emitCanaryOutcomes({
+      handoff: input,
+      knowledgeRoot: '/tmp/agent-qa-knowledge',
+      runDir,
+      emit: (outcome) => log.push(outcome),
+    })
+  }
+
+  it('no-artifact leg: fold output byte-identical to the handoff-only baseline (regression pin)', () => {
+    const collected: CanaryOutcome[] = []
+    const report = foldInto(collected, failingHandoffFor(RUN_A), tempRunDir())
+
+    expect(report.emitted).toBe(1)
+    expect(collected[0]).toMatchObject({
+      candidateId: CANDIDATE,
+      runId: RUN_A,
+      runOutcome: 'negative',
+      testId: 'checkout::happy-path',
+    })
+    // Byte-identity with the pure projection over the same handoff — the pre-rewire baseline.
+    expect(canonicalJson(collected)).toBe(canonicalJson(
+      project(failingHandoffFor(RUN_A), new Map([[CANDIDATE, [CANDIDATE_ANCHOR]]])),
+    ))
+  })
+
+  it('the artifact supersedes the deterministic unknown and the RESOLVED class flips attribution', () => {
+    const runDir = tempRunDir()
+    writeFileSync(
+      join(runDir, ANALYSIS_FILE),
+      `${canonicalJson(flakeArtifact(RUN_A))}\n`,
+      'utf8',
+    )
+
+    const collected: CanaryOutcome[] = []
+    const report = foldInto(collected, failingHandoffFor(RUN_A), runDir)
+
+    // unknown → flake: flake is non-attributable (D-11), so the fold that reads the
+    // resolved verdict emits NOTHING for this test — the outcome log cannot contradict it.
+    expect(collected).toEqual([])
+    expect(report.emitted).toBe(0)
+    expect(report.refused).toBe(0)
+    expect(report.unresolved).toBe(0)
+  })
+
+  it('SC2: two runs and a supersession — exactly ONE attributed observation per (runId, testId)', () => {
+    const log: CanaryOutcome[] = []
+    const dirA = tempRunDir()
+    const dirB = tempRunDir()
+    const runA = failingHandoffFor(RUN_A)
+    const runB = failingHandoffFor(RUN_B)
+
+    // Run A folds on its deterministic unknown floor: attributed.
+    expect(foldInto(log, runA, dirA).emitted).toBe(1)
+
+    // The analysis artifact lands: unknown → flake for run A.
+    writeFileSync(join(dirA, ANALYSIS_FILE), `${canonicalJson(flakeArtifact(RUN_A))}\n`, 'utf8')
+
+    // The re-fold reads the RESOLVED verdict: no second observation, ever (the upgrade
+    // flips attribution rather than appending beside the original).
+    expect(foldInto(log, runA, dirA).emitted).toBe(0)
+
+    // Run B folds AFTER the supersession, with run A's artifact on disk — and answers its
+    // OWN floor: the artifact is loaded from the fold's own runDir, keyed by the run it
+    // folds, never a sibling's (the cross-instance attribution defect class).
+    expect(foldInto(log, runB, dirB).emitted).toBe(1)
+
+    const observations = new Map<string, number>()
+    for (const outcome of log) {
+      const key = `${outcome.runId}::${outcome.testId}`
+      observations.set(key, (observations.get(key) ?? 0) + 1)
+    }
+    expect([...observations.entries()].sort()).toEqual([
+      [`${RUN_A}::checkout::happy-path`, 1],
+      [`${RUN_B}::checkout::happy-path`, 1],
+    ])
+    expect(log.map((outcome) => outcome.runId)).toEqual([RUN_A, RUN_B])
+    // Attribution consistent with each run's RESOLVED class: both surviving observations
+    // are the attributable negatives of their own unknown floors.
+    for (const outcome of log) expect(outcome.runOutcome).toBe('negative')
+  })
+
+  it('reads verdicts through the D-10 accessor only (source pin + grep gate)', () => {
+    const source = readFileSync(
+      new URL('../emit-canary-outcomes.ts', import.meta.url),
+      'utf8',
+    )
+    expect(source).toContain('resolveRunVerdicts')
+    // The region-scoped grep gate: no fold code path reads the handoff verdict field
+    // directly — the accessor is the ONLY supersedable-verdict read.
+    expect(source.split('test.rootCause').length - 1).toBe(0)
+  })
+
+  it('run_outcome_applied_runs holds through the upgrade — a re-fold never double-counts (T-389-15)', async () => {
+    const { applyRunOutcomes, indexDbPath, projectRunOutcomes, readTestOutcomeHistory } =
+      await vi.importActual<typeof import('@vostride/agent-qa-knowledge-local')>(
+        '@vostride/agent-qa-knowledge-local',
+      )
+    const knowledgeRoot = mkdtempSync(join(tmpdir(), 'agent-qa-sc2-knowledge-'))
+    tempDirs.push(knowledgeRoot)
+    const dbPath = indexDbPath(knowledgeRoot)
+    mkdirSync(dirname(dbPath), { recursive: true })
+    const db = new DatabaseSync(dbPath)
+    try {
+      const projection = projectRunOutcomes(failingHandoffFor(RUN_A), { extractAnchors: () => [] })
+
+      expect(applyRunOutcomes(db, projection).kind).toBe('applied')
+      // The supersession lands between the folds. By design it is INVISIBLE to these
+      // counters: an upgrade is a re-read of the same observation, never a second one.
+      expect(applyRunOutcomes(db, projection)).toEqual({ kind: 'already-applied', tests: 0 })
+
+      const history = readTestOutcomeHistory(db, {
+        product: 'storefront',
+        filePath: 'checkout.spec.yaml',
+        testName: 'Checkout happy path',
+      })
+      expect(history).toMatchObject({ failures: 1, passes: 0 })
+    } finally {
+      db.close()
+    }
   })
 })
