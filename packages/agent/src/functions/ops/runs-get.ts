@@ -4,13 +4,14 @@
 // runs it already enumerates and reports absence as `undefined`; turning that absence into a
 // typed refusal is this module's job, so every surface sees the same error vocabulary.
 
-import { RunDetailSchema, RunsGetInputSchema } from '@vostride/agent-qa-schema'
+import { RunDetailSchema, RunsGetInputSchema, resolveRunVerdicts } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   PerTestOutcome,
   RunDetail,
   RunTestDetail,
   RunsGetInput,
+  Verdict,
 } from '@vostride/agent-qa-schema'
 
 import type { FunctionSpec } from '../spec.js'
@@ -31,7 +32,10 @@ export class RunNotFoundError extends Error {
   }
 }
 
-function toRunTestDetail(test: PerTestOutcome): RunTestDetail {
+function toRunTestDetail(
+  test: PerTestOutcome,
+  resolved: Verdict | undefined,
+): RunTestDetail {
   return {
     testId: test.testId,
     testName: test.testName,
@@ -40,19 +44,36 @@ function toRunTestDetail(test: PerTestOutcome): RunTestDetail {
     outcome: test.outcome,
     // Step evidence stays in the handoff document; 389's evidence links address it by
     // runId + testIndex. Projecting it here would make the cheapest read the most expensive.
+    // The same law covers sentences (389 D-11): this projection carries class/producer/
+    // confidence from the resolved verdict and NEVER a rendered sentence — an unbound
+    // analysis port answers as artifact-absent (the deterministic floor), so the cheapest
+    // read stays cheap in every composition.
     stepCount: test.steps.length,
-    ...(test.rootCause === undefined ? {} : {
+    ...(resolved === undefined ? {} : {
       rootCause: {
-        class: test.rootCause.class,
-        producer: test.rootCause.producer,
-        confidence: test.rootCause.confidence,
-        rationale: test.rootCause.evidence.rationale,
+        class: resolved.class,
+        producer: resolved.producer,
+        confidence: resolved.confidence,
+        rationale: resolved.evidence.rationale,
       },
     }),
   }
 }
 
-export function toRunDetail(document: CompletedRunHandoff): RunDetail {
+/**
+ * Project one handoff over its RESOLVED verdicts (389 D-10/D-11): the summary block sources
+ * class/producer/confidence from `resolveRunVerdicts` — artifact verdicts when the analysis
+ * upgraded them, the handoff's deterministic floor when not — joined per member by `perTest`.
+ * A member the accessor holds no verdict for (clean pass, skipped, cancelled) projects no
+ * `rootCause`, exactly as the handoff's own absence used to read.
+ */
+export function toRunDetail(
+  document: CompletedRunHandoff,
+  resolvedVerdicts: readonly Verdict[] = resolveRunVerdicts(undefined, document),
+): RunDetail {
+  const verdictByPerTest = new Map(
+    resolvedVerdicts.map((verdict) => [verdict.perTest, verdict]),
+  )
   return {
     runId: document.runId,
     scope: document.scope,
@@ -68,7 +89,9 @@ export function toRunDetail(document: CompletedRunHandoff): RunDetail {
     ...(document.excludedFromOutcomes === undefined
       ? {}
       : { excludedFromOutcomes: document.excludedFromOutcomes }),
-    tests: document.tests.map(toRunTestDetail),
+    tests: document.tests.map((test) => (
+      toRunTestDetail(test, verdictByPerTest.get(test.testIndex))
+    )),
   }
 }
 
@@ -85,6 +108,12 @@ export const runsGetSpec: FunctionSpec<RunsGetInput, RunDetail> = {
     if (document === undefined) {
       throw new RunNotFoundError(input.runId)
     }
-    return toRunDetail(document)
+    // 389 D-11: the rootCause block reads through the ONE accessor. An unbound analysis
+    // port is treated as artifact-absent — the floor — never as a refusal: this op stays
+    // bound in every composition, and its answer off the floor is honest, not degraded.
+    return toRunDetail(
+      document,
+      resolveRunVerdicts(deps.analysis?.getArtifact(String(input.runId)), document),
+    )
   },
 }

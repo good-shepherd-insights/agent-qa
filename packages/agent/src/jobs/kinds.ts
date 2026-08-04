@@ -360,8 +360,12 @@ function templateGroundingQuote(test: PerTestOutcome | undefined): VerdictGround
  * `unknown` gets the honest "root cause undetermined" discriminator and the manual-inspection
  * next action; plan 04's LLM upgrade replaces exactly those members through the same author
  * callback, and nothing else changes shape.
+ *
+ * Exported (module-level, NOT on the package barrel) for the `analysis.get` op's floor leg:
+ * a run with no artifact renders honest parts through THIS same rule — a second spelling of
+ * the template inside the op would be exactly the D-06 drift the one-rule law forbids.
  */
-function templateSentenceParts(
+export function templateSentenceParts(
   verdict: Verdict,
   handoff: CompletedRunHandoff,
 ): VerdictSentenceParts {

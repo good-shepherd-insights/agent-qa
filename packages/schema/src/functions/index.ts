@@ -31,6 +31,22 @@ export type {
   RunsPostProcessingInput,
   RunStartAcknowledgement,
 } from './runs'
+// 389 D-11: the analysis.get op's contracts — verdicts + sentences + clusters, one producer.
+export {
+  AnalysisGetInputSchema,
+  AnalysisGetOutputSchema,
+  AnalysisResolvedVerdictSchema,
+  AnalysisSentenceSchema,
+  AnalysisClusterViewSchema,
+} from './analysis-get'
+export type {
+  AnalysisGetInput,
+  AnalysisGetOutput,
+  AnalysisResolvedVerdict,
+  AnalysisSentence,
+  AnalysisClusterMemberRef,
+  AnalysisClusterView,
+} from './analysis-get'
 export {
   KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION,
   KnowledgeBundleSummarySchema,

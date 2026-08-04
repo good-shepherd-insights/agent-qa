@@ -68,6 +68,9 @@ const RUN_CALLER: FunctionCaller = {
  * binding refusal.
  */
 const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
+  // 389 D-11: a PARSING input, because validation precedes the binding check — the empty
+  // default fails the contract and reports an input error, certifying nothing about binding.
+  'analysis.get': { runId: 'run-alpha' },
   'runs.get': { runId: 'run-alpha' },
   'runs.events': { runId: 'run-alpha' },
   'runs.postprocessing': { runId: 'run-alpha' },

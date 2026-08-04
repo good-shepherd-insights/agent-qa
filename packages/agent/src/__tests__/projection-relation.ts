@@ -22,6 +22,7 @@
 import { expect } from 'vitest'
 import type { z } from 'zod'
 
+import { analysisGetSpec } from '../functions/ops/analysis-get.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
@@ -55,6 +56,11 @@ export interface DeclaredContracts {
  * projection. It reproduces the discipline `INVOCATION_SAMPLES` already applies to calling.
  */
 export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
+  // 389 D-11. Paired the day it is registered (the growth seam working as designed): its
+  // output is the first here carrying two parallel per-test arrays plus a nested cluster
+  // list, so an unchecked projection would be where a `sentences` member could quietly stop
+  // appearing in a published catalogue.
+  'analysis.get': analysisGetSpec,
   'config.get': configGetSpec,
   'entities.get': entitiesGetSpec,
   'entities.resolve': entitiesResolveSpec,

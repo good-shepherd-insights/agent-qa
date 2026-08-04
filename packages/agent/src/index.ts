@@ -38,6 +38,7 @@ export {
 // between two names here does not annotate the export, it deletes every export in the
 // statement from the pinned set.
 export type {
+  AnalysisArtifactReaderPort,
   ConfigReaderPort,
   EntityDirectoryPort,
   FunctionBindingStatus,
@@ -85,6 +86,11 @@ export { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from './functions/ops/knowledge-
 // alternative is a string literal in the CLI — a second declaration of a capability's name,
 // free to drift from the spec that answers to it. An ID is not a dispatch handle.
 export { RUNS_POST_PROCESSING_FUNCTION_ID } from './functions/ops/runs-post-processing.js'
+// 389 D-11: the third op id a surface must be able to NAME, on the same footing as the two
+// above. Plan 07's CLI sentence block and the D-12 exit-line fetch hint both dispatch the
+// analysis read through the registry, and the alternative is a string literal in the CLI — a
+// second declaration of a capability's name, free to drift. An ID is not a dispatch handle.
+export { ANALYSIS_GET_FUNCTION_ID } from './functions/ops/analysis-get.js'
 
 // 389 D-05/D-08: THE sentence renderer, and the recurrence seam it joins through. The value
 // is a pure string composer over typed parts — no fs, no model, no store — published so plan

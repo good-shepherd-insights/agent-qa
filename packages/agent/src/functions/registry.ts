@@ -12,6 +12,7 @@ import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/
 
 import { toSchemaProjection } from './declaration-projection.js'
 import type { FunctionBindingStatus } from './spec.js'
+import { analysisGetSpec } from './ops/analysis-get.js'
 import { configGetSpec } from './ops/config-get.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
@@ -79,6 +80,12 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // durable queue lists it `unbound` BY NAME instead of answering all-pending about a chain it
   // cannot see.
   runsPostProcessingSpec as FunctionSpec,
+  // 389 D-11: THE analysis read — resolved verdicts, rendered sentences, clusters, one
+  // producer for the CLI print, the run page and chat. Bound through the OPTIONAL `analysis`
+  // dep (the artifact reader), so a host that cannot see run directories lists it `unbound`
+  // BY NAME; the optional `recurrence` dep only enriches the sentence's recurrence clause
+  // and never gates the binding.
+  analysisGetSpec as FunctionSpec,
   knowledgeBundlesListSpec as FunctionSpec,
   // 387 KREV-01: the read half of the review-verb family. All three bind through the REQUIRED
   // `knowledge` port, so — unlike the mutating half 387-08 registers through the optional

@@ -56,8 +56,11 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // 388 D-14 extends the union BY NAME rather than relaxing the equality: `postProcessing` is the
 // third optional member, and the pin is what forced this line to be edited in the same change
 // that added it — which is the whole mechanism.
+// 389 D-10/D-08 extend it again, by name again: `analysis` (the artifact reader analysis.get
+// binds through) and `recurrence` (the live-join seam the renderer consumes — optional because
+// its absence is an honest no-history clause, never a refusal). The pin fired on both.
 expectTypeOf<OptionalFunctionDepKey>()
-  .toEqualTypeOf<'runInvocation' | 'knowledgeReview' | 'postProcessing'>()
+  .toEqualTypeOf<'runInvocation' | 'knowledgeReview' | 'postProcessing' | 'analysis' | 'recurrence'>()
 
 // Every member of that union must actually be an optional member of the deps record — the half
 // that would otherwise let the union name a dep nobody supplies.

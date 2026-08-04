@@ -67,6 +67,10 @@ const ALLOWED_ID_DOMAINS = new Set([
  * the exact-equality assertion below is actually pinning.
  */
 const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
+  // 389 D-11: UNBOUND here because this fixture supplies no analysis-artifact reader — a
+  // claim about the composition, not the op, exactly like `runs.postprocessing` below. The
+  // optional `recurrence` dep never gates this binding; only `analysis` does.
+  'analysis.get': 'unbound',
   'config.get': 'bound',
   // 387 D-09. Both BOUND everywhere: the entity directory is a required dep, so unlike
   // `runs.start` there is no composition that can list these and then refuse them.
@@ -128,6 +132,10 @@ const FIXTURE_ENTITY_DESCRIPTOR = {
  * writing down how it is called.
  */
 const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
+  // 389 D-11: a PARSING input for a capability this composition cannot run — validation
+  // precedes the binding check, so a sample that failed the contract would make the
+  // unbound-refusal leg report an input error and certify nothing about binding.
+  'analysis.get': { runId: FIXTURE_RUN_ID },
   'config.get': {},
   // 387: `resolve` takes any reference at all, so the sample is free text that matches
   // nothing — the fixture directory is empty and the honest answer is the none arm. `get`

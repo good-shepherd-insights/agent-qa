@@ -33,12 +33,14 @@ import type {
   MaskedResolvedConfig,
   RecordChange,
   RiskActionDescriptor,
+  RunAnalysisArtifact,
   RunId,
   RunNotification,
   RunsStartInput,
   StepEvidence,
 } from '@vostride/agent-qa-schema'
 
+import type { RecurrenceProvider } from '../analysis/render-sentence.js'
 import type { ChainJobIds } from '../jobs/chain-identity.js'
 import type { JobIdSource } from '../jobs/engine.js'
 
@@ -89,7 +91,12 @@ export type FunctionBindingStatus = 'bound' | 'unbound'
  * become conditionally bound on something the deps record does not declare, so "which
  * compositions can run this op" is answerable by reading two lines.
  */
-export type OptionalFunctionDepKey = 'runInvocation' | 'knowledgeReview' | 'postProcessing'
+export type OptionalFunctionDepKey =
+  | 'runInvocation'
+  | 'knowledgeReview'
+  | 'postProcessing'
+  | 'analysis'
+  | 'recurrence'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -520,6 +527,26 @@ export interface PostProcessingReaderPort {
 }
 
 /**
+ * Injected read port over a run's persisted analysis artifact (Phase 389, D-10/D-11).
+ *
+ * `analysis.json` is the analyze-run job's own receipt; the only legal reader routes its
+ * bytes through `guardRunAnalysisArtifact` (the version guard), and an implementation of
+ * this port does exactly that at the composition root — the op receives a guarded document
+ * or a typed absence, never raw bytes.
+ *
+ * `undefined` is an ANSWER, not an error: a run whose analysis never ran (budget spent,
+ * daemon down, chain still in flight) has no artifact, and the ops answer it through the
+ * D-10 accessor's handoff floor. That is why `runs.get` treats an UNBOUND port the same
+ * way — artifact-absent — while `analysis.get` refuses by name: a listing that cannot see
+ * artifacts still lists truthfully off the floor, but a caller asking for THE analysis of
+ * a run must be told this host cannot serve one.
+ */
+export interface AnalysisArtifactReaderPort {
+  /** The guarded artifact for one run, or `undefined` when none is on disk. */
+  getArtifact(runId: string): RunAnalysisArtifact | undefined
+}
+
+/**
  * Injected read port over the resolved project configuration.
  *
  * The port's name says what its security contract is: it yields a config whose
@@ -602,4 +629,20 @@ export interface FunctionDeps {
    * wrong answer wearing a correct one's clothes.
    */
   postProcessing?: PostProcessingReaderPort
+  /**
+   * 389 D-10/D-11: the analysis-artifact read. `analysis.get` binds through it and refuses
+   * by name where it is absent; `runs.get` reads it opportunistically and treats an unbound
+   * port as artifact-absent (the floor), because the cheapest read must stay cheap and a
+   * listing off the deterministic floor is honest, not degraded. Bound in plan 06's
+   * composition root over the run-directory `analysis.json` + version guard.
+   */
+  analysis?: AnalysisArtifactReaderPort
+  /**
+   * 389 D-08: the live recurrence seam the one renderer joins through. OPTIONAL because a
+   * host without the knowledge index genuinely has no history to answer with — and the
+   * renderer's contract turns that absence into the explicit no-history clause rather than
+   * a refusal, so `analysis.get` stays bound wherever `analysis` is. Bound in plan 06 to
+   * v51's run-outcome projection; 390 rebinds the SAME seam to its fingerprint window.
+   */
+  recurrence?: RecurrenceProvider
 }

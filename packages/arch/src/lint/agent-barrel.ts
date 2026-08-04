@@ -73,6 +73,9 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * dispatch path.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
+  // 389 plan 05: the analysis read op's id, on the exact footing of the two op-id constants
+  // below — a string a surface names on the wire, never a dispatch handle.
+  'ANALYSIS_GET_FUNCTION_ID',
   'AmbiguousStepAddressError',
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
@@ -205,10 +208,14 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
  */
 export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AgentJobQueue',
-  // 389 plan 05: the cluster DTO and its member ref (D-16 — fingerprint value, count, member
-  // refs, representative testIndex; deliberately NO id and NO address field, and the exact-key
-  // pin in cluster.test.ts holds that shape). Types only; the value beside them is the pure
-  // function pinned in the value list.
+  // 389 plan 05, three names. `AnalysisArtifactReaderPort` is the optional artifact-read
+  // dep a composition root implements (plan 06 binds it over the run-directory analysis.json
+  // + version guard) — a type, so it carries no filesystem across the barrel. The other two
+  // are the cluster DTO and its member ref (D-16 — fingerprint value, count, member refs,
+  // representative testIndex; deliberately NO id and NO address field, and the exact-key pin
+  // in cluster.test.ts holds that shape); the value beside them is the pure function pinned
+  // in the value list.
+  'AnalysisArtifactReaderPort',
   'AnalysisCluster',
   'AnalysisClusterMember',
   'ApprovalsPort',

@@ -178,6 +178,10 @@ const REGISTRY = createFunctionRegistry({
 
 /** The shipped capability set, as both callers' listings are measured against it. */
 const ALL_FUNCTION_IDS = [
+  // 389 D-11: read-tier, so it survives safe-mode filtering like its analysis-domain-first
+  // siblings never had to — the non-read drop-out set stays exactly `runs.start` plus the
+  // four knowledge-write verbs.
+  'analysis.get',
   'config.get',
   // 387 D-09: both read-tier, so both survive safe-mode filtering — which is what makes the
   // filter assertion below sharper rather than merely longer. `runs.start` is still the only
