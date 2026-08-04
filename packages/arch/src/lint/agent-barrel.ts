@@ -118,6 +118,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'createRealJobKindRegistry',
   'invokeFunction',
   'recordLlmAuthorship',
+  // 389 plan 05: THE sentence renderer (D-05). A pure string composer over typed parts — it
+  // reads no storage, holds no capability and dispatches nothing; it is published precisely so
+  // plan 07's CLI print and every later surface compose sentences through ONE symbol instead of
+  // spelling a second one (SC3 structural).
+  'renderVerdictSentence',
   'unmaskForHumanOutput',
 ]
 
@@ -270,8 +275,15 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'PostProcessingReaderPort',
   'PostRunJobCapabilities',
   'RanJobOutcomeBase',
+  // 389 plan 05: the D-08 recurrence seam's vocabulary — the provider port a composition root
+  // implements (389 binds it to the run-outcome projection in plan 06; 390 rebinds the same
+  // seam to its fingerprint window) and the query/answer shapes it speaks. Types, so nothing
+  // here carries a database or a model across the barrel.
   'RecoverAbandonedClaimsInput',
   'RecoverAbandonedClaimsOutcome',
+  'RecurrenceAnswer',
+  'RecurrenceProvider',
+  'RecurrenceQuery',
   'ReplayedRunEvent',
   'RunInvocationPort',
   'RunNextJobInput',

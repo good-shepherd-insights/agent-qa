@@ -86,6 +86,21 @@ export { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from './functions/ops/knowledge-
 // free to drift from the spec that answers to it. An ID is not a dispatch handle.
 export { RUNS_POST_PROCESSING_FUNCTION_ID } from './functions/ops/runs-post-processing.js'
 
+// 389 D-05/D-08: THE sentence renderer, and the recurrence seam it joins through. The value
+// is a pure string composer over typed parts — no fs, no model, no store — published so plan
+// 07's CLI print and every later surface import THIS symbol rather than composing a second
+// sentence (SC3's "no second code path" is structural, not reviewed). The three port types
+// are what a composition root implements to bind the seam: 389 binds it to v51's run-outcome
+// projection (plan 06), 390 rebinds the SAME seam to its fingerprint window. None of this is
+// dispatch and none of it reaches storage, so publishing it opens no path around
+// `invokeFunction`.
+export { renderVerdictSentence } from './analysis/render-sentence.js'
+export type {
+  RecurrenceAnswer,
+  RecurrenceProvider,
+  RecurrenceQuery,
+} from './analysis/render-sentence.js'
+
 // The human display boundary (v48 masking discipline): surfaces render function-layer
 // results as prose, and prose is the sole unmasking surface.
 //
