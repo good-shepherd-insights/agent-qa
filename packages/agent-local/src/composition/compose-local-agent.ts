@@ -890,10 +890,15 @@ export type CandidateProsePosture = 'masker-active' | 'no-masker'
  * subset, and a total `Record` stops compiling the day a third posture is added. The queue's
  * `unclaimableKinds` is derived from this table and from nothing else.
  */
-export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonly JobKind[]> = {
-  'masker-active': [],
-  'no-masker': ['curate-memory'],
-}
+export const UNCLAIMABLE_BY_PROSE_POSTURE: Record<CandidateProsePosture, readonly JobKind[]>
+  = Object.freeze({
+    // Frozen to the same depth it is read at (WR-11). The shallow freeze every sibling table
+    // here uses is not enough for this one: the VALUES are the arrays the queue claims
+    // against, so an unfrozen inner array is a writable disclosure guard reachable from any
+    // module that can import the table.
+    'masker-active': Object.freeze([]),
+    'no-masker': Object.freeze(['curate-memory'] as const),
+  })
 
 export interface ComposeLocalAgentInput {
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. Absolute. */
@@ -1084,10 +1089,16 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // same default is how those two drift.
       const idSource = input.idSource ?? DIGEST_JOB_ID_SOURCE
       // Resolved ONCE from the one table, for the queue and the published field alike (388-10).
-      // A host with no `postRun` keeps today's behaviour: no exclusion.
-      const unclaimableKinds: readonly JobKind[] = input.postRun === undefined
-        ? []
-        : UNCLAIMABLE_BY_PROSE_POSTURE[input.postRun.candidateProse]
+      //
+      // A host with NO `postRun` folds to `'no-masker'` rather than to no exclusion (WR-12).
+      // Silence is not a review: a host that never declared what its fold does with candidate
+      // prose cannot have reviewed it, and the fail-safe reading of an undeclared posture is
+      // the constrained one. 388-09's M-3 measured what the permissive reading costs — a
+      // stand-in registry composed without `postRun` runs a `curate-memory` row to `done` and
+      // publishes `bundle-committed`, a receipt no fold earned. Read through the same total
+      // table as every other posture, so there is no fall-through here to drift from it.
+      const unclaimableKinds: readonly JobKind[]
+        = UNCLAIMABLE_BY_PROSE_POSTURE[input.postRun?.candidateProse ?? 'no-masker']
       jobs = {
         queue: createAgentJobQueue({
           store,

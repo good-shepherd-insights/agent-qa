@@ -370,6 +370,35 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
       expect(tail.report().drain).toBe('drained')
     })
 
+  it('never reports `drained` when the pump THREW — the one exit outside the enumeration (WR-10)',
+    async () => {
+      // `drainOutcome` is set to 'drained' optimistically BEFORE the pump, and a throw escapes
+      // the loop to the drain's catch without passing any of the five ChainPumpExit members.
+      // So the report kept saying the pump drained the chain when it had in fact blown up on
+      // the first job — `{drain: 'drained', jobsRun: 0}`, which reads exactly like the honest
+      // empty-queue case above and is indistinguishable from it.
+      const h = harness({
+        runNextJob: vi.fn(async () => {
+          throw new Error('the queue database is unreadable')
+        }),
+      })
+      const tail = runPostRunTail(options(h))
+      await tail.enqueue()
+      await tail.drain()
+
+      // The warning is the part that already worked, and it is why this is latent rather than
+      // user-visible: the cause reaches the user one line before any status. Asserted on
+      // `drain()` alone, like every sibling case here — this harness's operations table has no
+      // `readPostProcessingStatus`, so `finish()` would warn about the fake, not about the throw.
+      expect(h.warn).toHaveBeenCalledTimes(1)
+      expect(String(h.warn.mock.calls[0]![0])).toContain('the queue database is unreadable')
+
+      // The report may not claim a drain that threw.
+      expect(tail.report().drain).not.toBe('drained')
+      expect(tail.report().drain).toBe('threw')
+      expect(tail.report().jobsRun).toBe(0)
+    })
+
   it('logs ONE warning and resolves when the enqueue fails, still reporting (JOBQ-06/D-07)', async () => {
     const h = harness({
       enqueue: vi.fn(async () => {

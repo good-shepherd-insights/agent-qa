@@ -80,6 +80,18 @@ export type PostRunDrainOutcome =
   | 'backlog-exhausted'
   | 'retry-scheduled'
   | 'refused'
+  /**
+   * The drain raised and was caught by the tail's own catch (WR-10).
+   *
+   * A member rather than leaving the optimistic `'drained'` in place: the pre-loop assignment
+   * is what a throw escapes past, so the report used to say `{drain: 'drained', jobsRun: 0}` —
+   * byte-identical to the honest emptied-queue case, and there is no way for a reader to tell
+   * a queue that had nothing to do from one that blew up on its first job.
+   *
+   * NOT a `ChainPumpExit`: that type enumerates how the loop ENDS, and a throw does not end
+   * the loop, it leaves it. The two are deliberately separate domains.
+   */
+  | 'threw'
 
 /**
  * Control flow only.
@@ -260,8 +272,14 @@ export interface PostRunTailHandle {
 const CHAIN_PUMP_BOUND = 16
 
 /**
- * Every way the chain pump's loop can end. One spelling, one place to be read: the loop
- * variable ranges over it, and `PUMP_EXIT_STARVES_OWN_CHAIN` must classify every member.
+ * Every way the chain pump's loop can end NORMALLY. One spelling, one place to be read: the
+ * loop variable ranges over it, and `PUMP_EXIT_STARVES_OWN_CHAIN` must classify every member.
+ *
+ * The qualifier is load-bearing and was missing (WR-10): a throw does not END this loop, it
+ * LEAVES it, skipping the starvation classification below and landing in the drain's catch.
+ * That path is outside this domain by construction, and it is reported by the separate
+ * `PostRunDrainOutcome` member `'threw'` — not by a sixth exit here, which would imply the
+ * classification runs on a path where it never does.
  */
 type ChainPumpExit = 'bound' | 'budget' | 'empty' | 'aborted' | 'retry'
 
@@ -533,6 +551,10 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           deadlineMs: drainDeadlineMs,
         })
       } catch (error) {
+        // The report may not keep the optimistic `'drained'` set before the pump (WR-10).
+        // Assigned here rather than cleared in `finally`, because `finally` also runs on the
+        // paths that legitimately drained.
+        drainOutcome = 'threw'
         opts.log.warn(drainFailureWarning(opts.runId, error))
       } finally {
         heldAuthority = undefined
@@ -664,6 +686,9 @@ const DRAIN_OUTCOME_POSTURE: Record<PostRunDrainOutcome, PostRunPendingPosture> 
   'backlog-exhausted': 'backlog-exhausted',
   'retry-scheduled': 'none',
   refused: 'none',
+  // Nobody promised anything: the drain blew up. Whatever is still `pending` is pending for a
+  // reason the warning already named, one line above the status.
+  threw: 'none',
 }
 
 function postureOf(outcome: PostRunDrainOutcome): PostRunPendingPosture {

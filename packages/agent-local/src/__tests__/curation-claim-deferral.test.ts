@@ -15,7 +15,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
-import type { ClockPort, ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import type {
+  ClockPort,
+  ConfigReaderPort,
+  JobKind,
+  JobModelCapability,
+} from '@vostride/agent-qa-agent'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   asRunId,
@@ -26,7 +31,11 @@ import {
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../composition/compose-local-agent.js'
+import {
+  composeLocalAgent,
+  DIGEST_JOB_ID_SOURCE,
+  UNCLAIMABLE_BY_PROSE_POSTURE,
+} from '../composition/compose-local-agent.js'
 import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
 
 const RUN_ID = 'run-388-deferral'
@@ -251,5 +260,45 @@ describe('curation claim deferral by candidate-prose posture (G-388-2 / UF-388-0
     const masked = await openHost(freshRoot(), 'masker-active')
     expect(unmasked.jobs.unclaimableKinds).toEqual(['curate-memory'])
     expect(masked.jobs.unclaimableKinds).toEqual([])
+  })
+
+  it('a host with NO postRun binding is treated as unmasked, not as unconstrained (WR-12)', async () => {
+    // The third posture. A host that never declared what its fold does with candidate prose
+    // cannot have reviewed it, so the safe reading of silence is `no-masker` — and 388-09's
+    // M-3 hazard is exactly why: a stand-in registry composed without `postRun` runs a
+    // curate-memory row to `done` and publishes `bundle-committed`, a receipt no fold earned.
+    // Excluding the kind is what stops that host from minting one.
+    const host = composeLocalAgent({
+      agentQaRoot: freshRoot(),
+      config: TEST_CONFIG,
+      knowledgeRoot: () => join(freshRoot(), 'knowledge'),
+      model: () => TEST_MODEL,
+      clock: createSteppingClock(),
+      idSource: DIGEST_JOB_ID_SOURCE,
+    })
+    hosts.push(host)
+    const jobs = await host.jobs()
+    expect(jobs.unclaimableKinds).toEqual(['curate-memory'])
+  })
+
+  it('the posture table is frozen and the queue cannot be re-armed through it (WR-11)', async () => {
+    // Every sibling security-relevant table in compose-local-agent.ts is frozen (:263, :322,
+    // :784, :797). This one guards a DISCLOSURE boundary and was the only one left writable,
+    // and the engine captured its array by reference — so a typechecks-clean write to either
+    // could disable the guard at runtime, where no posture pin would see it.
+    expect(Object.isFrozen(UNCLAIMABLE_BY_PROSE_POSTURE)).toBe(true)
+    expect(Object.isFrozen(UNCLAIMABLE_BY_PROSE_POSTURE['no-masker'])).toBe(true)
+
+    // The published set IS the table's own frozen entry — one object, so it cannot drift from
+    // what the queue claims against — and freezing is precisely what makes that sharing safe.
+    // Emptying what a caller can reach must not empty the guard.
+    const unmasked = await openHost(freshRoot(), 'no-masker')
+    const published = unmasked.jobs.unclaimableKinds as JobKind[]
+    try {
+      published.length = 0
+    } catch {
+      // A frozen copy refuses the write outright, which is the stronger of the two outcomes.
+    }
+    expect(UNCLAIMABLE_BY_PROSE_POSTURE['no-masker']).toEqual(['curate-memory'])
   })
 })

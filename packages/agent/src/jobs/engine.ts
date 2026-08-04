@@ -291,8 +291,13 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
   const { store, registry, clock, idSource, model, unclaimableKinds } = options
   // Resolved once at construction, so every pump passes the same exclusion or none at all;
   // a queue built without the option calls `claimNext(fence)` exactly as it did before.
+  // Copied and frozen at construction, never captured by reference (WR-11): the caller keeps a
+  // handle on the array it passed, and a queue that claimed against that live array would let
+  // a post-construction write to it re-arm the exclusion this guard exists to hold.
   const claimOptions: ClaimNextOptions | undefined =
-    unclaimableKinds === undefined ? undefined : { excludeKinds: unclaimableKinds }
+    unclaimableKinds === undefined
+      ? undefined
+      : Object.freeze({ excludeKinds: Object.freeze([...unclaimableKinds]) })
 
   function requestFor(kind: JobKind, payload: unknown, idempotencyKey: string): JobInsert {
     // An undeclared kind is refused before anything is written: the store would happily
