@@ -1,20 +1,75 @@
-import { isAbsolute } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import {
+  ANALYSIS_FILE,
   canonicalJson,
+  guardRunAnalysisArtifact,
   normalizeAnchor,
+  resolveRunVerdicts,
   type Anchor,
   type CanaryOutcome,
   type CompletedRunHandoff,
   type PerTestOutcome,
   type RecordId,
+  type RunAnalysisArtifact,
   type StepEvidence,
+  type Verdict,
 } from '@vostride/agent-qa-schema'
 
 import { exercisedAnchors } from './handoff-anchors.js'
 
 const NON_ATTRIBUTABLE_FAILURES = new Set(['environment', 'timeout', 'flake'])
+
+/**
+ * The RESOLVED class per member test, computed ONCE per fold (389-06, D-10).
+ *
+ * Two layers, in overwrite order:
+ *
+ * 1. Members OUTSIDE the accessor's domain first — clean passes keep their persisted
+ *    classification (the runner's one pass-mintable class is `flake`, `classifyRootCause`'s
+ *    retry rule). The supersession law governs failure-worthy members only, so this read can
+ *    never contradict a resolved verdict: the accessor never serves one for these members,
+ *    and the analysis boundary discards author entries that re-class them.
+ * 2. THE one supersedable-verdict read — `resolveRunVerdicts` (D-10): artifact verdicts when
+ *    the artifact is present, the deterministic floor when it is absent. It OVERWRITES layer
+ *    1 for every member it governs, which is exactly how an unknown→flake upgrade flips
+ *    attribution here (flake is non-attributable) instead of the outcome log contradicting
+ *    the resolved verdict (SC2's "second independent observation" in disguise).
+ */
+type ResolvedClasses = ReadonlyMap<number, Verdict['class']>
+
+function resolveAttributionClasses(
+  artifact: RunAnalysisArtifact | undefined,
+  handoff: CompletedRunHandoff,
+): ResolvedClasses {
+  const classes = new Map<number, Verdict['class']>()
+  for (const member of handoff.tests) {
+    if (member.rootCause !== undefined) classes.set(member.testIndex, member.rootCause.class)
+  }
+  for (const verdict of resolveRunVerdicts(artifact, handoff)) {
+    classes.set(verdict.perTest, verdict.class)
+  }
+  return classes
+}
+
+/**
+ * One run's persisted analysis artifact, loaded from the fold's OWN `runDir` through the one
+ * schema guard (RESEARCH A4 — `runDir` is already on the fold's options, no new port). An
+ * absent file is `undefined` — the floor; a newer schemaVersion is the guard's typed hard
+ * failure, never swallowed into a silent floor.
+ */
+function loadRunAnalysisArtifact(runDir: string): RunAnalysisArtifact | undefined {
+  let bytes: string
+  try {
+    bytes = readFileSync(join(runDir, ANALYSIS_FILE), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+  return guardRunAnalysisArtifact(JSON.parse(bytes))
+}
 
 /**
  * D-11: only guard misses that evidence procedure STALENESS attribute negatives. `gate-refused`
@@ -29,6 +84,12 @@ const STALENESS_MISS_REASONS = new Set([
 
 export interface ProjectCanaryOutcomesInput {
   handoff: CompletedRunHandoff
+  /**
+   * The run's persisted analysis artifact when one exists (389-06, D-10). Data, not a port:
+   * `emitCanaryOutcomes` loads it from the fold's own `runDir`; the pure projection takes it
+   * as an argument so identical (handoff, artifact) bytes keep yielding identical outcomes.
+   */
+  artifact?: RunAnalysisArtifact
   resolveCandidateAnchors: (id: RecordId) => CandidateAnchorResolution
 }
 
@@ -79,16 +140,19 @@ function normalizedKey(anchor: Anchor): string {
   return canonicalJson(normalizeAnchor(anchor))
 }
 
-function nonAttributableFailure(test: PerTestOutcome): boolean {
-  return test.rootCause !== undefined && NON_ATTRIBUTABLE_FAILURES.has(test.rootCause.class)
+/** The class switch consumes the RESOLVED class (D-10) — never the handoff field. */
+function nonAttributableFailure(test: PerTestOutcome, resolved: ResolvedClasses): boolean {
+  const resolvedClass = resolved.get(test.testIndex)
+  return resolvedClass !== undefined && NON_ATTRIBUTABLE_FAILURES.has(resolvedClass)
 }
 
 function attributedOutcome(
   test: PerTestOutcome,
   step: StepEvidence,
+  resolved: ResolvedClasses,
 ): CanaryOutcome['runOutcome'] | undefined {
   if (step.verifierVerdict.pass) return 'positive'
-  if (nonAttributableFailure(test)) return undefined
+  if (nonAttributableFailure(test, resolved)) return undefined
   return 'negative'
 }
 
@@ -111,18 +175,19 @@ function attributedOutcome(
 function procedureReplayOutcome(
   test: PerTestOutcome,
   step: StepEvidence,
+  resolved: ResolvedClasses,
 ): CanaryOutcome['runOutcome'] | undefined {
   const source = step.planSource
   if (source === undefined || source.kind !== 'procedure-replay') return undefined
   if (source.guard.executionFailure !== undefined) {
-    return nonAttributableFailure(test) ? undefined : 'negative'
+    return nonAttributableFailure(test, resolved) ? undefined : 'negative'
   }
   if (source.guard.verifierRejection !== undefined) {
-    return nonAttributableFailure(test) ? undefined : 'negative'
+    return nonAttributableFailure(test, resolved) ? undefined : 'negative'
   }
   const miss = source.guard.miss
   if (miss === undefined) {
-    const outcome = attributedOutcome(test, step)
+    const outcome = attributedOutcome(test, step, resolved)
     if (outcome === 'positive' && source.guard.checksPassed !== source.guard.total) {
       return undefined
     }
@@ -132,7 +197,7 @@ function procedureReplayOutcome(
     return outcome
   }
   if (!STALENESS_MISS_REASONS.has(miss.reason)) return undefined
-  return nonAttributableFailure(test) ? undefined : 'negative'
+  return nonAttributableFailure(test, resolved) ? undefined : 'negative'
 }
 
 function servedCanaryIds(step: StepEvidence): RecordId[] {
@@ -195,11 +260,14 @@ function projectCanaryAttributions(
     return resolutionByCandidate.get(id)!
   }
 
+  // Resolved ONCE per fold, consumed by every class-switched site below (D-10).
+  const resolved = resolveAttributionClasses(input.artifact, input.handoff)
+
   const projected: ProjectedCanaryAttribution[] = []
   for (const test of input.handoff.tests) {
     for (const step of test.steps) {
-      projectBriefAttributions(input, test, step, resolveAnchors, projected)
-      projectProcedureAttribution(input, test, step, resolveAnchors, projected)
+      projectBriefAttributions(input, test, step, resolveAnchors, resolved, projected)
+      projectProcedureAttribution(input, test, step, resolveAnchors, resolved, projected)
     }
   }
   return projected
@@ -210,9 +278,10 @@ function projectBriefAttributions(
   test: PerTestOutcome,
   step: StepEvidence,
   resolveAnchors: (id: RecordId) => CandidateAnchorResolution,
+  resolved: ResolvedClasses,
   projected: ProjectedCanaryAttribution[],
 ): void {
-  const runOutcome = attributedOutcome(test, step)
+  const runOutcome = attributedOutcome(test, step, resolved)
   if (runOutcome === undefined) return
   const stepAnchors = exercisedAnchors(step)
   if (stepAnchors.length === 0) return
@@ -270,11 +339,12 @@ function projectProcedureAttribution(
   test: PerTestOutcome,
   step: StepEvidence,
   resolveAnchors: (id: RecordId) => CandidateAnchorResolution,
+  resolved: ResolvedClasses,
   projected: ProjectedCanaryAttribution[],
 ): void {
   const source = step.planSource
   if (source === undefined || source.kind !== 'procedure-replay') return
-  const runOutcome = procedureReplayOutcome(test, step)
+  const runOutcome = procedureReplayOutcome(test, step, resolved)
   if (runOutcome === undefined) return
 
   const resolution = resolveAnchors(source.procedureId)
@@ -339,8 +409,13 @@ export function emitCanaryOutcomes(opts: EmitCanaryOutcomesOptions): EmitCanaryO
   if (!isAbsolute(opts.knowledgeRoot)) throw new TypeError('knowledgeRoot must be absolute')
   if (!isAbsolute(opts.runDir)) throw new TypeError('runDir must be absolute')
 
+  // The D-10 rewire (389-06): the artifact is loaded from the fold's OWN runDir, once per
+  // fold, and every class switch downstream consumes the resolved verdict — an upgraded run
+  // re-folds with flipped attribution rather than a second independent observation (SC2).
+  const artifact = loadRunAnalysisArtifact(opts.runDir)
   const projected = projectCanaryAttributions({
     handoff: opts.handoff,
+    ...(artifact === undefined ? {} : { artifact }),
     resolveCandidateAnchors: (id) => LOCAL_CURATION_CAPABILITIES.readCanonicalBundleAnchors({
       knowledgeRoot: opts.knowledgeRoot,
       bundleId: id,
