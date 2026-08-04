@@ -9,26 +9,50 @@
 
 import { existsSync, mkdirSync, readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { createJobKindRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { JobKindRegistry, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
+  CURRENT_ANALYSIS_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  slugBranch,
 } from '@vostride/agent-qa-schema'
-import { FsEventLog, FsHandoffStore } from '@vostride/agent-qa-runner-local'
+import {
+  applyRunOutcomes,
+  indexDbPath,
+  projectRunOutcomes,
+} from '@vostride/agent-qa-knowledge-local'
+import {
+  FsEventLog,
+  FsEvidenceArtifactStore,
+  FsHandoffStore,
+  RUNS_SUBDIR,
+} from '@vostride/agent-qa-runner-local'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
   MaskedResolvedConfig,
+  RunAnalysisArtifact,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { writeAnalysisArtifact } from '../../analysis/persist-analysis.js'
 import { AGENT_JOB_STORE_DB_FILE } from '../../store/sqlite-job-store.js'
-import { composeLocalAgent, DIGEST_JOB_ID_SOURCE, SYSTEM_CLOCK } from '../compose-local-agent.js'
-import type { LocalAgentHost, RunExecutionPort } from '../compose-local-agent.js'
+import {
+  composeLocalAgent,
+  DIGEST_JOB_ID_SOURCE,
+  postRunCapabilities,
+  SYSTEM_CLOCK,
+} from '../compose-local-agent.js'
+import type {
+  ComposeLocalAgentInput,
+  LocalAgentHost,
+  RunExecutionPort,
+} from '../compose-local-agent.js'
 
 const CALLER: FunctionCaller = {
   surface: 'cli',
@@ -100,7 +124,11 @@ describe('composeLocalAgent (D-15)', () => {
   let host: LocalAgentHost
 
   function compose(
-    overrides: { jobKinds?: JobKindRegistry; runExecution?: RunExecutionPort } = {},
+    overrides: {
+      jobKinds?: JobKindRegistry
+      runExecution?: RunExecutionPort
+      knowledgeRoot?: () => Promise<string> | string
+    } = {},
   ): LocalAgentHost {
     return composeLocalAgent({
       agentQaRoot,
@@ -378,5 +406,276 @@ describe('composeLocalAgent (D-15)', () => {
       'utf8',
     )
     expect(config).toContain('removeNodeProtocol: false')
+  })
+
+  // ---- the 389 plan-06 bindings: analysis reader, recurrence, capability members ----------
+
+  describe('the 389-06 analysis bindings (385 D-15)', () => {
+    const ANALYZED_RUN_ID = 'run_bound_analysis'
+    const TEST_FILE_PATH = 'tests/checkout.yaml'
+    const TEST_NAME = 'checkout loads'
+
+    function knowledgeRootDir(): string {
+      return join(root, 'knowledge')
+    }
+
+    function failedHandoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
+      return {
+        schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+        runId: runId as CompletedRunHandoff['runId'],
+        scope: { tier: 'product', key: 'shop' },
+        buildOrdinal,
+        executionContext: 'local-headless',
+        aggregateVerdict: 'failed',
+        configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+        startedAt: 1_000,
+        endedAt: 2_000,
+        tests: [
+          {
+            testId: 't_checkout',
+            testName: TEST_NAME,
+            filePath: TEST_FILE_PATH,
+            testIndex: 0,
+            outcome: 'failed',
+            steps: [],
+          },
+        ],
+      }
+    }
+
+    function plantHandoff(handoff: CompletedRunHandoff): string {
+      const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(String(handoff.runId)))
+      mkdirSync(runDir, { recursive: true })
+      writeFileSync(join(runDir, 'handoff.json'), `${JSON.stringify(handoff)}\n`, 'utf8')
+      return runDir
+    }
+
+    /** Seeds the derived run-outcome projection through the REAL writer path (plan 02's law). */
+    function seedOutcome(handoff: CompletedRunHandoff): void {
+      const path = indexDbPath(knowledgeRootDir())
+      mkdirSync(dirname(path), { recursive: true })
+      const db = new DatabaseSync(path)
+      try {
+        applyRunOutcomes(db, projectRunOutcomes(handoff, { extractAnchors: () => [] }))
+      } finally {
+        db.close()
+      }
+    }
+
+    function authoredArtifact(runId: string): RunAnalysisArtifact {
+      return {
+        schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
+        runId,
+        verdicts: [
+          {
+            class: 'app_bug',
+            producer: 'analyze-run',
+            confidence: 0.9,
+            evidence: {
+              citedSteps: [],
+              citedAnchors: [],
+              citedArtifacts: [],
+              rationale: 'the checkout endpoint answered 500 on every attempt',
+            },
+            memoryMisdirectionRuledOut: true,
+            perTest: 0,
+          },
+        ],
+        parts: [
+          {
+            perTest: 0,
+            groundingQuote: { source: 'test-outcome', quote: 'failed' },
+            discriminator: 'the endpoint failed identically without memory involvement',
+            nextAction: 'inspect the checkout endpoint logs',
+            links: [],
+          },
+        ],
+      }
+    }
+
+    type AnalysisAnswer = {
+      verdicts: readonly { class: string; producer: string; confidence: number }[]
+      sentences: readonly { sentence: string }[]
+    }
+
+    it('lists analysis.get as BOUND and answers the deterministic floor when no artifact exists', async () => {
+      plantHandoff(failedHandoff(ANALYZED_RUN_ID, 1))
+
+      expect(host.registry.list(CALLER).find((entry) => entry.id === 'analysis.get'))
+        .toMatchObject({ bindingStatus: 'bound' })
+
+      const answer = await invokeFunction(
+        host.registry, 'analysis.get', { runId: ANALYZED_RUN_ID }, CALLER,
+      ) as AnalysisAnswer
+
+      // Artifact absent → the D-10 floor: the minted unknown, honestly rendered.
+      expect(answer.verdicts).toEqual([
+        { perTest: 0, testId: 't_checkout', class: 'unknown', producer: 'deterministic-classifier', confidence: 0 },
+      ])
+      expect(answer.sentences[0]!.sentence).toContain('no failure history is recorded for this test')
+    })
+
+    it('serves a persisted artifact through the version guard — the round-trip', async () => {
+      const runDir = plantHandoff(failedHandoff(ANALYZED_RUN_ID, 1))
+      writeAnalysisArtifact(join(runDir, 'analysis.json'), authoredArtifact(ANALYZED_RUN_ID))
+
+      const answer = await invokeFunction(
+        host.registry, 'analysis.get', { runId: ANALYZED_RUN_ID }, CALLER,
+      ) as AnalysisAnswer
+
+      expect(answer.verdicts[0]).toMatchObject({
+        class: 'app_bug', producer: 'analyze-run', confidence: 0.9,
+      })
+      expect(answer.sentences[0]!.sentence).toContain('app_bug: observed (test outcome): "failed"')
+    })
+
+    it('propagates a newer artifact schema version as the typed error, never a silent floor', async () => {
+      const runDir = plantHandoff(failedHandoff(ANALYZED_RUN_ID, 1))
+      writeFileSync(
+        join(runDir, 'analysis.json'),
+        `${JSON.stringify({
+          schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION + 1,
+          runId: ANALYZED_RUN_ID,
+          verdicts: [],
+          parts: [],
+        })}\n`,
+        'utf8',
+      )
+
+      await expect(
+        invokeFunction(host.registry, 'analysis.get', { runId: ANALYZED_RUN_ID }, CALLER),
+      ).rejects.toMatchObject({ name: 'AnalysisVersionError' })
+    })
+
+    it('joins recurrence LIVE per call: a store update between two invocations changes the clause', async () => {
+      plantHandoff(failedHandoff(ANALYZED_RUN_ID, 1))
+      seedOutcome(failedHandoff(ANALYZED_RUN_ID, 1))
+
+      const first = await invokeFunction(
+        host.registry, 'analysis.get', { runId: ANALYZED_RUN_ID }, CALLER,
+      ) as AnalysisAnswer
+      expect(first.sentences[0]!.sentence)
+        .toContain('failure 1 of this test in the last 1 builds')
+
+      // A second recorded failure of the SAME identity, folded between the two invocations —
+      // the D-08 live join must see it without any recomposition.
+      seedOutcome(failedHandoff('run_bound_analysis_b', 2))
+
+      const second = await invokeFunction(
+        host.registry, 'analysis.get', { runId: ANALYZED_RUN_ID }, CALLER,
+      ) as AnalysisAnswer
+      expect(second.sentences[0]!.sentence)
+        .toContain('failure 2 of this test in the last 2 builds')
+    })
+
+    it('primes an ASYNC knowledge root before the sync join — the CLI-host resolver shape', async () => {
+      // The CLI host's knowledgeRoot resolver is async (it layers configuration). The
+      // recurrence seam is SYNC by decision (plan 05), so a one-shot invocation on such a
+      // host would render the no-history clause FALSELY unless the invocation path resolves
+      // the root before the join runs. This is that exact hazard, pinned.
+      plantHandoff(failedHandoff(ANALYZED_RUN_ID, 1))
+      seedOutcome(failedHandoff(ANALYZED_RUN_ID, 1))
+
+      const asyncHost = compose({
+        knowledgeRoot: () => Promise.resolve().then(() => knowledgeRootDir()),
+      })
+      try {
+        const answer = await invokeFunction(
+          asyncHost.registry, 'analysis.get', { runId: ANALYZED_RUN_ID }, CALLER,
+        ) as AnalysisAnswer
+        expect(answer.sentences[0]!.sentence)
+          .toContain('failure 1 of this test in the last 1 builds')
+      } finally {
+        await asyncHost.close()
+      }
+    })
+
+    // ---- the capability members plan 04 declared, bound here (postRunCapabilities) --------
+
+    function capabilityInput(
+      overrides: Partial<ComposeLocalAgentInput> = {},
+    ): ComposeLocalAgentInput {
+      return {
+        agentQaRoot,
+        config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
+        knowledgeRoot: () => knowledgeRootDir(),
+        model: () => model,
+        postRun: {
+          curateRun: () => Promise.resolve({ curated: 0, deprecated: 0, complete: true }),
+          candidateProse: 'masker-active',
+        },
+        ...overrides,
+      }
+    }
+
+    it('binds readTestHistory over the projection store, keyed the projection way', () => {
+      seedOutcome(failedHandoff(ANALYZED_RUN_ID, 1))
+      const caps = postRunCapabilities(capabilityInput(), knowledgeRootDir())!
+
+      const history = caps.readTestHistory?.({
+        product: 'shop', filePath: TEST_FILE_PATH, testName: TEST_NAME,
+      })
+      expect(history).toMatchObject({ failures: 1, passes: 0, lastBuildOrdinal: 1 })
+
+      // An identity the projection never counted is a TYPED absence, not an empty row.
+      expect(caps.readTestHistory?.({
+        product: 'shop', filePath: 'tests/other.yaml', testName: 'other',
+      })).toBeUndefined()
+    })
+
+    it('answers undefined history when the knowledge store has never been created', () => {
+      const caps = postRunCapabilities(capabilityInput(), join(root, 'nowhere'))!
+      expect(caps.readTestHistory?.({
+        product: 'shop', filePath: TEST_FILE_PATH, testName: TEST_NAME,
+      })).toBeUndefined()
+    })
+
+    it('round-trips an evidence blob by sha and refuses a malformed sha before any path use', () => {
+      const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+      const stored = new FsEvidenceArtifactStore({ root: agentQaRoot, runId: ANALYZED_RUN_ID })
+        .persistDecisionScreenshot(bytes)
+      const caps = postRunCapabilities(capabilityInput(), knowledgeRootDir())!
+
+      expect(caps.readEvidenceBlob?.(ANALYZED_RUN_ID, stored.sha)).toEqual(bytes)
+      // T-389-14: the 64-hex guard precedes the join — a traversal-shaped sha answers
+      // undefined, and so does a well-formed sha no blob was ever written under.
+      expect(caps.readEvidenceBlob?.(ANALYZED_RUN_ID, '../../etc/passwd')).toBeUndefined()
+      expect(caps.readEvidenceBlob?.(ANALYZED_RUN_ID, 'a'.repeat(64))).toBeUndefined()
+    })
+
+    it('passes the host-supplied analysisTokenBudget through untouched, absent when unsupplied', () => {
+      const budget = { estimate: (text: string) => text.length, inputBudget: 123 }
+      const withBudget = postRunCapabilities(
+        capabilityInput({ analysisTokenBudget: budget }), knowledgeRootDir(),
+      )!
+      expect(withBudget.analysisTokenBudget).toBe(budget)
+
+      const without = postRunCapabilities(capabilityInput(), knowledgeRootDir())!
+      expect(without.analysisTokenBudget).toBeUndefined()
+
+      // No postRun input → no capability bag at all, exactly as before this plan.
+      const bagless = capabilityInput()
+      expect(postRunCapabilities(
+        { ...bagless, postRun: undefined } as unknown as ComposeLocalAgentInput,
+        knowledgeRootDir(),
+      )).toBeUndefined()
+    })
+
+    it('keys the readTestHistory binding the projection way — no testId in the binding source', () => {
+      const source = readFileSync(
+        new URL('../compose-local-agent.ts', import.meta.url),
+        'utf8',
+      )
+      const start = source.indexOf('function postRunCapabilities')
+      expect(start).toBeGreaterThan(-1)
+      const end = source.indexOf('export function composeLocalAgent', start)
+      const body = source
+        .slice(start, end)
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*'))
+        .join('\n')
+      expect(body).toContain('readTestOutcomeHistory')
+      expect(body).not.toContain('testId')
+    })
   })
 })
