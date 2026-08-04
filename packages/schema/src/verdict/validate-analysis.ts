@@ -279,6 +279,10 @@ export function validateAnalysisAgainstHandoff(
 ): AnalysisValidationResult {
   const rejects: AnalysisValidationReject[] = []
   const testsByIndex = new Map(handoff.tests.map((test) => [test.testIndex, test]))
+  // Duplicate perTest entries are refused upstream by `guardRunAnalysisArtifact` — the
+  // rule's one owner (G-389-3B / WR-02). This two-document boundary deliberately does not
+  // re-spell uniqueness (a Map here silently keeps the last duplicate, and that is fine);
+  // the executable non-owner pin lives in this module's test suite.
   const partsByPerTest = new Map(artifact.parts.map((parts) => [parts.perTest, parts]))
 
   for (const verdict of artifact.verdicts) {

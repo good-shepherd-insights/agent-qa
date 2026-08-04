@@ -98,6 +98,12 @@ function hasVerdictShape(value: unknown): boolean {
  * The artifact's fail-closed shape: root fields, every verdict structurally complete, and
  * every parts record parsed through the ONE zod contract — which is what routes each
  * `links` member through `EntityUriSchema` (T-389-02) rather than a bare string check.
+ *
+ * `perTest` is the phase's one join key (D-07), and its uniqueness over BOTH arrays is a
+ * one-document structural property enforced HERE for every stored/foreign artifact — this
+ * guard is the one gate those bytes cross (G-389-3B / WR-02). The author path needs no
+ * second gate: `evaluateAttempt` is first-entry-wins per testIndex (measured in plan 04),
+ * so the shipped author cannot produce duplicates; the threat is foreign/stored bytes only.
  */
 function hasCompleteArtifactShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
@@ -107,8 +113,12 @@ function hasCompleteArtifactShape(value: unknown): boolean {
     value.runId.length > 0 &&
     Array.isArray(value.verdicts) &&
     value.verdicts.every(hasVerdictShape) &&
+    new Set(value.verdicts.map((verdict) => (verdict as { perTest: number }).perTest))
+      .size === value.verdicts.length &&
     Array.isArray(value.parts) &&
-    value.parts.every((part) => VerdictSentencePartsSchema.safeParse(part).success)
+    value.parts.every((part) => VerdictSentencePartsSchema.safeParse(part).success) &&
+    new Set(value.parts.map((part) => (part as { perTest: number }).perTest)).size ===
+      value.parts.length
   )
 }
 
