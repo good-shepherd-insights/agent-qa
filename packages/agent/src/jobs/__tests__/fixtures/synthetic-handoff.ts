@@ -12,11 +12,13 @@
 // page anchor). Step-less failures model the suite-bootstrap case: outcome without steps.
 
 import type {
+  ArtifactRef,
   CompletedRunHandoff,
   ElementInfo,
   PerTestOutcome,
   ScreenState,
   ServedBrief,
+  ServedRetrievalTraceV1,
   StepEvidence,
   Verdict,
 } from '@vostride/agent-qa-schema'
@@ -43,6 +45,21 @@ export interface SyntheticHandoffOptions {
    * for the floor's minted `unknown`. Ranges over stepped failures only.
    */
   readonly rootCauseFor?: (failureIndex: number) => Verdict | undefined
+  /** The run's build ordinal (plan 03: prior-build history tests select strictly below it). */
+  readonly buildOrdinal?: number
+  /** Passing steps BEFORE each stepped failure's failing step (plan 03 window-clamp tests). */
+  readonly passingStepsBefore?: number
+  /** Passing steps AFTER each stepped failure's failing step (plan 03 window-clamp tests). */
+  readonly passingStepsAfter?: number
+  /**
+   * Decision-screenshot refs on the failing step (plan 03, the D-02 screenshot channel):
+   * one sub-action is minted PER ref, each carrying `decisionScreenshotRef`, the first one
+   * also carrying the failing `result.error`. Absent → the single historical sub-action
+   * with no ref, byte-identical to the pre-plan-03 fixture.
+   */
+  readonly decisionScreenshotRefs?: readonly ArtifactRef[]
+  /** A serve-time retrieval trace attached to the failing step (plan 03 forced channel 2). */
+  readonly retrievalTrace?: ServedRetrievalTraceV1
 }
 
 function servedBrief(): ServedBrief {
@@ -89,25 +106,62 @@ function screenState(element: ElementInfo, route: string): ScreenState {
 }
 
 function failingStep(options: {
+  readonly stepIndex: number
   readonly element: ElementInfo
   readonly route: string
   readonly evidenceText: string
   readonly verifierReasoning: string
+  readonly decisionScreenshotRefs?: readonly ArtifactRef[]
+  readonly retrievalTrace?: ServedRetrievalTraceV1
+}): StepEvidence {
+  const base = {
+    plan: `click ${options.element.name}`,
+    plannedAction: { type: 'click', ref: options.element.ref } as const,
+    stateBefore: screenState(options.element, options.route),
+  }
+  const refs = options.decisionScreenshotRefs ?? []
+  const subActions =
+    refs.length === 0
+      ? [{ ...base, result: { success: false, error: options.evidenceText } }]
+      : refs.map((ref, index) => ({
+          ...base,
+          result:
+            index === 0
+              ? { success: false, error: options.evidenceText }
+              : { success: false as const },
+          decisionScreenshotRef: ref,
+        }))
+  return {
+    stepIndex: options.stepIndex,
+    stepText: `click the ${options.element.name} button`,
+    cacheStatus: 'miss',
+    servedBrief: servedBrief(),
+    ...(options.retrievalTrace === undefined ? {} : { retrievalTrace: options.retrievalTrace }),
+    subActions,
+    verifierVerdict: { pass: false, reasoning: options.verifierReasoning },
+  }
+}
+
+/** A verifier-passed neighbor step (plan 03 window tests). */
+function passingStep(options: {
+  readonly stepIndex: number
+  readonly element: ElementInfo
+  readonly route: string
 }): StepEvidence {
   return {
-    stepIndex: 0,
-    stepText: `click the ${options.element.name} button`,
+    stepIndex: options.stepIndex,
+    stepText: `neighbor step ${options.stepIndex}`,
     cacheStatus: 'miss',
     servedBrief: servedBrief(),
     subActions: [
       {
-        plan: `click ${options.element.name}`,
+        plan: `observe step ${options.stepIndex}`,
         plannedAction: { type: 'click', ref: options.element.ref },
         stateBefore: screenState(options.element, options.route),
-        result: { success: false, error: options.evidenceText },
+        result: { success: true },
       },
     ],
-    verifierVerdict: { pass: false, reasoning: options.verifierReasoning },
+    verifierVerdict: { pass: true, reasoning: `neighbor step ${options.stepIndex} verified` },
   }
 }
 
@@ -132,6 +186,11 @@ export function buildSyntheticHandoff(
     verifierReasoning = 'the submit button never appeared on the checkout screen',
     route = '/checkout',
     rootCauseFor = () => undefined,
+    buildOrdinal = 1,
+    passingStepsBefore = 0,
+    passingStepsAfter = 0,
+    decisionScreenshotRefs,
+    retrievalTrace,
   } = options
 
   const element = sharedElement(sharedAnchor.role, sharedAnchor.name)
@@ -139,13 +198,31 @@ export function buildSyntheticHandoff(
 
   for (let index = 0; index < failureCount; index += 1) {
     const rootCause = rootCauseFor(index)
+    const steps: StepEvidence[] = []
+    for (let before = 0; before < passingStepsBefore; before += 1) {
+      steps.push(passingStep({ stepIndex: steps.length, element, route }))
+    }
+    steps.push(
+      failingStep({
+        stepIndex: steps.length,
+        element,
+        route,
+        evidenceText,
+        verifierReasoning,
+        decisionScreenshotRefs,
+        retrievalTrace,
+      }),
+    )
+    for (let after = 0; after < passingStepsAfter; after += 1) {
+      steps.push(passingStep({ stepIndex: steps.length, element, route }))
+    }
     tests.push({
       testId: `t_failed_${index}`,
       testName: `stepped failure ${index}`,
       filePath: `tests/failed-${index}.yaml`,
       testIndex: tests.length,
       outcome: 'failed',
-      steps: [failingStep({ element, route, evidenceText, verifierReasoning })],
+      steps,
       ...(rootCause === undefined ? {} : { rootCause }),
     })
   }
@@ -176,7 +253,7 @@ export function buildSyntheticHandoff(
     schemaVersion: 5,
     runId: asRunId(runId),
     scope: { tier: 'product', key: 'synthetic-389' },
-    buildOrdinal: 1,
+    buildOrdinal,
     executionContext: 'local-headless',
     aggregateVerdict: failureCount + steplessFailureCount > 0 ? 'failed' : 'passed',
     configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
