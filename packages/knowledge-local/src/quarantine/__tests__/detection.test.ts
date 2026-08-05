@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import {
+  CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   QUARANTINE_UNASSIGNED_OWNER,
   VERDICT_CLASSES,
   canonicalJson,
@@ -221,7 +222,7 @@ describe('the entered event an escalation authors', () => {
     const result = evaluate({ failures: [failure()] })
     expect(result.events).toEqual([
       {
-        schemaVersion: 1,
+        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
         kind: 'entered',
         at: NOW,
         product: PRODUCT,
@@ -285,7 +286,7 @@ describe('auto-exit at M passing ordinals (D-10)', () => {
     })
     expect(result.events).toEqual([
       {
-        schemaVersion: 1,
+        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
         kind: 'released-auto',
         at: NOW,
         product: PRODUCT,

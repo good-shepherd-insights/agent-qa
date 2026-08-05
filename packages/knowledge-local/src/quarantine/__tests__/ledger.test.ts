@@ -184,7 +184,9 @@ describe('quarantine ledger read/fold', () => {
   })
 
   it('hard-fails typed when a line declares a NEWER schemaVersion', async () => {
-    await writeLedger([JSON.stringify(entered({ schemaVersion: 2 }))])
+    await writeLedger([
+      JSON.stringify(entered({ schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION + 1 })),
+    ])
     expect(() => readQuarantineLedger(knowledgeRoot)).toThrow(QuarantineLedgerVersionError)
   })
 
