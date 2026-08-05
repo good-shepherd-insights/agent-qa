@@ -4,7 +4,10 @@
 // Eight runs against ONE knowledge root, driving the REAL machinery at every hop:
 //
 //   - the run-start snapshot        `resolveRunQuarantineSnapshot` over the committed ledger (D-16)
-//   - the aggregate verdict rule    `deriveAggregateVerdict` + `mapVerdictToExitCode` (D-14)
+//   - the run itself                the real `startRun` member loop over production-shape
+//                                   descriptors, which is where the disposition decides whether
+//                                   OTHER tests run (390-10 / CR-01) — the aggregate and the exit
+//                                   code are read off that session, never computed beside it
 //   - both reporters                the real JUnit document and the real console bytes (D-15)
 //   - the post-run fold             `LOCAL_CURATION_CAPABILITIES.foldRunOutcomes` — real sqlite,
 //                                   real projection, real detection, real ledger append (D-08)
@@ -12,7 +15,7 @@
 // Nothing here is stubbed except the browser: member outcomes are scripted, because the phenomenon
 // under test is what the SYSTEM does with a sequence of pass/fail results, not how a test fails.
 //
-// TWO LAWS THIS FILE OBEYS
+// THREE LAWS THIS FILE OBEYS
 //
 //  1. EVERY HOP IS ID-ADDRESSED AND TWO-SIDED (the 388 contract law). Each transition asserts the
 //     ledger BEFORE and AFTER by runId/ordinal, reading the real `quarantine.jsonl` bytes rather
@@ -25,6 +28,16 @@
 //     the NEXT run's start. So the run that crosses still fails honestly. That red is the timing
 //     law holding, and a change that "fixed" it would have quarantine relieving its own crossing —
 //     which is how a real regression gets silenced by the build that discovers it.
+//
+//  3. THE VERDICT LEG CROSSES THE MEMBER LOOP (390-10, closing CR-01). Every hop drives `startRun`
+//     over TWO same-group members — the tracked test plus a sibling — because a one-member run
+//     cannot observe the fail-fast poisoning at all, and computing the aggregate BESIDE the shell
+//     (which is what this file did until 390-10) leaves the loop where the poisoning lives
+//     unexercised at all eight hops. `executed` is asserted in both directions: an un-licensed
+//     failure still fail-fasts its sibling (run A, run H), a licensed one does not (run B). The
+//     anti-silencing direction — a licensed failure in front of a genuinely failing, UN-licensed
+//     sibling — has its own pin at the bottom of this file, because it is the direction that turns
+//     a red build green and an execution-only assertion would not catch it.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -37,7 +50,6 @@ import {
   QUARANTINE_UNASSIGNED_OWNER,
   asRef,
   exercisedAnchors,
-  quarantineAppliesToTest,
   slugBranch,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -61,7 +73,8 @@ import {
 } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { RUNS_SUBDIR } from '@vostride/agent-qa-runner-local'
-import { deriveAggregateVerdict, mapVerdictToExitCode } from '@vostride/agent-qa-runner'
+import { mapVerdictToExitCode, startRun } from '@vostride/agent-qa-runner'
+import type { RunConfig, RunMemberDescriptor, TestResult } from '@vostride/agent-qa-runner'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createConsoleReporter, QUARANTINE_TEST_ANNOTATION } from '../reporters/console-reporter.js'
@@ -76,6 +89,40 @@ const PRODUCT = 'shop-web'
 const FILE_PATH = 'tests/checkout.yaml'
 const TEST_NAME = 'checkout completes the payment sheet'
 const ANCHOR_NAME = 'pay now'
+
+/**
+ * The suite this run's members belong to.
+ *
+ * `cli/src/commands/run.ts:1961` sets `failFastGroup: prepared.suiteKey` on EVERY member of every
+ * suite, unconditionally — so a real suite run always has a shared group, and a fixture without one
+ * is drawn from outside the shape production ever produces. Both members below carry it.
+ */
+const SUITE_GROUP = 'tests/checkout.suite.yaml'
+
+/**
+ * A second test in the SAME suite as the tracked one — never quarantined, never folded into the
+ * projection. It exists so the member loop is non-degenerate: with one member there is nothing
+ * behind the tracked test for a poisoned group to skip, and the whole CR-01 defect class is
+ * unobservable.
+ */
+const SIBLING_FILE_PATH = 'tests/login.yaml'
+const SIBLING_TEST_NAME = 'login accepts a returning customer'
+
+const TRACKED_MEMBER: RunMemberDescriptor = {
+  testId: 'checkout',
+  testIndex: 0,
+  name: TEST_NAME,
+  filePath: FILE_PATH,
+  failFastGroup: SUITE_GROUP,
+}
+
+const SIBLING_MEMBER: RunMemberDescriptor = {
+  testId: 'login',
+  testIndex: 1,
+  name: SIBLING_TEST_NAME,
+  filePath: SIBLING_FILE_PATH,
+  failFastGroup: SUITE_GROUP,
+}
 
 /** The run-start instant every run in the A..H timeline is driven at. */
 const NOW = '2026-08-05T12:00:00.000Z'
@@ -180,6 +227,75 @@ interface RunScript {
   runId: string
   buildOrdinal: number
   outcome: Extract<MemberTestOutcome, 'passed' | 'failed'>
+}
+
+/** The runner-level result a scripted member answers with. */
+function shellResult(testId: string, outcome: 'passed' | 'failed'): TestResult {
+  return {
+    name: testId,
+    filePath: `${testId}.test.ts`,
+    status: outcome,
+    steps: [{
+      name: `click the ${ANCHOR_NAME} button`,
+      status: outcome,
+      duration: 1,
+      ...(outcome === 'failed' ? { error: `Error: element "${ANCHOR_NAME}" not found` } : {}),
+    }],
+    duration: 1,
+  }
+}
+
+interface ShellLeg {
+  aggregate: RunStatus
+  exitCode: number
+  /** The disposition the SHELL matched for the tracked member, read off its handoff. */
+  memberQuarantined: boolean
+  /** Which members the executor was actually reached for, in order. */
+  executed: readonly string[]
+}
+
+/**
+ * The run itself — `startRun` over the production descriptor shape (390-10, closing CR-01).
+ *
+ * This is the leg that used to be a direct `deriveAggregateVerdict` call sitting BESIDE the shell.
+ * Computing the verdict from a scripted outcome answered the aggregate question correctly and asked
+ * the member-loop question not at all: the fail-fast poisoning that decides whether the sibling ever
+ * executes lives in the loop, and no hop crossed it. Now the aggregate, the exit code and the
+ * per-member disposition all come off one real session, so a change to the loop is visible here.
+ *
+ * The run-start snapshot is passed as plain data exactly as `run.ts` passes it (D-16); the runner
+ * gains no port for it.
+ */
+async function runThroughShell(
+  script: RunScript,
+  snapshotAtStart: readonly QuarantineAppliedEntry[],
+  siblingOutcome: 'passed' | 'failed',
+): Promise<ShellLeg> {
+  const executed: string[] = []
+  const session = startRun({
+    runId: script.runId as RunConfig['runId'],
+    scope: { tier: 'product', key: PRODUCT },
+    executionContext: 'ci',
+    buildOrdinal: script.buildOrdinal,
+    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+    members: [TRACKED_MEMBER, SIBLING_MEMBER],
+    executor: async (member) => {
+      executed.push(member.testId)
+      return shellResult(
+        member.testId,
+        member.testId === TRACKED_MEMBER.testId ? script.outcome : siblingOutcome,
+      )
+    },
+    quarantined: snapshotAtStart,
+  })
+  const { verdict, handoff } = await session.done
+  const tracked = handoff.tests.find((test) => test.testId === TRACKED_MEMBER.testId)
+  return {
+    aggregate: verdict,
+    exitCode: mapVerdictToExitCode(verdict),
+    memberQuarantined: tracked?.quarantined === true,
+    executed,
+  }
 }
 
 function handoffFor(
@@ -295,6 +411,8 @@ interface DrivenRun {
   memberQuarantined: boolean
   aggregate: RunStatus
   exitCode: number
+  /** Which members the run shell actually reached the executor for (390-10). */
+  executed: readonly string[]
   junitXml: string
   consoleOutput: string
   ledgerBefore: LedgerLine[]
@@ -318,19 +436,15 @@ async function driveRun(env: Harness, script: RunScript, now = NOW): Promise<Dri
     product: PRODUCT,
     now,
   })
-  const memberQuarantined = quarantineAppliesToTest(snapshotAtStart, {
-    filePath: FILE_PATH,
-    testName: TEST_NAME,
-  })
-
-  // (2) the aggregate verdict rule and the exit code it freezes
-  const aggregate = deriveAggregateVerdict({
-    runCancelled: false,
-    runBudgetExpired: false,
-    outcomes: [script.outcome],
-    quarantined: [memberQuarantined],
-  })
-  const exitCode = mapVerdictToExitCode(aggregate)
+  // (2) THE RUN — the real member loop over production-shape descriptors. The aggregate, the exit
+  //     code and the tracked member's disposition are all read off this one session rather than
+  //     computed beside it, so the fail-fast poisoning decision is on every hop's path (390-10).
+  //     The sibling passes here; the anti-silencing case gives it a failure of its own.
+  const { aggregate, exitCode, memberQuarantined, executed } = await runThroughShell(
+    script,
+    snapshotAtStart,
+    'passed',
+  )
 
   // (3) both reporters, over the run's real envelope stream
   const envelopes = envelopesFor(script, aggregate)
@@ -375,6 +489,7 @@ async function driveRun(env: Harness, script: RunScript, now = NOW): Promise<Dri
     memberQuarantined,
     aggregate,
     exitCode,
+    executed,
     junitXml,
     consoleOutput: consoleChunks.join(''),
     ledgerBefore,
@@ -410,6 +525,9 @@ describe('the quarantine lifecycle, end to end (FLAK-02 / FLAK-03)', () => {
     // THE TIMING LAW: the run that discovers the flake fails honestly (D-08 + D-16)
     expect(runA.aggregate).toBe('failed')
     expect(runA.exitCode).toBe(1)
+    // …and because nothing licenses it, the failure poisons its suite group and the sibling behind
+    // it never runs — pre-390 within-suite fail-fast (D-15), unchanged by the disposition guard
+    expect(runA.executed).toEqual(['checkout'])
     expect(runA.junitXml).toContain('<failure')
     expect(runA.junitXml).not.toContain(JUNIT_QUARANTINE_MARKER_BLOCK)
     expect(runA.consoleOutput).not.toContain(QUARANTINE_TEST_ANNOTATION)
@@ -439,6 +557,11 @@ describe('the quarantine lifecycle, end to end (FLAK-02 / FLAK-03)', () => {
     // the member outcome is untouched; the AGGREGATE is what the disposition changed
     expect(runB.aggregate).toBe('passed')
     expect(runB.exitCode).toBe(0)
+    // THE OTHER HALF OF FLAK-02 (390-10 / CR-01): the licensed failure changes the aggregate rule
+    // and NOTHING ELSE. It does not poison its group, so the sibling behind it still runs. Compare
+    // run A one hop above — identical members, identical group, opposite disposition, opposite
+    // answer to "did the sibling execute".
+    expect(runB.executed).toEqual(['checkout', 'login'])
     // D-15: the correct amount of red on a green build
     expect(runB.junitXml).toContain('<failure')
     expect(runB.junitXml).toContain(JUNIT_QUARANTINE_MARKER_BLOCK)
@@ -467,6 +590,8 @@ describe('the quarantine lifecycle, end to end (FLAK-02 / FLAK-03)', () => {
     for (const run of [runC, runD, runE, runF]) {
       expect(run.exitCode).toBe(0)
       expect(run.ledgerAfter.map((line) => line.kind)).toEqual(['entered'])
+      // nothing failed, so nothing poisoned: both members ran
+      expect(run.executed).toEqual(['checkout', 'login'])
     }
     // D-10's boundary, one step either side: NOT after the fourth passing ordinal…
     expect(runF.ledgerAfter.some((line) => line.kind === 'released-auto')).toBe(false)
@@ -489,10 +614,67 @@ describe('the quarantine lifecycle, end to end (FLAK-02 / FLAK-03)', () => {
     expect(runH.memberQuarantined).toBe(false)
     expect(runH.aggregate).toBe('failed')
     expect(runH.exitCode).toBe(1)
+    // the exit path restored the fail-fast too: with no disposition, the failure poisons again
+    expect(runH.executed).toEqual(['checkout'])
     expect(runH.junitXml).toContain('<failure')
     expect(runH.junitXml).not.toContain(JUNIT_QUARANTINE_MARKER_BLOCK)
     expect(runH.consoleOutput).not.toContain(QUARANTINE_TEST_ANNOTATION)
     expect(runH.consoleOutput).toContain('Tests:  0 of 1 passed\n')
+  }, 120_000)
+})
+
+// ---- the anti-silencing direction (390-10, closing CR-01) --------------------------------------
+//
+// Runs A..H assert that a licensed failure lets its sibling EXECUTE. That is necessary and not
+// sufficient: a build that runs the sibling and then swallows its failure would satisfy it. The
+// property actually at risk is that an UN-licensed failure behind a licensed one still reaches the
+// exit code — that is the inversion the verifier measured on 2026-08-05 (executed ["flaky"] only,
+// verdict 'passed', exit 0, where pre-390 the same run exited 1).
+//
+// So this pin gives the sibling a real failure and asserts the aggregate and the exit code, over a
+// ledger entry authored by the same detection ladder every other hop uses.
+
+describe('a quarantined failure never silences an un-quarantined one (CR-01)', () => {
+  it('the failing sibling runs AND fails the build at exit 1, behind a licensed failure', async () => {
+    const env = harness('agent-qa-390-antisilencing-')
+
+    // three failing ordinals — the same crossing runs A..H drive, through the same fold
+    for (const buildOrdinal of [1, 2, 3]) {
+      await driveRun(env, {
+        runId: `run-silence-${String(buildOrdinal)}`,
+        buildOrdinal,
+        outcome: 'failed',
+      })
+    }
+    // the committed ledger now licenses the tracked test, and only the tracked test
+    const snapshotAtStart = resolveRunQuarantineSnapshot({
+      knowledgeRoot: env.knowledgeRoot,
+      product: PRODUCT,
+      now: NOW,
+    })
+    expect(snapshotAtStart).toEqual([{
+      product: PRODUCT,
+      filePath: FILE_PATH,
+      testName: TEST_NAME,
+      expiresAt: EXPECTED_EXPIRY,
+    }])
+
+    // the next run: the licensed test fails again, and so does its un-licensed suite sibling
+    const shell = await runThroughShell(
+      { runId: 'run-silence-4', buildOrdinal: 4, outcome: 'failed' },
+      snapshotAtStart,
+      'failed',
+    )
+
+    // Asserted as ONE shape: execution without the verdict would pass on a build that runs the
+    // sibling and swallows it, and the verdict without execution would pass on a build that
+    // skipped the sibling and failed for some other reason.
+    expect(shell).toEqual({
+      executed: ['checkout', 'login'],
+      memberQuarantined: true,
+      aggregate: 'failed',
+      exitCode: 1,
+    })
   }, 120_000)
 })
 
