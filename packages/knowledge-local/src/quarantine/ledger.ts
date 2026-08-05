@@ -1,4 +1,5 @@
-// The committed quarantine ledger: read, pure state fold (Phase 390, D-01/D-03/D-11).
+// The committed quarantine ledger: read, pure state fold, egress-checkpointed append
+// (Phase 390, D-01/D-03/D-04/D-11).
 //
 // `quarantine.jsonl` sits DIRECTLY under the committed knowledge root as its OWN top-level
 // artifact beside memory/ and policies/. It is the FIRST committed top-level operational artifact
@@ -19,12 +20,33 @@
 // `expiresAt` are stamped by callers at write time (D-11). That is what lets expiry boundaries be
 // pinned one second either side with no flake.
 //
+// WRITE POSTURE — fail-closed and audited. Every append passes the committed-egress checkpoint on
+// this module's OWN channel before a byte reaches the file, and a detector refusal comes back as
+// DATA (never a bare catch, never a throw the caller has to guess at). Quarantine events are
+// CODE-authored — threshold crossings, auto-exits, the gated verbs — never model output, which is
+// why CTX-FUT-01's propose-only posture deliberately does not bind these writes (D-04; the dated
+// posture note lands in REQUIREMENTS.md).
+//
+// SERIALIZATION is POSITIONAL, and that nuance matters: this module holds no lock of its own. Its
+// callers — the post-run fold and the gated quarantine verbs — already execute inside the MRSW
+// writer-lease scope with epoch fencing, so appends serialize because of WHERE they are called
+// from, not because anything here enforces it. A future caller outside that scope would need to
+// take the lease itself; the guarantee is the call site's.
+//
 // IDENTITY — entries are keyed by `(product, filePath, testName)`, never `testId`.
 
-import { readFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { guardQuarantineLedgerEvent } from '@vostride/agent-qa-schema'
+import {
+  CommittedEgressBlockedError,
+  assertCommittedEgressSafe,
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+} from '@vostride/agent-qa-safety'
+import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
+import { canonicalJson, guardQuarantineLedgerEvent } from '@vostride/agent-qa-schema'
+import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
 import type {
   QuarantineEntryState,
   QuarantineEntryStateName,
@@ -211,4 +233,72 @@ export function foldQuarantineLedgerState(
       state,
     }
   })
+}
+
+/**
+ * The ledger's own committed-egress channel (D-04). Distinct from the bundle channel so an audit
+ * row says which committed surface a refusal came from without anyone having to infer it.
+ */
+export const QUARANTINE_LEDGER_EGRESS_CHANNEL = 'quarantine-ledger'
+
+export interface QuarantineAppendOptions {
+  policy?: GuardrailPolicy
+  /** Explicit audit location; nothing silently resolves into a working directory. */
+  auditBaseDir: string
+}
+
+/**
+ * What an append answers. `'egress-blocked'` is a VALUE, not an exception: a guardrail refusal is
+ * information the caller surfaces (the drain tail logs it), and the alternative — a throw inside a
+ * fold whose failures are already swallowed — is how an `entered` event goes missing in silence.
+ */
+export type QuarantineAppendOutcome =
+  | { kind: 'appended'; lines: number }
+  | { kind: 'egress-blocked'; detections: readonly { label: string; detector: string }[] }
+
+/**
+ * Append lifecycle events to the committed ledger, as ONE fail-closed unit (D-04).
+ *
+ * Order is the whole point: serialize → checkpoint EVERY line together → only then write. Because
+ * the checkpoint covers the unit, a single refused event withholds its clean siblings too, and the
+ * existing file is left byte-unchanged. Partial writes are the failure mode that would leave the
+ * committed truth half-updated and a reviewer unable to tell.
+ *
+ * Callers stamp `at` and `expiresAt` themselves (D-11): this module reads no clock, which is what
+ * keeps both the write path and the fold deterministic.
+ */
+export function appendQuarantineEvents(
+  knowledgeRoot: string,
+  events: readonly QuarantineLedgerEvent[],
+  opts: QuarantineAppendOptions,
+): QuarantineAppendOutcome {
+  if (events.length === 0) return { kind: 'appended', lines: 0 }
+
+  const lines = events.map((event) => canonicalJson(event))
+  const parts = lines.map((text, index) => ({
+    label: `${QUARANTINE_LEDGER_FILENAME}#${String(index + 1)}`,
+    text,
+  }))
+
+  const checkpointOpts = {
+    policy: opts.policy ?? loadGuardrailPolicy(defaultGuardrailPolicyInput),
+    channel: QUARANTINE_LEDGER_EGRESS_CHANNEL,
+    auditSink: new JsonlAuditSink(opts.auditBaseDir),
+  }
+
+  try {
+    assertCommittedEgressSafe(parts, checkpointOpts)
+  } catch (error) {
+    if (error instanceof CommittedEgressBlockedError) {
+      return {
+        kind: 'egress-blocked',
+        detections: error.blocked.map(({ label, detector }) => ({ label, detector })),
+      }
+    }
+    throw error
+  }
+
+  mkdirSync(knowledgeRoot, { recursive: true })
+  appendFileSync(quarantineLedgerPath(knowledgeRoot), `${lines.join('\n')}\n`, 'utf8')
+  return { kind: 'appended', lines: lines.length }
 }
