@@ -14,6 +14,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { createQuarantineOperations } from '@vostride/agent-qa-knowledge-local'
 import { QUARANTINE_LEDGER_FILENAME } from '@vostride/agent-qa-knowledge-local/reader'
 import {
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
@@ -196,5 +197,82 @@ describe('resolveRunQuarantineSnapshot (D-16)', () => {
     expect(snapshot()).toEqual([])
     expect(warnings).toHaveLength(1)
     expect(warnings[0]).toMatch(/schemaVersion/)
+  })
+
+  // ---- the two-sided pin: the human WRITE verb against this READER (390-09 / WR-01) --------
+  //
+  // The defect this closes was invisible to every single-sided fixture. The writer half lives in
+  // `knowledge-local` and the reader half lives here; each is internally consistent, and they
+  // disagreed about what a `product` IS — `add` stored the spelling a human typed, this reader
+  // filters on `slugBranch` of it. So `quarantine.add({product: 'My Product'})` answered `entered`,
+  // the ledger recorded a real entry, and the test it named kept failing every build.
+  //
+  // It is pinned HERE rather than beside the verb because the two halves cannot be brought into one
+  // package: `agent-local` depends on `knowledge-local`, never the reverse. Nothing but the ledger
+  // file passes between them below — the writer is driven entirely through the real port.
+
+  describe('a human quarantine.add against this reader (WR-01)', () => {
+    let auditBaseDir: string
+    const ADD_NOW = '2026-08-15T10:00:00.000Z'
+    /** ADD_NOW + the pinned 30-day default lifetime — still suppressing at RUN_START_NOW. */
+    const ADDED_EXPIRY = '2026-09-14T10:00:00.000Z'
+    const HUMAN_PRODUCT = 'My Product'
+    const SLUGGED_PRODUCT = 'My-Product'
+    const TEST_FILE = 'tests/checkout.yaml'
+    const TEST_NAME = 'checkout completes'
+
+    beforeEach(async () => {
+      auditBaseDir = await mkdtemp(join(tmpdir(), 'quarantine-snapshot-audit-'))
+    })
+
+    afterEach(async () => {
+      await rm(auditBaseDir, { recursive: true, force: true })
+    })
+
+    function verbs(): ReturnType<typeof createQuarantineOperations> {
+      return createQuarantineOperations({
+        resolveKnowledgeRoot: () => knowledgeRoot,
+        auditBaseDir,
+        now: () => ADD_NOW,
+      })
+    }
+
+    it('is APPLIED by the next run under the same unslugged spelling the human typed', async () => {
+      const answer = await verbs().add({
+        product: HUMAN_PRODUCT,
+        filePath: TEST_FILE,
+        testName: TEST_NAME,
+      })
+      expect(answer.kind).toBe('entered')
+
+      expect(snapshot(HUMAN_PRODUCT)).toEqual([
+        {
+          product: SLUGGED_PRODUCT,
+          filePath: TEST_FILE,
+          testName: TEST_NAME,
+          expiresAt: ADDED_EXPIRY,
+        },
+      ])
+      expect(warnings).toEqual([])
+    })
+
+    it('is dropped again by the human release verb — the exit path closes what it opened', async () => {
+      await verbs().add({ product: HUMAN_PRODUCT, filePath: TEST_FILE, testName: TEST_NAME })
+      const released = await verbs().release({
+        product: HUMAN_PRODUCT,
+        filePath: TEST_FILE,
+        testName: TEST_NAME,
+      })
+
+      expect(released.kind).toBe('released')
+      expect(snapshot(HUMAN_PRODUCT)).toEqual([])
+    })
+
+    it('does NOT leak into a different product that merely slugs alike-looking bytes', async () => {
+      await verbs().add({ product: HUMAN_PRODUCT, filePath: TEST_FILE, testName: TEST_NAME })
+
+      // The partition still partitions: normalizing is not the same as collapsing.
+      expect(snapshot('Other Product')).toEqual([])
+    })
   })
 })

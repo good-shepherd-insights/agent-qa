@@ -415,6 +415,68 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
       .toContain('quarantine-ledger')
   })
 
+  // ---- the product partition (390-09 / WR-01) ---------------------------------------------
+
+  /** A product spelling a human types and every reader re-partitions: `slugBranch` rewrites it. */
+  const RAW_PRODUCT = 'My Product'
+  const SLUGGED_PRODUCT = 'My-Product'
+
+  function human(fields: { product: string }): {
+    product: string
+    filePath: string
+    testName: string
+  } {
+    return { ...fields, filePath: 'tests/checkout.yaml', testName: 'checkout completes' }
+  }
+
+  it('records the SLUGGED product in the entered line — the partition every reader compares', async () => {
+    await operations().add(human({ product: RAW_PRODUCT }))
+
+    // Asserted verbatim rather than against `slugBranch(RAW_PRODUCT)`: a pin written as a relation
+    // among the code's own functions cannot see both halves agreeing on the wrong bytes.
+    expect(ledgerLines()[0]).toMatchObject({ kind: 'entered', product: SLUGGED_PRODUCT })
+    expect(JSON.stringify(ledgerLines()[0])).not.toContain(RAW_PRODUCT)
+  })
+
+  it('answers the caller with the normalized identity it actually stored, not the spelling it was given', async () => {
+    const answer = await operations().add(human({ product: RAW_PRODUCT }))
+
+    expect(answer.entry).toMatchObject({ product: SLUGGED_PRODUCT, state: 'quarantined' })
+  })
+
+  it('RENEWS a second add under the same unslugged spelling — the lookup joins through the slug', async () => {
+    await operations().add(human({ product: RAW_PRODUCT }))
+
+    const answer = await operations().add(human({ product: RAW_PRODUCT }))
+
+    // Reds when only the WRITE half slugs: `entryFor` would look for `My Product`, miss the
+    // `My-Product` row it just wrote, and open a second window over the same test.
+    expect(answer.kind).toBe('renewed')
+    expect(ledgerLines().map((line) => line.kind)).toEqual(['entered', 'renewed'])
+  })
+
+  it('RELEASES the window an unslugged add opened — both write verbs join on the same bytes', async () => {
+    await operations().add(human({ product: RAW_PRODUCT }))
+
+    const answer = await operations().release(human({ product: RAW_PRODUCT }))
+
+    expect(answer.kind).toBe('released')
+    expect(ledgerLines()[1]).toMatchObject({
+      kind: 'released-manual',
+      product: SLUGGED_PRODUCT,
+    })
+    expect(await operations().list()).toEqual([expect.objectContaining({ state: 'released' })])
+  })
+
+  it('round-trips an ALREADY-slugged product byte-identically — the idempotence control', async () => {
+    // The conditional half of WR-01: a product already in slug form was never broken, which is
+    // exactly why no existing fixture caught the defect. It must not move now.
+    await operations().add(human({ product: PRODUCT }))
+
+    expect(ledgerLines()[0]).toMatchObject({ product: PRODUCT })
+    expect((await operations().list())[0]).toMatchObject({ product: PRODUCT })
+  })
+
   // ---- writer-lease serialization (390-09 / CR-03 / D-04) ---------------------------------
 
   function leaseFile(): string {
