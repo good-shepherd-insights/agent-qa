@@ -17,6 +17,7 @@ import {
 
 import type { EmbedderPort } from '../embedder-port.js'
 import { indexDbPath, openIndexReaderConnection } from '../index-open.js'
+import { foldQuarantineLedgerState, readQuarantineLedger } from '../quarantine/ledger.js'
 import { hasDenseCandidates } from '../retrieve.js'
 import { denseLeg, type RetrievalLegScope } from '../retrieval/legs.js'
 import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
@@ -45,6 +46,13 @@ export interface AuthoringReaderDependencies {
   discoverKnownTests?: () => readonly AuthoringTestRef[]
   /** Test/integration seam; production omission uses denseLeg's automatic acquisition ladder. */
   embedder?: EmbedderPort
+  /**
+   * ISO-8601 instant the quarantine fold compares expiry against (390 D-11). A seam rather than a
+   * clock read inside the fold: `'expired'` is COMPUTED from this value, so pinning an expiry
+   * boundary one second either side has to be possible without waiting for wall time. Production
+   * omission reads the clock ONCE per brief, at this composition boundary.
+   */
+  now?: () => string
 }
 
 interface OutcomeRow {
@@ -55,8 +63,30 @@ interface OutcomeRow {
   failures: number
   heals: number
   flake_count: number
-  quarantined: number
   last_outcomes_json: string
+}
+
+/**
+ * The identities the committed ledger currently suppresses (390 D-02), keyed exactly the way the
+ * projection is keyed — `(product, filePath, testName)`, with the ledger's `product` carrying the
+ * same slugged partition the projection rows do.
+ *
+ * Only `'quarantined'` counts. `'expired'` and both released states are deliberately NOT excluded:
+ * an entry whose deadline lapsed has stopped suppressing (that lapse is the forcing function D-11
+ * exists for) while staying listed, and a released entry is a decision someone made.
+ *
+ * NO try/catch. A ledger this build cannot read propagates its typed error, because the one
+ * outcome that must be impossible here is degrading unreadable committed truth to "nothing is
+ * quarantined" — that silently un-quarantines every entry in the file. Refused individual LINES
+ * are already surfaced as data by the read itself and never became entries.
+ */
+function quarantinedIdentityKeys(knowledgeRoot: string, now: string): ReadonlySet<string> {
+  const { events } = readQuarantineLedger(knowledgeRoot)
+  return new Set(
+    foldQuarantineLedgerState(events, now)
+      .filter((entry) => entry.state === 'quarantined')
+      .map((entry) => identityTupleKey([entry.product, entry.filePath, entry.testName])),
+  )
 }
 
 function parseLastOutcomes(json: string): { buildOrdinal: number; passed: boolean }[] {
@@ -89,6 +119,7 @@ function parseLastOutcomes(json: string): { buildOrdinal: number; passed: boolea
 function readProjectionRows(
   config: OpenServingKnowledgeReaderConfig,
   scope: ScopeKey,
+  now: string,
 ): AuthoringExemplarRow[] {
   if (!existsSync(indexDbPath(config.knowledgeRoot))) return []
 
@@ -136,9 +167,11 @@ function readProjectionRows(
       else keys.push(String(row.anchor_normalized_json))
     }
 
+    const quarantinedKeys = quarantinedIdentityKeys(config.knowledgeRoot, now)
+
     return (reader.db.prepare(`
       SELECT r.product, r.file_path, r.test_name, r.passes, r.failures, r.heals,
-        r.flake_count, r.quarantined,
+        r.flake_count,
         last_outcomes_json
       FROM run_test_outcomes r
       WHERE ${predicate.sql}
@@ -150,7 +183,9 @@ function readProjectionRows(
       failures: Number(row.failures),
       heals: Number(row.heals),
       flakeCount: Number(row.flake_count),
-      quarantined: Number(row.quarantined) !== 0,
+      quarantined: quarantinedKeys.has(identityTupleKey([
+        String(row.product), String(row.file_path), String(row.test_name),
+      ])),
       lastOutcomes: parseLastOutcomes(String(row.last_outcomes_json)),
       anchorKeys: anchorsByTest.get(identityTupleKey([
         String(row.product), String(row.file_path), String(row.test_name),
@@ -276,7 +311,13 @@ export function createAuthoringReader(
   return {
     async getAuthoringBrief(intent: string, scope: ScopeKey): Promise<AuthoringBrief> {
       const entries = hydrateRows(config, readIndexRows(config, scope), false)
-      const projectionRows = readProjectionRows(config, scope)
+      // ONE clock read per brief, here at the composition boundary — the quarantine fold below is
+      // pure in `now` (D-11), and a second read could put two rows on two sides of one deadline.
+      const projectionRows = readProjectionRows(
+        config,
+        scope,
+        (deps.now ?? (() => new Date().toISOString()))(),
+      )
       const denseScoreByRecordId = await readDenseScores(config, deps, intent, scope)
       const knownTests = knownTestUniverse(
         projectionRows,

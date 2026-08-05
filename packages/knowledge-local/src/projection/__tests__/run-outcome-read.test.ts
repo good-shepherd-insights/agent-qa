@@ -103,8 +103,8 @@ function insertRawRow(db: DatabaseSync, lastOutcomesJson: string): void {
   db.prepare(`
     INSERT INTO run_test_outcomes (
       product, scope_tier, scope_key, file_path, test_name, passes, failures, heals,
-      flake_count, quarantined, last_outcomes_json, last_build_ordinal
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      flake_count, last_outcomes_json, last_build_ordinal
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     PRODUCT,
     'product',
@@ -115,7 +115,6 @@ function insertRawRow(db: DatabaseSync, lastOutcomesJson: string): void {
     2,
     1,
     1,
-    0,
     lastOutcomesJson,
     9,
   )

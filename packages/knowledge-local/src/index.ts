@@ -217,7 +217,6 @@ export {
   foldRunOutcomes,
   LAST_OUTCOMES_LIMIT,
   projectRunOutcomes,
-  QUARANTINE_FLAKE_THRESHOLD,
   rebuildRunOutcomes,
   RUN_OUTCOMES_PROJECTION_VERSION,
 } from './projection/run-outcomes.js'

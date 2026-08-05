@@ -461,7 +461,6 @@ export function ensureRunOutcomeTables(db: DatabaseSync): void {
       failures INTEGER NOT NULL DEFAULT 0,
       heals INTEGER NOT NULL DEFAULT 0,
       flake_count INTEGER NOT NULL DEFAULT 0,
-      quarantined INTEGER NOT NULL DEFAULT 0,
       last_outcomes_json TEXT NOT NULL DEFAULT '[]',
       last_build_ordinal INTEGER,
       PRIMARY KEY (product, file_path, test_name)

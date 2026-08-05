@@ -58,13 +58,6 @@ export const RUN_OUTCOMES_PROJECTION_VERSION = 3
 export const LAST_OUTCOMES_LIMIT = 10
 
 /**
- * PROVISIONAL quarantine threshold: a test whose flake count reaches this value is
- * flagged quarantined for ABRF-02's exemplar ranking to deprioritize. Tuning belongs
- * to the ranking plan; the derived-flag shape is the contract here.
- */
-export const QUARANTINE_FLAKE_THRESHOLD = 3
-
-/**
  * Mirrors runner-local's HANDOFF_FILE. knowledge-local sits below runner-local in the
  * package layering, so the constant cannot be imported without inverting the dependency
  * direction; the rebuild receives the runs root and joins this fixed leaf name.
@@ -358,8 +351,8 @@ export function applyRunOutcomes(
   const upsertRow = db.prepare(`
     INSERT INTO run_test_outcomes (
       product, scope_tier, scope_key, file_path, test_name, passes, failures, heals,
-      flake_count, quarantined, last_outcomes_json, last_build_ordinal
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      flake_count, last_outcomes_json, last_build_ordinal
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (product, file_path, test_name) DO UPDATE SET
       scope_tier = excluded.scope_tier,
       scope_key = excluded.scope_key,
@@ -367,7 +360,6 @@ export function applyRunOutcomes(
       failures = excluded.failures,
       heals = excluded.heals,
       flake_count = excluded.flake_count,
-      quarantined = excluded.quarantined,
       last_outcomes_json = excluded.last_outcomes_json,
       last_build_ordinal = excluded.last_build_ordinal
   `)
@@ -417,7 +409,6 @@ export function applyRunOutcomes(
         failures,
         heals,
         flakeCount,
-        flakeCount >= QUARANTINE_FLAKE_THRESHOLD ? 1 : 0,
         mergeOutcomeEntries(existing?.last_outcomes_json, {
           buildOrdinal: projection.buildOrdinal,
           passed: test.passed,

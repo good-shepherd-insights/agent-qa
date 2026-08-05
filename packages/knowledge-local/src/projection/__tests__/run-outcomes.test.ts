@@ -239,7 +239,6 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       failures: 0,
       heals: 1,
       flake_count: 0,
-      quarantined: 0,
       last_build_ordinal: 7,
     })
     expect(happy?.last_outcomes_json).toBe(
@@ -705,7 +704,12 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     expect(dumpTables(rebuilt)).toEqual(dumpTables(incremental))
   })
 
-  it('marks a test quarantined once its flake count crosses the provisional threshold', () => {
+  // 390 D-07 replaced this case's original assertion. It used to pin that crossing a lifetime
+  // flake threshold stamped a derived quarantined flag; the lifetime count is now a RANKING input
+  // only and never a quarantine trigger, because a counter that never forgives cannot express a
+  // lifecycle with an exit. The accumulation still matters and is still pinned — what is pinned
+  // additionally is that accumulating it produces no quarantine effect anywhere in the projection.
+  it('accumulates a lifetime flake count that triggers no quarantine of its own', () => {
     const db = openDb()
     for (let ordinal = 1; ordinal <= 3; ordinal += 1) {
       applyRunOutcomes(db, projectRunOutcomes(handoffFixture({
@@ -720,9 +724,13 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
         }],
       }), { extractAnchors }))
     }
-    const row = db.prepare(
-      'SELECT flake_count, quarantined FROM run_test_outcomes',
-    ).get()
-    expect(row).toMatchObject({ flake_count: 3, quarantined: 1 })
+
+    const row = db.prepare('SELECT * FROM run_test_outcomes').get() as Record<string, unknown>
+    expect(row).toMatchObject({ flake_count: 3 })
+    expect(Object.keys(row)).not.toContain('quarantined')
+    // Passing members write no window rows either, so a lifetime flake count cannot reach the
+    // detection substrate by this path at all.
+    expect(db.prepare('SELECT count(*) AS rows FROM run_fingerprint_windows').get())
+      .toEqual({ rows: 0 })
   })
 })

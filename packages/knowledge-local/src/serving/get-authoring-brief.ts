@@ -98,6 +98,7 @@ export interface AuthoringExemplarRow {
   failures: number
   heals: number
   flakeCount: number
+  /** Resolved by the hydrating reader from the committed quarantine ledger (390 D-02). */
   quarantined: boolean
   /** Last-N window entries — ordinals only, wall-clock never. */
   lastOutcomes: readonly { buildOrdinal: number; passed: boolean }[]
@@ -268,8 +269,10 @@ function verifiedExemplarCandidate(
   tokens: readonly string[],
 ): ExemplarCandidate[] {
   // D-15 hard excludes fire on the FIRST observed negative signal: any observed flake or a
-  // currently-failing recent window, before relevance scoring. Quarantine remains a durable
-  // projection flag this gate also honors. (Store-status candidate/deprecated exclusion is
+  // currently-failing recent window, before relevance scoring. The quarantine leg is the third,
+  // and as of 390 D-02 its truth is the COMMITTED ledger's state fold, not a derived projection
+  // column — this assembler stays pure, so the flag arrives already resolved on the row and the
+  // reader that hydrates it owns the ledger read. (Store-status candidate/deprecated exclusion is
   // vacuous in M2 — tests are never memidex records; the clause activates if that ever changes.)
   const latestOutcome = row.lastOutcomes.at(-1)
   if (row.quarantined || row.flakeCount >= 1 || latestOutcome?.passed === false) return []
