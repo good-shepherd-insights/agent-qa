@@ -5,7 +5,9 @@
 // broken event is refused — never healed to absence (healing a quarantine entry silently
 // un-quarantines, the exact silent flip this phase exists to prevent).
 //
-// Boundary pinned at 1 and 2: version 1 admits by identity, version 2 throws typed.
+// Boundary pinned around the CURRENT version: the current version admits by identity, one above
+// throws typed, and version 1 — whose identity leg was a machine-local absolute path — throws typed
+// too, because no honest migration to a checkout-independent identity exists (390-08 / CR-02).
 
 import { describe, expect, it } from 'vitest'
 
@@ -53,9 +55,14 @@ function enteredEvent(overrides: Record<string, unknown> = {}): Record<string, u
 // ---- The closed event vocabulary (388 C13 — spelled once) ----------------
 
 describe('quarantine ledger event vocabulary', () => {
-  it('pins the version at 1 with an empty (registered) migration seam', () => {
-    expect(CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION).toBe(1)
+  it('pins the version at 2 with a DELIBERATELY empty migration seam', () => {
+    // 390-08 / CR-02: version 1 stamped a machine-local ABSOLUTE path as the filePath identity
+    // leg, which no other checkout can interpret. There is no honest v1 -> v2 migration (the
+    // function would have to guess a checkout root it was never told), so the seam stays empty and
+    // a v1 line hard-fails through QuarantineLedgerVersionError. Refusal is the correct arm.
+    expect(CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION).toBe(2)
     expect(QUARANTINE_LEDGER_MIGRATIONS).toEqual({})
+    expect(QUARANTINE_LEDGER_MIGRATIONS[1]).toBeUndefined()
   })
 
   it('closes the event-kind union over the four lifecycle actions', () => {
@@ -117,7 +124,7 @@ describe('verdict class vocabulary', () => {
 // ---- guardQuarantineLedgerEvent ------------------------------------------
 
 describe('guardQuarantineLedgerEvent', () => {
-  it('admits a well-formed schemaVersion-1 entered event BY IDENTITY', () => {
+  it('admits a well-formed current-version entered event BY IDENTITY', () => {
     const stored = enteredEvent()
     const admitted = guardQuarantineLedgerEvent(stored)
     expect(admitted).toBe(stored as unknown as QuarantineLedgerEvent)
@@ -129,7 +136,7 @@ describe('guardQuarantineLedgerEvent', () => {
 
   it('admits renewed and both released kinds', () => {
     const renewed = guardQuarantineLedgerEvent({
-      schemaVersion: 1,
+      schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
       kind: 'renewed',
       at: '2026-08-06T10:00:00.000Z',
       product: 'example-web',
@@ -142,7 +149,7 @@ describe('guardQuarantineLedgerEvent', () => {
 
     for (const kind of ['released-manual', 'released-auto'] as const) {
       const released = guardQuarantineLedgerEvent({
-        schemaVersion: 1,
+        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
         kind,
         at: '2026-08-07T10:00:00.000Z',
         product: 'example-web',
@@ -180,9 +187,10 @@ describe('guardQuarantineLedgerEvent', () => {
   })
 
   it('hard-fails a NEWER schemaVersion with the typed ledger version error', () => {
+    const newer = CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION + 1
     let thrown: unknown
     try {
-      guardQuarantineLedgerEvent(enteredEvent({ schemaVersion: 2 }))
+      guardQuarantineLedgerEvent(enteredEvent({ schemaVersion: newer }))
     } catch (error) {
       thrown = error
     }
@@ -191,8 +199,32 @@ describe('guardQuarantineLedgerEvent', () => {
     const versionError = thrown as QuarantineLedgerVersionError
     expect(versionError.name).toBe('QuarantineLedgerVersionError')
     expect(versionError.documentName).toBe('QuarantineLedgerEvent')
-    expect(versionError.foundVersion).toBe(2)
-    expect(versionError.supportedVersion).toBe(1)
+    expect(versionError.foundVersion).toBe(newer)
+    expect(versionError.supportedVersion).toBe(CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION)
+  })
+
+  it('hard-fails a stored VERSION-1 line — the unmigratable-older arm (390-08 / CR-02)', () => {
+    // A v1 line's filePath is a machine-local absolute path. Admitting it would seed the fold with
+    // an identity no other checkout can produce, and "healing" it to a relative path would require
+    // guessing a checkout root. The typed refusal is the honest answer, and it is FREE today
+    // because zero quarantine.jsonl files exist in the wild (verified 2026-08-05).
+    let thrown: unknown
+    try {
+      guardQuarantineLedgerEvent(enteredEvent({
+        schemaVersion: 1,
+        filePath: '/Users/someone/repo/tests/checkout.yaml',
+      }))
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(QuarantineLedgerVersionError)
+    const versionError = thrown as QuarantineLedgerVersionError
+    expect(versionError.foundVersion).toBe(1)
+    expect(versionError.supportedVersion).toBe(CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION)
+
+    // The version-2 line carrying the workspace-relative identity is the shape that DOES pass —
+    // otherwise the refusal above would prove nothing about which contract is current.
+    expect(guardQuarantineLedgerEvent(enteredEvent({ schemaVersion: 2 })).kind).toBe('entered')
   })
 
   it('refuses a line with no numeric schemaVersion at all', () => {
@@ -206,6 +238,53 @@ describe('guardQuarantineLedgerEvent', () => {
     expect(hasQuarantineEventShape(enteredEvent({ kind: 'evicted' }))).toBe(false)
     expect(hasQuarantineEventShape(null)).toBe(false)
     expect(hasQuarantineEventShape([enteredEvent()])).toBe(false)
+  })
+})
+
+// ---- The identity leg is CHECKOUT-INDEPENDENT (390-08 / CR-02, D-01) -----
+
+describe('quarantine identity leg portability', () => {
+  // The ledger is COMMITTED and travels between machines. An absolute filePath is bytes only one
+  // machine can produce, so `quarantineAppliesToTest`'s `===` could never match on a fresh CI
+  // checkout — the ledger would be committed FOR an inheritance it structurally cannot deliver.
+  // Refusing the absolute form at the shape guard makes that unrepresentable rather than asserted.
+
+  it('refuses a POSIX absolute identity leg', () => {
+    expect(hasQuarantineEventShape(
+      enteredEvent({ filePath: '/Users/someone/repo/tests/checkout.yaml' }),
+    )).toBe(false)
+    expect(() => guardQuarantineLedgerEvent(
+      enteredEvent({ filePath: '/Users/someone/repo/tests/checkout.yaml' }),
+    )).toThrow(TypeError)
+  })
+
+  it('refuses a Windows-drive identity leg in either slash direction', () => {
+    for (const absolute of [
+      'C:\\repo\\tests\\checkout.yaml',
+      'C:/repo/tests/checkout.yaml',
+      'd:/repo/tests/checkout.yaml',
+      '\\\\server\\share\\tests\\checkout.yaml',
+    ]) {
+      expect(hasQuarantineEventShape(enteredEvent({ filePath: absolute }))).toBe(false)
+    }
+  })
+
+  it('refuses the absolute form on EVERY event kind, not just entered', () => {
+    const absolute = '/Users/someone/repo/tests/checkout.yaml'
+    for (const kind of QUARANTINE_EVENT_KINDS) {
+      const event = enteredEvent({ kind, filePath: absolute, expiresAt: '2026-09-04T10:00:00.000Z' })
+      expect(hasQuarantineEventShape(event)).toBe(false)
+    }
+  })
+
+  it('admits the workspace-relative identity the CLI now mints', () => {
+    for (const relative of [
+      'tests/checkout.yaml',
+      'tests/nested/deep/checkout.yaml',
+      'checkout.yaml',
+    ]) {
+      expect(hasQuarantineEventShape(enteredEvent({ filePath: relative }))).toBe(true)
+    }
   })
 })
 
