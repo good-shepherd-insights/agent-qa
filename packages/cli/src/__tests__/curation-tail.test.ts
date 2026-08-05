@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import {
   RUN_OUTCOMES_PROJECTION_VERSION,
   type FoldRunOutcomesOptions,
+  type FoldRunOutcomesReport,
 } from '@vostride/agent-qa-knowledge-local'
 import {
   HANDOFF_FILE,
@@ -29,6 +30,7 @@ import {
   type CompletedRunHandoff,
   type GuardrailPolicy,
   type MaskingContext,
+  type QuarantineLedgerEvent,
   type StepEvidence,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it, vi } from 'vitest'
@@ -325,9 +327,17 @@ function successfulOperations(
     ],
     readCurationTailReceipt: () => undefined,
     writeCurationTailReceipt: vi.fn(),
-    foldRunOutcomes: vi.fn(() => ({ kind: 'applied' as const, tests: 0 })),
+    foldRunOutcomes: vi.fn(() => ({ kind: 'applied' as const, tests: 0, ...NO_DETECTION })),
     ...overrides,
   }
+}
+
+/**
+ * The 390 D-08 detection member every fold report now carries. Declared once so a stub cannot
+ * accidentally describe a DIFFERENT detection outcome than the tail is being asked about.
+ */
+const NO_DETECTION = {
+  quarantine: { kind: 'not-evaluated' as const, reason: 'not-requested' as const },
 }
 
 function handedOffDrainReport() {
@@ -462,7 +472,11 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         })
         expect(options).not.toHaveProperty('excluded')
         expect(options.extractAnchors).toBeTypeOf('function')
-        return { kind: 'applied', tests: 1 }
+        // 390 D-08: the tail reads the drain's wall clock ONCE and hands it down as data, and
+        // names the audit location explicitly — the fold and the ladder read no clock of their own.
+        expect(options.quarantine?.auditBaseDir).toBe(agentQaRoot)
+        expect(options.quarantine?.now).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/)
+        return { kind: 'applied', tests: 1, ...NO_DETECTION }
       },
       buildCuratorAuthor(deps) {
         order.push('author')
@@ -672,7 +686,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       })),
       foldRunOutcomes: condition === 'projection-failed'
         ? vi.fn(() => { throw new Error('projection failed') })
-        : vi.fn(() => ({ kind: 'applied' as const, tests: 0 })),
+        : vi.fn(() => ({ kind: 'applied' as const, tests: 0, ...NO_DETECTION })),
       drainQueue: vi.fn(async () => handedOffDrainReport()),
     })
 
@@ -802,6 +816,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     const foldRunOutcomes = vi.fn((_options: FoldRunOutcomesOptions) => ({
       kind: 'applied' as const,
       tests: 0 as const,
+      ...NO_DETECTION,
     }))
     const operations = successfulOperations({
       loadCompletedRunHandoff(file) {
@@ -1281,7 +1296,7 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
       runId,
       handoffDigest: curationTailHandoffDigest(completed),
     } as unknown as CurationTailReceipt
-    const foldRunOutcomes = vi.fn(() => ({ kind: 'applied' as const, tests: 0 }))
+    const foldRunOutcomes = vi.fn(() => ({ kind: 'applied' as const, tests: 0, ...NO_DETECTION }))
     const operations = successfulOperations({
       loadCompletedRunHandoff: () => completed,
       readCurationTailReceipt: () => staleReceipt,
@@ -1296,7 +1311,7 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
   it('reruns all three folds after a simulated mid-tail failure — safe because the fold is idempotent per runId', async () => {
     let crashDrain = true
     const receipts = new Map<string, CurationTailReceipt>()
-    const foldRunOutcomes = vi.fn(() => ({ kind: 'applied' as const, tests: 1 }))
+    const foldRunOutcomes = vi.fn(() => ({ kind: 'applied' as const, tests: 1, ...NO_DETECTION }))
     const emitCurationCandidates = vi.fn(successfulOperations().emitCurationCandidates)
     const emitCanaryOutcomes = vi.fn(successfulOperations().emitCanaryOutcomes)
     const workingDrain = successfulOperations().drainQueue!
@@ -1755,5 +1770,163 @@ describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
     )
 
     expect(source).toContain('info(message: string): void')
+  })
+})
+
+describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
+  const sighting = {
+    product: 'shop-web',
+    filePath: 'suite/checkout.test.ts',
+    testName: 'checkout completes',
+    fingerprint: 'fp::app_bug',
+    verdictClass: 'app_bug' as const,
+    occurrenceOrdinals: 4,
+    windowOrdinals: 5,
+  }
+
+  function enteredFixture(): QuarantineLedgerEvent {
+    return {
+      schemaVersion: 1,
+      kind: 'entered',
+      at: '2026-08-05T12:00:00.000Z',
+      product: sighting.product,
+      filePath: sighting.filePath,
+      testName: sighting.testName,
+      fingerprint: 'fp::flake',
+      verdictClass: 'flake',
+      owner: 'unassigned',
+      expiresAt: '2026-09-04T12:00:00.000Z',
+    }
+  }
+
+  function releasedAutoFixture(): QuarantineLedgerEvent {
+    return {
+      schemaVersion: 1,
+      kind: 'released-auto',
+      at: '2026-08-05T12:00:00.000Z',
+      product: sighting.product,
+      filePath: sighting.filePath,
+      testName: 'some other test',
+    }
+  }
+
+  function withQuarantine(quarantine: FoldRunOutcomesReport['quarantine']) {
+    return successfulOperations({
+      foldRunOutcomes: vi.fn(() => ({ kind: 'applied' as const, tests: 1, quarantine })),
+    })
+  }
+
+  it('stays silent when detection ran and found nothing worth saying', async () => {
+    const info = vi.fn()
+    const warn = vi.fn()
+
+    await runCurationTail(baseOptions(
+      withQuarantine({
+        kind: 'evaluated',
+        append: { kind: 'appended', lines: 0 },
+        events: [],
+        // A flag alone is NOT news here: it fires every second failure and its home is the
+        // recurrence sentence. Pinning the silence is what keeps the drain log readable.
+        flagged: [{ ...sighting, verdictClass: 'flake', occurrenceOrdinals: 2 }],
+        escalatedNotQuarantined: [],
+        refusedLines: [],
+      }),
+      { log: { warn, info } },
+    ))
+
+    expect(info.mock.calls.map(([message]) => String(message))
+      .filter((message) => message.startsWith('quarantine: '))).toEqual([])
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('Quarantine'))
+  })
+
+  it('renders one disposition line when lifecycle events landed', async () => {
+    const info = vi.fn()
+
+    await runCurationTail(baseOptions(
+      withQuarantine({
+        kind: 'evaluated',
+        append: { kind: 'appended', lines: 2 },
+        events: [enteredFixture(), releasedAutoFixture()],
+        flagged: [{ ...sighting, verdictClass: 'flake', occurrenceOrdinals: 2 }],
+        escalatedNotQuarantined: [],
+        refusedLines: [],
+      }),
+      { log: { warn: vi.fn(), info } },
+    ))
+
+    expect(info).toHaveBeenCalledWith(
+      'quarantine: 1 entered, 1 released-auto, 0 escalated-not-quarantined (1 flagged)',
+    )
+  })
+
+  it('is LOUD about an escalation the class gate withheld — it appends nothing (D-05)', async () => {
+    const info = vi.fn()
+    const warn = vi.fn()
+
+    await runCurationTail(baseOptions(
+      withQuarantine({
+        kind: 'evaluated',
+        append: { kind: 'appended', lines: 0 },
+        events: [],
+        flagged: [],
+        escalatedNotQuarantined: [sighting],
+        refusedLines: [],
+      }),
+      { log: { warn, info } },
+    ))
+
+    expect(info).toHaveBeenCalledWith(
+      'quarantine: 0 entered, 0 released-auto, 1 escalated-not-quarantined (0 flagged)',
+    )
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Quarantine withheld for'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('app_bug'))
+  })
+
+  it('warns on a blocked append and names the self-healing path — never a silent loss', async () => {
+    const warn = vi.fn()
+
+    await runCurationTail(baseOptions(
+      withQuarantine({
+        kind: 'evaluated',
+        append: { kind: 'egress-blocked', detections: [{ label: 'l', detector: 'awsKey' }] },
+        events: [],
+        flagged: [],
+        escalatedNotQuarantined: [],
+        refusedLines: [],
+      }),
+      { log: { warn, info: vi.fn() } },
+    ))
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('egress-blocked (awsKey)'))
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("next run's fold re-evaluates and appends then"),
+    )
+  })
+
+  it('warns when the committed ledger could not be read at all', async () => {
+    const warn = vi.fn()
+
+    await runCurationTail(baseOptions(
+      withQuarantine({ kind: 'ledger-unreadable', reason: 'schemaVersion 99 is newer' }),
+      { log: { warn, info: vi.fn() } },
+    ))
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Quarantine detection skipped'),
+    )
+  })
+
+  it('says nothing at all when detection never ran', async () => {
+    const info = vi.fn()
+    const warn = vi.fn()
+
+    await runCurationTail(baseOptions(
+      withQuarantine({ kind: 'not-evaluated', reason: 'already-applied' }),
+      { log: { warn, info } },
+    ))
+
+    expect([...info.mock.calls, ...warn.mock.calls]
+      .map(([message]) => String(message))
+      .filter((message) => message.toLowerCase().includes('quarantine'))).toEqual([])
   })
 })

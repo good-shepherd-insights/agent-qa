@@ -83,7 +83,12 @@ export async function runOneShotLeg(): Promise<void> {
         procedure: { emitted: 0, refused: 0, unresolved: 0 },
         details: [],
       }),
-      foldRunOutcomes: () => ({ kind: 'applied', tests: 0 }),
+      foldRunOutcomes: () => ({
+          kind: 'applied',
+          tests: 0,
+          // 390 D-08: this stub asks for no detection, so the fold declares it skipped.
+          quarantine: { kind: 'not-evaluated', reason: 'not-requested' },
+        }),
       buildCuratorAuthor: () => author,
       // Compare the two hosts at the drain boundary; daemon maintenance runs on a later cadence.
       drainQueue: async (options) => {

@@ -366,6 +366,68 @@ export interface CurateCompletedRunReport {
 }
 
 /**
+ * Render the fold's quarantine disposition (390 D-08, Pitfall 4).
+ *
+ * Silent unless there is something a human must know. Loud in three cases, each of which is a
+ * fact that would otherwise be invisible:
+ *
+ *  - lifecycle events landed (a test entered or left quarantine),
+ *  - an escalation was class-gated AWAY from auto-quarantine — the D-05 anti-silencing surfacing,
+ *    which is exactly the case that appends nothing and would otherwise pass unremarked,
+ *  - the append or the read was REFUSED. A blocked egress that loses an `entered` event is the
+ *    defect class this warning exists for; it is never swallowed by a bare catch.
+ *
+ * Flags alone stay quiet: a suspected-flaky rung fires every second failure and its home is the
+ * recurrence sentence, not the drain log.
+ */
+function logQuarantineDisposition(
+  runId: string,
+  // Reached THROUGH the capability the CLI already owns: 387 D-20 removed knowledge-local from
+  // this package's dependency contract, and the surface firewall ledger only ever shrinks. The
+  // report type is the fold capability's own return, so naming it costs no new import.
+  outcome: ReturnType<LocalCurationCapabilities['foldRunOutcomes']>['quarantine'],
+  log: CurationTailLogger,
+): void {
+  if (outcome.kind === 'not-evaluated') return
+  if (outcome.kind === 'ledger-unreadable') {
+    log.warn(`Quarantine detection skipped for ${runId}: ${outcome.reason}`)
+    return
+  }
+
+  const entered = outcome.events.filter((event) => event.kind === 'entered').length
+  const released = outcome.events.filter((event) => event.kind === 'released-auto').length
+  if (entered > 0 || released > 0 || outcome.escalatedNotQuarantined.length > 0) {
+    log.info?.(
+      `quarantine: ${String(entered)} entered, ${String(released)} released-auto, `
+      + `${String(outcome.escalatedNotQuarantined.length)} escalated-not-quarantined `
+      + `(${String(outcome.flagged.length)} flagged)`,
+    )
+  }
+  for (const sighting of outcome.escalatedNotQuarantined) {
+    log.warn(
+      `Quarantine withheld for ${sighting.testName} (${sighting.filePath}): `
+      + `${sighting.verdictClass} recurred at ${String(sighting.occurrenceOrdinals)} of the last `
+      + `${String(sighting.windowOrdinals)} failing builds and will keep failing this build.`,
+    )
+  }
+  if (outcome.append.kind === 'egress-blocked') {
+    log.warn(
+      `Quarantine ledger append refused for ${runId}: egress-blocked (`
+      + `${outcome.append.detections.map((detection) => detection.detector).join(', ')}). `
+      + 'The window stays crossed; the next run\'s fold re-evaluates and appends then.',
+    )
+  }
+  if (outcome.refusedLines.length > 0) {
+    log.warn(
+      `Quarantine ledger has ${String(outcome.refusedLines.length)} unreadable line(s) for `
+      + `${runId}: ${outcome.refusedLines
+        .map((line) => `line ${String(line.lineNumber)} (${line.reason})`)
+        .join(', ')}.`,
+    )
+  }
+}
+
+/**
  * Fold ONE completed run (388-02 D-01).
  *
  * Extracted verbatim from the sweep's inner body so `curate-memory`'s handler and the tail's
@@ -433,13 +495,22 @@ export async function curateCompletedRun(
       // 390 D-09: `runDir` lets the fold read this run's `analysis.json`, so the counters and
       // fingerprint windows key off RESOLVED verdicts rather than the deterministic floor. It is
       // the same dir the canary fold above already reads — no new input crosses this boundary.
+      // 390 D-08: detection runs INSIDE this fold, under the writer lease the tail already holds
+      // (positional serialization — the ledger module takes no lock of its own). `now` is read
+      // once, here, and threaded down as data so the fold and the ladder stay clock-free.
       try {
-        operations.foldRunOutcomes({
+        const fold = operations.foldRunOutcomes({
           knowledgeRoot: input.knowledgeRoot,
           handoff: input.handoff,
           runDir: input.runDir,
           extractAnchors: exercisedAnchors,
+          quarantine: {
+            now: new Date(tailStartedAtMs).toISOString(),
+            auditBaseDir: input.agentQaRoot,
+            policy: input.policy,
+          },
         })
+        logQuarantineDisposition(receiptIdentity.runId, fold.quarantine, input.log)
       } catch {
         projectionFailed = true
       }

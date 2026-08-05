@@ -82,6 +82,27 @@ export type {
   QuarantineLedgerRead,
   RefusedQuarantineLine,
 } from './quarantine/ledger.js'
+// 390 D-05/D-06/D-07/D-10: the detection ladder's pure rule and its pinned thresholds. Plan 06's
+// provider composes these; QUARANTINE_WINDOW_ORDINALS is deliberately absent here because it is
+// already published below from the window read that declares it — one symbol, one export site.
+export {
+  AUTO_QUARANTINE_CLASSES,
+  QUARANTINE_AUTO_EXIT_PASSES,
+  QUARANTINE_CLASS_DISPOSITIONS,
+  QUARANTINE_DEFAULT_EXPIRY_DAYS,
+  QUARANTINE_ESCALATE_THRESHOLD,
+  QUARANTINE_FLAG_FLOOR,
+  evaluateQuarantineDetection,
+} from './quarantine/detection.js'
+export type {
+  EvaluateQuarantineDetectionInput,
+  QuarantineDetectionFailure,
+  QuarantineDetectionResult,
+  QuarantineDetectionSighting,
+  QuarantineDetectionTestWindow,
+  QuarantineDisposition,
+  QuarantineOrdinalOutcome,
+} from './quarantine/detection.js'
 export {
   ARTIFACT_RUN_CAP_BYTES,
   ARTIFACT_STEP_CAP_BYTES,
@@ -226,6 +247,8 @@ export type {
   FoldRunOutcomesOptions,
   FoldRunOutcomesReport,
   ProjectRunOutcomesOptions,
+  QuarantineDetectionOptions,
+  QuarantineFoldOutcome,
   RebuildRunOutcomesOptions,
   RebuildRunOutcomesReport,
   RunOutcomeFailureKey,

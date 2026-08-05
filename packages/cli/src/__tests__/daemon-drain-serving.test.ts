@@ -566,7 +566,12 @@ describe('daemon curation serving tracer', () => {
           procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [],
         }),
-        foldRunOutcomes: () => ({ kind: 'applied', tests: 0 }),
+        foldRunOutcomes: () => ({
+          kind: 'applied',
+          tests: 0,
+          // 390 D-08: this stub asks for no detection, so the fold declares it skipped.
+          quarantine: { kind: 'not-evaluated', reason: 'not-requested' },
+        }),
         drainQueue: async () => ({
           kind: 'handed-off',
           holder: {

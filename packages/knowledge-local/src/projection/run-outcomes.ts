@@ -38,7 +38,28 @@ import type {
   VerdictClass,
 } from '@vostride/agent-qa-schema'
 
+import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
+import { QuarantineLedgerVersionError } from '@vostride/agent-qa-schema'
+import type { QuarantineLedgerEvent } from '@vostride/agent-qa-schema'
+
 import { ensureRunOutcomeTables, openIndexWriter } from '../index-open.js'
+import { evaluateQuarantineDetection } from '../quarantine/detection.js'
+import type {
+  QuarantineDetectionFailure,
+  QuarantineDetectionSighting,
+  QuarantineDetectionTestWindow,
+} from '../quarantine/detection.js'
+import {
+  appendQuarantineEvents,
+  foldQuarantineLedgerState,
+  readQuarantineLedger,
+} from '../quarantine/ledger.js'
+import type {
+  QuarantineAppendOutcome,
+  RefusedQuarantineLine,
+} from '../quarantine/ledger.js'
+import { fingerprintRecurrence } from './fingerprint-window-read.js'
+import { readTestOutcomeHistory } from './run-outcome-read.js'
 
 /**
  * Stamped into the curation-tail receipt's projection component. Bump when the fold
@@ -130,6 +151,25 @@ export interface RebuildRunOutcomesReport {
   skipped: number
 }
 
+/**
+ * What the fold needs before it may evaluate the quarantine detection ladder (390 D-08).
+ *
+ * Grouped and OPTIONAL on purpose: a caller that cannot supply a clock and an audit location does
+ * not get a silently empty evaluation, it gets `{kind: 'not-evaluated', reason: 'not-requested'}`
+ * on the report. "Detection ran and found nothing" and "detection never ran" are different facts.
+ */
+export interface QuarantineDetectionOptions {
+  /**
+   * The ISO-8601 instant the evaluation is anchored to — the drain's own wall clock, read ONCE by
+   * the caller. The fold and the rule below it stay clock-free (390-01's purity-by-argument), which
+   * is what lets both expiry and the ladder be pinned one step either side.
+   */
+  now: string
+  /** Explicit audit location for the ledger's committed-egress checkpoint; never inferred. */
+  auditBaseDir: string
+  policy?: GuardrailPolicy
+}
+
 export interface FoldRunOutcomesOptions {
   /** Absolute agent-qa-knowledge root hosting the derived index SQLite. */
   knowledgeRoot: string
@@ -141,9 +181,34 @@ export interface FoldRunOutcomesOptions {
    * has no run dir — folds the deterministic floor, byte-identically to pre-390.
    */
   runDir?: string
+  /** Present when the caller wants the D-08 detection step; absent skips it explicitly. */
+  quarantine?: QuarantineDetectionOptions
 }
 
-export type FoldRunOutcomesReport = ApplyRunOutcomesResult
+/**
+ * What the fold's detection step did, as DATA (390 Pitfall 4).
+ *
+ * Every arm is a fact the caller can print. In particular an `'egress-blocked'` append is a value,
+ * not an exception: a guardrail refusal that vanished inside a catch is exactly how an `entered`
+ * event goes missing in silence, and a missing `entered` event is a test that keeps failing builds
+ * with nobody told why it was supposed to stop.
+ */
+export type QuarantineFoldOutcome =
+  | { kind: 'not-evaluated'; reason: 'already-applied' | 'not-requested' }
+  /** The committed ledger could not be read at all — detection refuses rather than guessing. */
+  | { kind: 'ledger-unreadable'; reason: string }
+  | {
+      kind: 'evaluated'
+      append: QuarantineAppendOutcome
+      events: readonly QuarantineLedgerEvent[]
+      flagged: readonly QuarantineDetectionSighting[]
+      escalatedNotQuarantined: readonly QuarantineDetectionSighting[]
+      refusedLines: readonly RefusedQuarantineLine[]
+    }
+
+export type FoldRunOutcomesReport = ApplyRunOutcomesResult & {
+  quarantine: QuarantineFoldOutcome
+}
 
 interface OutcomeEntry {
   buildOrdinal: number
@@ -564,9 +629,103 @@ export function rebuildRunOutcomes(
 }
 
 /**
+ * The D-08 detection step: evaluate the quarantine ladder over the JUST-COMMITTED window and
+ * append whatever lifecycle events it authors.
+ *
+ * ORDERING, stated rather than pretended (Open Q1). The projection lives in SQLite and the ledger
+ * is a committed JSONL file; there is no transaction that spans both, so this cannot be atomic and
+ * the code does not claim to be. The append orders AFTER the projection commit, which means a
+ * crash — or an egress refusal — between the two leaves the counters applied and no event written.
+ * That state SELF-HEALS: the window is still crossed, so the next applied fold re-evaluates and
+ * appends then. The opposite order (append first) would have the strictly worse failure: a
+ * quarantine entry for a run whose counters never landed.
+ *
+ * The reads below run on the same connection immediately after `applyRunOutcomes` returned
+ * `'applied'`, so the recurrence they see includes this run.
+ */
+function evaluateQuarantineForFold(
+  db: DatabaseSync,
+  projection: RunOutcomesProjection,
+  knowledgeRoot: string,
+  opts: QuarantineDetectionOptions,
+): QuarantineFoldOutcome {
+  let read
+  try {
+    read = readQuarantineLedger(knowledgeRoot)
+  } catch (error) {
+    // Refuse, never heal. A ledger this build cannot parse is committed truth it must not guess
+    // at — evaluating against "no entries" would re-quarantine released tests and re-enter open
+    // ones. The counters already applied; only detection stands down, and it says so.
+    if (error instanceof QuarantineLedgerVersionError) {
+      return { kind: 'ledger-unreadable', reason: error.message }
+    }
+    throw error
+  }
+  const entries = foldQuarantineLedgerState(read.events, opts.now)
+
+  const failures: QuarantineDetectionFailure[] = projection.tests.flatMap((test) =>
+    test.failure === undefined ? [] : [{
+      product: projection.product,
+      filePath: test.filePath,
+      testName: test.testName,
+      fingerprint: test.failure.fingerprint,
+      verdictClass: test.failure.verdictClass,
+      ...fingerprintRecurrence(
+        db,
+        { product: projection.product, fingerprint: test.failure.fingerprint },
+        projection.buildOrdinal,
+      ),
+    }])
+
+  // Exit candidates are every OPEN entry in this product — not only the tests that ran here. A
+  // test whose window filled with passes several runs ago must still be released.
+  const testWindows: QuarantineDetectionTestWindow[] = entries.flatMap((entry) => {
+    if (entry.state !== 'quarantined' || entry.product !== projection.product) return []
+    const history = readTestOutcomeHistory(db, {
+      product: entry.product,
+      filePath: entry.filePath,
+      testName: entry.testName,
+    })
+    if (history === undefined) return []
+    return [{
+      product: entry.product,
+      filePath: entry.filePath,
+      testName: entry.testName,
+      ordinals: history.lastOutcomes,
+    }]
+  })
+
+  const detection = evaluateQuarantineDetection({
+    failures,
+    testWindows,
+    entries,
+    now: opts.now,
+  })
+
+  const append = appendQuarantineEvents(knowledgeRoot, detection.events, {
+    auditBaseDir: opts.auditBaseDir,
+    ...(opts.policy === undefined ? {} : { policy: opts.policy }),
+  })
+
+  return {
+    kind: 'evaluated',
+    append,
+    events: detection.events,
+    flagged: detection.flagged,
+    escalatedNotQuarantined: detection.escalatedNotQuarantined,
+    refusedLines: read.refusedLines,
+  }
+}
+
+/**
  * Incremental fold wrapper for the post-verdict tail: opens the one index writer, applies
  * the projection, and closes. The tail invokes it inside the SAME crash boundary and the
  * SAME (extended) receipt as candidate/canary emit — never a second marker file.
+ *
+ * Detection hangs off the `'applied'` arm ONLY (D-08). `applyRunOutcomes` answers
+ * `'already-applied'` from an early return that fires before its transaction even opens, so
+ * "a refold never double-quarantines" is true by POSITION — there is no second idempotency
+ * condition here to keep in sync with the marker.
  */
 export function foldRunOutcomes(opts: FoldRunOutcomesOptions): FoldRunOutcomesReport {
   const artifact = opts.runDir === undefined
@@ -578,7 +737,22 @@ export function foldRunOutcomes(opts: FoldRunOutcomesOptions): FoldRunOutcomesRe
   })
   const handle = openIndexWriter(opts.knowledgeRoot)
   try {
-    return applyRunOutcomes(handle.db, projection)
+    const applied = applyRunOutcomes(handle.db, projection)
+    if (applied.kind !== 'applied') {
+      return { ...applied, quarantine: { kind: 'not-evaluated', reason: 'already-applied' } }
+    }
+    if (opts.quarantine === undefined) {
+      return { ...applied, quarantine: { kind: 'not-evaluated', reason: 'not-requested' } }
+    }
+    return {
+      ...applied,
+      quarantine: evaluateQuarantineForFold(
+        handle.db,
+        projection,
+        opts.knowledgeRoot,
+        opts.quarantine,
+      ),
+    }
   } finally {
     handle.close()
   }

@@ -46,6 +46,13 @@ const FLAKY_FILE = 'suite/checkout.test.ts'
 const FLAKY_TEST = 'checkout retries the payment sheet'
 const payAnchor: Anchor = { t: 'el', role: 'button', name: 'pay now', ordinal: 1 }
 
+/**
+ * These folds pass no `quarantine` options, so the 390 D-08 detection step declares itself
+ * explicitly skipped rather than answering an empty evaluation. Kept as exact equality — the
+ * report's shape is the contract, and a loosened matcher would stop certifying it.
+ */
+const NO_DETECTION = { quarantine: { kind: 'not-evaluated', reason: 'not-requested' } } as const
+
 const tempDirs: string[] = []
 
 function tempDir(prefix: string): string {
@@ -229,7 +236,7 @@ describe('D-09: the projection fold consumes resolved verdicts', () => {
     })
 
     expect(foldRunOutcomes({ knowledgeRoot, handoff, runDir, extractAnchors }))
-      .toEqual({ kind: 'applied', tests: 1 })
+      .toEqual({ kind: 'applied', tests: 1, ...NO_DETECTION })
 
     const writer = openIndexWriter(knowledgeRoot)
     try {
@@ -251,7 +258,7 @@ describe('D-09: the projection fold consumes resolved verdicts', () => {
       handoff,
       runDir,
       extractAnchors,
-    })).toEqual({ kind: 'applied', tests: 1 })
+    })).toEqual({ kind: 'applied', tests: 1, ...NO_DETECTION })
 
     const writer = openIndexWriter(knowledgeRoot)
     try {
@@ -291,7 +298,7 @@ describe('D-09: the projection fold consumes resolved verdicts', () => {
         handoff,
         runDir: runDirs[index] as string,
         extractAnchors,
-      })).toEqual({ kind: 'applied', tests: 1 })
+      })).toEqual({ kind: 'applied', tests: 1, ...NO_DETECTION })
     }
 
     const incremental = openIndexWriter(incrementalRoot)
