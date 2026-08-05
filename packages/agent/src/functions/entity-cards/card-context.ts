@@ -16,7 +16,11 @@
 // dashboard, which is the honest one. The masker's own flag is what makes this decidable; the
 // producer never inspects the value's characters to guess.
 
-import type { MaskedResolvedConfig } from '@vostride/agent-qa-schema'
+import type {
+  EntityDescriptor,
+  MaskedResolvedConfig,
+  QuarantineEntryState,
+} from '@vostride/agent-qa-schema'
 
 import type { FunctionDeps } from '../spec.js'
 
@@ -65,6 +69,15 @@ export function readDashboardUrlBase(
 /** Everything the producer needs beyond the descriptor itself. */
 export interface EntityCardContext {
   readonly urlBase?: DashboardUrlBase
+  /**
+   * The committed quarantine ledger's folded entries (390 D-12), when this render needs them.
+   *
+   * Read at the OP boundary and handed to the producer as a value, exactly like `urlBase` — the
+   * producer takes no ports, which is what makes ENTY-02's "two renders of unchanged state are
+   * deeply equal" a fact about the parameter list. Absent means no quarantine port is bound, or
+   * no test is being rendered; the producer treats both as `active`.
+   */
+  readonly quarantine?: readonly QuarantineEntryState[]
 }
 
 /**
@@ -74,8 +87,24 @@ export interface EntityCardContext {
  * The two states are different — one is a deliberate default and the other is a broken
  * project — and a card that quietly dropped its link because the config file could not be
  * parsed would hide the breakage behind D-10's expected absence.
+ *
+ * The quarantine read is SCOPED to renders that contain a test, and the descriptors are taken as
+ * a parameter for exactly that reason. Only a `TST` card's status can depend on the ledger, so a
+ * `MEM` or `RUN` render must not be able to fail because a committed file somebody hand-edited
+ * no longer parses. When a test IS in the set the read happens once for the whole render — one
+ * fold, so two cards in one disambiguation set cannot disagree — and a refusal PROPAGATES:
+ * answering `active` there would say "this test is not quarantined" about a ledger nobody could
+ * open, which is the silent flip this phase exists to prevent.
  */
-export async function readEntityCardContext(deps: FunctionDeps): Promise<EntityCardContext> {
+export async function readEntityCardContext(
+  deps: FunctionDeps,
+  descriptors: readonly EntityDescriptor[],
+): Promise<EntityCardContext> {
   const urlBase = readDashboardUrlBase(await deps.config.getMasked())
-  return urlBase === undefined ? {} : { urlBase }
+  const needsQuarantine = descriptors.some((descriptor) => descriptor.kind === 'TST')
+  const quarantine = needsQuarantine ? await deps.quarantine?.list() : undefined
+  return {
+    ...(urlBase === undefined ? {} : { urlBase }),
+    ...(quarantine === undefined ? {} : { quarantine }),
+  }
 }

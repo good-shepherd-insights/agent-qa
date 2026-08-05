@@ -49,6 +49,6 @@ export const entitiesGetSpec: FunctionSpec<EntitiesGetInput, EntityCard> = {
     // The render context is read HERE, not inside the producer, so the producer stays a pure
     // synchronous function of values (D-10). Read after the lookup: an address that names
     // nothing is refused without touching configuration at all.
-    return produceEntityCard(descriptor, await readEntityCardContext(deps))
+    return produceEntityCard(descriptor, await readEntityCardContext(deps, [descriptor]))
   },
 }

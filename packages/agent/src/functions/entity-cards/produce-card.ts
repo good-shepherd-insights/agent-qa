@@ -26,6 +26,7 @@ import type {
   EntityCard,
   EntityDescriptor,
   ForgetReceiptV1,
+  QuarantineEntryState,
 } from '@vostride/agent-qa-schema'
 
 import { actionsForKind } from './actions.js'
@@ -70,10 +71,52 @@ export class ForgetReceiptKindError extends TypeError {
  * has not caught up must not be able to contradict it. The receipt's own field is typed to
  * the `MEM` vocabulary, so this substitution can never widen what the card may say.
  */
-function statusFor(descriptor: EntityDescriptor, input: EntityCardRenderInput): string {
-  if (input.forgetReceipt === undefined) return descriptor.statusSource
+function statusFor(
+  descriptor: EntityDescriptor,
+  input: EntityCardRenderInput,
+  /**
+   * 390 D-12: the SUPPRESSING window this entity sits under, already joined. Passed in rather
+   * than recomputed so the status and the key facts are decided by literally one evaluation —
+   * a card can never say `quarantined` above facts that describe no window, or the reverse.
+   *
+   * The two substitutions cannot collide: a receipt describes a `MEM` bundle and a quarantine
+   * window a `TST` test, so the receipt keeps its precedence unchanged (D-19's second use).
+   */
+  quarantineEntry: QuarantineEntryState | undefined,
+): string {
+  if (input.forgetReceipt === undefined) {
+    return quarantineEntry === undefined ? descriptor.statusSource : 'quarantined'
+  }
   if (descriptor.kind !== 'MEM') throw new ForgetReceiptKindError(descriptor.kind)
   return input.forgetReceipt.resultingBundleStatus
+}
+
+/**
+ * THE join between an entity and the committed ledger (390 D-11/D-12), spelled once.
+ *
+ * Three gates, each refusing a different wrong answer:
+ *
+ *  - KIND. Only `TST` has a test identity; every other kind's card is untouched by the ledger.
+ *  - REPORTED IDENTITY. The join key is `(product, filePath, testName)`, which the store must
+ *    have REPORTED — never `machineId` (a per-run explicit id) and never the title. A descriptor
+ *    that carries no identity answers `active`, which is honest: this store cannot say.
+ *  - STATE. Only `quarantined` counts. An `expired` window has STOPPED suppressing (D-11 — the
+ *    forcing function that keeps quarantine a lifecycle) and a `released` one is closed, so both
+ *    are `active` tests whose history lives in `quarantine.list`. A card that showed `expired`
+ *    as `quarantined` would tell a reader the failing build in front of them is licensed.
+ */
+function quarantineEntryFor(
+  descriptor: EntityDescriptor,
+  input: EntityCardRenderInput,
+): QuarantineEntryState | undefined {
+  if (descriptor.kind !== 'TST') return undefined
+  const identity = descriptor.testIdentity
+  if (identity === undefined || input.quarantine === undefined) return undefined
+  return input.quarantine.find((entry) =>
+    entry.state === 'quarantined'
+    && entry.product === identity.product
+    && entry.filePath === identity.filePath
+    && entry.testName === identity.testName)
 }
 
 /**
@@ -110,6 +153,7 @@ export function produceEntityCard(
   descriptor: EntityDescriptor,
   input: EntityCardRenderInput = {},
 ): EntityCard {
+  const quarantineEntry = quarantineEntryFor(descriptor, input)
   return EntityCardSchema.parse({
     kind: descriptor.kind,
     id: descriptor.shortId,
@@ -118,13 +162,15 @@ export function produceEntityCard(
     // stops a card from ever carrying two that disagree.
     uri: formatEntityUri(descriptor.kind, descriptor.shortId),
     title: descriptor.title,
-    status: statusFor(descriptor, input),
+    status: statusFor(descriptor, input, quarantineEntry),
     ...urlFor(descriptor, input),
-    keyFacts: projectKeyFacts(
-      input.forgetReceipt === undefined
-        ? { descriptor }
-        : { descriptor, forgetReceipt: input.forgetReceipt },
-    ),
+    keyFacts: projectKeyFacts({
+      descriptor,
+      ...(input.forgetReceipt === undefined ? {} : { forgetReceipt: input.forgetReceipt }),
+      // The SAME join the status was decided by — computed once, passed as a value, so the
+      // projection table stays pure over what it is handed.
+      ...(quarantineEntry === undefined ? {} : { quarantineEntry }),
+    }),
     actions: actionsForKind(descriptor),
   }) as EntityCard
 }

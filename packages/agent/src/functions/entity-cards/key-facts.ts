@@ -29,6 +29,7 @@ import type {
   EntityKind,
   ForgetReceiptV1,
   KeyFact,
+  QuarantineEntryState,
 } from '@vostride/agent-qa-schema'
 
 /**
@@ -51,6 +52,22 @@ export const ENTITY_IDENTITY_FACT_LABELS = {
 
 /** The label the D-03 rename fact renders under, named once so a test can pin it. */
 export const ENTITY_RENAMED_TO_FACT_LABEL = 'renamed to'
+
+/**
+ * The labels a quarantined `TST` card projects under, in the order they render (390 D-12/D-17).
+ *
+ * Three facts, and the third is the only interesting choice. D-17 puts the OCCURRENCE COUNT
+ * ("3rd occurrence in 5 builds") in the rendered sentence, where a live provider join can compute
+ * it; this producer is pure by construction and takes no ports, so it carries the occurrence
+ * context the LEDGER ITSELF records — which class of failure recurred, and since when. Reaching
+ * for the count here would mean giving the card producer a store handle, which is the one thing
+ * ENTY-02's determinism claim rests on it not having.
+ */
+export const QUARANTINE_FACT_LABELS = {
+  owner: 'quarantine owner',
+  expires: 'quarantine expires',
+  occurrence: 'quarantine occurrence',
+} as const
 
 /** The labels a forget receipt projects under, in the order they render (D-19). */
 export const FORGET_RECEIPT_FACT_LABELS = {
@@ -89,6 +106,26 @@ function renameFact(descriptor: EntityDescriptor): KeyFact[] {
     value: descriptor.successorMachineId,
     ref: formatEntityUri('TGT', `TGT-${descriptor.successorMachineId}`),
   }]
+}
+
+/**
+ * An open quarantine window rendered as facts (390 D-12).
+ *
+ * Reached only from the `TST` row of the table below, and only for an entry the join already
+ * decided is suppressing — an expired or released window contributes NOTHING here, because the
+ * card's status says `active` for both and a fact announcing a quarantine beside it would be the
+ * card contradicting itself.
+ */
+function quarantineFacts(entry: QuarantineEntryState | undefined): KeyFact[] {
+  if (entry === undefined) return []
+  return [
+    { label: QUARANTINE_FACT_LABELS.owner, value: entry.owner },
+    { label: QUARANTINE_FACT_LABELS.expires, value: entry.expiresAt },
+    {
+      label: QUARANTINE_FACT_LABELS.occurrence,
+      value: `${entry.verdictClass} failures recurring; quarantined since ${entry.enteredAt}`,
+    },
+  ]
 }
 
 /**
@@ -139,6 +176,14 @@ export interface KeyFactInput {
   readonly descriptor: EntityDescriptor
   /** The forget receipt for a forgotten `MEM` bundle (D-04/D-19), when the caller holds one. */
   readonly forgetReceipt?: ForgetReceiptV1
+  /**
+   * The SUPPRESSING quarantine window for a `TST` entity (390), already joined by the producer.
+   *
+   * Handed in as a value for the same reason the receipt is: this module is pure over what it is
+   * given, and a member through which a ledger could be read would be a port in disguise. The
+   * join itself is spelled once, beside the status it also decides.
+   */
+  readonly quarantineEntry?: QuarantineEntryState
 }
 
 type KeyFactProjection = (input: KeyFactInput) => KeyFact[]
@@ -151,7 +196,10 @@ type KeyFactProjection = (input: KeyFactInput) => KeyFact[]
  * fallback happened to be. There is deliberately no fallback.
  */
 export const KEY_FACT_PROJECTIONS = {
-  TST: ({ descriptor }) => [identityFact(descriptor)],
+  TST: ({ descriptor, quarantineEntry }) => [
+    identityFact(descriptor),
+    ...quarantineFacts(quarantineEntry),
+  ],
   RUN: ({ descriptor }) => [identityFact(descriptor)],
   // A reserved family (D-03) has no entity behind the address, so the address itself under its
   // own label is the whole honest content.

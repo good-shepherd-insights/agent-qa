@@ -78,6 +78,25 @@ export const EntityDescriptorSchema = z.object({
    * successor, which would make an old CI log's reference quietly mean something else.
    */
   successorMachineId: z.string().min(1).optional(),
+  /**
+   * The DURABLE test identity a `TST` entity's store keyed it on (Phase 390, D-12).
+   *
+   * `(product, filePath, testName)` — the same three legs the run-outcome projection and the
+   * quarantine ledger are keyed by, and never `testId`, which is a per-run explicit id. It is
+   * reported BESIDE `machineId` rather than parsed out of it: the two answer different
+   * questions, and a card that recovered an identity by splitting a machine id would be
+   * guessing at a format no producer has agreed to.
+   *
+   * OPTIONAL because a store may not know it. A `TST` descriptor without it renders `active`,
+   * which is the honest answer for a store that cannot say whether this test is quarantined —
+   * matching it from the title instead would be exactly the plausible-but-wrong attribution
+   * D-12 refuses. Absent for every other kind by construction: nothing else has a test identity.
+   */
+  testIdentity: z.object({
+    product: z.string().min(1),
+    filePath: z.string().min(1),
+    testName: z.string().min(1),
+  }).strict().optional(),
 }).strict()
 
 export type EntityDescriptor = z.infer<typeof EntityDescriptorSchema>

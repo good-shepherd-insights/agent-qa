@@ -17,6 +17,7 @@ import {
 import type {
   EntitiesResolveInput,
   EntityCardResolution,
+  EntityDescriptor,
   EntityResolution,
 } from '@vostride/agent-qa-schema'
 
@@ -61,6 +62,22 @@ function renderResolution(
   }
 }
 
+/**
+ * Every descriptor a resolution will render a card for — the SAME exhaustive shape as
+ * `renderResolution`, so the set the context is built for cannot drift from the set that is
+ * rendered. A fourth resolution arm is a compile error here too.
+ */
+function descriptorsOf(resolution: EntityResolution): readonly EntityDescriptor[] {
+  switch (resolution.kind) {
+    case 'resolved':
+      return [resolution.descriptor]
+    case 'ambiguous':
+      return resolution.candidates.map((candidate) => candidate.descriptor)
+    case 'none':
+      return []
+  }
+}
+
 export const entitiesResolveSpec: FunctionSpec<EntitiesResolveInput, EntityCardResolution> = {
   id: ENTITIES_RESOLVE_FUNCTION_ID,
   summary: 'Resolve any entity reference to a card, a disambiguation set, or an honest miss.',
@@ -74,6 +91,12 @@ export const entitiesResolveSpec: FunctionSpec<EntitiesResolveInput, EntityCardR
     // an ADDRESS for something that already existed. It creates no entity, changes no
     // knowledge, and is invisible in every projection except the one that hands out names.
     const resolution = await deps.entities.resolve(input.ref)
-    return renderResolution(resolution, await readEntityCardContext(deps))
+    return renderResolution(
+      resolution,
+      // The descriptors this render is ABOUT to produce cards for — every arm of them, so an
+      // ambiguous set containing one test reads the ledger once and every candidate is rendered
+      // against the same fold (390). A `none` arm renders nothing and reads nothing.
+      await readEntityCardContext(deps, descriptorsOf(resolution)),
+    )
   },
 }
