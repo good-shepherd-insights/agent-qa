@@ -184,7 +184,7 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   },
 }))
 
-vi.mock('@vostride/agent-qa-core', () => {
+vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   class MockMobileSetupError extends Error {
     category: string
     constructor(input: { category: string; message: string }) {
@@ -193,7 +193,14 @@ vi.mock('@vostride/agent-qa-core', () => {
     }
   }
 
+  // 390-08: `workspaceRelativeIdentityPath` comes from the REAL module, never a hand-spelled stub.
+  // It is the rule that decides what bytes land in the committed quarantine ledger, so a mock of it
+  // would leave these run-command pins measuring the mock's idea of identity instead of the
+  // shipped one — and a drift between the two would be exactly the defect CR-02 found.
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-core')>()
+
   return {
+  workspaceRelativeIdentityPath: actual.workspaceRelativeIdentityPath,
   parseAllTests: mockParseAllTests,
   parseAllTestBindings: vi.fn(async (filePaths: string[]) => {
     const result = await mockParseAllTests(filePaths)

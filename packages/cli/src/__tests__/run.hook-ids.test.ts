@@ -120,7 +120,12 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   slugBranch: (name: string) => String(name),
 }))
 
-vi.mock('@vostride/agent-qa-core', () => ({
+// 390-08: `workspaceRelativeIdentityPath` is pulled from the REAL module rather than stubbed — it
+// decides the bytes the committed quarantine ledger keys on, and a stub would leave these pins
+// measuring the test's idea of identity instead of the shipped one.
+vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
+  workspaceRelativeIdentityPath:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).workspaceRelativeIdentityPath,
   DEFAULT_AGENT_QA_ARTIFACTS_DIR: '.agent-qa/artifacts',
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
   DEFAULT_AGENT_QA_SCREENSHOTS_DIR: '.agent-qa/artifacts/screenshots',

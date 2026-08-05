@@ -4,7 +4,7 @@ import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
 import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
-import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths } from '@vostride/agent-qa-core'
+import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths, workspaceRelativeIdentityPath } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate } from '@vostride/agent-qa-model'
 import { resolveTarget, type ResolvedTarget } from '../targets.js'
@@ -1180,6 +1180,10 @@ async function executeSuites(
     dashboardDb.close()
   }
 
+  // One resolved suite member: the parsed test, the absolute path it was READ from, and the
+  // workspace-relative path that is its durable IDENTITY (390-08).
+  type SuiteTestEntry = [TestDefinition, string, string]
+
   // A suite fully resolved by the composition root, ready to contribute its members to the ONE
   // RunSession (D-04). Suite-level orchestration (setup hooks + adapter setup + nav / teardown +
   // auth capture + reporter end-calls) is captured as the lazy lifecycle `setup`/`teardown` the
@@ -1191,7 +1195,16 @@ async function executeSuites(
     suiteConfig: RunSuiteConfig
     modelProfiles: { planner: DeclaredModelProfile; verifier: DeclaredModelProfile }
     curationModelDeps: CurationTailModelDeps
-    testEntries: [TestDefinition, string][]
+    /**
+     * `[parsed test, ABSOLUTE source path, workspace-relative IDENTITY]`.
+     *
+     * 390-08 (CR-02 / D-01): the two path legs are deliberately distinct. The absolute path is what
+     * reads bytes (parse, upload resolution, artifacts); the third leg is the durable identity the
+     * descriptor, the handoff, the projection and the committed quarantine ledger all key on — the
+     * same bytes on every checkout. Minted ONCE here, beside the resolve that produced the absolute
+     * path, so no consumer downstream has to re-derive it (and none can derive it differently).
+     */
+    testEntries: SuiteTestEntry[]
     suiteMembers: Array<Record<string, unknown>>
     suiteRunId: string
     suiteArtifact: Record<string, unknown> | undefined
@@ -1236,7 +1249,7 @@ async function executeSuites(
     )
     const suiteAuthStateUse = getSelectedAuthStateUse(mergedUse as Record<string, unknown>)
 
-    const testEntries: [TestDefinition, string][] = []
+    const testEntries: SuiteTestEntry[] = []
     const suiteMembers: Array<Record<string, unknown>> = []
     for (const { test: relativePath, id: suiteEntryId } of suite.tests) {
       if (!isPathInsideDir(relativePath, configDir)) {
@@ -1411,7 +1424,11 @@ async function executeSuites(
         resolvedDefinition: testDef,
         loadStatus: 'loaded',
       })
-      testEntries.push([testDef, absolutePath])
+      // 390-08 (CR-02 / D-01): mint the durable identity HERE, beside the resolve that produced
+      // `absolutePath`, through core's one exported recipe. `relativePath` is the suite ref as the
+      // author typed it (it may carry a leading `./`), so it is deliberately NOT reused as identity
+      // — the direct-run path has no such ref and would then mint different bytes for the same file.
+      testEntries.push([testDef, absolutePath, workspaceRelativeIdentityPath(configDir, absolutePath)])
     }
 
     const suiteResolvedTarget = suite.target
@@ -1915,6 +1932,13 @@ async function executeSuites(
   // Flat ordered member list across all suites (file order, then in-suite order). Each member's
   // failFastGroup = its suite file, preserving today's within-suite fail-fast while other suites
   // still run (D-15). testIndex = global array position (the shell's authoritative index).
+  //
+  // 390-08 (CR-02 / D-01): descriptor `filePath` is the WORKSPACE-RELATIVE identity, not the
+  // absolute path. RUN_OUTCOMES_PROJECTION_VERSION is deliberately NOT bumped alongside it: a
+  // projection rebuild replays stored handoffs, which still carry the absolute identities their runs
+  // wrote, so the rebuild would land in the same mixed state it was meant to clear. Pre-390-08 rows
+  // simply age out of the 5-ordinal recurrence window instead, and detection state is machine-local
+  // by posture anyway — D-01's accepted cost, paid once, while zero ledgers exist in the wild.
   const members: RunMemberDescriptor[] = []
   const bindings: SuiteMemberBinding[] = []
   const digestMembers: Array<{ testFileContent: string; suiteFileContent?: string }> = []
@@ -1923,7 +1947,11 @@ async function executeSuites(
   for (let suiteIndex = 0; suiteIndex < preparedSuites.length; suiteIndex++) {
     const prepared = preparedSuites[suiteIndex]
     for (let i = 0; i < prepared.testEntries.length; i++) {
-      const [test, filePath] = prepared.testEntries[i]
+      // `filePath` is the ABSOLUTE path every read below uses; `identityPath` is the durable
+      // workspace-relative identity minted at prepare time (390-08). The descriptor carries the
+      // identity — never the absolute path — because it is what the handoff, the projection and the
+      // committed quarantine ledger key on, on every checkout.
+      const [test, filePath, identityPath] = prepared.testEntries[i]
       const globalIndex = members.length
       const memberSuiteIndex = i
       members.push({
@@ -1933,7 +1961,7 @@ async function executeSuites(
         failFastGroup: prepared.suiteKey,
         // 363 D-01: parity descriptor fields the shell rides onto testStarted. Suite grouping is
         // per-suite (id/name/index/total); filePath + totalSteps are per-member.
-        filePath,
+        filePath: identityPath,
         suiteId: prepared.suite['suite-id'],
         suiteName: prepared.suite.name,
         suiteIndex,
@@ -3371,7 +3399,12 @@ export function createRunCommand(): Command {
 
         // Parser-minted bindings are the ONE source for member identity and digest bytes (D-20).
         // Digests must still be resolved before startRun (D-04).
-        const { members, digestMembers } = buildDirectRunMembers(filtered)
+        //
+        // 390-08 (CR-02 / D-01): `configDir` is handed in so the descriptor's identity leg is the
+        // WORKSPACE-RELATIVE form of the binding's own path — the same bytes on every checkout, which
+        // is what lets the committed ledger written on one machine suppress on another. The bindings
+        // keep their absolute paths for every read below.
+        const { members, digestMembers } = buildDirectRunMembers(filtered, configDir)
         let perMemberDigests: ConfigDigests[] = []
         const memberBindings: Array<(ctx: MemberTestRunContext) => Promise<TestResult>> =
           filtered.map((binding, testIndex) =>

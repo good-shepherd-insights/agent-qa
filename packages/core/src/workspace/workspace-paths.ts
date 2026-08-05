@@ -74,6 +74,32 @@ function assertInsideWorkspace(configDir: string, absolutePath: string, filePath
   return trimLeadingCurrentDir(relativePath)
 }
 
+/**
+ * The ONE spelling of the durable workspace-relative IDENTITY recipe (390-08 / CR-02, D-01).
+ *
+ * `configDir`-rooted, forward-slashed, `./`-trimmed, and escape-refusing — literally
+ * {@link assertInsideWorkspace} with {@link resolveWorkspaceFileTarget}'s resolution step in front,
+ * exported rather than re-derived so no second spelling of the rule can drift from this one.
+ *
+ * WHY IT EXISTS: the committed `quarantine.jsonl` keys entries on this string and compares it with
+ * `===`. An absolute path is bytes only the machine that wrote them can produce, so a ledger
+ * carrying absolute identities could never match on a fresh CI checkout — it would be committed for
+ * an inheritance it structurally cannot deliver. These bytes are IDENTITY ONLY and are never used
+ * for file access; readers keep the absolute path they already resolved.
+ *
+ * Accepting an already-relative input (resolved against `configDir`, as
+ * {@link resolveWorkspaceFileTarget} does) makes the mint idempotent: handing an identity through a
+ * second layer cannot silently re-anchor it on `process.cwd()`.
+ *
+ * @throws when the path resolves outside `configDir` — an escaping file cannot mint an identity.
+ */
+export function workspaceRelativeIdentityPath(configDir: string, filePath: string): string {
+  const absolutePath = path.isAbsolute(filePath)
+    ? path.resolve(filePath)
+    : path.resolve(configDir, filePath)
+  return assertInsideWorkspace(configDir, absolutePath, filePath)
+}
+
 function escapeRegexChar(char: string): string {
   return char.replace(/[.+^${}()|[\]\\]/g, '\\$&')
 }
