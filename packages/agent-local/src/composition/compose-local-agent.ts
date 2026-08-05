@@ -1418,10 +1418,22 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // The port takes the root as a FACTORY (the CLI resolves it asynchronously) and the clock
       // as an argument, so this composition supplies both and the implementation reads neither
       // of its own accord. Nothing opens here: the first byte is read when a verb is invoked.
+      //
+      // 390-09 / CR-03: the SAME `resolveWriterAuthority` the apply path consumes three bindings
+      // above, and it is what lands each host on the correct lease arm with zero daemon changes.
+      // The daemon supplies it (`cli/src/daemon/host.ts:1839`) because it acquired the lease at
+      // startup and holds it for its lifetime, so the verbs ride that authority instead of asking
+      // for a lease the process cannot be granted twice; the CLI in-process host supplies nothing,
+      // so the verbs acquire and release per call. Conditionally spread like its neighbour rather
+      // than assigned through: an absent authority must be an ABSENT field, not a present
+      // `undefined` one, so the implementation's `?.()` arm distinguishes the two hosts.
       quarantine: createQuarantineOperations({
         resolveKnowledgeRoot: input.knowledgeRoot,
         auditBaseDir: input.agentQaRoot,
         now: () => clock.now(),
+        ...(input.resolveWriterAuthority === undefined
+          ? {}
+          : { resolveWriterAuthority: input.resolveWriterAuthority }),
       }),
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),

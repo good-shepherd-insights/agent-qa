@@ -45,6 +45,8 @@ import type {
   VerdictClass,
 } from '@vostride/agent-qa-schema'
 
+import { acquireWriterLease, releaseLease } from '../lease/writer-lease.js'
+import type { WriterLease } from '../lease/writer-lease.js'
 import { QUARANTINE_DEFAULT_EXPIRY_DAYS } from './detection.js'
 import {
   appendQuarantineEvents,
@@ -92,6 +94,30 @@ export class QuarantineWriteBlockedError extends Error {
   }
 }
 
+/**
+ * Another writer holds the MRSW lease, so the verb declined instead of writing beside it.
+ *
+ * Same shape and same reason as `QuarantineWriteBlockedError` above: the port's result unions carry
+ * no lease arm by design (390-04), so a refusal that is not one of the named outcomes surfaces as a
+ * typed throw. The ledger is byte-unchanged when this is raised — the acquisition fails before the
+ * read, so nothing was decided either.
+ *
+ * The holder is carried, not just named in the message, because the operator's next question is
+ * always "who?" and the answer is a live pid the CLI can report without re-reading the lease file.
+ * This verb does NOT wait and does NOT delegate: an operator retrying by hand is a better failure
+ * mode than a human-facing verb that blocks for as long as a drain takes.
+ */
+export class QuarantineLeaseHeldError extends Error {
+  constructor(readonly holder: WriterLease) {
+    super(
+      'the quarantine ledger write was refused: the knowledge writer lease is held by pid '
+        + `${holder.pid} (lease ${holder.leaseId}, epoch ${holder.epoch}). `
+        + 'Retry once that writer finishes.',
+    )
+    this.name = 'QuarantineLeaseHeldError'
+  }
+}
+
 export interface QuarantineOperationsOptions {
   /** The committed knowledge root. A FACTORY, because the CLI host resolves it asynchronously. */
   resolveKnowledgeRoot: () => Promise<string> | string
@@ -99,6 +125,17 @@ export interface QuarantineOperationsOptions {
   auditBaseDir: string
   /** The ONLY way wall clock enters these verbs. Required — see the module head. */
   now: () => string
+  /**
+   * The writer lease THIS process already holds, when it holds one (387-08 D-18 / D-5).
+   *
+   * Supplied by the daemon host, which acquires at startup and holds for its whole lifetime: a
+   * holder that calls `acquireWriterLease` is answered `held` by itself and, unlike the apply path,
+   * has nobody to delegate to. Absent on the CLI in-process host, which holds nothing and therefore
+   * takes the lease per call. The value is not consulted for fencing here — an append to the
+   * committed ledger is one line through the egress checkpoint, not an index mutation — it answers
+   * exactly one question: has this process already serialized itself?
+   */
+  resolveWriterAuthority?: () => { leaseId: string; epoch: number } | undefined
   policy?: GuardrailPolicy
 }
 
@@ -150,17 +187,46 @@ export function createQuarantineOperations(
   options: QuarantineOperationsOptions,
 ): QuarantineOperationsPort {
   /** One read of the injected clock, one fold against it — the whole state a verb decides on. */
-  async function readState(): Promise<{
-    knowledgeRoot: string
+  function readState(knowledgeRoot: string): {
     now: string
     entries: QuarantineEntryState[]
-  }> {
-    const knowledgeRoot = await options.resolveKnowledgeRoot()
+  } {
     const now = options.now()
     // Typed refusals propagate — see the module head. `refusedLines` are the ledger's own
     // line-level damage report and do not stop the neighbours from folding.
     const { events } = readQuarantineLedger(knowledgeRoot)
-    return { knowledgeRoot, now, entries: foldQuarantineLedgerState(events, now) }
+    return { now, entries: foldQuarantineLedgerState(events, now) }
+  }
+
+  /**
+   * The write verbs' serialized section — the whole read-fold-decide-append cycle, not the append.
+   *
+   * Serializing only the file write would leave the interesting race intact: two writers could both
+   * fold a ledger with no entry for a test, both decide `entered`, and both append, producing two
+   * opening events for one window. So `decide` runs INSIDE the scope and is deliberately synchronous
+   * — there is no await point between the read and the append for another writer to be scheduled at.
+   *
+   * Three arms, and they are exhaustive over the acquisition outcome:
+   *  - a handed-in authority means this process IS the holder; it acquires nothing and releases
+   *    nothing, because the lease it was given outlives this call (the `applyReview` arm);
+   *  - `held` refuses typed, having written nothing and having taken nothing from the holder;
+   *  - every other non-`acquired` outcome rethrows the union's own error, which every refusal arm
+   *    carries precisely so a new arm surfaces by name instead of being swallowed here.
+   */
+  async function underWriterLease<T>(knowledgeRoot: string, decide: () => T): Promise<T> {
+    if (options.resolveWriterAuthority?.() !== undefined) return decide()
+
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind === 'held') throw new QuarantineLeaseHeldError(acquired.holder)
+    if (acquired.kind !== 'acquired') throw acquired.error
+
+    try {
+      return decide()
+    } finally {
+      // Given back on EVERY exit, including the typed ledger refusals the read raises: a verb that
+      // failed must not leave the next drain locked out of the knowledge root.
+      releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })
+    }
   }
 
   function append(knowledgeRoot: string, events: readonly QuarantineLedgerEvent[]): void {
@@ -181,100 +247,108 @@ export function createQuarantineOperations(
 
   return {
     async list(): Promise<readonly QuarantineEntryState[]> {
-      const { entries } = await readState()
+      // Acquisition-free ON PURPOSE: this reads and answers, and a reader that took the writer
+      // lease would queue every enumeration behind whatever drain happens to be running.
+      const { entries } = readState(await options.resolveKnowledgeRoot())
       // Every state, unfiltered (the op's own contract): an operator deciding what to release
       // needs the expired and released rows as much as the suppressing ones.
       return [...entries].sort(triageOrder)
     },
 
     async release(input: QuarantineReleaseInput): Promise<QuarantineReleaseOutput> {
-      const { knowledgeRoot, now, entries } = await readState()
-      const entry = entryFor(entries, input)
-      // An OPEN window is one no release event has closed — `expired` counts, because D-11 keeps an
-      // expired entry listed, renewable AND releasable; it stopped suppressing, it did not vanish.
-      // Absent or already-closed answers the named arm and appends nothing: "that test is not
-      // quarantined" is an ordinary answer, and an event recording a release that released nothing
-      // would put a lie in committed history.
-      if (entry === undefined || entry.state === 'released') return { kind: 'no-entry' }
+      const knowledgeRoot = await options.resolveKnowledgeRoot()
+      return await underWriterLease(knowledgeRoot, () => {
+        const { now, entries } = readState(knowledgeRoot)
+        const entry = entryFor(entries, input)
+        // An OPEN window is one no release event has closed — `expired` counts, because D-11 keeps
+        // an expired entry listed, renewable AND releasable; it stopped suppressing, it did not
+        // vanish. Absent or already-closed answers the named arm and appends nothing: "that test is
+        // not quarantined" is an ordinary answer, and an event recording a release that released
+        // nothing would put a lie in committed history.
+        if (entry === undefined || entry.state === 'released') return { kind: 'no-entry' }
 
-      append(knowledgeRoot, [{
-        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
-        kind: 'released-manual',
-        at: now,
-        product: entry.product,
-        filePath: entry.filePath,
-        testName: entry.testName,
-      }])
-
-      // The entry as it stands AFTER the release — a caller reading `released` learns what it
-      // closed without a second read, and the state it reports is the post-write one.
-      return { kind: 'released', entry: { ...entry, state: 'released' } }
-    },
-
-    async add(input: QuarantineAddInput): Promise<QuarantineAddOutput> {
-      const { knowledgeRoot, now, entries } = await readState()
-      const entry = entryFor(entries, input)
-      const expiresAt = input.expiresAt ?? defaultExpiry(now)
-
-      // An open window (suppressing OR lapsed) is EXTENDED rather than reopened, so the ledger keeps
-      // one continuous window instead of two overlapping ones. A closed window re-enters — D-10's
-      // "re-entry needs no special rule", and the repeated `entered` lines are the history the event
-      // log was chosen to keep (390-05: the intended record, not duplication).
-      if (entry !== undefined && entry.state !== 'released') {
         append(knowledgeRoot, [{
           schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
-          kind: 'renewed',
+          kind: 'released-manual',
           at: now,
           product: entry.product,
           filePath: entry.filePath,
           testName: entry.testName,
-          expiresAt,
-          // OMITTED when the caller named nobody: an absent owner leaves the existing claim (or the
-          // unassigned literal) exactly as it was. Writing `unassigned` here would silently
-          // UN-claim a window somebody had taken.
-          ...(input.owner === undefined ? {} : { owner: input.owner }),
         }])
-        return {
-          kind: 'renewed',
-          entry: {
-            ...entry,
-            owner: input.owner ?? entry.owner,
+
+        // The entry as it stands AFTER the release — a caller reading `released` learns what it
+        // closed without a second read, and the state it reports is the post-write one.
+        return { kind: 'released', entry: { ...entry, state: 'released' } }
+      })
+    },
+
+    async add(input: QuarantineAddInput): Promise<QuarantineAddOutput> {
+      const knowledgeRoot = await options.resolveKnowledgeRoot()
+      return await underWriterLease(knowledgeRoot, () => {
+        const { now, entries } = readState(knowledgeRoot)
+        const entry = entryFor(entries, input)
+        const expiresAt = input.expiresAt ?? defaultExpiry(now)
+
+        // An open window (suppressing OR lapsed) is EXTENDED rather than reopened, so the ledger
+        // keeps one continuous window instead of two overlapping ones. A closed window re-enters —
+        // D-10's "re-entry needs no special rule", and the repeated `entered` lines are the history
+        // the event log was chosen to keep (390-05: the intended record, not duplication).
+        if (entry !== undefined && entry.state !== 'released') {
+          append(knowledgeRoot, [{
+            schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+            kind: 'renewed',
+            at: now,
+            product: entry.product,
+            filePath: entry.filePath,
+            testName: entry.testName,
             expiresAt,
-            // A renewal on a lapsed entry puts it back under suppression, which is the whole point
-            // of keeping an expired entry renewable.
-            state: 'quarantined',
-          },
+            // OMITTED when the caller named nobody: an absent owner leaves the existing claim (or
+            // the unassigned literal) exactly as it was. Writing `unassigned` here would silently
+            // UN-claim a window somebody had taken.
+            ...(input.owner === undefined ? {} : { owner: input.owner }),
+          }])
+          return {
+            kind: 'renewed',
+            entry: {
+              ...entry,
+              owner: input.owner ?? entry.owner,
+              expiresAt,
+              // A renewal on a lapsed entry puts it back under suppression, which is the whole
+              // point of keeping an expired entry renewable.
+              state: 'quarantined',
+            },
+          }
         }
-      }
 
-      const owner = input.owner ?? QUARANTINE_UNASSIGNED_OWNER
-      append(knowledgeRoot, [{
-        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
-        kind: 'entered',
-        at: now,
-        product: input.product,
-        filePath: input.filePath,
-        testName: input.testName,
-        fingerprint: QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
-        verdictClass: QUARANTINE_MANUAL_ENTRY_CLASS,
-        owner,
-        expiresAt,
-      }])
-
-      return {
-        kind: 'entered',
-        entry: {
+        const owner = input.owner ?? QUARANTINE_UNASSIGNED_OWNER
+        append(knowledgeRoot, [{
+          schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+          kind: 'entered',
+          at: now,
           product: input.product,
           filePath: input.filePath,
           testName: input.testName,
           fingerprint: QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
           verdictClass: QUARANTINE_MANUAL_ENTRY_CLASS,
           owner,
-          enteredAt: now,
           expiresAt,
-          state: 'quarantined',
-        },
-      }
+        }])
+
+        return {
+          kind: 'entered',
+          entry: {
+            product: input.product,
+            filePath: input.filePath,
+            testName: input.testName,
+            fingerprint: QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
+            verdictClass: QUARANTINE_MANUAL_ENTRY_CLASS,
+            owner,
+            enteredAt: now,
+            expiresAt,
+            state: 'quarantined',
+          },
+        }
+      })
     },
   }
 }
