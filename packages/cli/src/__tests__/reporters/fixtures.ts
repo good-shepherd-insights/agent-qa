@@ -7,7 +7,7 @@
 // (D-09/D-10); the JUnit + wire reporters must leave the placeholders intact (D-11/D-02).
 
 import { createMaskingContext } from '@vostride/agent-qa-safety'
-import type { MaskingContext } from '@vostride/agent-qa-schema'
+import type { MaskingContext, QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import type {
   HookFinishedPayload,
   HookStartedPayload,
@@ -195,6 +195,30 @@ export function buildReporterFixture(): ReporterFixture {
   ]
 
   return { ctx, stepSecret, hookSecret, summarySecret, envelopes }
+}
+
+/**
+ * The run-start quarantine snapshot entry that licenses the fixture's FAILING member (390 D-16).
+ *
+ * Its identity is `(filePath, testName)` taken verbatim from `test1Started` — the same two fields
+ * the runner matches on, so a reporter that agrees with this entry agrees with the aggregate
+ * verdict rule about the same member. `product` is present because the handoff records it, and is
+ * deliberately NOT part of the match (the composition layer filtered by product before the
+ * snapshot was handed over — D-16).
+ */
+export const QUARANTINED_CHECKOUT: QuarantineAppliedEntry = {
+  product: 'shop-web',
+  filePath: 'tests/checkout.yaml',
+  testName: 'Checkout test',
+  expiresAt: '2126-09-04T10:00:00.000Z',
+}
+
+/** The same shape addressed at a test this fixture never runs — the negative half of any match pin. */
+export const QUARANTINED_ELSEWHERE: QuarantineAppliedEntry = {
+  product: 'shop-web',
+  filePath: 'tests/settings.yaml',
+  testName: 'Settings test',
+  expiresAt: '2126-09-04T10:00:00.000Z',
 }
 
 /** A simple string-collecting sink for asserting reporter writes. */
