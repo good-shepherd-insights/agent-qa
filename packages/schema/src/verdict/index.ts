@@ -14,6 +14,7 @@ export type { AnalysisArtifactAdmission, RunAnalysisArtifact } from './analysis-
 export { resolveRunVerdicts } from './resolved-verdicts'
 export { failureFingerprint } from './failure-fingerprint'
 export type { FailureFingerprintInput } from './failure-fingerprint'
+export { errorTextOf, failingStepOf } from './fingerprint-input'
 export {
   QUOTE_SEARCHED_STEP_FIELDS,
   QUOTE_SEARCHED_TEST_OUTCOME_FIELDS,

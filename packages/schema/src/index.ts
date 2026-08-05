@@ -217,13 +217,17 @@ export type {
 } from './quarantine/index'
 // 389 D-05/D-07/D-09/D-10: the verdict truth vocabulary — sentence parts joined to Verdict
 // by perTest (beside, never inside the frozen §A9 union), the version-guarded run analysis
-// artifact, and the ONE resolved-verdict accessor every consumer routes through.
+// artifact, and the ONE resolved-verdict accessor every consumer routes through. 390 FLAK-01
+// adds the fingerprint's INPUT stage (`failingStepOf`/`errorTextOf`) beside the frozen recipe,
+// hoisted out of agent so knowledge-local's recurrence windows can key the same way.
 export {
   admitAnalysisArtifactForRun,
   ANALYSIS_FILE,
   ANALYSIS_MIGRATIONS,
   AnalysisVersionError,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
+  errorTextOf,
+  failingStepOf,
   failureFingerprint,
   guardRunAnalysisArtifact,
   QUOTE_SEARCHED_STEP_FIELDS,
