@@ -24,7 +24,11 @@ import type {
   RunSession,
   RunStatus,
 } from '@vostride/agent-qa-schema'
-import { CURRENT_BUS_SCHEMA_VERSION, projectTestFinished } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_BUS_SCHEMA_VERSION,
+  projectTestFinished,
+  quarantineAppliesToTest,
+} from '@vostride/agent-qa-schema'
 import { createRunEventBus } from './bus.js'
 import { deriveAggregateVerdict, deriveMemberOutcome } from './verdict.js'
 import { classifyRootCause } from './root-cause.js'
@@ -53,18 +57,21 @@ const IDENTITY_MASKING: MaskingContext = {
  *
  * The match is on STABLE TEST IDENTITY — the member's `filePath` plus its parsed `name`, which is
  * the `testName` leg the ledger keys on — never `testId`, a per-run explicit id that would not
- * survive to the next build. `product` is not compared here: the composition layer already filtered
- * the snapshot to this run's product before handing it over (D-16), so re-deriving product bytes
- * inside the runner would be a second, drift-prone spelling of that rule.
+ * survive to the next build. `product` is not compared: the composition layer already filtered the
+ * snapshot to this run's product before handing it over (D-16).
+ *
+ * The comparison itself is schema's `quarantineAppliesToTest` and not a local copy (390-07): the
+ * CLI reporters have to reach the SAME answer about the same member, and two spellings of one rule
+ * can disagree without failing to compile.
  */
 function isMemberQuarantined(
   member: RunMemberDescriptor,
   quarantined: RunConfig['quarantined'],
 ): boolean {
-  if (quarantined === undefined) return false
-  return quarantined.some(
-    (entry) => entry.filePath === member.filePath && entry.testName === member.name,
-  )
+  return quarantineAppliesToTest(quarantined, {
+    filePath: member.filePath,
+    testName: member.name,
+  })
 }
 
 /**

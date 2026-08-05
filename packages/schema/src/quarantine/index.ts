@@ -8,6 +8,7 @@ export {
   guardQuarantineLedgerEvent,
   hasQuarantineEventShape,
   isQuarantineEventKind,
+  quarantineAppliesToTest,
 } from './quarantine-ledger'
 export type {
   QuarantineAppliedEntry,
@@ -20,6 +21,7 @@ export type {
   QuarantineOwner,
   QuarantineReleasedEvent,
   QuarantineRenewedEvent,
+  QuarantineSnapshotMatch,
 } from './quarantine-ledger'
 export {
   QuarantineAddInputSchema,

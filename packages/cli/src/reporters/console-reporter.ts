@@ -1,6 +1,7 @@
 import pc from 'picocolors'
 import { unmaskForHumanOutput } from '@vostride/agent-qa-safety'
-import type { MaskingContext } from '@vostride/agent-qa-schema'
+import { quarantineAppliesToTest } from '@vostride/agent-qa-schema'
+import type { MaskingContext, QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import type {
   HookFinishedPayload,
   HookStartedPayload,
@@ -35,6 +36,31 @@ export interface ConsoleReporterOptions {
   /** Test seam: override TTY detection (defaults to process.stdout.isTTY). */
   isTTY?: boolean
   columns?: number
+  /**
+   * The run-start quarantine snapshot (390 D-15/D-16), taken AT CONSTRUCTION — the same set the
+   * runner's aggregate verdict rule was handed, matched through schema's ONE predicate so the human
+   * line and the exit code cannot tell different stories about the same member.
+   */
+  quarantined?: readonly QuarantineAppliedEntry[]
+}
+
+/**
+ * What a quarantined FAILURE reads as (390 D-15). Three facts in one phrase, in the order a reader
+ * needs them: it is under quarantine, it FAILED (no skipped-mapping, no pass-with-note — the test
+ * ran, which is FLAK-02's point), and that failure is not in the build's failing tally.
+ */
+export const QUARANTINE_TEST_ANNOTATION = 'QUARANTINED — failed, not counted'
+
+/**
+ * The summary line's separate count segment (390 D-15) — a pure string composer, the
+ * `renderChainTerminalLine` idiom, so it can be pinned by value without rendering a run.
+ *
+ * SILENT at zero, and that silence is load-bearing: every pre-390 summary line stays byte-frozen on
+ * a run with nothing quarantined, so 388's exit summary and 389's D-08/D-09 lines keep their pins.
+ */
+export function renderQuarantineSummarySegment(count: number): string {
+  if (count <= 0) return ''
+  return ` · ${count} quarantined failure${count === 1 ? '' : 's'}`
 }
 
 /**
@@ -128,10 +154,13 @@ export function createConsoleReporter(
   let testsFailed = 0
   let testsSkipped = 0
   let totalDurationMs = 0
+  // 390 D-14: counted SEPARATELY and never subtracted from `testsFailed` — the member outcome stays
+  // truthful, and this is the segment that explains the green build's arithmetic.
+  let quarantinedFailures = 0
 
   const stepTextByIndex = new Map<number, string>()
   const testMeta = new Map<number, TestMeta>()
-  const failedTests: { name: string; failureSummary?: string }[] = []
+  const failedTests: { name: string; failureSummary?: string; quarantined: boolean }[] = []
   const hookPhaseStarted = new Set<string>()
 
   function resetPerTest(): void {
@@ -290,12 +319,25 @@ export function createConsoleReporter(
     else if (skipped) testsSkipped++
     else testsPassed++
 
-    if (failed) failedTests.push({ name, failureSummary: payload.failureSummary })
+    // Only a FAILED member carries the disposition: the annotation's claim is "this failure is not
+    // counted", which a passing member cannot make. Which tests are under quarantine at all is
+    // `quarantine.list`'s question (FLAK-03), not this line's.
+    const quarantined =
+      failed
+      && quarantineAppliesToTest(options.quarantined, {
+        filePath: meta?.filePath ?? name,
+        testName: name,
+      })
+    if (quarantined) quarantinedFailures++
+
+    if (failed) failedTests.push({ name, failureSummary: payload.failureSummary, quarantined })
 
     const badge = failed ? testBadge('failed') : skipped ? statusIcon('skipped') : testBadge('passed')
     const indent = sawSuite ? '  ' : ''
     const dur = skipped ? '(skipped)' : humanDuration(payload.durationMs ?? 0)
-    println(`${indent}${badge} ${name} ${c(pc.dim, dur)}`)
+    // Empty at zero quarantined, so this line is byte-identical to its pre-390 self.
+    const disposition = quarantined ? ` ${c(pc.yellow, QUARANTINE_TEST_ANNOTATION)}` : ''
+    println(`${indent}${badge} ${name} ${c(pc.dim, dur)}${disposition}`)
     println('')
   }
 
@@ -305,7 +347,8 @@ export function createConsoleReporter(
     if (failedTests.length > 0) {
       println(c(pc.red, 'Failed tests:'))
       for (const failure of failedTests) {
-        println(`  ${plain ? 'x' : c(pc.red, '✗')} ${failure.name}`)
+        const disposition = failure.quarantined ? ` ${c(pc.yellow, QUARANTINE_TEST_ANNOTATION)}` : ''
+        println(`  ${plain ? 'x' : c(pc.red, '✗')} ${failure.name}${disposition}`)
         if (failure.failureSummary) {
           for (const line of failure.failureSummary.split('\n')) {
             println(`    ${c(pc.dim, line)}`)
@@ -313,7 +356,7 @@ export function createConsoleReporter(
         }
       }
     }
-    println(`Tests:  ${testsPassed} of ${total} passed`)
+    println(`Tests:  ${testsPassed} of ${total} passed${renderQuarantineSummarySegment(quarantinedFailures)}`)
     println(`Steps:  ${formatStepsLine()}`)
     println(`Cache:  ${cacheHits} hits, ${cacheMisses} misses`)
     println(`Time:   ${humanDuration(totalDurationMs)}`)

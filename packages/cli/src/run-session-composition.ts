@@ -17,6 +17,7 @@
 
 import { unmaskForHumanOutput } from '@vostride/agent-qa-safety'
 import type { AuditSink, ConfirmPort, SafetyHookRunner } from '@vostride/agent-qa-safety'
+import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import { createReadlineConfirm } from '@vostride/agent-qa-safety-local'
 import { buildRunSessionSafetyHooks } from '@vostride/agent-qa-agent-local'
 import type {
@@ -143,6 +144,14 @@ export interface AttachRunSubscribersInput {
   extraSubscribers?: readonly RunSubscriberHandle[]
   /** Console pause/resume seam bound here so the D-11 confirm decorator can coordinate. */
   live?: LivePauseController
+  /**
+   * The run-start quarantine snapshot (390 D-15/D-16) — the SAME resolved set `startRun` was given.
+   *
+   * It arrives here rather than on the bus because this is the one place either reporter is
+   * constructed (Pitfall 8), so this is the one place the disposition can be dropped. Both surfaces
+   * receive it; both match through schema's single predicate.
+   */
+  quarantined?: readonly QuarantineAppliedEntry[]
 }
 
 /**
@@ -160,9 +169,14 @@ export interface AttachRunSubscribersInput {
 export function attachRunSubscribers(input: AttachRunSubscribersInput): { flush: () => Promise<void> } {
   const flushes: Array<() => Promise<void>> = []
 
+  const quarantined = input.quarantined
+
   let consoleHandle: ConsoleReporterHandle | undefined
   if (input.console !== false) {
-    consoleHandle = createConsoleReporter(input.maskingContext, input.console ?? {})
+    consoleHandle = createConsoleReporter(input.maskingContext, {
+      ...(input.console ?? {}),
+      ...(quarantined === undefined ? {} : { quarantined }),
+    })
     input.session.subscribe(REPLAY_FROM_START, consoleHandle.handler)
     flushes.push(consoleHandle.flush)
   }
@@ -170,7 +184,10 @@ export function attachRunSubscribers(input: AttachRunSubscribersInput): { flush:
   input.live?.bind(consoleHandle)
 
   if (input.junitOutputPath) {
-    const junit: JunitReporterHandle = createJunitReporter({ outputPath: input.junitOutputPath })
+    const junit: JunitReporterHandle = createJunitReporter({
+      outputPath: input.junitOutputPath,
+      ...(quarantined === undefined ? {} : { quarantined }),
+    })
     input.session.subscribe(REPLAY_FROM_START, junit.handler)
     flushes.push(junit.flush)
   }

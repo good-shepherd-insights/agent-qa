@@ -197,7 +197,8 @@ describe('attachRunSubscribers threads the quarantine snapshot to both reporters
     expect(calls).toHaveLength(2)
     for (const call of calls) {
       // the argument object ends at the first line that closes it at the call's indentation
-      expect(call.slice(0, call.indexOf('})'))).toMatch(/quarantined:/)
+      // shorthand (`quarantined,`) or explicit (`quarantined: singleQuarantined`)
+      expect(call.slice(0, call.indexOf('})'))).toMatch(/\bquarantined[,:]/)
     }
   })
 })

@@ -203,6 +203,7 @@ export {
   guardQuarantineLedgerEvent,
   hasQuarantineEventShape,
   isQuarantineEventKind,
+  quarantineAppliesToTest,
 } from './quarantine/index'
 export type {
   QuarantineAppliedEntry,
@@ -215,6 +216,7 @@ export type {
   QuarantineOwner,
   QuarantineReleasedEvent,
   QuarantineRenewedEvent,
+  QuarantineSnapshotMatch,
 } from './quarantine/index'
 // 390 D-12/D-13: the three verbs' wire contract and the port they dispatch through. Minted
 // here rather than beside the op specs because two packages consume it and neither may import

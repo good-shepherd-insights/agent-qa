@@ -2248,6 +2248,9 @@ async function executeSuites(
         junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
         extraSubscribers,
         live: livePause,
+        // 390 D-15: the SAME resolved set `startRun` was handed above, so the reporters and the
+        // aggregate verdict rule describe one disposition rather than two.
+        quarantined,
       })
 
       const { verdict } = await session.done
@@ -3511,6 +3514,8 @@ export function createRunCommand(): Command {
               junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
               extraSubscribers: singleExtraSubscribers,
               live: livePause,
+              // 390 D-15: the SAME resolved set `startRun` was handed above (Pitfall 8 — both sites).
+              quarantined: singleQuarantined,
             })
 
             const { verdict } = await session.done

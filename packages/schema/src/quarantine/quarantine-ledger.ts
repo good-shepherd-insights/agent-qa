@@ -218,3 +218,35 @@ export interface QuarantineAppliedEntry {
   testName: string
   expiresAt: string
 }
+
+/**
+ * The STABLE test identity a snapshot entry is matched against — `(filePath, testName)`, never
+ * `testId`, which is a per-run explicit id that does not survive to the next build.
+ */
+export interface QuarantineSnapshotMatch {
+  filePath: string
+  testName: string
+}
+
+/**
+ * Does the run-start snapshot license this test's failure (390 D-14/D-16)?
+ *
+ * ONE spelling of the match, consumed by everything that has to agree about it: the runner's
+ * aggregate verdict rule (which decides the exit code) and both CLI reporters (which tell the human
+ * and the CI parser why a red row did not fail the build). Two spellings could disagree without
+ * failing to compile, and the disagreement would surface as a reporter announcing a suppression
+ * that never happened — precisely the un-quarantine evidence FLAK-02 exists to keep flowing.
+ *
+ * `product` is deliberately NOT compared: the composition layer filters the snapshot to the run's
+ * product before handing it over (D-16), so re-deriving product bytes downstream would be a second,
+ * drift-prone spelling of that rule.
+ */
+export function quarantineAppliesToTest(
+  applied: readonly QuarantineAppliedEntry[] | undefined,
+  test: QuarantineSnapshotMatch,
+): boolean {
+  if (applied === undefined) return false
+  return applied.some(
+    (entry) => entry.filePath === test.filePath && entry.testName === test.testName,
+  )
+}
