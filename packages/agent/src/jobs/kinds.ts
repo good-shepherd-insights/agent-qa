@@ -35,6 +35,8 @@ import type {
 import {
   canonicalJson,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
+  errorTextOf,
+  failingStepOf,
   sha256hex,
   slugBranch,
 } from '@vostride/agent-qa-schema'
@@ -383,25 +385,20 @@ const TEMPLATE_NEXT_ACTION: Record<Verdict['class'], string> = {
 /**
  * A verbatim quote of captured evidence for one member test (389 D-06).
  *
- * Precedence inside the first failed step (else the last step): the first sub-action error
- * text, else the verifier's own reasoning. A test that captured ZERO steps quotes its
- * test-level outcome through the typed no-step arm — never a fabricated stepIndex. Every
- * branch quotes bytes the run actually recorded; templates assemble around the quote, the
- * quote itself is never authored.
+ * Step selection and error-text precedence come from schema's ONE exported input rule
+ * (`failingStepOf`/`errorTextOf`, hoisted by 390 plan 02): the first failed step else the last,
+ * then the first sub-action error text else the verifier's own reasoning. This quote and the
+ * fingerprint window are now the SAME rule by construction rather than by parallel maintenance.
+ * A test that captured ZERO steps quotes its test-level outcome through the typed no-step arm —
+ * never a fabricated stepIndex. Every branch quotes bytes the run actually recorded; templates
+ * assemble around the quote, the quote itself is never authored.
  */
 function templateGroundingQuote(test: PerTestOutcome | undefined): VerdictGroundingQuote {
-  if (test === undefined || test.steps.length === 0) {
-    return { source: 'test-outcome', quote: test?.outcome ?? 'failed' }
-  }
-  const step = test.steps.find((candidate) => !candidate.verifierVerdict.pass)
-    ?? test.steps[test.steps.length - 1] as (typeof test.steps)[number]
-  const subActionError = step.subActions
-    .map((subAction) => subAction.result.error)
-    .find((error): error is string => typeof error === 'string' && error !== '')
-  return {
-    stepIndex: step.stepIndex,
-    quote: subActionError ?? step.verifierVerdict.reasoning,
-  }
+  if (test === undefined) return { source: 'test-outcome', quote: 'failed' }
+  const step = failingStepOf(test)
+  // `failingStepOf` answers undefined for exactly the zero-step test — the no-step arm.
+  if (step === undefined) return { source: 'test-outcome', quote: test.outcome }
+  return { stepIndex: step.stepIndex, quote: errorTextOf(step, test) }
 }
 
 /**

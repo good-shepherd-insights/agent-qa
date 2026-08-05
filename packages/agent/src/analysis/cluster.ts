@@ -3,21 +3,22 @@
 // Called inside the `analysis.get` op and nowhere else persistent (D-14): CLI, run page and
 // chat get byte-identical clusters because there is nothing here to go stale — no store, no
 // port, no cache. Groups key on the ONE exported fingerprint vocabulary (`failureFingerprint`,
-// D-13), so 390's recurrence window and this presentation can never disagree about what "the
-// same failure" means.
+// D-13) over the ONE exported input rule (`failingStepOf`/`errorTextOf`, hoisted into schema by
+// 390 plan 02), so 390's recurrence window and this presentation cannot disagree about what "the
+// same failure" means — not by convention, but because there is a single spelling of each.
 //
 // D-16 — clusters mint NO identity. A cluster carries the fingerprint VALUE, its occurrence
 // count and member refs, and nothing else: no short-ID, no `agentqa://` address, no `BUG-`.
 // Durable problem identity belongs to the issue engine's identity-key model, and `BUG-` stays
 // reserved for it (387 D-03).
 
-import { exercisedAnchors, failureFingerprint } from '@vostride/agent-qa-schema'
-import type {
-  CompletedRunHandoff,
-  PerTestOutcome,
-  StepEvidence,
-  Verdict,
+import {
+  errorTextOf,
+  exercisedAnchors,
+  failingStepOf,
+  failureFingerprint,
 } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, Verdict } from '@vostride/agent-qa-schema'
 
 /** One member ref: the join keys a surface needs to expand a cluster, nothing more. */
 export interface AnalysisClusterMember {
@@ -33,34 +34,6 @@ export interface AnalysisCluster {
   members: AnalysisClusterMember[]
   /** The highest-confidence member; equal confidence breaks to the LOWEST testIndex. */
   representative: { testIndex: number }
-}
-
-/**
- * THE failing-step selection rule, pinned here once: the FIRST step whose verifier verdict
- * failed, else the LAST recorded step (the timeout-after-all-verified anchor). A zero-step
- * test has no failing step and keys through the error-signature fallback below. The same
- * rule `templateGroundingQuote` (jobs/kinds.ts) quotes by — two spellings of "which step
- * failed" would be two fingerprints for one failure.
- */
-function failingStepOf(test: PerTestOutcome): StepEvidence | undefined {
-  if (test.steps.length === 0) return undefined
-  return (
-    test.steps.find((step) => !step.verifierVerdict.pass)
-    ?? test.steps[test.steps.length - 1]
-  )
-}
-
-/**
- * The error-signature fallback source for anchorless failures (D-13's total-function leg):
- * the failing step's first sub-action error text, else the verifier's reasoning; a step-less
- * test answers its recorded outcome. Every branch quotes bytes the run recorded.
- */
-function errorTextOf(step: StepEvidence | undefined, test: PerTestOutcome): string {
-  if (step === undefined) return test.outcome
-  const subActionError = step.subActions
-    .map((subAction) => subAction.result.error)
-    .find((error): error is string => typeof error === 'string' && error !== '')
-  return subActionError ?? step.verifierVerdict.reasoning
 }
 
 interface GroupedMember extends AnalysisClusterMember {
