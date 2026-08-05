@@ -28,6 +28,7 @@ import type {
   EntityKind,
   ForgetReceiptV1,
   MaskedResolvedConfig,
+  QuarantineEntryState,
 } from '@vostride/agent-qa-schema'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -42,6 +43,7 @@ import {
   ENTITY_IDENTITY_FACT_LABELS,
   ENTITY_RENAMED_TO_FACT_LABEL,
   FORGET_RECEIPT_FACT_LABELS,
+  QUARANTINE_FACT_LABELS,
   forgetReceiptKeyFacts,
 } from '../key-facts.js'
 import { ForgetReceiptKindError, produceEntityCard } from '../produce-card.js'
@@ -413,6 +415,102 @@ describe('rendering is pure (ENTY-02 idempotency + empty edges)', () => {
     // must not be flagged — the `validate:arch` extractor's own known failure mode.
     expect(forbiddenModelImports('// this file must never import a model or an llm provider\n'))
       .toEqual([])
+  })
+})
+
+// ---- Test N: the TST quarantine flip (390 D-11/D-12, the 387 D-12 status member) ----------
+//
+// The `'quarantined'` member has been in `ENTITY_STATUSES.TST` since 387; this is the wiring
+// that serves it. Every leg below varies exactly ONE thing against the same fixture, because
+// "renders active" is the answer to four genuinely different situations — no entry, a lapsed
+// entry, a closed entry, and a store that never reported the durable identity — and a suite
+// that pinned only "absent → active" could not tell them apart.
+
+describe('the TST card serves quarantine state from the ledger (390)', () => {
+  const TEST_IDENTITY = {
+    product: 'shop',
+    filePath: 'tests/checkout.spec.ts',
+    testName: 'adds to cart',
+  }
+
+  function entry(overrides: Partial<QuarantineEntryState> = {}): QuarantineEntryState {
+    return {
+      ...TEST_IDENTITY,
+      fingerprint: '{"name":"submit","ordinal":0,"role":"button","t":"el"}::flake',
+      verdictClass: 'flake',
+      owner: 'unassigned',
+      enteredAt: '2026-08-05T10:00:00.000Z',
+      expiresAt: '2026-09-04T10:00:00.000Z',
+      state: 'quarantined',
+      ...overrides,
+    }
+  }
+
+  function tstDescriptor(overrides: Partial<EntityDescriptor> = {}): EntityDescriptor {
+    return descriptorFor('TST', { testIdentity: TEST_IDENTITY, ...overrides })
+  }
+
+  it('serves status quarantined with the owner, expiry and occurrence facts', () => {
+    const card = produceEntityCard(tstDescriptor(), { quarantine: [entry()] })
+
+    expect(card.status).toBe('quarantined')
+    expect(card.keyFacts.slice(1)).toEqual([
+      { label: QUARANTINE_FACT_LABELS.owner, value: 'unassigned' },
+      { label: QUARANTINE_FACT_LABELS.expires, value: '2026-09-04T10:00:00.000Z' },
+      {
+        label: QUARANTINE_FACT_LABELS.occurrence,
+        value: 'flake failures recurring; quarantined since 2026-08-05T10:00:00.000Z',
+      },
+    ])
+  })
+
+  it('serves EXPIRED as active — suppression stopped, so the card must not claim it (D-11)', () => {
+    const card = produceEntityCard(tstDescriptor(), { quarantine: [entry({ state: 'expired' })] })
+
+    expect(card.status).toBe('active')
+    expect(card.keyFacts).toHaveLength(1)
+  })
+
+  it('serves a RELEASED entry as active — a closed window is history, not a state', () => {
+    const card = produceEntityCard(tstDescriptor(), { quarantine: [entry({ state: 'released' })] })
+
+    expect(card.status).toBe('active')
+  })
+
+  it('serves active when the ledger holds an entry for a DIFFERENT test', () => {
+    const card = produceEntityCard(tstDescriptor(), {
+      quarantine: [entry({ testName: 'checks out as a guest' })],
+    })
+
+    expect(card.status).toBe('active')
+  })
+
+  it('serves active when the store reported no durable identity to join on', () => {
+    // The join is on `(product, filePath, testName)` — never on the machine id, which is the
+    // per-run explicit test id and not a durable identity. A descriptor with no reported
+    // identity is a store that cannot answer the question, and inventing a match from the
+    // title is exactly the plausible-but-wrong attribution D-12 refuses.
+    const card = produceEntityCard(descriptorFor('TST'), { quarantine: [entry()] })
+
+    expect(card.status).toBe('active')
+    expect(card.keyFacts).toHaveLength(1)
+  })
+
+  it('serves active with NO context at all — a host with no ledger renders the same card', () => {
+    expect(produceEntityCard(tstDescriptor()).status).toBe('active')
+    expect(produceEntityCard(tstDescriptor(), {}).status).toBe('active')
+  })
+
+  it('is TST-only: a same-identity entry never touches another kind\'s card', () => {
+    for (const kind of ENTITY_KINDS) {
+      if (kind === 'TST') continue
+      const card = produceEntityCard(
+        descriptorFor(kind, { testIdentity: TEST_IDENTITY }),
+        { quarantine: [entry()] },
+      )
+      expect(card.status, kind).toBe(ENTITY_STATUSES[kind][0])
+      expect(card.keyFacts.length, kind).toBeLessThanOrEqual(1)
+    }
   })
 })
 
