@@ -5,7 +5,7 @@
 // state and FLAK-02's non-failing disposition holds on every machine. Every line carries its own
 // `schemaVersion` (headerless, the outcomes.jsonl idiom) and crosses this one guard.
 //
-// TWO THINGS ARE DELIBERATE HERE:
+// THREE THINGS ARE DELIBERATE HERE:
 //
 //  1. The event list is append-only LIFECYCLE ACTIONS only. `'expired'` is NOT an event: it is a
 //     COMPUTED state derived from an entry's `expiresAt` against the caller's `now` (D-11). Wall
@@ -13,6 +13,13 @@
 //     reads no clock at all, and neither does the fold that consumes it.
 //  2. Stable test identity is `(product, filePath, testName)`, never `testId` (a per-run explicit
 //     id, not a durable identity). Every event and every folded entry is keyed that way.
+//  3. The `filePath` leg is the WORKSPACE-RELATIVE source path — rooted at the config directory,
+//     forward-slashed, no leading `./` — which is the same bytes on every checkout (390-08 / D-01).
+//     This is what makes the inheritance claim above TRUE rather than asserted: the match at
+//     `quarantineAppliesToTest` is an exact string compare, so an absolute path (the version-1
+//     shape) could only ever match on the one machine that wrote it. The absolute form is refused
+//     structurally by {@link hasQuarantineEventShape}, so a hand-edited machine-local line cannot
+//     silently re-enter the committed file.
 //
 // Consumers: the knowledge-local ledger read/fold (`readQuarantineLedger`/
 // `foldQuarantineLedgerState`), the CLI run-start snapshot (D-16), the quarantine list/add/release
@@ -26,7 +33,13 @@ import type { MigrationRegistry } from '../versioning/create-version-guard'
 import { isVerdictClass } from '../verdict/verdict'
 import type { VerdictClass } from '../verdict/verdict'
 
-export const CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION = 1
+/**
+ * Version 2 (390-08 / CR-02): the `filePath` identity leg is workspace-relative. Version 1 stamped
+ * a machine-local ABSOLUTE path, which no other checkout can interpret — the bump moves the
+ * contract while it is still FREE (zero `quarantine.jsonl` files exist in the wild, verified
+ * 2026-08-05) rather than after entries start circulating through PRs and CI checkouts.
+ */
+export const CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION = 2
 
 /**
  * The closed lifecycle-action union, spelled ONCE (388 C13). `entered` opens a window,
@@ -71,6 +84,13 @@ interface QuarantineEventBase {
   at: string
   /** The slugged product partition, matching the run-outcome projection's own key. */
   product: string
+  /**
+   * The WORKSPACE-RELATIVE source path: rooted at the config directory, forward-slashed, no
+   * leading `./` — minted once by the CLI through `workspaceRelativeIdentityPath` (390-08). These
+   * are the same bytes on every checkout, which is the whole reason the committed ledger can hand
+   * a disposition to a machine that never saw the run that wrote it. An absolute path is refused
+   * by {@link hasQuarantineEventShape}; it is never used for file access, only for identity.
+   */
   filePath: string
   testName: string
 }
@@ -116,7 +136,17 @@ export class QuarantineLedgerVersionError extends VersionGuardError {
   }
 }
 
-/** The older-version migration seam — empty at version 1, registered so growth is additive. */
+/**
+ * The older-version migration seam — DELIBERATELY EMPTY, registered so growth is additive.
+ *
+ * There is no `1 -> 2` entry and there will never be one. A version-1 line's `filePath` is a
+ * machine-local absolute path; migrating it to the workspace-relative identity would require
+ * GUESSING the checkout root it was written under, and a wrong guess produces an entry that
+ * silently suppresses the wrong test (or nothing at all) forever. Refusal through
+ * {@link QuarantineLedgerVersionError} is the honest arm: the read fails loudly, the run-start
+ * snapshot degrades to empty with a printed warning, and the human deletes three lines of a file
+ * that — by construction — no repository actually has (zero v1 ledgers exist, verified 2026-08-05).
+ */
 export const QUARANTINE_LEDGER_MIGRATIONS: MigrationRegistry = {}
 
 function isNonArrayObject(value: unknown): value is Record<string, unknown> {
@@ -127,11 +157,27 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
 }
 
+/** A POSIX root, a Windows drive root (either slash direction), or a UNC/backslash root. */
+const ABSOLUTE_PATH_PREFIX = /^([/\\]|[A-Za-z]:[/\\])/
+
+/**
+ * Is this `filePath` a checkout-portable identity — i.e. NOT an absolute path (390-08 / CR-02)?
+ *
+ * String predicates only, on purpose: this package bans host APIs, so the platform path module is
+ * unavailable and the Windows forms have to be spelled here rather than delegated to
+ * `isAbsolute` (which on a POSIX host would happily call `C:\repo\x.yaml` relative anyway).
+ */
+function isWorkspaceRelativeIdentity(value: string): boolean {
+  return !ABSOLUTE_PATH_PREFIX.test(value)
+}
+
 /**
  * Fail-closed structural check on one stored event, at the depth the fold traverses: the kind
- * inside the closed union, all three identity legs present and non-empty, and every kind-specific
- * field the arm declares. An `entered` event with no `expiresAt` would fold to a forever
- * suppression, so its absence is refused rather than defaulted.
+ * inside the closed union, all three identity legs present and non-empty, the `filePath` leg
+ * workspace-relative rather than machine-local, and every kind-specific field the arm declares. An
+ * `entered` event with no `expiresAt` would fold to a forever suppression, so its absence is
+ * refused rather than defaulted; an absolute `filePath` would fold to an entry no other checkout
+ * can match, so it is refused rather than normalized (this module cannot know the checkout root).
  */
 export function hasQuarantineEventShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
@@ -140,6 +186,7 @@ export function hasQuarantineEventShape(value: unknown): boolean {
   if (!isNonEmptyString(value.at)) return false
   if (!isNonEmptyString(value.product)) return false
   if (!isNonEmptyString(value.filePath)) return false
+  if (!isWorkspaceRelativeIdentity(value.filePath)) return false
   if (!isNonEmptyString(value.testName)) return false
 
   switch (value.kind) {
