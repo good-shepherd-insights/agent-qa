@@ -148,10 +148,18 @@ export interface RunMemberDescriptor {
   name: string
   failFastGroup?: string
   /**
-   * The member test file's path as the CLI resolves it. REQUIRED since 381-01 (ABRF-02):
-   * stable test identity = filePath + testName, copied verbatim onto `PerTestOutcome.filePath`
-   * by the handoff assembly — the required field makes the compiler enforce that every
-   * descriptor construction site supplies it.
+   * The member test file's WORKSPACE-RELATIVE path — rooted at the config directory,
+   * forward-slashed, no leading `./`. REQUIRED since 381-01 (ABRF-02): stable test identity =
+   * filePath + testName, copied verbatim onto `PerTestOutcome.filePath` by the handoff assembly —
+   * the required field makes the compiler enforce that every descriptor construction site supplies
+   * it.
+   *
+   * 390-08 (CR-02 / D-01): this is IDENTITY, not a file handle. It is deliberately checkout-
+   * independent — the same bytes on every machine — because the committed `quarantine.jsonl` keys
+   * entries on it and matches with `===`, so an absolute path here would produce a ledger that
+   * could only ever apply on the machine that wrote it. Nothing in the run reads bytes off disk
+   * through this field; the CLI mints it via core's `workspaceRelativeIdentityPath` and keeps the
+   * absolute path on the side for every read.
    */
   filePath: string
   /**

@@ -15,7 +15,10 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { QUARANTINE_LEDGER_FILENAME } from '@vostride/agent-qa-knowledge-local/reader'
-import { QUARANTINE_UNASSIGNED_OWNER } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+  QUARANTINE_UNASSIGNED_OWNER,
+} from '@vostride/agent-qa-schema'
 
 import { resolveRunQuarantineSnapshot } from '../composition/quarantine-snapshot.js'
 
@@ -30,7 +33,7 @@ function entered(fields: {
   expiresAt: string
 }): string {
   return JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
     kind: 'entered',
     at: '2026-07-20T10:00:00.000Z',
     fingerprint: 'fp-1',
@@ -108,7 +111,7 @@ describe('resolveRunQuarantineSnapshot (D-16)', () => {
         expiresAt: ACTIVE_EXPIRY,
       }),
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
         kind: 'released-manual',
         at: '2026-08-10T10:00:00.000Z',
         product: 'example-web',
@@ -185,7 +188,10 @@ describe('resolveRunQuarantineSnapshot (D-16)', () => {
         filePath: 'tests/checkout.test.yaml',
         testName: 'checkout completes',
         expiresAt: ACTIVE_EXPIRY,
-      }).replace('"schemaVersion":1', '"schemaVersion":99'),
+      }).replace(
+        `"schemaVersion":${CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION}`,
+        '"schemaVersion":99',
+      ),
     ])
     expect(snapshot()).toEqual([])
     expect(warnings).toHaveLength(1)
