@@ -20,9 +20,15 @@
 // `expiresAt` are stamped by callers at write time (D-11). That is what lets expiry boundaries be
 // pinned one second either side with no flake.
 //
-// WRITE POSTURE — fail-closed and audited. Every append passes the committed-egress checkpoint on
-// this module's OWN channel before a byte reaches the file, and a detector refusal comes back as
-// DATA (never a bare catch, never a throw the caller has to guess at). Quarantine events are
+// WRITE POSTURE — fail-closed and audited, on TWO gates in a fixed order. Every append first
+// STRUCTURALLY pre-checks each event against schema's `hasQuarantineEventShape` — the same
+// predicate the READ ranges — and then passes the committed-egress checkpoint on this module's OWN
+// channel; only after both does a byte reach the file. The two gates answer different questions and
+// answer them differently: the structural one asks "can this ever be read back?" and THROWS
+// (a write the reader refuses is corruption of a committed artifact, not a refusal a caller can
+// sensibly carry on from — it is invisible to `list`, unreleasable, and duplicates on retry), while
+// the egress one asks "does this leak a secret?" and comes back as DATA (never a bare catch, never
+// a throw the caller has to guess at). Quarantine events are
 // CODE-authored — threshold crossings, auto-exits, the gated verbs — never model output, which is
 // why CTX-FUT-01's propose-only posture deliberately does not bind these writes (D-04; the dated
 // posture note lands in REQUIREMENTS.md).
@@ -38,8 +44,12 @@
 // callers are invoked from". That was false and statically so — 390-09 / CR-03: no caller on the
 // path from `invokeFunction('quarantine.add')` to this function held any lease. It is true now
 // because the verb module takes one, not because anything here does.
-// The residual is honest and small: a THIRD caller of `appendQuarantineEvents`, added outside those
-// two paths, would be unserialized and would have to take the lease itself.
+// The residual is honest and small, and 390-11 / WR-07 closed half of it — say both halves plainly:
+//   - SERIALIZATION stays open. A THIRD caller of `appendQuarantineEvents`, added outside those two
+//     paths, would be unserialized and would have to take the lease itself.
+//   - SHAPE is closed AT THIS SEAM. A third caller cannot author a line the reader refuses, because
+//     the append pre-checks every event against the read's own predicate before writing. That class
+//     needed closing here rather than at each caller precisely because the caller set can grow.
 //
 // IDENTITY — entries are keyed by `(product, filePath, testName)`, never `testId`.
 
@@ -53,7 +63,11 @@ import {
   loadGuardrailPolicy,
 } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
-import { canonicalJson, guardQuarantineLedgerEvent } from '@vostride/agent-qa-schema'
+import {
+  canonicalJson,
+  guardQuarantineLedgerEvent,
+  hasQuarantineEventShape,
+} from '@vostride/agent-qa-schema'
 import type { GuardrailPolicy } from '@vostride/agent-qa-schema'
 import type {
   QuarantineEntryState,
@@ -170,6 +184,16 @@ function entryKey(event: {
  * the sliding window self-heals) a window carrying owner/expiry/fingerprint/class; `renewed`
  * extends the expiry and claims the owner when one is supplied; either released kind closes it.
  *
+ * A renewal can extend an OPEN window — quarantined or lapsed — but NEVER re-opens a CLOSED one
+ * (390-11 / WR-04). A release is the operator's decision, and re-entry has its own event:
+ * `operations.add` already routes a released entry to the `entered` branch, so honoring a `renewed`
+ * against a closed window would only ever resurrect a suppression a human deliberately ended. That
+ * case is reachable solely through the committed file's documented human-editability (D-12) — no
+ * code path authors it — which is exactly why the fold, not the verb, is where it has to be
+ * refused. The guard keys on the EVENT state, never the computed one: a lapsed entry still carries
+ * `eventState: 'quarantined'` (expiry is applied after this loop), so D-11's renew-an-expired-entry
+ * behavior is untouched.
+ *
  * `'expired'` is then COMPUTED, never read from an event: an open window whose `expiresAt` is at or
  * before `now` answers `'expired'`. Its suppression has stopped — the test fails builds again — but
  * the entry stays LISTED, renewable and releasable. That is the forcing function that makes
@@ -204,6 +228,9 @@ export function foldQuarantineLedgerState(
         // A renewal with no window to renew is meaningless — refusing to synthesize one keeps the
         // fold honest about what the log actually says (no invented entries reach any surface).
         if (existing === undefined) break
+        // Nor does a renewal re-open a CLOSED window: the release stands until an `entered` event
+        // says otherwise (WR-04, above).
+        if (existing.eventState === 'released') break
         existing.expiresAt = event.expiresAt
         if (event.owner !== undefined) existing.owner = event.owner
         existing.eventState = 'quarantined'
@@ -267,11 +294,18 @@ export type QuarantineAppendOutcome =
 /**
  * Append lifecycle events to the committed ledger, as ONE fail-closed unit (D-04).
  *
- * Order is the whole point: serialize → checkpoint EVERY line together → only then write. Because
- * the checkpoint covers the unit, a single refused event withholds its clean siblings too, and the
- * existing file is left byte-unchanged. Partial writes are the failure mode that would leave the
- * committed truth half-updated and a reviewer unable to tell.
+ * Order is the whole point: shape-check EVERY event → serialize → checkpoint EVERY line together →
+ * only then write. Because both gates cover the unit, a single refused event withholds its clean
+ * siblings too, and the existing file is left byte-unchanged. Partial writes are the failure mode
+ * that would leave the committed truth half-updated and a reviewer unable to tell.
  *
+ * Throws a `TypeError` naming the offending index when an event would not survive
+ * {@link readQuarantineLedger}'s own guard (390-11 / WR-07). This is deliberately a THROW rather
+ * than an outcome arm: every arm of {@link QuarantineAppendOutcome} describes a write that did not
+ * happen for a reason the caller can act on, whereas authoring an unreadable line is a CALLER BUG
+ * that would otherwise commit permanent, unlistable, unreleasable damage to a shared artifact.
+ *
+
  * Callers stamp `at` and `expiresAt` themselves (D-11): this module reads no clock, which is what
  * keeps both the write path and the fold deterministic.
  */
@@ -281,6 +315,17 @@ export function appendQuarantineEvents(
   opts: QuarantineAppendOptions,
 ): QuarantineAppendOutcome {
   if (events.length === 0) return { kind: 'appended', lines: 0 }
+
+  // The write refuses exactly what the read refuses — ONE predicate ranges both directions, so the
+  // two halves of the contract cannot disagree about what a valid line is. Runs before the egress
+  // checkpoint and before any filesystem call, so a refused unit leaves no byte and no audit row.
+  for (let index = 0; index < events.length; index += 1) {
+    if (hasQuarantineEventShape(events[index])) continue
+    throw new TypeError(
+      `quarantine event at index ${String(index)} would be refused by the ledger read: ` +
+        'the committed ledger must never carry a line no checkout can consume',
+    )
+  }
 
   const lines = events.map((event) => canonicalJson(event))
   const parts = lines.map((text, index) => ({

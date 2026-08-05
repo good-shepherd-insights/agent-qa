@@ -68,10 +68,13 @@ export { KNOWLEDGE_BUNDLE_EGRESS_CHANNEL, checkpointCommittedParts } from './bun
 export type { BundleEgressOptions, BundleEgressOutcome } from './bundle-egress.js'
 // 390 D-01/D-03/D-11: the committed quarantine ledger — read, pure state fold. The event DTOs and
 // the state vocabulary live in schema; this package owns the bytes and the fold over them.
+// The APPEND is deliberately NOT published (390-11 / WR-07): it writes a committed artifact whose
+// unserialized-third-caller residual is real, and a smaller public write surface is a smaller
+// residual. The three in-package writers — the verbs, detection, and the run-outcome projection —
+// import it from './quarantine/ledger.js' directly, so nothing outside was withheld from anyone.
 export {
   QUARANTINE_LEDGER_EGRESS_CHANNEL,
   QUARANTINE_LEDGER_FILENAME,
-  appendQuarantineEvents,
   foldQuarantineLedgerState,
   quarantineLedgerPath,
   readQuarantineLedger,

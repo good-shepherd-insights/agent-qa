@@ -204,8 +204,8 @@ function isWorkspaceRelativeIdentity(value: string): boolean {
  * folding into an entry that lists as `quarantined` while suppressing nothing. Refusal stays DATA
  * — never a run abort (the T-390-04 posture is unchanged), and never healing to absence.
  *
- * This is also the predicate the WRITE side ranges (`appendQuarantineEvents` pre-checks every event
- * with it), so no caller can commit bytes this guard will refuse.
+ * This is also the predicate the WRITE side ranges: the knowledge-local ledger append pre-checks
+ * every event with it, so no caller can commit bytes this guard will refuse (390-11 / WR-07).
  */
 export function hasQuarantineEventShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
