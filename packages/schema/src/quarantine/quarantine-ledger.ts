@@ -161,23 +161,51 @@ function isNonEmptyString(value: unknown): value is string {
 const ABSOLUTE_PATH_PREFIX = /^([/\\]|[A-Za-z]:[/\\])/
 
 /**
- * Is this `filePath` a checkout-portable identity — i.e. NOT an absolute path (390-08 / CR-02)?
+ * A Windows DRIVE-RELATIVE prefix (`C:foo\bar`) — a per-drive cwd-relative path, which
+ * {@link ABSOLUTE_PATH_PREFIX} deliberately misses because it carries no root separator. It is not
+ * absolute, and it is not the mint's output either.
+ */
+const DRIVE_RELATIVE_PREFIX = /^[A-Za-z]:/
+
+/**
+ * Is this `filePath` the identity the mint PRODUCES (390-08 / CR-02, 390-11 / WR-01)?
+ *
+ * Positive domain, not merely "not absolute": `workspaceRelativeIdentityPath` emits a
+ * configDir-rooted, forward-slashed, `./`-trimmed, `..`-free path, and that is exactly the set
+ * admitted here — root-free, backslash-free, drive-prefix-free, and carrying no `.` or `..`
+ * segment. The predicate previously enumerated only the NEGATIVE (absolute) domain, which is a
+ * strictly weaker claim: `./tests/a.yaml`, `tests\a.yaml` and `../outside.yaml` all passed it,
+ * folded, and listed as `quarantined` while `quarantineAppliesToTest` compares `===` against the
+ * mint's output and could never match one of them. That is silent suppression theater — the
+ * loudest failure mode this phase exists to prevent — so those forms are now refused too.
  *
  * String predicates only, on purpose: this package bans host APIs, so the platform path module is
  * unavailable and the Windows forms have to be spelled here rather than delegated to
  * `isAbsolute` (which on a POSIX host would happily call `C:\repo\x.yaml` relative anyway).
  */
 function isWorkspaceRelativeIdentity(value: string): boolean {
-  return !ABSOLUTE_PATH_PREFIX.test(value)
+  if (ABSOLUTE_PATH_PREFIX.test(value)) return false
+  if (DRIVE_RELATIVE_PREFIX.test(value)) return false
+  if (value.includes('\\')) return false
+  return value.split('/').every((segment) => segment !== '.' && segment !== '..')
 }
 
 /**
  * Fail-closed structural check on one stored event, at the depth the fold traverses: the kind
  * inside the closed union, all three identity legs present and non-empty, the `filePath` leg
- * workspace-relative rather than machine-local, and every kind-specific field the arm declares. An
- * `entered` event with no `expiresAt` would fold to a forever suppression, so its absence is
- * refused rather than defaulted; an absolute `filePath` would fold to an entry no other checkout
- * can match, so it is refused rather than normalized (this module cannot know the checkout root).
+ * inside the mint's own positive domain — forward-slashed, root-free, `./`-trimmed, `..`-free —
+ * and every kind-specific field the arm declares. An `entered` event with no `expiresAt` would
+ * fold to a forever suppression, so its absence is refused rather than defaulted; a `filePath` no
+ * other checkout can match is refused rather than normalized (this module cannot know the checkout
+ * root, so any normalization here would be a guess).
+ *
+ * The read-side consequence is deliberate and worth naming: a hand-edited relative-but-unmatchable
+ * line now lands in `refusedLines` as LINE-LEVEL DAMAGE the human can see and fix, instead of
+ * folding into an entry that lists as `quarantined` while suppressing nothing. Refusal stays DATA
+ * — never a run abort (the T-390-04 posture is unchanged), and never healing to absence.
+ *
+ * This is also the predicate the WRITE side ranges (`appendQuarantineEvents` pre-checks every event
+ * with it), so no caller can commit bytes this guard will refuse.
  */
 export function hasQuarantineEventShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
