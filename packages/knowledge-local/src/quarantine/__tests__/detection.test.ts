@@ -129,7 +129,8 @@ describe('detection ladder constants', () => {
   it('carries a retune comment on every threshold and adds no config key', () => {
     const source = readFileSync(DETECTION_SOURCE, 'utf8')
     // The 386 D-15 idiom: pinned constants that are retuned in source, never lifted into config.
-    expect(source.match(/retune/g)?.length ?? 0).toBeGreaterThanOrEqual(4)
+    // Four thresholds are minted here; the fifth (the window) is re-exported from its own home.
+    expect(source.match(/retune/gi)?.length ?? 0).toBeGreaterThanOrEqual(4)
     expect(source).not.toMatch(/process\.env/)
   })
 
