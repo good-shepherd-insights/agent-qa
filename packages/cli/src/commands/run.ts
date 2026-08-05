@@ -1180,9 +1180,22 @@ async function executeSuites(
     dashboardDb.close()
   }
 
-  // One resolved suite member: the parsed test, the absolute path it was READ from, and the
-  // workspace-relative path that is its durable IDENTITY (390-08).
-  type SuiteTestEntry = [TestDefinition, string, string]
+  // One resolved suite member. The two path legs are semantically opposite and both `string`, so
+  // they are NAMED rather than positional: a reorder of the construction or the consumption is a
+  // compile error instead of a silent CR-02 relapse (round-1 WR-06). `buildDirectRunMembers` gets
+  // the same split right by construction.
+  type SuiteTestEntry = {
+    /** The parsed test definition this suite ref resolved to. */
+    test: TestDefinition
+    /** ABSOLUTE — every byte read (parse, upload resolution, artifacts) runs off this leg. */
+    absolutePath: string
+    /**
+     * Workspace-relative durable IDENTITY (390-08 / D-01): the descriptor, the handoff, the
+     * projection and the committed quarantine ledger all key on this leg, so it must be the same
+     * bytes on every checkout. A machine-local path here is exactly the CR-02 defect.
+     */
+    identityPath: string
+  }
 
   // A suite fully resolved by the composition root, ready to contribute its members to the ONE
   // RunSession (D-04). Suite-level orchestration (setup hooks + adapter setup + nav / teardown +
@@ -1196,13 +1209,9 @@ async function executeSuites(
     modelProfiles: { planner: DeclaredModelProfile; verifier: DeclaredModelProfile }
     curationModelDeps: CurationTailModelDeps
     /**
-     * `[parsed test, ABSOLUTE source path, workspace-relative IDENTITY]`.
-     *
-     * 390-08 (CR-02 / D-01): the two path legs are deliberately distinct. The absolute path is what
-     * reads bytes (parse, upload resolution, artifacts); the third leg is the durable identity the
-     * descriptor, the handoff, the projection and the committed quarantine ledger all key on — the
-     * same bytes on every checkout. Minted ONCE here, beside the resolve that produced the absolute
-     * path, so no consumer downstream has to re-derive it (and none can derive it differently).
+     * Minted ONCE in `prepareSuite`, beside the resolve that produced `absolutePath`, so no consumer
+     * downstream has to re-derive the identity (and none can derive it differently). The
+     * absolute-vs-identity split the legs carry is documented on `SuiteTestEntry`'s own fields.
      */
     testEntries: SuiteTestEntry[]
     suiteMembers: Array<Record<string, unknown>>
@@ -1428,12 +1437,16 @@ async function executeSuites(
       // `absolutePath`, through core's one exported recipe. `relativePath` is the suite ref as the
       // author typed it (it may carry a leading `./`), so it is deliberately NOT reused as identity
       // — the direct-run path has no such ref and would then mint different bytes for the same file.
-      testEntries.push([testDef, absolutePath, workspaceRelativeIdentityPath(configDir, absolutePath)])
+      testEntries.push({
+        test: testDef,
+        absolutePath,
+        identityPath: workspaceRelativeIdentityPath(configDir, absolutePath),
+      })
     }
 
     const suiteResolvedTarget = suite.target
       ? resolveTarget(config, suite.target!)
-      : resolveTarget(config, testEntries[0][0].target!)
+      : resolveTarget(config, testEntries[0].test.target!)
     const suitePlatform: 'web' | 'android' | 'ios' = suiteResolvedTarget.platform
 
     const suiteAuthState = await resolveSelectedAuthStateForRun({
@@ -1452,7 +1465,7 @@ async function executeSuites(
     let suiteDeviceName = opts.device ?? (mergedUse.device as string | undefined)
 
     if ((suitePlatform === 'android' || suitePlatform === 'ios') && !suiteDeviceName) {
-      const childDeviceNames = testEntries.map(([testDef]) => {
+      const childDeviceNames = testEntries.map(({ test: testDef }) => {
         const device = (testDef.use as Record<string, unknown> | undefined)?.device
         return typeof device === 'string' && device.trim().length > 0 ? device.trim() : undefined
       })
@@ -1538,8 +1551,8 @@ async function executeSuites(
 
     const resolvedTarget = suite.target
       ? resolveTarget(config, suite.target)
-      : testEntries[0][0].target
-        ? resolveTarget(config, testEntries[0][0].target)
+      : testEntries[0].test.target
+        ? resolveTarget(config, testEntries[0].test.target)
         : undefined
 
     const suiteBrowser = (mergedUse.browser as Record<string, unknown> | undefined) ?? config.use?.browser
@@ -1782,7 +1795,7 @@ async function executeSuites(
         qaRulesText: suiteCapabilityNotes,
         workingContextText: JSON.stringify({
           suite: { name: suite.name, context: (suite as { context?: string }).context },
-          tests: testEntries.map(([entry]) => ({
+          tests: testEntries.map(({ test: entry }) => ({
             name: entry.name,
             context: entry.context,
             steps: entry.steps,
@@ -1834,7 +1847,7 @@ async function executeSuites(
 
     await suiteConfig.adapter.setup(suiteConfig.platformConfig)
 
-    const initialTargetName = suite.target ?? testEntries[0]?.[0].target
+    const initialTargetName = suite.target ?? testEntries[0]?.test.target
     if (suiteConfig.resolveUrl && initialTargetName) {
       const rawSuiteUrl = suiteConfig.resolveUrl(initialTargetName)
       if (rawSuiteUrl) {
@@ -1947,11 +1960,9 @@ async function executeSuites(
   for (let suiteIndex = 0; suiteIndex < preparedSuites.length; suiteIndex++) {
     const prepared = preparedSuites[suiteIndex]
     for (let i = 0; i < prepared.testEntries.length; i++) {
-      // `filePath` is the ABSOLUTE path every read below uses; `identityPath` is the durable
-      // workspace-relative identity minted at prepare time (390-08). The descriptor carries the
-      // identity — never the absolute path — because it is what the handoff, the projection and the
-      // committed quarantine ledger key on, on every checkout.
-      const [test, filePath, identityPath] = prepared.testEntries[i]
+      // Both legs are in scope below under their own names (see `SuiteTestEntry`): the descriptor
+      // carries `identityPath`, every byte read carries `absolutePath`.
+      const { test, absolutePath, identityPath } = prepared.testEntries[i]
       const globalIndex = members.length
       const memberSuiteIndex = i
       members.push({
@@ -1981,7 +1992,7 @@ async function executeSuites(
         run: async (ctx) => {
           if (prepared.bootstrapFailure) {
             const bootstrapResult: TestResult = {
-              runId: prepared.suiteRunId, name: test.name, filePath, status: 'failed',
+              runId: prepared.suiteRunId, name: test.name, filePath: absolutePath, status: 'failed',
               steps: [], duration: 0, failureSummary: prepared.bootstrapFailure,
               metadata: { phase: 'suite-bootstrap' },
             }
@@ -2037,7 +2048,7 @@ async function executeSuites(
 
           if (perTestSetupFailed) {
             const setupFailureResult: TestResult = {
-              runId: undefined, name: test.name, filePath, status: 'failed', steps: [],
+              runId: undefined, name: test.name, filePath: absolutePath, status: 'failed', steps: [],
               duration: 0, failureSummary: 'Setup hook failed', metadata: { phase: 'per-test-setup' },
             }
             prepared.results.push(setupFailureResult)
@@ -2087,12 +2098,12 @@ async function executeSuites(
             visionGate: suiteConfig.visionGate,
             contextWindow: prepared.knowledgeSeed.capabilities.contextWindow,
             suiteContext: (prepared.suite as any).context,
-            filePath,
+            filePath: absolutePath,
           }), {
             modelProfiles: prepared.modelProfiles,
             onEvidenceContext: ctx.setEvidenceContext,
           })
-          const result = await runMemberTest(toMemberTest(patched, filePath), memberRunConfig)
+          const result = await runMemberTest(toMemberTest(patched, absolutePath), memberRunConfig)
 
           // Per-test TEARDOWN hooks (after each test).
           if ((patched as any).teardown?.length && suiteConfig.resolvedHooks && prepared.suiteSandboxOptions) {
@@ -2185,7 +2196,7 @@ async function executeSuites(
   // device-session-create failure is the existing equivalent signal.
   let baselineProbe: BaselineProbeResult | undefined
   for (const prepared of preparedSuites) {
-    const probeTargetName = prepared.suite.target ?? prepared.testEntries[0]?.[0].target
+    const probeTargetName = prepared.suite.target ?? prepared.testEntries[0]?.test.target
     if (!probeTargetName) continue
     try {
       const probeTarget = resolveTarget(config, probeTargetName)
