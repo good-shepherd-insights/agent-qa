@@ -301,11 +301,15 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       'last_outcomes_json',
       'passes',
       'product',
-      'quarantined',
       'scope_key',
       'scope_tier',
       'test_name',
     ])
+    // 390 D-02, stated as its own assertion so a re-add reds with a named reason rather than as an
+    // opaque set mismatch: the derived quarantined flag is DELETED. One word, one truth — the
+    // committed ledger is the only thing this codebase now calls quarantined, and a projection
+    // column stamped from a lifetime flake threshold could only ever disagree with it.
+    expect(outcomeColumns).not.toContain('quarantined')
     const anchorColumns = db.prepare('PRAGMA table_info(run_test_anchors)').all()
       .map((row) => String((row as Record<string, unknown>).name))
       .sort()

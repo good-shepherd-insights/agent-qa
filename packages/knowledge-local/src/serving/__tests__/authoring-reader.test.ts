@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto'
-import { rmSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+  QUARANTINE_UNASSIGNED_OWNER,
+  QuarantineLedgerVersionError,
   asRunId,
   BundleOutcomeEventSchema,
   DEFAULT_EMBEDDING_PROFILE,
   canonicalJson,
+  slugBranch,
   type Anchor,
   type CompletedRunHandoff,
   type ScopeKey,
@@ -24,6 +28,7 @@ import {
   applyRunOutcomes,
   openIndexWriter,
   projectRunOutcomes,
+  QUARANTINE_LEDGER_FILENAME,
   rebuildIndex,
   type BundleStoreConfig,
   type EmbedderPort,
@@ -60,6 +65,8 @@ function outcomeHandoff(input: {
   testName: string
   outcome: 'passed' | 'failed'
   anchor?: Anchor
+  /** Drives the projection's lifetime flake counter — the exclude that is NOT the ledger's. */
+  rootCauseClass?: string
 }): CompletedRunHandoff {
   return {
     schemaVersion: 3,
@@ -80,6 +87,19 @@ function outcomeHandoff(input: {
       steps: input.anchor === undefined
         ? []
         : [{ stepIndex: 0, anchors: [input.anchor] }],
+      ...(input.rootCauseClass === undefined ? {} : {
+        rootCause: {
+          class: input.rootCauseClass,
+          producer: 'deterministic-classifier',
+          confidence: 1,
+          evidence: {
+            citedSteps: [], citedAnchors: [], citedArtifacts: [],
+            rationale: `fixture ${input.rootCauseClass} root cause`,
+          },
+          memoryMisdirectionRuledOut: true,
+          perTest: 0,
+        },
+      }),
     }],
   } as unknown as CompletedRunHandoff
 }
@@ -442,5 +462,145 @@ describe('createAuthoringReader dense retrieval', () => {
     const brief = await reader.getAuthoringBrief('missing projection', SCOPE)
 
     expect(brief.exemplars).toEqual([])
+  })
+
+  // 390 D-02 — the exemplar quarantine exclude used to read a DERIVED column the projection
+  // stamped from a lifetime flake threshold. That column is gone: the committed ledger is now the
+  // one thing called "quarantined", and every case below varies exactly ONE input (the ledger
+  // bytes, or the clock the fold is asked about) while the projection rows stay identical.
+  describe('quarantine exclusion re-sourced to the committed ledger', () => {
+    const QUARANTINED_REF = {
+      filePath: 'tests/ledger-quarantined.yaml',
+      testName: 'ledger quarantined checkout',
+    }
+    const CONTROL_REF = {
+      filePath: 'tests/ledger-control.yaml',
+      testName: 'ledger control checkout',
+    }
+    const LEDGER_ANCHOR: Anchor = { t: 'page', route: '/ledger-checkout' }
+    const INTENT = 'ledger checkout /ledger-checkout'
+    const ENTERED_AT = '2026-08-01T00:00:00.000Z'
+    const EXPIRES_AT = '2026-08-15T00:00:00.000Z'
+    /** Inside the window the `entered` event opened. */
+    const BEFORE_EXPIRY = '2026-08-05T00:00:00.000Z'
+    /** One day past the deadline — the fold COMPUTES 'expired' from this, D-11. */
+    const AFTER_EXPIRY = '2026-08-16T00:00:00.000Z'
+
+    function foldExemplar(
+      ref: { filePath: string; testName: string },
+      input: { runId: string; buildOrdinal: number; rootCauseClass?: string },
+    ): void {
+      foldOutcomeHandoff(knowledgeRoot, outcomeHandoff({
+        scope: SCOPE,
+        ...ref,
+        ...input,
+        outcome: 'passed',
+        anchor: LEDGER_ANCHOR,
+      }))
+    }
+
+    function ledgerEvent(overrides: Record<string, unknown>): Record<string, unknown> {
+      return {
+        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+        kind: 'entered',
+        at: ENTERED_AT,
+        product: slugBranch(PRODUCT),
+        ...QUARANTINED_REF,
+        fingerprint: '{"route":"/ledger-checkout","t":"page"}::flake',
+        verdictClass: 'flake',
+        owner: QUARANTINE_UNASSIGNED_OWNER,
+        expiresAt: EXPIRES_AT,
+        ...overrides,
+      }
+    }
+
+    function writeLedger(events: readonly Record<string, unknown>[]): void {
+      writeFileSync(
+        join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME),
+        `${events.map((event) => canonicalJson(event)).join('\n')}\n`,
+        'utf8',
+      )
+    }
+
+    async function exemplarNames(now: string): Promise<string[]> {
+      const reader = createAuthoringReader(
+        { knowledgeRoot, product: PRODUCT },
+        { now: () => now },
+      )
+      const brief = await reader.getAuthoringBrief(INTENT, SCOPE)
+      return brief.exemplars.map(({ testName }) => testName).sort()
+    }
+
+    beforeEach(() => {
+      foldExemplar(QUARANTINED_REF, { runId: 'run-ledger-quarantined', buildOrdinal: 40 })
+      foldExemplar(CONTROL_REF, { runId: 'run-ledger-control', buildOrdinal: 41 })
+    })
+
+    it('serves both tests when the ledger is absent (the FLAK-03 empty-input floor)', async () => {
+      expect(await exemplarNames(BEFORE_EXPIRY)).toEqual([
+        CONTROL_REF.testName,
+        QUARANTINED_REF.testName,
+      ])
+    })
+
+    it('hard-excludes a test whose ledger entry is open and unexpired', async () => {
+      writeLedger([ledgerEvent({})])
+
+      expect(await exemplarNames(BEFORE_EXPIRY)).toEqual([CONTROL_REF.testName])
+    })
+
+    it('stops excluding once the deadline lapses — expiry is COMPUTED from now (D-11)', async () => {
+      writeLedger([ledgerEvent({})])
+
+      expect(await exemplarNames(AFTER_EXPIRY)).toEqual([
+        CONTROL_REF.testName,
+        QUARANTINED_REF.testName,
+      ])
+    })
+
+    it('stops excluding once the entry is released', async () => {
+      writeLedger([
+        ledgerEvent({}),
+        ledgerEvent({ kind: 'released-manual', at: '2026-08-02T00:00:00.000Z' }),
+      ])
+
+      expect(await exemplarNames(BEFORE_EXPIRY)).toEqual([
+        CONTROL_REF.testName,
+        QUARANTINED_REF.testName,
+      ])
+    })
+
+    it('keeps the entry inside its own product partition', async () => {
+      writeLedger([ledgerEvent({ product: slugBranch(BLOG_PRODUCT) })])
+
+      expect(await exemplarNames(BEFORE_EXPIRY)).toEqual([
+        CONTROL_REF.testName,
+        QUARANTINED_REF.testName,
+      ])
+    })
+
+    it('still excludes on lifetime flakeCount with NO ledger entry (control)', async () => {
+      foldExemplar(CONTROL_REF, {
+        runId: 'run-ledger-control-flake',
+        buildOrdinal: 42,
+        rootCauseClass: 'flake',
+      })
+
+      expect(await exemplarNames(BEFORE_EXPIRY)).toEqual([QUARANTINED_REF.testName])
+    })
+
+    it('refuses a ledger the build cannot read rather than serving it un-quarantined', async () => {
+      writeLedger([ledgerEvent({
+        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION + 1,
+      })])
+      const reader = createAuthoringReader(
+        { knowledgeRoot, product: PRODUCT },
+        { now: () => BEFORE_EXPIRY },
+      )
+
+      await expect(reader.getAuthoringBrief(INTENT, SCOPE)).rejects.toThrow(
+        QuarantineLedgerVersionError,
+      )
+    })
   })
 })
