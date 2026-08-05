@@ -14,6 +14,10 @@
 import {
   AnalysisGetInputSchema,
   AnalysisGetOutputSchema,
+  errorTextOf,
+  exercisedAnchors,
+  failingStepOf,
+  failureFingerprint,
   resolveRunVerdicts,
   slugBranch,
 } from '@vostride/agent-qa-schema'
@@ -22,6 +26,7 @@ import type {
   AnalysisGetOutput,
   AnalysisSentence,
   CompletedRunHandoff,
+  PerTestOutcome,
   RunAnalysisArtifact,
   Verdict,
   VerdictSentenceParts,
@@ -60,6 +65,37 @@ function partsFor(
   )
 }
 
+/**
+ * The window key one failure is counted under (390 D-07), or nothing.
+ *
+ * Every input rule is IMPORTED from schema and none is respelled here: which step the failure
+ * is about (`failingStepOf`), which recorded bytes describe it (`errorTextOf`), which anchors
+ * it touched (`exercisedAnchors`), and how those compose into the frozen recipe
+ * (`failureFingerprint`). That matters because the projection's WRITER composes the window key
+ * from the very same four symbols — a second spelling here would mean the clause counts a
+ * window nothing ever wrote to.
+ *
+ * The class folded in is the RESOLVED one (389 D-13's `::class` suffix), so an artifact
+ * upgrading a member `unknown → flake` queries a different window on purpose.
+ *
+ * `undefined` for a member with no failing step to key from — a zero-step failure, or a
+ * verdict whose `perTest` names no member. The recipe would happily key those through its
+ * error arm, but the value it would produce is a stand-in for evidence that was never
+ * recorded, and the query travels perfectly well on identity alone.
+ */
+function fingerprintFor(
+  verdict: Verdict,
+  test: PerTestOutcome | undefined,
+): string | undefined {
+  if (test === undefined) return undefined
+  const step = failingStepOf(test)
+  if (step === undefined) return undefined
+  return failureFingerprint(
+    { anchors: exercisedAnchors(step), errorText: errorTextOf(step, test) },
+    verdict.class,
+  )
+}
+
 export const analysisGetSpec: FunctionSpec<AnalysisGetInput, AnalysisGetOutput> = {
   id: ANALYSIS_GET_FUNCTION_ID,
   summary: "Read one run's resolved verdicts, rendered sentences and failure clusters.",
@@ -95,6 +131,7 @@ export const analysisGetSpec: FunctionSpec<AnalysisGetInput, AnalysisGetOutput> 
 
     const sentences: AnalysisSentence[] = resolved.map((verdict) => {
       const test = document.tests.find((candidate) => candidate.testIndex === verdict.perTest)
+      const fingerprint = fingerprintFor(verdict, test)
       const sentence = renderVerdictSentence(
         verdict,
         partsFor(verdict, artifact, document),
@@ -105,6 +142,9 @@ export const analysisGetSpec: FunctionSpec<AnalysisGetInput, AnalysisGetOutput> 
           product,
           filePath: test?.filePath ?? '',
           testName: test?.testName ?? '',
+          // OMITTED, not `undefined`: the leg's absence is a fact about this member, and a
+          // present-but-empty key would look like a window with no occurrences in it.
+          ...(fingerprint === undefined ? {} : { fingerprint }),
         },
       )
       return { perTest: verdict.perTest, testId: test?.testId ?? '', sentence }

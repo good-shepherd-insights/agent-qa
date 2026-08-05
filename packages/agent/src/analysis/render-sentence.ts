@@ -12,33 +12,61 @@
 // template parts, and the honest root-cause-undetermined fallback all flow through this one
 // rule, so sentence EXISTENCE never depends on LLM availability.
 
-import type { Verdict, VerdictSentenceParts } from '@vostride/agent-qa-schema'
+import type {
+  QuarantineLadderState,
+  Verdict,
+  VerdictSentenceParts,
+} from '@vostride/agent-qa-schema'
 
 /**
  * The projection's key, spelled the way `run_test_outcomes` is keyed: stable test identity
  * is `(product, filePath, testName)` — NEVER `testId`, a per-run explicit id.
+ *
+ * 390 D-07 adds the FAILURE FINGERPRINT beside the identity, and the two legs answer two
+ * different questions: recurrence is counted per `(product, fingerprint)` — the same failure
+ * recurring, not the same test — while the quarantine ladder is keyed on the identity, which
+ * is what the ledger records. A member with no failing step to key from (a zero-step failure)
+ * omits the leg entirely rather than carrying a stand-in: a fabricated key would window a
+ * failure against occurrences that are not its own.
  */
 export interface RecurrenceQuery {
   readonly product: string
   readonly filePath: string
   readonly testName: string
+  readonly fingerprint?: string
+}
+
+/**
+ * The ladder rung this identity currently sits on (390 D-06/D-17), when it sits on one at all.
+ *
+ * `expiresAt` is the ISO deadline the ledger recorded. It is optional because `flagged` has no
+ * deadline — flagging is visibility, not suppression — and because the ledger is committed text
+ * a human may edit, so a recorded deadline is not guaranteed to parse.
+ */
+export interface RecurrenceLadder {
+  readonly state: QuarantineLadderState
+  readonly expiresAt?: string
 }
 
 /** Typed recurrence data in ("Kth failure, window N"); the renderer turns it into prose. */
 export interface RecurrenceAnswer {
   readonly kth: number
   readonly windowBuilds: number
+  /** Absent means this identity is on no rung — the clause is the occurrence count alone. */
+  readonly ladder?: RecurrenceLadder
 }
 
 /**
  * The D-08 recurrence seam: recurrence context is a LIVE join at render time, resolved per
  * call through this provider — never baked into authored parts and never stored as prose.
  *
- * 389 binds this seam to v51's derived run-outcome projection (`readTestOutcomeHistory` +
- * `failureRecurrence`, wired at the composition root in plan 06); 390 rebinds the SAME seam
- * to its fingerprint-window computation and appends the quarantine clause. The author's
- * prompt separately consumes failure history as input-for-REASONING (plan 03's forced
- * channel); this join is the rendered-CLAUSE — two different things by decision.
+ * 389 bound this seam to v51's derived run-outcome projection (`readTestOutcomeHistory` +
+ * `failureRecurrence`); 390-06 REBOUND the same seam at the same composition root to the
+ * fingerprint-keyed recurrence window plus a per-call fold of the committed quarantine ledger,
+ * which is what the ladder arms render. The seam itself did not change shape — the query gained
+ * a fingerprint and the answer gained a rung. The author's prompt separately consumes failure
+ * history as input-for-REASONING (plan 03's forced channel); this join is the rendered-CLAUSE
+ * — two different things by decision.
  *
  * `undefined` means the provider has no history for this identity; the renderer answers
  * with an explicit no-history clause, so obligation c is always rendered, honestly.
@@ -60,10 +88,62 @@ function groundingSegment(quote: VerdictSentenceParts['groundingQuote']): string
     : `observed (test outcome): "${quote.quote}"`
 }
 
+/** Month names, spelled here so the rendered deadline never depends on a host locale. */
+const EXPIRY_MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const
+
+/**
+ * A recorded deadline as a short human date, in UTC.
+ *
+ * UTC rather than local time because the same sentence is rendered in CI, on a laptop and in
+ * a dashboard, and a deadline that reads `Sep 4` in one place and `Sep 3` in another is a
+ * deadline nobody can quote. An UNPARSEABLE value is shown VERBATIM: the ledger is committed
+ * text a human may hand-edit (D-12), the fold already treats such an entry as lapsed, and
+ * quoting what the file actually says is what lets the human find the line they broke.
+ */
+function expiryPhrase(expiresAt: string | undefined): string {
+  if (expiresAt === undefined) return 'an unrecorded date'
+  const parsed = Date.parse(expiresAt)
+  if (Number.isNaN(parsed)) return expiresAt
+  const at = new Date(parsed)
+  return `${EXPIRY_MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}`
+}
+
+/**
+ * D-17's locked clause structure, as a TOTAL table over the ladder vocabulary.
+ *
+ * `satisfies Record<QuarantineLadderState, …>` is the load-bearing part: a fourth ladder state
+ * cannot compile until someone decides how it reads to a human. The alternative — a switch with
+ * a default, or an `if` chain — would have rendered a future state as the bare occurrence count,
+ * which is the one wrong answer here (a suppressed test whose sentence never says so).
+ *
+ * D-17's scope note is why only the deadline appears: expiry is the one detail that changes what
+ * a reader does next. Owner and entry history live in the list verb and the entity card.
+ */
+const LADDER_CLAUSE_SUFFIXES = {
+  flagged: () => '; suspected flaky',
+  quarantined: (expiresAt) => `; quarantined until ${expiryPhrase(expiresAt)}`,
+  expired: (expiresAt) =>
+    `; quarantine expired ${expiryPhrase(expiresAt)} — failures count again`,
+} as const satisfies Record<QuarantineLadderState, (expiresAt: string | undefined) => string>
+
+/** The clause's fourth arm: absence. No rung means no suffix, not an empty-looking one. */
+function ladderSuffix(ladder: RecurrenceLadder | undefined): string {
+  return ladder === undefined ? '' : LADDER_CLAUSE_SUFFIXES[ladder.state](ladder.expiresAt)
+}
+
 /**
  * Obligation c, always present: live data becomes prose, and every absence is an EXPLICIT
  * clause rather than a dropped segment — a sentence whose recurrence section silently
  * vanished would read as "no history" without ever saying so.
+ *
+ * The ladder suffix (390 D-17) rides ONLY the occurrence-count arm. Both honest-absence
+ * clauses and the kth-0 clause stay byte-identical to 389 whatever the ladder says, because
+ * "no failure history is recorded for this test" is the answer to the question actually asked,
+ * and a quarantine note appended to it would trade an explicit absence for a partial answer.
+ * A reader who needs the owner, the deadline or the entry history has `quarantine.list` and
+ * the entity card, both of which enumerate entries the projection has no history for.
  */
 function recurrenceClause(answer: RecurrenceAnswer | undefined): string {
   if (answer === undefined || answer.windowBuilds === 0) {
@@ -73,6 +153,7 @@ function recurrenceClause(answer: RecurrenceAnswer | undefined): string {
     return `no prior failure of this test is recorded in the last ${answer.windowBuilds} builds`
   }
   return `failure ${answer.kth} of this test in the last ${answer.windowBuilds} builds`
+    + ladderSuffix(answer.ladder)
 }
 
 /**
