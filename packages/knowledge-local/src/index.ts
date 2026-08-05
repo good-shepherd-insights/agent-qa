@@ -103,6 +103,17 @@ export type {
   QuarantineDisposition,
   QuarantineOrdinalOutcome,
 } from './quarantine/detection.js'
+// 390 D-12/D-13: the three verbs' one implementation. The PORT type lives in schema (both `agent`
+// and this package consume it and neither may import the other); what is published here is the
+// factory the composition root binds, plus the two literals a manual entry records where an auto
+// entry records a real fingerprint.
+export {
+  QUARANTINE_MANUAL_ENTRY_CLASS,
+  QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
+  QuarantineWriteBlockedError,
+  createQuarantineOperations,
+} from './quarantine/operations.js'
+export type { QuarantineOperationsOptions } from './quarantine/operations.js'
 export {
   ARTIFACT_RUN_CAP_BYTES,
   ARTIFACT_STEP_CAP_BYTES,
