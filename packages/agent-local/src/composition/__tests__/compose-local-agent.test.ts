@@ -17,10 +17,15 @@ import type { JobKindRegistry, JobModelCapability } from '@vostride/agent-qa-age
 import {
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  QUARANTINE_UNASSIGNED_OWNER,
+  asRef,
+  canonicalJson,
   slugBranch,
 } from '@vostride/agent-qa-schema'
 import {
+  QUARANTINE_LEDGER_FILENAME,
   applyRunOutcomes,
   indexDbPath,
   projectRunOutcomes,
@@ -33,10 +38,14 @@ import {
 } from '@vostride/agent-qa-runner-local'
 import type {
   CompletedRunHandoff,
+  ElementInfo,
   FunctionCaller,
   MaskedResolvedConfig,
+  QuarantineLedgerEvent,
   RunAnalysisArtifact,
   RunEventEnvelope,
+  ScreenState,
+  StepEvidence,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -852,6 +861,296 @@ describe('composeLocalAgent (D-15)', () => {
         .join('\n')
       expect(body).toContain('readTestOutcomeHistory')
       expect(body).not.toContain('testId')
+    })
+  })
+
+  // ---- the 390-06 quarantine bindings: the three verbs, and the rebound recurrence seam ----
+  //
+  // SC4 is the spine: the sentence's recurrence clause and the `quarantine.list` verb must be two
+  // readings of ONE live computation, not a number restated in two places. The differential that
+  // proves it mutates the ledger BETWEEN two `analysis.get` calls through the bound `add` verb —
+  // one mutation, two surfaces — and both halves are addressed by the same test identity.
+
+  describe('the 390-06 quarantine bindings (D-12/D-13/D-17, SC4)', () => {
+    const QUARANTINED_RUN_ID = 'run_quarantine_a'
+    const TEST_FILE_PATH = 'tests/checkout.yaml'
+    const TEST_NAME = 'checkout loads'
+    const PRODUCT = 'shop'
+
+    const WRITE_CALLER: FunctionCaller = {
+      surface: 'cli',
+      grantedScopes: ['read', 'knowledge-write'],
+      safeMode: false,
+    }
+
+    const IDENTITY = { product: PRODUCT, filePath: TEST_FILE_PATH, testName: TEST_NAME }
+
+    function knowledgeRootDir(): string {
+      return join(root, 'knowledge')
+    }
+
+    function failedHandoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
+      return {
+        schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+        runId: runId as CompletedRunHandoff['runId'],
+        scope: { tier: 'product', key: PRODUCT },
+        buildOrdinal,
+        executionContext: 'local-headless',
+        aggregateVerdict: 'failed',
+        configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+        startedAt: 1_000,
+        endedAt: 2_000,
+        tests: [{
+          testId: 't_checkout',
+          testName: TEST_NAME,
+          filePath: TEST_FILE_PATH,
+          testIndex: 0,
+          outcome: 'failed',
+          steps: [],
+        }],
+      }
+    }
+
+    /**
+     * One failed member with ONE failing step anchored on `anchorName`.
+     *
+     * The anchor name is the only thing that varies, and it is what makes two runs of the SAME
+     * test carry two DIFFERENT fingerprints — which is the only way to tell the fingerprint-keyed
+     * window (390 D-07) apart from the per-test one it replaced.
+     */
+    function steppedHandoff(
+      runId: string,
+      buildOrdinal: number,
+      anchorName: string,
+    ): CompletedRunHandoff {
+      const element: ElementInfo = {
+        ref: asRef('e1'),
+        role: 'button',
+        name: anchorName,
+        nameNormalized: anchorName.trim().toLowerCase(),
+        state: { enabled: true, focused: false, visible: true },
+        labels: {},
+        attributes: {},
+      }
+      const stateBefore: ScreenState = {
+        platform: 'web',
+        tree: '',
+        elements: [element],
+        refMap: {},
+        url: '/checkout',
+        timestamp: 1,
+        metadata: {
+          coordSpace: 'viewport',
+          viewportWidth: 1280,
+          viewportHeight: 720,
+          scroll: { offsetX: 0, offsetY: 0, contentWidth: 1280, contentHeight: 720 },
+          captureMode: 'textOnly',
+        },
+      }
+      const step: StepEvidence = {
+        stepIndex: 0,
+        stepText: `click the ${anchorName} button`,
+        cacheStatus: 'miss',
+        servedBrief: {
+          scope: { tier: 'product', key: PRODUCT },
+          asOfBuild: buildOrdinal,
+          budget: 0,
+          truncation: 'none',
+          channel1: [],
+          channel2: [],
+          channel3: [],
+          briefDigest: 'compose-brief-digest',
+        },
+        subActions: [{
+          plan: `click ${anchorName}`,
+          plannedAction: { type: 'click', ref: element.ref },
+          stateBefore,
+          result: { success: false, error: `Error: element "${anchorName}" not found` },
+        }],
+        verifierVerdict: { pass: false, reasoning: `the ${anchorName} button never appeared` },
+      }
+      const base = failedHandoff(runId, buildOrdinal)
+      return { ...base, tests: [{ ...base.tests[0]!, steps: [step] }] }
+    }
+
+    function plantHandoff(handoff: CompletedRunHandoff): string {
+      const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(String(handoff.runId)))
+      mkdirSync(runDir, { recursive: true })
+      writeFileSync(join(runDir, 'handoff.json'), `${JSON.stringify(handoff)}\n`, 'utf8')
+      return runDir
+    }
+
+    /** Seeds the derived projection — counters AND the fingerprint window — the real writer way. */
+    function seedOutcome(handoff: CompletedRunHandoff): void {
+      const path = indexDbPath(knowledgeRootDir())
+      mkdirSync(dirname(path), { recursive: true })
+      const db = new DatabaseSync(path)
+      try {
+        applyRunOutcomes(db, projectRunOutcomes(handoff, { extractAnchors: () => [] }))
+      } finally {
+        db.close()
+      }
+    }
+
+    function plantLedger(events: readonly QuarantineLedgerEvent[]): void {
+      mkdirSync(knowledgeRootDir(), { recursive: true })
+      writeFileSync(
+        join(knowledgeRootDir(), QUARANTINE_LEDGER_FILENAME),
+        `${events.map((event) => canonicalJson(event)).join('\n')}\n`,
+        'utf8',
+      )
+    }
+
+    function enteredEvent(overrides: Partial<Record<string, unknown>> = {}): QuarantineLedgerEvent {
+      return {
+        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+        kind: 'entered',
+        at: '2026-08-05T10:00:00.000Z',
+        ...IDENTITY,
+        fingerprint: 'fp-compose',
+        verdictClass: 'flake',
+        owner: QUARANTINE_UNASSIGNED_OWNER,
+        expiresAt: '2126-09-04T10:00:00.000Z',
+        ...overrides,
+      } as QuarantineLedgerEvent
+    }
+
+    async function sentenceFor(runId: string): Promise<string> {
+      const answer = await invokeFunction(
+        host.registry, 'analysis.get', { runId }, CALLER,
+      ) as { sentences: readonly { sentence: string }[] }
+      return answer.sentences[0]!.sentence
+    }
+
+    function ledgerText(): string {
+      return readFileSync(join(knowledgeRootDir(), QUARANTINE_LEDGER_FILENAME), 'utf8')
+    }
+
+    // ---- the binding itself ---------------------------------------------------------------
+
+    it('lists all three quarantine verbs as BOUND on this composition (385 D-15)', () => {
+      const listed = host.registry.list(WRITE_CALLER)
+      for (const id of ['quarantine.list', 'quarantine.release', 'quarantine.add']) {
+        expect(listed.find((entry) => entry.id === id)).toMatchObject({ bindingStatus: 'bound' })
+      }
+    })
+
+    it('answers an empty list against a knowledge root with no ledger — the FLAK-03 empty edge', async () => {
+      expect(await invokeFunction(host.registry, 'quarantine.list', {}, CALLER))
+        .toEqual({ entries: [] })
+    })
+
+    it('add / list / release operate on the REAL committed ledger under the knowledge root', async () => {
+      const added = await invokeFunction(
+        host.registry, 'quarantine.add', IDENTITY, WRITE_CALLER,
+      ) as { kind: string; entry: { owner: string; state: string } }
+
+      expect(added.kind).toBe('entered')
+      expect(added.entry).toMatchObject({ owner: QUARANTINE_UNASSIGNED_OWNER, state: 'quarantined' })
+      // The bytes really landed in the committed file, not in some in-memory stand-in.
+      expect(ledgerText()).toContain('"kind":"entered"')
+
+      const listed = await invokeFunction(host.registry, 'quarantine.list', {}, CALLER) as {
+        entries: readonly { filePath: string; state: string }[]
+      }
+      expect(listed.entries).toEqual([expect.objectContaining({
+        filePath: TEST_FILE_PATH, state: 'quarantined',
+      })])
+
+      const releasedAnswer = await invokeFunction(
+        host.registry, 'quarantine.release', IDENTITY, WRITE_CALLER,
+      ) as { kind: string }
+      expect(releasedAnswer.kind).toBe('released')
+      expect(ledgerText()).toContain('"kind":"released-manual"')
+
+      // …and the release is a typed arm the second time, not a throw.
+      expect(await invokeFunction(host.registry, 'quarantine.release', IDENTITY, WRITE_CALLER))
+        .toEqual({ kind: 'no-entry' })
+    })
+
+    // ---- SC4: one computation, two surfaces ------------------------------------------------
+
+    it('SC4: a ledger mutation between two analysis.get calls changes the clause, and the SAME mutation shows in quarantine.list', async () => {
+      plantHandoff(failedHandoff(QUARANTINED_RUN_ID, 1))
+      seedOutcome(failedHandoff(QUARANTINED_RUN_ID, 1))
+
+      const before = await sentenceFor(QUARANTINED_RUN_ID)
+      expect(before).toContain('failure 1 of this test in the last 1 builds')
+      expect(before).not.toContain('quarantined until')
+
+      // ONE mutation, through the bound write verb — the same ledger both surfaces read.
+      await invokeFunction(host.registry, 'quarantine.add', IDENTITY, WRITE_CALLER)
+
+      const after = await sentenceFor(QUARANTINED_RUN_ID)
+      expect(after).toContain('failure 1 of this test in the last 1 builds; quarantined until ')
+      expect(after).not.toBe(before)
+
+      // The list verb's half of the same computation, id-addressed to the same identity.
+      const listed = await invokeFunction(host.registry, 'quarantine.list', {}, CALLER) as {
+        entries: readonly { filePath: string; testName: string; state: string }[]
+      }
+      expect(listed.entries).toEqual([expect.objectContaining({
+        filePath: TEST_FILE_PATH, testName: TEST_NAME, state: 'quarantined',
+      })])
+
+      // And releasing it takes the clause back — the join is live in BOTH directions.
+      await invokeFunction(host.registry, 'quarantine.release', IDENTITY, WRITE_CALLER)
+      expect(await sentenceFor(QUARANTINED_RUN_ID)).toBe(before)
+    })
+
+    it('renders the EXPIRED arm with the recorded deadline — failures count again (D-11)', async () => {
+      plantHandoff(failedHandoff(QUARANTINED_RUN_ID, 1))
+      seedOutcome(failedHandoff(QUARANTINED_RUN_ID, 1))
+      plantLedger([enteredEvent({ expiresAt: '2026-09-04T10:00:00.000Z' })])
+
+      expect(await sentenceFor(QUARANTINED_RUN_ID)).toContain(
+        'failure 1 of this test in the last 1 builds; quarantine expired Sep 4 — failures count again',
+      )
+    })
+
+    it('propagates an UNREADABLE ledger rather than rendering a test as un-quarantined', async () => {
+      plantHandoff(failedHandoff(QUARANTINED_RUN_ID, 1))
+      seedOutcome(failedHandoff(QUARANTINED_RUN_ID, 1))
+      mkdirSync(knowledgeRootDir(), { recursive: true })
+      writeFileSync(
+        join(knowledgeRootDir(), QUARANTINE_LEDGER_FILENAME),
+        `${JSON.stringify({
+          ...enteredEvent(),
+          schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION + 1,
+        })}\n`,
+        'utf8',
+      )
+
+      // Committed truth this build cannot read is a refusal, never a healed absence: healing here
+      // renders a suppressed test as ordinary, which is the silent flip the phase exists to stop.
+      await expect(sentenceFor(QUARANTINED_RUN_ID))
+        .rejects.toMatchObject({ name: 'QuarantineLedgerVersionError' })
+      await expect(invokeFunction(host.registry, 'quarantine.list', {}, CALLER))
+        .rejects.toMatchObject({ name: 'QuarantineLedgerVersionError' })
+    })
+
+    // ---- the fingerprint-keyed rebind ------------------------------------------------------
+
+    it('counts recurrence per FINGERPRINT, not per test — two different failures of one test stay apart', async () => {
+      // Same identity, two builds, two DIFFERENT anchors. The per-test window this seam was bound
+      // to in 389 answers `failure 2`; the fingerprint window 390 rebound it to answers `failure 1`,
+      // because the second build's failure is not a recurrence of the first one.
+      plantHandoff(steppedHandoff('run_fp_a', 1, 'Submit'))
+      plantHandoff(steppedHandoff('run_fp_b', 2, 'Pay'))
+      seedOutcome(steppedHandoff('run_fp_a', 1, 'Submit'))
+      seedOutcome(steppedHandoff('run_fp_b', 2, 'Pay'))
+
+      expect(await sentenceFor('run_fp_b'))
+        .toContain('failure 1 of this test in the last 2 builds')
+
+      // The control that makes the pin above load-bearing: a THIRD build repeating the FIRST
+      // anchor is a recurrence, so run A's own fingerprint now counts two — and crossing the flag
+      // floor renders D-06's one build of warning.
+      plantHandoff(steppedHandoff('run_fp_c', 3, 'Submit'))
+      seedOutcome(steppedHandoff('run_fp_c', 3, 'Submit'))
+
+      expect(await sentenceFor('run_fp_a'))
+        .toContain('failure 2 of this test in the last 3 builds; suspected flaky')
     })
   })
 })

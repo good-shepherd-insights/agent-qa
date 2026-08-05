@@ -595,26 +595,26 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 390 D-12/D-13: the three quarantine verbs. UNBOUND, and — unlike every other unbound
-      // row this table has ever carried — unbound in EVERY composition rather than in a
-      // read-only one: plan 04 registers the specs and the `quarantine` dep is supplied
-      // nowhere yet. PLAN 06 MUST FLIP ALL THREE TO 'bound' when it binds the port at the
-      // composition root; a plan 06 that landed with these still reading 'unbound' would have
-      // shipped three catalogued verbs that refuse every caller by name.
+      // 390 D-12/D-13: the three quarantine verbs, FLIPPED to bound by plan 06 (plan 04
+      // registered the specs and left this row saying so). BOUND here for the same reason the
+      // knowledge-write rows above are — the CLI composes a local host that owns the committed
+      // knowledge root the ledger lives at — and the binding is a statement about THIS host: a
+      // composition supplying no quarantine port still lists all three `unbound` and refuses
+      // them by name, which is what agent's `parity-coverage.test.ts` asserts.
       'quarantine.add': {
         requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
-        bindingStatus: 'unbound',
+        bindingStatus: 'bound',
       },
       'quarantine.list': {
         requiredScopes: ['read'],
         resultKind: 'unary',
-        bindingStatus: 'unbound',
+        bindingStatus: 'bound',
       },
       'quarantine.release': {
         requiredScopes: ['knowledge-write'],
         resultKind: 'unary',
-        bindingStatus: 'unbound',
+        bindingStatus: 'bound',
       },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },

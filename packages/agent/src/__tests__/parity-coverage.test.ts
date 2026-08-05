@@ -97,10 +97,12 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   'knowledge.proposal.apply': 'unbound',
   'knowledge.reject.propose': 'unbound',
   // 390 D-12/D-13: the three quarantine verbs, UNBOUND here for the 387-08 reason — this
-  // fixture supplies no quarantine port. They are unbound in EVERY composition as of this
-  // plan, which is a fact about the tree rather than about the fixture: the port's
-  // implementation and the composition-root binding are a later plan's, and until then a host
-  // refuses by name instead of answering an empty list about a ledger it cannot read.
+  // fixture supplies no quarantine port. That is now a statement about THIS FIXTURE and
+  // nothing else: plan 06 implemented the port and bound it at `composeLocalAgent`, so both
+  // production hosts list all three `bound` (the CLI catalog in `fn-command.test.ts` pins it).
+  // A host with no port must still refuse by name rather than answer an empty list about a
+  // ledger it cannot read — an empty answer would say "nothing is quarantined" about a file
+  // it has never been able to open.
   'quarantine.add': 'unbound',
   'quarantine.list': 'unbound',
   'quarantine.release': 'unbound',
