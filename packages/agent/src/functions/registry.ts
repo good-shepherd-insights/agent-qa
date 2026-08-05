@@ -25,6 +25,9 @@ import { knowledgeRecordShowSpec } from './ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from './ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from './ops/knowledge-records-inspect.js'
 import { knowledgeRejectProposeSpec } from './ops/knowledge-reject-propose.js'
+import { quarantineAddSpec } from './ops/quarantine-add.js'
+import { quarantineListSpec } from './ops/quarantine-list.js'
+import { quarantineReleaseSpec } from './ops/quarantine-release.js'
 import { runsEventsSpec } from './ops/runs-events.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
@@ -107,6 +110,15 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   knowledgeForgetProposeSpec as FunctionSpec,
   knowledgeProposalApplySpec as FunctionSpec,
   configGetSpec as FunctionSpec,
+  // 390 D-12/D-13: a new `quarantine.` domain — a taxonomy extension exactly as `entities.`
+  // was, because quarantine state is neither a run, a memory nor an analysis. All three bind
+  // through the OPTIONAL `quarantine` dep, so a host with no knowledge root lists them
+  // `unbound` BY NAME rather than answering an empty list about a ledger it cannot read.
+  // `list` is read-tier; `release` and `add` are DIRECT gated writes (no propose+apply pair —
+  // that idiom is for learned-knowledge mutations, and this is operational state).
+  quarantineListSpec as FunctionSpec,
+  quarantineReleaseSpec as FunctionSpec,
+  quarantineAddSpec as FunctionSpec,
   // 387 D-09: a new `entities.` domain, a taxonomy extension exactly as `knowledge.` was.
   // Both read-tier, both bound in every composition — the directory is a REQUIRED dep, so
   // there is no host that lists these and cannot run them.

@@ -1,0 +1,60 @@
+// `quarantine.list` — the machine-readable enumeration of quarantine state (Phase 390, D-12/D-13).
+//
+// FLAK-03's "quarantine is enumerable" in one op: every entry carries the three legs of stable
+// test identity, the fingerprint that keyed the window, the resolved class, the owner, the
+// entry instant, the deadline and the computed state. One producer, so a dashboard column, a
+// CLI table and a chat answer are the same rows by construction rather than by review.
+//
+// THE OP RE-SORTS NOTHING. D-12 requires unassigned-owner entries FIRST — they are the triage
+// queue — with the rest ordered deterministically after them. That ordering is the PORT
+// implementation's law and is pinned where it is implemented; a second sort here would be a
+// second declaration of it, free to agree today and disagree after the first tie-break change.
+// The op's whole job is the envelope.
+//
+// THE INPUT CARRIES NO FILTER. Owner and state filtering are reader concerns over rows already
+// in hand. A filter here would make the verb's answer depend on how it was asked, and the one
+// caller that most needs the full picture — a human deciding what to un-quarantine — is exactly
+// the one who would have to know to ask for it.
+
+import {
+  QuarantineListInputSchema,
+  QuarantineListOutputSchema,
+} from '@vostride/agent-qa-schema'
+import type { QuarantineListInput, QuarantineListOutput } from '@vostride/agent-qa-schema'
+
+import { FunctionNotBoundError } from '../spec.js'
+import type { FunctionDeps, FunctionSpec } from '../spec.js'
+
+/**
+ * Lowercase dot taxonomy (384 D-15): a new `quarantine` domain, one noun. Quarantine state is
+ * neither a run, a memory nor an analysis — filing these verbs under an existing domain would
+ * have made the taxonomy decorative, which is the same call 387 made for `entities`.
+ *
+ * The literal appears here once; the parity-coverage suite picks the id up off the registry.
+ */
+export const QUARANTINE_LIST_FUNCTION_ID = 'quarantine.list'
+
+export const quarantineListSpec: FunctionSpec<QuarantineListInput, QuarantineListOutput> = {
+  id: QUARANTINE_LIST_FUNCTION_ID,
+  summary: 'List every quarantined test with its owner, expiry and lifecycle state.',
+  requiredScopes: ['read'],
+  resultKind: 'unary',
+  // Bound exactly where a composition supplies the quarantine port. Listing quarantine state
+  // is not something a host can approximate: an unbound host answering `[]` would say "nothing
+  // is quarantined" about a ledger it has never been able to read, which is a wrong answer
+  // wearing a correct one's clothes. So it refuses by name instead (D-09).
+  boundThrough: 'quarantine',
+  input: QuarantineListInputSchema,
+  output: QuarantineListOutputSchema,
+  risk: { name: `fn:${QUARANTINE_LIST_FUNCTION_ID}`, recognized: true, readOnly: true },
+  async invoke(_input, deps: FunctionDeps) {
+    const quarantine = deps.quarantine
+    if (quarantine === undefined) {
+      throw new FunctionNotBoundError(QUARANTINE_LIST_FUNCTION_ID)
+    }
+
+    // An EMPTY listing is a result, not an absence: a project with no quarantined tests is the
+    // healthy state, and it reads identically to one whose ledger file was never created.
+    return { entries: [...await quarantine.list()] }
+  },
+}

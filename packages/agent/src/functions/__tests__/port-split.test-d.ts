@@ -14,7 +14,7 @@
 // with `packages/agent external deps: unexpected vitest` (387-04 hit this exact trap). The
 // vitest `typecheck.include` glob matches either location.
 
-import type { BriefWhyInput } from '@vostride/agent-qa-schema'
+import type { BriefWhyInput, QuarantineOperationsPort } from '@vostride/agent-qa-schema'
 import { expectTypeOf } from 'vitest'
 
 import type { mapStepEvidenceToWhy } from '../ops/knowledge-brief-why.js'
@@ -59,14 +59,33 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // 389 D-10/D-08 extend it again, by name again: `analysis` (the artifact reader analysis.get
 // binds through) and `recurrence` (the live-join seam the renderer consumes — optional because
 // its absence is an honest no-history clause, never a refusal). The pin fired on both.
+// 390 D-12/D-13 extends it a fourth time, by name again: `quarantine` — the committed ledger's
+// three verbs. It fired on this one too, and that is the whole mechanism working: `tsc` refused
+// the union edit until this line acknowledged it. (Note the dual-witness rule — vitest reported
+// `Type Errors  no errors` for the same tree; only `tsc --noEmit` saw it.)
 expectTypeOf<OptionalFunctionDepKey>()
-  .toEqualTypeOf<'runInvocation' | 'knowledgeReview' | 'postProcessing' | 'analysis' | 'recurrence'>()
+  .toEqualTypeOf<
+    | 'runInvocation'
+    | 'knowledgeReview'
+    | 'postProcessing'
+    | 'analysis'
+    | 'recurrence'
+    | 'quarantine'
+  >()
 
 // Every member of that union must actually be an optional member of the deps record — the half
 // that would otherwise let the union name a dep nobody supplies.
 expectTypeOf<OptionalFunctionDepKey>().toMatchTypeOf<keyof FunctionDeps>()
 expectTypeOf<FunctionDeps['knowledgeReview']>().toEqualTypeOf<KnowledgeReviewPort | undefined>()
 expectTypeOf<FunctionDeps['knowledge']>().toEqualTypeOf<KnowledgeReaderPort>()
+// 390: the same two-sided claim for the quarantine dep — named in the union AND optional on the
+// record, so neither half can arrive alone. The port TYPE is minted in schema (both `agent` and
+// knowledge-local consume it and neither may import the other), which is why this is the one
+// member here whose type is not declared in `spec.ts`.
+expectTypeOf<FunctionDeps['quarantine']>().toEqualTypeOf<QuarantineOperationsPort | undefined>()
+// Exactly three verbs, pinned for the same exact-set reason the review port's surface is: a
+// fourth power arriving quietly would be one no host ever declared it could supply.
+expectTypeOf<keyof QuarantineOperationsPort>().toEqualTypeOf<'list' | 'release' | 'add'>()
 
 // The review port's own surface, pinned for the same exact-set reason as the reader's: 387-08
 // implements against this and a third member arriving quietly would be a third power no host

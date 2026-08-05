@@ -31,6 +31,7 @@ import type {
   KnowledgeRecordsInspectInput,
   KnowledgeRejectInput,
   MaskedResolvedConfig,
+  QuarantineOperationsPort,
   RecordChange,
   RiskActionDescriptor,
   RunAnalysisArtifact,
@@ -97,6 +98,7 @@ export type OptionalFunctionDepKey =
   | 'postProcessing'
   | 'analysis'
   | 'recurrence'
+  | 'quarantine'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -645,4 +647,21 @@ export interface FunctionDeps {
    * v51's run-outcome projection; 390 rebinds the SAME seam to its fingerprint window.
    */
   recurrence?: RecurrenceProvider
+  /**
+   * 390 D-12/D-13: the committed quarantine ledger's three verbs — list, release, add.
+   *
+   * OPTIONAL for the reason `knowledgeReview` is, and not by analogy: a host with no knowledge
+   * root genuinely cannot enumerate quarantine state, and the alternative to saying so by name
+   * is answering an empty list about a ledger it has never been able to read — a wrong answer
+   * wearing a correct one's clothes. On the write side the stakes are higher still: an unbound
+   * `add` that no-opped would report a test as quarantined while it kept failing every build.
+   *
+   * ONE port for all three verbs rather than a reader/writer split, because the read/write
+   * asymmetry is already stated where it is ENFORCED — `quarantine.list` declares read scopes
+   * and a read-only descriptor, `release` and `add` declare a write scope and `readOnly: false`
+   * — so a second port would restate at the composition root a distinction the gate makes at
+   * every call. The port TYPE is minted in schema, so knowledge-local can implement it without
+   * depending on the function layer.
+   */
+  quarantine?: QuarantineOperationsPort
 }
