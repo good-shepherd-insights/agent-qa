@@ -27,8 +27,12 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, ex
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { parseTestFile } from '@vostride/agent-qa-core'
+import { parseTestFile, workspaceRelativeIdentityPath } from '@vostride/agent-qa-core'
 import type { ParsedTestBinding } from '@vostride/agent-qa-core'
+import {
+  QuarantineIdentityRefusedError,
+  createQuarantineOperations,
+} from '@vostride/agent-qa-knowledge-local'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
@@ -389,5 +393,200 @@ describe('the committed quarantine ledger crosses checkout roots (CR-02 / D-01)'
       filePath: damaged.filePath,
       testName: damaged.testName,
     })).toBe(false)
+  })
+})
+
+// ---- the WRITE-verb half of the same contract (390-12 / D-01) -----------------------------------
+//
+// The block above pins the RUN writer. This one pins the two HUMAN write verbs — the documented
+// human half of the exit path (D-12/D-13), and the surface most likely to receive a path pasted out
+// of a failure report. Round 1 hardened the read and the run path and left these two as an
+// unnormalized door into the same committed file: `quarantine.add` answered `entered` over a line
+// the reader refuses, `list` could not show it, `release` could not undo it, a retry duplicated it,
+// and every later run reported it as damage.
+//
+// EVERY PART HERE IS PRODUCTION CODE, which is only possible in `cli`: core's mint, knowledge-local's
+// verbs, agent-local's snapshot reader and schema's match all meet in this one package. The writer
+// half runs entirely under root A with the REAL `workspaceRelativeIdentityPath` pre-bound to root
+// A's config directory, exactly as `composeCliLocalAgent` binds it; the committed file is then
+// copied to root B the way git delivers it, and the reader half never sees root A's bytes.
+//
+// THE INVARIANT, one case per measured input class: for every input the verb either STORES the
+// minted canonical identity or REFUSES with the ledger byte-unchanged. There is no third outcome —
+// no committed line the reader refuses, and no line that lists but can never match.
+
+describe('the human write verbs mint the identity the reader joins on (390-12 / D-01)', () => {
+  function verbsUnder(env: Checkout): ReturnType<typeof createQuarantineOperations> {
+    return createQuarantineOperations({
+      resolveKnowledgeRoot: () => env.knowledgeRoot,
+      auditBaseDir: env.agentQaRoot,
+      // Wall-clock purity by argument: the verbs read this and nothing else.
+      now: () => NOW,
+      mintIdentityPath: (filePath: string) => workspaceRelativeIdentityPath(env.configDir, filePath),
+    })
+  }
+
+  /** The reader half, run entirely under the checkout that never saw the writer. */
+  function appliesUnder(env: Checkout): boolean {
+    const snapshot = resolveRunQuarantineSnapshot({
+      knowledgeRoot: env.knowledgeRoot,
+      product: PRODUCT,
+      now: NOW,
+    })
+    expect(snapshot).toEqual([{
+      product: PRODUCT,
+      filePath: TEST_FILE_RELATIVE,
+      testName: TEST_NAME,
+      expiresAt: EXPECTED_EXPIRY,
+    }])
+    // Root B's OWN descriptor, minted from root B's own absolute path — never handed root A's bytes.
+    return quarantineAppliesToTest(snapshot, {
+      filePath: mintedIdentity(env),
+      testName: TEST_NAME,
+    })
+  }
+
+  /** The house negative anchor: the committed bytes name no machine that ever touched them. */
+  function leaksNoRoot(from: Checkout, to: Checkout): void {
+    const committed = ledgerText(from)
+    expect(committed.length).toBeGreaterThan(0)
+    expect(committed).not.toContain(from.configDir)
+    expect(committed).not.toContain(to.configDir)
+    expect(committed).not.toContain(tmpdir())
+  }
+
+  it('Class 1 — an ABSOLUTE path INSIDE the workspace is stored canonical and joins on root B', async () => {
+    // The operator copy-pastes the path out of a failure report on the writing machine. Before the
+    // mint this produced a permanently refused, unlistable, unreleasable line in a committed file.
+    const machineA = checkout('agent-qa-390-verbmint-abs-A-')
+    const ciCheckoutB = checkout('agent-qa-390-verbmint-abs-B-')
+
+    const answer = await verbsUnder(machineA).add({
+      product: PRODUCT,
+      filePath: machineA.absoluteTestFile,
+      testName: TEST_NAME,
+    })
+
+    expect(answer.kind).toBe('entered')
+    // Anchored as the exact fixture string, outside the code's own field relations.
+    expect(answer.entry.filePath).toBe(TEST_FILE_RELATIVE)
+    expect(ledgerLines(machineA)).toHaveLength(1)
+    expect(ledgerLines(machineA)[0]).toMatchObject({
+      kind: 'entered',
+      filePath: TEST_FILE_RELATIVE,
+      product: PRODUCT,
+      expiresAt: EXPECTED_EXPIRY,
+      schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+    })
+
+    deliverLedger(machineA, ciCheckoutB)
+
+    expect(appliesUnder(ciCheckoutB)).toBe(true)
+    leaksNoRoot(machineA, ciCheckoutB)
+  })
+
+  it('Class 2 — a `./`-prefixed path is stored as the SAME bytes and joins on root B', async () => {
+    // Round 1 measured this class as the QUIET one: it folded and listed as `quarantined` while
+    // never matching `quarantineAppliesToTest`'s `===`. The operator saw a green row and the test
+    // kept failing every build.
+    const machineA = checkout('agent-qa-390-verbmint-dot-A-')
+    const ciCheckoutB = checkout('agent-qa-390-verbmint-dot-B-')
+
+    const answer = await verbsUnder(machineA).add({
+      product: PRODUCT,
+      filePath: `./${TEST_FILE_RELATIVE}`,
+      testName: TEST_NAME,
+    })
+
+    expect(answer.entry.filePath).toBe(TEST_FILE_RELATIVE)
+    expect(ledgerLines(machineA)[0]).toMatchObject({ filePath: TEST_FILE_RELATIVE })
+    expect(ledgerText(machineA)).not.toContain(`./${TEST_FILE_RELATIVE}`)
+
+    deliverLedger(machineA, ciCheckoutB)
+
+    expect(appliesUnder(ciCheckoutB)).toBe(true)
+    leaksNoRoot(machineA, ciCheckoutB)
+  })
+
+  it('Class 3 — a BACKSLASH path is refused by the ledger contract, byte-unchanged', async () => {
+    // MEASURED, not assumed, and this is the arm that ships on a POSIX runner: `path.resolve` treats
+    // `tests\checkout.yaml` as ONE filename containing a backslash, so the mint has nothing to
+    // rewrite and hands the bytes back unchanged. 390-11's structural write guard then refuses them
+    // — a backslash is not something the mint can emit, so no reader would consume the line. The
+    // invariant holds through the OTHER arm: refused, with the ledger byte-unchanged.
+    //
+    // On a Windows runner the mint would separate the segments and this would land on the stored
+    // arm instead. Either way the third outcome — a committed line the reader refuses — is absent.
+    const machineA = checkout('agent-qa-390-verbmint-slash-A-')
+
+    const refused = verbsUnder(machineA).add({
+      product: PRODUCT,
+      filePath: 'tests\\checkout.yaml',
+      testName: TEST_NAME,
+    })
+
+    await expect(refused).rejects.toThrow(/would be refused by the ledger read/)
+    expect(ledgerText(machineA)).toBe('')
+    expect(existsSync(join(machineA.knowledgeRoot, QUARANTINE_LEDGER_FILE))).toBe(false)
+  })
+
+  it('Class 4 — an ESCAPING path refuses TYPED, byte-unchanged, and a RETRY adds nothing', async () => {
+    const machineA = checkout('agent-qa-390-verbmint-escape-A-')
+    const verbs = verbsUnder(machineA)
+
+    for (const escaping of [
+      '../outside.yaml',
+      // The verifier's own probe shape: an absolute path that is not inside this workspace at all.
+      join(tmpdir(), 'some-other-checkout', 'tests', 'checkout.yaml'),
+    ]) {
+      const refused = verbs.add({ product: PRODUCT, filePath: escaping, testName: TEST_NAME })
+      await expect(refused).rejects.toBeInstanceOf(QuarantineIdentityRefusedError)
+      await expect(refused).rejects.toMatchObject({
+        name: 'QuarantineIdentityRefusedError',
+        filePath: escaping,
+      })
+      // Retried, exactly as an operator would. Round 1 measured `line count after retry -> 2`.
+      await expect(
+        verbs.add({ product: PRODUCT, filePath: escaping, testName: TEST_NAME }),
+      ).rejects.toBeInstanceOf(QuarantineIdentityRefusedError)
+    }
+
+    expect(ledgerText(machineA)).toBe('')
+    expect(existsSync(join(machineA.knowledgeRoot, QUARANTINE_LEDGER_FILE))).toBe(false)
+  })
+
+  it('the EXIT PATH crosses spellings — a `./` release closes the window an ABSOLUTE add opened', async () => {
+    // The two verbs are one contract: if only `add` minted, this release would answer `no-entry`
+    // and the operator would have no way out of a window they themselves opened.
+    const machineA = checkout('agent-qa-390-verbmint-exit-A-')
+    const ciCheckoutB = checkout('agent-qa-390-verbmint-exit-B-')
+    const verbs = verbsUnder(machineA)
+
+    await verbs.add({
+      product: PRODUCT,
+      filePath: machineA.absoluteTestFile,
+      testName: TEST_NAME,
+    })
+    deliverLedger(machineA, ciCheckoutB)
+    expect(appliesUnder(ciCheckoutB)).toBe(true)
+
+    const released = await verbs.release({
+      product: PRODUCT,
+      filePath: `./${TEST_FILE_RELATIVE}`,
+      testName: TEST_NAME,
+    })
+
+    expect(released.kind).toBe('released')
+    expect(ledgerLines(machineA).map((line) => line.kind)).toEqual(['entered', 'released-manual'])
+    for (const line of ledgerLines(machineA)) expect(line.filePath).toBe(TEST_FILE_RELATIVE)
+
+    // The re-delivered artifact suppresses nothing on the checkout that never saw either verb run.
+    deliverLedger(machineA, ciCheckoutB)
+    expect(resolveRunQuarantineSnapshot({
+      knowledgeRoot: ciCheckoutB.knowledgeRoot,
+      product: PRODUCT,
+      now: NOW,
+    })).toEqual([])
+    leaksNoRoot(machineA, ciCheckoutB)
   })
 })

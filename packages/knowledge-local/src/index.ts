@@ -110,9 +110,15 @@ export type {
 // and this package consume it and neither may import the other); what is published here is the
 // factory the composition root binds, plus the two literals a manual entry records where an auto
 // entry records a real fingerprint.
+// `QuarantineIdentityRefusedError` joins its sibling refusal on the barrel (390-12) for the same
+// reason that one is here: a surface rendering `quarantine.add` needs to tell an operator WHY a
+// path was refused, and an error it cannot name is an error it renders as "unknown". This is an
+// error type, not a power — `underWriterLease` and `appendQuarantineEvents` stay off the barrel,
+// where 390-11 put the second one, because the committed-write surface only ever shrinks.
 export {
   QUARANTINE_MANUAL_ENTRY_CLASS,
   QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
+  QuarantineIdentityRefusedError,
   QuarantineWriteBlockedError,
   createQuarantineOperations,
 } from './quarantine/operations.js'
