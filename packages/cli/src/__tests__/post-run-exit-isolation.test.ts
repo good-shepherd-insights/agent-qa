@@ -62,6 +62,13 @@ import {
 import { createConsoleReporter } from '../reporters/console-reporter.js'
 import { buildReporterFixture } from './reporters/fixtures.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const RUN_ID = 'run-388-05-isolation'
 const EVENTS_FILE = 'events.jsonl'
 
@@ -179,6 +186,7 @@ function fixture(): Fixture {
 
   const composeTestHost = (): LocalAgentHost => {
     const host = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: TEST_CONFIG,
       knowledgeRoot: () => knowledgeRoot,

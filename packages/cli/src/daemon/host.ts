@@ -456,6 +456,39 @@ function captureWorkerOutput(stream: Readable): CapturedWorkerOutput {
 }
 
 /**
+ * The quarantine identity mint this daemon composes with (390-12 / D-01).
+ *
+ * Two arms, on the same `configPath` branch this file already uses for the run executor (:268 —
+ * production always resolves it in `commands/daemon.ts`; legacy and test hosts omit it):
+ *
+ *  - PRESENT: pre-bind core's one recipe to the workspace's own config directory, through
+ *    `createQuarantineIdentityMint` in the CLI composition module. Deferred exactly as the run
+ *    executor is, for the same two reasons stated there and in that module's head: it keeps a
+ *    configPath-less host independent of the CLI composition graph, and the mint's dependency on
+ *    `@vostride/agent-qa-core` belongs in the one surface file the FUNC-02 firewall ledger already
+ *    clears for it — that ledger only ever shrinks, so new surface code may not join it.
+ *  - ABSENT: FAIL CLOSED. A host with no checkout root cannot mint an identity, and the wrong
+ *    answer here is the pass-through: it would store whatever a caller typed into a COMMITTED file
+ *    that every later checkout inherits. Throwing means such a host simply has no working
+ *    `quarantine.add`/`release`, which the verbs surface as `QuarantineIdentityRefusedError`.
+ */
+async function resolveQuarantineIdentityMint(
+  configPath: string | undefined,
+): Promise<(filePath: string) => string> {
+  if (configPath === undefined) {
+    return (filePath: string) => {
+      throw new Error(
+        'this daemon was composed without a workspace config path, so it cannot mint the '
+          + 'workspace-relative quarantine identity the committed ledger is keyed on: '
+          + filePath,
+      )
+    }
+  }
+  const { createQuarantineIdentityMint } = await import('../composition/local-agent-host.js')
+  return createQuarantineIdentityMint(configPath)
+}
+
+/**
  * Run the foreground daemon until a signal or lease-heartbeat refusal closes it.
  *
  * Startup order is part of the safety contract: pin posture, acquire authority, heartbeat once,
@@ -1781,6 +1814,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       config: input.config,
       knowledgeRoot: () => input.knowledgeRoot,
       model: () => model,
+      // 390-12 / D-01. Resolved on the `configPath` branch above: bound to the real checkout root
+      // in production, fail-closed in a legacy or test host that has none.
+      mintQuarantineIdentityPath: await resolveQuarantineIdentityMint(input.configPath),
       // 389-06: the author's compaction budget, host-derived from the same profile
       // resolution as the model above and resolved once at queue open (386 D-15).
       ...(input.analysisTokenBudget === undefined

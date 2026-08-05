@@ -963,6 +963,23 @@ export interface ComposeLocalAgentInput {
   readonly applyDelegate?: ApplyDelegate
   /** The writer lease a leaseholding host already owns (387-08 D-18). See `createKnowledgeReview`. */
   readonly resolveWriterAuthority?: () => { readonly leaseId: string; readonly epoch: number } | undefined
+  /**
+   * Mints the durable workspace-relative identity the quarantine ledger keys `filePath` on
+   * (390-12 / D-01). Core's `workspaceRelativeIdentityPath`, pre-bound by the host to its own
+   * config directory.
+   *
+   * Host-supplied for the same reason `resolveWriterAuthority` one field up is: the CHECKOUT ROOT is
+   * a fact only a host knows. Neither this composition nor the verbs beneath it can discover it, and
+   * a layer that guessed would mint identities against the wrong root.
+   *
+   * REQUIRED, and — unlike its neighbour — not conditionally spread. The optionality of the writer
+   * authority is a real report about a real difference between hosts: one holds the lease, one does
+   * not. There is no host that can legitimately lack a checkout root, so an absent mint is not a
+   * posture, it is exactly the unvalidated pass-through that let the write verbs author permanently
+   * unreadable lines into a committed artifact. It belongs at compile time, at the composition that
+   * forgot it.
+   */
+  readonly mintQuarantineIdentityPath: (filePath: string) => string
   readonly clock?: ClockPort
   readonly idSource?: JobIdSource
   /** The kind registry the queue dispatches through. Defaults to the six real declarations. */
@@ -1427,10 +1444,17 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // so the verbs acquire and release per call. Conditionally spread like its neighbour rather
       // than assigned through: an absent authority must be an ABSENT field, not a present
       // `undefined` one, so the implementation's `?.()` arm distinguishes the two hosts.
+      //
+      // 390-12 / D-01: the identity mint is handed straight through, REQUIRED and unspread. The
+      // verbs key the committed ledger on `filePath` and every reader compares those bytes with
+      // `===`, so a host that supplied nothing would be back to storing whatever a human typed —
+      // the round-2 regression. Unlike the authority above there is no host without a checkout
+      // root, so the absent case is a compile error rather than a second posture.
       quarantine: createQuarantineOperations({
         resolveKnowledgeRoot: input.knowledgeRoot,
         auditBaseDir: input.agentQaRoot,
         now: () => clock.now(),
+        mintIdentityPath: input.mintQuarantineIdentityPath,
         ...(input.resolveWriterAuthority === undefined
           ? {}
           : { resolveWriterAuthority: input.resolveWriterAuthority }),

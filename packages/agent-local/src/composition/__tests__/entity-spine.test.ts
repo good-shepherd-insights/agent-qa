@@ -39,6 +39,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { composeLocalAgent, sweepEntityIndexProjection } from '../compose-local-agent.js'
 import type { LocalAgentHost } from '../compose-local-agent.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const PRODUCT = 'shop'
 
 const CALLER: FunctionCaller = {
@@ -97,6 +104,7 @@ describe('the entity spine through composeLocalAgent (387-01)', () => {
 
   function compose(): LocalAgentHost {
     return composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
       knowledgeRoot: () => knowledgeRoot,

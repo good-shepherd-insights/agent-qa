@@ -34,6 +34,13 @@ import {
   writeDaemonRegistration,
 } from '../daemon/registration.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const roots: string[] = []
 const hosts: LocalAgentHost[] = []
 const servers: InvokeServerHandle[] = []
@@ -86,6 +93,7 @@ function host(
   extra: Partial<Parameters<typeof composeLocalAgent>[0]> = {},
 ): LocalAgentHost {
   const composed = composeLocalAgent({
+    mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot: where.agentQaRoot,
     config: CONFIG,
     knowledgeRoot: () => where.knowledgeRoot,

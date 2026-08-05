@@ -23,7 +23,12 @@ import type {
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { CandidateProsePosture, ComposeLocalAgentInput, LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-local'
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
-import { AgentQaConfigSchema, generateRunId, resolveKnowledgeRoot } from '@vostride/agent-qa-core'
+import {
+  AgentQaConfigSchema,
+  generateRunId,
+  resolveKnowledgeRoot,
+  workspaceRelativeIdentityPath,
+} from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
 import { KnowledgeApplyOutcomeSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, RunId, RunsStartInput } from '@vostride/agent-qa-schema'
@@ -373,6 +378,31 @@ export interface ComposeCliLocalAgentInput {
  * composition lists the capability as `unbound` and refuses it by name, which is D-09's visible
  * state expressed as a fact about a host rather than as a literal on a spec.
  */
+/**
+ * The quarantine ledger's identity mint, pre-bound to one workspace's config directory (390-12).
+ *
+ * The committed `quarantine.jsonl` keys entries on a workspace-relative `filePath` and every reader
+ * compares it with `===`, so the two human write verbs need the SAME recipe the run path mints with
+ * — `workspaceRelativeIdentityPath`, resolved against the checkout root. The verbs cannot know that
+ * root, so it is bound here, once, by the layer that does.
+ *
+ * IT LIVES IN THIS FILE ON PURPOSE, and the reason is the one this module's head already states for
+ * the run-id minting beside it: the mint needs `@vostride/agent-qa-core`, the FUNC-02 surface
+ * firewall forbids a `packages/cli` file naming core without an exact (file, specifier) ledger
+ * entry, and that ledger only ever SHRINKS — new surface code can never join it. This file already
+ * carries the entry (`surface-firewall-ledger.ts`, cleared by 395), so the placement mints no new
+ * debt. The daemon host reaches it through the same deferred import it already uses for the run
+ * executor, which also keeps the CLI composition graph out of a configPath-less legacy host.
+ *
+ * The returned closure throws for a path that escapes the config directory — the mint's own
+ * contract — and the verbs surface that as `QuarantineIdentityRefusedError`.
+ */
+export function createQuarantineIdentityMint(configPath: string): (filePath: string) => string {
+  // The same derivation the `knowledgeRoot` closure below performs, spelled once per call site.
+  const configDir = dirname(resolve(configPath))
+  return (filePath: string) => workspaceRelativeIdentityPath(configDir, filePath)
+}
+
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {
   const knowledgeRoot = async (): Promise<string> => {
     const config = await resolveConfig({ configPath: input.configPath, loadAuthPlugins: false })
@@ -381,6 +411,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
 
   return composeLocalAgent({
     agentQaRoot: input.agentQaRoot,
+    mintQuarantineIdentityPath: createQuarantineIdentityMint(input.configPath),
     runExecution: input.runExecution ?? createCliRunExecution({ configPath: input.configPath }),
     config: createMaskedConfigReader(input.configPath),
     knowledgeRoot,

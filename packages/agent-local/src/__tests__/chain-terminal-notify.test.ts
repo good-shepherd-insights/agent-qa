@@ -47,6 +47,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const RUN_ID = 'run-388-alpha'
 
 const CALLER: FunctionCaller = {
@@ -180,6 +187,7 @@ async function createHarness(options?: {
   roots.push(agentQaRoot)
   const curateCalls: { runId: string; executionContext: unknown }[] = []
   const host = composeLocalAgent({
+    mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,
     knowledgeRoot: () => join(agentQaRoot, 'knowledge'),

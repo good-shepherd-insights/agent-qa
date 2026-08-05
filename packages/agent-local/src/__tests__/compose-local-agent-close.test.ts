@@ -15,6 +15,13 @@ import {
 } from '../composition/compose-local-agent.js'
 import { AGENT_JOB_STORE_DB_FILE } from '../store/sqlite-job-store.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const TEST_MODEL: JobModelCapability = {
   modelId: 'test:compose-close',
   generate: async () => {
@@ -76,6 +83,7 @@ describe('composeLocalAgent job-store lifecycle (WR-03)', () => {
     let modelCalls = 0
     const closeStore = vi.spyOn(DatabaseSync.prototype, 'close')
     const host = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: root,
       config: TEST_CONFIG,
       knowledgeRoot: () => join(root, 'knowledge'),
@@ -113,6 +121,7 @@ describe('composeLocalAgent job-store lifecycle (WR-03)', () => {
     let modelCalls = 0
     const closeStore = vi.spyOn(DatabaseSync.prototype, 'close')
     const host = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: root,
       config: TEST_CONFIG,
       knowledgeRoot: () => join(root, 'knowledge'),

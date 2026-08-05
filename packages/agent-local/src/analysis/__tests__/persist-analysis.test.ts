@@ -31,6 +31,13 @@ import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../../composition/compo
 import type { LocalAgentHost, LocalAgentJobs } from '../../composition/compose-local-agent.js'
 import { writeAnalysisArtifact } from '../persist-analysis.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const RUN_ID = 'run-389-persist'
 
 function artifactFor(runId: string, rationale: string): RunAnalysisArtifact {
@@ -171,6 +178,7 @@ describe('postRunCapabilities binds persistAnalysis on the D-09 path law (T-389-
     writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(handoff)}\n`, 'utf8')
 
     const host = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: TEST_CONFIG,
       knowledgeRoot: () => join(agentQaRoot, 'knowledge'),

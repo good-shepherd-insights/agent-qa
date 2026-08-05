@@ -80,6 +80,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createConsoleReporter, QUARANTINE_TEST_ANNOTATION } from '../reporters/console-reporter.js'
 import { JUNIT_QUARANTINE_MARKER_BLOCK, createJunitReporter } from '../reporters/junit-reporter.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 // The committed ledger's path is spelled here as a LITERAL rather than imported from the package
 // that owns it: this suite is asserting on the artifact a human will find in their repository, and
 // a constant imported from the writer would move with the writer and keep every assertion green.
@@ -706,6 +713,7 @@ describe('the expiry forcing function (D-11)', () => {
     expect(entered[0]).toMatchObject({ kind: 'entered', expiresAt: LAPSED_EXPIRY })
 
     const host = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: env.agentQaRoot,
       config: { getMasked: () => Promise.reject(new Error('no config in this fixture')) },
       knowledgeRoot: () => env.knowledgeRoot,

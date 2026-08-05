@@ -39,6 +39,13 @@ import {
 } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const RUN_ID = 'run-388-deferral'
 
 const TEST_MODEL: JobModelCapability = {
@@ -125,6 +132,7 @@ async function openHost(
 ): Promise<DeferralHarness> {
   const curateCalls: { runId: string; executionContext: unknown }[] = []
   const host = composeLocalAgent({
+    mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,
     knowledgeRoot: () => join(agentQaRoot, 'knowledge'),
@@ -270,6 +278,7 @@ describe('curation claim deferral by candidate-prose posture (G-388-2 / UF-388-0
     // curate-memory row to `done` and publishes `bundle-committed`, a receipt no fold earned.
     // Excluding the kind is what stops that host from minting one.
     const host = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot: freshRoot(),
       config: TEST_CONFIG,
       knowledgeRoot: () => join(freshRoot(), 'knowledge'),

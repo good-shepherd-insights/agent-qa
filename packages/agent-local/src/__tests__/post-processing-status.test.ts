@@ -36,6 +36,13 @@ import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../composition/compose-
 import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
 import { AGENT_JOB_STORE_DB_FILE } from '../store/sqlite-job-store.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const RUN_ID = 'run-388-status'
 
 const CALLER: FunctionCaller = {
@@ -148,6 +155,7 @@ function createHarness(): Harness {
   const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
   roots.push(agentQaRoot)
   const host = composeLocalAgent({
+    mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,
     knowledgeRoot: () => join(agentQaRoot, 'knowledge'),
@@ -268,6 +276,7 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
     const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
     roots.push(agentQaRoot)
     const host = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: TEST_CONFIG,
       knowledgeRoot: () => join(agentQaRoot, 'knowledge'),

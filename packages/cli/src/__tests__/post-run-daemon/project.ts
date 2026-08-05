@@ -36,6 +36,13 @@ import {
   type PostRunTailReport,
 } from '../../curation/post-run-tail.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 export const EVENTS_FILE = 'events.jsonl'
 export const AGENT_JOB_STORE_DB_FILE = 'agent-jobs.db'
 /** `job-checkpoint-store.ts`'s `JOB_CHECKPOINT_SUBDIR`; the store itself is off the barrel. */
@@ -191,6 +198,7 @@ export async function runRealTail(input: {
 /** A composition over the same root the daemon serves — the second, socket-free reader. */
 export function openProjectHost(agentQaRoot: string, knowledgeRoot: string): LocalAgentHost {
   return composeLocalAgent({
+    mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,
     knowledgeRoot: () => knowledgeRoot,

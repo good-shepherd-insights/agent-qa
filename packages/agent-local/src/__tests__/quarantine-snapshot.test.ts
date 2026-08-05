@@ -234,6 +234,12 @@ describe('resolveRunQuarantineSnapshot (D-16)', () => {
         resolveKnowledgeRoot: () => knowledgeRoot,
         auditBaseDir,
         now: () => ADD_NOW,
+        // 390-12: this pin is about the PRODUCT partition, and its fixture already speaks the
+        // canonical `tests/checkout.yaml`, so a passthrough leaves what it measures unchanged. The
+        // filePath leg's own two-sided pin — real mint, real verbs, real reader, two checkout roots
+        // — is `cli/src/__tests__/quarantine-ledger-portability.test.ts`, the one layer where every
+        // part can be production code.
+        mintIdentityPath: (filePath: string) => filePath,
       })
     }
 

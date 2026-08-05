@@ -41,6 +41,13 @@ import {
   type RunPostRunTailOptions,
 } from '../curation/post-run-tail.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const RUN_ID = 'run-388-02-idempotency'
 
 // 389-04's author swap put unknown-floor members on the model path, so a throwing stub
@@ -161,6 +168,7 @@ function fixture(): Fixture {
           runCurationTail,
           composeHost: () => {
             const host = composeLocalAgent({
+              mintQuarantineIdentityPath: MINT_IDENTITY,
               agentQaRoot,
               config: TEST_CONFIG,
               knowledgeRoot: () => knowledgeRoot,
@@ -214,6 +222,7 @@ async function readDurableState(agentQaRoot: string): Promise<{
   rows: { id: string; kind: string; status: string; claimedAt: unknown }[]
 }> {
   const host = composeLocalAgent({
+    mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot,
     config: TEST_CONFIG,
     knowledgeRoot: () => join(agentQaRoot, 'knowledge'),

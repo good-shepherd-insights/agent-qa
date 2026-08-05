@@ -63,6 +63,13 @@ import type {
   RunExecutionPort,
 } from '../compose-local-agent.js'
 
+/**
+ * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
+ * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
+ * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
+ */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
 const CALLER: FunctionCaller = {
   surface: 'cli',
   grantedScopes: ['read', 'run', 'config-write'],
@@ -140,6 +147,7 @@ describe('composeLocalAgent (D-15)', () => {
     } = {},
   ): LocalAgentHost {
     return composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
       agentQaRoot,
       config: {
         getMasked: () => {
@@ -778,6 +786,7 @@ describe('composeLocalAgent (D-15)', () => {
     ): ComposeLocalAgentInput {
       return {
         agentQaRoot,
+        mintQuarantineIdentityPath: MINT_IDENTITY,
         config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
         knowledgeRoot: () => knowledgeRootDir(),
         model: () => model,
