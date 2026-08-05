@@ -60,6 +60,24 @@ function scriptedExecutor(script: Record<string, TestResult>): MemberTestExecuto
   }
 }
 
+/**
+ * The same scripted executor, recording WHICH members it was invoked for.
+ *
+ * The recording is the point: a member the shell skipped never reaches the executor, so `executed`
+ * is the only direct evidence of "this test actually ran" — the half of FLAK-02 that lives in the
+ * member loop rather than in the verdict rule.
+ */
+function trackingExecutor(
+  script: Record<string, TestResult>,
+  executed: string[],
+): MemberTestExecutor {
+  return async (member: RunMemberDescriptor, ctx: MemberTestRunContext) => {
+    void ctx
+    executed.push(member.testId)
+    return script[member.testId] ?? passResult(member.testId)
+  }
+}
+
 const FLAKY: RunMemberDescriptor = {
   testId: 'flaky',
   name: 'checkout completes',
@@ -82,6 +100,27 @@ const QUARANTINED_FLAKY = {
   testName: FLAKY.name,
   expiresAt: '2026-09-04T10:00:00.000Z',
 } as const
+
+const QUARANTINED_HEALTHY = {
+  product: 'checkout',
+  filePath: HEALTHY.filePath,
+  testName: HEALTHY.name,
+  expiresAt: '2026-09-04T10:00:00.000Z',
+} as const
+
+/**
+ * THE PRODUCTION DESCRIPTOR SHAPE, replicated exactly (`cli/src/commands/run.ts:1961`).
+ *
+ * Every member of every suite is constructed with `failFastGroup: prepared.suiteKey` —
+ * unconditionally, one shared group per suite file. That single producer is why the descriptors in
+ * the rest of this file (which omit the field entirely) were drawn from OUTSIDE the shape any real
+ * suite run has: the pins below only reach the fail-fast decision because they carry it.
+ */
+const SUITE_GROUP = 'tests/checkout.suite.yaml'
+
+function inSuite(member: RunMemberDescriptor): RunMemberDescriptor {
+  return { ...member, failFastGroup: SUITE_GROUP }
+}
 
 function baseConfig(overrides: Partial<RunConfig> = {}): RunConfig {
   return {
@@ -192,6 +231,159 @@ describe('quarantine-aware run (D-14/D-16)', () => {
     expect(member?.outcome).toBe('timeout')
     expect(member?.quarantined).toBe(true)
     expect(verdict).toBe('passed')
+  })
+})
+
+// ---- The fail-fast gate, in the production descriptor shape (CR-01) -----------------------------
+//
+// FLAK-02's promise is that a quarantined test still RUNS. The aggregate rule above delivers half of
+// it; the other half lives in the shell's member loop, where a failing member POISONS its
+// `failFastGroup` and every later same-group member is skipped without ever reaching the executor.
+//
+// Measured 2026-08-05 (phase 390 verification, CR-01): with production-shape descriptors, a
+// quarantined failing member poisoned its group, its NON-quarantined failing sibling never executed,
+// the skip was neutral in the aggregate, and the run answered 'passed' / exit 0 where pre-390 it
+// exited 1. Every fixture in the suite above omits `failFastGroup`, so the CONTROL pin at :128 —
+// "a non-quarantined failing sibling still fails the run" — could not red on it.
+//
+// These four pins are the corpus that can. They assert the ANTI-SILENCING direction (the aggregate
+// and the exit code), not merely that the sibling executed: a build that runs the sibling and then
+// swallows its failure would pass an execution-only pin.
+
+/**
+ * The verifier's probe output, as a value: which members the executor was reached for, the
+ * aggregate, the exit code a CI gate reads, and every member's (outcome, disposition) pair.
+ *
+ * Kept as ONE object so a failure prints all four legs in a single diff. Execution alone is not the
+ * property at risk — the property at risk is that an un-quarantined failure survives to the exit
+ * code — so the pins below never assert one leg without the others.
+ */
+function probeShape(
+  executed: readonly string[],
+  verdict: string,
+  handoff: CompletedRunHandoff,
+): {
+  executed: readonly string[]
+  verdict: string
+  exitCode: number
+  outcomes: Array<[string, string, boolean | null]>
+} {
+  return {
+    executed,
+    verdict,
+    exitCode: mapVerdictToExitCode(handoff.aggregateVerdict),
+    outcomes: handoff.tests.map((test) => [test.testId, test.outcome, test.quarantined ?? null]),
+  }
+}
+
+describe('fail-fast poisoning is disposition-aware (CR-01, D-14)', () => {
+  it('a quarantined failure does not skip its siblings — a failing sibling still reds the run at exit 1', async () => {
+    const executed: string[] = []
+    const session = startRun(
+      baseConfig({
+        members: [FLAKY, REGRESSION, HEALTHY].map(inSuite),
+        executor: trackingExecutor(
+          { flaky: failResult('flaky'), regression: failResult('regression') },
+          executed,
+        ),
+        quarantined: [QUARANTINED_FLAKY],
+      }),
+    )
+    const { verdict, handoff } = await done(session)
+
+    // Asserted as ONE shape, mirroring the verifier's probe output, because the three facts are
+    // only meaningful together: a diff showing just "the sibling was skipped" invites a fix that
+    // runs the sibling and still swallows its failure.
+    expect(probeShape(executed, verdict, handoff)).toEqual({
+      executed: ['flaky', 'regression', 'healthy'],
+      verdict: 'failed',
+      exitCode: 1,
+      outcomes: [
+        ['flaky', 'failed', true],
+        ['regression', 'failed', null],
+        ['healthy', 'passed', null],
+      ],
+    })
+  })
+
+  it('CONTROL in the production shape: a NON-quarantined failure still poisons its group', async () => {
+    const executed: string[] = []
+    const session = startRun(
+      baseConfig({
+        members: [FLAKY, REGRESSION, HEALTHY].map(inSuite),
+        executor: trackingExecutor(
+          { flaky: failResult('flaky'), regression: failResult('regression') },
+          executed,
+        ),
+        quarantined: [],
+      }),
+    )
+    const { verdict, handoff } = await done(session)
+
+    // pre-390 within-suite fail-fast (D-15) is preserved EXACTLY where no disposition applies —
+    // this is the corpus case the guard must REJECT
+    expect(probeShape(executed, verdict, handoff)).toEqual({
+      executed: ['flaky'],
+      verdict: 'failed',
+      exitCode: 1,
+      outcomes: [
+        ['flaky', 'failed', null],
+        ['regression', 'skipped', null],
+        ['healthy', 'skipped', null],
+      ],
+    })
+  })
+
+  it('the guard covers the TIMEOUT arm too — the same two outcomes the aggregate rule skips', async () => {
+    const timeoutResult: TestResult = {
+      name: 'flaky',
+      filePath: 'flaky.test.ts',
+      status: 'failed',
+      steps: [step({ status: 'failed', error: createTimeoutAbortReason('test', 30_000).message })],
+      duration: 1,
+    }
+    const executed: string[] = []
+    const session = startRun(
+      baseConfig({
+        members: [FLAKY, HEALTHY, REGRESSION].map(inSuite),
+        executor: trackingExecutor({ flaky: timeoutResult }, executed),
+        quarantined: [QUARANTINED_FLAKY],
+      }),
+    )
+    const { verdict, handoff } = await done(session)
+
+    // with the siblings executed and passing, the licensed timeout is the only failure left
+    expect(probeShape(executed, verdict, handoff)).toEqual({
+      executed: ['flaky', 'healthy', 'regression'],
+      verdict: 'passed',
+      exitCode: 0,
+      outcomes: [
+        ['flaky', 'timeout', true],
+        ['healthy', 'passed', null],
+        ['regression', 'passed', null],
+      ],
+    })
+  })
+
+  it('a quarantined member skipped BY a non-quarantined predecessor still carries its disposition', async () => {
+    const executed: string[] = []
+    const session = startRun(
+      baseConfig({
+        members: [FLAKY, HEALTHY].map(inSuite),
+        executor: trackingExecutor({ flaky: failResult('flaky') }, executed),
+        quarantined: [QUARANTINED_HEALTHY],
+      }),
+    )
+    const { verdict, handoff } = await done(session)
+
+    expect(executed).toEqual(['flaky'])
+    const healthy = handoff.tests.find((test) => test.testId === 'healthy')
+    // the skip path stamps the marker in lockstep with the outcome push — the guard change must not
+    // regress it
+    expect(healthy?.outcome).toBe('skipped')
+    expect(healthy?.quarantined).toBe(true)
+    expect(verdict).toBe('failed')
+    expect(mapVerdictToExitCode(handoff.aggregateVerdict)).toBe(1)
   })
 })
 
