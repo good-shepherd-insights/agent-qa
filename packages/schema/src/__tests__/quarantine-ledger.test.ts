@@ -282,10 +282,48 @@ describe('quarantine identity leg portability', () => {
       'tests/checkout.yaml',
       'tests/nested/deep/checkout.yaml',
       'checkout.yaml',
+      'suites/checkout/flow.yaml',
     ]) {
       expect(hasQuarantineEventShape(enteredEvent({ filePath: relative }))).toBe(true)
     }
   })
+
+  // 390-11 / round-1 WR-01. "Not absolute" is a WEAKER claim than "is what the mint produces", and
+  // the gap between the two is where the verifier measured the SILENT half of the round-2 defect:
+  // `./x`, `x\y` and `../x` all pass a negative-only guard, fold, and list as `quarantined` while
+  // `quarantineAppliesToTest`'s `===` compares them against the mint's `./`-trimmed forward-slashed
+  // output and never matches. The operator reads a green quarantined row while the test keeps
+  // failing every build. These pins range the POSITIVE domain so that class is unrepresentable.
+
+  const REJECTED_SIBLINGS: readonly (readonly [string, string])[] = [
+    ['./tests/a.yaml', 'a leading current-dir prefix the mint trims'],
+    ['tests\\a.yaml', 'a backslash separator the mint never emits'],
+    ['../outside.yaml', 'a leading parent segment — outside the config directory'],
+    ['tests/../../outside.yaml', 'an embedded parent segment that escapes'],
+    ['C:foo/bar', 'a Windows DRIVE-RELATIVE prefix (no root slash)'],
+    ['C:foo\\bar', 'a Windows drive-relative prefix with backslashes'],
+  ]
+
+  // One `it` per input class on purpose: a single loop short-circuits on the first sibling, so a
+  // RED baseline taken over it could not say which of the classes are actually admitted today.
+  it.each(REJECTED_SIBLINGS)('refuses %s — %s', (filePath) => {
+    expect(hasQuarantineEventShape(enteredEvent({ filePath }))).toBe(false)
+    expect(() => guardQuarantineLedgerEvent(enteredEvent({ filePath }))).toThrow(TypeError)
+  })
+
+  it.each(REJECTED_SIBLINGS)(
+    'refuses %s on EVERY event kind, not just entered — %s',
+    (filePath) => {
+      for (const kind of QUARANTINE_EVENT_KINDS) {
+        const event = enteredEvent({
+          kind,
+          filePath,
+          expiresAt: '2026-09-04T10:00:00.000Z',
+        })
+        expect(hasQuarantineEventShape(event), kind).toBe(false)
+      }
+    },
+  )
 })
 
 // ---- The handoff disposition contract (D-14 / D-16) ----------------------
