@@ -286,6 +286,33 @@ describe('quarantine ledger lifecycle fold', () => {
     expect(state[0].fingerprint).toBe('fp-2')
   })
 
+  // 390-11 / round-1 WR-04. The committed ledger is human-editable (D-12), so a `renewed` line
+  // authored after a release is reachable by hand. Honoring it would let a renewal SILENTLY re-open
+  // a window an operator deliberately closed — the anti-silencing direction this phase exists to
+  // hold. Re-entry has its own event; `entered` is what re-opens (and `operations.add` already
+  // routes a released entry there).
+  it('a renewal CANNOT resurrect a released window — the release stands', () => {
+    const state = foldQuarantineLedgerState(
+      [entered(), released('released-manual'), renewed()],
+      BETWEEN_EXPIRIES,
+    )
+    expect(state).toHaveLength(1)
+    expect(state[0].state).toBe('released')
+    // The deadline is not extended either — nothing about the closed window moves.
+    expect(state[0].expiresAt).toBe(EXPIRES_AT)
+  })
+
+  it('a renewal on a LAPSED window still extends and re-suppresses (D-11 untouched)', () => {
+    // The released-guard above keys on the EVENT state, never the computed one: a lapsed entry
+    // still carries eventState 'quarantined' (expiry is applied after the fold), so D-11's
+    // renew-an-expired-entry behavior must survive it. `entered` expires before `now`; the renewal
+    // pushes the deadline past it.
+    const state = foldQuarantineLedgerState([entered(), renewed()], BETWEEN_EXPIRIES)
+    expect(foldQuarantineLedgerState([entered()], BETWEEN_EXPIRIES)[0].state).toBe('expired')
+    expect(state[0].state).toBe('quarantined')
+    expect(state[0].expiresAt).toBe(LATER_EXPIRY)
+  })
+
   it('never invents an entry from a renewal or release with no window to act on', () => {
     expect(foldQuarantineLedgerState([renewed()], BETWEEN_EXPIRIES)).toEqual([])
     expect(foldQuarantineLedgerState([released('released-manual')], BETWEEN_EXPIRIES)).toEqual([])
@@ -402,6 +429,74 @@ describe('appendQuarantineEvents (D-04)', () => {
     expect(outcome.kind).toBe('egress-blocked')
     // The CLEAN sibling in the same unit is withheld too: the checkpoint is one unit.
     expect(ledgerText()).toBe(before)
+  })
+
+  // 390-11 / WR-07. The write half and the read half range ONE predicate. A line the reader refuses
+  // is not a refusal, it is CORRUPTION of a committed artifact: it is invisible to `list`, answers
+  // `no-entry` on `release`, duplicates on retry, and prints `N unreadable line(s)` on every
+  // subsequent run — forever, with no verb able to undo it. The pre-check makes that class
+  // unrepresentable from EVERY caller, including a future third one.
+  const UNMATCHABLE_IDENTITY = './tests/a.yaml'
+
+  it('refuses an event the READ would refuse — throws, writes nothing', () => {
+    expect(() =>
+      appendQuarantineEvents(knowledgeRoot, [entered({ filePath: UNMATCHABLE_IDENTITY })], {
+        auditBaseDir,
+      }),
+    ).toThrow(TypeError)
+
+    // Named by INDEX, so a caller appending a batch knows which event it authored badly.
+    expect(() =>
+      appendQuarantineEvents(knowledgeRoot, [entered({ filePath: UNMATCHABLE_IDENTITY })], {
+        auditBaseDir,
+      }),
+    ).toThrow(/index 0/)
+
+    expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
+  })
+
+  it('the shape pre-check runs BEFORE the egress checkpoint', () => {
+    // An event that is BOTH malformed and secret-bearing answers the STRUCTURAL refusal, and no
+    // audit row is written — which is only observable if the pre-check truly precedes the
+    // checkpoint rather than sitting beside it.
+    expect(() =>
+      appendQuarantineEvents(
+        knowledgeRoot,
+        [entered({ filePath: UNMATCHABLE_IDENTITY, owner: `oncall-${AWS_KEY}` })],
+        { auditBaseDir },
+      ),
+    ).toThrow(TypeError)
+
+    expect(existsSync(join(auditBaseDir, 'guardrail_audit.jsonl'))).toBe(false)
+    expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
+  })
+
+  it('a malformed SECOND event withholds the clean first one — all-or-nothing holds', () => {
+    appendQuarantineEvents(knowledgeRoot, [entered()], { auditBaseDir })
+    const before = ledgerText()
+
+    expect(() =>
+      appendQuarantineEvents(
+        knowledgeRoot,
+        [renewed(), entered({ testName: 'second test', filePath: UNMATCHABLE_IDENTITY })],
+        { auditBaseDir },
+      ),
+    ).toThrow(/index 1/)
+
+    expect(ledgerText()).toBe(before)
+  })
+
+  it('the SAME append with the canonical identity writes — the refusal has a reddening domain', () => {
+    // Control: identical fixture, differing only in the filePath leg. Without it, "byte-unchanged"
+    // above would be an absence rather than a measurement.
+    const outcome = appendQuarantineEvents(
+      knowledgeRoot,
+      [renewed(), entered({ testName: 'second test', filePath: 'tests/a.yaml' })],
+      { auditBaseDir },
+    )
+    expect(outcome).toEqual({ kind: 'appended', lines: 2 })
+    expect(ledgerText().trimEnd().split('\n')).toHaveLength(2)
+    expect(readQuarantineLedger(knowledgeRoot).refusedLines).toEqual([])
   })
 
   it('reads no clock — the caller stamps every instant', () => {
