@@ -16,6 +16,7 @@ import {
 import type { MigrationRegistry } from '../versioning/create-version-guard'
 import { VerdictSentencePartsSchema } from './sentence-parts'
 import type { VerdictSentenceParts } from './sentence-parts'
+import { isVerdictClass } from './verdict'
 import type { Verdict } from './verdict'
 
 export const CURRENT_ANALYSIS_SCHEMA_VERSION = 1
@@ -57,17 +58,6 @@ function isNonArrayObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-const VERDICT_CLASSES = new Set<string>([
-  'test_bug',
-  'app_bug',
-  'environment',
-  'flake',
-  'config_error',
-  'llm_error',
-  'unknown',
-  'timeout',
-])
-
 /**
  * Structural check on one stored verdict, at the depth the artifact's consumers traverse:
  * class inside the closed union, a declared producer, and consumer-traversable evidence
@@ -75,7 +65,7 @@ const VERDICT_CLASSES = new Set<string>([
  */
 function hasVerdictShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
-  if (typeof value.class !== 'string' || !VERDICT_CLASSES.has(value.class)) return false
+  if (!isVerdictClass(value.class)) return false
   if (
     value.producer !== 'deterministic-classifier' &&
     value.producer !== 'analyze-run'

@@ -28,6 +28,7 @@ import type { PerTestOutcome } from '../handoff/per-test-outcome'
 import type { StepEvidence } from '../handoff/step-evidence'
 import type { RunAnalysisArtifact } from './analysis-artifact'
 import type { VerdictSentenceParts } from './sentence-parts'
+import { isVerdictClass, VERDICT_CLASSES } from './verdict'
 import type { Verdict } from './verdict'
 
 /**
@@ -77,18 +78,6 @@ export interface AnalysisValidationReject {
 export type AnalysisValidationResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly rejects: readonly AnalysisValidationReject[] }
-
-/** The closed §A9 union at runtime — an authored class outside this set is a reject. */
-const VERDICT_CLASSES: ReadonlySet<string> = new Set([
-  'test_bug',
-  'app_bug',
-  'environment',
-  'flake',
-  'config_error',
-  'llm_error',
-  'unknown',
-  'timeout',
-])
 
 /**
  * The classes whose §A9 routing moves NO trust: app_bug/flake/environment/config_error all
@@ -176,10 +165,10 @@ function validateOneTest(
   }
 
   const verdictClass: string = verdict.class
-  if (!VERDICT_CLASSES.has(verdictClass)) {
+  if (!isVerdictClass(verdictClass)) {
     reject(
       `class "${verdictClass}" is not a member of the closed verdict union ` +
-        `(${[...VERDICT_CLASSES].join(', ')})`,
+        `(${VERDICT_CLASSES.join(', ')})`,
     )
   }
 

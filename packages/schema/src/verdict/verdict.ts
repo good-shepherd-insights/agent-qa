@@ -31,9 +31,9 @@ interface VerdictBase {
  * The closed verdict-class vocabulary, spelled once as data (388 C13). Minted here beside the
  * union it enumerates so consumers that must validate a stored class — the 390 quarantine ledger
  * guard keys entries on one — check membership against the same list the type declares, rather
- * than a fourth private copy. (Three private copies predate this export: the handoff guard, the
- * analysis-artifact guard and the analysis validator; rewiring them is a behavior-identical
- * cleanup deferred out of 390's scope.)
+ * than a fourth private copy. The three copies that predated it — the handoff guard, the
+ * analysis-artifact guard and the analysis validator — were rewired to this export in 390 plan
+ * 02, so the closed set is spelled exactly once (388 C13).
  *
  * Type agreement with `Verdict['class']` is pinned in `__tests__/quarantine-ledger.test.ts`.
  */

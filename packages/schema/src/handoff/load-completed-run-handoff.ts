@@ -6,6 +6,7 @@ import {
   VersionGuardError,
 } from '../versioning/create-version-guard'
 import type { MigrationRegistry } from '../versioning/create-version-guard'
+import { isVerdictClass } from '../verdict/verdict'
 
 /**
  * Thrown when a stored handoff declares a `schemaVersion` this build cannot consume:
@@ -195,17 +196,6 @@ const PLAN_SOURCE_DEMOTIONS = new Set<string>([
   'body-empty',
 ])
 
-const VERDICT_CLASSES = new Set<string>([
-  'test_bug',
-  'app_bug',
-  'environment',
-  'flake',
-  'config_error',
-  'llm_error',
-  'unknown',
-  'timeout',
-])
-
 const TEST_BUG_SUBTYPES = new Set<string>([
   'stale_selector',
   'outdated_flow',
@@ -278,9 +268,7 @@ function hasCompletePlanSourceShape(value: unknown): boolean {
  */
 function hasCompleteRootCauseShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
-  if (typeof value.class !== 'string' || !VERDICT_CLASSES.has(value.class)) {
-    return false
-  }
+  if (!isVerdictClass(value.class)) return false
   if (
     value.producer !== 'deterministic-classifier' &&
     value.producer !== 'analyze-run'
