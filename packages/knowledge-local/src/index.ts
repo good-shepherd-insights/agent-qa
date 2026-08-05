@@ -229,6 +229,7 @@ export type {
   ProjectRunOutcomesOptions,
   RebuildRunOutcomesOptions,
   RebuildRunOutcomesReport,
+  RunOutcomeFailureKey,
   RunOutcomesProjection,
   RunOutcomeTestDelta,
 } from './projection/run-outcomes.js'
@@ -246,6 +247,18 @@ export type {
   TestOutcomeHistory,
   TestOutcomeIdentity,
 } from './projection/run-outcome-read.js'
+// 390 FLAK-01 — the fingerprint-keyed recurrence window: detection's substrate, read per query
+// over the sliding ordinal window (D-07). Keyed by (product, fingerprint), never testId.
+export {
+  fingerprintRecurrence,
+  QUARANTINE_WINDOW_ORDINALS,
+  readFingerprintWindow,
+} from './projection/fingerprint-window-read.js'
+export type {
+  FingerprintRecurrence,
+  FingerprintWindowIdentity,
+  FingerprintWindowRow,
+} from './projection/fingerprint-window-read.js'
 export { GC_SUPERSEDED_RETAIN_K, runKnowledgeGc } from './gc.js'
 export type {
   GateHorizon,

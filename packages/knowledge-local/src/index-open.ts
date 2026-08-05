@@ -428,11 +428,13 @@ function bootstrapVecSchema(db: DatabaseSync, activeProfile: EmbeddingProfile): 
  * identity (product + file_path + test_name) within the folded handoff's raw scope pair,
  * counters, and normalized anchors ONLY; no test file content ever enters the store.
  * `run_outcome_applied_runs` is the per-product/runId idempotency marker that makes
- * refolding a crash-rerun tail safe (receipt-gated at the caller, DB-gated here). All
- * three tables are disposable: `rebuildRunOutcomes` reproduces them from
- * `.agent-qa/runs/<runId>/handoff.json` scans alone (L12). Deliberately absent from
- * REQUIRED_INDEX_TABLES — like the per-profile vec tables, a lost projection heals on
- * the next writer open + rebuild rather than failing health probes.
+ * refolding a crash-rerun tail safe (receipt-gated at the caller, DB-gated here).
+ * `run_fingerprint_windows` (390 D-07/D-09) carries one row per applied FAILED member keyed by
+ * the failure fingerprint, which is the substrate the quarantine detection rule windows over.
+ * All four tables are disposable: `rebuildRunOutcomes` reproduces them from
+ * `.agent-qa/runs/<runId>/handoff.json` (plus each run's `analysis.json`) scans alone (L12).
+ * Deliberately absent from REQUIRED_INDEX_TABLES — like the per-profile vec tables, a lost
+ * projection heals on the next writer open + rebuild rather than failing health probes.
  */
 export function ensureRunOutcomeTables(db: DatabaseSync): void {
   const outcomeColumns = db.prepare("PRAGMA table_info('run_test_outcomes')").all()
@@ -444,6 +446,7 @@ export function ensureRunOutcomeTables(db: DatabaseSync): void {
       DROP TABLE IF EXISTS run_test_outcomes;
       DROP TABLE IF EXISTS run_test_anchors;
       DROP TABLE IF EXISTS run_outcome_applied_runs;
+      DROP TABLE IF EXISTS run_fingerprint_windows;
     `)
   }
 
@@ -478,6 +481,17 @@ export function ensureRunOutcomeTables(db: DatabaseSync): void {
       product TEXT NOT NULL,
       run_id TEXT NOT NULL,
       PRIMARY KEY (product, run_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS run_fingerprint_windows (
+      product TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      test_name TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      verdict_class TEXT NOT NULL,
+      build_ordinal INTEGER NOT NULL,
+      run_id TEXT NOT NULL,
+      UNIQUE (product, file_path, test_name, fingerprint, build_ordinal, run_id)
     );
   `)
 }

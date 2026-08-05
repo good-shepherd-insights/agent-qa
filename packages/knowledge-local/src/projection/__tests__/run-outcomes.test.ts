@@ -212,8 +212,10 @@ afterEach(() => {
 })
 
 describe('run-outcome projection fold (ABRF-02, D-14)', () => {
-  it('stamps the partitioned projection shape at version 2', () => {
-    expect(RUN_OUTCOMES_PROJECTION_VERSION).toBe(2)
+  // 390 D-02/D-07/D-09 bumped 2 → 3: resolved verdicts, the fingerprint window, and the deleted
+  // derived quarantined column. The bump IS the migration — receipted runs refold on the next tail.
+  it('stamps the resolved-verdict projection shape at version 3', () => {
+    expect(RUN_OUTCOMES_PROJECTION_VERSION).toBe(3)
   })
 
   it('folds pass/failure/heal/flake counters, last-N ordinals, and normalized anchor rows', () => {

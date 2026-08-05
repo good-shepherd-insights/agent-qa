@@ -17,6 +17,10 @@ import {
   ANALYSIS_FILE,
   admitAnalysisArtifactForRun,
   canonicalJson,
+  errorTextOf,
+  exercisedAnchors,
+  failingStepOf,
+  failureFingerprint,
   guardCompletedRunHandoff,
   guardRunAnalysisArtifact,
   normalizeAnchor,
@@ -31,6 +35,7 @@ import type {
   ScopeKey,
   StepEvidence,
   Verdict,
+  VerdictClass,
 } from '@vostride/agent-qa-schema'
 
 import { ensureRunOutcomeTables, openIndexWriter } from '../index-open.js'
@@ -39,9 +44,12 @@ import { ensureRunOutcomeTables, openIndexWriter } from '../index-open.js'
  * Stamped into the curation-tail receipt's projection component. Bump when the fold
  * semantics or table shapes change so already-receipted runs refold on the next tail.
  * Version 2 partitions every row and applied-run marker, forcing existing receipts to
- * refold through the product/scope-keyed shape.
+ * refold through the product/scope-keyed shape. Version 3 (390 D-02/D-07/D-09) reads
+ * RESOLVED verdicts instead of the handoff's deterministic floor, adds the fingerprint-keyed
+ * recurrence window, and deletes the provisional derived `quarantined` column — the derived
+ * index is gitignored and rebuildable (L12), so this bump IS the migration.
  */
-export const RUN_OUTCOMES_PROJECTION_VERSION = 2
+export const RUN_OUTCOMES_PROJECTION_VERSION = 3
 
 /**
  * PROVISIONAL last-N window for per-test outcome history (~10 pending ABRF-02 ranking
@@ -82,6 +90,19 @@ export interface ProjectRunOutcomesOptions {
   artifact?: RunAnalysisArtifact
 }
 
+/**
+ * What a FAILED member contributes to the fingerprint-keyed recurrence window (390 D-07).
+ *
+ * The fingerprint is composed through the ONE exported vocabulary — `failingStepOf`/`errorTextOf`
+ * over `exercisedAnchors`, keyed by `failureFingerprint` — so this window and the render-time
+ * cluster presentation cannot disagree about what "the same failure" is. The verdict class is part
+ * of the key by recipe, which is why it travels beside it rather than being re-derived downstream.
+ */
+export interface RunOutcomeFailureKey {
+  fingerprint: string
+  verdictClass: VerdictClass
+}
+
 export interface RunOutcomeTestDelta {
   filePath: string
   testName: string
@@ -90,6 +111,8 @@ export interface RunOutcomeTestDelta {
   flake: boolean
   /** canonicalJson(normalizeAnchor(...)) keys — byte-deterministic (ABRF-02 encoding edge). */
   anchorKeys: string[]
+  /** Present for exactly the failed members — a pass contributes no window row (D-07). */
+  failure?: RunOutcomeFailureKey
 }
 
 export interface RunOutcomesProjection {
@@ -216,13 +239,44 @@ function testDelta(
     }
   }
 
+  const resolvedClass = resolvedClasses.get(test.testIndex)
   return {
     filePath: test.filePath,
     testName: test.testName,
     passed,
     heals: steps.filter((step) => step.selfHeal !== undefined).length,
-    flake: resolvedClasses.get(test.testIndex) === 'flake',
+    flake: resolvedClass === 'flake',
     anchorKeys: [...anchorKeys].sort(),
+    ...(passed ? {} : { failure: failureKey({ ...test, steps }, resolvedClass) }),
+  }
+}
+
+/**
+ * The window key for one failed member (390 D-07).
+ *
+ * Every input rule is IMPORTED, never respelled here: which step the failure is about
+ * (`failingStepOf`), which recorded bytes describe it (`errorTextOf`), which anchors it touched
+ * (`exercisedAnchors`), and how those compose into the frozen key (`failureFingerprint`). The
+ * anchor walk is schema's own — deliberately NOT the injected `extractAnchors` seam, which exists
+ * so callers can vary the projection's anchor ROWS; keying the window through a variable seam would
+ * let the window and the cluster presentation drift apart on a test host.
+ *
+ * A failed member always has a resolved class (`resolveRunVerdicts` mints `unknown` for a failure
+ * carrying no verdict), so the fallback below is a total-function guard, not an expected path.
+ */
+function failureKey(
+  test: PerTestOutcome,
+  resolvedClass: VerdictClass | undefined,
+): RunOutcomeFailureKey {
+  const step = failingStepOf(test)
+  const anchors = step === undefined ? [] : exercisedAnchors(step)
+  const verdictClass = resolvedClass ?? 'unknown'
+  return {
+    fingerprint: failureFingerprint(
+      { anchors, errorText: errorTextOf(step, test) },
+      verdictClass,
+    ),
+    verdictClass,
   }
 }
 
@@ -322,6 +376,15 @@ export function applyRunOutcomes(
       product, scope_tier, scope_key, file_path, test_name, anchor_normalized_json
     ) VALUES (?, ?, ?, ?, ?, ?)
   `)
+  // 390 D-07: window rows commit in the SAME transaction as the counters and behind the SAME
+  // applied-runs marker, so a refold can neither double-count a recurrence nor leave counters and
+  // windows describing different histories. OR IGNORE makes the uniqueness constraint the second
+  // line of defence rather than an error path.
+  const insertWindow = db.prepare(`
+    INSERT OR IGNORE INTO run_fingerprint_windows (
+      product, file_path, test_name, fingerprint, verdict_class, build_ordinal, run_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
 
   db.exec('BEGIN IMMEDIATE')
   try {
@@ -369,6 +432,17 @@ export function applyRunOutcomes(
           test.filePath,
           test.testName,
           anchorKey,
+        )
+      }
+      if (test.failure !== undefined) {
+        insertWindow.run(
+          projection.product,
+          test.filePath,
+          test.testName,
+          test.failure.fingerprint,
+          test.failure.verdictClass,
+          projection.buildOrdinal,
+          projection.runId,
         )
       }
     }
@@ -468,6 +542,7 @@ export function rebuildRunOutcomes(
     DELETE FROM run_test_outcomes;
     DELETE FROM run_test_anchors;
     DELETE FROM run_outcome_applied_runs;
+    DELETE FROM run_fingerprint_windows;
   `)
 
   const report: RebuildRunOutcomesReport = { folded: 0, skipped: 0 }
