@@ -26,7 +26,7 @@
 //     for byte unchanged. The refusing direction is the load-bearing one: the same call appends a
 //     line two tests above, so zero bytes is a measurement rather than an absence.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,6 +44,7 @@ import type { QuarantineEntryState, QuarantineLedgerEvent } from '@vostride/agen
 import {
   EPOCH_FILE,
   LEASE_FILE,
+  LEASE_HEARTBEAT_TTL_MS,
   acquireWriterLease,
   releaseLease,
 } from '../../lease/writer-lease.js'
@@ -107,6 +108,43 @@ function released(who: ReturnType<typeof identity>, at: string): QuarantineLedge
   } as QuarantineLedgerEvent
 }
 
+// ---- the injected identity mint (390-12 / D-01) -------------------------------------------------
+//
+// These verbs cannot know the checkout root, and `knowledge-local` cannot import `@vostride/
+// agent-qa-core` (only the surface packages may), so the mint arrives pre-bound from the host. The
+// RECIPE itself stays pinned where it lives — `core/src/workspace/__tests__/workspace-paths.test.ts`
+// — and the fixtures below are deliberately NOT re-implementations of it: each is the smallest
+// closure that exhibits one behaviour of the real mint (it rewrites, or it throws), so what these
+// pins measure is this module's THREADING of a mint rather than any mint's arithmetic. The two
+// halves meet with all parts real in `cli/src/__tests__/quarantine-ledger-portability.test.ts`.
+
+/** The mint a host that speaks the canonical bytes already supplies: unchanged in, unchanged out. */
+function passthroughMint(filePath: string): string {
+  return filePath
+}
+
+/**
+ * A mint that REWRITES its input — the `./`-trimming leg of the real recipe, spelled minimally.
+ *
+ * A pin driven through a passthrough mint cannot tell a threaded mint from an unthreaded one: both
+ * store the caller's bytes. Only a mint whose output DIFFERS from its input makes the threading
+ * observable in the committed line.
+ */
+function trimmingMint(filePath: string): string {
+  return filePath.replace(/^\.\//, '')
+}
+
+/**
+ * A mint that THROWS — the escape arm of the real recipe (`workspaceRelativeIdentityPath` raises
+ * `Workspace file path escapes config directory` for a path outside the config directory).
+ */
+function refusingMint(filePath: string): string {
+  if (filePath.startsWith('../') || filePath.startsWith('/')) {
+    throw new Error(`Workspace file path escapes config directory: ${filePath}`)
+  }
+  return filePath
+}
+
 describe('createQuarantineOperations (D-12/D-13)', () => {
   let knowledgeRoot: string
   let auditBaseDir: string
@@ -115,6 +153,7 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
   function operations(
     now: string = NOW,
     resolveWriterAuthority?: () => { leaseId: string; epoch: number } | undefined,
+    mintIdentityPath: (filePath: string) => string = passthroughMint,
   ) {
     return createQuarantineOperations({
       resolveKnowledgeRoot: () => knowledgeRoot,
@@ -123,6 +162,7 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
         clockReads += 1
         return now
       },
+      mintIdentityPath,
       ...(resolveWriterAuthority === undefined ? {} : { resolveWriterAuthority }),
     })
   }
@@ -421,12 +461,31 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
   const RAW_PRODUCT = 'My Product'
   const SLUGGED_PRODUCT = 'My-Product'
 
-  function human(fields: { product: string }): {
+  /** The identity spelling every reader compares — what the mint EMITS. */
+  const CANONICAL_FILE = 'tests/checkout.yaml'
+  /** The same file as a human types it from a shell. Folds and lists; matches nothing unminted. */
+  const NON_CANONICAL_FILE = './tests/checkout.yaml'
+  /** A path outside the config directory — the input the real mint refuses rather than rewrites. */
+  const ESCAPING_FILE = '../outside.yaml'
+
+  /**
+   * The human write verbs' input shape, with the filePath leg RANGEABLE (390-12).
+   *
+   * It used to hardcode the already-canonical `tests/checkout.yaml`, which 390-VERIFICATION.md
+   * names as the exact reason no fixture in the round could red on the filePath defect: the verb's
+   * filePath input domain had never been ranged over by anything, so every pin in this file agreed
+   * with an unminted implementation by construction.
+   */
+  function human(fields: { product: string; filePath?: string }): {
     product: string
     filePath: string
     testName: string
   } {
-    return { ...fields, filePath: 'tests/checkout.yaml', testName: 'checkout completes' }
+    return {
+      product: fields.product,
+      filePath: fields.filePath ?? CANONICAL_FILE,
+      testName: 'checkout completes',
+    }
   }
 
   it('records the SLUGGED product in the entered line — the partition every reader compares', async () => {
@@ -475,6 +534,127 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
 
     expect(ledgerLines()[0]).toMatchObject({ product: PRODUCT })
     expect((await operations().list())[0]).toMatchObject({ product: PRODUCT })
+  })
+
+  // ---- the filePath identity mint (390-12 / D-01, the round-2 regression) -----------------
+  //
+  // The committed ledger is keyed on `(product, filePath, testName)` and every reader compares
+  // `filePath` with `===` against the workspace-relative identity the run path mints. Before this
+  // block the verbs copied the caller's spelling through: an absolute path became a permanently
+  // refused, unlistable, unreleasable, self-duplicating line in a COMMITTED artifact, and `./x`,
+  // `x\y`, `../x` folded and listed as `quarantined` while suppressing nothing. The two pins the
+  // round needed are here: what the verb STORES for an input the mint rewrites, and what it does
+  // for an input the mint refuses.
+
+  it('stores the MINT\'S OUTPUT on the committed line, never the caller\'s spelling', async () => {
+    const answer = await operations(NOW, undefined, trimmingMint)
+      .add(human({ product: PRODUCT, filePath: NON_CANONICAL_FILE }))
+
+    // Anchored as the exact fixture string rather than as `trimmingMint(NON_CANONICAL_FILE)`: a pin
+    // written as a relation among the code's own functions cannot see both halves agreeing on the
+    // wrong bytes (this repository's recorded closure law).
+    expect(ledgerLines()[0]).toMatchObject({ kind: 'entered', filePath: 'tests/checkout.yaml' })
+    expect(JSON.stringify(ledgerLines()[0])).not.toContain(NON_CANONICAL_FILE)
+    // And the ANSWER names what was stored — an answer carrying the raw spelling would tell an
+    // operator an entry exists under bytes no reader will ever compare against.
+    expect(answer.entry).toMatchObject({ filePath: 'tests/checkout.yaml', state: 'quarantined' })
+  })
+
+  it('REFUSES an add whose filePath cannot mint — typed, no ledger, and no lease was ever taken', async () => {
+    const rejected = operations(NOW, undefined, refusingMint)
+      .add(human({ product: PRODUCT, filePath: ESCAPING_FILE }))
+
+    await expect(rejected).rejects.toMatchObject({
+      name: 'QuarantineIdentityRefusedError',
+      filePath: ESCAPING_FILE,
+    })
+    // The mint's own message is carried, not swallowed: the operator's next question is "why".
+    await expect(rejected).rejects.toThrow(/escapes config directory/)
+    expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
+    // No residue AND no acquisition: nothing in this fixture writes the monotonic epoch except an
+    // acquisition, so an absent `.epoch` says the refusal happened before the lease, not inside it.
+    expect(existsSync(leaseFile())).toBe(false)
+    expect(existsSync(join(knowledgeRoot, EPOCH_FILE))).toBe(false)
+  })
+
+  it('a RETRIED refused add still leaves the ledger at ZERO lines — not one refused line per attempt', async () => {
+    const verbs = operations(NOW, undefined, refusingMint)
+    const input = human({ product: PRODUCT, filePath: ESCAPING_FILE })
+
+    await expect(verbs.add(input)).rejects.toMatchObject({ name: 'QuarantineIdentityRefusedError' })
+    await expect(verbs.add(input)).rejects.toMatchObject({ name: 'QuarantineIdentityRefusedError' })
+
+    // 390-VERIFICATION.md measured the pre-fix behaviour as `line count after retry -> 2`. Zero is
+    // the whole point: a refused write leaves nothing for the next attempt to duplicate.
+    expect(ledgerLines()).toHaveLength(0)
+    expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
+  })
+
+  it('refuses the UNMINTABLE input BEFORE the lease — an input tripping both gates answers identity', async () => {
+    // The ordering claim is prose unless an input trips both gates and the answer names which one
+    // ran (390-11's idiom). With the mint inside the lease scope this answers `QuarantineLeaseHeldError`.
+    const holder = foreignHolder()
+
+    await expect(
+      operations(NOW, undefined, refusingMint).add(human({ product: PRODUCT, filePath: ESCAPING_FILE })),
+    ).rejects.toMatchObject({ name: 'QuarantineIdentityRefusedError' })
+
+    expect(currentLeaseId()).toBe(holder.leaseId)
+    releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
+  })
+
+  it('RELEASES through the mint — a non-canonical spelling closes the window a canonical add opened', async () => {
+    const verbs = operations(NOW, undefined, trimmingMint)
+    await verbs.add(human({ product: PRODUCT }))
+
+    const answer = await verbs.release(human({ product: PRODUCT, filePath: NON_CANONICAL_FILE }))
+
+    // Sibling-input corpus law: `release` is the other half of the exit path and joins on the same
+    // leg. A mint threaded into `add` only would leave this answering `no-entry`.
+    expect(answer.kind).toBe('released')
+    expect(ledgerLines()[1]).toMatchObject({
+      kind: 'released-manual',
+      filePath: 'tests/checkout.yaml',
+    })
+    expect(await operations().list()).toEqual([expect.objectContaining({ state: 'released' })])
+  })
+
+  it('REFUSES a release whose filePath cannot mint — typed, and the ledger is byte-unchanged', async () => {
+    await plant([entered(A, '2026-01-01T00:00:00.000Z')])
+    const before = ledgerBytes()
+
+    await expect(
+      operations(NOW, undefined, refusingMint).release(human({ product: PRODUCT, filePath: ESCAPING_FILE })),
+    ).rejects.toMatchObject({ name: 'QuarantineIdentityRefusedError' })
+
+    expect(ledgerBytes()).toBe(before)
+    expect(existsSync(leaseFile())).toBe(false)
+  })
+
+  it('round-trips the CANONICAL spelling untouched — the accept direction the refusals need', async () => {
+    // Without this, the byte-unchanged assertions above are absences rather than measurements: they
+    // must have an input domain that DOES write through the very same refusing mint.
+    const verbs = operations(NOW, undefined, refusingMint)
+
+    expect((await verbs.add(human({ product: PRODUCT }))).kind).toBe('entered')
+    expect((await verbs.release(human({ product: PRODUCT }))).kind).toBe('released')
+
+    expect(ledgerLines()).toHaveLength(2)
+    for (const line of ledgerLines()) expect(line.filePath).toBe(CANONICAL_FILE)
+  })
+
+  it('RENEWS across two filePath SPELLINGS — the lookup joins through the mint, not only the write', async () => {
+    // Harness ranging: the standing product/renewal pin, re-driven over the filePath domain the
+    // `human()` helper could not previously express. Reds when only the WRITE half mints: `entryFor`
+    // would look for `./tests/checkout.yaml`, miss the row it just wrote, and open a second window.
+    const verbs = operations(NOW, undefined, trimmingMint)
+    await verbs.add(human({ product: RAW_PRODUCT, filePath: NON_CANONICAL_FILE }))
+
+    const answer = await verbs.add(human({ product: RAW_PRODUCT, filePath: CANONICAL_FILE }))
+
+    expect(answer.kind).toBe('renewed')
+    expect(ledgerLines().map((line) => line.kind)).toEqual(['entered', 'renewed'])
+    for (const line of ledgerLines()) expect(line.filePath).toBe(CANONICAL_FILE)
   })
 
   // ---- writer-lease serialization (390-09 / CR-03 / D-04) ---------------------------------
@@ -589,6 +769,33 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
     expect(currentLeaseId()).toBe(holder.leaseId)
 
     releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
+  })
+
+  it('RECLAIMS a STALE lease and writes — the arm the fresh-holder fixture can never produce (WR-03)', async () => {
+    // `foreignHolder()` acquires microseconds before the assertion, so every refusal pin above
+    // meets a FRESH holder and the reclaim arm was unreachable from this corpus — the recorded
+    // precondition-guarded rule corpus law. Planting an aged heartbeat is what produces it.
+    // Own `process.pid` rides along in the spread, so the escalation/kill path stays unreachable.
+    const planted = foreignHolder()
+    const staleLease = {
+      ...(JSON.parse(readFileSync(leaseFile(), 'utf8')) as Record<string, unknown>),
+      heartbeatAtMs: Date.now() - LEASE_HEARTBEAT_TTL_MS,
+    }
+    writeFileSync(leaseFile(), `${JSON.stringify(staleLease)}\n`, 'utf8')
+    const startedAtMs = Date.now()
+
+    await operations().add(A)
+
+    // The append landed: a reclaim that refused would have thrown before this line existed.
+    expect(ledgerLines()).toHaveLength(1)
+    // Epoch 2, not 1 — the reclaim's own footprint, and the leg that separates it from a clean
+    // acquisition on an empty root (which the accept-direction pin above measures at 1).
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe('2\n')
+    // The prior lease is gone, and so is the one that replaced it: the verb gave back what it took.
+    expect(currentLeaseId()).not.toBe(planted.leaseId)
+    expect(existsSync(leaseFile())).toBe(false)
+    // Prompt: the stale arm reclaims rather than waiting out the acquisition deadline.
+    expect(Date.now() - startedAtMs).toBeLessThan(5_000)
   })
 
   // ---- committed-truth read posture -------------------------------------------------------
