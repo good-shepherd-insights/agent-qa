@@ -35,6 +35,7 @@ import type {
   JobModelCapability,
   KnowledgeReaderPort,
   PostRunJobCapabilities,
+  RecurrenceLadder,
   RecurrenceProvider,
   RunInvocationPort,
   RunsReaderPort,
@@ -48,6 +49,8 @@ import {
   acquireWriterLease,
   countPendingCurationJobs,
   createMemorySightingSource,
+  createQuarantineOperations,
+  QUARANTINE_FLAG_FLOOR,
   describeAllEntities,
   embedPendingEntities,
   countRemainingCurationWork,
@@ -61,8 +64,11 @@ import {
   embedderWorkerSocketPath,
   enqueueCurationCandidateProjection,
   failureRecurrence,
+  fingerprintRecurrence,
+  foldQuarantineLedgerState,
   foldRunOutcomes,
   indexDbPath,
+  readQuarantineLedger,
   readTestOutcomeHistory,
   getEntityDescriptor,
   heartbeatLease,
@@ -134,6 +140,8 @@ import {
 import type {
   CompletedRunHandoff,
   JobKind,
+  QuarantineEntryStateName,
+  QuarantineLadderState,
   RunEventEnvelope,
   RunId,
   RunsStartInput,
@@ -1028,6 +1036,109 @@ function readProjectedTestHistory(
   }
 }
 
+/**
+ * The recurrence pair the clause renders, from whichever window the query keyed (390 D-07).
+ *
+ * `kth` / `windowBuilds` keep 389's names because they are the renderer's vocabulary; what
+ * changed underneath is which window answers them.
+ */
+interface ProjectedRecurrence {
+  readonly kth: number
+  readonly windowBuilds: number
+}
+
+/**
+ * One recurrence read, over ONE connection (390 D-07).
+ *
+ * A query CARRYING a fingerprint is answered by the fingerprint-keyed window — the same failure
+ * recurring, which is what the ladder triggers on — and a query without one falls back to the
+ * per-test window 389 bound this seam to. The fallback is not a degradation: a member with no
+ * failing step to key from has no fingerprint to count, and its per-test history is the honest
+ * answer rather than a stand-in key's.
+ *
+ * The read-time "current build" is the row's own `lastBuildOrdinal` (falling back to the greatest
+ * windowed ordinal) for BOTH legs: at render time the latest recorded build IS current, and using
+ * one ordinal for both keeps the numerator and the denominator on the same window.
+ */
+function readProjectedRecurrence(
+  knowledgeRoot: string,
+  query: { readonly product: string; readonly filePath: string; readonly testName: string
+    readonly fingerprint?: string },
+): ProjectedRecurrence | undefined {
+  const path = indexDbPath(knowledgeRoot)
+  if (!existsSync(path)) return undefined
+  const db = new DatabaseSync(path, { readOnly: true })
+  try {
+    const history = readTestOutcomeHistory(db, {
+      product: query.product,
+      filePath: query.filePath,
+      testName: query.testName,
+    })
+    if (history === undefined) return undefined
+    const currentBuildOrdinal =
+      history.lastBuildOrdinal
+      ?? history.lastOutcomes.reduce((max, entry) => Math.max(max, entry.buildOrdinal), 0)
+    if (query.fingerprint === undefined) return failureRecurrence(history, currentBuildOrdinal)
+    const windowed = fingerprintRecurrence(
+      db,
+      { product: query.product, fingerprint: query.fingerprint },
+      currentBuildOrdinal,
+    )
+    return { kth: windowed.occurrenceOrdinals, windowBuilds: windowed.windowOrdinals }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('no such table')) return undefined
+    throw error
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * What a folded ledger entry renders as on the sentence's ladder — a TOTAL table (390 D-17).
+ *
+ * `satisfies Record<QuarantineEntryStateName, …>` is load-bearing: a fourth ledger state cannot
+ * compile until someone decides how it reads to a human. `released` maps to NO rung because a
+ * closed window is history, not a state of the test today — the clause would otherwise announce a
+ * quarantine that ended.
+ */
+const LADDER_STATE_FOR_ENTRY = {
+  quarantined: 'quarantined',
+  expired: 'expired',
+  released: undefined,
+} as const satisfies Record<QuarantineEntryStateName, QuarantineLadderState | undefined>
+
+/**
+ * The ladder rung this identity sits on, joined LIVE from the committed ledger (390 D-06/D-17).
+ *
+ * Keyed on IDENTITY, not on the fingerprint: the ledger records which TEST is suppressed, and a
+ * test whose failure mode changed is still suppressed. `now` arrives as an argument (one read per
+ * query — two reads could land either side of one deadline).
+ *
+ * An unreadable ledger PROPAGATES its typed error rather than answering "no rung". Healing here
+ * would render a suppressed test's sentence as an ordinary one, which is the silent flip this
+ * phase exists to prevent (the same posture 390-03 pinned for the authoring reader).
+ *
+ * Below the ledger, the FLAG floor: a fingerprint at D-06's floor with no open window is
+ * `flagged` — one build of warning before anything changes — and that covers both halves of
+ * D-05's class gate, since a class that never auto-quarantines still recurs loudly here.
+ */
+function readQuarantineLadder(
+  knowledgeRoot: string,
+  identity: { readonly product: string; readonly filePath: string; readonly testName: string },
+  now: string,
+  recurrence: ProjectedRecurrence,
+): RecurrenceLadder | undefined {
+  const entries = foldQuarantineLedgerState(readQuarantineLedger(knowledgeRoot).events, now)
+  const entry = entries.find((candidate) =>
+    candidate.product === identity.product
+    && candidate.filePath === identity.filePath
+    && candidate.testName === identity.testName)
+  const state = entry === undefined ? undefined : LADDER_STATE_FOR_ENTRY[entry.state]
+  if (entry !== undefined && state !== undefined) return { state, expiresAt: entry.expiresAt }
+  if (recurrence.kth >= QUARANTINE_FLAG_FLOOR) return { state: 'flagged' }
+  return undefined
+}
+
 interface ProjectionRecurrence {
   readonly provider: RecurrenceProvider
   /**
@@ -1038,16 +1149,17 @@ interface ProjectionRecurrence {
 }
 
 /**
- * The D-08 recurrence seam bound to v51's run-outcome projection (`readTestOutcomeHistory`
- * + `failureRecurrence` — plan 05 declares the seam, 390 rebinds it to its
- * fingerprint-window computation). The join is LIVE per call: the read and the derivation
- * run on every query and nothing about the ANSWER is cached, so a store update between two
- * renders changes the clause (D-08). Only the knowledge ROOT — a composition-lifetime
- * fact, not an answer — is resolved once and remembered.
+ * The D-08 recurrence seam, bound at ONE composition root.
  *
- * The read-time "current build" is the row's own `lastBuildOrdinal` (falling back to the
- * greatest windowed ordinal): at render time the latest recorded build IS current, so
- * `kth` counts every recorded failure in the window.
+ * 389 bound it to v51's per-test run-outcome window; 390-06 REBOUND the COMPUTATION to the
+ * fingerprint-keyed window plus a per-call fold of the committed quarantine ledger (D-07/D-17).
+ * The priming machinery below is unchanged and deliberately so — G-389-2's fused
+ * mint-and-attach is a shipped fix, and only what the provider computes moved.
+ *
+ * The join is LIVE per call: both reads run on every query and nothing about the ANSWER is
+ * cached, so a store update OR a ledger append between two renders changes the clause (D-08,
+ * SC4). Only the knowledge ROOT — a composition-lifetime fact, not an answer — is resolved
+ * once and remembered.
  *
  * A host may supply an ASYNC root resolver (the CLI layers configuration). A query that
  * arrives before the root resolves answers `undefined` — rendered as the explicit
@@ -1059,6 +1171,8 @@ interface ProjectionRecurrence {
  */
 function createProjectionRecurrenceProvider(
   resolveKnowledgeRoot: () => Promise<string> | string,
+  /** The host clock, read ONCE per query — the ladder's expiry comparison needs an instant. */
+  now: () => string,
 ): ProjectionRecurrence {
   let root: string | undefined
   let resolving: Promise<void> | undefined
@@ -1105,12 +1219,13 @@ function createProjectionRecurrenceProvider(
       failureRecurrence(query) {
         const knowledgeRoot = rootNow()
         if (knowledgeRoot === undefined) return undefined
-        const history = readProjectedTestHistory(knowledgeRoot, query)
-        if (history === undefined) return undefined
-        const currentBuildOrdinal =
-          history.lastBuildOrdinal
-          ?? history.lastOutcomes.reduce((max, entry) => Math.max(max, entry.buildOrdinal), 0)
-        return failureRecurrence(history, currentBuildOrdinal)
+        const recurrence = readProjectedRecurrence(knowledgeRoot, query)
+        // No recorded history is the honest no-history clause, ladder or not: 389's absence
+        // discipline is a prohibition this plan inherits, and a reader who needs the owner or
+        // the deadline of an entry with no history has `quarantine.list` and the entity card.
+        if (recurrence === undefined) return undefined
+        const ladder = readQuarantineLadder(knowledgeRoot, query, now(), recurrence)
+        return ladder === undefined ? recurrence : { ...recurrence, ladder }
       },
     },
   }
@@ -1228,7 +1343,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   // root string is cached. A resolution failure is swallowed HERE only — the provider then
   // answers the honest no-history clause, and the knowledge verbs report their own errors
   // through their own awaited resolutions.
-  const recurrence = createProjectionRecurrenceProvider(input.knowledgeRoot)
+  const recurrence = createProjectionRecurrenceProvider(input.knowledgeRoot, () => clock.now())
   const runsReader = createRunsReader(input.agentQaRoot)
 
   const registry = createFunctionRegistry({
@@ -1291,6 +1406,23 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // renders the explicit no-history clause; neither is a refusal (plan 05's law).
       analysis: createAnalysisArtifactReader(input.agentQaRoot),
       recurrence: recurrence.provider,
+      // 390 D-12/D-13: the three quarantine verbs, bound HERE and therefore on BOTH hosts —
+      // the CLI tail and 386's daemon compose the same root, which is the whole point of
+      // 385 D-15 (a second binding site is a second answer to "what is quarantined").
+      //
+      // Present in every local composition for the same reason the knowledge WRITE half is: a
+      // local host owns the committed knowledge root the ledger lives at. It stays an OPTIONAL
+      // dep so a genuinely read-only or remote composition reports all three `unbound` BY NAME
+      // rather than answering an empty list about a ledger it has never been able to open.
+      //
+      // The port takes the root as a FACTORY (the CLI resolves it asynchronously) and the clock
+      // as an argument, so this composition supplies both and the implementation reads neither
+      // of its own accord. Nothing opens here: the first byte is read when a verb is invoked.
+      quarantine: createQuarantineOperations({
+        resolveKnowledgeRoot: input.knowledgeRoot,
+        auditBaseDir: input.agentQaRoot,
+        now: () => clock.now(),
+      }),
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
   })

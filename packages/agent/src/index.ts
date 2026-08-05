@@ -108,13 +108,16 @@ export { QUARANTINE_RELEASE_FUNCTION_ID } from './functions/ops/quarantine-relea
 // is a pure string composer over typed parts — no fs, no model, no store — published so plan
 // 07's CLI print and every later surface import THIS symbol rather than composing a second
 // sentence (SC3's "no second code path" is structural, not reviewed). The three port types
-// are what a composition root implements to bind the seam: 389 binds it to v51's run-outcome
-// projection (plan 06), 390 rebinds the SAME seam to its fingerprint window. None of this is
-// dispatch and none of it reaches storage, so publishing it opens no path around
+// are what a composition root implements to bind the seam: 389 bound it to v51's run-outcome
+// projection (plan 06), and 390-06 rebound the SAME seam to its fingerprint window plus the
+// committed ledger's ladder state (`RecurrenceLadder`, published for the same reason its
+// siblings are — the composition root names it in the function that computes it). None of this
+// is dispatch and none of it reaches storage, so publishing it opens no path around
 // `invokeFunction`.
 export { renderVerdictSentence } from './analysis/render-sentence.js'
 export type {
   RecurrenceAnswer,
+  RecurrenceLadder,
   RecurrenceProvider,
   RecurrenceQuery,
 } from './analysis/render-sentence.js'

@@ -307,6 +307,7 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'RecoverAbandonedClaimsInput',
   'RecoverAbandonedClaimsOutcome',
   'RecurrenceAnswer',
+  'RecurrenceLadder',
   'RecurrenceProvider',
   'RecurrenceQuery',
   'ReplayedRunEvent',

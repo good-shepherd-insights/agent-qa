@@ -1098,10 +1098,27 @@ describe('composeLocalAgent (D-15)', () => {
       expect(await sentenceFor(QUARANTINED_RUN_ID)).toBe(before)
     })
 
+    it('renders the QUARANTINED arm with the recorded deadline, byte for byte', async () => {
+      plantHandoff(failedHandoff(QUARANTINED_RUN_ID, 1))
+      seedOutcome(failedHandoff(QUARANTINED_RUN_ID, 1))
+      // The default fixture deadline is far future, so the fold answers `quarantined`.
+      plantLedger([enteredEvent()])
+
+      expect(await sentenceFor(QUARANTINED_RUN_ID)).toContain(
+        'failure 1 of this test in the last 1 builds; quarantined until Sep 4',
+      )
+    })
+
     it('renders the EXPIRED arm with the recorded deadline — failures count again (D-11)', async () => {
       plantHandoff(failedHandoff(QUARANTINED_RUN_ID, 1))
       seedOutcome(failedHandoff(QUARANTINED_RUN_ID, 1))
-      plantLedger([enteredEvent({ expiresAt: '2026-09-04T10:00:00.000Z' })])
+      // The SAME entry with a deadline already behind it: suppression stopped, the entry stays
+      // listed, and the clause says so. Only `expiresAt` varies between this leg and the one
+      // above, which is what makes the two arms a differential rather than two fixtures.
+      plantLedger([enteredEvent({
+        at: '2025-08-05T10:00:00.000Z',
+        expiresAt: '2025-09-04T10:00:00.000Z',
+      })])
 
       expect(await sentenceFor(QUARANTINED_RUN_ID)).toContain(
         'failure 1 of this test in the last 1 builds; quarantine expired Sep 4 — failures count again',
