@@ -25,9 +25,21 @@
 // alternative would have been to answer `entered` while the ledger recorded nothing, which tells an
 // operator a test is quarantined when the next run will fail on it.
 //
-// SERIALIZATION is the CALLER's, positionally: the gated verbs run inside the same MRSW
-// writer-lease scope as the post-run fold, so appends serialize because of where they are invoked
-// from. Nothing here takes a lock of its own (the ledger module states the same).
+// SERIALIZATION IS THIS MODULE'S, and it is taken here rather than assumed about a caller. `release`
+// and `add` run their WHOLE read-fold-decide-append cycle inside the MRSW writer lease — acquired
+// here, released here, on every exit — or inside the authority a host that already holds the lease
+// hands in (`resolveWriterAuthority`; the daemon acquires at startup and would otherwise be told
+// `held` by itself). Serializing only the append would leave the interesting race intact: two
+// writers folding a ledger with no entry for a test would both decide `entered` and both append, so
+// the DECISION is inside the scope and there is no await point between the read and the write.
+// `list` acquires nothing — a reader that took the lease would queue every enumeration behind
+// whatever drain is running.
+//
+// This replaces a claim that serialization was the caller's, "positionally". It was false, and
+// statically so (390-09 / CR-03): nothing on the path from `invokeFunction('quarantine.add')` to
+// `appendQuarantineEvents` held a lease. The two-OS-process byte-interleaving consequence is a
+// separately filed human-verification item; what is enforced and pinned here is that a lease held
+// by another writer refuses this verb typed, with the ledger byte-unchanged.
 
 import {
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,

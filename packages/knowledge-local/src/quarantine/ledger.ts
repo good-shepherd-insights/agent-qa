@@ -27,11 +27,19 @@
 // why CTX-FUT-01's propose-only posture deliberately does not bind these writes (D-04; the dated
 // posture note lands in REQUIREMENTS.md).
 //
-// SERIALIZATION is POSITIONAL, and that nuance matters: this module holds no lock of its own. Its
-// callers — the post-run fold and the gated quarantine verbs — already execute inside the MRSW
-// writer-lease scope with epoch fencing, so appends serialize because of WHERE they are called
-// from, not because anything here enforces it. A future caller outside that scope would need to
-// take the lease itself; the guarantee is the call site's.
+// SERIALIZATION belongs to two NAMED callers, and this module is not one of them — it holds no lock
+// of its own. Both mechanisms are real and each is enforced in code:
+//   - the POST-RUN FOLD appends under a lease the drain already holds. `post-run-tail.ts:458`
+//     acquires the writer lease and the fold runs inside that scope.
+//   - the GATED VERBS acquire the lease INSIDE `createQuarantineOperations` and release it per
+//     call, or ride the handed-in `writerAuthority` when the host process is already the holder
+//     (the daemon). The whole read-fold-decide cycle is inside that scope, not just the append.
+// This paragraph previously claimed the verb half serialized POSITIONALLY, "because of where the
+// callers are invoked from". That was false and statically so — 390-09 / CR-03: no caller on the
+// path from `invokeFunction('quarantine.add')` to this function held any lease. It is true now
+// because the verb module takes one, not because anything here does.
+// The residual is honest and small: a THIRD caller of `appendQuarantineEvents`, added outside those
+// two paths, would be unserialized and would have to take the lease itself.
 //
 // IDENTITY — entries are keyed by `(product, filePath, testName)`, never `testId`.
 
