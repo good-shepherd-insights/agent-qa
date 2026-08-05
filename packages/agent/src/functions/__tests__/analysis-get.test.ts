@@ -12,6 +12,10 @@
 import {
   canonicalJson,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
+  errorTextOf,
+  exercisedAnchors,
+  failingStepOf,
+  failureFingerprint,
   FunctionScopeSchema,
   resolveRunVerdicts,
   slugBranch,
@@ -254,12 +258,87 @@ describe('analysis.get — the artifact leg and the one accessor (D-10/D-11)', (
 
     expect(output.sentences[0]!.sentence)
       .toContain('failure 3 of this test in the last 5 builds')
-    // Identity is (product, filePath, testName) — the projection's own key, never testId.
+    // Identity is (product, filePath, testName) — the projection's own key, never testId —
+    // and 390 D-07 adds the FINGERPRINT the recurrence windows are keyed by. Both travel:
+    // the ladder join is identity-keyed, the occurrence count is fingerprint-keyed.
     expect(asked).toEqual([{
       product: slugBranch(handoff.scope.key),
       filePath: 'tests/failed-0.yaml',
       testName: 'stepped failure 0',
+      fingerprint: failureFingerprint(
+        {
+          anchors: exercisedAnchors(failingStepOf(handoff.tests[0]!)!),
+          errorText: errorTextOf(failingStepOf(handoff.tests[0]!), handoff.tests[0]!),
+        },
+        'unknown',
+      ),
     }])
+  })
+
+  it('keys the fingerprint by the RESOLVED class — an upgraded verdict queries a different window', async () => {
+    // The recipe folds the class in (389 D-13), so the same anchor failing as `unknown` and as
+    // `app_bug` are two windows. The caller must therefore key from the resolved verdict, not
+    // from the handoff's floor — which is exactly what the projection's writer does.
+    const handoff = buildSyntheticHandoff({ failureCount: 1 })
+    const asked: RecurrenceQuery[] = []
+    const recurrence: RecurrenceProvider = {
+      failureRecurrence(query) {
+        asked.push(query)
+        return { kth: 1, windowBuilds: 1 }
+      },
+    }
+    const registry = registryWith({
+      handoff,
+      analysis: readerOf(artifactFor(handoff)),
+      recurrence,
+    })
+
+    await analysisOf(registry, String(handoff.runId))
+
+    expect(asked[0]!.fingerprint).toBe(
+      failureFingerprint(
+        {
+          anchors: exercisedAnchors(failingStepOf(handoff.tests[0]!)!),
+          errorText: errorTextOf(failingStepOf(handoff.tests[0]!), handoff.tests[0]!),
+        },
+        'app_bug',
+      ),
+    )
+    // The floor's key is a DIFFERENT string — the control that makes the pin above load-bearing.
+    expect(asked[0]!.fingerprint).not.toBe(
+      failureFingerprint(
+        {
+          anchors: exercisedAnchors(failingStepOf(handoff.tests[0]!)!),
+          errorText: errorTextOf(failingStepOf(handoff.tests[0]!), handoff.tests[0]!),
+        },
+        'unknown',
+      ),
+    )
+  })
+
+  it('queries a ZERO-STEP failure by identity with the fingerprint ABSENT — no fabricated key', async () => {
+    // A member with no recorded steps has no failing step to key from. The query still goes out
+    // (identity is enough for the per-test window and for the ladder join); the fingerprint leg
+    // is OMITTED rather than filled with a stand-in, so `'fingerprint' in query` is false.
+    const handoff = buildSyntheticHandoff({ failureCount: 0, steplessFailureCount: 1 })
+    const asked: RecurrenceQuery[] = []
+    const recurrence: RecurrenceProvider = {
+      failureRecurrence(query) {
+        asked.push(query)
+        return undefined
+      },
+    }
+    const registry = registryWith({ handoff, analysis: readerOf(undefined), recurrence })
+
+    await analysisOf(registry, String(handoff.runId))
+
+    expect(asked).toHaveLength(1)
+    expect(asked[0]!.fingerprint).toBeUndefined()
+    expect('fingerprint' in asked[0]!).toBe(false)
+    expect(asked[0]).toMatchObject({
+      product: slugBranch(handoff.scope.key),
+      filePath: 'tests/stepless-0.yaml',
+    })
   })
 
   it('returns clusters byte-identical to the pure fold — no re-derivation, no drift', async () => {
