@@ -188,7 +188,33 @@ export type {
   IssueId,
   RecordId,
 } from './ids/index'
-export type { Verdict, VerdictEvidence } from './verdict/index'
+export type { Verdict, VerdictClass, VerdictEvidence } from './verdict/index'
+export { VERDICT_CLASSES, isVerdictClass } from './verdict/index'
+// 390 D-01/D-03/D-11/D-12: the committed quarantine ledger's event contract and the state
+// vocabulary every quarantine surface speaks — the fold, the list verb, the entity card and the
+// recurrence clause's ladder arms. `'expired'` is a COMPUTED state, never an event.
+export {
+  CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+  QUARANTINE_EVENT_KINDS,
+  QUARANTINE_LEDGER_MIGRATIONS,
+  QUARANTINE_UNASSIGNED_OWNER,
+  QuarantineLedgerVersionError,
+  guardQuarantineLedgerEvent,
+  hasQuarantineEventShape,
+  isQuarantineEventKind,
+} from './quarantine/index'
+export type {
+  QuarantineAppliedEntry,
+  QuarantineEnteredEvent,
+  QuarantineEntryState,
+  QuarantineEntryStateName,
+  QuarantineEventKind,
+  QuarantineLadderState,
+  QuarantineLedgerEvent,
+  QuarantineOwner,
+  QuarantineReleasedEvent,
+  QuarantineRenewedEvent,
+} from './quarantine/index'
 // 389 D-05/D-07/D-09/D-10: the verdict truth vocabulary — sentence parts joined to Verdict
 // by perTest (beside, never inside the frozen §A9 union), the version-guarded run analysis
 // artifact, and the ONE resolved-verdict accessor every consumer routes through.

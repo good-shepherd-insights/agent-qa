@@ -46,12 +46,12 @@ describe('CompletedRunHandoff gateRun carrier, minted at v4 (D-10)', () => {
   // CURRENT version the guard accepts and the migration chain that carries a v4 document
   // forward. Both are repinned here rather than loosened, because the exact-equality
   // assertion below is what makes "exactly one new migration entry" machine-checked.
-  it('pins the current handoff schema version at 5 (387-02 retrievalTrace bump)', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(5)
+  it('pins the current handoff schema version at 6 (390-01 quarantine disposition bump)', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(6)
   })
 
-  it('registers the 4 -> 5 identity migration beside the shipped v2 and v3 entries', () => {
-    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2', '3', '4'])
+  it('registers the 5 -> 6 identity migration beside the shipped v2, v3 and v4 entries', () => {
+    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2', '3', '4', '5'])
   })
 
   it('loads an already-written schemaVersion 3 document unchanged, with gateRun absent', () => {

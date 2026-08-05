@@ -1,9 +1,9 @@
 // RED-first pins for the run-start quarantine snapshot (Phase 390 D-16).
 //
-// The CLI is the composition layer: it folds the committed ledger ONCE at run start and hands the
-// resolved set into the run as plain data. Folding once is what makes the disposition deterministic
-// for the whole run — a mid-run ledger edit can never retroactively change a running build (the
-// same posture `executionContext` resolution already has).
+// The local composition root folds the committed ledger ONCE at run start and hands the resolved
+// set into the run as plain data. Folding once is what makes the disposition deterministic for the
+// whole run — a mid-run ledger edit can never retroactively change a running build (the same
+// posture `executionContext` resolution already has).
 //
 // A ledger read failure DEGRADES to an empty set with a printed warning. A broken ledger can never
 // abort a run (T-390-04).
@@ -14,10 +14,10 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { QUARANTINE_LEDGER_FILENAME } from '@vostride/agent-qa-knowledge-local'
+import { QUARANTINE_LEDGER_FILENAME } from '@vostride/agent-qa-knowledge-local/reader'
 import { QUARANTINE_UNASSIGNED_OWNER } from '@vostride/agent-qa-schema'
 
-import { resolveRunQuarantineSnapshot } from '../commands/quarantine-snapshot.js'
+import { resolveRunQuarantineSnapshot } from '../composition/quarantine-snapshot.js'
 
 const RUN_START_NOW = '2026-08-20T10:00:00.000Z'
 const ACTIVE_EXPIRY = '2026-09-04T10:00:00.000Z'

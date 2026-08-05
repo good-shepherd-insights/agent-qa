@@ -27,6 +27,36 @@ interface VerdictBase {
   perTest: number
 }
 
+/**
+ * The closed verdict-class vocabulary, spelled once as data (388 C13). Minted here beside the
+ * union it enumerates so consumers that must validate a stored class — the 390 quarantine ledger
+ * guard keys entries on one — check membership against the same list the type declares, rather
+ * than a fourth private copy. (Three private copies predate this export: the handoff guard, the
+ * analysis-artifact guard and the analysis validator; rewiring them is a behavior-identical
+ * cleanup deferred out of 390's scope.)
+ *
+ * Type agreement with `Verdict['class']` is pinned in `__tests__/quarantine-ledger.test.ts`.
+ */
+export const VERDICT_CLASSES = [
+  'test_bug',
+  'app_bug',
+  'environment',
+  'flake',
+  'config_error',
+  'llm_error',
+  'unknown',
+  'timeout',
+] as const
+
+export type VerdictClass = (typeof VERDICT_CLASSES)[number]
+
+const VERDICT_CLASS_SET: ReadonlySet<string> = new Set(VERDICT_CLASSES)
+
+/** True for exactly the eight closed classes — the membership check stored bytes must pass. */
+export function isVerdictClass(value: unknown): value is VerdictClass {
+  return typeof value === 'string' && VERDICT_CLASS_SET.has(value)
+}
+
 export type Verdict =
   | (VerdictBase & {
       class: 'test_bug'

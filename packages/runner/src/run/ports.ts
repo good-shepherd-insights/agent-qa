@@ -17,6 +17,7 @@ import type {
   HookFinishedPayload,
   DeclaredModelProfile,
   ModelIdentity,
+  QuarantineAppliedEntry,
   TestRetryScheduledPayload,
   RunArtifactStageInput,
   RunArtifactFinalizeInput,
@@ -307,4 +308,18 @@ export interface RunConfig {
    * so the store leg stays a no-op-shaped write and the memory-only path is unchanged.
    */
   runArtifact?: RunArtifactStageInput
+  /**
+   * Phase 390 D-16: the quarantined-test set, resolved ONCE at run start by the composition layer
+   * (the CLI folds the committed ledger before the first member executes) and threaded in as PLAIN
+   * DATA. This is deliberately NOT a port: the runner gains zero new I/O seams and stays
+   * storageNeutral, and the disposition is deterministic for the whole run, so a mid-run ledger
+   * edit can never retroactively change a running build. Mirrors how `executionContext` is
+   * resolved once at run start.
+   *
+   * Members are matched on `(filePath, name)` — the stable test identity — never `testId`. A match
+   * makes the member's failure skippable in the aggregate rule (`deriveAggregateVerdict`) and
+   * stamps the disposition beside its truthful outcome in the handoff. Absent or empty ⇒
+   * byte-identical pre-390 behavior.
+   */
+  quarantined?: readonly QuarantineAppliedEntry[]
 }

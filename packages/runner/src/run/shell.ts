@@ -31,6 +31,7 @@ import { classifyRootCause } from './root-cause.js'
 import { createMemberEventSink } from './event-sink.js'
 import { assembleHandoff, assemblePerTestOutcome, skippedPerTestOutcome } from './handoff-assembly.js'
 import type { MemberEvidenceContext, RunConfig } from './ports.js'
+import type { RunMemberDescriptor } from './ports.js'
 import type { TestResult } from '../result.js'
 
 // Re-export the port contracts the Wave-0 `run-shell.test.ts` imports through `../shell.js`.
@@ -45,6 +46,25 @@ export type {
 const IDENTITY_MASKING: MaskingContext = {
   mask: (text: string) => text,
   unmask: (text: string) => text,
+}
+
+/**
+ * Does the run-start quarantine snapshot license this member's failure (390 D-14/D-16)?
+ *
+ * The match is on STABLE TEST IDENTITY — the member's `filePath` plus its parsed `name`, which is
+ * the `testName` leg the ledger keys on — never `testId`, a per-run explicit id that would not
+ * survive to the next build. `product` is not compared here: the composition layer already filtered
+ * the snapshot to this run's product before handing it over (D-16), so re-deriving product bytes
+ * inside the runner would be a second, drift-prone spelling of that rule.
+ */
+function isMemberQuarantined(
+  member: RunMemberDescriptor,
+  quarantined: RunConfig['quarantined'],
+): boolean {
+  if (quarantined === undefined) return false
+  return quarantined.some(
+    (entry) => entry.filePath === member.filePath && entry.testName === member.name,
+  )
 }
 
 /**
@@ -121,27 +141,35 @@ export function startRun(config: RunConfig): RunSession {
   const done: Promise<RunCompletion> = (async (): Promise<RunCompletion> => {
     const outcomes: PerTestOutcome[] = []
     const memberOutcomes: MemberTestOutcome[] = []
+    // 390 D-14: per-member quarantine flags, pushed in lockstep with `memberOutcomes` at EVERY
+    // push site so the two arrays stay positionally aligned — the aggregate rule reads them by
+    // index, and a missed push would silently shift every later member's disposition.
+    const memberQuarantined: boolean[] = []
     const poisonedGroups = new Set<string>()
 
     for (let i = 0; i < config.members.length; i += 1) {
       const member = config.members[i]
       const testIndex = member.testIndex ?? i
       const name = member.name
+      const quarantined = isMemberQuarantined(member, config.quarantined)
+      const quarantineMarker = quarantined ? (true as const) : undefined
 
       // Run aborted (cancel or budget) — skip the rest without invoking the executor (D-03).
       if (runController.signal.aborted) {
-        const skip = skippedPerTestOutcome(member, testIndex)
+        const skip = skippedPerTestOutcome(member, testIndex, quarantineMarker)
         outcomes.push(skip)
         memberOutcomes.push('skipped')
+        memberQuarantined.push(quarantined)
         continue
       }
 
       // Group fail-fast (D-15): a poisoned same-group predecessor skips this member — shell-owned
       // skip production absorbed from suite/runner.ts:530-554; the executor is never invoked.
       if (member.failFastGroup !== undefined && poisonedGroups.has(member.failFastGroup)) {
-        const skip = skippedPerTestOutcome(member, testIndex)
+        const skip = skippedPerTestOutcome(member, testIndex, quarantineMarker)
         outcomes.push(skip)
         memberOutcomes.push('skipped')
+        memberQuarantined.push(quarantined)
         bus.publish('testFinished', projectTestFinished(skip, mask))
         continue
       }
@@ -271,11 +299,13 @@ export function startRun(config: RunConfig): RunSession {
           buildOrdinal: config.buildOrdinal,
           mask,
           ...evidenceContext,
+          ...(quarantineMarker !== undefined ? { quarantined: quarantineMarker } : {}),
         },
         rootCause,
       )
       outcomes.push(perTest)
       memberOutcomes.push(outcome)
+      memberQuarantined.push(quarantined)
       // 363 D-01: enrich testFinished with the TestResult the shell already holds at assembly —
       // durationMs, retryCount, and the masked failureSummary (masked by projectTestFinished's
       // terminal walk, T-363-05). Absent optionals are omitted (Pitfall 2 — sourced from the runner
@@ -291,7 +321,12 @@ export function startRun(config: RunConfig): RunSession {
     }
 
     // ---- Terminal sequence — ONE owner (Pitfall 7) -------------------------------------------
-    const verdict = deriveAggregateVerdict({ runCancelled, runBudgetExpired, outcomes: memberOutcomes })
+    const verdict = deriveAggregateVerdict({
+      runCancelled,
+      runBudgetExpired,
+      outcomes: memberOutcomes,
+      quarantined: memberQuarantined,
+    })
 
     // verdict EXACTLY once, BEFORE any post-processing event (SESSION-02).
     bus.publish('verdict', { verdict })

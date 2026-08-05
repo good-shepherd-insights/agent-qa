@@ -66,6 +66,15 @@ export type {
 
 export { KNOWLEDGE_BUNDLE_EGRESS_CHANNEL, checkpointCommittedParts } from './bundle-egress.js'
 export type { BundleEgressOptions, BundleEgressOutcome } from './bundle-egress.js'
+// 390 D-01/D-03/D-11: the committed quarantine ledger — read, pure state fold. The event DTOs and
+// the state vocabulary live in schema; this package owns the bytes and the fold over them.
+export {
+  QUARANTINE_LEDGER_FILENAME,
+  foldQuarantineLedgerState,
+  quarantineLedgerPath,
+  readQuarantineLedger,
+} from './quarantine/ledger.js'
+export type { QuarantineLedgerRead, RefusedQuarantineLine } from './quarantine/ledger.js'
 export {
   ARTIFACT_RUN_CAP_BYTES,
   ARTIFACT_STEP_CAP_BYTES,

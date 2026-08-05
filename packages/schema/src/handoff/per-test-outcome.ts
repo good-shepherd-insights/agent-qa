@@ -30,4 +30,16 @@ export interface PerTestOutcome {
    * verdicts at this same per-test granularity via ordinary supersession.
    */
   rootCause?: Verdict
+  /**
+   * Phase 390 D-14: the quarantine disposition, living BESIDE the outcome rather than replacing
+   * it. `outcome` stays truthful for a quarantined test — a `'failed'` member reads `'failed'`
+   * here forever, so the projection window and the M-consecutive-passes auto-exit keep seeing
+   * reality. What changes is the AGGREGATE rule (deriveAggregateVerdict skips flagged failures),
+   * and this marker is how every later consumer — reporters, the projection, digests — knows the
+   * failure was licensed.
+   *
+   * Only the literal marker is meaningful; absence denotes an ordinary member and remains absent
+   * in JSON (the `excludedFromOutcomes` idiom).
+   */
+  quarantined?: true
 }

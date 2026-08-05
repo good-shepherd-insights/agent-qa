@@ -1,9 +1,10 @@
 import type { ScopeKey } from '../identity/scope-key'
 import type { RunId } from '../run/run-id'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
+import type { QuarantineAppliedEntry } from '../quarantine/quarantine-ledger'
 import type { PerTestOutcome } from './per-test-outcome'
 
-export const CURRENT_HANDOFF_SCHEMA_VERSION = 5
+export const CURRENT_HANDOFF_SCHEMA_VERSION = 6
 
 export interface CompletedRunHandoff {
   schemaVersion: number
@@ -40,4 +41,14 @@ export interface CompletedRunHandoff {
   startedAt: number
   endedAt: number
   tests: PerTestOutcome[]
+  /**
+   * Phase 390 D-16: which committed ledger entries this run applied, resolved ONCE at run start.
+   * The set is folded before the first member executes, so a mid-run ledger edit can never
+   * retroactively change a running build — and the run's own record says exactly which
+   * dispositions it was operating under, and until when.
+   *
+   * Absent on runs that applied nothing (the overwhelmingly common case), and absent on every
+   * handoff written before version 6.
+   */
+  quarantineApplied?: readonly QuarantineAppliedEntry[]
 }

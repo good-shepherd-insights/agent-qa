@@ -1,4 +1,5 @@
-export type { Verdict, VerdictEvidence } from './verdict'
+export type { Verdict, VerdictClass, VerdictEvidence } from './verdict'
+export { VERDICT_CLASSES, isVerdictClass } from './verdict'
 export type { VerdictGroundingQuote, VerdictSentenceParts } from './sentence-parts'
 export { VerdictSentencePartsSchema } from './sentence-parts'
 export {

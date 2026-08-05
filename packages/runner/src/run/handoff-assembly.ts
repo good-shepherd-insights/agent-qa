@@ -75,6 +75,10 @@ function synthesizeStepEvidence(step: StepResult, stepIndex: number, deps: Synth
  * `rootCause` is the shell-classified §A9 verdict (373-07): attached ONLY when defined so clean
  * passes/skipped/cancelled members stay rootCause-free in the persisted JSON (the D-01 presence
  * rule — the key is absent, never undefined-valued).
+ *
+ * `deps.quarantined` is the 390 D-14 disposition, stamped BESIDE `outcome` under the same
+ * presence rule. It never alters `outcome`: a quarantined failing member reads `'failed'` here, and
+ * the licence to ignore that failure lives entirely in the aggregate rule and in this marker.
  */
 export function assemblePerTestOutcome(
   member: RunMemberDescriptor,
@@ -88,6 +92,7 @@ export function assemblePerTestOutcome(
     modelProfile?: DeclaredModelProfile
     verifierIdentity?: ModelIdentity
     toolSchemaDigest?: string
+    quarantined?: true
   },
   rootCause?: Verdict,
 ): PerTestOutcome {
@@ -112,14 +117,23 @@ export function assemblePerTestOutcome(
     outcome,
     steps,
     ...(rootCause !== undefined ? { rootCause } : {}),
+    ...(deps.quarantined === true ? { quarantined: true as const } : {}),
   }
 }
 
 /**
  * The shell-produced skip outcome (D-15): a member the shell never invoked (run aborted, or a
  * poisoned same-group member). `outcome: 'skipped'`, no steps — neutral in the aggregate fold.
+ *
+ * `quarantined` is still stamped when the ledger licensed this member (390 D-14): the disposition
+ * describes the TEST's standing, not the outcome it happened to reach, so a reader of the handoff
+ * sees the same truth whether the member ran or was skipped past.
  */
-export function skippedPerTestOutcome(member: RunMemberDescriptor, testIndex: number): PerTestOutcome {
+export function skippedPerTestOutcome(
+  member: RunMemberDescriptor,
+  testIndex: number,
+  quarantined?: true,
+): PerTestOutcome {
   return {
     testId: member.testId,
     testName: member.name,
@@ -127,6 +141,7 @@ export function skippedPerTestOutcome(member: RunMemberDescriptor, testIndex: nu
     testIndex,
     outcome: 'skipped',
     steps: [],
+    ...(quarantined === true ? { quarantined: true as const } : {}),
   }
 }
 
@@ -134,6 +149,12 @@ export function skippedPerTestOutcome(member: RunMemberDescriptor, testIndex: nu
  * Assemble the one {@link CompletedRunHandoff} a run persists (D-17). Every header field is copied
  * verbatim FROM the resolved {@link RunConfig} (D-04/D-20 — never re-derived); `aggregateVerdict`
  * is the execution verdict; `tests` are the assembled per-member outcomes in run order.
+ *
+ * 390 D-16: `quarantineApplied` records the ledger entries this run was operating under, copied
+ * from the same resolved config the disposition markers were matched against — so the run's own
+ * receipt answers "which suppressions were licensed here, and until when" without re-reading a
+ * ledger that may since have changed. An empty set stays ABSENT, keeping every unquarantined run's
+ * handoff bytes identical to pre-390.
  */
 export function assembleHandoff(
   config: RunConfig,
@@ -154,5 +175,8 @@ export function assembleHandoff(
     startedAt: timing.startedAt,
     endedAt: timing.endedAt,
     tests: outcomes,
+    ...(config.quarantined !== undefined && config.quarantined.length > 0
+      ? { quarantineApplied: config.quarantined }
+      : {}),
   }
 }

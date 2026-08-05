@@ -53,15 +53,37 @@ export function deriveMemberOutcome(result: TestResult): MemberTestOutcome {
  *
  * `'skipped'` members are neutral throughout — an all-skipped (or empty) run is
  * vacuously `'passed'` (D-15, the reconciled clause; matches every test runner).
+ *
+ * PHASE 390 D-14 — the quarantine skip is EXPLICIT IN THE RULE, right here in step 3 and nowhere
+ * else. `quarantined[i] === true` marks a member whose failure the committed ledger has licensed:
+ * step 3 passes over it, so a run whose only failures are quarantined aggregates `'passed'` and
+ * exits 0 through the untouched {@link mapVerdictToExitCode}. Three things this deliberately does
+ * NOT do: it does not rewrite the member outcome (`'failed'` stays `'failed'` — the projection
+ * window and the auto-exit keep seeing reality), it does not touch any other branch (a sibling
+ * `'cancelled'`/`'healed'` still governs, and the two run-level branches still win outright), and
+ * it does not widen either closed union. `quarantined` absent — or shorter than `outcomes` — is
+ * byte-identical pre-390 behavior, which is why every existing call site compiles unchanged.
+ *
+ * The skip covers `'timeout'` members as well as `'failed'` ones: a quarantined flaky test that
+ * times out is the same A3 phenomenon, and a rule that suppressed one but not the other would make
+ * relief depend on how the flake happened to manifest that build.
  */
 export function deriveAggregateVerdict(input: {
   runCancelled: boolean
   runBudgetExpired: boolean
   outcomes: readonly MemberTestOutcome[]
+  quarantined?: readonly boolean[]
 }): RunStatus {
   if (input.runCancelled) return 'cancelled'
   if (input.runBudgetExpired) return 'timeout'
-  if (input.outcomes.some((o) => o === 'failed' || o === 'timeout')) return 'failed'
+  const quarantined = input.quarantined
+  if (
+    input.outcomes.some(
+      (o, index) => (o === 'failed' || o === 'timeout') && quarantined?.[index] !== true,
+    )
+  ) {
+    return 'failed'
+  }
   if (input.outcomes.some((o) => o === 'cancelled')) return 'cancelled'
   if (input.outcomes.some((o) => o === 'healed')) return 'healed'
   return 'passed'

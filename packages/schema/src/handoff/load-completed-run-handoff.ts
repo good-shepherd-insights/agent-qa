@@ -44,6 +44,16 @@ export const HANDOFF_MIGRATIONS: MigrationRegistry = {
    * extractor scans comments too, and read a package name out of the earlier wording.)
    */
   4: (doc) => doc,
+  /**
+   * v5 → v6 (390 D-14/D-16, 2026-08-05): both new fields are optional-additive — the per-member
+   * `quarantined` disposition marker and the run-level `quarantineApplied` record — so every
+   * already-written v5 handoff loads unchanged and simply carries no disposition.
+   *
+   * Registered rather than skipped for the same reason the trace bump was: a stamped document is
+   * the only way a reader can tell a run that predates quarantine from a run that quarantined
+   * nothing, and every later consumer reads the disposition out of this contract.
+   */
+  5: (doc) => doc,
 }
 
 function isNonArrayObject(value: unknown): value is Record<string, unknown> {
@@ -409,7 +419,29 @@ function hasCompleteTestShape(value: unknown): boolean {
       value.outcome === 'skipped') &&
     Array.isArray(value.steps) &&
     value.steps.every(hasCompleteStepShape) &&
-    (!('rootCause' in value) || hasCompleteRootCauseShape(value.rootCause))
+    (!('rootCause' in value) || hasCompleteRootCauseShape(value.rootCause)) &&
+    // 390 D-14: only the literal marker is legal. A truthy-but-not-true value would let a
+    // hand-edited handoff read as quarantined at one consumer and not at another.
+    (!('quarantined' in value) || value.quarantined === true)
+  )
+}
+
+/**
+ * 390 D-16: one applied-entry record, at the depth consumers traverse — the three identity legs
+ * plus the expiry that says how long the disposition was licensed for. Every field is a required
+ * non-empty string; an entry missing its identity could never be joined back to a test.
+ */
+function hasQuarantineAppliedShape(value: unknown): boolean {
+  if (!isNonArrayObject(value)) return false
+  return (
+    typeof value.product === 'string' &&
+    value.product.length > 0 &&
+    typeof value.filePath === 'string' &&
+    value.filePath.length > 0 &&
+    typeof value.testName === 'string' &&
+    value.testName.length > 0 &&
+    typeof value.expiresAt === 'string' &&
+    value.expiresAt.length > 0
   )
 }
 
@@ -475,7 +507,10 @@ function hasCompleteHandoffShape(value: unknown): boolean {
     typeof value.startedAt === 'number' &&
     typeof value.endedAt === 'number' &&
     Array.isArray(value.tests) &&
-    value.tests.every(hasCompleteTestShape)
+    value.tests.every(hasCompleteTestShape) &&
+    (!('quarantineApplied' in value) ||
+      (Array.isArray(value.quarantineApplied) &&
+        value.quarantineApplied.every(hasQuarantineAppliedShape)))
   )
 }
 

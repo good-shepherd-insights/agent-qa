@@ -19,6 +19,9 @@ import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agen
 import { WorkingMemoryStore, runMemberTest } from '@vostride/agent-qa-runner'
 import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor, BaselineProbeResult } from '@vostride/agent-qa-runner'
 import { runBaselineProbe } from './baseline-probe.js'
+// 390 D-16: the run-start ledger fold lives at the local composition root (the CLI's shipped source
+// does not name the knowledge package — 387 D-20); this host calls the ONE resolved helper.
+import { resolveRunQuarantineSnapshot } from '@vostride/agent-qa-agent-local'
 import {
   buildMemberRunConfig,
   buildRunAuditSink,
@@ -2137,6 +2140,17 @@ async function executeSuites(
     }
   }
 
+  // 390 D-16: fold the committed quarantine ledger ONCE, here, before any member can execute. The
+  // resolved set rides RunConfig as plain data, so the disposition is fixed for the whole run and a
+  // mid-run ledger edit cannot change a build already under way. A read failure degrades to an
+  // empty set with a warning — a broken ledger never aborts a run (T-390-04).
+  const quarantined = resolveRunQuarantineSnapshot({
+    knowledgeRoot,
+    product: runProduct,
+    now: new Date().toISOString(),
+    warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
+  })
+
   // D-04: run-start baseline probe — web targets only; ONE GET whose result threads in-memory via
   // RunConfig into the deterministic root-cause classifier. A probe failure is a value (its own
   // environment signal), never a run abort. Mobile targets skip the probe entirely — the
@@ -2221,6 +2235,7 @@ async function executeSuites(
         masking: maskingContext,
         ports: { ...runPorts, confirmPausedMs },
         ...(baselineProbe !== undefined ? { baselineProbe } : {}),
+        ...(quarantined.length > 0 ? { quarantined } : {}),
       })
       activeRunSession = session
 
@@ -3397,6 +3412,15 @@ export function createRunCommand(): Command {
         })
         const singleRunPorts = buildRunPorts({ configDir, runId: singleRunId })
 
+        // 390 D-16: the SAME one snapshot helper the multi-suite site above calls — folded once,
+        // before startRun, so both paths see one rule and neither can drift.
+        const singleQuarantined = resolveRunQuarantineSnapshot({
+          knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
+          product: singleRunProduct,
+          now: new Date().toISOString(),
+          warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
+        })
+
         const executor: MemberTestExecutor = async (member, ctx) => {
           const binding = memberBindings[ctx.testIndex]
           if (!binding) {
@@ -3474,6 +3498,7 @@ export function createRunCommand(): Command {
               masking: maskingContext,
               ports: { ...singleRunPorts, confirmPausedMs },
               ...(singleBaselineProbe !== undefined ? { baselineProbe: singleBaselineProbe } : {}),
+              ...(singleQuarantined.length > 0 ? { quarantined: singleQuarantined } : {}),
             })
             activeRunSession = session
 

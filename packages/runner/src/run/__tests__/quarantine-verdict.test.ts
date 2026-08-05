@@ -19,6 +19,7 @@ import type {
 } from '../shell.js'
 import type { HandoffStorePort } from '../ports.js'
 import { deriveAggregateVerdict, mapVerdictToExitCode } from '../verdict.js'
+import { createTimeoutAbortReason } from '../../loop/abort.js'
 import type { StepResult, TestResult } from '../../result.js'
 import type { CompletedRunHandoff, MemberTestOutcome, RunSession } from '@vostride/agent-qa-schema'
 
@@ -177,7 +178,7 @@ describe('quarantine-aware run (D-14/D-16)', () => {
       name: 'flaky',
       filePath: 'flaky.test.ts',
       status: 'failed',
-      steps: [step({ status: 'failed', error: 'Test exceeded its time limit of 30000ms' })],
+      steps: [step({ status: 'failed', error: createTimeoutAbortReason('test', 30_000).message })],
       duration: 1,
     }
     const session = startRun(

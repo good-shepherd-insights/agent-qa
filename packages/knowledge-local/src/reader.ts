@@ -25,6 +25,17 @@ export { listBundles } from './list-bundles.js'
 // files and projects them, which is the whole of what the read half of the review family is.
 export { showRecord } from './show-record.js'
 export type { ShowRecordOptions } from './show-record.js'
+// 390 D-01/D-11: the committed quarantine ledger's READ half. On the reader entry beside its
+// siblings because it opens nothing, writes nothing and holds no lease — it reads one committed
+// text file and folds it purely. The append half stays on the main entry: it performs a committed
+// write through the egress checkpoint, which is exactly the power this entry withholds.
+export {
+  QUARANTINE_LEDGER_FILENAME,
+  foldQuarantineLedgerState,
+  quarantineLedgerPath,
+  readQuarantineLedger,
+} from './quarantine/ledger.js'
+export type { QuarantineLedgerRead, RefusedQuarantineLine } from './quarantine/ledger.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export type { BuildRange, ReadOptions, SearchOptions } from '@vostride/agent-qa-schema'

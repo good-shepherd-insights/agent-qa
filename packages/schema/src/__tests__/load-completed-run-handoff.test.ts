@@ -102,8 +102,8 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     expect(() => guardCompletedRunHandoff(withoutVersion as CompletedRunHandoff)).toThrow()
   })
 
-  it('registers exactly the v2, v3 and v4 identity migrations so schemaVersion 1 stays unreadable', () => {
+  it('registers exactly the v2..v5 identity migrations so schemaVersion 1 stays unreadable', () => {
     expect(HANDOFF_MIGRATIONS).toBeDefined()
-    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2', '3', '4'])
+    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2', '3', '4', '5'])
   })
 })

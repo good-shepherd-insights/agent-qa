@@ -227,8 +227,8 @@ function handoffWithStep(step: Record<string, unknown>): Record<string, unknown>
 }
 
 describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
-  it('pins the current handoff schema version at 5', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(5)
+  it('pins the current handoff schema version at 6 (390-01 quarantine disposition bump)', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(6)
   })
 
   it('loads an already-written schemaVersion 4 document unchanged (identity migration)', () => {
@@ -242,10 +242,10 @@ describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
     expect('retrievalTrace' in guarded.tests[0].steps[0]).toBe(false)
   })
 
-  it('refuses a schemaVersion 6 document BY NAME rather than by shape', () => {
+  it('refuses a NEWER-than-current document BY NAME rather than by shape', () => {
     let thrown: unknown
     try {
-      guardCompletedRunHandoff({ ...makeHandoff(), schemaVersion: 6 })
+      guardCompletedRunHandoff({ ...makeHandoff(), schemaVersion: 7 })
     } catch (error) {
       thrown = error
     }
@@ -253,8 +253,8 @@ describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
     expect(thrown).toBeInstanceOf(HandoffVersionError)
     const error = thrown as HandoffVersionError
     expect(error.name).toBe('HandoffVersionError')
-    expect(error.foundVersion).toBe(6)
-    expect(error.supportedVersion).toBe(5)
+    expect(error.foundVersion).toBe(7)
+    expect(error.supportedVersion).toBe(6)
   })
 
   it('loads a v5 step that carries NO retrievalTrace (historical absence, D-15)', () => {

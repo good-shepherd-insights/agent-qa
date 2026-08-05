@@ -87,6 +87,12 @@ export {
 } from './composition/knowledge-reader.js'
 export type { ConstructKnowledgeReaderInput } from './composition/knowledge-reader.js'
 
+// 390 D-16: the run-start quarantine snapshot. Published because the run host calls it at both of
+// its startRun composition sites — the fold happens here, on the reader entry, and the host only
+// ever sees the resolved plain data it hands to the runner.
+export { resolveRunQuarantineSnapshot } from './composition/quarantine-snapshot.js'
+export type { RunQuarantineSnapshotInput } from './composition/quarantine-snapshot.js'
+
 // 2026-07-29 (Phase 385 plan 09, D-15): the one local composition root. `composeLocalAgent` is
 // what a host calls instead of wiring a registry of its own, so it is published for the same
 // reason the run composition is: a host that cannot reach it re-derives it.
