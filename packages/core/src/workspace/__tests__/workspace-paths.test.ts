@@ -7,6 +7,7 @@ import {
   discoverWorkspaceFiles,
   resolveWorkspaceFileTarget,
   resolveWorkspacePaths,
+  workspaceRelativeIdentityPath,
 } from '../workspace-paths.js'
 
 interface SampleWorkspaceConfigFixture {
@@ -175,5 +176,53 @@ describe('workspace path resolver', () => {
       configPath: fixture.configPath,
       requireExistingFiles: true,
     })).toThrow(/workspace\.envFile/)
+  })
+})
+
+// The ONE spelling of the durable identity recipe (390-08 / CR-02). The committed quarantine
+// ledger keys entries on this string, so "the same file under a different checkout root answers
+// the same bytes" is not a convenience — it is the property that lets a ledger written on one
+// machine suppress on another.
+describe('workspaceRelativeIdentityPath', () => {
+  const CHECKOUT_A = path.join(path.sep, 'Users', 'someone', 'repo')
+  const CHECKOUT_B = path.join(path.sep, 'var', 'ci', 'workspace', '4711', 'repo')
+
+  it('answers identical bytes for the same file under two different checkout roots', () => {
+    const underA = workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, 'tests', 'checkout.yaml'))
+    const underB = workspaceRelativeIdentityPath(CHECKOUT_B, path.join(CHECKOUT_B, 'tests', 'checkout.yaml'))
+
+    expect(underA).toBe('tests/checkout.yaml')
+    expect(underB).toBe('tests/checkout.yaml')
+    expect(underA).toBe(underB)
+    // Anchored on the bytes themselves, not on a relation between the two answers: no root
+    // prefix survives, the separators are forward slashes, and there is no leading './' or '/'.
+    expect(underA.startsWith('/')).toBe(false)
+    expect(underA).not.toContain('\\')
+    expect(underA).not.toContain(CHECKOUT_A)
+    expect(underB).not.toContain(CHECKOUT_B)
+  })
+
+  it('trims a leading ./ and normalizes nested segments', () => {
+    expect(workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, 'a', 'b', 'c.yaml')))
+      .toBe('a/b/c.yaml')
+    expect(workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, '.', 'tests', 'x.yaml')))
+      .toBe('tests/x.yaml')
+  })
+
+  it('is idempotent — re-minting an already-relative identity is a no-op', () => {
+    // A second mint must not resolve against process.cwd() and silently produce a different (or
+    // escaping) answer: identity has to survive being handed through a layer twice.
+    const once = workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, 'tests', 'checkout.yaml'))
+    expect(workspaceRelativeIdentityPath(CHECKOUT_A, once)).toBe(once)
+  })
+
+  it('REFUSES a path that escapes the config directory', () => {
+    expect(() => workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, '..', 'outside.yaml')))
+      .toThrow(/escapes config directory/)
+    expect(() => workspaceRelativeIdentityPath(CHECKOUT_A, path.join(path.sep, 'etc', 'passwd')))
+      .toThrow(/escapes config directory/)
+    // The config directory itself is not a file identity.
+    expect(() => workspaceRelativeIdentityPath(CHECKOUT_A, CHECKOUT_A))
+      .toThrow(/escapes config directory/)
   })
 })

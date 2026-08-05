@@ -12,8 +12,14 @@ import {
 
 import { buildDirectRunMembers } from '../commands/direct-run-members.js'
 
+// The parser hands bindings whose `filePath` is the ABSOLUTE resolved path (it reads the file), so
+// that is what the fixture supplies. What the descriptor must carry is the workspace-relative
+// IDENTITY — the bytes the committed ledger and the projection both key on (390-08 / CR-02).
+const CONFIG_DIR = '/workspace'
 const FILE_A = '/workspace/tests/account.yaml'
 const FILE_B = '/workspace/tests/checkout.yaml'
+const IDENTITY_A = 'tests/account.yaml'
+const IDENTITY_B = 'tests/checkout.yaml'
 const LOGIN_ID = 't_brick-cinder-dawn-echo-forest-grove-harvest-isle-jade-kite'
 const CHECKOUT_ID = 't_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
 
@@ -56,12 +62,12 @@ function fixtureBindings(): ParsedTestBinding[] {
 
 describe('buildDirectRunMembers', () => {
   it('keeps each member and digest bound to its parsed source file', () => {
-    const result = buildDirectRunMembers(fixtureBindings())
+    const result = buildDirectRunMembers(fixtureBindings(), CONFIG_DIR)
 
     expect(result.members.map(({ filePath }) => filePath)).toEqual([
-      FILE_A,
-      FILE_A,
-      FILE_B,
+      IDENTITY_A,
+      IDENTITY_A,
+      IDENTITY_B,
     ])
     expect(result.members.map(({ testIndex }) => testIndex)).toEqual([0, 1, 2])
     expect(result.members.map(({ name }) => name)).toEqual([
@@ -76,8 +82,30 @@ describe('buildDirectRunMembers', () => {
     ])
   })
 
+  it('mints an identity no checkout root leaks into', () => {
+    // Two different checkout roots, the same workspace layout: the descriptors must be byte-equal.
+    const underCi = buildDirectRunMembers(
+      fixtureBindings().map((binding) => ({
+        ...binding,
+        filePath: binding.filePath.replace('/workspace', '/var/ci/build/8123/repo'),
+      })),
+      '/var/ci/build/8123/repo',
+    )
+    expect(underCi.members.map(({ filePath }) => filePath))
+      .toEqual(buildDirectRunMembers(fixtureBindings(), CONFIG_DIR).members.map(({ filePath }) => filePath))
+    for (const { filePath } of underCi.members) {
+      expect(filePath.startsWith('/')).toBe(false)
+      expect(filePath).not.toContain('/var/ci/build')
+    }
+  })
+
+  it('REFUSES a binding whose source file escapes the config directory', () => {
+    expect(() => buildDirectRunMembers(fixtureBindings(), '/workspace/tests/nested'))
+      .toThrow(/escapes config directory/)
+  })
+
   it('projects equal-named tests from different files as distinct outcome rows', () => {
-    const { members } = buildDirectRunMembers(fixtureBindings())
+    const { members } = buildDirectRunMembers(fixtureBindings(), CONFIG_DIR)
     const checkoutMembers = members.filter(({ name }) => name === 'checkout succeeds')
     const handoff: CompletedRunHandoff = {
       schemaVersion: 3,
@@ -104,8 +132,8 @@ describe('buildDirectRunMembers', () => {
     })
 
     expect(projection.tests).toEqual([
-      expect.objectContaining({ filePath: FILE_A, testName: 'checkout succeeds' }),
-      expect.objectContaining({ filePath: FILE_B, testName: 'checkout succeeds' }),
+      expect.objectContaining({ filePath: IDENTITY_A, testName: 'checkout succeeds' }),
+      expect.objectContaining({ filePath: IDENTITY_B, testName: 'checkout succeeds' }),
     ])
   })
 })
