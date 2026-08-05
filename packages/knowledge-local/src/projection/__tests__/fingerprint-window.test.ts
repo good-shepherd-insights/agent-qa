@@ -242,6 +242,50 @@ describe('the fingerprint-keyed recurrence window (D-07)', () => {
     }])
   })
 
+  // The plan specified uniqueness over (product, fingerprint, build_ordinal, run_id); the shipped
+  // constraint is WIDER, carrying file_path and test_name. This case is the whole difference: under
+  // the narrower form the second test's row collides with the first and INSERT OR IGNORE drops it
+  // SILENTLY, so a crossing on that fingerprint could only ever name one of the two tests it
+  // actually describes. The identity has to survive because the ledger is keyed by
+  // (product, filePath, testName) — a window row that cannot say which test it belongs to cannot
+  // author an `entered` event. Refold idempotency is unaffected either way: a re-apply produces
+  // byte-identical tuples (deduped under BOTH forms) and is short-circuited by the applied-runs
+  // marker before any insert, while recurrence counts DISTINCT ordinals and so cannot inflate.
+  it('keeps BOTH tests when two members of one run share a fingerprint', () => {
+    const db = openDb()
+    const runId = 'run-shared-fingerprint'
+    const first = handoffFixture({ runId, buildOrdinal: 7, outcome: 'failed' })
+    const sibling = {
+      ...(first.tests[0] as unknown as Record<string, unknown>),
+      testId: `${runId}-checkout-sibling`,
+      testName: 'a second test failing the very same way',
+      testIndex: 1,
+    } as unknown as PerTestOutcome
+    const handoff = {
+      ...(first as unknown as Record<string, unknown>),
+      tests: [first.tests[0], sibling],
+    } as unknown as CompletedRunHandoff
+
+    fold(db, handoff)
+
+    const rows = windowRows(db)
+    expect(rows).toHaveLength(2)
+    expect(rows.map((row) => row.test_name)).toEqual([
+      'a second test failing the very same way',
+      TEST_NAME,
+    ])
+    expect(new Set(rows.map((row) => row.fingerprint))).toEqual(
+      new Set([`${ELEMENT_GOLDEN}::unknown`]),
+    )
+    // Two rows in one ordinal are still ONE occurrence — the distinct-ordinal count is the
+    // guarantee the wider constraint does not touch.
+    expect(fingerprintRecurrence(
+      db,
+      { product: PRODUCT, fingerprint: `${ELEMENT_GOLDEN}::unknown` },
+      7,
+    )).toEqual({ occurrenceOrdinals: 1, windowOrdinals: 1 })
+  })
+
   it('writes no window row for a passing member', () => {
     const db = openDb()
 
