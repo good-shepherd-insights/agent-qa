@@ -40,6 +40,15 @@
 // `appendQuarantineEvents` held a lease. The two-OS-process byte-interleaving consequence is a
 // separately filed human-verification item; what is enforced and pinned here is that a lease held
 // by another writer refuses this verb typed, with the ledger byte-unchanged.
+//
+// THE IDENTITY IS MINTED HERE, AT THE BOUNDARY, ON BOTH NORMALIZED LEGS (390-12 / D-01). The
+// ledger is keyed on `(product, filePath, testName)` and every reader compares those bytes with
+// `===`, so a verb that stores the spelling a human typed writes into a partition nothing reads.
+// `product` is slugged and `filePath` is minted through the host-supplied
+// `workspaceRelativeIdentityPath` (see `mintIdentityPath`); `testName` is stored raw, because it
+// is the one leg no reader transforms. An input that cannot mint is refused TYPED before a lease
+// is taken or a byte is read — see `QuarantineIdentityRefusedError`, and see its division of labour
+// with the ledger's own structural write guard.
 
 import {
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
@@ -117,8 +126,19 @@ export class QuarantineWriteBlockedError extends Error {
  *
  * The holder is carried, not just named in the message, because the operator's next question is
  * always "who?" and the answer is a live pid the CLI can report without re-reading the lease file.
- * This verb does NOT wait and does NOT delegate: an operator retrying by hand is a better failure
- * mode than a human-facing verb that blocks for as long as a drain takes.
+ *
+ * WHICH ARM THIS IS (390-12 / WR-03 — the previous wording named only one and read as if it were
+ * the whole rule). `acquireWriterLease` answers `held` — and therefore raises this — only when the
+ * lease on disk parses AND `deriveWriterLeaseFreshness` calls it FRESH. Against a fresh holder this
+ * verb genuinely does not wait and does not delegate: an operator retrying by hand is a better
+ * failure mode than a human-facing verb that blocks for as long as a drain takes.
+ *
+ * Against a STALE holder — one whose heartbeat is older than `LEASE_HEARTBEAT_TTL_MS`, or whose
+ * epoch no longer matches the one on disk — nothing is raised at all: the acquisition enters the
+ * standard MRSW path and RECLAIMS, bumping the epoch and sweeping staged epochs below it, exactly
+ * as the apply path does. So this verb can bump a fence and take a lock another process minted;
+ * that routing is deliberate and shared, and the corpus produces it (`RECLAIMS a STALE lease and
+ * writes`) rather than leaving the arm asserted only by the code that implements it.
  */
 export class QuarantineLeaseHeldError extends Error {
   constructor(readonly holder: WriterLease) {
@@ -131,6 +151,40 @@ export class QuarantineLeaseHeldError extends Error {
   }
 }
 
+/**
+ * The `filePath` a caller sent cannot mint the durable identity the ledger is keyed on (390-12).
+ *
+ * Same shape and same reason as the two refusals above: the port's result unions carry no refusal
+ * arm by design (390-04), so a refusal that is not one of the named outcomes surfaces as a typed
+ * throw. Raised BEFORE the knowledge root is resolved, before the lease is acquired and before a
+ * byte is read, so a refused call costs the ledger nothing and the next writer nothing.
+ *
+ * WHAT THIS OWNS, AND WHAT THE LEDGER'S OWN WRITE GUARD OWNS (390-11). They are not two spellings
+ * of one rule and neither subsumes the other:
+ *
+ *  - THIS decides what the identity IS. It is the only gate that knows the checkout root, so it is
+ *    the only one that can turn `/Users/me/repo/tests/a.yaml` — a real file inside the workspace,
+ *    the exact bytes an operator pastes out of a failure report — into `tests/a.yaml` and ACCEPT
+ *    it. The structural guard would refuse that input; refusing it is the wrong answer, because
+ *    the operator named a file the workspace genuinely contains.
+ *  - The STRUCTURAL guard in `appendQuarantineEvents` decides what the FILE may carry, for every
+ *    writer including one that never met a mint. It is a backstop with no host context, and it
+ *    throws rather than answering data because a line the reader refuses is corruption.
+ *
+ * What cannot be canonicalized at all — a path escaping the config directory — is refused here,
+ * with the mint's own message carried so the operator learns why rather than that.
+ */
+export class QuarantineIdentityRefusedError extends Error {
+  constructor(readonly filePath: string, readonly reason: unknown) {
+    super(
+      'the quarantine ledger write was refused: this file path cannot mint the durable '
+        + `workspace-relative identity the ledger is keyed on: ${filePath} `
+        + `(${reason instanceof Error ? reason.message : String(reason)})`,
+    )
+    this.name = 'QuarantineIdentityRefusedError'
+  }
+}
+
 export interface QuarantineOperationsOptions {
   /** The committed knowledge root. A FACTORY, because the CLI host resolves it asynchronously. */
   resolveKnowledgeRoot: () => Promise<string> | string
@@ -138,6 +192,24 @@ export interface QuarantineOperationsOptions {
   auditBaseDir: string
   /** The ONLY way wall clock enters these verbs. Required — see the module head. */
   now: () => string
+  /**
+   * Mints the durable workspace-relative identity a `filePath` is stored under (390-12 / D-01).
+   *
+   * Production supplies core's ONE recipe, `workspaceRelativeIdentityPath`, pre-bound to the host's
+   * own config directory. INJECTED rather than imported for two independent reasons, and either
+   * alone would be sufficient: this package may not depend on `@vostride/agent-qa-core` (only the
+   * surface packages may), and — the load-bearing one — the checkout root is a HOST fact these
+   * verbs cannot discover. A verb that guessed it would mint identities against the wrong root.
+   *
+   * REQUIRED, with no default. A default passthrough is exactly the unvalidated pass-through that
+   * produced the round-2 regression: the verbs answered `entered` over lines the reader is
+   * guaranteed to refuse. An absent mint must be a compile error at the composition that forgot it,
+   * not a runtime surprise inside a committed artifact.
+   *
+   * @throws whatever the mint throws for a path it cannot canonicalize; re-raised as
+   * {@link QuarantineIdentityRefusedError}.
+   */
+  mintIdentityPath: (filePath: string) => string
   /**
    * The writer lease THIS process already holds, when it holds one (387-08 D-18 / D-5).
    *
@@ -184,9 +256,76 @@ function triageOrder(left: QuarantineEntryState, right: QuarantineEntryState): n
   return leftKey < rightKey ? -1 : 1
 }
 
-/** The deadline an absent `expiresAt` takes (D-11), derived from the SUPPLIED instant. */
+/**
+ * The deadline an absent `expiresAt` takes (D-11), derived from the SUPPLIED instant.
+ *
+ * `Date.parse` of a caller's argument is arithmetic, not a clock read. An unparseable `now` is a
+ * caller bug, so it surfaces as a thrown RangeError from `toISOString` rather than silently minting
+ * a forever entry — the same arm `detection.ts`'s `expiryFrom` documents for its own copy, stated
+ * here too because a reader of this function should not have to find the sibling to learn it
+ * (390-12 / IN-01).
+ */
 function defaultExpiry(now: string): string {
   return new Date(Date.parse(now) + QUARANTINE_DEFAULT_EXPIRY_DAYS * MS_PER_DAY).toISOString()
+}
+
+/**
+ * A `decide` that returns a promise, refused at COMPILE time (390-12 / WR-02).
+ *
+ * `underWriterLease` releases the lease in a `finally`, so an async `decide` would hand back a
+ * PENDING promise, the `finally` would run immediately, and the lease would be given up while the
+ * work it serializes is still running — reinstating precisely the race CR-03 closed, without
+ * failing to compile (`Promise<Promise<X>>` collapses in the return position, so nothing objects).
+ * This module's own history is a serialization claim that turned out to be false; a signature that
+ * permits the false version by construction is the wrong default here specifically.
+ *
+ * Spelled as an INTERSECTION on the callback's return rather than as a constraint on the type
+ * parameter (`T extends NotSynchronous<T>` is rejected as a circular constraint) and rather than as
+ * a conditional RETURN type (which resolves to `never`, and `never` is assignable to everything, so
+ * the call site would still compile). In this position inference is preserved — `T` is still read
+ * off the callback — and a promise-returning closure fails to satisfy `never`.
+ */
+type SynchronousDecision<T> = T extends PromiseLike<unknown> ? never : unknown
+
+/**
+ * The write verbs' serialized section — the whole read-fold-decide-append cycle, not the append.
+ *
+ * Serializing only the file write would leave the interesting race intact: two writers could both
+ * fold a ledger with no entry for a test, both decide `entered`, and both append, producing two
+ * opening events for one window. So `decide` runs INSIDE the scope and is synchronous BY SIGNATURE
+ * (see {@link SynchronousDecision}) — there is no await point between the read and the append for
+ * another writer to be scheduled at.
+ *
+ * Three arms, and they are exhaustive over the acquisition outcome:
+ *  - a handed-in authority means this process IS the holder; it acquires nothing and releases
+ *    nothing, because the lease it was given outlives this call (the `applyReview` arm);
+ *  - `held` refuses typed, having written nothing and having taken nothing from the holder;
+ *  - every other non-`acquired` outcome rethrows the union's own error, which every refusal arm
+ *    carries precisely so a new arm surfaces by name instead of being swallowed here.
+ *
+ * Module-scope and exported so the compile-time refusal above has a call site a test can point a
+ * `@ts-expect-error` at — a constraint nothing exercises is a claim, not a guard. Deliberately NOT
+ * added to this package's barrel (`src/index.ts`), on 390-11's reasoning about
+ * `appendQuarantineEvents`: the committed-write surface only ever shrinks.
+ */
+export async function underWriterLease<T>(
+  knowledgeRoot: string,
+  resolveWriterAuthority: (() => { leaseId: string; epoch: number } | undefined) | undefined,
+  decide: () => T & SynchronousDecision<T>,
+): Promise<T> {
+  if (resolveWriterAuthority?.() !== undefined) return decide()
+
+  const acquired = acquireWriterLease(knowledgeRoot)
+  if (acquired.kind === 'held') throw new QuarantineLeaseHeldError(acquired.holder)
+  if (acquired.kind !== 'acquired') throw acquired.error
+
+  try {
+    return decide()
+  } finally {
+    // Given back on EVERY exit, including the typed ledger refusals the read raises: a verb that
+    // failed must not leave the next drain locked out of the knowledge root.
+    releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })
+  }
 }
 
 /**
@@ -211,35 +350,12 @@ export function createQuarantineOperations(
     return { now, entries: foldQuarantineLedgerState(events, now) }
   }
 
-  /**
-   * The write verbs' serialized section — the whole read-fold-decide-append cycle, not the append.
-   *
-   * Serializing only the file write would leave the interesting race intact: two writers could both
-   * fold a ledger with no entry for a test, both decide `entered`, and both append, producing two
-   * opening events for one window. So `decide` runs INSIDE the scope and is deliberately synchronous
-   * — there is no await point between the read and the append for another writer to be scheduled at.
-   *
-   * Three arms, and they are exhaustive over the acquisition outcome:
-   *  - a handed-in authority means this process IS the holder; it acquires nothing and releases
-   *    nothing, because the lease it was given outlives this call (the `applyReview` arm);
-   *  - `held` refuses typed, having written nothing and having taken nothing from the holder;
-   *  - every other non-`acquired` outcome rethrows the union's own error, which every refusal arm
-   *    carries precisely so a new arm surfaces by name instead of being swallowed here.
-   */
-  async function underWriterLease<T>(knowledgeRoot: string, decide: () => T): Promise<T> {
-    if (options.resolveWriterAuthority?.() !== undefined) return decide()
-
-    const acquired = acquireWriterLease(knowledgeRoot)
-    if (acquired.kind === 'held') throw new QuarantineLeaseHeldError(acquired.holder)
-    if (acquired.kind !== 'acquired') throw acquired.error
-
-    try {
-      return decide()
-    } finally {
-      // Given back on EVERY exit, including the typed ledger refusals the read raises: a verb that
-      // failed must not leave the next drain locked out of the knowledge root.
-      releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })
-    }
+  /** This composition's serialized section, over the module-scope lease scope. */
+  async function serialized<T>(
+    knowledgeRoot: string,
+    decide: () => T & SynchronousDecision<T>,
+  ): Promise<T> {
+    return await underWriterLease(knowledgeRoot, options.resolveWriterAuthority, decide)
   }
 
   function append(knowledgeRoot: string, events: readonly QuarantineLedgerEvent[]): void {
@@ -259,23 +375,44 @@ export function createQuarantineOperations(
   }
 
   /**
-   * The write verbs' ONE normalization, taken at the boundary before anything decides (WR-01).
+   * The mint's throw, re-raised typed (390-12). Only the mint's failure is caught here: a
+   * `slugBranch` that threw would be a bug in this module, not a refusal about the caller's input.
+   */
+  function mintFilePath(filePath: string): string {
+    try {
+      return options.mintIdentityPath(filePath)
+    } catch (error) {
+      throw new QuarantineIdentityRefusedError(filePath, error)
+    }
+  }
+
+  /**
+   * The write verbs' ONE normalization, taken at the boundary before anything decides.
    *
-   * `product` reaches these verbs as whatever a human typed at `quarantine.add`, while every reader
-   * of the ledger compares the SLUGGED partition — `resolveRunQuarantineSnapshot` filters on
-   * `entry.product === slugBranch(input.product)`, and the detection path authors entries from
-   * projection rows that are already partitioned that way. Storing the raw spelling therefore wrote
-   * a real entry into a partition nothing reads: the verb answered `entered` and the quarantined
-   * test kept failing every build.
+   * TWO of the three identity legs are normalized, and the third deliberately is not. The rule is
+   * the same for both: a leg the READER transforms gets a WRITER-side transform, so the ledger keeps
+   * one vocabulary instead of two that agree only by convention.
+   *
+   *  - `product` is SLUGGED (WR-01 / 390-09). Every reader compares the slugged partition —
+   *    `resolveRunQuarantineSnapshot` filters on `entry.product === slugBranch(input.product)`, and
+   *    the detection path authors from projection rows already partitioned that way. Storing the raw
+   *    spelling wrote a real entry into a partition nothing reads.
+   *  - `filePath` is MINTED through {@link QuarantineOperationsOptions.mintIdentityPath} (390-12,
+   *    the round-2 regression). Every reader compares `===` against core's workspace-relative
+   *    identity, so an absolute path became a permanently refused, unlistable, unreleasable,
+   *    self-duplicating line in a COMMITTED artifact, and `./x`, `x\y`, `../x` folded and listed as
+   *    `quarantined` while suppressing nothing. This half exists because the round hardened the READ
+   *    and the RUN path and left these two verbs — the documented human half of the exit path, the
+   *    surface most likely to receive a hand-typed path — as an unvalidated door into the same file.
+   *  - `testName` is stored RAW. It is the one leg no reader transforms; inventing a rule for it
+   *    here would be the mirror-image defect.
    *
    * Normalizing (rather than refusing a mismatch) is the choice on the merits: a human exit-path
-   * verb should DO what was meant, and the auto half already writes slugged bytes, so the ledger
-   * keeps ONE vocabulary instead of two that agree only by convention. `slugBranch` is idempotent
-   * on its own output, so an already-slugged product round-trips byte-identically and no existing
-   * entry moves.
+   * verb should DO what was meant. Both rules are idempotent on their own output, so an input
+   * already in canonical form round-trips byte-identically and no existing entry moves.
    *
    * Applied once, here, and threaded to all four places the identity is used — the fold lookup, the
-   * authored event, the answered entry, and the release join. A slug applied at only one of them is
+   * authored event, the answered entry, and the release join. A rule applied at only one of them is
    * strictly worse than none: the write and the lookup would then disagree with each other as well
    * as with the reader.
    */
@@ -284,7 +421,7 @@ export function createQuarantineOperations(
   ): { product: string; filePath: string; testName: string } {
     return {
       product: slugBranch(input.product),
-      filePath: input.filePath,
+      filePath: mintFilePath(input.filePath),
       testName: input.testName,
     }
   }
@@ -300,10 +437,13 @@ export function createQuarantineOperations(
     },
 
     async release(input: QuarantineReleaseInput): Promise<QuarantineReleaseOutput> {
+      // FIRST, before the root is resolved and before the lease is acquired: an input that cannot
+      // mint an identity has no business taking a lock or opening a committed file.
+      const identity = normalize(input)
       const knowledgeRoot = await options.resolveKnowledgeRoot()
-      return await underWriterLease(knowledgeRoot, () => {
+      return await serialized(knowledgeRoot, () => {
         const { now, entries } = readState(knowledgeRoot)
-        const entry = entryFor(entries, normalize(input))
+        const entry = entryFor(entries, identity)
         // An OPEN window is one no release event has closed — `expired` counts, because D-11 keeps
         // an expired entry listed, renewable AND releasable; it stopped suppressing, it did not
         // vanish. Absent or already-closed answers the named arm and appends nothing: "that test is
@@ -327,10 +467,12 @@ export function createQuarantineOperations(
     },
 
     async add(input: QuarantineAddInput): Promise<QuarantineAddOutput> {
+      // Same ordering as `release`, for the same reason: the refusal costs the ledger nothing and
+      // the next writer nothing, and an input tripping BOTH this and a held lease answers THIS.
+      const identity = normalize(input)
       const knowledgeRoot = await options.resolveKnowledgeRoot()
-      return await underWriterLease(knowledgeRoot, () => {
+      return await serialized(knowledgeRoot, () => {
         const { now, entries } = readState(knowledgeRoot)
-        const identity = normalize(input)
         const entry = entryFor(entries, identity)
         const expiresAt = input.expiresAt ?? defaultExpiry(now)
 

@@ -75,12 +75,24 @@ export type QuarantineListOutput = z.infer<typeof QuarantineListOutputSchema>
 /**
  * The three legs of stable test identity — never `testId`, which is per-run and not durable.
  *
- * `product` is accepted RAW and normalized by the implementation to the slugged partition every
- * reader of the ledger compares (WR-01 / 390-09): `createQuarantineOperations` runs it through
- * `slugBranch` at the boundary of both write verbs, so a human typing `My Product` lands in the
- * `My-Product` partition `resolveRunQuarantineSnapshot` filters on. Deliberately NOT constrained
- * here — a schema that demanded pre-slugged bytes would put the slug rule in two places and refuse
- * the exact input the human half of the exit path exists to accept. One rule, one home.
+ * TWO of the three are accepted RAW here and normalized by the implementation, for one reason: a
+ * leg the ledger's READERS transform needs a matching writer-side transform, and a schema that
+ * demanded pre-transformed bytes would put the rule in two places and refuse the exact input the
+ * human half of the exit path exists to accept. One rule, one home — and the home is
+ * `createQuarantineOperations`, at the boundary of both write verbs.
+ *
+ * `product` lands in the slugged partition every reader compares (WR-01 / 390-09):
+ * `createQuarantineOperations` runs it through `slugBranch`, so a human typing `My Product` reaches
+ * the `My-Product` partition `resolveRunQuarantineSnapshot` filters on.
+ *
+ * `filePath` lands as the durable workspace-relative IDENTITY every reader compares with `===`
+ * (390-12 / D-01): the same boundary mints it through core's `workspaceRelativeIdentityPath`,
+ * pre-bound by the host to its own config directory — which is why the rule cannot live here, in a
+ * package that knows no checkout root. A path that cannot be canonicalized for this checkout is
+ * refused typed by the implementation rather than stored. Before that mint existed, an absolute
+ * path from a failure report became a permanently unreadable line in a COMMITTED artifact.
+ *
+ * `testName` is the leg no reader transforms, so nothing normalizes it anywhere.
  */
 const identityShape = {
   product: z.string().min(1),

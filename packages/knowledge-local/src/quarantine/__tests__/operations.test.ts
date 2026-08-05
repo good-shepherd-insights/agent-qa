@@ -52,8 +52,10 @@ import { QUARANTINE_LEDGER_FILENAME } from '../ledger.js'
 import {
   QUARANTINE_MANUAL_ENTRY_CLASS,
   QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
+  QuarantineIdentityRefusedError,
   QuarantineWriteBlockedError,
   createQuarantineOperations,
+  underWriterLease,
 } from '../operations.js'
 
 const PRODUCT = 'example-web'
@@ -564,6 +566,10 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
     const rejected = operations(NOW, undefined, refusingMint)
       .add(human({ product: PRODUCT, filePath: ESCAPING_FILE }))
 
+    await expect(rejected).rejects.toBeInstanceOf(QuarantineIdentityRefusedError)
+    // The name literal is asserted BESIDE the instance check on purpose: it is anchored outside the
+    // code's own vocabulary, so it survives an `instanceof` that starts agreeing for the wrong
+    // reason, and it is what the RED baseline for this pin was written against.
     await expect(rejected).rejects.toMatchObject({
       name: 'QuarantineIdentityRefusedError',
       filePath: ESCAPING_FILE,
@@ -623,9 +629,10 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
     await plant([entered(A, '2026-01-01T00:00:00.000Z')])
     const before = ledgerBytes()
 
-    await expect(
-      operations(NOW, undefined, refusingMint).release(human({ product: PRODUCT, filePath: ESCAPING_FILE })),
-    ).rejects.toMatchObject({ name: 'QuarantineIdentityRefusedError' })
+    const rejected = operations(NOW, undefined, refusingMint)
+      .release(human({ product: PRODUCT, filePath: ESCAPING_FILE }))
+    await expect(rejected).rejects.toBeInstanceOf(QuarantineIdentityRefusedError)
+    await expect(rejected).rejects.toMatchObject({ name: 'QuarantineIdentityRefusedError' })
 
     expect(ledgerBytes()).toBe(before)
     expect(existsSync(leaseFile())).toBe(false)
@@ -769,6 +776,33 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
     expect(currentLeaseId()).toBe(holder.leaseId)
 
     releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
+  })
+
+  /**
+   * WR-02, and it is a COMPILE-time pin: declared, referenced, never called.
+   *
+   * `underWriterLease` releases in a `finally`, so an async `decide` hands back a PENDING promise
+   * and the lease is given up while the work it serializes is still running — the race CR-03
+   * closed, reinstated without failing to compile, because `Promise<Promise<X>>` collapses in the
+   * return position. The signature refuses it, and this directive is the only thing that can
+   * observe the refusal: `tsc --noEmit` reports `Unused '@ts-expect-error' directive` the moment
+   * the constraint is dropped. Measured in both directions, 390-12.
+   *
+   * Deliberately not inside an `it`: the point is that this text is TYPE-CHECKED, and running it
+   * would take a real lease against a real root for a call that must never happen.
+   */
+  async function wr02AnAsyncDecideMustNotCompile(root: string): Promise<void> {
+    // @ts-expect-error — a PromiseLike-returning `decide` cannot satisfy the synchronous signature
+    await underWriterLease(root, undefined, async () => 'never runs')
+  }
+  void wr02AnAsyncDecideMustNotCompile
+
+  it('runs a SYNCHRONOUS decide under the lease — the direction the WR-02 pin needs to be about it', async () => {
+    // Non-vacuity for the compile pin above: the same call with a synchronous closure compiles AND
+    // executes, so the `@ts-expect-error` is about the promise, not about a broken signature.
+    expect(await underWriterLease(knowledgeRoot, undefined, () => 'decided')).toBe('decided')
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe('1\n')
+    expect(existsSync(leaseFile())).toBe(false)
   })
 
   it('RECLAIMS a STALE lease and writes — the arm the fresh-holder fixture can never produce (WR-03)', async () => {
