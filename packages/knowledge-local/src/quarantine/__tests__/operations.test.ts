@@ -18,6 +18,13 @@
 //  4. COMMITTED-TRUTH READ POSTURE. An unreadable ledger PROPAGATES its typed error from every
 //     verb. Healing it to "nothing is quarantined" would silently un-quarantine every entry in the
 //     file, which is the one silent flip this phase exists to prevent.
+//  5. SERIALIZATION IS THIS MODULE'S, NOT ITS CALLER'S (390-09 / CR-03). The write verbs run their
+//     whole read-fold-decide-append cycle inside the MRSW writer lease they take themselves, or
+//     inside a handed-in `writerAuthority` when this process already holds it (the daemon). The
+//     pins below drive BOTH directions — a verb that acquires leaves the epoch bumped and no lease
+//     residue, and a verb meeting a lease somebody else holds refuses typed with the ledger BYTE
+//     for byte unchanged. The refusing direction is the load-bearing one: the same call appends a
+//     line two tests above, so zero bytes is a measurement rather than an absence.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -34,6 +41,12 @@ import {
 } from '@vostride/agent-qa-schema'
 import type { QuarantineEntryState, QuarantineLedgerEvent } from '@vostride/agent-qa-schema'
 
+import {
+  EPOCH_FILE,
+  LEASE_FILE,
+  acquireWriterLease,
+  releaseLease,
+} from '../../lease/writer-lease.js'
 import { QUARANTINE_LEDGER_FILENAME } from '../ledger.js'
 import {
   QUARANTINE_MANUAL_ENTRY_CLASS,
@@ -99,7 +112,10 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
   let auditBaseDir: string
   let clockReads: number
 
-  function operations(now: string = NOW) {
+  function operations(
+    now: string = NOW,
+    resolveWriterAuthority?: () => { leaseId: string; epoch: number } | undefined,
+  ) {
     return createQuarantineOperations({
       resolveKnowledgeRoot: () => knowledgeRoot,
       auditBaseDir,
@@ -107,6 +123,7 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
         clockReads += 1
         return now
       },
+      ...(resolveWriterAuthority === undefined ? {} : { resolveWriterAuthority }),
     })
   }
 
@@ -396,6 +413,120 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
     expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
     expect(readFileSync(join(auditBaseDir, 'guardrail_audit.jsonl'), 'utf8'))
       .toContain('quarantine-ledger')
+  })
+
+  // ---- writer-lease serialization (390-09 / CR-03 / D-04) ---------------------------------
+
+  function leaseFile(): string {
+    return join(knowledgeRoot, LEASE_FILE)
+  }
+
+  function ledgerBytes(): string {
+    return readFileSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME), 'utf8')
+  }
+
+  /** The fixture takes the lease FIRST, so the verb under test meets a writer that is not it. */
+  function foreignHolder(): { leaseId: string; epoch: number } {
+    const acquired = acquireWriterLease(knowledgeRoot)
+    if (acquired.kind !== 'acquired') {
+      throw new Error(`the fixture could not take the lease it needs: ${acquired.kind}`)
+    }
+    return { leaseId: acquired.leaseId, epoch: acquired.epoch }
+  }
+
+  function currentLeaseId(): string | undefined {
+    if (!existsSync(leaseFile())) return undefined
+    return (JSON.parse(readFileSync(leaseFile(), 'utf8')) as { leaseId: string }).leaseId
+  }
+
+  it('ACQUIRES the writer lease for an add and gives back exactly what it took', async () => {
+    // Nothing in this fixture writes the monotonic epoch except an acquisition, so the epoch is
+    // the acquisition's own footprint — this is the leg that reds for a verb holding no lock.
+    expect(existsSync(join(knowledgeRoot, EPOCH_FILE))).toBe(false)
+
+    await operations().add(A)
+
+    expect(ledgerLines()).toHaveLength(1)
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe('1\n')
+    // And no residue: a verb that returned must not leave the next writer locked out.
+    expect(existsSync(leaseFile())).toBe(false)
+  })
+
+  it('ACQUIRES the writer lease for a release and gives back exactly what it took', async () => {
+    await plant([entered(A, '2026-01-01T00:00:00.000Z')])
+
+    await operations().release(A)
+
+    expect(ledgerLines()).toHaveLength(2)
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe('1\n')
+    expect(existsSync(leaseFile())).toBe(false)
+  })
+
+  it('REFUSES an add while another writer holds the lease — typed, and the ledger is byte-unchanged', async () => {
+    await plant([entered(B, '2026-01-01T00:00:00.000Z')])
+    const before = ledgerBytes()
+    const holder = foreignHolder()
+
+    await expect(operations().add(A)).rejects.toMatchObject({
+      name: 'QuarantineLeaseHeldError',
+      holder: { leaseId: holder.leaseId, epoch: holder.epoch },
+    })
+
+    // Load-bearing BECAUSE the same call writes: `add(A)` against a ledger holding only B appends
+    // an `entered` line in the accept-direction test above. Zero appended bytes is a measurement.
+    expect(ledgerBytes()).toBe(before)
+    // The refusal took nothing from the holder either — no reclaim, no silent steal.
+    expect(currentLeaseId()).toBe(holder.leaseId)
+
+    releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
+  })
+
+  it('REFUSES a release while another writer holds the lease — typed, and the ledger is byte-unchanged', async () => {
+    await plant([entered(A, '2026-01-01T00:00:00.000Z')])
+    const before = ledgerBytes()
+    const holder = foreignHolder()
+
+    await expect(operations().release(A)).rejects.toMatchObject({
+      name: 'QuarantineLeaseHeldError',
+      holder: { leaseId: holder.leaseId, epoch: holder.epoch },
+    })
+
+    // Same shape, same reason: `release(A)` on this exact ledger appends `released-manual` when the
+    // lease is free (the release test above), so an unchanged file is the guard's own doing.
+    expect(ledgerBytes()).toBe(before)
+    expect(currentLeaseId()).toBe(holder.leaseId)
+
+    releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
+  })
+
+  it('rides a HANDED-IN writer authority — the daemon arm: it appends while the lease is held, and never releases it', async () => {
+    // The daemon acquires at startup and holds for its lifetime (cli/src/daemon/host.ts:642), then
+    // hands the same two fields to the composition (host.ts:1839). A holder that called
+    // `acquireWriterLease` would be told `held` by itself, so this arm must not acquire at all.
+    const authority = foreignHolder()
+
+    const answer = await operations(NOW, () => authority).add(A)
+
+    expect(answer.kind).toBe('entered')
+    expect(ledgerLines()).toHaveLength(1)
+    // Still the SAME lease, still present: the verb neither took a second one nor released an
+    // authority it does not own — releasing it would unlock the daemon's whole process.
+    expect(currentLeaseId()).toBe(authority.leaseId)
+
+    releaseLease({ knowledgeRoot, leaseId: authority.leaseId })
+  })
+
+  it('leaves the READ verb acquisition-free — list answers while a foreign writer holds the lease', async () => {
+    await plant([entered(A, '2026-01-01T00:00:00.000Z')])
+    const holder = foreignHolder()
+
+    const entries = await operations().list()
+
+    expect(entries).toHaveLength(1)
+    // A reader that took the lease would serialize enumeration behind every drain in progress.
+    expect(currentLeaseId()).toBe(holder.leaseId)
+
+    releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
   })
 
   // ---- committed-truth read posture -------------------------------------------------------
