@@ -78,6 +78,20 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   'knowledge.reject.propose': { target: { grain: 'record', recordId: 'rec-x' }, reason: 'no' },
   'knowledge.forget.propose': { target: { grain: 'record', recordId: 'rec-x' } },
   'knowledge.proposal.apply': { proposalId: 'prop_0123456789ab' },
+  // 390 D-13: the two quarantine WRITE verbs take the three legs of stable test identity, so
+  // the `{}` default would fail their contract and turn an unbound refusal into an input
+  // error — which the parity case below reads as `dispatched`. `quarantine.list` genuinely
+  // takes the empty query and needs no row here.
+  'quarantine.release': {
+    product: 'shop',
+    filePath: 'tests/checkout.test.yaml',
+    testName: 'checkout completes',
+  },
+  'quarantine.add': {
+    product: 'shop',
+    filePath: 'tests/checkout.test.yaml',
+    testName: 'checkout completes',
+  },
 }
 
 /**

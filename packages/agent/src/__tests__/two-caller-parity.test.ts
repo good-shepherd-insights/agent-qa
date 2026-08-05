@@ -204,6 +204,15 @@ const ALL_FUNCTION_IDS = [
   'knowledge.records.diff',
   'knowledge.records.inspect',
   'knowledge.reject.propose',
+  // 390 D-12/D-13: three more ids, and they land in SORT position rather than appended —
+  // this list is compared against the registry's lexicographic listing, so an appended id
+  // would fail on order while every member was present. `quarantine.list` is read-tier and
+  // survives safe-mode filtering; `release` and `add` are knowledge-write-tier and drop out
+  // with the 387-08 verbs, so the derived non-read set below grows from five to seven and the
+  // filter assertion keeps testing the RULE rather than a frozen list.
+  'quarantine.add',
+  'quarantine.list',
+  'quarantine.release',
   'runs.events',
   'runs.get',
   'runs.list',

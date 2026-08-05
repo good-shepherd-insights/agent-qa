@@ -92,6 +92,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // string, not a handle — see the barrel's own note beside the export.
   'KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID',
   'MissingIdempotencyKeyError',
+  // 390 plan 04: the three quarantine verb ids, on the same footing as the op-id constants
+  // above and below — strings a surface names on the wire, never dispatch handles. The three
+  // SPECS are deliberately NOT here: a spec carries the implementation and the live
+  // validators, and two of these verbs write the committed ledger.
+  'QUARANTINE_ADD_FUNCTION_ID',
+  'QUARANTINE_LIST_FUNCTION_ID',
+  'QUARANTINE_RELEASE_FUNCTION_ID',
   'REAL_JOB_KIND_DECLARATIONS',
   // 388 plan 03: the chip-truth op's id, on the same footing as the apply id above. Plan 04's
   // exit summary line dispatches through the registry and has to put a name on the wire; the

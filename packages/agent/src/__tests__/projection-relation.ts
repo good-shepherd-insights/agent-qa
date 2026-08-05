@@ -35,6 +35,9 @@ import { knowledgeRecordShowSpec } from '../functions/ops/knowledge-record-show.
 import { knowledgeRecordsDiffSpec } from '../functions/ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from '../functions/ops/knowledge-records-inspect.js'
 import { knowledgeRejectProposeSpec } from '../functions/ops/knowledge-reject-propose.js'
+import { quarantineAddSpec } from '../functions/ops/quarantine-add.js'
+import { quarantineListSpec } from '../functions/ops/quarantine-list.js'
+import { quarantineReleaseSpec } from '../functions/ops/quarantine-release.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
@@ -73,6 +76,14 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'knowledge.records.diff': knowledgeRecordsDiffSpec,
   'knowledge.records.inspect': knowledgeRecordsInspectSpec,
   'knowledge.reject.propose': knowledgeRejectProposeSpec,
+  // 390 D-13. Paired the day they are registered, which is what the growth seam is for. The
+  // two write verbs are the first contracts in this map whose OUTPUT is a discriminated union,
+  // so an unchecked projection would be exactly where a published catalogue could lose an arm
+  // — and losing `no-entry` or `renewed` would leave a caller with no way to learn that its
+  // release matched nothing or that its add renewed rather than entered.
+  'quarantine.add': quarantineAddSpec,
+  'quarantine.list': quarantineListSpec,
+  'quarantine.release': quarantineReleaseSpec,
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,
   'runs.list': runsListSpec,

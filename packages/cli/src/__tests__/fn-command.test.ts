@@ -595,6 +595,27 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 390 D-12/D-13: the three quarantine verbs. UNBOUND, and — unlike every other unbound
+      // row this table has ever carried — unbound in EVERY composition rather than in a
+      // read-only one: plan 04 registers the specs and the `quarantine` dep is supplied
+      // nowhere yet. PLAN 06 MUST FLIP ALL THREE TO 'bound' when it binds the port at the
+      // composition root; a plan 06 that landed with these still reading 'unbound' would have
+      // shipped three catalogued verbs that refuse every caller by name.
+      'quarantine.add': {
+        requiredScopes: ['knowledge-write'],
+        resultKind: 'unary',
+        bindingStatus: 'unbound',
+      },
+      'quarantine.list': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'unbound',
+      },
+      'quarantine.release': {
+        requiredScopes: ['knowledge-write'],
+        resultKind: 'unary',
+        bindingStatus: 'unbound',
+      },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },

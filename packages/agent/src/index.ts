@@ -91,6 +91,18 @@ export { RUNS_POST_PROCESSING_FUNCTION_ID } from './functions/ops/runs-post-proc
 // analysis read through the registry, and the alternative is a string literal in the CLI — a
 // second declaration of a capability's name, free to drift. An ID is not a dispatch handle.
 export { ANALYSIS_GET_FUNCTION_ID } from './functions/ops/analysis-get.js'
+// 390 D-13: the three quarantine verb ids, on exactly the footing of the three constants above.
+// A later plan's CLI verbs and M5's quarantine management both have to put a name on the wire,
+// and the alternative is a string literal in each surface — a second declaration of a
+// capability's name, free to drift. An ID is not a dispatch handle.
+//
+// The SPECS themselves are deliberately absent, as every other op's are: `FunctionSpec` carries
+// the implementation and the live validators, so exporting one would hand a surface a dispatch
+// path around `invokeFunction`'s gate (T-384-01) — which for two verbs that write the committed
+// ledger is precisely the escalation this plan's threat register names (T-390-11).
+export { QUARANTINE_ADD_FUNCTION_ID } from './functions/ops/quarantine-add.js'
+export { QUARANTINE_LIST_FUNCTION_ID } from './functions/ops/quarantine-list.js'
+export { QUARANTINE_RELEASE_FUNCTION_ID } from './functions/ops/quarantine-release.js'
 
 // 389 D-05/D-08: THE sentence renderer, and the recurrence seam it joins through. The value
 // is a pure string composer over typed parts — no fs, no model, no store — published so plan

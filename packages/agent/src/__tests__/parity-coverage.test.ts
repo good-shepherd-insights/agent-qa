@@ -57,6 +57,11 @@ const ALLOWED_ID_DOMAINS = new Set([
   // belong to runs, memory or analysis, and filing them there would have made the domain
   // list decorative. Same reconciliation the `knowledge` line above records; 397 folds both.
   'entities',
+  // 2026-08-05 (390 D-13): `quarantine` is the third taxonomy EXTENSION, declared on exactly
+  // the footing of the two above. Quarantine state is neither a run, a memory nor an analysis
+  // — a lifecycle with its own enumeration, exit and entry verbs — and filing it under one of
+  // those would have made this list decorative for a third time. 397 folds all three.
+  'quarantine',
 ])
 
 /**
@@ -91,6 +96,14 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   'knowledge.forget.propose': 'unbound',
   'knowledge.proposal.apply': 'unbound',
   'knowledge.reject.propose': 'unbound',
+  // 390 D-12/D-13: the three quarantine verbs, UNBOUND here for the 387-08 reason — this
+  // fixture supplies no quarantine port. They are unbound in EVERY composition as of this
+  // plan, which is a fact about the tree rather than about the fixture: the port's
+  // implementation and the composition-root binding are a later plan's, and until then a host
+  // refuses by name instead of answering an empty list about a ledger it cannot read.
+  'quarantine.add': 'unbound',
+  'quarantine.list': 'unbound',
+  'quarantine.release': 'unbound',
   'runs.events': 'bound',
   'runs.get': 'bound',
   'runs.list': 'bound',
@@ -163,6 +176,22 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   },
   'knowledge.forget.propose': { target: { grain: 'bundle', shortId: FIXTURE_ENTITY_SHORT_ID } },
   'knowledge.proposal.apply': { proposalId: 'prop_0123456789ab' },
+  // 390 D-13: PARSING inputs for three capabilities this composition cannot run, on the same
+  // reasoning as the rows above. `list` genuinely takes the empty query — enumeration is the
+  // verb — while the two write verbs take the three legs of stable test identity, and a
+  // partial address would report an input error where the unbound-refusal leg needs a binding
+  // refusal. The test named here exists in no fixture; nothing is dispatched either way.
+  'quarantine.add': {
+    product: 'shop',
+    filePath: 'tests/checkout.test.yaml',
+    testName: 'checkout completes',
+  },
+  'quarantine.list': {},
+  'quarantine.release': {
+    product: 'shop',
+    filePath: 'tests/checkout.test.yaml',
+    testName: 'checkout completes',
+  },
   'runs.events': { runId: FIXTURE_RUN_ID },
   'runs.get': { runId: FIXTURE_RUN_ID },
   'runs.list': {},
