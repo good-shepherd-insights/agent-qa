@@ -182,7 +182,9 @@ export const guardQuarantineLedgerEvent = createVersionGuard<QuarantineLedgerEve
  * releasable — the forcing function that makes quarantine a lifecycle rather than a graveyard);
  * `'released'` is a closed window kept for the history the event log answers for free.
  */
-export type QuarantineEntryStateName = 'quarantined' | 'expired' | 'released'
+export const QUARANTINE_ENTRY_STATE_NAMES = ['quarantined', 'expired', 'released'] as const
+
+export type QuarantineEntryStateName = (typeof QUARANTINE_ENTRY_STATE_NAMES)[number]
 
 /** One folded entry: the durable identity, the entry's own facts, and its computed state. */
 export interface QuarantineEntryState {

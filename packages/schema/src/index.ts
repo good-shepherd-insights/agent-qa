@@ -195,6 +195,7 @@ export { VERDICT_CLASSES, isVerdictClass } from './verdict/index'
 // recurrence clause's ladder arms. `'expired'` is a COMPUTED state, never an event.
 export {
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+  QUARANTINE_ENTRY_STATE_NAMES,
   QUARANTINE_EVENT_KINDS,
   QUARANTINE_LEDGER_MIGRATIONS,
   QUARANTINE_UNASSIGNED_OWNER,
@@ -214,6 +215,29 @@ export type {
   QuarantineOwner,
   QuarantineReleasedEvent,
   QuarantineRenewedEvent,
+} from './quarantine/index'
+// 390 D-12/D-13: the three verbs' wire contract and the port they dispatch through. Minted
+// here rather than beside the op specs because two packages consume it and neither may import
+// the other — `agent` declares the specs against these validators, knowledge-local implements
+// the port over the committed ledger. `release`'s no-entry and `add`'s renewed are result
+// ARMS, never throws.
+export {
+  QuarantineAddInputSchema,
+  QuarantineAddOutputSchema,
+  QuarantineEntrySchema,
+  QuarantineListInputSchema,
+  QuarantineListOutputSchema,
+  QuarantineReleaseInputSchema,
+  QuarantineReleaseOutputSchema,
+} from './quarantine/index'
+export type {
+  QuarantineAddInput,
+  QuarantineAddOutput,
+  QuarantineListInput,
+  QuarantineListOutput,
+  QuarantineOperationsPort,
+  QuarantineReleaseInput,
+  QuarantineReleaseOutput,
 } from './quarantine/index'
 // 389 D-05/D-07/D-09/D-10: the verdict truth vocabulary — sentence parts joined to Verdict
 // by perTest (beside, never inside the frozen §A9 union), the version-guarded run analysis
