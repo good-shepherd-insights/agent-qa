@@ -291,17 +291,23 @@ describe('fail-fast poisoning is disposition-aware (CR-01, D-14)', () => {
     )
     const { verdict, handoff } = await done(session)
 
-    // Asserted as ONE shape, mirroring the verifier's probe output, because the three facts are
-    // only meaningful together: a diff showing just "the sibling was skipped" invites a fix that
-    // runs the sibling and still swallows its failure.
+    // Asserted as ONE shape, mirroring the verifier's probe output, because the facts are only
+    // meaningful together: a diff showing just "the sibling was skipped" invites a fix that runs
+    // the sibling and still swallows its failure.
+    //
+    // This ONE fixture shows both directions of the guard, in member order. `flaky`'s LICENSED
+    // failure does not poison, so `regression` executes. `regression`'s UN-licensed failure then
+    // poisons exactly as pre-390, so `healthy` behind it is skipped — the guard removed one route
+    // to a skip and left the other untouched. Pre-fix this whole shape read
+    // `executed: ['flaky'] / verdict 'passed' / exitCode 0`, the verifier's measurement.
     expect(probeShape(executed, verdict, handoff)).toEqual({
-      executed: ['flaky', 'regression', 'healthy'],
+      executed: ['flaky', 'regression'],
       verdict: 'failed',
       exitCode: 1,
       outcomes: [
         ['flaky', 'failed', true],
         ['regression', 'failed', null],
-        ['healthy', 'passed', null],
+        ['healthy', 'skipped', null],
       ],
     })
   })

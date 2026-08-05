@@ -286,7 +286,20 @@ export function startRun(config: RunConfig): RunSession {
       }
 
       const outcome = deriveMemberOutcome(result)
-      if ((outcome === 'failed' || outcome === 'timeout') && member.failFastGroup !== undefined) {
+      // 390 D-14 (CR-01, measured 2026-08-05): the disposition licenses this member's failure at the
+      // AGGREGATE rule, and it must license it HERE too — this is the one site that decides whether
+      // OTHER tests run. `run.ts:1961` puts every member of a suite in one `failFastGroup`
+      // unconditionally, so an unguarded poisoning by a quarantined failure skips every remaining
+      // member of that suite; those skips are neutral in `deriveAggregateVerdict`, and a run holding
+      // a genuinely failing, NON-quarantined test answers 'passed' at exit 0 where pre-390 it exited
+      // 1. Both outcome arms are guarded because the aggregate rule skips both (a licensed flake that
+      // times out is the same phenomenon). A NON-quarantined failure still poisons its group exactly
+      // as before — the disposition changes nothing where none applies.
+      if (
+        (outcome === 'failed' || outcome === 'timeout') &&
+        member.failFastGroup !== undefined &&
+        !quarantined
+      ) {
         poisonedGroups.add(member.failFastGroup)
       }
 
