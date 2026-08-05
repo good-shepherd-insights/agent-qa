@@ -14,17 +14,23 @@ import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
+  ANALYSIS_FILE,
+  admitAnalysisArtifactForRun,
   canonicalJson,
   guardCompletedRunHandoff,
+  guardRunAnalysisArtifact,
   normalizeAnchor,
+  resolveRunVerdicts,
   slugBranch,
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   CompletedRunHandoff,
   PerTestOutcome,
+  RunAnalysisArtifact,
   ScopeKey,
   StepEvidence,
+  Verdict,
 } from '@vostride/agent-qa-schema'
 
 import { ensureRunOutcomeTables, openIndexWriter } from '../index-open.js'
@@ -66,6 +72,14 @@ export type ExtractStepAnchors = (step: StepEvidence) => Anchor[]
  */
 export interface ProjectRunOutcomesOptions {
   extractAnchors: ExtractStepAnchors
+  /**
+   * The run's persisted analysis artifact when one exists (390 D-09, the `ProjectCanaryOutcomes
+   * Input.artifact` precedent). DATA, not a port: `foldRunOutcomes` and `rebuildRunOutcomes` each
+   * load it from the run's own dir through the one shared loader and hand it here, so ONE
+   * projection function with ONE signature serves both paths — a second signature only one path
+   * calls is exactly how L12 rebuild parity breaks in silence.
+   */
+  artifact?: RunAnalysisArtifact
 }
 
 export interface RunOutcomeTestDelta {
@@ -105,6 +119,12 @@ export interface FoldRunOutcomesOptions {
   knowledgeRoot: string
   handoff: CompletedRunHandoff
   extractAnchors: ExtractStepAnchors
+  /**
+   * The run's own directory (`.agent-qa/runs/<slug(runId)>/`). When supplied, the fold loads
+   * `analysis.json` from it so the counters read RESOLVED verdicts (D-09). Absent — a caller that
+   * has no run dir — folds the deterministic floor, byte-identically to pre-390.
+   */
+  runDir?: string
 }
 
 export type FoldRunOutcomesReport = ApplyRunOutcomesResult
@@ -145,9 +165,45 @@ function countedOutcome(outcome: PerTestOutcome['outcome']): boolean | undefined
   }
 }
 
+/**
+ * The RESOLVED class per member test, computed ONCE per fold (390 D-09, mirroring the canary
+ * fold's `resolveAttributionClasses` member-for-member — same class of fold, same input treatment).
+ *
+ * Two layers, in overwrite order:
+ *
+ *  1. Members OUTSIDE the accessor's domain first — a clean pass keeps its persisted class, which
+ *     is how the runner's one pass-mintable `flake` (classifyRootCause's retry rule) still counts.
+ *  2. THE one supersedable-verdict read, `resolveRunVerdicts` (D-10): artifact verdicts when the
+ *     artifact is present, the deterministic floor when it is absent. It OVERWRITES layer 1
+ *     wherever it governs, which is exactly how an unknown→flake upgrade moves the flake counter
+ *     instead of the projection contradicting the resolved verdict.
+ *
+ * ACCEPTED SHAPE (the 389-06 precedent): a run whose artifact is written AFTER its fold never
+ * refolds — the `run_outcome_applied_runs` marker is final — so an upgraded class reaches the
+ * counters and the fingerprint windows only through LATER runs. The rebuild path re-reads every
+ * artifact from disk, which is where a late upgrade eventually lands.
+ */
+function resolveProjectionClasses(
+  handoff: CompletedRunHandoff,
+  artifact: RunAnalysisArtifact | undefined,
+): ReadonlyMap<number, Verdict['class']> {
+  const members = handoff.tests ?? []
+  const classes = new Map<number, Verdict['class']>()
+  for (const member of members) {
+    if (member.rootCause !== undefined) classes.set(member.testIndex, member.rootCause.class)
+  }
+  // The accessor traverses `tests` on the floor path; the rebuild's WR-03 wall admits a handoff
+  // whose `tests` key is absent, so it is normalized to the same empty array used above.
+  for (const verdict of resolveRunVerdicts(artifact, { ...handoff, tests: members })) {
+    classes.set(verdict.perTest, verdict.class)
+  }
+  return classes
+}
+
 function testDelta(
   test: PerTestOutcome,
   extractAnchors: ExtractStepAnchors,
+  resolvedClasses: ReadonlyMap<number, Verdict['class']>,
 ): RunOutcomeTestDelta | undefined {
   const passed = countedOutcome(test.outcome)
   if (passed === undefined) return undefined
@@ -165,22 +221,23 @@ function testDelta(
     testName: test.testName,
     passed,
     heals: steps.filter((step) => step.selfHeal !== undefined).length,
-    flake: test.rootCause?.class === 'flake',
+    flake: resolvedClasses.get(test.testIndex) === 'flake',
     anchorKeys: [...anchorKeys].sort(),
   }
 }
 
-/** Pure fold: identical handoff bytes yield identical row deltas. */
+/** Pure fold: identical (handoff, artifact) bytes yield identical row deltas. */
 export function projectRunOutcomes(
   handoff: CompletedRunHandoff,
   opts: ProjectRunOutcomesOptions,
 ): RunOutcomesProjection {
   const partition = projectionPartition(handoff.scope)
   const excluded = handoff.excludedFromOutcomes === true
+  const resolvedClasses = resolveProjectionClasses(handoff, opts.artifact)
   const tests = excluded
     ? []
     : (handoff.tests ?? []).flatMap((test) => {
-        const delta = testDelta(test, opts.extractAnchors)
+        const delta = testDelta(test, opts.extractAnchors, resolvedClasses)
         return delta === undefined ? [] : [delta]
       })
   return {
@@ -329,6 +386,32 @@ export function applyRunOutcomes(
   return { kind: 'applied', tests: projection.tests.length }
 }
 
+/**
+ * One run's persisted analysis artifact, loaded from that run's OWN dir (390 D-09). THE shared
+ * loader: the incremental fold and the full rebuild both call it, which is what keeps L12 parity
+ * true rather than asserted.
+ *
+ * The fs glue is local; every rule that matters belongs to schema. An absent file is `undefined` —
+ * the deterministic floor. A newer schemaVersion is the guard's typed hard failure, never swallowed
+ * into a silent floor. A PRESENT file recording ANOTHER run's id is refused by identity
+ * (`admitAnalysisArtifactForRun`, G-389-3A) and folds to the floor: counters and windows never key
+ * off another run's verdicts, the 388 cross-instance class.
+ */
+function loadRunArtifact(runDir: string, runId: string): RunAnalysisArtifact | undefined {
+  let bytes: string
+  try {
+    bytes = readFileSync(join(runDir, ANALYSIS_FILE), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+  const admission = admitAnalysisArtifactForRun(
+    guardRunAnalysisArtifact(JSON.parse(bytes)),
+    runId,
+  )
+  return admission.kind === 'admitted' ? admission.artifact : undefined
+}
+
 function loadRebuildHandoff(file: string): CompletedRunHandoff | undefined {
   try {
     const guarded = guardCompletedRunHandoff(JSON.parse(readFileSync(file, 'utf8')))
@@ -390,20 +473,24 @@ export function rebuildRunOutcomes(
   const report: RebuildRunOutcomesReport = { folded: 0, skipped: 0 }
   if (!existsSync(runsRoot)) return report
 
-  const handoffFiles = readdirSync(runsRoot, { withFileTypes: true })
+  const runDirs = readdirSync(runsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => join(runsRoot, entry.name, RUN_HANDOFF_FILE))
-    .filter((file) => existsSync(file))
+    .map((entry) => join(runsRoot, entry.name))
+    .filter((dir) => existsSync(join(dir, RUN_HANDOFF_FILE)))
     .sort()
 
-  for (const file of handoffFiles) {
-    const handoff = loadRebuildHandoff(file)
+  for (const runDir of runDirs) {
+    const handoff = loadRebuildHandoff(join(runDir, RUN_HANDOFF_FILE))
     if (handoff === undefined) {
       report.skipped += 1
       continue
     }
+    // D-09 / L12: `analysis.json` is read from beside `handoff.json` through the SAME loader the
+    // incremental fold uses, so the rebuild reproduces resolved-verdict tables byte-identically.
+    const artifact = loadRunArtifact(runDir, String(handoff.runId))
     applyRunOutcomes(db, projectRunOutcomes(handoff, {
       extractAnchors: opts.extractAnchors,
+      ...(artifact === undefined ? {} : { artifact }),
     }))
     report.folded += 1
   }
@@ -416,8 +503,12 @@ export function rebuildRunOutcomes(
  * SAME (extended) receipt as candidate/canary emit — never a second marker file.
  */
 export function foldRunOutcomes(opts: FoldRunOutcomesOptions): FoldRunOutcomesReport {
+  const artifact = opts.runDir === undefined
+    ? undefined
+    : loadRunArtifact(opts.runDir, String(opts.handoff.runId))
   const projection = projectRunOutcomes(opts.handoff, {
     extractAnchors: opts.extractAnchors,
+    ...(artifact === undefined ? {} : { artifact }),
   })
   const handle = openIndexWriter(opts.knowledgeRoot)
   try {

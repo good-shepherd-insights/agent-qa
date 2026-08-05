@@ -73,7 +73,7 @@ function failingStep(): StepEvidence {
       channel3: [],
       briefDigest: 'resolved-fixture-digest',
     },
-    subActions: [{ plan: 'click pay now', result: { error: 'payment sheet never opened' } }],
+    subActions: [],
     verifierVerdict: { pass: false, reasoning: 'the payment sheet never opened' },
     anchors: [payAnchor],
   } as unknown as StepEvidence
@@ -214,19 +214,29 @@ describe('D-09: the projection fold consumes resolved verdicts', () => {
     expect(flakeCountOf(db)).toBe(1)
   })
 
-  it('refuses a FOREIGN-runId artifact by identity and answers the floor (G-389-3A)', () => {
-    const db = openDb()
+  it('refuses a FOREIGN-runId artifact at the loader and answers the floor (G-389-3A)', () => {
+    const runsRoot = tempDir('agent-qa-resolved-foreign-')
+    const knowledgeRoot = tempDir('agent-qa-foreign-knowledge-')
     const runId = 'run-own-ccc'
     const handoff = unknownFailureHandoff({ runId, buildOrdinal: 4 })
-
-    // Present on the same path in both legs — only the RECORDED runId differs, which is what
-    // separates identity refusal from absence.
-    applyRunOutcomes(db, projectRunOutcomes(handoff, {
-      extractAnchors,
+    // The file is PRESENT on the same path the admitted leg reads — only the RECORDED runId
+    // differs, which is what separates identity refusal from absence. Admission lives in the
+    // loader (schema owns the comparison); the pure projection takes its artifact as trusted data.
+    const runDir = writeRunDir({
+      runsRoot,
+      handoff,
       artifact: flakeArtifact('run-somebody-elses-ddd'),
-    }))
+    })
 
-    expect(flakeCountOf(db)).toBe(0)
+    expect(foldRunOutcomes({ knowledgeRoot, handoff, runDir, extractAnchors }))
+      .toEqual({ kind: 'applied', tests: 1 })
+
+    const writer = openIndexWriter(knowledgeRoot)
+    try {
+      expect(flakeCountOf(writer.db)).toBe(0)
+    } finally {
+      writer.close()
+    }
   })
 
   it('loads the run\'s own artifact from runDir on the incremental fold path', () => {

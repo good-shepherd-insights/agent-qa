@@ -64,12 +64,19 @@ function stepEvidence(fixture: StepFixture): StepEvidence {
   } as unknown as StepEvidence
 }
 
-function perTest(fixture: TestFixture): PerTestOutcome {
+/**
+ * `testIndex` is the run's per-member index and `rootCause.perTest` is the join key that names it
+ * (389 D-07). Both are derived from the member's position here rather than hardcoded: the 390 D-09
+ * resolved-class map is keyed by that index, so a fixture where every member claimed index 0 and
+ * every rootCause claimed perTest 1 described a handoff no runner can produce, and the classes of
+ * unrelated members collapsed onto each other.
+ */
+function perTest(fixture: TestFixture, testIndex: number): PerTestOutcome {
   return {
     testId: fixture.testId,
     testName: fixture.testName ?? fixture.testId,
     filePath: fixture.filePath,
-    testIndex: 0,
+    testIndex,
     outcome: fixture.outcome,
     steps: (fixture.steps ?? []).map(stepEvidence),
     ...(fixture.rootCauseClass === undefined
@@ -86,7 +93,7 @@ function perTest(fixture: TestFixture): PerTestOutcome {
               rationale: `fixture ${fixture.rootCauseClass} root cause`,
             },
             memoryMisdirectionRuledOut: true,
-            perTest: 1,
+            perTest: testIndex,
           },
         }),
   } as unknown as PerTestOutcome
@@ -119,7 +126,7 @@ function handoffFixture(input: {
     },
     startedAt: input.buildOrdinal * 1_000,
     endedAt: input.buildOrdinal * 1_000 + 1,
-    tests: input.tests.map(perTest),
+    tests: input.tests.map((fixture, testIndex) => perTest(fixture, testIndex)),
     ...(input.excludedFromOutcomes === true ? { excludedFromOutcomes: true } : {}),
   } as unknown as CompletedRunHandoff
 }

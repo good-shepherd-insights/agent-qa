@@ -430,10 +430,14 @@ export async function curateCompletedRun(
       // handoff marker is the sole exclusion authority for current and sibling runs.
       // A fold failure is isolated (counted below) and never blocks the drain; the
       // withheld receipt refolds it on the next run, safe because the fold is idempotent.
+      // 390 D-09: `runDir` lets the fold read this run's `analysis.json`, so the counters and
+      // fingerprint windows key off RESOLVED verdicts rather than the deterministic floor. It is
+      // the same dir the canary fold above already reads — no new input crosses this boundary.
       try {
         operations.foldRunOutcomes({
           knowledgeRoot: input.knowledgeRoot,
           handoff: input.handoff,
+          runDir: input.runDir,
           extractAnchors: exercisedAnchors,
         })
       } catch {
