@@ -32,6 +32,7 @@
 import {
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   QUARANTINE_UNASSIGNED_OWNER,
+  slugBranch,
 } from '@vostride/agent-qa-schema'
 import type {
   GuardrailPolicy,
@@ -245,6 +246,37 @@ export function createQuarantineOperations(
     return entries.find((entry) => identityKey(entry) === key)
   }
 
+  /**
+   * The write verbs' ONE normalization, taken at the boundary before anything decides (WR-01).
+   *
+   * `product` reaches these verbs as whatever a human typed at `quarantine.add`, while every reader
+   * of the ledger compares the SLUGGED partition — `resolveRunQuarantineSnapshot` filters on
+   * `entry.product === slugBranch(input.product)`, and the detection path authors entries from
+   * projection rows that are already partitioned that way. Storing the raw spelling therefore wrote
+   * a real entry into a partition nothing reads: the verb answered `entered` and the quarantined
+   * test kept failing every build.
+   *
+   * Normalizing (rather than refusing a mismatch) is the choice on the merits: a human exit-path
+   * verb should DO what was meant, and the auto half already writes slugged bytes, so the ledger
+   * keeps ONE vocabulary instead of two that agree only by convention. `slugBranch` is idempotent
+   * on its own output, so an already-slugged product round-trips byte-identically and no existing
+   * entry moves.
+   *
+   * Applied once, here, and threaded to all four places the identity is used — the fold lookup, the
+   * authored event, the answered entry, and the release join. A slug applied at only one of them is
+   * strictly worse than none: the write and the lookup would then disagree with each other as well
+   * as with the reader.
+   */
+  function normalize(
+    input: { product: string; filePath: string; testName: string },
+  ): { product: string; filePath: string; testName: string } {
+    return {
+      product: slugBranch(input.product),
+      filePath: input.filePath,
+      testName: input.testName,
+    }
+  }
+
   return {
     async list(): Promise<readonly QuarantineEntryState[]> {
       // Acquisition-free ON PURPOSE: this reads and answers, and a reader that took the writer
@@ -259,7 +291,7 @@ export function createQuarantineOperations(
       const knowledgeRoot = await options.resolveKnowledgeRoot()
       return await underWriterLease(knowledgeRoot, () => {
         const { now, entries } = readState(knowledgeRoot)
-        const entry = entryFor(entries, input)
+        const entry = entryFor(entries, normalize(input))
         // An OPEN window is one no release event has closed — `expired` counts, because D-11 keeps
         // an expired entry listed, renewable AND releasable; it stopped suppressing, it did not
         // vanish. Absent or already-closed answers the named arm and appends nothing: "that test is
@@ -286,7 +318,8 @@ export function createQuarantineOperations(
       const knowledgeRoot = await options.resolveKnowledgeRoot()
       return await underWriterLease(knowledgeRoot, () => {
         const { now, entries } = readState(knowledgeRoot)
-        const entry = entryFor(entries, input)
+        const identity = normalize(input)
+        const entry = entryFor(entries, identity)
         const expiresAt = input.expiresAt ?? defaultExpiry(now)
 
         // An open window (suppressing OR lapsed) is EXTENDED rather than reopened, so the ledger
@@ -325,9 +358,7 @@ export function createQuarantineOperations(
           schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
           kind: 'entered',
           at: now,
-          product: input.product,
-          filePath: input.filePath,
-          testName: input.testName,
+          ...identity,
           fingerprint: QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
           verdictClass: QUARANTINE_MANUAL_ENTRY_CLASS,
           owner,
@@ -337,9 +368,9 @@ export function createQuarantineOperations(
         return {
           kind: 'entered',
           entry: {
-            product: input.product,
-            filePath: input.filePath,
-            testName: input.testName,
+            // The identity that was STORED, never the spelling the caller sent: an answer naming
+            // the raw product would tell an operator a partition exists that does not.
+            ...identity,
             fingerprint: QUARANTINE_MANUAL_ENTRY_FINGERPRINT,
             verdictClass: QUARANTINE_MANUAL_ENTRY_CLASS,
             owner,

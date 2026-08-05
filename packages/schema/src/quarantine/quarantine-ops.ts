@@ -72,7 +72,16 @@ export const QuarantineListOutputSchema = z.object({
 
 export type QuarantineListOutput = z.infer<typeof QuarantineListOutputSchema>
 
-/** The three legs of stable test identity — never `testId`, which is per-run and not durable. */
+/**
+ * The three legs of stable test identity — never `testId`, which is per-run and not durable.
+ *
+ * `product` is accepted RAW and normalized by the implementation to the slugged partition every
+ * reader of the ledger compares (WR-01 / 390-09): `createQuarantineOperations` runs it through
+ * `slugBranch` at the boundary of both write verbs, so a human typing `My Product` lands in the
+ * `My-Product` partition `resolveRunQuarantineSnapshot` filters on. Deliberately NOT constrained
+ * here — a schema that demanded pre-slugged bytes would put the slug rule in two places and refuse
+ * the exact input the human half of the exit path exists to accept. One rule, one home.
+ */
 const identityShape = {
   product: z.string().min(1),
   filePath: z.string().min(1),
