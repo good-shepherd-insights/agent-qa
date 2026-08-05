@@ -40,7 +40,17 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { foldRunOutcomes } from '../../projection/run-outcomes.js'
 import type { FoldRunOutcomesReport } from '../../projection/run-outcomes.js'
-import { QUARANTINE_LEDGER_FILENAME, appendQuarantineEvents } from '../ledger.js'
+import {
+  AUTO_QUARANTINE_CLASSES,
+  QUARANTINE_CLASS_DISPOSITIONS,
+  QUARANTINE_ESCALATE_THRESHOLD,
+} from '../detection.js'
+import {
+  QUARANTINE_LEDGER_FILENAME,
+  appendQuarantineEvents,
+  foldQuarantineLedgerState,
+  readQuarantineLedger,
+} from '../ledger.js'
 
 const SHOP_SCOPE: ScopeKey = { tier: 'product', key: 'shop-web' }
 const PRODUCT = 'shop-web'
@@ -87,14 +97,14 @@ function failingStep(): StepEvidence {
   } as unknown as StepEvidence
 }
 
-function rootCause(verdictClass: VerdictClass): Verdict {
+function rootCause(verdictClass: VerdictClass, perTest = 0): Verdict {
   return {
     class: verdictClass,
     producer: 'deterministic-classifier',
     confidence: 0.6,
     evidence: { citedSteps: [0], citedAnchors: [], citedArtifacts: [], rationale: ERROR_TEXT },
     memoryMisdirectionRuledOut: false,
-    perTest: 0,
+    perTest,
   } as Verdict
 }
 
@@ -129,6 +139,43 @@ function handoffFixture(input: {
       steps: [failingStep()],
       ...(passed ? {} : { rootCause: rootCause(input.verdictClass ?? 'flake') }),
     } as unknown as PerTestOutcome],
+  } as unknown as CompletedRunHandoff
+}
+
+/**
+ * ONE run carrying TWO failing members whose ONLY difference is the resolved verdict class.
+ * Same step, same anchor, same error text, same ordinal — so the class is genuinely the only
+ * varied input, which is what makes the pair a differential rather than two examples.
+ */
+function twoClassHandoff(input: {
+  runId: string
+  buildOrdinal: number
+  classA: VerdictClass
+  classB: VerdictClass
+}): CompletedRunHandoff {
+  const member = (index: number, verdictClass: VerdictClass) => ({
+    testId: `${input.runId}-${String(index)}`,
+    testName: `${TEST_NAME} [${verdictClass}]`,
+    filePath: `suite/${verdictClass}.test.ts`,
+    testIndex: index,
+    outcome: 'failed',
+    steps: [failingStep()],
+    rootCause: rootCause(verdictClass, index),
+  } as unknown as PerTestOutcome)
+  return {
+    schemaVersion: 6,
+    runId: input.runId,
+    buildOrdinal: input.buildOrdinal,
+    scope: SHOP_SCOPE,
+    executionContext: 'ci',
+    aggregateVerdict: 'failed',
+    configDigests: {
+      suiteConfigDigest: 'detection-suite-digest',
+      testConfigDigest: 'detection-test-digest',
+    },
+    startedAt: input.buildOrdinal * 1_000,
+    endedAt: input.buildOrdinal * 1_000 + 1,
+    tests: [member(0, input.classA), member(1, input.classB)],
   } as unknown as CompletedRunHandoff
 }
 
@@ -427,5 +474,79 @@ describe('auto-exit through the real fold (D-10, FLAK-03)', () => {
     if (report?.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
     expect(report.quarantine.events).toEqual([])
     expect(ledgerLines(env)).toHaveLength(1)
+  })
+})
+
+describe('the anti-silencing differential: D-05 in BOTH directions', () => {
+  const FLAKE_TEST = `${TEST_NAME} [flake]`
+  const APP_BUG_TEST = `${TEST_NAME} [app_bug]`
+
+  /** Plan 01's run-start snapshot rule, spelled the way agent-local spells it: state === open. */
+  function activeQuarantineSet(env: FoldHarness): string[] {
+    const read = readQuarantineLedger(env.knowledgeRoot)
+    return foldQuarantineLedgerState(read.events, NOW)
+      .filter((entry) => entry.state === 'quarantined')
+      .map((entry) => entry.testName)
+      .sort()
+  }
+
+  function crossBothClasses(env: FoldHarness): FoldRunOutcomesReport {
+    let last: FoldRunOutcomesReport | undefined
+    for (const buildOrdinal of [1, 2, 3]) {
+      last = fold(env, twoClassHandoff({
+        runId: `run-anti-silencing-${String(buildOrdinal)}`,
+        buildOrdinal,
+        classA: 'flake',
+        classB: 'app_bug',
+      }))
+    }
+    if (last === undefined) throw new Error('no fold ran')
+    return last
+  }
+
+  it('quarantines the flake and REFUSES to quarantine the app_bug at the same recurrence', () => {
+    const env = harness('agent-qa-anti-silencing')
+
+    const report = crossBothClasses(env)
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+
+    // Both halves genuinely crossed: the negative half is not passing for want of recurrence
+    // (an assertion that something did NOT happen is load-bearing only if the input could have
+    // made it happen). Both sightings answer the same occurrence count.
+    const escalated = report.quarantine.escalatedNotQuarantined
+    expect(escalated.map((sight) => sight.testName)).toEqual([APP_BUG_TEST])
+    expect(escalated[0]?.verdictClass).toBe('app_bug')
+    expect(escalated[0]?.occurrenceOrdinals).toBe(QUARANTINE_ESCALATE_THRESHOLD)
+
+    expect(report.quarantine.events).toHaveLength(1)
+    expect(report.quarantine.events[0]).toMatchObject({
+      kind: 'entered',
+      testName: FLAKE_TEST,
+      verdictClass: 'flake',
+    })
+    // The occurrence count the POSITIVE half acted on, so the two halves are comparable.
+    expect(ledgerLines(env).map((line) => line.testName)).toEqual([FLAKE_TEST])
+  })
+
+  it('closes the loop to FLAK-02: the app_bug test is absent from the active set', () => {
+    const env = harness('agent-qa-anti-silencing-snapshot')
+
+    crossBothClasses(env)
+
+    // The join that makes this a product claim rather than a code claim: the SAME ledger the
+    // detection wrote is folded through plan 01's state fold, which is what a run start reads.
+    // The app_bug test is not in it, so its next failure still fails the build.
+    expect(activeQuarantineSet(env)).toEqual([FLAKE_TEST])
+  })
+
+  it('names AUTO_QUARANTINE_CLASSES as the thing under test', () => {
+    // Both mutations this differential must detect, stated as data so the reason a reader can
+    // check is the same one the probe checks: deleting 'flake' from the auto set must red the
+    // positive half; adding 'app_bug' must red the negative half.
+    expect(AUTO_QUARANTINE_CLASSES).toContain('flake')
+    expect(AUTO_QUARANTINE_CLASSES).not.toContain('app_bug')
+    expect(QUARANTINE_CLASS_DISPOSITIONS.flake).toBe('auto-quarantine')
+    expect(QUARANTINE_CLASS_DISPOSITIONS.app_bug).toBe('escalate-only')
   })
 })
