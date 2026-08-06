@@ -463,7 +463,18 @@ describe('auto-exit through the real fold (D-10, FLAK-03)', () => {
     })
   })
 
-  it('does not release an entry whose deadline has already lapsed', () => {
+  // 390-17 / G-390-4, the probe's own measurement inverted into the shipped behavior. Feeding SIX
+  // consecutive passing ordinals to a test whose window had LAPSED measured `releasedAutoLines: 0`
+  // at every ordinal: a test that got FIXED during a lapse was listed as `expired` forever, and
+  // only a manual `release` closed it. That is FLAK-03's own counter-example — an entry a fixed
+  // test can never leave — so the exit path now applies in every state where an entry is LISTED.
+  //
+  // Driven through the REAL fold because the rule lives at TWO sites and either alone is a no-op:
+  // `evaluateQuarantineDetection`'s release-loop filter, and `evaluateQuarantineForFold`'s
+  // exit-candidate `testWindows` filter, which is what decides whether a window for a lapsed entry
+  // is BUILT at all. With only the first changed the pure rule answers correctly over a window that
+  // never arrives — a green unit test over a broken fold. Only a fold-level leg sees both.
+  it('releases an entry whose deadline has already LAPSED, at the 5th passing ordinal and not the 4th', () => {
     const env = harness('agent-qa-detect-exit-expired')
     appendQuarantineEvents(
       env.knowledgeRoot,
@@ -471,10 +482,73 @@ describe('auto-exit through the real fold (D-10, FLAK-03)', () => {
       { auditBaseDir: env.auditBaseDir },
     )
 
-    let report: FoldRunOutcomesReport | undefined
-    for (const buildOrdinal of [1, 2, 3, 4, 5]) {
-      report = fold(env, handoffFixture({
+    for (const buildOrdinal of [1, 2, 3, 4]) {
+      const partial = fold(env, handoffFixture({
         runId: `run-lapsed-${String(buildOrdinal)}`,
+        buildOrdinal,
+        passed: true,
+      }))
+      if (partial.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+      expect(partial.quarantine.events).toEqual([])
+    }
+    expect(ledgerLines(env)).toHaveLength(1)
+
+    const released = fold(env, handoffFixture({
+      runId: 'run-lapsed-5',
+      buildOrdinal: 5,
+      passed: true,
+    }))
+    if (released.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(released.quarantine.events).toHaveLength(1)
+    expect(ledgerLines(env)[1]).toEqual({
+      schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+      kind: 'released-auto',
+      at: NOW,
+      product: PRODUCT,
+      filePath: FILE_PATH,
+      testName: TEST_NAME,
+    })
+
+    // The probe fed a SIXTH ordinal; the release must not repeat, because the window it closed is
+    // now CLOSED — the same complement asserted on the pure rule, here against committed bytes.
+    const sixth = fold(env, handoffFixture({
+      runId: 'run-lapsed-6',
+      buildOrdinal: 6,
+      passed: true,
+    }))
+    if (sixth.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(sixth.quarantine.events).toEqual([])
+    expect(ledgerLines(env)).toHaveLength(2)
+
+    // …and the entry reads CLOSED rather than still-lapsed: `released-auto` over a lapsed window
+    // folds to `released` because the computed-`expired` arm only ever reaches an OPEN one. No
+    // further change was needed in `foldQuarantineLedgerState`, and this is what says so.
+    const state = foldQuarantineLedgerState(readQuarantineLedger(env.knowledgeRoot).events, NOW)
+    expect(state.map((entry) => entry.state)).toEqual(['released'])
+  })
+
+  it('COMPLEMENT: never re-releases a window a human already CLOSED', () => {
+    const env = harness('agent-qa-detect-exit-released')
+    appendQuarantineEvents(
+      env.knowledgeRoot,
+      [
+        enteredEvent({ expiresAt: '2026-07-10T12:00:00.000Z' }),
+        {
+          schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+          kind: 'released-manual',
+          at: '2026-07-20T12:00:00.000Z',
+          product: PRODUCT,
+          filePath: FILE_PATH,
+          testName: TEST_NAME,
+        },
+      ],
+      { auditBaseDir: env.auditBaseDir },
+    )
+
+    let report: FoldRunOutcomesReport | undefined
+    for (const buildOrdinal of [1, 2, 3, 4, 5, 6]) {
+      report = fold(env, handoffFixture({
+        runId: `run-closed-${String(buildOrdinal)}`,
         buildOrdinal,
         passed: true,
       }))
@@ -482,7 +556,25 @@ describe('auto-exit through the real fold (D-10, FLAK-03)', () => {
 
     if (report?.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
     expect(report.quarantine.events).toEqual([])
-    expect(ledgerLines(env)).toHaveLength(1)
+    expect(ledgerLines(env)).toHaveLength(2)
+  })
+
+  // The two arms do not interfere: a lapsed entry whose test keeps FAILING authors nothing on the
+  // exit path and still re-enters on the crossing path. Without this, "the exit path now admits a
+  // lapsed window" could have been read as "a lapsed window leaves on any evidence at all".
+  it('a LAPSED entry whose test keeps failing re-enters and is never released', () => {
+    const env = harness('agent-qa-detect-exit-still-failing')
+    appendQuarantineEvents(
+      env.knowledgeRoot,
+      [enteredEvent({ expiresAt: '2026-07-10T12:00:00.000Z' })],
+      { auditBaseDir: env.auditBaseDir },
+    )
+
+    crossThreeInFive(env)
+
+    const lines = ledgerLines(env)
+    expect(lines.map((line) => line.kind)).toEqual(['entered', 'entered'])
+    expect(lines[1]).toMatchObject({ kind: 'entered', expiresAt: EXPECTED_EXPIRY })
   })
 })
 

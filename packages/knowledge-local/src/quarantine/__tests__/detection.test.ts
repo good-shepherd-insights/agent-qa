@@ -451,20 +451,56 @@ describe('auto-exit at M passing ordinals (D-10)', () => {
     ).toHaveLength(1)
   })
 
-  it('does NOT auto-release an EXPIRED entry — release applies to active windows only', () => {
+  // 390-17 / G-390-4. The exit path is TOTAL across the states in which an entry is still LISTED.
+  // A lapsed window is still listed, still renewable and still in the triage queue, so a test
+  // FIXED while its window was lapsed genuinely leaves quarantine — a `released-auto` over it
+  // closes something real. Before this, only a manual `release` could, and a fixed test sat in the
+  // list forever. The half of the old filter that was always right — a CLOSED window stays closed —
+  // is kept and pinned on its own leg below, so the widened rule cannot swallow it.
+  it('auto-releases an entry whose deadline has LAPSED — a fixed test leaves on the same terms', () => {
     const result = evaluate({
       entries: [activeEntry({ state: 'expired' })],
       testWindows: [passingWindow(QUARANTINE_AUTO_EXIT_PASSES)],
     })
-    expect(result.events).toEqual([])
+    expect(result.events).toEqual([
+      {
+        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+        kind: 'released-auto',
+        at: NOW,
+        product: PRODUCT,
+        filePath: FILE_PATH,
+        testName: TEST_NAME,
+      },
+    ])
   })
 
-  it('does NOT re-release an already released entry', () => {
+  it('COMPLEMENT: does NOT re-release an already released entry — a closed window stays closed', () => {
     const result = evaluate({
       entries: [activeEntry({ state: 'released' })],
       testWindows: [passingWindow(QUARANTINE_AUTO_EXIT_PASSES)],
     })
     expect(result.events).toEqual([])
+  })
+
+  // The exit PREDICATE is unchanged by the widening: a lapsed entry earns its release on exactly
+  // the same evidence a suppressing one does, one step either side of both boundaries.
+  it('a LAPSED entry ONE ordinal short of the threshold still authors nothing', () => {
+    const result = evaluate({
+      entries: [activeEntry({ state: 'expired' })],
+      testWindows: [passingWindow(QUARANTINE_AUTO_EXIT_PASSES - 1)],
+    })
+    expect(result.events).toEqual([])
+  })
+
+  it('a LAPSED entry with a mixed-outcome ordinal inside the window authors nothing', () => {
+    const window = passingWindow(QUARANTINE_AUTO_EXIT_PASSES)
+    const ordinals = [...window.ordinals, { buildOrdinal: 3, passed: false }]
+    expect(
+      evaluate({
+        entries: [activeEntry({ state: 'expired' })],
+        testWindows: [{ ...window, ordinals }],
+      }).events,
+    ).toEqual([])
   })
 
   it('releases only the test whose window passed, in a multi-entry product', () => {
