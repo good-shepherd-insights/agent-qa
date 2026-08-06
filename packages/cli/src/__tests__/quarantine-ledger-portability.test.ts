@@ -183,10 +183,20 @@ function failingStep(buildOrdinal: number): StepEvidence {
   } as unknown as StepEvidence
 }
 
+/**
+ * AUTHORED since 390-19. This file's subject is LEDGER PORTABILITY — that a committed entry
+ * suppresses on a checkout that never saw the machine that wrote it, and that no checkout root
+ * leaks into the bytes — so it needs a crossing the gate genuinely ADMITS in order to have an entry
+ * to carry at all. A floor-produced verdict can no longer be that one: 390-19's floor arm requires
+ * a per-crossing `sameBuildPassAndFail`, and the fold's only construction site supplies a constant
+ * `false` until plan 390-21 computes it, so a floor-produced crossing is INERT IN-TREE BY
+ * CONSTRUCTION for that interval. `analyze-run` admits on the first disjunct, which this round does
+ * not touch, so the portability assertions keep exercising a real committed entry.
+ */
 function flakeVerdict(): Verdict {
   return {
     class: 'flake',
-    producer: 'deterministic-classifier',
+    producer: 'analyze-run',
     confidence: 0.6,
     evidence: {
       citedSteps: [0],
