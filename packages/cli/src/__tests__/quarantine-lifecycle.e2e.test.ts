@@ -214,10 +214,23 @@ function failingStep(buildOrdinal: number): StepEvidence {
   } as unknown as StepEvidence
 }
 
+/**
+ * AUTHORED since 390-19. This file's subject is the LIFECYCLE — in at the crossing, suppressed but
+ * visible, auto-out after five passes, honest again — and it needs a verdict the auto-quarantine
+ * gate genuinely ADMITS in order to exercise any of it. A floor-produced verdict can no longer be
+ * that: 390-19's floor arm requires a per-crossing `sameBuildPassAndFail`, and the fold's only
+ * construction site supplies a constant `false` until plan 390-21 computes it, so a floor-produced
+ * crossing is INERT IN-TREE BY CONSTRUCTION for that interval. An `analyze-run` verdict admits on
+ * the first disjunct, which is untouched by this round, so every lifecycle assertion below keeps
+ * exercising a real path rather than a stubbed one.
+ *
+ * 390-21 owns this file (`files_modified`) and replaces this fixture with a corpus PRODUCED through
+ * `classifyRootCause`, at which point the floor path becomes exercisable here on its own terms.
+ */
 function flakeVerdict(): Verdict {
   return {
     class: 'flake',
-    producer: 'deterministic-classifier',
+    producer: 'analyze-run',
     confidence: 0.6,
     evidence: {
       citedSteps: [0],

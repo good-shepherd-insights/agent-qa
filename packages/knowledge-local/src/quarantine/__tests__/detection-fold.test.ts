@@ -97,10 +97,20 @@ function failingStep(): StepEvidence {
   } as unknown as StepEvidence
 }
 
+/**
+ * AUTHORED by default since 390-19. Every leg in this file that does not name a producer is about
+ * fold PLUMBING — the applied-arm gate, the append/commit ordering, the owner carry-forward, the
+ * anti-silencing class differential — and needs a verdict the gate genuinely ADMITS to exercise it.
+ * The floor path can no longer be that verdict in-tree: 390-19 made the floor arm require a
+ * per-crossing `sameBuildPassAndFail`, and the fold's only construction site supplies a constant
+ * `false` until 390-21 computes it, so a floor-produced crossing is INERT IN-TREE BY CONSTRUCTION
+ * for that interval. The legs that are genuinely ABOUT the producer axis name it explicitly below
+ * and are unaffected.
+ */
 function rootCause(
   verdictClass: VerdictClass,
   perTest = 0,
-  producer: Verdict['producer'] = 'deterministic-classifier',
+  producer: Verdict['producer'] = 'analyze-run',
 ): Verdict {
   return {
     class: verdictClass,
@@ -714,9 +724,15 @@ describe('the anti-silencing differential: D-05 in BOTH directions', () => {
 // Every pair varies exactly ONE input: `rootCause.producer`. Same test, same step, same anchor,
 // same error text, same three build ordinals, same class.
 describe('a floor-produced crossing cannot buy a committed entry (390-16)', () => {
-  const AUTHORED_REQUIRED_AUTO_CLASSES: readonly VerdictClass[] = ['environment', 'timeout']
+  // Both classes are still REFUSED end-to-end, but since 390-19 for DIFFERENT reasons, and the old
+  // name (`AUTHORED_REQUIRED_AUTO_CLASSES`) asserted a falsehood about one of them. `environment`
+  // is authored-required in QUARANTINE_FLOOR_ELIGIBILITY. `timeout` is now FLOOR-ELIGIBLE and is
+  // refused here only for want of the per-crossing signature, which the fold supplies as a constant
+  // `false` until 390-21's history read lands. The observable answer is identical; the reason is
+  // not, and this file must not re-assert the reason that stopped being true.
+  const FLOOR_REFUSED_AUTO_CLASSES: readonly VerdictClass[] = ['environment', 'timeout']
 
-  it.each(AUTHORED_REQUIRED_AUTO_CLASSES)(
+  it.each(FLOOR_REFUSED_AUTO_CLASSES)(
     'writes ZERO ledger bytes for a floor-produced %s crossing, and escalates it instead',
     (verdictClass: VerdictClass) => {
       const env = harness(`agent-qa-floor-refuse-${verdictClass}`)
@@ -744,7 +760,7 @@ describe('a floor-produced crossing cannot buy a committed entry (390-16)', () =
     },
   )
 
-  it.each(AUTHORED_REQUIRED_AUTO_CLASSES)(
+  it.each(FLOOR_REFUSED_AUTO_CLASSES)(
     'commits ONE entered line for the same %s crossing when analyze-run authored it',
     (verdictClass: VerdictClass) => {
       const env = harness(`agent-qa-floor-accept-${verdictClass}`)
@@ -769,7 +785,20 @@ describe('a floor-produced crossing cannot buy a committed entry (390-16)', () =
     },
   )
 
-  it('still commits an entered line for a FLOOR-produced flake — FLAK-01 is not gated', () => {
+  // THE INTERVAL THIS LEG RECORDS, stated in its strong form (390-19 → 390-21).
+  //
+  // 390-16 wrote this leg asserting that a floor-produced `flake` still commits an entered line.
+  // That fixture pinned an input the pipeline cannot build — `classifyRootCause` mints `flake` only
+  // on a member that PASSED, and a passing member carries no failure row — which is one of the four
+  // artifacts G-390-5 names as vacuous. What it observes NOW is the honest fact: 390-19's floor arm
+  // requires a per-crossing `sameBuildPassAndFail`, and the fold's only construction site
+  // (`evaluateQuarantineForFold` in projection/run-outcomes.ts) supplies a constant `false`, so the
+  // FLOOR DISJUNCT IS INERT IN-TREE BY CONSTRUCTION until plan 390-21 replaces that constant with
+  // the real `readTestOutcomeHistory` read. 390-21 declares `depends_on: ["390-19"]` and its
+  // `files_modified` names this file: it replaces this leg with the genuine end-to-end reachability
+  // assertion over a produced corpus. Deliberately NOT deleted — the interval is the thing to keep
+  // visible.
+  it('refuses a FLOOR-produced crossing carrying no signature — inert until 390-21', () => {
     const env = harness('agent-qa-floor-flake')
 
     const report = crossThreeInFive(env, {
@@ -778,9 +807,13 @@ describe('a floor-produced crossing cannot buy a committed entry (390-16)', () =
     })
 
     if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
-    expect(report.quarantine.escalatedNotQuarantined).toEqual([])
-    expect(ledgerLines(env)).toHaveLength(1)
-    expect(ledgerLines(env)[0]).toMatchObject({ kind: 'entered', verdictClass: 'flake' })
+    expect(report.quarantine.events).toEqual([])
+    expect(ledgerLines(env)).toEqual([])
+    expect(report.quarantine.escalatedNotQuarantined).toHaveLength(1)
+    expect(report.quarantine.escalatedNotQuarantined[0]).toMatchObject({
+      verdictClass: 'flake',
+      producer: 'deterministic-classifier',
+    })
   })
 })
 

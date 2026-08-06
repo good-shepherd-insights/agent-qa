@@ -198,88 +198,186 @@ describe('the class gate is TOTAL over the closed verdict vocabulary', () => {
   })
 })
 
-// A quarantine decision requires an AUTHORED verdict (390-16, G-390-3).
+// THE FLOOR ARM: a floor-eligible CLASS and a per-test SIGNATURE (390-16 G-390-3, re-decided by
+// 390-19 G-390-5).
 //
 // The disposition table decides WHETHER a class may ever auto-quarantine. It cannot decide the
-// other axis: whether the EVIDENCE behind the class is about this test or about the whole run.
-// `classifyRootCause`'s `environment` arms are two run-scoped health-probe reads, so one down
-// dependency classifies every failing member of a suite identically; `timeout` is per-test but as
-// consistent with an app_bug as with flakiness. `flake` is the one class the floor observes
-// directly and per-test (the test literally passed on retry), so gating it would make
-// auto-quarantine unreachable on any project running without an analysis budget — FLAK-01's
-// promise itself.
+// other axis: whether the EVIDENCE behind the class is about this test or about the whole run. The
+// floor-eligibility table answers that for the class — and 390-19 adds the second conjunct that
+// answers it for the CROSSING, because 390-16 shipped the class conjunct alone and the arm was
+// DEAD. The only floor-eligible class was `flake`, which `classifyRootCause` mints only on a member
+// that PASSED; a passing member produces no failure row and therefore no crossing. The disjunct
+// reduced to `producer === 'analyze-run'` and auto-quarantine was OFF for every project without an
+// analysis budget — the inverse of what the table's own docstring asserted.
 //
-// Every leg below is PAIRED. "Does not quarantine" is load-bearing only if the same fixture with
-// the producer flipped DOES quarantine — otherwise it could be passing for want of recurrence.
-describe('floor eligibility: an auto-quarantine class the floor may not act on alone', () => {
-  const AUTHORED_REQUIRED_AUTO_CLASSES: readonly VerdictClass[] = ['environment', 'timeout']
+// `timeout` carries the live floor path now: per-test but semantically thin, and the same-build
+// pass∧fail is exactly the thickness it was missing.
+//
+// EVERY LEG IS PAIRED AND DIRECTIONAL, and the two conjuncts have SEPARATE mutation targets —
+// deleting the signature conjunct reds the "without the signature" leg, deleting the class conjunct
+// reds the "environment even with the signature" leg. A corpus that cannot say which conjunct is
+// load-bearing is the defect 390-16 shipped, not the evidence.
+describe('the floor arm: a floor-eligible class AND a per-test signature (390-19)', () => {
+  // Named from the TABLES rather than from string literals, so a future table edit REDS this
+  // corpus instead of drifting past it.
+  const FLOOR_ELIGIBLE_AUTO_CLASSES: readonly VerdictClass[] = AUTO_QUARANTINE_CLASSES
+    .filter((name) => QUARANTINE_FLOOR_ELIGIBILITY[name] === 'floor-eligible')
+  const AUTHORED_REQUIRED_AUTO_CLASSES: readonly VerdictClass[] = AUTO_QUARANTINE_CLASSES
+    .filter((name) => QUARANTINE_FLOOR_ELIGIBILITY[name] === 'authored-required')
 
   it('is TOTAL over the closed vocabulary — no member left un-decided', () => {
     expect(Object.keys(QUARANTINE_FLOOR_ELIGIBILITY).sort()).toEqual([...VERDICT_CLASSES].sort())
   })
 
-  it('makes authored-required the value of every class but flake', () => {
-    // Stated as data so the reason a reader can check is the reason the gate checks. The five
-    // escalate-only classes carry the STRICT value deliberately: it is unobservable today, which
-    // is exactly why a future one-line disposition flip must not silently license the floor too.
+  it('states the RE-DECIDED floor-eligible set as DATA — flake and timeout, nothing else', () => {
     expect(
       VERDICT_CLASSES.filter((name) => QUARANTINE_FLOOR_ELIGIBILITY[name] === 'floor-eligible'),
-    ).toEqual(['flake'])
+    ).toEqual(['flake', 'timeout'])
+    // `environment` is the ONE auto-quarantine class the floor still may not act on alone. The five
+    // escalate-only classes keep the strict value deliberately: unobservable today, which is
+    // exactly why a future one-line disposition flip must not silently license the floor too
+    // (T-390-16-04).
+    expect([...AUTHORED_REQUIRED_AUTO_CLASSES]).toEqual(['environment'])
+    expect([...FLOOR_ELIGIBLE_AUTO_CLASSES].sort()).toEqual(['flake', 'timeout'])
   })
 
-  it.each(AUTHORED_REQUIRED_AUTO_CLASSES)(
-    'REFUSES to auto-quarantine a floor-produced %s crossing, loudly',
-    (verdictClass: VerdictClass) => {
+  // THE REACHABILITY THIS PHASE FAILED TO ESTABLISH THREE TIMES. There is no authored verdict
+  // anywhere in this input and an `entered` line is authored anyway.
+  it('AUTO-QUARANTINES a floor-produced timeout CARRYING the signature — no analysis budget', () => {
+    const result = evaluate({
+      failures: [failure({
+        verdictClass: 'timeout',
+        producer: 'deterministic-classifier',
+        sameBuildPassAndFail: true,
+        fingerprint: 'fp::timeout',
+      })],
+    })
+
+    expect(result.escalatedNotQuarantined).toEqual([])
+    expect(result.flagged).toEqual([])
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({
+      kind: 'entered',
+      verdictClass: 'timeout',
+      testName: TEST_NAME,
+    })
+  })
+
+  // THE SIGNATURE CONJUNCT'S MUTATION TARGET. Deleting `&& failure.sameBuildPassAndFail` from
+  // `autoQuarantines` reds this leg and nothing else.
+  it('REFUSES the SAME timeout crossing without the signature — loudly, build still failing', () => {
+    const result = evaluate({
+      failures: [failure({
+        verdictClass: 'timeout',
+        producer: 'deterministic-classifier',
+        sameBuildPassAndFail: false,
+        fingerprint: 'fp::timeout',
+      })],
+    })
+
+    expect(result.events).toEqual([])
+    expect(result.flagged).toEqual([])
+    // Refused is not dropped: the crossing lands where the curation tail already renders it. A
+    // silent third arm would be the anti-silencing defect wearing a hat.
+    expect(result.escalatedNotQuarantined).toHaveLength(1)
+    expect(result.escalatedNotQuarantined[0]).toMatchObject({
+      verdictClass: 'timeout',
+      producer: 'deterministic-classifier',
+      occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
+    })
+  })
+
+  // THE FLOOR-ELIGIBILITY CONJUNCT'S MUTATION TARGET. Deleting the class conjunct reds this leg
+  // and nothing else.
+  //
+  // A CONTROL ON AN ARM THIS ROUND DOES NOT TOUCH. `environment` is refused before this change and
+  // after it, which is what makes this a control — it is NOT evidence about the blast radius of the
+  // arm this round widens, and it is not the containment. See the per-run cap for that.
+  it('REFUSES a floor-produced environment crossing EVEN WITH the signature', () => {
+    const result = evaluate({
+      failures: [failure({
+        verdictClass: 'environment',
+        producer: 'deterministic-classifier',
+        sameBuildPassAndFail: true,
+        fingerprint: 'fp::environment',
+      })],
+    })
+
+    expect(result.events).toEqual([])
+    expect(result.escalatedNotQuarantined).toHaveLength(1)
+    expect(result.escalatedNotQuarantined[0]).toMatchObject({
+      verdictClass: 'environment',
+      producer: 'deterministic-classifier',
+    })
+  })
+
+  it.each([false, true])(
+    'ACCEPTS an analyze-run environment crossing with signature=%s — the first disjunct is untouched',
+    (sameBuildPassAndFail: boolean) => {
       const result = evaluate({
         failures: [failure({
-          verdictClass,
-          producer: 'deterministic-classifier',
-          fingerprint: `fp::${verdictClass}`,
+          verdictClass: 'environment',
+          producer: 'analyze-run',
+          sameBuildPassAndFail,
+          fingerprint: 'fp::environment',
         })],
       })
 
-      expect(result.events).toEqual([])
-      expect(result.flagged).toEqual([])
-      // Refused is not dropped: the crossing lands where the curation tail already renders it and
-      // the build keeps failing. A silent third arm would be the anti-silencing defect in a hat.
-      expect(result.escalatedNotQuarantined).toHaveLength(1)
-      expect(result.escalatedNotQuarantined[0]).toMatchObject({
+      expect(result.escalatedNotQuarantined).toEqual([])
+      expect(result.events).toHaveLength(1)
+      expect(result.events[0]).toMatchObject({ kind: 'entered', verdictClass: 'environment' })
+    },
+  )
+
+  it.each([false, true])(
+    'ACCEPTS an analyze-run timeout crossing with signature=%s — the accept-direction control',
+    (sameBuildPassAndFail: boolean) => {
+      const result = evaluate({
+        failures: [failure({
+          verdictClass: 'timeout',
+          producer: 'analyze-run',
+          sameBuildPassAndFail,
+          fingerprint: 'fp::timeout',
+        })],
+      })
+
+      expect(result.escalatedNotQuarantined).toEqual([])
+      expect(result.events).toHaveLength(1)
+      expect(result.events[0]).toMatchObject({ kind: 'entered', verdictClass: 'timeout' })
+    },
+  )
+
+  // `flake` is floor-eligible on its own merits and this row DECIDES NOTHING: the floor mints
+  // `flake` only on a member that passed, so every `flake` crossing the pipeline can build carries
+  // an authored producer and is admitted by the FIRST disjunct. The leg 390-16 wrote here — a
+  // floor-produced `flake` auto-quarantines — pinned an input the runner cannot emit, which is the
+  // vacuity G-390-5 is about. It is deliberately GONE rather than re-stated.
+  it('auto-quarantines an analyze-run flake — the only flake crossing the pipeline builds', () => {
+    const result = evaluate({
+      failures: [failure({ verdictClass: 'flake', producer: 'analyze-run' })],
+    })
+
+    expect(result.escalatedNotQuarantined).toEqual([])
+    expect(result.events).toHaveLength(1)
+    expect(result.events[0]).toMatchObject({ kind: 'entered', verdictClass: 'flake' })
+  })
+
+  it('refuses an escalate-only class carrying BOTH a floor producer and the signature', () => {
+    const nonA3 = VERDICT_CLASSES.filter((name) => !AUTO_QUARANTINE_CLASSES.includes(name))
+    expect(nonA3).toHaveLength(5)
+    const result = evaluate({
+      failures: nonA3.map((verdictClass) => failure({
         verdictClass,
         producer: 'deterministic-classifier',
-        occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
-      })
-    },
-  )
-
-  it.each(AUTHORED_REQUIRED_AUTO_CLASSES)(
-    'ACCEPTS the same %s crossing once analyze-run authored it — the accept-direction control',
-    (verdictClass: VerdictClass) => {
-      const result = evaluate({
-        failures: [failure({
-          verdictClass,
-          producer: 'analyze-run',
-          fingerprint: `fp::${verdictClass}`,
-        })],
-      })
-
-      expect(result.escalatedNotQuarantined).toEqual([])
-      expect(result.events).toHaveLength(1)
-      expect(result.events[0]).toMatchObject({ kind: 'entered', verdictClass })
-    },
-  )
-
-  it.each(['deterministic-classifier', 'analyze-run'] as const)(
-    'auto-quarantines a %s-produced flake — FLAK-01 survives with no analysis budget',
-    (producer) => {
-      const result = evaluate({
-        failures: [failure({ verdictClass: 'flake', producer })],
-      })
-
-      expect(result.escalatedNotQuarantined).toEqual([])
-      expect(result.events).toHaveLength(1)
-      expect(result.events[0]).toMatchObject({ kind: 'entered', verdictClass: 'flake' })
-    },
-  )
+        sameBuildPassAndFail: true,
+        fingerprint: `fp::${verdictClass}`,
+        testName: `${TEST_NAME} ${verdictClass}`,
+      })),
+    })
+    // The DISPOSITION table runs first, so neither floor conjunct ever gets a say.
+    expect(result.events).toEqual([])
+    expect(result.escalatedNotQuarantined).toHaveLength(5)
+  })
 
   it('leaves the five escalate-only classes untouched on BOTH producer values', () => {
     const nonA3 = VERDICT_CLASSES.filter((name) => !AUTO_QUARANTINE_CLASSES.includes(name))
@@ -292,8 +390,7 @@ describe('floor eligibility: an auto-quarantine class the floor may not act on a
           testName: `${TEST_NAME} ${verdictClass}`,
         })),
       })
-      // The disposition table refuses them FIRST, so the floor axis never gets a say — an
-      // authored config_error is still not quarantinable, which is the point of two tables.
+      // An authored config_error is still not quarantinable — the point of two tables.
       expect(result.events).toEqual([])
       expect(result.escalatedNotQuarantined).toHaveLength(5)
     }

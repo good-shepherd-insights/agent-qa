@@ -21,9 +21,16 @@
 //  - DISPOSITION answers "may this class ever auto-quarantine". Only the three classes
 //    issue-curation §6.4 routes to A3 may. The other five escalate LOUDLY and append nothing.
 //  - FLOOR ELIGIBILITY answers the axis the class set alone cannot express: is the EVIDENCE behind
-//    the class about THIS TEST, or about the run? `flake` is the floor's one directly-observed
-//    per-test signal (it passed on retry) and is floor-eligible; everything else needs an AUTHORED
-//    `analyze-run` verdict before it may silence anything.
+//    the class about THIS TEST, or about the run? It is one of TWO conjuncts on the floor arm
+//    (390-19): the class answers whether the floor may decide this KIND of thing at all, and the
+//    crossing's `sameBuildPassAndFail` answers whether there is per-test evidence in THIS crossing.
+//    A crossing carrying an AUTHORED `analyze-run` verdict needs neither, because a model reading
+//    this test's evidence IS the per-test statement.
+//
+// AND THE FLOOR ARM IS CAPPED PER RUN (390-19). Neither table contains mass auto-quarantine on the
+// floor path and neither should be read as doing so — `classifyRootCause` returns `timeout` before
+// it ever reads its health probe, so a run-scoped hang arrives in the class the floor may act on.
+// QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP is the containment; see its docstring.
 //
 // A crossing that either table refuses lands in `escalatedNotQuarantined` — the build keeps
 // failing, because auto-silencing a real regression is the one outcome this phase exists to
@@ -150,34 +157,68 @@ export type QuarantineFloorEligibility = 'floor-eligible' | 'authored-required'
  * compiles forever while treating every future class as an accident. A ninth member of
  * VERDICT_CLASSES is a compile error here until someone decides its floor eligibility.
  *
+ * This table is ONE OF TWO CONJUNCTS on the floor arm since 390-19. It licenses a CLASS; the
+ * crossing's `sameBuildPassAndFail` supplies the per-test EVIDENCE. Neither alone may silence a
+ * failing test on the deterministic floor's word.
+ *
  * Per class, with the reasoning that decides it:
  *
- *  - `flake` → FLOOR-ELIGIBLE. `classifyRootCause`'s rule is `retryCount > 0` on a final-attempt
- *    pass: the test LITERALLY passed on retry. That is the definition of flaky, observed directly,
- *    per-test, needing no LLM. Gating it would make auto-quarantine unreachable on every project
- *    running without an analysis budget — which is FLAK-01's promise itself.
- *  - `environment` → AUTHORED-REQUIRED. Two of its three arms are RUN-SCOPED probe reads
- *    (`baselineProbe.error !== undefined`, `baselineProbe.status >= 500`) that fire before any
- *    per-test signal. One down staging dependency classifies every failing member of a suite
- *    identically; the measured blast radius was 6 of 6 tests under one shared 30-day deadline.
- *  - `timeout` → AUTHORED-REQUIRED. Per-test, but semantically thin: "exceeded the budget" is as
- *    consistent with an `app_bug` (an infinite spinner, a deadlock) as with flakiness. Telling
- *    those apart is what `analyze-run` exists for.
+ *  - `timeout` → FLOOR-ELIGIBLE (re-decided by 390-19 / G-390-5, and the row that carries the LIVE
+ *    floor path). This row used to read authored-required because "exceeded the budget" is
+ *    per-test but semantically THIN — as consistent with an infinite spinner as with flakiness.
+ *    Thinness is exactly what a same-build pass∧fail cures: a test that passed and failed at the
+ *    same build ordinal is flaky by direct observation, whatever the budget did. So `timeout` may
+ *    now be decided on the floor's word PLUS the signature, and NEVER on the floor's word alone.
+ *  - `environment` → AUTHORED-REQUIRED, on its own merits, unchanged. Two of its three arms are
+ *    RUN-SCOPED probe reads (`baselineProbe.error !== undefined`, `baselineProbe.status >= 500`)
+ *    that fire before any per-test signal. One down staging dependency classifies every failing
+ *    member of a suite identically; the measured blast radius was 6 of 6 tests under one shared
+ *    30-day deadline. A flapping dependency produces same-build pass∧fail across MANY tests at
+ *    once, so the signature does not make a run-scoped observation per-test — read the branch-order
+ *    paragraph below before treating this row as the containment, because it is not.
+ *  - `flake` → FLOOR-ELIGIBLE on the class's own merits, AND THIS ROW DECIDES NOTHING. Say it out
+ *    loud, because G-390-5 exists precisely because a row nobody could reach was described as the
+ *    mechanism keeping FLAK-01 alive. `classifyRootCause` mints `flake` only inside its
+ *    `outcome === 'passed' || outcome === 'healed'` arm — the test LITERALLY passed on retry, so
+ *    the class IS the signature — but a member that passed carries no `failure` row
+ *    (`projection/run-outcomes.ts`'s `...(passed ? {} : { failure })` spread) and a
+ *    `QuarantineDetectionFailure` is built only from `test.failure`. So no crossing can carry class
+ *    `flake` AND producer `deterministic-classifier`: every `flake` crossing the pipeline can build
+ *    is authored, and is admitted by the FIRST disjunct. `timeout` is the row that is
+ *    reachable-and-deciding on the floor path; this one is correct and inert.
  *  - THE FIVE ESCALATE-ONLY CLASSES → AUTHORED-REQUIRED. They never reach the auto-quarantine
  *    branch today, so this value is not observable — which is precisely why it is the strict one.
  *    It makes authored-required the DEFAULT for any future widening of the disposition table, so a
  *    later one-line class flip cannot silently also license the floor (T-390-16-04).
  *
+ * THE BRANCH-ORDER FACT THAT KILLS THE CLASS-BASED CONTAINMENT, measured at HEAD against
+ * `classifyRootCause` (`runner/src/run/root-cause.ts`). Its arms run in this order: the presence
+ * rule, then the `passed || healed` arm that mints `flake`, then the `outcome === 'timeout'` arm —
+ * WHICH RETURNS — and only THEN the `baselineProbe` reads that mint `environment`. So a hung or
+ * flapping staging dependency does NOT arrive classed `environment` for the members that blew their
+ * deadline: it arrives classed `timeout`, the class this table now licenses. The run-scoped
+ * objection stated on the `environment` row above applies VERBATIM to those `timeout` members.
+ *
+ * DRAW THE CONCLUSION HERE RATHER THAN LEAVING IT TO BE INFERRED: every class the floor can mint on
+ * a FAILING member (`timeout`, `environment`, `unknown`) is reachable from a RUN-SCOPED cause, so
+ * THIS TABLE CANNOT BE THE CONTAINMENT FOR MASS AUTO-QUARANTINE AND MUST NOT BE READ AS ONE.
+ * Keeping `environment` strict contains `environment`; it does not contain the hazard.
+ * QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP does — a per-run COUNT, which is the form 390-16's
+ * motivating observation (one probe failure, 6 of 6 tests) actually took. A reader who inherits the
+ * older framing — that `environment` is THE run-scoped class and `timeout` is the per-test one —
+ * will re-derive exactly the defect this round closes: a true-sounding containment sentence about a
+ * path the code does not take.
+ *
  * WHY NOT flip the disposition table instead. That is wrong in both directions: it would disable
  * auto-quarantine for genuinely ANALYZED environment/timeout failures, and it would leave
  * floor-minted `flake` firing. The consistent rule — the one 390-05 already ratified once when it
- * made `unknown` escalate-only — is that a quarantine decision requires an AUTHORED verdict, and
- * `producer` is what makes that rule expressible.
+ * made `unknown` escalate-only — is that a quarantine decision requires per-test EVIDENCE, and
+ * `producer` plus `sameBuildPassAndFail` are what make that rule expressible.
  */
 export const QUARANTINE_FLOOR_ELIGIBILITY = {
   flake: 'floor-eligible',
   environment: 'authored-required',
-  timeout: 'authored-required',
+  timeout: 'floor-eligible',
   app_bug: 'authored-required',
   test_bug: 'authored-required',
   config_error: 'authored-required',
@@ -186,14 +227,35 @@ export const QUARANTINE_FLOOR_ELIGIBILITY = {
 } as const satisfies Record<VerdictClass, QuarantineFloorEligibility>
 
 /**
- * Both tables must agree before a crossing may author an `entered` line: the class's disposition
- * is auto-quarantine AND (the class is floor-eligible OR this crossing's verdict was authored).
- * Everything else routes to `escalatedNotQuarantined` — loud, rendered, build still failing.
+ * WHICH ARM of the gate admitted a crossing, or that none did (390-19). A boolean was exactly the
+ * information the per-run floor cap needs and cannot get: the cap counts FLOOR admissions and
+ * exempts AUTHORED ones, so the ladder has to be able to tell them apart.
  */
-function autoQuarantines(failure: QuarantineDetectionFailure): boolean {
-  if (QUARANTINE_CLASS_DISPOSITIONS[failure.verdictClass] !== 'auto-quarantine') return false
+type QuarantineAdmission = 'authored' | 'floor' | 'refused'
+
+/**
+ * Whether a crossing may author an `entered` line, and — since 390-19 — WHICH ARM admitted it.
+ *
+ * The disposition must be auto-quarantine, and then EITHER this crossing's verdict was AUTHORED,
+ * OR the class is floor-eligible AND the crossing carries the per-test flake signature. Everything
+ * else routes to `escalatedNotQuarantined` — loud, rendered, build still failing.
+ *
+ * TWO CONJUNCTS ON THE FLOOR ARM, DELIBERATELY, and each refuses something the other admits:
+ *
+ *  - The CLASS conjunct alone admits a floor-produced `timeout` from a run-scoped hang with no
+ *    per-test evidence behind it at all. That is 390-16's shape, and it is what the signature
+ *    refuses.
+ *  - The SIGNATURE conjunct alone admits a floor-produced `environment` — a class whose evidence is
+ *    a health probe, where a flapping dependency stamps the same-build pass∧fail across many tests
+ *    at once. That is what the class conjunct refuses.
+ */
+function autoQuarantines(failure: QuarantineDetectionFailure): QuarantineAdmission {
+  if (QUARANTINE_CLASS_DISPOSITIONS[failure.verdictClass] !== 'auto-quarantine') return 'refused'
+  if (failure.producer === 'analyze-run') return 'authored'
   return QUARANTINE_FLOOR_ELIGIBILITY[failure.verdictClass] === 'floor-eligible'
-    || failure.producer === 'analyze-run'
+    && failure.sameBuildPassAndFail
+    ? 'floor'
+    : 'refused'
 }
 
 /**
@@ -498,7 +560,7 @@ export function evaluateQuarantineDetection(
     if (activeKeys.has(identityKey(failure))) continue
 
     if (failure.occurrenceOrdinals >= QUARANTINE_ESCALATE_THRESHOLD) {
-      if (autoQuarantines(failure)) {
+      if (autoQuarantines(failure) !== 'refused') {
         entered.push({
           schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
           kind: 'entered',
