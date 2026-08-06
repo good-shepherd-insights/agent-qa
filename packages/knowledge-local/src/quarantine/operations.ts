@@ -255,19 +255,25 @@ function identityKey(identity: {
  * D-12's triage order, spelled once.
  *
  * Unassigned entries FIRST because they are the queue a human works — an owned entry already has
- * somebody accountable for it. Then `enteredAt` ascending, so the oldest unclaimed suppression is
- * the first thing anyone sees. Ties break on identity bytes, which is what makes the answer a
- * function of the ledger's CONTENT rather than of the order events happened to be appended in: two
- * entries stamped in the same second must not swap places between two reads.
+ * somebody accountable for it. Then `firstEnteredAt` ascending, so the oldest unclaimed
+ * suppression is the first thing anyone sees. Ties break on identity bytes, which is what makes
+ * the answer a function of the ledger's CONTENT rather than of the order events happened to be
+ * appended in: two entries stamped in the same second must not swap places between two reads.
  *
- * The instant compared is the FOLDED entry's `enteredAt` — for a test that was released and crossed
- * again, that is its most recent entry, which is the one an operator is looking at.
+ * THE INSTANT COMPARED IS `firstEnteredAt`, NOT `enteredAt` (390-18 / G-390-4). A test's place in
+ * the queue is set by when its quarantine history BEGAN, so re-entering can never move it back
+ * down the list. Comparing the current window's instant did the opposite: a test on its seventh
+ * re-entry sorted as the newest thing in the queue, which put the longest-suffering test last —
+ * the sort inverted against the purpose stated in the paragraph above it. The two instants are
+ * different questions (see `QuarantineEntryState`), and this is the one the triage queue is about.
  */
 function triageOrder(left: QuarantineEntryState, right: QuarantineEntryState): number {
   const leftUnassigned = left.owner === QUARANTINE_UNASSIGNED_OWNER
   const rightUnassigned = right.owner === QUARANTINE_UNASSIGNED_OWNER
   if (leftUnassigned !== rightUnassigned) return leftUnassigned ? -1 : 1
-  if (left.enteredAt !== right.enteredAt) return left.enteredAt < right.enteredAt ? -1 : 1
+  if (left.firstEnteredAt !== right.firstEnteredAt) {
+    return left.firstEnteredAt < right.firstEnteredAt ? -1 : 1
+  }
   const leftKey = identityKey(left)
   const rightKey = identityKey(right)
   if (leftKey === rightKey) return 0
