@@ -9,13 +9,18 @@
 //                                   OTHER tests run (390-10 / CR-01) — the aggregate and the exit
 //                                   code are read off that session, never computed beside it
 //   - both reporters                the real JUnit document and the real console bytes (D-15)
-//   - the post-run fold             `LOCAL_CURATION_CAPABILITIES.foldRunOutcomes` — real sqlite,
-//                                   real projection, real detection, real ledger append (D-08)
+//   - the durable artifacts         the handoff `startRun` ITSELF produced, written to the run dir
+//                                   — plus, when the run had an analysis budget, the `analyze-run`
+//                                   job's `analysis.json` beside it, which is the only place an
+//                                   authored verdict can live (D-09/D-10)
+//   - the post-run fold             `LOCAL_CURATION_CAPABILITIES.foldRunOutcomes` over that run
+//                                   DIRECTORY — real sqlite, real projection, real detection, real
+//                                   ledger append (D-08)
 //
 // Nothing here is stubbed except the browser: member outcomes are scripted, because the phenomenon
 // under test is what the SYSTEM does with a sequence of pass/fail results, not how a test fails.
 //
-// THREE LAWS THIS FILE OBEYS
+// FOUR LAWS THIS FILE OBEYS
 //
 //  1. EVERY HOP IS ID-ADDRESSED AND TWO-SIDED (the 388 contract law). Each transition asserts the
 //     ledger BEFORE and AFTER by runId/ordinal, reading the real `quarantine.jsonl` bytes rather
@@ -38,6 +43,16 @@
 //     anti-silencing direction — a licensed failure in front of a genuinely failing, UN-licensed
 //     sibling — has its own pin at the bottom of this file, because it is the direction that turns
 //     a red build green and an execution-only assertion would not catch it.
+//
+//  4. THE HANDOFF IS THE RUN'S OWN, AND SO IS EVERY VERDICT IN IT (390-21, closing CR-01/WR-05).
+//     Until this round the harness awaited the real handoff, read four scalars off it, threw it
+//     away, and wrote and folded a HAND-BUILT one carrying `producer: 'analyze-run'` — a shape the
+//     pipeline cannot produce, since the runner persists `handoff.json` at run end before any
+//     analyst has run. Four assertions rested on it. Now the object written to the run directory,
+//     the object detection folds and the object `startRun` returned are one value; an authored
+//     verdict enters only through `analysis.json`, exactly as production does it; and the floor's
+//     verdicts are whatever `classifyRootCause` answers for the scripted member. An input the
+//     runner cannot emit can no longer be asserted about here.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -46,7 +61,7 @@ import { join } from 'node:path'
 import { createMaskingContext } from '@vostride/agent-qa-safety'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
-  CURRENT_HANDOFF_SCHEMA_VERSION,
+  CURRENT_ANALYSIS_SCHEMA_VERSION,
   QUARANTINE_UNASSIGNED_OWNER,
   asRef,
   exercisedAnchors,
@@ -57,14 +72,13 @@ import type {
   ElementInfo,
   FunctionCaller,
   MemberTestOutcome,
-  PerTestOutcome,
   QuarantineAppliedEntry,
+  RunAnalysisArtifact,
   RunEventEnvelope,
   RunEventType,
   RunStatus,
   ScreenState,
   StepEvidence,
-  Verdict,
 } from '@vostride/agent-qa-schema'
 import {
   LOCAL_CURATION_CAPABILITIES,
@@ -73,7 +87,7 @@ import {
 } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { RUNS_SUBDIR } from '@vostride/agent-qa-runner-local'
-import { mapVerdictToExitCode, startRun } from '@vostride/agent-qa-runner'
+import { createTimeoutAbortReason, mapVerdictToExitCode, startRun } from '@vostride/agent-qa-runner'
 import type { RunConfig, RunMemberDescriptor, TestResult } from '@vostride/agent-qa-runner'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -115,9 +129,16 @@ const SUITE_GROUP = 'tests/checkout.suite.yaml'
 const SIBLING_FILE_PATH = 'tests/login.yaml'
 const SIBLING_TEST_NAME = 'login accepts a returning customer'
 
+/**
+ * The tracked member's position in the `members` array, which is what the shell stamps as
+ * `PerTestOutcome.testIndex` and therefore what an authored `Verdict.perTest` has to key on.
+ * Named once so the descriptor and the analysis artifact cannot drift apart.
+ */
+const TRACKED_TEST_INDEX = 0
+
 const TRACKED_MEMBER: RunMemberDescriptor = {
   testId: 'checkout',
-  testIndex: 0,
+  testIndex: TRACKED_TEST_INDEX,
   name: TEST_NAME,
   filePath: FILE_PATH,
   failFastGroup: SUITE_GROUP,
@@ -214,43 +235,87 @@ function failingStep(buildOrdinal: number): StepEvidence {
   } as unknown as StepEvidence
 }
 
+/** The ordinary element-not-found failure the lifecycle timeline is driven with. */
+const ELEMENT_NOT_FOUND = `Error: element "${ANCHOR_NAME}" not found`
+
 /**
- * AUTHORED since 390-19. This file's subject is the LIFECYCLE — in at the crossing, suppressed but
- * visible, auto-out after five passes, honest again — and it needs a verdict the auto-quarantine
- * gate genuinely ADMITS in order to exercise any of it. A floor-produced verdict can no longer be
- * that: 390-19's floor arm requires a per-crossing `sameBuildPassAndFail`, and the fold's only
- * construction site supplies a constant `false` until plan 390-21 computes it, so a floor-produced
- * crossing is INERT IN-TREE BY CONSTRUCTION for that interval. An `analyze-run` verdict admits on
- * the first disjunct, which is untouched by this round, so every lifecycle assertion below keeps
- * exercising a real path rather than a stubbed one.
+ * THE RUNNER'S OWN TEST-DEADLINE MESSAGE, from the single mint site that defines it (390-21).
  *
- * 390-21 owns this file (`files_modified`) and replaces this fixture with a corpus PRODUCED through
- * `classifyRootCause`, at which point the floor path becomes exercisable here on its own terms.
+ * `deriveMemberOutcome` answers `'timeout'` for a failed member iff a failing step's error is
+ * exactly this string, and `classifyRootCause` then mints `timeout` on the deterministic floor. It
+ * is minted here rather than written out because the matcher and the mint are deliberately
+ * single-sourced: a literal would pin a message the runner stops emitting the day the format moves.
  */
-function flakeVerdict(): Verdict {
+const TEST_DEADLINE_ERROR = createTimeoutAbortReason('test', 30_000).message
+
+/**
+ * THE `analyze-run` JOB'S DURABLE OUTPUT, IN ITS OWN FILE — which is where an authored verdict
+ * actually lives (390 D-09/D-10, `resolveRunVerdicts`).
+ *
+ * WHAT THIS REPLACES AND WHY (390-21, CR-01). Until now this file put `producer: 'analyze-run'`
+ * directly onto a hand-built `CompletedRunHandoff`. That is a shape the pipeline cannot produce:
+ * the runner assembles and persists `handoff.json` at run end, BEFORE any `analyze-run` job has
+ * run, so every verdict a handoff carries is the deterministic floor's. An authored verdict reaches
+ * a consumer only through `analysis.json` beside it, which `resolveRunVerdicts` reads and lets
+ * OVERWRITE the floor. So the lifecycle below still exercises the authored arm — the same arm it
+ * always did — but through the artifact seam production uses, over the handoff `startRun` really
+ * produced.
+ */
+function authoredFlakeArtifact(runId: string): RunAnalysisArtifact {
   return {
-    class: 'flake',
-    producer: 'analyze-run',
-    confidence: 0.6,
-    evidence: {
-      citedSteps: [0],
-      citedAnchors: [],
-      citedArtifacts: [],
-      rationale: `the ${ANCHOR_NAME} button never appeared`,
-    },
-    memoryMisdirectionRuledOut: false,
-    perTest: 0,
-  } as Verdict
+    schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
+    runId,
+    verdicts: [{
+      class: 'flake',
+      producer: 'analyze-run',
+      confidence: 0.6,
+      evidence: {
+        citedSteps: [0],
+        citedAnchors: [],
+        citedArtifacts: [],
+        rationale: `the ${ANCHOR_NAME} button never appeared`,
+      },
+      memoryMisdirectionRuledOut: false,
+      perTest: TRACKED_TEST_INDEX,
+    }],
+    parts: [{
+      perTest: TRACKED_TEST_INDEX,
+      groundingQuote: { stepIndex: 0, quote: `the ${ANCHOR_NAME} button never appeared` },
+      discriminator: 'the same step fails intermittently across builds',
+      nextAction: 'stabilise the payment sheet wait',
+      links: [],
+    }],
+  }
 }
 
 interface RunScript {
   runId: string
   buildOrdinal: number
   outcome: Extract<MemberTestOutcome, 'passed' | 'failed'>
+  /** The tracked member's failing-step error. Defaults to the element-not-found string. */
+  failureError?: string
+  /**
+   * `false` ⇒ NO `analysis.json` is written for this run, so the deterministic floor is the only
+   * verdict there is. That is the no-analysis-budget posture, asserted POSITIVELY at the leg that
+   * uses it by reading the producer off the handoff the run produced.
+   */
+  analysisBudget?: false
 }
 
-/** The runner-level result a scripted member answers with. */
-function shellResult(testId: string, outcome: 'passed' | 'failed'): TestResult {
+/**
+ * The runner-level result a scripted member answers with.
+ *
+ * THE FAILING STEP CARRIES THE FIXTURE'S RICH `StepEvidence` (390-21). `assemblePerTestOutcome`
+ * passes a step's `evidence` THROUGH when present and synthesizes a thinner one only when absent,
+ * so attaching it here is what keeps the anchors the fold extracts — and therefore the failure
+ * fingerprint recurrence counts — real once the run's own handoff is the one being folded.
+ */
+function shellResult(
+  testId: string,
+  outcome: 'passed' | 'failed',
+  buildOrdinal: number,
+  failureError: string = ELEMENT_NOT_FOUND,
+): TestResult {
   return {
     name: testId,
     filePath: `${testId}.test.ts`,
@@ -259,7 +324,9 @@ function shellResult(testId: string, outcome: 'passed' | 'failed'): TestResult {
       name: `click the ${ANCHOR_NAME} button`,
       status: outcome,
       duration: 1,
-      ...(outcome === 'failed' ? { error: `Error: element "${ANCHOR_NAME}" not found` } : {}),
+      ...(outcome === 'failed'
+        ? { error: failureError, evidence: failingStep(buildOrdinal) }
+        : {}),
     }],
     duration: 1,
   }
@@ -272,6 +339,14 @@ interface ShellLeg {
   memberQuarantined: boolean
   /** Which members the executor was actually reached for, in order. */
   executed: readonly string[]
+  /**
+   * THE handoff this run produced (390-21). Returned rather than discarded: what the harness
+   * writes to the run directory and what detection folds are now the SAME OBJECT. Until this
+   * round `runThroughShell` awaited it, read four scalars off it and threw it away while a
+   * hand-built stand-in was written and folded beside it — which is how an impossible shape became
+   * load-bearing at four assertions (390-REVIEW CR-01, WR-05).
+   */
+  handoff: CompletedRunHandoff
 }
 
 /**
@@ -301,9 +376,14 @@ async function runThroughShell(
     members: [TRACKED_MEMBER, SIBLING_MEMBER],
     executor: async (member) => {
       executed.push(member.testId)
+      const tracked = member.testId === TRACKED_MEMBER.testId
       return shellResult(
         member.testId,
-        member.testId === TRACKED_MEMBER.testId ? script.outcome : siblingOutcome,
+        tracked ? script.outcome : siblingOutcome,
+        script.buildOrdinal,
+        // Only the TRACKED member is scripted with a chosen failure text. The sibling always fails
+        // ordinarily, which is what keeps it off the floor-admission path (see the no-budget leg).
+        tracked ? script.failureError ?? ELEMENT_NOT_FOUND : ELEMENT_NOT_FOUND,
       )
     },
     quarantined: snapshotAtStart,
@@ -315,40 +395,8 @@ async function runThroughShell(
     exitCode: mapVerdictToExitCode(verdict),
     memberQuarantined: tracked?.quarantined === true,
     executed,
+    handoff,
   }
-}
-
-function handoffFor(
-  script: RunScript,
-  quarantined: readonly QuarantineAppliedEntry[],
-  memberQuarantined: boolean,
-): CompletedRunHandoff {
-  const failed = script.outcome === 'failed'
-  const member = {
-    testId: `${script.runId}-checkout`,
-    testName: TEST_NAME,
-    filePath: FILE_PATH,
-    testIndex: 0,
-    outcome: script.outcome,
-    steps: failed ? [failingStep(script.buildOrdinal)] : [],
-    ...(failed ? { rootCause: flakeVerdict() } : {}),
-    // 390 D-14: the disposition rides BESIDE the outcome, which stays truthful.
-    ...(memberQuarantined ? { quarantined: true as const } : {}),
-  } as unknown as PerTestOutcome
-  return {
-    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
-    runId: script.runId as CompletedRunHandoff['runId'],
-    buildOrdinal: script.buildOrdinal,
-    scope: { tier: 'product', key: PRODUCT },
-    executionContext: 'ci',
-    aggregateVerdict: failed ? 'failed' : 'passed',
-    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
-    startedAt: script.buildOrdinal * 1_000,
-    endedAt: script.buildOrdinal * 1_000 + 1,
-    tests: [member],
-    // D-16: what the run was operating under, copied from the snapshot it was handed.
-    ...(quarantined.length > 0 ? { quarantineApplied: quarantined } : {}),
-  } as unknown as CompletedRunHandoff
 }
 
 /** The bus stream a real run of this one member would publish. */
@@ -423,6 +471,8 @@ function ledgerLines(env: Harness): LedgerLine[] {
     .map((line) => JSON.parse(line) as LedgerLine)
 }
 
+type FoldReport = ReturnType<typeof LOCAL_CURATION_CAPABILITIES.foldRunOutcomes>
+
 interface DrivenRun {
   runId: string
   buildOrdinal: number
@@ -433,6 +483,10 @@ interface DrivenRun {
   exitCode: number
   /** Which members the run shell actually reached the executor for (390-10). */
   executed: readonly string[]
+  /** The handoff the run PRODUCED — the same object written to the run dir and folded (390-21). */
+  handoff: CompletedRunHandoff
+  /** What the post-run fold answered — the detection events and the loud refusals it reported. */
+  fold: FoldReport
   junitXml: string
   consoleOutput: string
   ledgerBefore: LedgerLine[]
@@ -460,7 +514,7 @@ async function driveRun(env: Harness, script: RunScript, now = NOW): Promise<Dri
   //     code and the tracked member's disposition are all read off this one session rather than
   //     computed beside it, so the fail-fast poisoning decision is on every hop's path (390-10).
   //     The sibling passes here; the anti-silencing case gives it a failure of its own.
-  const { aggregate, exitCode, memberQuarantined, executed } = await runThroughShell(
+  const { aggregate, exitCode, memberQuarantined, executed, handoff } = await runThroughShell(
     script,
     snapshotAtStart,
     'passed',
@@ -488,16 +542,31 @@ async function driveRun(env: Harness, script: RunScript, now = NOW): Promise<Dri
   }
   await junit.flush()
 
-  // (4) the durable handoff a later surface reads
-  const handoff = handoffFor(script, snapshotAtStart, memberQuarantined)
+  // (4) the durable handoff a later surface reads — THE ONE THE RUN PRODUCED (390-21). Nothing is
+  //     rebuilt here: the bytes on disk and the object detection evaluates are the same value, so
+  //     an assertion below cannot be true of a shape the runner would never emit.
   const runDir = join(env.agentQaRoot, RUNS_SUBDIR, slugBranch(script.runId))
   mkdirSync(runDir, { recursive: true })
   writeFileSync(join(runDir, 'handoff.json'), `${JSON.stringify(handoff)}\n`, 'utf8')
 
-  // (5) the post-run fold — where THIS run's outcome enters the window and detection runs
-  LOCAL_CURATION_CAPABILITIES.foldRunOutcomes({
+  // (4b) the `analyze-run` job's artifact, beside it, when this run had an analysis budget and
+  //      something to analyse. This is the ONLY place an authored verdict can enter — the handoff
+  //      above carries the deterministic floor's answer and nothing else.
+  if (script.analysisBudget !== false && script.outcome === 'failed') {
+    writeFileSync(
+      join(runDir, 'analysis.json'),
+      `${JSON.stringify(authoredFlakeArtifact(script.runId))}\n`,
+      'utf8',
+    )
+  }
+
+  // (5) the post-run fold — where THIS run's outcome enters the window and detection runs. It is
+  //     handed the run DIRECTORY, exactly as the post-verdict tail does, so the artifact above is
+  //     resolved through the same loader production uses rather than injected as data.
+  const fold = LOCAL_CURATION_CAPABILITIES.foldRunOutcomes({
     knowledgeRoot: env.knowledgeRoot,
     handoff,
+    runDir,
     extractAnchors: exercisedAnchors,
     quarantine: { now, auditBaseDir: env.agentQaRoot },
   })
@@ -510,6 +579,8 @@ async function driveRun(env: Harness, script: RunScript, now = NOW): Promise<Dri
     aggregate,
     exitCode,
     executed,
+    handoff,
+    fold,
     junitXml,
     consoleOutput: consoleChunks.join(''),
     ledgerBefore,
@@ -680,7 +751,7 @@ describe('a quarantined failure never silences an un-quarantined one (CR-01)', (
     }])
 
     // the next run: the licensed test fails again, and so does its un-licensed suite sibling
-    const shell = await runThroughShell(
+    const { aggregate, exitCode, memberQuarantined, executed } = await runThroughShell(
       { runId: 'run-silence-4', buildOrdinal: 4, outcome: 'failed' },
       snapshotAtStart,
       'failed',
@@ -689,12 +760,144 @@ describe('a quarantined failure never silences an un-quarantined one (CR-01)', (
     // Asserted as ONE shape: execution without the verdict would pass on a build that runs the
     // sibling and swallows it, and the verdict without execution would pass on a build that
     // skipped the sibling and failed for some other reason.
-    expect(shell).toEqual({
+    expect({ executed, memberQuarantined, aggregate, exitCode }).toEqual({
       executed: ['checkout', 'login'],
       memberQuarantined: true,
       aggregate: 'failed',
       exitCode: 1,
     })
+  }, 120_000)
+})
+
+// ---- THE NO-BUDGET REACHABILITY RUN (390-21, closing G-390-5's reachability half) ---------------
+//
+// THE CLAIM, WITH ITS CONDITION IN THE SAME SENTENCE — because this phase has now overstated this
+// exact reachability three times, and the correction is never to weaken the claim but to make it
+// travel with the fact that makes it true:
+//
+//   A failing member with NO analysis budget is auto-quarantined end to end — through the real
+//   shell, the real handoff and the real fold — WHEN its per-test outcome window carries a pass and
+//   a fail at ONE build ordinal, which takes TWO SEPARATE APPLIED RUNS at the same
+//   `handoff.buildOrdinal` (in practice a CI job re-run without an ordinal bump).
+//
+// THE BOUND, stated because a reader will otherwise assume the cheaper thing: an IN-RUN RETRY
+// CANNOT PRODUCE THIS SIGNATURE. The member-runner collapses retries into one member outcome and
+// `countedOutcome` maps `healed` to a pass — one applied run leaves exactly ONE entry per member.
+// That is why the fixture below drives an EXTRA passing run at an ordinal it already failed at,
+// rather than scripting a retry.
+//
+// AND THE MECHANISM THAT SHIPS, which is NOT the one 390-16 described. 390-16 claimed a
+// floor-minted `flake` kept auto-quarantine alive without an analysis budget. `classifyRootCause`
+// mints `flake` only inside its `passed || healed` arm, and a passing member carries no failure
+// row, so no crossing can ever carry that class on the floor. What is live instead is `timeout`:
+// the floor mints it on a FAILING member whose failed step carries the test-deadline message, and
+// 390-19 made that class floor-eligible on the condition that the crossing ALSO carries the
+// per-test same-build pass∧fail — which 390-21 taught the fold to compute.
+
+describe('a failing member with no analysis budget can still be quarantined (G-390-5)', () => {
+  /** Every run here is scripted to blow the test deadline, and none of them gets an analyst. */
+  const NO_BUDGET = {
+    failureError: TEST_DEADLINE_ERROR,
+    analysisBudget: false,
+  } as const
+
+  /**
+   * Three failing ordinals — the crossing — optionally with a SECOND applied run at ordinal 1 in
+   * which the same member PASSED. That extra run is the entire difference between the two legs
+   * below, and it is the whole signature.
+   */
+  async function driveCrossing(
+    env: Harness,
+    opts: { sameOrdinalPass: boolean },
+  ): Promise<DrivenRun> {
+    await driveRun(env, { runId: 'run-floor-1', buildOrdinal: 1, outcome: 'failed', ...NO_BUDGET })
+    if (opts.sameOrdinalPass) {
+      // The CI job re-run: same build, same member, opposite answer. `mergeOutcomeEntries` pushes
+      // one entry per applied run, so ordinal 1 now carries two.
+      await driveRun(env, {
+        runId: 'run-floor-1-rerun',
+        buildOrdinal: 1,
+        outcome: 'passed',
+        ...NO_BUDGET,
+      })
+    }
+    await driveRun(env, { runId: 'run-floor-2', buildOrdinal: 2, outcome: 'failed', ...NO_BUDGET })
+    return driveRun(env, { runId: 'run-floor-3', buildOrdinal: 3, outcome: 'failed', ...NO_BUDGET })
+  }
+
+  it('authors an entered line NAMING the member, on the floor, with no analyst in the run', async () => {
+    const env = harness('agent-qa-390-nobudget-')
+
+    const crossing = await driveCrossing(env, { sameOrdinalPass: true })
+
+    // (1) NO AUTHORED VERDICT PARTICIPATED — asserted POSITIVELY, off the handoff the run produced,
+    //     rather than by the absence of a file (which a path typo satisfies just as well).
+    const tracked = crossing.handoff.tests.find((test) => test.testId === TRACKED_MEMBER.testId)
+    expect(tracked?.rootCause).toMatchObject({
+      class: 'timeout',
+      producer: 'deterministic-classifier',
+    })
+    for (const test of crossing.handoff.tests) {
+      expect(test.rootCause?.producer ?? 'deterministic-classifier')
+        .toBe('deterministic-classifier')
+    }
+
+    // (2) THE ENTERED LINE NAMES THIS MEMBER'S OWN IDENTITY — never a count of entered lines. A
+    //     count is exactly what makes a cap-induced failure and a gate-induced one look alike.
+    if (crossing.fold.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    const entered = crossing.fold.quarantine.events.filter((event) => event.kind === 'entered')
+    expect(entered.map((event) => ({
+      product: event.product,
+      filePath: event.filePath,
+      testName: event.testName,
+    }))).toEqual([{ product: PRODUCT, filePath: FILE_PATH, testName: TEST_NAME }])
+    expect(crossing.ledgerAfter).toHaveLength(1)
+    expect(crossing.ledgerAfter[0]).toMatchObject({
+      kind: 'entered',
+      product: PRODUCT,
+      filePath: FILE_PATH,
+      testName: TEST_NAME,
+      owner: QUARANTINE_UNASSIGNED_OWNER,
+      expiresAt: EXPECTED_EXPIRY,
+    })
+
+    // (3) THE PER-RUN FLOOR CAP IS NOT THE BINDING CONSTRAINT, by construction rather than by
+    //     arithmetic. The tracked member's failure poisons its suite group, so the sibling is never
+    //     reached and lands in the handoff as `skipped` — a skipped member contributes no failure
+    //     row, so it is not a floor-admission candidate at all. This run therefore has exactly ONE
+    //     candidate, strictly below the cap, and NOTHING was withheld for any cause. Without this
+    //     the leg would sit on the cap's boundary and a later retune would red it with the same
+    //     symptom as a genuine reachability regression.
+    expect(crossing.executed).toEqual(['checkout'])
+    expect(crossing.handoff.tests.find((test) => test.testId === SIBLING_MEMBER.testId)?.outcome)
+      .toBe('skipped')
+    expect(crossing.fold.quarantine.escalatedNotQuarantined).toEqual([])
+
+    // (4) THE TIMING LAW still holds: the run that discovers it still fails honestly (D-08/D-16).
+    expect(crossing.aggregate).toBe('failed')
+    expect(crossing.exitCode).toBe(1)
+  }, 120_000)
+
+  it('authors NOTHING for the same crossing without the same-ordinal pass', async () => {
+    const env = harness('agent-qa-390-nobudget-nosig-')
+
+    // The ONLY delta from the leg above: no second applied run at ordinal 1. Same class, same
+    // producer, same three occurrence ordinals, same absent analyst — so the refusal is the
+    // signature's doing and not a sub-threshold window.
+    const crossing = await driveCrossing(env, { sameOrdinalPass: false })
+
+    if (crossing.fold.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(crossing.fold.quarantine.events).toEqual([])
+    expect(crossing.ledgerAfter).toEqual([])
+    // Loud, not silent: the crossing is reported and the build still fails.
+    expect(crossing.fold.quarantine.escalatedNotQuarantined).toHaveLength(1)
+    expect(crossing.fold.quarantine.escalatedNotQuarantined[0]).toMatchObject({
+      product: PRODUCT,
+      testName: TEST_NAME,
+      verdictClass: 'timeout',
+      producer: 'deterministic-classifier',
+    })
+    expect(crossing.exitCode).toBe(1)
   }, 120_000)
 })
 
