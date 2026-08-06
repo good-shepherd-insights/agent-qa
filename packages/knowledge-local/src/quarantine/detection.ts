@@ -27,10 +27,12 @@
 //    A crossing carrying an AUTHORED `analyze-run` verdict needs neither, because a model reading
 //    this test's evidence IS the per-test statement.
 //
-// AND THE FLOOR ARM IS CAPPED PER RUN (390-19). Neither table contains mass auto-quarantine on the
-// floor path and neither should be read as doing so — `classifyRootCause` returns `timeout` before
-// it ever reads its health probe, so a run-scoped hang arrives in the class the floor may act on.
-// QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP is the containment; see its docstring.
+// AND THE FLOOR ARM IS BUDGETED PER RUN (390-19). Neither table contains mass auto-quarantine on
+// the floor path and neither should be read as doing so — `classifyRootCause` returns `timeout`
+// before it ever reads its health probe, so a run-scoped hang arrives in the class the floor may
+// act on. QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP budgets that arm per run. It RATE-LIMITS a fan-out
+// and does not contain one — a refused member is admitted on the next applied run (measured;
+// 390-28 / WR-02) — so nothing in this module bounds eventual entries. See its docstring.
 //
 // A crossing that either table refuses lands in `escalatedNotQuarantined` — the build keeps
 // failing, because auto-silencing a real regression is the one outcome this phase exists to
@@ -93,9 +95,10 @@ export const QUARANTINE_FLAG_FLOOR = 2
 export const QUARANTINE_ESCALATE_THRESHOLD = 3
 
 /**
- * THE CONTAINMENT for mass auto-quarantine on the FLOOR path (390-19 / G-390-5): at most this many
- * `entered` events may be authored on the floor arm in ONE `evaluateQuarantineDetection` call. One
- * call is one run's fold, so this is PER RUN.
+ * THE PER-RUN BUDGET for mass auto-quarantine on the FLOOR path (390-19 / G-390-5): at most this
+ * many `entered` events may be authored on the floor arm in ONE `evaluateQuarantineDetection` call.
+ * One call is one run's fold, so this is PER RUN — and PER RUN is the whole of it, which is why
+ * this reads "budget" and not "containment" (390-28 / WR-02; see the measurement below).
  *
  * WHY A COUNT AND NOT A CLASS. 390-16's motivating observation was itself a count — one probe
  * failure auto-quarantined 6 of 6 tests in a suite — and it was read as a statement about the class
@@ -105,11 +108,38 @@ export const QUARANTINE_ESCALATE_THRESHOLD = 3
  * reachable from a run-scoped cause, so no class-based gate can contain fan-out. This constant
  * states the property directly instead of proxying it through class semantics.
  *
- * WHY 2. Strictly below the measured 6-of-6 fan-out, so the event that motivated this containment
- * would have been caught by it. Above 1, so the mechanism is not a de facto single-shot and two
- * genuinely independent flaky tests can still both land in one run. A run asking to silence three
- * or more tests on the floor's word alone is the shape of FAN-OUT, not of independent flakiness —
- * simultaneity is the signal a shared cause leaves.
+ * WHAT THIS CONSTANT ACTUALLY BUYS: A RATE LIMIT, NOT CONTAINMENT (390-28 / WR-02, correcting the
+ * 390-19 text). Two claims stood here and both were false, in opposite directions:
+ *
+ *  1. IT WOULD NOT HAVE CAUGHT THE MOTIVATING EVENT — that event never reaches this counter. The
+ *     measured 6-of-6 members classed `environment`, and `QUARANTINE_FLOOR_ELIGIBILITY.environment`
+ *     is `authored-required`, so `autoQuarantines` answers `'refused'` for a floor-produced
+ *     `environment` crossing one conjunct EARLIER; the cap is consulted only when that call answers
+ *     `'floor'`. Zero entered lines for those six is the CLASS gate's doing, pinned by
+ *     detection-fold.test.ts's "writes ZERO entered lines for six floor-produced environment
+ *     failures". The `timeout` RE-DERIVATION of the same event — a run-scoped hang arriving in a
+ *     floor-eligible class, per WHY A COUNT above — is INFERRED and has never been observed in the
+ *     field; it is the reason the cap exists, not evidence that the cap caught anything.
+ *  2. IT DOES NOT BOUND EVENTUAL ENTRIES. Measured 2026-08-06 at CAP=2 over a SUITE=6 fan-out: six
+ *     floor-admissible crossings enter 2 / 2 / 2 across three consecutive evaluations and ALL SIX
+ *     are quarantined by run 3. Each refused member is admitted on the next applied run with no
+ *     human decision and no new evidence — which is exactly what OVERFLOW IS LOUD says below, so
+ *     the retracted containment clause contradicted its own docstring a paragraph later.
+ *     The first two evaluations of that shape now live in the corpus rather than only in a probe:
+ *     detection-fold.test.ts's "the floor cap rate-limits a multi-member fan-out (390-28)" produces
+ *     CAP + 1 floor admissions in ONE real fold, admits exactly CAP by identity order, and admits
+ *     the refused member on the very next run.
+ *
+ * So the purchase is TIME AND VISIBILITY, per run: every crossing this counter refuses is one build
+ * in which a human sees the identity in `escalatedNotQuarantined` with the build still red, before
+ * anything silences it. That is worth having and it is all of it.
+ *
+ * WHY 2 SPECIFICALLY, on the half that survives. Strictly above 1, so the mechanism is not a de
+ * facto single-shot and two genuinely independent flaky tests can still both land in one run. A run
+ * asking to silence three or more tests on the floor's word alone is the shape of FAN-OUT, not of
+ * independent flakiness — simultaneity is the signal a shared cause leaves. The number is a
+ * per-run BUDGET on that shape, and 2 is where the budget was set; it is not derived from the
+ * 6-of-6 observation, which the class gate already refuses.
  *
  * IT SHARES `QUARANTINE_FLAG_FLOOR`'s VALUE BY COINCIDENCE AND IS NOT DERIVED FROM IT. Said
  * explicitly so a later retune of the flag floor cannot silently move this number too. A pinned
