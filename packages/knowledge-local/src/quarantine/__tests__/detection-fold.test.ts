@@ -101,11 +101,13 @@ function failingStep(): StepEvidence {
  * AUTHORED by default since 390-19. Every leg in this file that does not name a producer is about
  * fold PLUMBING — the applied-arm gate, the append/commit ordering, the owner carry-forward, the
  * anti-silencing class differential — and needs a verdict the gate genuinely ADMITS to exercise it.
- * The floor path can no longer be that verdict in-tree: 390-19 made the floor arm require a
- * per-crossing `sameBuildPassAndFail`, and the fold's only construction site supplies a constant
- * `false` until 390-21 computes it, so a floor-produced crossing is INERT IN-TREE BY CONSTRUCTION
- * for that interval. The legs that are genuinely ABOUT the producer axis name it explicitly below
- * and are unaffected.
+ * A floor-produced verdict cannot be that verdict HERE, and since 390-21 the reason is a
+ * measurement rather than an interval: the floor arm requires a per-crossing
+ * `sameBuildPassAndFail`, the fold now COMPUTES that from the crossing test's own outcome window,
+ * and every plumbing fixture below drives three distinct failing ordinals with no same-ordinal
+ * pass — so its window carries no signature and the floor arm refuses it on the facts. The legs
+ * that are genuinely ABOUT the producer axis name it explicitly below, and the legs about the
+ * signature build the two-runs-at-one-ordinal window the floor arm needs.
  */
 function rootCause(
   verdictClass: VerdictClass,
@@ -726,10 +728,13 @@ describe('the anti-silencing differential: D-05 in BOTH directions', () => {
 describe('a floor-produced crossing cannot buy a committed entry (390-16)', () => {
   // Both classes are still REFUSED end-to-end, but since 390-19 for DIFFERENT reasons, and the old
   // name (`AUTHORED_REQUIRED_AUTO_CLASSES`) asserted a falsehood about one of them. `environment`
-  // is authored-required in QUARANTINE_FLOOR_ELIGIBILITY. `timeout` is now FLOOR-ELIGIBLE and is
-  // refused here only for want of the per-crossing signature, which the fold supplies as a constant
-  // `false` until 390-21's history read lands. The observable answer is identical; the reason is
-  // not, and this file must not re-assert the reason that stopped being true.
+  // is authored-required in QUARANTINE_FLOOR_ELIGIBILITY. `timeout` is FLOOR-ELIGIBLE and is
+  // refused here only for want of the per-crossing signature — and since 390-21 that is a fact
+  // about THESE FIXTURES rather than about the tree: `crossThreeInFive` drives three distinct
+  // failing ordinals, so the window the fold now reads carries no same-build pass∧fail. The leg
+  // that supplies one is in the 390-21 block above, and it enters. The observable answer here is
+  // identical to 390-16's; the reason is not, and this file must not re-assert a reason that
+  // stopped being true.
   const FLOOR_REFUSED_AUTO_CLASSES: readonly VerdictClass[] = ['environment', 'timeout']
 
   it.each(FLOOR_REFUSED_AUTO_CLASSES)(
@@ -813,6 +818,125 @@ describe('a floor-produced crossing cannot buy a committed entry (390-16)', () =
     expect(report.quarantine.escalatedNotQuarantined[0]).toMatchObject({
       verdictClass: 'flake',
       producer: 'deterministic-classifier',
+    })
+  })
+})
+
+// THE PER-CROSSING FLAKE SIGNATURE, ANSWERED BY THE FOLD (390-21 Task 1, G-390-5).
+//
+// 390-19 made the floor arm require a per-crossing `sameBuildPassAndFail` and filled the fold's
+// only construction site with a constant `false`, so the floor disjunct was INERT IN-TREE BY
+// CONSTRUCTION for one wave. These legs are the closure of that interval: they drive the REAL fold
+// and observe the gate's answer change with the crossing test's OWN outcome history and nothing
+// else — same class, same producer, same crossing, same three occurrence ordinals.
+//
+// WHY THE FOLD IS THE ONLY PLACE THAT CAN ANSWER IT. `evaluateQuarantineForFold` builds
+// `testWindows` from the folded LEDGER ENTRIES — tests already quarantined — while the signature is
+// needed for a CROSSING, which is by definition not in the ledger yet and therefore has NO window.
+// The two reads look redundant and are not; the fold is simply the only site holding both the
+// crossing's identity and the db handle.
+//
+// THE REAL-WORLD BOUND, stated here because this is the file a reader learns the capability from:
+// two entries at one build ordinal require TWO SEPARATE APPLIED RUNS carrying the same
+// `handoff.buildOrdinal`. An in-run retry cannot produce it — the member-runner collapses retries
+// into one member outcome and `healed` counts as a pass — so the fixtures below fold two runs.
+describe('a CROSSING test carries its own same-build pass∧fail into the gate (390-21)', () => {
+  /** One fold at `buildOrdinal`, floor-produced `timeout`, pass or fail. */
+  function foldTimeout(env: FoldHarness, input: {
+    runId: string
+    buildOrdinal: number
+    passed?: boolean
+    testName?: string
+    filePath?: string
+  }): FoldRunOutcomesReport {
+    return fold(env, handoffFixture({
+      ...input,
+      verdictClass: 'timeout',
+      producer: 'deterministic-classifier',
+    }))
+  }
+
+  it('AUTO-QUARANTINES a floor-produced timeout whose window carries a same-build pass', () => {
+    const env = harness('agent-qa-390-21-signature-set')
+
+    // Ordinal 1 is driven TWICE — two separate applied runs, one failing and one passing, at ONE
+    // build ordinal. That pair IS the signature; the ordinal-2 and ordinal-3 failures only carry
+    // the fingerprint across the escalate threshold.
+    foldTimeout(env, { runId: 'run-sig-1-fail', buildOrdinal: 1 })
+    foldTimeout(env, { runId: 'run-sig-1-pass', buildOrdinal: 1, passed: true })
+    foldTimeout(env, { runId: 'run-sig-2', buildOrdinal: 2 })
+    const report = foldTimeout(env, { runId: 'run-sig-3', buildOrdinal: 3 })
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    // No authored verdict participated anywhere: the producer on the crossing is the floor's.
+    expect(report.quarantine.escalatedNotQuarantined).toEqual([])
+    expect(report.quarantine.events).toHaveLength(1)
+    expect(ledgerLines(env)).toEqual([{
+      schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+      kind: 'entered',
+      at: NOW,
+      product: PRODUCT,
+      filePath: FILE_PATH,
+      testName: TEST_NAME,
+      fingerprint: expect.stringContaining('::timeout') as unknown as string,
+      verdictClass: 'timeout',
+      owner: QUARANTINE_UNASSIGNED_OWNER,
+      expiresAt: EXPECTED_EXPIRY,
+    }])
+  })
+
+  it('REFUSES the same crossing when every ordinal carries one answer — signature clear', () => {
+    const env = harness('agent-qa-390-21-signature-clear')
+
+    // The ONLY delta from the leg above: no second run at ordinal 1. Three failing ordinals still
+    // cross, so the refusal is the signature's doing and not a sub-threshold window.
+    foldTimeout(env, { runId: 'run-nosig-1', buildOrdinal: 1 })
+    foldTimeout(env, { runId: 'run-nosig-2', buildOrdinal: 2 })
+    const report = foldTimeout(env, { runId: 'run-nosig-3', buildOrdinal: 3 })
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(report.quarantine.events).toEqual([])
+    expect(ledgerLines(env)).toEqual([])
+    expect(report.quarantine.escalatedNotQuarantined).toHaveLength(1)
+    expect(report.quarantine.escalatedNotQuarantined[0]).toMatchObject({
+      testName: TEST_NAME,
+      verdictClass: 'timeout',
+      producer: 'deterministic-classifier',
+      occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
+    })
+  })
+
+  it('REFUSES a crossing for a test this run is the FIRST to count — one entry, no signature', () => {
+    const env = harness('agent-qa-390-21-first-sighting')
+
+    // Recurrence is keyed (product, fingerprint); a quarantine ENTRY is keyed on test identity.
+    // So a test the projection has never counted can cross on its very first appearance, carried
+    // over the threshold by a sibling that shares its failure signature. Its window then holds
+    // exactly ONE entry — this run — and one entry can never be a same-build pass∧fail.
+    //
+    // This is the reachable form of the typed-absence case. The fold applies the projection BEFORE
+    // it evaluates detection, so the crossing test ALWAYS has a row by the time the signature is
+    // read; `readTestOutcomeHistory` returning `undefined` is a defensive branch the fold's own
+    // ordering makes unreachable in-tree, pinned directly in
+    // `projection/__tests__/run-outcome-read.test.ts` ("answers undefined for a missing row").
+    const NEWCOMER = 'checkout retries the payment sheet [newcomer]'
+    foldTimeout(env, { runId: 'run-first-1', buildOrdinal: 1 })
+    foldTimeout(env, { runId: 'run-first-2', buildOrdinal: 2 })
+    const report = foldTimeout(env, {
+      runId: 'run-first-3',
+      buildOrdinal: 3,
+      testName: NEWCOMER,
+      filePath: 'suite/newcomer.test.ts',
+    })
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(report.quarantine.events).toEqual([])
+    expect(ledgerLines(env)).toEqual([])
+    expect(report.quarantine.escalatedNotQuarantined).toHaveLength(1)
+    expect(report.quarantine.escalatedNotQuarantined[0]).toMatchObject({
+      testName: NEWCOMER,
+      verdictClass: 'timeout',
+      occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
     })
   })
 })

@@ -43,7 +43,7 @@ import { QuarantineLedgerVersionError } from '@vostride/agent-qa-schema'
 import type { QuarantineLedgerEvent } from '@vostride/agent-qa-schema'
 
 import { ensureRunOutcomeTables, openIndexWriter } from '../index-open.js'
-import { evaluateQuarantineDetection } from '../quarantine/detection.js'
+import { evaluateQuarantineDetection, hasSameBuildPassAndFail } from '../quarantine/detection.js'
 import type {
   QuarantineDetectionFailure,
   QuarantineDetectionSighting,
@@ -658,6 +658,18 @@ export function rebuildRunOutcomes(
  *
  * The reads below run on the same connection immediately after `applyRunOutcomes` returned
  * `'applied'`, so the recurrence they see includes this run.
+ *
+ * TWO PER-TEST OUTCOME READS THAT LOOK REDUNDANT AND ARE NOT (390-21). `testWindows` is built for
+ * ENTRIES — tests the ledger already carries — and answers the EXIT question. The flake signature
+ * is needed for CROSSINGS, and a crossing is by definition NOT in the ledger yet, so it has no
+ * window here: the exit path reads windows for entries, the entry path needs a window for a test
+ * that has none. That asymmetry is the whole reason the signature is computed in this function and
+ * nowhere else — the failure loop is the only place holding both the crossing's identity and the db
+ * handle at once.
+ *
+ * THE READ COST, stated honestly: one indexed point lookup per CROSSING failure, on a connection
+ * already open, after the projection has committed. Crossings are rare by construction — this loop
+ * is reached only for members that failed — so this is not a per-test cost on the common path.
  */
 function evaluateQuarantineForFold(
   db: DatabaseSync,
@@ -687,20 +699,20 @@ function evaluateQuarantineForFold(
       fingerprint: test.failure.fingerprint,
       verdictClass: test.failure.verdictClass,
       producer: test.failure.producer,
-      // A CONSTANT, DELIBERATELY, AND ONLY UNTIL PLAN 390-21. This is the only non-test
-      // construction site of a `QuarantineDetectionFailure` in the tree, and the fold cannot answer
-      // the signature yet: it would have to read this test's outcome window
-      // (`readTestOutcomeHistory`) per crossing and hand it to `hasSameBuildPassAndFail`. Plan
-      // 390-21's Task 1 replaces this literal with exactly that read.
-      //
-      // SAY THE CONSEQUENCE OUT LOUD, because an unexplained constant at a gate input is precisely
-      // the shape of the defect G-390-5 is about (T-390-19-06). Because this is the ONLY producing
-      // site, BETWEEN 390-19 AND 390-21 THE FLOOR DISJUNCT OF `autoQuarantines` IS INERT IN-TREE BY
-      // CONSTRUCTION — no in-tree caller can hand it a set field, so it cannot fire. That is a new
-      // dead disjunct, created on purpose and held briefly. The only things separating it from the
-      // one this round exists to close are that it is STATED here and that it is closed on a hard
-      // dependency: 390-21 declares `depends_on: ["390-19"]`.
-      sameBuildPassAndFail: false,
+      // THE PER-CROSSING FLAKE SIGNATURE, read from this test's OWN outcome window (390-21).
+      // `hasSameBuildPassAndFail` is called rather than re-derived: the exit path's
+      // `distinctOrdinalOutcomes` and this entry-side read share one `groupByBuildOrdinal`, so
+      // "what a build ordinal is" has exactly one spelling and the two directions cannot drift.
+      // A test with no history row answers false through the `?? []` — typed absence, never a
+      // throw and never a fabricated window. (Defensive in-tree: the reads below run after
+      // `applyRunOutcomes` returned `applied`, so a crossing test always has a row by now.)
+      sameBuildPassAndFail: hasSameBuildPassAndFail(
+        readTestOutcomeHistory(db, {
+          product: projection.product,
+          filePath: test.filePath,
+          testName: test.testName,
+        })?.lastOutcomes ?? [],
+      ),
       ...fingerprintRecurrence(
         db,
         { product: projection.product, fingerprint: test.failure.fingerprint },
