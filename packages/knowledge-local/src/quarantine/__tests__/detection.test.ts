@@ -441,29 +441,37 @@ describe('the per-run floor cap contains fan-out (390-19)', () => {
   const SUITE_SIZE = 6
   const K = QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP
 
-  /** N distinct IDENTITIES crossing in ONE evaluation — the 6-of-6 shape, on the floor arm. */
-  function suite(overrides: Partial<QuarantineDetectionFailure>): QuarantineDetectionFailure[] {
-    return Array.from({ length: SUITE_SIZE }, (_unused, index) => failure({
+  /** Every member of the suite, by index — the one place the suite's size is spent. */
+  const MEMBER_INDICES = Array.from({ length: SUITE_SIZE }, (_unused, index) => index)
+
+  /**
+   * A member's identity, spelled ONCE for every fixture in this describe. The crossing fixture and
+   * the already-quarantined fixture build the same three fields from the same index, so the two
+   * cannot name different tests while looking like they name the same one.
+   */
+  function member(index: number): Pick<
+    QuarantineDetectionFailure,
+    'testName' | 'filePath' | 'fingerprint'
+  > {
+    return {
       testName: `${TEST_NAME} ${String(index)}`,
       filePath: `suite/member-${String(index)}.test.ts`,
       fingerprint: `fp::member-${String(index)}`,
-      ...overrides,
-    }))
+    }
+  }
+
+  /** N distinct IDENTITIES crossing in ONE evaluation — the 6-of-6 shape, on the floor arm. */
+  function suite(overrides: Partial<QuarantineDetectionFailure>): QuarantineDetectionFailure[] {
+    return MEMBER_INDICES.map((index) => failure({ ...member(index), ...overrides }))
   }
 
   /** The ladder's own identity order, named rather than assumed positionally. */
-  const MEMBER_NAMES = Array.from(
-    { length: SUITE_SIZE },
-    (_unused, index) => `${TEST_NAME} ${String(index)}`,
-  )
+  const MEMBER_NAMES = MEMBER_INDICES.map((index) => member(index).testName)
 
-  function quarantinedEntriesFor(testNames: readonly string[]): QuarantineEntryState[] {
-    return testNames.map((testName) => activeEntry({
-      testName,
-      filePath: `suite/member-${testName.slice(-1)}.test.ts`,
-      fingerprint: `fp::member-${testName.slice(-1)}`,
-      state: 'quarantined',
-    }))
+  // The index travels as DATA rather than being recovered from the test name: a name-suffix parse
+  // is correct only while SUITE_SIZE <= 10, which is the natural edit when retuning the cap.
+  function quarantinedEntriesFor(indices: readonly number[]): QuarantineEntryState[] {
+    return indices.map((index) => activeEntry({ ...member(index), state: 'quarantined' }))
   }
 
   it('pins the cap as its own constant — 2, below the measured 6-of-6 fan-out and above 1', () => {
@@ -544,7 +552,7 @@ describe('the per-run floor cap contains fan-out (390-19)', () => {
   // Auto-EXITS are not capped, deliberately: refusing to let a fixed test out is a failure in the
   // opposite direction from the one the cap defends against.
   it('leaves the RELEASE loop uncapped — six fixed tests all leave in one evaluation', () => {
-    const entries = quarantinedEntriesFor(MEMBER_NAMES)
+    const entries = quarantinedEntriesFor(MEMBER_INDICES)
     const result = evaluate({
       entries,
       testWindows: entries.map((entry) => passingWindow(QUARANTINE_AUTO_EXIT_PASSES, {
@@ -581,7 +589,7 @@ describe('the per-run floor cap contains fan-out (390-19)', () => {
 
     const second = evaluate({
       failures,
-      entries: quarantinedEntriesFor(MEMBER_NAMES.slice(0, K)),
+      entries: quarantinedEntriesFor(MEMBER_INDICES.slice(0, K)),
     })
     expect(second.events.map((event) => event.testName)).toEqual(MEMBER_NAMES.slice(K, K * 2))
     expect(second.escalatedNotQuarantined.map((s) => s.testName))
