@@ -52,6 +52,7 @@ import {
   AUTO_QUARANTINE_CLASSES,
   QUARANTINE_CLASS_DISPOSITIONS,
   QUARANTINE_ESCALATE_THRESHOLD,
+  QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP,
 } from '../detection.js'
 import {
   QUARANTINE_LEDGER_FILENAME,
@@ -1293,5 +1294,189 @@ describe('one down dependency cannot blanket-quarantine a suite (390-16)', () =>
     // fixture is genuinely capable of mass-quarantining, so the zero above is the gate's doing.
     expect(new Set(lines.map((line) => line.expiresAt))).toEqual(new Set([EXPECTED_EXPIRY]))
     expect(new Set(lines.map((line) => line.verdictClass))).toEqual(new Set(['environment']))
+  })
+})
+
+// THE CAP'S INPUT DOMAIN, PRODUCED IN-TREE (390-28 / WR-02).
+//
+// `QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP` was pinned by VALUE in `detection.test.ts` and exercised
+// by a two-call drain leg there, but nothing in this tree had ever built its INPUT DOMAIN — more
+// than CAP floor-admissible crossings inside ONE `evaluateQuarantineDetection` call — through the
+// real pipeline. A gate pinned over an input the pipeline has not been shown to produce is the
+// shape this round exists to close, so the domain is produced here: a real suite handoff, real
+// projection, real ledger bytes, and floor verdicts the runner's own classifier answers for a
+// scripted timed-out member (never an authored class, which the cap deliberately exempts and which
+// therefore cannot measure it).
+//
+// WHAT THESE TWO LEGS PROVE, AND WHAT THEY DO NOT.
+//
+//  - PROVED: the cap's counter is per-call and it bites. Three members cross one evaluation on the
+//    floor arm; exactly CAP enter, chosen BY IDENTITY ORDER rather than by handoff order; the
+//    overflow member routes to `escalatedNotQuarantined` LOUDLY with the build still failing.
+//  - PROVED: it RATE-LIMITS, it does not CONTAIN. The very next applied run admits the member the
+//    previous one refused — no human decision, no new evidence, just another red build — so the
+//    cumulative entered count reaches the full suite size one run later than it otherwise would.
+//    These two legs are the 2/2/2-across-three-evaluations measurement (2026-08-06, CAP=2 over a
+//    six-member suite) truncated to its first two evaluations and living in the corpus rather than
+//    only in a verifier probe. The cap buys TIME and VISIBILITY, never a ceiling on eventual
+//    entries — which is exactly what the constant's docstring now says.
+//  - NOT PROVED: nothing here says the fan-out was WORTH slowing. Whether a shared cause deserves
+//    a per-run budget at all is the retune question, and it stays open on operational evidence.
+describe('the floor cap rate-limits a multi-member fan-out (390-28)', () => {
+  // CAP + 1 — the SMALLEST suite that can overflow, so a refusal here is the cap's doing and not
+  // an arbitrary surplus. Derived from the constant, never a literal 3: if the cap is ever retuned
+  // the fixture resizes with it and the leg keeps measuring the same property.
+  const CAP_SUITE_SIZE = QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP + 1
+
+  const capMemberName = (index: number): string => `${TEST_NAME} [cap ${String(index)}]`
+  const capMemberPath = (index: number): string => `suite/cap-member-${String(index)}.test.ts`
+
+  /**
+   * CAP_SUITE_SIZE distinct members in ONE run, every member failing or every member passing.
+   *
+   * Modeled on 390-16's `suiteHandoff` and sized off the cap instead of the measured suite. The
+   * digit-collapsing note there applies unchanged and is load-bearing here too: the error-text
+   * normalizer scrubs digits, so `(member 0)`…`(member N)` fold to ONE fingerprint — the real
+   * signature of a shared cause — while each member still gets its OWN quarantine entry, because
+   * recurrence is keyed on (product, fingerprint) and an entry is keyed on test identity.
+   */
+  function capSuiteHandoff(input: {
+    runId: string
+    buildOrdinal: number
+    passed?: boolean
+  }): CompletedRunHandoff {
+    const passed = input.passed === true
+    const member = (index: number) => ({
+      testId: `${input.runId}-${String(index)}`,
+      testName: capMemberName(index),
+      filePath: capMemberPath(index),
+      testIndex: index,
+      outcome: passed ? 'passed' : 'failed',
+      steps: [{
+        ...failingStep(),
+        verifierVerdict: { pass: false, reasoning: `${ERROR_TEXT} (member ${String(index)})` },
+      } as unknown as StepEvidence],
+      // The FLOOR arm, produced: the classifier is asked what a member that blew its deadline is,
+      // and answers `timeout` / `deterministic-classifier`. The `FoldVerdictSpec` compile-guard is
+      // intact — no verdict in this leg is hand-written, and the passing branch carries none at all.
+      ...(passed ? {} : { rootCause: verdictFor({ produced: timedOutResult() }, index) }),
+    } as unknown as PerTestOutcome)
+    return {
+      schemaVersion: 6,
+      runId: input.runId,
+      buildOrdinal: input.buildOrdinal,
+      scope: SHOP_SCOPE,
+      executionContext: 'ci',
+      aggregateVerdict: passed ? 'passed' : 'failed',
+      configDigests: {
+        suiteConfigDigest: 'detection-suite-digest',
+        testConfigDigest: 'detection-test-digest',
+      },
+      startedAt: input.buildOrdinal * 1_000,
+      endedAt: input.buildOrdinal * 1_000 + 1,
+      tests: Array.from({ length: CAP_SUITE_SIZE }, (_unused, index) => member(index)),
+    } as unknown as CompletedRunHandoff
+  }
+
+  function foldCapSuite(env: FoldHarness, input: {
+    runId: string
+    buildOrdinal: number
+    passed?: boolean
+  }): FoldRunOutcomesReport {
+    return fold(env, capSuiteHandoff(input))
+  }
+
+  /**
+   * The shared episode, ordinals 1..3 — every ordinal DERIVED, none guessed.
+   *
+   * Ordinal 1 is driven TWICE (two applied runs at one build ordinal, one failing and one passing)
+   * because that pair IS the floor arm's per-test `sameBuildPassAndFail` signature, and every
+   * member needs its own. Failing ordinals 1, 2 and 3 are exactly QUARANTINE_ESCALATE_THRESHOLD
+   * distinct occurrences, so nothing crosses before 3 (ordinal 2's window holds two). The crossing
+   * at 3 has recurrence window [3 - QUARANTINE_WINDOW_ORDINALS + 1, 3] = [-1, 3], so the ordinal-1
+   * signature sits INSIDE it under 390-24's window scoping — which is what keeps this leg about
+   * the cap rather than accidentally about staleness.
+   */
+  function driveToCrossing(env: FoldHarness): FoldRunOutcomesReport {
+    expect(3 - QUARANTINE_WINDOW_ORDINALS + 1).toBeLessThanOrEqual(1)
+    foldCapSuite(env, { runId: 'run-cap-1-fail', buildOrdinal: 1 })
+    foldCapSuite(env, { runId: 'run-cap-1-pass', buildOrdinal: 1, passed: true })
+    foldCapSuite(env, { runId: 'run-cap-2', buildOrdinal: 2 })
+    return foldCapSuite(env, { runId: 'run-cap-3', buildOrdinal: 3 })
+  }
+
+  it('admits exactly CAP of three floor-admissible crossings in ONE evaluation, by identity order', () => {
+    const env = harness('agent-qa-390-28-cap-domain')
+
+    const report = driveToCrossing(env)
+
+    expect(report.kind).toBe('applied')
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+
+    // THE DOMAIN IS REAL: all CAP_SUITE_SIZE members crossed the escalate threshold on the floor
+    // arm in this one call, so the cap had something to refuse. A leg where only CAP crossed would
+    // measure nothing.
+    expect(report.quarantine.events.length + report.quarantine.escalatedNotQuarantined.length)
+      .toBe(CAP_SUITE_SIZE)
+
+    // ADMITTED BY IDENTITY ORDER, asserted by value. The identity key is
+    // JSON.stringify([product, filePath, testName]) compared by code unit, and the three members
+    // share a product, so `suite/cap-member-0` < `suite/cap-member-1` < `suite/cap-member-2`
+    // decides it. Handoff order happens to agree here; what makes the assertion about ORDER rather
+    // than about arrival is that the ladder sorts before it counts, pinned in `detection.test.ts`.
+    expect(report.quarantine.events).toHaveLength(QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP)
+    expect(report.quarantine.events.map((event) => event.testName)).toEqual([
+      'checkout retries the payment sheet [cap 0]',
+      'checkout retries the payment sheet [cap 1]',
+    ])
+
+    // AND THE OVERFLOW IS LOUD, never dropped: the third member is refused as DATA, still failing.
+    expect(report.quarantine.escalatedNotQuarantined).toHaveLength(1)
+    expect(report.quarantine.escalatedNotQuarantined[0]).toMatchObject({
+      testName: 'checkout retries the payment sheet [cap 2]',
+      verdictClass: 'timeout',
+      producer: 'deterministic-classifier',
+      occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
+    })
+
+    // The committed bytes agree with the report — the cap is not merely a reporting artifact.
+    expect(ledgerLines(env).map((line) => line.testName)).toEqual([
+      'checkout retries the payment sheet [cap 0]',
+      'checkout retries the payment sheet [cap 1]',
+    ])
+  })
+
+  it('drains the refused member on the NEXT applied run — the cap rate-limits, it does not contain', () => {
+    const env = harness('agent-qa-390-28-cap-drain')
+
+    driveToCrossing(env)
+    const report = foldCapSuite(env, { runId: 'run-cap-4', buildOrdinal: 4 })
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+
+    // The two OPEN entries do not re-enter — an already-quarantined test is skipped before the
+    // ladder — so this run's single admission is the previously-refused member and nothing else.
+    // Its window at the crossing ordinal 4 is [0, 4], which still holds the ordinal-1 signature.
+    expect(report.quarantine.events).toHaveLength(1)
+    expect(report.quarantine.events[0]).toMatchObject({
+      kind: 'entered',
+      testName: 'checkout retries the payment sheet [cap 2]',
+      verdictClass: 'timeout',
+    })
+    // Nothing is refused any more: one admission is under the cap, so the counter that bit last
+    // run is silent this run. That asymmetry between two identical suites one ordinal apart is the
+    // rate-limit, stated as a measurement.
+    expect(report.quarantine.escalatedNotQuarantined).toEqual([])
+
+    // THE HEADLINE NUMBER: the whole suite is quarantined after all, one run later. The cap bought
+    // one build of visibility per overflow member and no ceiling whatsoever.
+    expect(ledgerLines(env).map((line) => line.testName)).toEqual([
+      'checkout retries the payment sheet [cap 0]',
+      'checkout retries the payment sheet [cap 1]',
+      'checkout retries the payment sheet [cap 2]',
+    ])
+    expect(ledgerLines(env)).toHaveLength(CAP_SUITE_SIZE)
+    expect(foldQuarantineLedgerState(readQuarantineLedger(env.knowledgeRoot).events, NOW))
+      .toHaveLength(CAP_SUITE_SIZE)
   })
 })
