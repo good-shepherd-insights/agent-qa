@@ -93,6 +93,44 @@ export const QUARANTINE_FLAG_FLOOR = 2
 export const QUARANTINE_ESCALATE_THRESHOLD = 3
 
 /**
+ * THE CONTAINMENT for mass auto-quarantine on the FLOOR path (390-19 / G-390-5): at most this many
+ * `entered` events may be authored on the floor arm in ONE `evaluateQuarantineDetection` call. One
+ * call is one run's fold, so this is PER RUN.
+ *
+ * WHY A COUNT AND NOT A CLASS. 390-16's motivating observation was itself a count — one probe
+ * failure auto-quarantined 6 of 6 tests in a suite — and it was read as a statement about the class
+ * `environment`. That reading is unsound under `classifyRootCause`'s branch order: its
+ * `outcome === 'timeout'` arm RETURNS before the `baselineProbe` arms that mint `environment`, so a
+ * run-scoped hang arrives classed `timeout`. Every class the floor can mint on a FAILING member is
+ * reachable from a run-scoped cause, so no class-based gate can contain fan-out. This constant
+ * states the property directly instead of proxying it through class semantics.
+ *
+ * WHY 2. Strictly below the measured 6-of-6 fan-out, so the event that motivated this containment
+ * would have been caught by it. Above 1, so the mechanism is not a de facto single-shot and two
+ * genuinely independent flaky tests can still both land in one run. A run asking to silence three
+ * or more tests on the floor's word alone is the shape of FAN-OUT, not of independent flakiness —
+ * simultaneity is the signal a shared cause leaves.
+ *
+ * IT SHARES `QUARANTINE_FLAG_FLOOR`'s VALUE BY COINCIDENCE AND IS NOT DERIVED FROM IT. Said
+ * explicitly so a later retune of the flag floor cannot silently move this number too. A pinned
+ * constant with no config key (386 D-15); retune it here, on its own evidence.
+ *
+ * OVERFLOW IS LOUD, NEVER DROPPED. Past the cap an identity routes to `escalatedNotQuarantined`
+ * with the build still failing — D-05's already-ratified posture for a class-gated refusal, applied
+ * to a count-gated one. It crosses again on the next applied run and may be admitted THEN; one that
+ * stops failing was never a quarantine candidate. Nothing is lost: the cap slows the floor path
+ * down, it does not close it.
+ *
+ * THE AUTHORED ARM IS EXEMPT, DELIBERATELY. An authored verdict is per-test evidence by
+ * construction — a model read THIS test's evidence and named its cause — so it does not carry the
+ * hazard this cap defends against, which is a RUN-level signal being read as per-test. Capping it
+ * would also silently regress the arm 390-16 shipped, on no measurement. THE HONEST RESIDUAL: an
+ * authored run CAN still class many tests identically, so the authored path's fan-out is unchanged
+ * by this round — stated, not closed (T-390-19-07, accepted).
+ */
+export const QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP = 2
+
+/**
  * D-10's exit: M consecutive PASSING distinct build ordinals release a quarantined test. Five is
  * symmetric with the detection window by design (~17% escape odds for a 30%-failure flake) and sits
  * inside LAST_OUTCOMES_LIMIT, so no window widening is needed. Retune from operational evidence.
@@ -345,10 +383,19 @@ export interface QuarantineDetectionSighting {
   verdictClass: VerdictClass
   /**
    * The crossing run's producer, carried onto the sighting so an operator can ACT on it.
-   * `escalatedNotQuarantined` has two distinct causes with two different human actions: a class
-   * that is never auto-quarantinable (run `analyze-run` and it still will not be), versus a class
-   * that would have been had a verdict been authored (run `analyze-run` and it will be). Those
-   * read identically on the curation tail's line unless the producer travels with the sighting.
+   * `escalatedNotQuarantined` has THREE distinct causes, and the producer separates the first two:
+   * a class that is never auto-quarantinable (run `analyze-run` and it still will not be), versus a
+   * class that would have been had a verdict been authored (run `analyze-run` and it will be).
+   * Those read identically on the curation tail's line unless the producer travels with the
+   * sighting.
+   *
+   * THE THIRD CAUSE, ADDED BY 390-19, AND THE FACT THAT THIS FIELD DOES NOT DISTINGUISH IT: the
+   * crossing was admissible on the floor arm but QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP was already
+   * spent on this run. The information gap is bounded — an operator sees the withheld line either
+   * way, the build fails either way, and the identity crosses again on the next applied run — so no
+   * field is added to carry it, which would widen this shape and the cli render inside the very
+   * round that is closing a containment defect. Recorded as a STATED RESIDUAL instead, because a
+   * docstring that enumerates causes and misses one is the defect class this whole round closes.
    */
   producer: Verdict['producer']
   occurrenceOrdinals: number
@@ -550,6 +597,12 @@ export function evaluateQuarantineDetection(
   const escalatedNotQuarantined: QuarantineDetectionSighting[] = []
   const entered: QuarantineLedgerEvent[] = []
   const expiresAt = expiryFrom(input.now)
+  // PER CALL, and a call is one run's fold — which is what makes the cap PER RUN. Declaring it in
+  // module scope instead would satisfy every single-evaluation assertion in the corpus while
+  // silently turning this into a PROCESS-LIFETIME cap, under which the third genuine flake in a
+  // project is never auto-quarantined again for the life of the daemon. The two-call drain leg in
+  // detection.test.ts is the discriminator that reds if this declaration ever moves.
+  let floorAdmissions = 0
 
   for (const failure of [...input.failures].sort(
     (a, b) => identityKey(a).localeCompare(identityKey(b))
@@ -560,7 +613,14 @@ export function evaluateQuarantineDetection(
     if (activeKeys.has(identityKey(failure))) continue
 
     if (failure.occurrenceOrdinals >= QUARANTINE_ESCALATE_THRESHOLD) {
-      if (autoQuarantines(failure) !== 'refused') {
+      const admission = autoQuarantines(failure)
+      // The cap counts FLOOR admissions only. Beyond it a floor-admissible crossing routes to
+      // `escalatedNotQuarantined` exactly as a class-refused one does: build still failing,
+      // identity visible, admitted on a later evaluation once the earlier ones are suppressing.
+      const capped = admission === 'floor'
+        && floorAdmissions >= QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP
+      if (admission !== 'refused' && !capped) {
+        if (admission === 'floor') floorAdmissions += 1
         entered.push({
           schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
           kind: 'entered',

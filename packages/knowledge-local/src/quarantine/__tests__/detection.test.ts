@@ -37,6 +37,7 @@ import {
   QUARANTINE_DEFAULT_EXPIRY_DAYS,
   QUARANTINE_ESCALATE_THRESHOLD,
   QUARANTINE_FLAG_FLOOR,
+  QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP,
   QUARANTINE_FLOOR_ELIGIBILITY,
   QUARANTINE_WINDOW_ORDINALS,
   evaluateQuarantineDetection,
@@ -394,6 +395,172 @@ describe('the floor arm: a floor-eligible class AND a per-test signature (390-19
       expect(result.events).toEqual([])
       expect(result.escalatedNotQuarantined).toHaveLength(5)
     }
+  })
+})
+
+// THE CONTAINMENT: a PER-RUN cap on floor-path auto-quarantines (390-19).
+//
+// 390-16's motivating observation was a COUNT — one probe failure auto-quarantined 6 of 6 tests in
+// a suite — and 390-16 read it as a statement about a CLASS. That reading is unsound under
+// `classifyRootCause`'s branch order: its `outcome === 'timeout'` arm RETURNS before the
+// `baselineProbe` arms that mint `environment`, so a run-scoped hang or a flapping dependency
+// arrives classed `timeout` — the class this round makes floor-eligible. Every class the floor can
+// mint on a FAILING member is reachable from a run-scoped cause, so no class-based gate contains
+// fan-out. The containment is therefore stated as the count it always was.
+//
+// Overflow is LOUD: past the cap an identity routes to `escalatedNotQuarantined` with the build
+// still failing (D-05's posture for a class-gated refusal, applied to a count-gated one), crosses
+// again on the next applied run, and may be admitted THEN. The cap slows the floor path down; it
+// does not close it — which is what the two-call drain leg shows rather than asserts.
+describe('the per-run floor cap contains fan-out (390-19)', () => {
+  const SUITE_SIZE = 6
+  const K = QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP
+
+  /** N distinct IDENTITIES crossing in ONE evaluation — the 6-of-6 shape, on the floor arm. */
+  function suite(overrides: Partial<QuarantineDetectionFailure>): QuarantineDetectionFailure[] {
+    return Array.from({ length: SUITE_SIZE }, (_unused, index) => failure({
+      testName: `${TEST_NAME} ${String(index)}`,
+      filePath: `suite/member-${String(index)}.test.ts`,
+      fingerprint: `fp::member-${String(index)}`,
+      ...overrides,
+    }))
+  }
+
+  /** The ladder's own identity order, named rather than assumed positionally. */
+  const MEMBER_NAMES = Array.from(
+    { length: SUITE_SIZE },
+    (_unused, index) => `${TEST_NAME} ${String(index)}`,
+  )
+
+  function quarantinedEntriesFor(testNames: readonly string[]): QuarantineEntryState[] {
+    return testNames.map((testName) => activeEntry({
+      testName,
+      filePath: `suite/member-${testName.slice(-1)}.test.ts`,
+      fingerprint: `fp::member-${testName.slice(-1)}`,
+      state: 'quarantined',
+    }))
+  }
+
+  it('pins the cap as its own constant — 2, below the measured 6-of-6 fan-out and above 1', () => {
+    expect(QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP).toBe(2)
+    expect(QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP).toBeLessThan(SUITE_SIZE)
+    expect(QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP).toBeGreaterThan(1)
+  })
+
+  // THE FAN-OUT DIFFERENTIAL. Removing the cap check reds THIS leg.
+  it('admits exactly K of SIX floor-produced crossings in ONE evaluation, by identity', () => {
+    const result = evaluate({
+      failures: suite({
+        verdictClass: 'timeout',
+        producer: 'deterministic-classifier',
+        sameBuildPassAndFail: true,
+      }),
+    })
+
+    // BY IDENTITY, not by position: the leg keeps its meaning when 390-22 replaces the comparator.
+    expect(result.events.map((event) => event.testName)).toEqual(MEMBER_NAMES.slice(0, K))
+    expect(result.escalatedNotQuarantined.map((s) => s.testName)).toEqual(MEMBER_NAMES.slice(K))
+    expect(result.events).toHaveLength(K)
+    expect(result.escalatedNotQuarantined).toHaveLength(SUITE_SIZE - K)
+  })
+
+  it('routes the overflow LOUDLY — class and producer visible, nothing dropped', () => {
+    const result = evaluate({
+      failures: suite({
+        verdictClass: 'timeout',
+        producer: 'deterministic-classifier',
+        sameBuildPassAndFail: true,
+      }),
+    })
+
+    for (const overflow of result.escalatedNotQuarantined) {
+      expect(overflow).toMatchObject({
+        verdictClass: 'timeout',
+        producer: 'deterministic-classifier',
+        occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
+      })
+    }
+    // Nothing vanished: every identity is in exactly one bucket.
+    expect([
+      ...result.events.map((event) => event.testName),
+      ...result.escalatedNotQuarantined.map((s) => s.testName),
+    ].sort()).toEqual([...MEMBER_NAMES].sort())
+  })
+
+  // THE EXEMPTION, pinned as a DECISION rather than left as an oversight. An authored verdict is
+  // per-test evidence by construction — a model read THIS test's evidence and named its cause — so
+  // it does not carry the hazard the cap defends against, which is a RUN-level signal being read as
+  // per-test. Capping it would also silently regress the arm 390-16 shipped, on no measurement.
+  // THE RESIDUAL, stated: an authored run CAN still class many tests identically, so the authored
+  // path's fan-out is unchanged by this round (T-390-19-07, accepted).
+  it('does NOT cap the authored arm — six analyze-run crossings all enter', () => {
+    const result = evaluate({
+      failures: suite({ verdictClass: 'timeout', producer: 'analyze-run' }),
+    })
+
+    expect(result.escalatedNotQuarantined).toEqual([])
+    expect(result.events.map((event) => event.testName)).toEqual(MEMBER_NAMES)
+  })
+
+  it('did NOT close the path Task 2 opened — one floor crossing still enters', () => {
+    const result = evaluate({
+      failures: [failure({
+        verdictClass: 'timeout',
+        producer: 'deterministic-classifier',
+        sameBuildPassAndFail: true,
+        fingerprint: 'fp::timeout',
+      })],
+    })
+
+    expect(result.escalatedNotQuarantined).toEqual([])
+    expect(result.events).toHaveLength(1)
+  })
+
+  // Auto-EXITS are not capped, deliberately: refusing to let a fixed test out is a failure in the
+  // opposite direction from the one the cap defends against.
+  it('leaves the RELEASE loop uncapped — six fixed tests all leave in one evaluation', () => {
+    const entries = quarantinedEntriesFor(MEMBER_NAMES)
+    const result = evaluate({
+      entries,
+      testWindows: entries.map((entry) => passingWindow(QUARANTINE_AUTO_EXIT_PASSES, {
+        testName: entry.testName,
+        filePath: entry.filePath,
+      })),
+    })
+
+    expect(result.events).toHaveLength(SUITE_SIZE)
+    expect(result.events.map((event) => event.testName)).toEqual(MEMBER_NAMES)
+  })
+
+  // THE ONLY LEG WHOSE ANSWER DEPENDS ON THE WORD "PER-RUN".
+  //
+  // Every other leg here is a single `evaluate(...)` and is satisfied IDENTICALLY by a module-scope
+  // `let floorAdmissions = 0` — which would make this a PROCESS-LIFETIME cap, under which the third
+  // genuine flake in a project is never auto-quarantined again for the life of the daemon. This leg
+  // is also the only evidence for the plan's central safety argument: an overflow identity crosses
+  // again on a LATER applied run and may be admitted then, so the cap slows the floor path down
+  // rather than closing it — which is the argument that makes K = 2 acceptable at all.
+  //
+  // The mechanism it rides: `evaluateQuarantineDetection` consults `activeKeys` at the TOP of the
+  // failure loop, ahead of the escalate branch, so carrying call 1's admitted identities in as
+  // `quarantined` entries makes call 2 skip them before the admission path — the drain.
+  it('is PER CALL and the overflow DRAINS: the next K enter on the next evaluation, by name', () => {
+    const failures = suite({
+      verdictClass: 'timeout',
+      producer: 'deterministic-classifier',
+      sameBuildPassAndFail: true,
+    })
+
+    const first = evaluate({ failures })
+    expect(first.events.map((event) => event.testName)).toEqual(MEMBER_NAMES.slice(0, K))
+
+    const second = evaluate({
+      failures,
+      entries: quarantinedEntriesFor(MEMBER_NAMES.slice(0, K)),
+    })
+    expect(second.events.map((event) => event.testName)).toEqual(MEMBER_NAMES.slice(K, K * 2))
+    expect(second.escalatedNotQuarantined.map((s) => s.testName))
+      .toEqual(MEMBER_NAMES.slice(K * 2))
   })
 })
 
