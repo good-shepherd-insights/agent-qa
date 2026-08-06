@@ -1,20 +1,43 @@
 // RED-first pins for the detection ladder's PURE rule (Phase 390, D-05/D-06/D-07/D-10/D-11).
 //
-// Three properties are load-bearing here and each is pinned two-sided:
+// The load-bearing properties are NAMED here rather than counted, and each is pinned two-sided:
 //
 //  1. The ladder boundaries. 1 ordinal is nothing, 2 is FLAGGED (visibility only — zero ledger
 //     bytes), 3 ESCALATES. One build of warning before action is the whole point of D-06, so the
 //     step below and the step above every threshold are both asserted.
-//  2. The gate is TWO tables, each TOTAL over the closed eight-class verdict vocabulary.
-//     DISPOSITION restricts auto-quarantine to the three §6.4 A3 classes; the other FIVE escalate
-//     loudly and append nothing, so a real regression is never auto-silenced. FLOOR ELIGIBILITY
-//     (390-16) then asks whether the evidence behind the class is about this test or about the
-//     run — only `flake` may auto-quarantine on the deterministic floor's word alone. Both tables
-//     are asserted key-for-key against VERDICT_CLASSES itself, so a ninth class cannot be
-//     silently un-decided on either axis.
-//  3. Purity. `now` arrives as an argument and the module reads no clock, no fs and no database —
+//  2. The gate is TWO TABLES PLUS A PER-CROSSING CONJUNCT. Both tables are TOTAL over the closed
+//     eight-class verdict vocabulary. DISPOSITION restricts auto-quarantine to the three §6.4 A3
+//     classes; the other FIVE escalate loudly and append nothing, so a real regression is never
+//     auto-silenced. FLOOR ELIGIBILITY (390-16) then asks whether the evidence behind the class is
+//     about this test or about the run: `flake` and `timeout` are both `'floor-eligible'`, and
+//     every other class is `'authored-required'`. But NO class auto-quarantines on the
+//     deterministic floor's word alone — since 390-19 the floor arm additionally requires the
+//     crossing's own `sameBuildPassAndFail` signature, so the table answers whether the floor may
+//     decide this KIND of thing at all and the crossing answers whether there is per-test evidence
+//     in THIS one. Both tables are asserted key-for-key against VERDICT_CLASSES itself, so a ninth
+//     class cannot be silently un-decided on either axis.
+//  3. The per-run floor cap (390-19). Neither table can contain fan-out — every class the floor
+//     mints on a FAILING member is reachable from a run-scoped cause — so
+//     QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP bounds the floor-arm `entered` events one
+//     `evaluateQuarantineDetection` call may author, and one call is one run's fold. The overflow
+//     escalates LOUDLY and DRAINS on the next evaluation; that drain leg is the only one whose
+//     answer depends on the word PER-RUN, and the authored arm's exemption is pinned as a decision
+//     rather than left as an oversight.
+//  4. The same-build pass∧fail signature itself. `hasSameBuildPassAndFail` — the floor arm's second
+//     conjunct — is pinned directly, paired and directional: ONE ordinal carrying both answers
+//     HOLDS, one ordinal carrying one answer does not, and two builds (broke, then fixed) do not.
+//     That last leg is what a "some pass and some fail ANYWHERE in the window" relaxation reds.
+//  5. The committed ledger's ORDER is decided by BYTES, never by host collation (390-22 / WR-06).
+//     Every leg there fails against a collation ordering and passes against a code-unit one, so
+//     the determinism claim is a property of the strings rather than of the machine.
+//  6. Purity. `now` arrives as an argument and the module reads no clock, no fs and no database —
 //     asserted behaviourally (identical inputs, identical bytes) AND by a source scan, because a
 //     rule that reads a clock cannot have its expiry boundary pinned.
+//
+// The remaining clusters pin the constants and the lifecycle the ladder authors: the thresholds
+// themselves, the `entered` event an escalation writes, re-entry suppression while a window is
+// OPEN, the auto-entry's owner over a prior entry's state (390-18), and auto-exit at M passing
+// ordinals (D-10).
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
