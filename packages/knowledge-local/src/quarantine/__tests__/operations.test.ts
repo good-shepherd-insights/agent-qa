@@ -24,7 +24,10 @@
 //     pins below drive BOTH directions — a verb that acquires leaves the epoch bumped and no lease
 //     residue, and a verb meeting a lease somebody else holds refuses typed with the ledger BYTE
 //     for byte unchanged. The refusing direction is the load-bearing one: the same call appends a
-//     line two tests above, so zero bytes is a measurement rather than an absence.
+//     line two tests above, so zero bytes is a measurement rather than an absence. And "already
+//     holds it" is CHECKED rather than believed (390-15): a handed-in authority is re-validated
+//     against the epoch and the lease on disk, so a daemon whose lease was reclaimed under it is
+//     refused typed instead of writing beside the writer that reclaimed.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -45,6 +48,7 @@ import {
   EPOCH_FILE,
   LEASE_FILE,
   LEASE_HEARTBEAT_TTL_MS,
+  WriterAuthorityLostError,
   acquireWriterLease,
   releaseLease,
 } from '../../lease/writer-lease.js'
@@ -830,6 +834,143 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
     expect(existsSync(leaseFile())).toBe(false)
     // Prompt: the stale arm reclaims rather than waiting out the acquisition deadline.
     expect(Date.now() - startedAtMs).toBeLessThan(5_000)
+  })
+
+  // ---- the handed-in authority is FENCED against disk (390-15 / G-390-2R) ------------------
+  //
+  // The daemon arm above rides an authority its process holds. The residual the two-OS-process
+  // harness measured is what happens when it no longer does: a daemon whose heartbeat starved and
+  // whose lease was then RECLAIMED still answers "yes, I already serialized myself" and keeps
+  // writing beside the writer that took the lease from it — two `entered` lines for one identity,
+  // and the verb answering an owner committed truth does not record. The pins below drive both
+  // directions of the fence that closes it.
+
+  /**
+   * A REAL reclaim, forced with no clock and no waiting: acquire, release, acquire again.
+   *
+   * `releaseLease` removes the lease file and deliberately RETAINS the monotonic epoch, so the
+   * second acquisition writes `epoch + 1` over a root the first holder's captured authority still
+   * names. That captured value is therefore provably behind disk — precisely the state a daemon
+   * reclaimed under arrives in — reproduced without ageing a heartbeat or manipulating a clock.
+   *
+   * The `+ 1` assertion is load-bearing rather than decorative: it is what makes this fixture a
+   * reproduction of a RECLAIM instead of a mismatch somebody typed. If the lease module ever
+   * stopped bumping the epoch on acquisition, this fixture would stop reproducing the state under
+   * test, and it would say so here rather than degrading quietly into a hand-written number.
+   */
+  function reclaimed(): {
+    stale: { leaseId: string; epoch: number }
+    current: { leaseId: string; epoch: number }
+  } {
+    const stale = foreignHolder()
+    expect(releaseLease({ knowledgeRoot, leaseId: stale.leaseId }).kind).toBe('released')
+    const current = foreignHolder()
+    expect(current.epoch).toBe(stale.epoch + 1)
+    expect(current.leaseId).not.toBe(stale.leaseId)
+    return { stale, current }
+  }
+
+  /**
+   * The refusal a verb produced, or a legible failure naming what it answered instead.
+   *
+   * A bare `rejects` matcher reports "promise resolved" and drops the value, which is exactly the
+   * evidence the RED direction needs: these three legs must first be observed with the verb
+   * RETURNING a success kind, not merely failing to throw.
+   */
+  async function refusalFrom(work: Promise<unknown>): Promise<unknown> {
+    return await work.then(
+      (value) => {
+        throw new Error(`expected a typed refusal, the verb answered ${JSON.stringify(value)}`)
+      },
+      (error: unknown) => error,
+    )
+  }
+
+  it('REFUSES an add from a RECLAIMED authority — typed, ledger byte-unchanged, reclaimer untouched', async () => {
+    await plant([entered(B, '2026-01-01T00:00:00.000Z')])
+    const before = ledgerBytes()
+    const { stale, current } = reclaimed()
+
+    const refusal = await refusalFrom(operations(NOW, () => stale).add(A))
+
+    expect(refusal).toBeInstanceOf(WriterAuthorityLostError)
+    expect(refusal).toMatchObject({
+      name: 'WriterAuthorityLostError',
+      reason: 'stale-epoch',
+      observedEpoch: current.epoch,
+      authority: { knowledgeRoot, leaseId: stale.leaseId, epoch: stale.epoch },
+    })
+
+    // Load-bearing BECAUSE the same call writes: the accept control below plants this exact ledger
+    // and `add(A)` appends an `entered` line through it. Zero appended bytes is a measurement.
+    expect(ledgerBytes()).toBe(before)
+    // The refusal took nothing from the writer that reclaimed — no second lease, no silent steal.
+    expect(currentLeaseId()).toBe(current.leaseId)
+
+    releaseLease({ knowledgeRoot, leaseId: current.leaseId })
+  })
+
+  it('REFUSES a release from a RECLAIMED authority — same fence, the other write verb', async () => {
+    await plant([entered(A, '2026-01-01T00:00:00.000Z')])
+    const before = ledgerBytes()
+    const { stale, current } = reclaimed()
+
+    const refusal = await refusalFrom(operations(NOW, () => stale).release(A))
+
+    expect(refusal).toBeInstanceOf(WriterAuthorityLostError)
+    expect(refusal).toMatchObject({ reason: 'stale-epoch', observedEpoch: current.epoch })
+
+    // Same reasoning: `release(A)` over this open window appends `released-manual` when the
+    // authority is current (the accept control below), so an unchanged file is the fence's doing.
+    expect(ledgerBytes()).toBe(before)
+    expect(currentLeaseId()).toBe(current.leaseId)
+
+    releaseLease({ knowledgeRoot, leaseId: current.leaseId })
+  })
+
+  it('REFUSES an authority whose LEASE is gone while the epoch still matches — the leg the epoch cannot cover', async () => {
+    // The release-without-reclaim shape. `releaseLease` retains the monotonic epoch forever, so a
+    // holder that released (or was released by a supervisor) still carries an epoch that matches
+    // disk exactly — and is nonetheless no longer the holder. An epoch-only fence admits it.
+    await plant([entered(B, '2026-01-01T00:00:00.000Z')])
+    const before = ledgerBytes()
+    const departed = foreignHolder()
+    expect(releaseLease({ knowledgeRoot, leaseId: departed.leaseId }).kind).toBe('released')
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe(`${String(departed.epoch)}\n`)
+    expect(existsSync(leaseFile())).toBe(false)
+
+    const refusal = await refusalFrom(operations(NOW, () => departed).add(A))
+
+    expect(refusal).toBeInstanceOf(WriterAuthorityLostError)
+    expect(refusal).toMatchObject({ reason: 'lease-missing', observedEpoch: departed.epoch })
+
+    expect(ledgerBytes()).toBe(before)
+    // Nothing was minted on the way out either: a refused verb does not leave a lease behind.
+    expect(existsSync(leaseFile())).toBe(false)
+  })
+
+  it('ACCEPTS a CURRENT authority unchanged — acquires nothing, releases nothing, and writes', async () => {
+    // The accept direction on the SAME fixture shape as the three refusals above, without which
+    // each of them is satisfiable by a fence that refuses everything. It is also the assertion
+    // that the daemon's normal path is untouched: a live acquisition, held across both verbs.
+    await plant([entered(B, '2026-01-01T00:00:00.000Z')])
+    const authority = foreignHolder()
+    const verbs = operations(NOW, () => authority)
+
+    expect((await verbs.add(A)).kind).toBe('entered')
+    expect((await verbs.release(A)).kind).toBe('released')
+
+    expect(ledgerLines().map((line) => line.kind)).toEqual([
+      'entered',
+      'entered',
+      'released-manual',
+    ])
+    // Zero acquisitions BY THE VERB: the epoch is still the holder's own, and the holder's lease
+    // is still on disk. Releasing it would have unlocked the daemon's whole process.
+    expect(readFileSync(join(knowledgeRoot, EPOCH_FILE), 'utf8')).toBe(`${String(authority.epoch)}\n`)
+    expect(currentLeaseId()).toBe(authority.leaseId)
+
+    releaseLease({ knowledgeRoot, leaseId: authority.leaseId })
   })
 
   // ---- committed-truth read posture -------------------------------------------------------
