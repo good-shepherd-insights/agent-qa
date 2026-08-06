@@ -11,7 +11,7 @@
 // The fold is PURE: `now` arrives as an argument, so expiry boundaries are pinned one second
 // either side with zero wall-clock reads.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -497,6 +497,86 @@ describe('appendQuarantineEvents (D-04)', () => {
     expect(outcome).toEqual({ kind: 'appended', lines: 2 })
     expect(ledgerText().trimEnd().split('\n')).toHaveLength(2)
     expect(readQuarantineLedger(knowledgeRoot).refusedLines).toEqual([])
+  })
+
+  // 390-14 / G-390-1. The read is FOUR legs in order (`createVersionGuard`: object-ness →
+  // finite-number → reject-newer → migration walk over a permanently-empty registry → structural
+  // shape). The write pre-check ranged only the LAST of them, so five distinct finite/non-finite
+  // versions were admitted here and hard-failed on read — and the failure is all-or-nothing over
+  // the WHOLE file, so one such line takes `list`, `add` and `release` down together, leaving the
+  // operator's only recovery a hand-edit of a file the verb that would show them its contents also
+  // refuses to read. Two of the five (`1`, `2.5`) are OLDER-side, so a reject-newer comparison
+  // would not close this; `NaN`/`Infinity` fail every ordering comparison silently. The check is
+  // `=== CURRENT`.
+  const READ_REFUSED_VERSIONS: readonly (readonly [string, number])[] = [
+    ['newer than this build', 3],
+    ['older with no registered migration', 1],
+    ['non-integer', 2.5],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ]
+
+  for (const [label, schemaVersion] of READ_REFUSED_VERSIONS) {
+    it(`refuses a schemaVersion the READ refuses — ${label} (${String(schemaVersion)})`, () => {
+      expect(() =>
+        appendQuarantineEvents(knowledgeRoot, [entered({ schemaVersion })], { auditBaseDir }),
+      ).toThrow(TypeError)
+
+      // The throw names the offending index AND the leg that refused, so an operator reading it
+      // can tell a malformed record from a wrong-version one.
+      expect(() =>
+        appendQuarantineEvents(knowledgeRoot, [entered({ schemaVersion })], { auditBaseDir }),
+      ).toThrow(/index 0[\s\S]*schemaVersion/)
+
+      expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
+      expect(existsSync(join(auditBaseDir, 'guardrail_audit.jsonl'))).toBe(false)
+    })
+
+    it(`and the READ genuinely refuses it — ${label} (${String(schemaVersion)})`, () => {
+      // The refusal above is load-bearing only because this same line, written past the gate, is
+      // one the reader cannot consume. Hand-write it (the D-12 human path) and watch the read.
+      writeFileSync(
+        join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME),
+        `${canonicalJson(entered({ schemaVersion }))}\n`,
+        'utf8',
+      )
+      let refused = false
+      try {
+        const read = readQuarantineLedger(knowledgeRoot)
+        refused = read.refusedLines.length > 0 && read.events.length === 0
+      } catch {
+        refused = true
+      }
+      expect(refused).toBe(true)
+    })
+  }
+
+  it('the SAME append at the CURRENT version writes — the version refusal has a reddening domain', () => {
+    // Accept-direction control on the identical fixture shape. Without it the five refusals above
+    // are satisfiable by a `throw` on everything.
+    const event = entered({ schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION })
+    expect(appendQuarantineEvents(knowledgeRoot, [event], { auditBaseDir })).toEqual({
+      kind: 'appended',
+      lines: 1,
+    })
+    const read = readQuarantineLedger(knowledgeRoot)
+    expect(read.refusedLines).toEqual([])
+    expect(read.events).toEqual([event])
+  })
+
+  it('a wrong-version SECOND event withholds the clean first one — all-or-nothing holds', () => {
+    appendQuarantineEvents(knowledgeRoot, [entered()], { auditBaseDir })
+    const before = ledgerText()
+
+    expect(() =>
+      appendQuarantineEvents(
+        knowledgeRoot,
+        [renewed(), entered({ testName: 'second test', schemaVersion: 3 })],
+        { auditBaseDir },
+      ),
+    ).toThrow(/index 1/)
+
+    expect(ledgerText()).toBe(before)
   })
 
   it('reads no clock — the caller stamps every instant', () => {
