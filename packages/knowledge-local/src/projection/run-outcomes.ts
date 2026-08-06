@@ -115,6 +115,14 @@ export interface ProjectRunOutcomesOptions {
 export interface RunOutcomeFailureKey {
   fingerprint: string
   verdictClass: VerdictClass
+  /**
+   * WHICH pipeline authored the class (390-16). Not part of the fingerprint and not stored on
+   * `run_fingerprint_windows` — it travels on the in-memory delta only, because the quarantine
+   * ladder's floor-eligibility gate needs to know whether the class is a statement about THIS
+   * TEST (an authored `analyze-run` verdict) or about the RUN (the deterministic floor, whose
+   * `environment` arms are one health-probe result applied to every failing member).
+   */
+  producer: Verdict['producer']
 }
 
 export interface RunOutcomeTestDelta {
@@ -247,8 +255,13 @@ function countedOutcome(outcome: PerTestOutcome['outcome']): boolean | undefined
 }
 
 /**
- * The RESOLVED class per member test, computed ONCE per fold (390 D-09, mirroring the canary
+ * The RESOLVED VERDICT per member test, computed ONCE per fold (390 D-09, mirroring the canary
  * fold's `resolveAttributionClasses` member-for-member — same class of fold, same input treatment).
+ *
+ * It answers the whole `Verdict`, not just `.class` (390-16). Both layers below already HOLD one —
+ * layer 1 reads `member.rootCause`, which IS a Verdict, and layer 2 reads `resolveRunVerdicts`,
+ * which returns them — so keeping only the class was discarding `producer` one step short of the
+ * quarantine decision that needs it.
  *
  * Two layers, in overwrite order:
  *
@@ -267,24 +280,24 @@ function countedOutcome(outcome: PerTestOutcome['outcome']): boolean | undefined
 function resolveProjectionClasses(
   handoff: CompletedRunHandoff,
   artifact: RunAnalysisArtifact | undefined,
-): ReadonlyMap<number, Verdict['class']> {
+): ReadonlyMap<number, Verdict> {
   const members = handoff.tests ?? []
-  const classes = new Map<number, Verdict['class']>()
+  const verdicts = new Map<number, Verdict>()
   for (const member of members) {
-    if (member.rootCause !== undefined) classes.set(member.testIndex, member.rootCause.class)
+    if (member.rootCause !== undefined) verdicts.set(member.testIndex, member.rootCause)
   }
   // The accessor traverses `tests` on the floor path; the rebuild's WR-03 wall admits a handoff
   // whose `tests` key is absent, so it is normalized to the same empty array used above.
   for (const verdict of resolveRunVerdicts(artifact, { ...handoff, tests: members })) {
-    classes.set(verdict.perTest, verdict.class)
+    verdicts.set(verdict.perTest, verdict)
   }
-  return classes
+  return verdicts
 }
 
 function testDelta(
   test: PerTestOutcome,
   extractAnchors: ExtractStepAnchors,
-  resolvedClasses: ReadonlyMap<number, Verdict['class']>,
+  resolvedVerdicts: ReadonlyMap<number, Verdict>,
 ): RunOutcomeTestDelta | undefined {
   const passed = countedOutcome(test.outcome)
   if (passed === undefined) return undefined
@@ -297,15 +310,15 @@ function testDelta(
     }
   }
 
-  const resolvedClass = resolvedClasses.get(test.testIndex)
+  const resolved = resolvedVerdicts.get(test.testIndex)
   return {
     filePath: test.filePath,
     testName: test.testName,
     passed,
     heals: steps.filter((step) => step.selfHeal !== undefined).length,
-    flake: resolvedClass === 'flake',
+    flake: resolved?.class === 'flake',
     anchorKeys: [...anchorKeys].sort(),
-    ...(passed ? {} : { failure: failureKey({ ...test, steps }, resolvedClass) }),
+    ...(passed ? {} : { failure: failureKey({ ...test, steps }, resolved) }),
   }
 }
 
@@ -319,22 +332,25 @@ function testDelta(
  * so callers can vary the projection's anchor ROWS; keying the window through a variable seam would
  * let the window and the cluster presentation drift apart on a test host.
  *
- * A failed member always has a resolved class (`resolveRunVerdicts` mints `unknown` for a failure
- * carrying no verdict), so the fallback below is a total-function guard, not an expected path.
+ * A failed member always has a resolved verdict (`resolveRunVerdicts` mints `unknown` for a failure
+ * carrying no verdict), so the fallbacks below are total-function guards, not expected paths. The
+ * `producer` fallback matches `mintedUnknown`'s own value for the same reason the class fallback
+ * matches its class: an absent verdict is exactly the floor's answer, never an authored one.
  */
 function failureKey(
   test: PerTestOutcome,
-  resolvedClass: VerdictClass | undefined,
+  resolved: Verdict | undefined,
 ): RunOutcomeFailureKey {
   const step = failingStepOf(test)
   const anchors = step === undefined ? [] : exercisedAnchors(step)
-  const verdictClass = resolvedClass ?? 'unknown'
+  const verdictClass = resolved?.class ?? 'unknown'
   return {
     fingerprint: failureFingerprint(
       { anchors, errorText: errorTextOf(step, test) },
       verdictClass,
     ),
     verdictClass,
+    producer: resolved?.producer ?? 'deterministic-classifier',
   }
 }
 
@@ -670,6 +686,7 @@ function evaluateQuarantineForFold(
       testName: test.testName,
       fingerprint: test.failure.fingerprint,
       verdictClass: test.failure.verdictClass,
+      producer: test.failure.producer,
       ...fingerprintRecurrence(
         db,
         { product: projection.product, fingerprint: test.failure.fingerprint },

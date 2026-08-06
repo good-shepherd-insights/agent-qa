@@ -45,6 +45,7 @@ import {
 import type {
   QuarantineEntryState,
   QuarantineLedgerEvent,
+  Verdict,
   VerdictClass,
 } from '@vostride/agent-qa-schema'
 
@@ -121,6 +122,19 @@ export interface QuarantineDetectionFailure {
   testName: string
   fingerprint: string
   verdictClass: VerdictClass
+  /**
+   * WHICH pipeline authored `verdictClass` on the CROSSING run (390-16). The floor-eligibility
+   * gate reads this beside the class, because for some classes the class alone does not say
+   * whether the evidence is about this test or about the whole run.
+   *
+   * WHY THE CROSSING RUN'S PRODUCER, and not all three occurrence ordinals'. Gating on every
+   * ordinal in the window would need a new `producer` column on `run_fingerprint_windows` plus an
+   * index rebuild — cheap in itself, since L12 makes the projection a gitignored rebuildable
+   * derivation — but it is a strictly larger change that buys nothing: the crossing run is the one
+   * AUTHORING the `entered` line, so its evidence is the evidence the entry rests on. Recorded
+   * here so the next reader does not have to re-derive the choice (T-390-16-05, accepted).
+   */
+  producer: Verdict['producer']
   /** DISTINCT build ordinals inside the window carrying this fingerprint. */
   occurrenceOrdinals: number
   /** DISTINCT build ordinals inside the window carrying ANY failure — the honest denominator. */
@@ -158,6 +172,14 @@ export interface QuarantineDetectionSighting {
   testName: string
   fingerprint: string
   verdictClass: VerdictClass
+  /**
+   * The crossing run's producer, carried onto the sighting so an operator can ACT on it.
+   * `escalatedNotQuarantined` has two distinct causes with two different human actions: a class
+   * that is never auto-quarantinable (run `analyze-run` and it still will not be), versus a class
+   * that would have been had a verdict been authored (run `analyze-run` and it will be). Those
+   * read identically on the curation tail's line unless the producer travels with the sighting.
+   */
+  producer: Verdict['producer']
   occurrenceOrdinals: number
   windowOrdinals: number
 }
@@ -188,6 +210,7 @@ function sighting(failure: QuarantineDetectionFailure): QuarantineDetectionSight
     testName: failure.testName,
     fingerprint: failure.fingerprint,
     verdictClass: failure.verdictClass,
+    producer: failure.producer,
     occurrenceOrdinals: failure.occurrenceOrdinals,
     windowOrdinals: failure.windowOrdinals,
   }

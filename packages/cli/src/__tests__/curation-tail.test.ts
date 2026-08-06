@@ -1781,6 +1781,7 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
     testName: 'checkout completes',
     fingerprint: 'fp::app_bug',
     verdictClass: 'app_bug' as const,
+    producer: 'analyze-run' as const,
     occurrenceOrdinals: 4,
     windowOrdinals: 5,
   }

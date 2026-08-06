@@ -66,6 +66,11 @@ function failure(
     testName: TEST_NAME,
     fingerprint: FINGERPRINT,
     verdictClass: 'flake',
+    // AUTHORED by default (390-16), so every pre-existing leg keeps varying exactly ONE axis: the
+    // disposition table's. The floor-eligibility axis is varied EXPLICITLY, in its own suite, with
+    // both producer values named on both sides. A shared default of 'deterministic-classifier'
+    // would have silently folded the two tables' effects together in every legacy assertion.
+    producer: 'analyze-run',
     occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
     windowOrdinals: QUARANTINE_WINDOW_ORDINALS,
     ...overrides,
@@ -202,6 +207,8 @@ describe('ladder boundaries, pinned one step either side', () => {
         testName: TEST_NAME,
         fingerprint: FINGERPRINT,
         verdictClass: 'flake',
+        // The sighting mirrors the failure whole — the producer travels with it (390-16).
+        producer: 'analyze-run',
         occurrenceOrdinals: 2,
         windowOrdinals: QUARANTINE_WINDOW_ORDINALS,
       },
