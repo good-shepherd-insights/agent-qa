@@ -611,6 +611,13 @@ export function createQuarantineOperations(
             owner,
             enteredAt: now,
             expiresAt,
+            // The history the NEXT fold of this file will answer, answered here too. This branch
+            // is reached both for a first entry and for a re-entry over a CLOSED window, so the
+            // count continues the prior entry's rather than restarting — an answer that restarted
+            // would disagree with the ledger one read later, and the caller would have no way to
+            // know which of the two was lying.
+            enteredCount: (entry?.enteredCount ?? 0) + 1,
+            firstEnteredAt: entry?.firstEnteredAt ?? now,
             state: 'quarantined',
           },
         }

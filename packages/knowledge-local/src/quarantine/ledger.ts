@@ -170,6 +170,10 @@ interface MutableEntry {
   owner: QuarantineOwner
   enteredAt: string
   expiresAt: string
+  /** Accumulated across every `entered` event for this key — never reset by the re-entry arm. */
+  enteredCount: number
+  /** The FIRST `entered` event's instant for this key; set once and carried forward. */
+  firstEnteredAt: string
   /** The state the EVENTS put the entry in; expiry is applied against `now` afterwards. */
   eventState: 'quarantined' | 'released'
 }
@@ -189,6 +193,22 @@ function entryKey(event: {
  * Per key, in event order: `entered` opens (or re-opens — D-10's re-entry needs no special rule,
  * the sliding window self-heals) a window carrying owner/expiry/fingerprint/class; `renewed`
  * extends the expiry and claims the owner when one is supplied; either released kind closes it.
+ *
+ * TWO OF THE ANSWERED FIELDS ARE HISTORY, NOT WINDOW FACTS (390-18). `enteredCount` is how many
+ * `entered` events this key has accumulated — a renewal extends a window rather than opening one,
+ * so it never increments — and `firstEnteredAt` is the first of those events' instant. They are
+ * DERIVED here from bytes the log already holds: no new event kind carries them, no migration
+ * exists for them and {@link CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION} is unmoved by them. A
+ * reader meeting two new fields on a versioned artifact's state type will reasonably ask whether
+ * the file format moved; it did not, and every ledger written before this fold existed answers
+ * both questions correctly on its next read. This is the question D-03 chose an append-only log to
+ * make free, finally being asked.
+ *
+ * THE TWO INSTANTS ANSWER DIFFERENT QUESTIONS and their names are close enough to be a drift
+ * hazard, so: `enteredAt` is WHEN THIS WINDOW OPENED, which is the fact `expiresAt` and the
+ * computed state are about; `firstEnteredAt` is WHEN THIS TEST'S QUARANTINE HISTORY BEGAN, which
+ * is the fact a human triaging it needs (and the key `triageOrder` sorts on, so that a test on its
+ * seventh re-entry cannot present as the newest thing in the queue).
  *
  * A renewal can extend an OPEN window — quarantined or lapsed — but NEVER re-opens a CLOSED one
  * (390-11 / WR-04). A release is the operator's decision, and re-entry has its own event:
@@ -223,7 +243,12 @@ export function foldQuarantineLedgerState(
   for (const event of events) {
     const key = entryKey(event)
     switch (event.kind) {
-      case 'entered':
+      case 'entered': {
+        // Read the prior record BEFORE overwriting it. The arm still overwrites every mutable
+        // fact — that is deliberate, a re-entry genuinely re-states owner, expiry, fingerprint and
+        // class — but two of them are HISTORY rather than facts about the current window, and a
+        // whole-record `set` discarded exactly the history D-03 chose an event log to keep.
+        const prior = entries.get(key)
         entries.set(key, {
           product: event.product,
           filePath: event.filePath,
@@ -233,9 +258,12 @@ export function foldQuarantineLedgerState(
           owner: event.owner,
           enteredAt: event.at,
           expiresAt: event.expiresAt,
+          enteredCount: (prior?.enteredCount ?? 0) + 1,
+          firstEnteredAt: prior?.firstEnteredAt ?? event.at,
           eventState: 'quarantined',
         })
         break
+      }
       case 'renewed': {
         const existing = entries.get(key)
         // A renewal with no window to renew is meaningless — refusing to synthesize one keeps the
@@ -278,6 +306,8 @@ export function foldQuarantineLedgerState(
       owner: entry.owner,
       enteredAt: entry.enteredAt,
       expiresAt: entry.expiresAt,
+      enteredCount: entry.enteredCount,
+      firstEnteredAt: entry.firstEnteredAt,
       state,
     }
   })

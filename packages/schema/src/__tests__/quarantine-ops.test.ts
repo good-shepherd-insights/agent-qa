@@ -50,6 +50,8 @@ function entry(overrides: Record<string, unknown> = {}): Record<string, unknown>
     owner: QUARANTINE_UNASSIGNED_OWNER,
     enteredAt: '2026-08-05T10:00:00.000Z',
     expiresAt: '2026-09-04T10:00:00.000Z',
+    enteredCount: 1,
+    firstEnteredAt: '2026-08-05T10:00:00.000Z',
     state: 'quarantined',
     ...overrides,
   }

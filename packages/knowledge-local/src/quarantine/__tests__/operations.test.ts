@@ -297,6 +297,9 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
         owner: QUARANTINE_UNASSIGNED_OWNER,
         enteredAt: NOW,
         expiresAt: DEFAULT_EXPIRY,
+        // A first entry: one crossing, and the history begins now (390-18).
+        enteredCount: 1,
+        firstEnteredAt: NOW,
         state: 'quarantined',
       },
     })
@@ -403,6 +406,9 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
         owner: QUARANTINE_UNASSIGNED_OWNER,
         enteredAt: '2026-01-01T00:00:00.000Z',
         expiresAt: FAR_FUTURE,
+        // A closed window still reports the history it accumulated (390-18).
+        enteredCount: 1,
+        firstEnteredAt: '2026-01-01T00:00:00.000Z',
         state: 'released',
       },
     })

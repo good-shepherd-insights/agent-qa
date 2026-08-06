@@ -283,7 +283,21 @@ export const QUARANTINE_ENTRY_STATE_NAMES = ['quarantined', 'expired', 'released
 
 export type QuarantineEntryStateName = (typeof QUARANTINE_ENTRY_STATE_NAMES)[number]
 
-/** One folded entry: the durable identity, the entry's own facts, and its computed state. */
+/**
+ * One folded entry: the durable identity, the entry's own facts, its accumulated history, and its
+ * computed state.
+ *
+ * TWO INSTANTS, TWO QUESTIONS (390-18). `enteredAt` is when the CURRENT window opened — the fact
+ * `expiresAt` and `state` are relative to. `firstEnteredAt` is when this test's quarantine history
+ * began, which is the fact a human triaging it is actually deciding about, and the key the triage
+ * queue sorts on. For a first entry they coincide; for a test that has been here before they do
+ * not, and reading one where the other was meant is the drift this docstring exists to prevent.
+ *
+ * `enteredCount` and `firstEnteredAt` are DERIVED by the fold from `entered` events already
+ * committed — no event kind carries them, {@link CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION} is
+ * unmoved and no migration exists for them. Every ledger already written answers both correctly on
+ * its next fold.
+ */
 export interface QuarantineEntryState {
   product: string
   filePath: string
@@ -293,6 +307,10 @@ export interface QuarantineEntryState {
   owner: QuarantineOwner
   enteredAt: string
   expiresAt: string
+  /** How many `entered` events this identity has accumulated. A renewal is not one; minimum 1. */
+  enteredCount: number
+  /** The `at` of this identity's FIRST `entered` event — when its history began. */
+  firstEnteredAt: string
   state: QuarantineEntryStateName
 }
 

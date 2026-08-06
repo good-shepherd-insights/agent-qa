@@ -34,11 +34,22 @@ import type { QuarantineEntryState } from './quarantine-ledger'
  * One folded ledger entry as every surface lists it — D-13's enumeration contract in full:
  * the three legs of stable test identity, the fingerprint that keyed the window, the resolved
  * class, the owner (D-12's `unassigned` literal until a human claims it), the entry instant,
- * the deadline, and the computed state.
+ * the accumulated re-entry history, the deadline, and the computed state.
  *
  * The owner leg is a non-empty string rather than an enum on purpose: the ledger's own owner
  * type is the unassigned literal widened by whatever name a human claimed it under, so an
  * enum here would be a closed set the ledger deliberately does not have.
+ *
+ * `enteredCount` and `firstEnteredAt` (390-18) are the ledger's own DERIVATIONS, not stored
+ * bytes — the fold computes them over `entered` events already committed, so nothing about the
+ * ledger's version or its migrations moves to carry them. They are on the wire because
+ * "this test has re-entered quarantine 7 times, and its history began 214 days ago" is the fact
+ * that prompts a human decision, and a surface cannot say it from a row that has no past. HOW a
+ * surface phrases that is the surface's decision; this contract only carries the two numbers.
+ *
+ * The `satisfies` below is this widening's COMPLETENESS ORACLE: `QuarantineEntryState` gaining a
+ * leg that this strict object does not carry is a compile error, so the wire contract cannot
+ * silently answer less than the fold knows.
  */
 export const QuarantineEntrySchema = z.object({
   product: z.string().min(1),
@@ -49,6 +60,8 @@ export const QuarantineEntrySchema = z.object({
   owner: z.string().min(1),
   enteredAt: z.string().min(1),
   expiresAt: z.string().min(1),
+  enteredCount: z.number().int().positive(),
+  firstEnteredAt: z.string().min(1),
   state: z.enum(QUARANTINE_ENTRY_STATE_NAMES),
 }).strict() satisfies z.ZodType<QuarantineEntryState>
 

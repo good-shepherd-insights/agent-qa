@@ -108,6 +108,8 @@ function activeEntry(overrides: Partial<QuarantineEntryState> = {}): QuarantineE
     owner: QUARANTINE_UNASSIGNED_OWNER,
     enteredAt: '2026-07-06T12:00:00.000Z',
     expiresAt: '2026-09-01T12:00:00.000Z',
+    enteredCount: 1,
+    firstEnteredAt: '2026-07-06T12:00:00.000Z',
     state: 'quarantined',
     ...overrides,
   }
