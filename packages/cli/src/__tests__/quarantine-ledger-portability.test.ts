@@ -184,14 +184,25 @@ function failingStep(buildOrdinal: number): StepEvidence {
 }
 
 /**
- * AUTHORED since 390-19. This file's subject is LEDGER PORTABILITY — that a committed entry
- * suppresses on a checkout that never saw the machine that wrote it, and that no checkout root
- * leaks into the bytes — so it needs a crossing the gate genuinely ADMITS in order to have an entry
- * to carry at all. A floor-produced verdict can no longer be that one: 390-19's floor arm requires
- * a per-crossing `sameBuildPassAndFail`, and the fold's only construction site supplies a constant
- * `false` until plan 390-21 computes it, so a floor-produced crossing is INERT IN-TREE BY
- * CONSTRUCTION for that interval. `analyze-run` admits on the first disjunct, which this round does
- * not touch, so the portability assertions keep exercising a real committed entry.
+ * AUTHORED since 390-19, and STILL authored after 390-21 for a live reason rather than a dead one
+ * (corrected 390-22; 390-21 filed this sentence as a known stale comment).
+ *
+ * This file's subject is LEDGER PORTABILITY — that a committed entry suppresses on a checkout that
+ * never saw the machine that wrote it, and that no checkout root leaks into the bytes — so it needs
+ * a crossing the gate genuinely ADMITS in order to have an entry to carry at all.
+ *
+ * WHAT CHANGED. 390-19's floor arm requires a per-crossing `sameBuildPassAndFail`, and for one wave
+ * the fold's only construction site supplied a constant `false`, so a floor-produced crossing was
+ * inert in-tree by construction. That interval is CLOSED: 390-21 replaced the constant with a read
+ * of the crossing test's own outcome window, and the floor path is reachable end to end.
+ *
+ * WHY AUTHORED IS STILL THE RIGHT CHOICE HERE. The floor arm is reachable, not free: it needs the
+ * crossing test's window to carry a pass and a fail at ONE build ordinal, which takes two separate
+ * applied runs at the same `handoff.buildOrdinal` and which an in-run retry can never produce. This
+ * harness drives one run per checkout because the checkout, not the run count, is its subject.
+ * `analyze-run` admits on the first disjunct — untouched by either round — so the portability
+ * assertions keep exercising a real committed entry without the fixture having to simulate a CI
+ * job re-run it is not about.
  */
 function flakeVerdict(): Verdict {
   return {
