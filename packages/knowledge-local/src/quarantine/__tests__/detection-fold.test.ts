@@ -38,6 +38,13 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import {
+  classifyRootCause,
+  createTimeoutAbortReason,
+  deriveMemberOutcome,
+} from '@vostride/agent-qa-runner'
+import type { TestResult } from '@vostride/agent-qa-runner'
+
 import { foldRunOutcomes } from '../../projection/run-outcomes.js'
 import type { FoldRunOutcomesReport } from '../../projection/run-outcomes.js'
 import {
@@ -97,26 +104,98 @@ function failingStep(): StepEvidence {
   } as unknown as StepEvidence
 }
 
+// ---- TWO VERDICT BUILDERS, FOR TWO PRODUCERS (390-21) -----------------------------------------
+//
+// They are not one shortcut around the other. A verdict has exactly two producers and they are
+// built in opposite directions, so this file models both:
+//
+//  - THE FLOOR (`deterministic-classifier`) is a FUNCTION of a member's TestResult. So the floor
+//    corpus SCRIPTS a result and asks the runner's own `classifyRootCause` what it says — a caller
+//    asks for "a member that blew its deadline" and gets whatever the classifier answers, rather
+//    than asserting what it should have answered. 390-16 shipped green over the opposite: a
+//    `CompletedRunHandoff` carrying `class: 'flake'` WITH `producer: 'deterministic-classifier'`,
+//    behind an `as unknown as` cast, which the classifier cannot emit for ANY input. The
+//    `FoldVerdictSpec` union below is what makes that shape stop COMPILING instead of quietly
+//    passing.
+//  - AN AUTHORED VERDICT (`analyze-run`) is a MODEL OUTPUT. It has no deterministic producer to
+//    route through and the class genuinely IS the input, so the authored builder still takes a
+//    class name — and that is faithful, not a shortcut.
+//
+// WHAT THE SCRIPTED RESULT DOES AND DOES NOT DECIDE HERE. It produces the VERDICT. The handoff's
+// step evidence stays the fixture's own rich `failingStep()`, because this file's subject is the
+// fold and the failure fingerprint it derives; the end-to-end file (cli
+// `quarantine-lifecycle.e2e.test.ts`) is where the scripted result drives the real shell and the
+// steps come off the run too.
+
 /**
- * AUTHORED by default since 390-19. Every leg in this file that does not name a producer is about
- * fold PLUMBING — the applied-arm gate, the append/commit ordering, the owner carry-forward, the
- * anti-silencing class differential — and needs a verdict the gate genuinely ADMITS to exercise it.
- * A floor-produced verdict cannot be that verdict HERE, and since 390-21 the reason is a
- * measurement rather than an interval: the floor arm requires a per-crossing
- * `sameBuildPassAndFail`, the fold now COMPUTES that from the crossing test's own outcome window,
- * and every plumbing fixture below drives three distinct failing ordinals with no same-ordinal
- * pass — so its window carries no signature and the floor arm refuses it on the facts. The legs
- * that are genuinely ABOUT the producer axis name it explicitly below, and the legs about the
- * signature build the two-runs-at-one-ordinal window the floor arm needs.
+ * The runner's own test-deadline message, from the SINGLE MINT SITE that defines it
+ * (`createTimeoutAbortReason`) — never a string literal. The matcher `isTestTimeoutMessage` and
+ * this mint are deliberately single-sourced, so a literal here would pin a message the runner
+ * stops emitting the day the format changes.
  */
-function rootCause(
-  verdictClass: VerdictClass,
-  perTest = 0,
-  producer: Verdict['producer'] = 'analyze-run',
-): Verdict {
+const TEST_DEADLINE_ERROR = createTimeoutAbortReason('test', 30_000).message
+
+/** A member that blew the hard test budget ⇒ `deriveMemberOutcome` answers `'timeout'`. */
+function timedOutResult(): TestResult {
+  return {
+    name: TEST_NAME,
+    filePath: FILE_PATH,
+    status: 'failed',
+    steps: [{ name: 'pay now', status: 'failed', duration: 1, error: TEST_DEADLINE_ERROR }],
+    duration: 1,
+  }
+}
+
+/** A member whose failing step carries a connect token ⇒ the classifier answers `'environment'`. */
+function connectFailureResult(): TestResult {
+  return {
+    name: TEST_NAME,
+    filePath: FILE_PATH,
+    status: 'failed',
+    steps: [{
+      name: 'pay now',
+      status: 'failed',
+      duration: 1,
+      error: 'connect ECONNREFUSED 127.0.0.1:4173',
+    }],
+    duration: 1,
+  }
+}
+
+/** A member that PASSED on retry — the ONLY shape `classifyRootCause` mints `flake` for. */
+function passedOnRetryResult(): TestResult {
+  return {
+    name: TEST_NAME,
+    filePath: FILE_PATH,
+    status: 'passed',
+    steps: [{ name: 'pay now', status: 'passed', duration: 1 }],
+    duration: 1,
+    retryCount: 1,
+  }
+}
+
+/**
+ * The verdict THE RUNNER ANSWERS for a scripted member — the same three inputs the shell coexists
+ * with at its one classification seam (`run/shell.ts`): the result, the derived member outcome,
+ * and the member index.
+ */
+function producedVerdict(result: TestResult, perTest = 0): Verdict {
+  const verdict = classifyRootCause({
+    result,
+    outcome: deriveMemberOutcome(result),
+    testIndex: perTest,
+  })
+  if (verdict === undefined) {
+    throw new Error('the classifier declined to classify this scripted member')
+  }
+  return verdict
+}
+
+/** An `analyze-run` verdict: a model output, so the class IS the input (see the note above). */
+function authoredVerdict(verdictClass: VerdictClass, perTest = 0): Verdict {
   return {
     class: verdictClass,
-    producer,
+    producer: 'analyze-run',
     confidence: 0.6,
     evidence: { citedSteps: [0], citedAnchors: [], citedArtifacts: [], rationale: ERROR_TEXT },
     memoryMisdirectionRuledOut: false,
@@ -124,12 +203,43 @@ function rootCause(
   } as Verdict
 }
 
+/**
+ * WHICH PRODUCER a fixture's verdict comes from — and the compile-time guard of this whole file.
+ *
+ * The two arms are mutually exclusive by TYPE (`?: undefined` on the opposite key), so
+ * `{ produced: timedOutResult(), authored: 'flake' }` — scripting a failing member and forcing the
+ * class the floor mints only on a PASS — does not compile. There is no longer any way in this file
+ * to hand-write a `deterministic-classifier` verdict at all: the floor arm's class is whatever the
+ * classifier answers for the scripted result, and nothing else.
+ */
+type FoldVerdictSpec =
+  | { readonly authored: VerdictClass; readonly produced?: undefined }
+  | { readonly produced: TestResult; readonly authored?: undefined }
+
+function verdictFor(spec: FoldVerdictSpec, perTest = 0): Verdict {
+  return spec.produced === undefined
+    ? authoredVerdict(spec.authored, perTest)
+    : producedVerdict(spec.produced, perTest)
+}
+
+/**
+ * Every leg in this file that does not name a verdict spec is about fold PLUMBING — the
+ * applied-arm gate, the append/commit ordering, the owner carry-forward, the anti-silencing class
+ * differential — and needs a verdict the gate genuinely ADMITS to exercise it. A floor-produced
+ * verdict cannot be that verdict HERE: the floor arm requires a per-crossing
+ * `sameBuildPassAndFail`, the fold computes it from the crossing test's own outcome window
+ * (390-21), and every plumbing fixture drives three distinct failing ordinals with no same-ordinal
+ * pass — so its window carries no signature and the floor arm refuses it on the facts. The legs
+ * that ARE about the producer axis name their spec explicitly, and the legs about the signature
+ * build the two-runs-at-one-ordinal window the floor arm needs.
+ */
+const AUTHORED_FLAKE: FoldVerdictSpec = { authored: 'flake' }
+
 function handoffFixture(input: {
   runId: string
   buildOrdinal: number
   passed?: boolean
-  verdictClass?: VerdictClass
-  producer?: Verdict['producer']
+  verdict?: FoldVerdictSpec
   testName?: string
   filePath?: string
 }): CompletedRunHandoff {
@@ -156,7 +266,7 @@ function handoffFixture(input: {
       steps: [failingStep()],
       ...(passed
         ? {}
-        : { rootCause: rootCause(input.verdictClass ?? 'flake', 0, input.producer) }),
+        : { rootCause: verdictFor(input.verdict ?? AUTHORED_FLAKE) }),
     } as unknown as PerTestOutcome],
   } as unknown as CompletedRunHandoff
 }
@@ -179,7 +289,9 @@ function twoClassHandoff(input: {
     testIndex: index,
     outcome: 'failed',
     steps: [failingStep()],
-    rootCause: rootCause(verdictClass, index),
+    // The AUTHORED path specifically: this differential varies the RESOLVED class directly,
+    // which only an `analyze-run` verdict lets a fixture do (see the two-builders note above).
+    rootCause: authoredVerdict(verdictClass, index),
   } as unknown as PerTestOutcome)
   return {
     schemaVersion: 6,
@@ -243,8 +355,7 @@ function ledgerLines(env: FoldHarness): Record<string, unknown>[] {
 
 /** The A3 crossing, driven through three real folds: ordinals 1, 2, then the 3rd that escalates. */
 function crossThreeInFive(env: FoldHarness, opts: {
-  verdictClass?: VerdictClass
-  producer?: Verdict['producer']
+  verdict?: FoldVerdictSpec
   testName?: string
   filePath?: string
   policy?: GuardrailPolicy
@@ -254,8 +365,7 @@ function crossThreeInFive(env: FoldHarness, opts: {
     last = fold(env, handoffFixture({
       runId: `run-${opts.testName ?? 'default'}-${String(buildOrdinal)}`,
       buildOrdinal,
-      ...(opts.verdictClass === undefined ? {} : { verdictClass: opts.verdictClass }),
-      ...(opts.producer === undefined ? {} : { producer: opts.producer }),
+      ...(opts.verdict === undefined ? {} : { verdict: opts.verdict }),
       ...(opts.testName === undefined ? {} : { testName: opts.testName }),
       ...(opts.filePath === undefined ? {} : { filePath: opts.filePath }),
     }), opts.policy === undefined ? {} : { policy: opts.policy })
@@ -735,17 +845,31 @@ describe('a floor-produced crossing cannot buy a committed entry (390-16)', () =
   // that supplies one is in the 390-21 block above, and it enters. The observable answer here is
   // identical to 390-16's; the reason is not, and this file must not re-assert a reason that
   // stopped being true.
-  const FLOOR_REFUSED_AUTO_CLASSES: readonly VerdictClass[] = ['environment', 'timeout']
+  //
+  // PRODUCED, NOT DECLARED (390-21). Each row names a SCRIPTED MEMBER, and the class beside it is
+  // what `classifyRootCause` ANSWERS for that member — asserted below, so a row that stopped being
+  // producible reds here instead of silently pinning an input the runner cannot emit.
+  const FLOOR_PRODUCED_CROSSINGS = [
+    { verdictClass: 'environment' as VerdictClass, script: connectFailureResult },
+    { verdictClass: 'timeout' as VerdictClass, script: timedOutResult },
+  ]
 
-  it.each(FLOOR_REFUSED_AUTO_CLASSES)(
-    'writes ZERO ledger bytes for a floor-produced %s crossing, and escalates it instead',
-    (verdictClass: VerdictClass) => {
-      const env = harness(`agent-qa-floor-refuse-${verdictClass}`)
-
-      const report = crossThreeInFive(env, {
-        verdictClass,
+  it.each(FLOOR_PRODUCED_CROSSINGS)(
+    'the runner really does answer $verdictClass on the floor for that scripted member',
+    ({ verdictClass, script }) => {
+      expect(producedVerdict(script())).toMatchObject({
+        class: verdictClass,
         producer: 'deterministic-classifier',
       })
+    },
+  )
+
+  it.each(FLOOR_PRODUCED_CROSSINGS)(
+    'writes ZERO ledger bytes for a floor-produced $verdictClass crossing, and escalates it instead',
+    ({ verdictClass, script }) => {
+      const env = harness(`agent-qa-floor-refuse-${verdictClass}`)
+
+      const report = crossThreeInFive(env, { verdict: { produced: script() } })
 
       expect(report.kind).toBe('applied')
       if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
@@ -765,12 +889,12 @@ describe('a floor-produced crossing cannot buy a committed entry (390-16)', () =
     },
   )
 
-  it.each(FLOOR_REFUSED_AUTO_CLASSES)(
-    'commits ONE entered line for the same %s crossing when analyze-run authored it',
-    (verdictClass: VerdictClass) => {
+  it.each(FLOOR_PRODUCED_CROSSINGS)(
+    'commits ONE entered line for the same $verdictClass crossing when analyze-run authored it',
+    ({ verdictClass }) => {
       const env = harness(`agent-qa-floor-accept-${verdictClass}`)
 
-      const report = crossThreeInFive(env, { verdictClass, producer: 'analyze-run' })
+      const report = crossThreeInFive(env, { verdict: { authored: verdictClass } })
 
       if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
       expect(report.quarantine.escalatedNotQuarantined).toEqual([])
@@ -790,35 +914,52 @@ describe('a floor-produced crossing cannot buy a committed entry (390-16)', () =
     },
   )
 
-  // THE INTERVAL THIS LEG RECORDS, stated in its strong form (390-19 → 390-21).
+  // WHY THERE IS NO "floor-produced flake" LEG HERE, demonstrated rather than asserted (390-21).
   //
-  // 390-16 wrote this leg asserting that a floor-produced `flake` still commits an entered line.
-  // That fixture pinned an input the pipeline cannot build — `classifyRootCause` mints `flake` only
-  // on a member that PASSED, and a passing member carries no failure row — which is one of the four
-  // artifacts G-390-5 names as vacuous. What it observes NOW is the honest fact: 390-19's floor arm
-  // requires a per-crossing `sameBuildPassAndFail`, and the fold's only construction site
-  // (`evaluateQuarantineForFold` in projection/run-outcomes.ts) supplies a constant `false`, so the
-  // FLOOR DISJUNCT IS INERT IN-TREE BY CONSTRUCTION until plan 390-21 replaces that constant with
-  // the real `readTestOutcomeHistory` read. 390-21 declares `depends_on: ["390-19"]` and its
-  // `files_modified` names this file: it replaces this leg with the genuine end-to-end reachability
-  // assertion over a produced corpus. Deliberately NOT deleted — the interval is the thing to keep
-  // visible.
-  it('refuses a FLOOR-produced crossing carrying no signature — inert until 390-21', () => {
-    const env = harness('agent-qa-floor-flake')
-
-    const report = crossThreeInFive(env, {
-      verdictClass: 'flake',
+  // 390-16 wrote a leg claiming a floor-produced `flake` commits an entered line, and 390-19
+  // inverted it to a refusal for the one wave the fold's fill was a constant. Both were writing
+  // about an input the pipeline CANNOT BUILD, which is one of the four artifacts G-390-5 names as
+  // vacuous. So the leg is gone, and what replaces it is the floor's actual rule, run: the
+  // classifier mints `flake` only for a member that PASSED, and a passing member contributes no
+  // failure row, so no `QuarantineDetectionFailure` can ever carry class `flake` with the floor's
+  // producer. Every `flake` crossing the pipeline can build is AUTHORED, and is admitted by the
+  // first disjunct — which the `analyze-run` legs above already cover.
+  //
+  // Since 390-21 this is also enforced by the type system: `FoldVerdictSpec`'s two arms are
+  // mutually exclusive, so `{ produced: <a failing member>, authored: 'flake' }` does not compile.
+  it('mints `flake` only on a member that PASSED, so no failure row can carry it', () => {
+    const passedOnRetry = passedOnRetryResult()
+    expect(deriveMemberOutcome(passedOnRetry)).toBe('passed')
+    expect(producedVerdict(passedOnRetry)).toMatchObject({
+      class: 'flake',
       producer: 'deterministic-classifier',
     })
+    // The same member without the retry answers NO verdict at all — the D-01 presence rule: a
+    // clean pass is not a failure to explain.
+    expect(classifyRootCause({
+      result: { ...passedOnRetry, retryCount: 0 },
+      outcome: deriveMemberOutcome({ ...passedOnRetry, retryCount: 0 }),
+      testIndex: 0,
+    })).toBeUndefined()
+    // And the FAILING members the floor path is actually about are never flakes.
+    expect(producedVerdict(timedOutResult())).toMatchObject({ class: 'timeout' })
+    expect(producedVerdict(connectFailureResult())).toMatchObject({ class: 'environment' })
 
-    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
-    expect(report.quarantine.events).toEqual([])
+    // The consequence, through the REAL fold: three passing runs contribute no failure row at all,
+    // so nothing crosses and not one byte is written — there is no crossing for a floor-produced
+    // `flake` to be attached to.
+    const env = harness('agent-qa-floor-flake-unbuildable')
+    for (const buildOrdinal of [1, 2, 3]) {
+      const report = fold(env, handoffFixture({
+        runId: `run-flake-pass-${String(buildOrdinal)}`,
+        buildOrdinal,
+        passed: true,
+      }))
+      if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+      expect(report.quarantine.events).toEqual([])
+      expect(report.quarantine.escalatedNotQuarantined).toEqual([])
+    }
     expect(ledgerLines(env)).toEqual([])
-    expect(report.quarantine.escalatedNotQuarantined).toHaveLength(1)
-    expect(report.quarantine.escalatedNotQuarantined[0]).toMatchObject({
-      verdictClass: 'flake',
-      producer: 'deterministic-classifier',
-    })
   })
 })
 
@@ -849,11 +990,7 @@ describe('a CROSSING test carries its own same-build pass∧fail into the gate (
     testName?: string
     filePath?: string
   }): FoldRunOutcomesReport {
-    return fold(env, handoffFixture({
-      ...input,
-      verdictClass: 'timeout',
-      producer: 'deterministic-classifier',
-    }))
+    return fold(env, handoffFixture({ ...input, verdict: { produced: timedOutResult() } }))
   }
 
   it('AUTO-QUARANTINES a floor-produced timeout whose window carries a same-build pass', () => {
@@ -967,7 +1104,7 @@ describe('one down dependency cannot blanket-quarantine a suite (390-16)', () =>
   function suiteHandoff(input: {
     runId: string
     buildOrdinal: number
-    producer: Verdict['producer']
+    verdict: FoldVerdictSpec
   }): CompletedRunHandoff {
     const member = (index: number) => ({
       testId: `${input.runId}-${String(index)}`,
@@ -985,7 +1122,7 @@ describe('one down dependency cannot blanket-quarantine a suite (390-16)', () =>
         // (product, filePath, testName) while recurrence is keyed on (product, fingerprint).
         verifierVerdict: { pass: false, reasoning: `${ERROR_TEXT} (member ${String(index)})` },
       } as unknown as StepEvidence],
-      rootCause: rootCause('environment', index, input.producer),
+      rootCause: verdictFor(input.verdict, index),
     } as unknown as PerTestOutcome)
     return {
       schemaVersion: 6,
@@ -1006,14 +1143,15 @@ describe('one down dependency cannot blanket-quarantine a suite (390-16)', () =>
 
   function crossWholeSuite(
     env: FoldHarness,
-    producer: Verdict['producer'],
+    label: string,
+    verdict: FoldVerdictSpec,
   ): FoldRunOutcomesReport {
     let last: FoldRunOutcomesReport | undefined
     for (const buildOrdinal of [1, 2, 3]) {
       last = fold(env, suiteHandoff({
-        runId: `run-mass-${producer}-${String(buildOrdinal)}`,
+        runId: `run-mass-${label}-${String(buildOrdinal)}`,
         buildOrdinal,
-        producer,
+        verdict,
       }))
     }
     if (last === undefined) throw new Error('no fold ran')
@@ -1023,7 +1161,9 @@ describe('one down dependency cannot blanket-quarantine a suite (390-16)', () =>
   it('writes ZERO entered lines for six floor-produced environment failures', () => {
     const env = harness('agent-qa-mass-floor')
 
-    const report = crossWholeSuite(env, 'deterministic-classifier')
+    // PRODUCED: six members each scripted with a connect failure — one down dependency, which is
+    // exactly the shape the measured 6-of-6 event took.
+    const report = crossWholeSuite(env, 'floor', { produced: connectFailureResult() })
 
     expect(report.kind).toBe('applied')
     if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
@@ -1047,7 +1187,7 @@ describe('one down dependency cannot blanket-quarantine a suite (390-16)', () =>
   it('writes SIX entered lines for the same six failures once analyze-run authored them', () => {
     const env = harness('agent-qa-mass-authored')
 
-    const report = crossWholeSuite(env, 'analyze-run')
+    const report = crossWholeSuite(env, 'authored', { authored: 'environment' })
 
     if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
     expect(report.quarantine.escalatedNotQuarantined).toEqual([])

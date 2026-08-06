@@ -243,7 +243,14 @@ export {
 // base is free to drift from the one 389 supersedes — and the drift would be silent, since
 // both spellings would still typecheck as a Verdict.
 export { deterministicVerdict, UNKNOWN_SIGNAL_RATIONALE } from './run/root-cause.js'
-export type { DeterministicRootCauseClass } from './run/root-cause.js'
+// 390-21: the classifier itself, beside the verdict base it mints, for the same reason. A
+// downstream corpus that needs a floor verdict must be able to build it THE WAY THE SHELL DOES —
+// from a member's TestResult, its derived outcome and its index — instead of writing one out by
+// hand. A hand-written floor verdict is free to carry a (class, producer) pair `classifyRootCause`
+// cannot emit for any input, and 390-16 shipped green over exactly that: the tests passed, the
+// mutation differential reddened only the impossible fixtures, and nobody could tell.
+export { classifyRootCause } from './run/root-cause.js'
+export type { DeterministicRootCauseClass, RootCauseInput } from './run/root-cause.js'
 export type { LoopEventEmitPort } from './loop/ports.js'
 export { createRecordLedger } from './loop/record-ledger.js'
 export type { RecordAdmission, RecordLedger } from './loop/record-ledger.js'
