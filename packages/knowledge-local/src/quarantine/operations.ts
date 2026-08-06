@@ -81,7 +81,11 @@ import {
   releaseLease,
 } from '../lease/writer-lease.js'
 import type { WriterLease, WriterLeaseAuthority } from '../lease/writer-lease.js'
-import { QUARANTINE_DEFAULT_EXPIRY_DAYS } from './detection.js'
+import {
+  QUARANTINE_DEFAULT_EXPIRY_DAYS,
+  compareQuarantineIdentity,
+  quarantineIdentityKey,
+} from './detection.js'
 import {
   appendQuarantineEvents,
   foldQuarantineLedgerState,
@@ -242,15 +246,6 @@ export interface QuarantineOperationsOptions {
   policy?: GuardrailPolicy
 }
 
-/** The identity key the ledger is folded on: `(product, filePath, testName)`, never `testId`. */
-function identityKey(identity: {
-  product: string
-  filePath: string
-  testName: string
-}): string {
-  return JSON.stringify([identity.product, identity.filePath, identity.testName])
-}
-
 /**
  * D-12's triage order, spelled once.
  *
@@ -274,10 +269,11 @@ function triageOrder(left: QuarantineEntryState, right: QuarantineEntryState): n
   if (left.firstEnteredAt !== right.firstEnteredAt) {
     return left.firstEnteredAt < right.firstEnteredAt ? -1 : 1
   }
-  const leftKey = identityKey(left)
-  const rightKey = identityKey(right)
-  if (leftKey === rightKey) return 0
-  return leftKey < rightKey ? -1 : 1
+  // The subsystem's ONE identity ordering, imported rather than re-spelled (390-22 / WR-06). This
+  // module's byte comparison is where the shared comparator was lifted FROM — it was already
+  // correct here, and the detection ladder's collated spelling was the one deciding committed
+  // bytes. Two spellings of one rule is how they came to disagree.
+  return compareQuarantineIdentity(left, right)
 }
 
 /**
@@ -457,8 +453,8 @@ export function createQuarantineOperations(
     entries: readonly QuarantineEntryState[],
     identity: { product: string; filePath: string; testName: string },
   ): QuarantineEntryState | undefined {
-    const key = identityKey(identity)
-    return entries.find((entry) => identityKey(entry) === key)
+    const key = quarantineIdentityKey(identity)
+    return entries.find((entry) => quarantineIdentityKey(entry) === key)
   }
 
   /**

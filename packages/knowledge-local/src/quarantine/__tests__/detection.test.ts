@@ -40,8 +40,10 @@ import {
   QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP,
   QUARANTINE_FLOOR_ELIGIBILITY,
   QUARANTINE_WINDOW_ORDINALS,
+  compareQuarantineIdentity,
   evaluateQuarantineDetection,
   hasSameBuildPassAndFail,
+  quarantineIdentityKey,
 } from '../detection.js'
 import type {
   QuarantineDetectionFailure,
@@ -561,6 +563,139 @@ describe('the per-run floor cap contains fan-out (390-19)', () => {
     expect(second.events.map((event) => event.testName)).toEqual(MEMBER_NAMES.slice(K, K * 2))
     expect(second.escalatedNotQuarantined.map((s) => s.testName))
       .toEqual(MEMBER_NAMES.slice(K * 2))
+  })
+})
+
+describe('the committed ledger order is decided by BYTES, never by host collation (390-22 / WR-06)', () => {
+  // The module's docstring claims the committed ledger's bytes do not depend on projection
+  // iteration order. `localeCompare` with no locale argument resolves against the HOST's default
+  // locale and ICU build, so the claim was a property of the machine rather than of the code.
+  // These legs pin the answer independent of host: every one of them fails against a collation
+  // ordering and passes against a code-unit ordering, and the last one asserts the stated
+  // guarantee directly rather than describing it.
+
+  /** Two crossings that differ in exactly ONE axis, both escalating on the authored arm. */
+  function crossingPair(
+    left: Partial<QuarantineDetectionFailure>,
+    right: Partial<QuarantineDetectionFailure>,
+  ): QuarantineDetectionFailure[] {
+    return [failure(left), failure(right)]
+  }
+
+  it('orders a VARIABLE-WEIGHT punctuation pair by code unit — `-` (0x2D) before `_` (0x5F)', () => {
+    // Collation treats `-` and `_` as variable-weight and answers +1 here on at least one common
+    // ICU build; bytes answer -1. The pair is fed in the collation order so a comparator that
+    // kept collation would return the input unchanged and pass by accident.
+    const result = evaluate({
+      failures: crossingPair(
+        { filePath: 'tests/a_b.yaml' },
+        { filePath: 'tests/a-b.yaml' },
+      ),
+    })
+    expect(result.events.map((event) => event.filePath)).toEqual([
+      'tests/a-b.yaml',
+      'tests/a_b.yaml',
+    ])
+  })
+
+  it('orders a CASE pair by code unit — `A` (0x41) before `a` (0x61)', () => {
+    const result = evaluate({
+      failures: crossingPair(
+        { filePath: 'tests/a.yaml' },
+        { filePath: 'tests/A.yaml' },
+      ),
+    })
+    expect(result.events.map((event) => event.filePath)).toEqual([
+      'tests/A.yaml',
+      'tests/a.yaml',
+    ])
+  })
+
+  it('answers NON-ZERO for canonically equivalent names in different normalisations', () => {
+    // THIS is what forbids the input-order fallback. `Array.prototype.sort` is stable, so a
+    // comparator answering 0 for two DISTINCT identities hands the ordering decision back to the
+    // caller's iteration order — which is precisely the dependency the docstring denies.
+    // Collation answers 0 for an NFC/NFD pair; a code-unit comparison cannot.
+    const nfc = { product: PRODUCT, filePath: FILE_PATH, testName: 'café checkout' }
+    const nfd = { product: PRODUCT, filePath: FILE_PATH, testName: 'café checkout' }
+    expect(nfc.testName).not.toBe(nfd.testName)
+    expect(nfc.testName.normalize('NFC')).toBe(nfd.testName.normalize('NFC'))
+    expect(compareQuarantineIdentity(nfc, nfd)).not.toBe(0)
+    expect(compareQuarantineIdentity(nfd, nfc)).not.toBe(0)
+    expect(Math.sign(compareQuarantineIdentity(nfc, nfd)))
+      .toBe(-Math.sign(compareQuarantineIdentity(nfd, nfc)))
+    expect(compareQuarantineIdentity(nfc, { ...nfc })).toBe(0)
+  })
+
+  it('breaks a same-identity tie on fingerprint BYTES too — no leg of the chain is collated', () => {
+    // A comparison chain is only as deterministic as its least deterministic leg. Leaving the
+    // fingerprint tiebreak collated would reproduce the defect on a narrower input class.
+    const result = evaluate({
+      failures: crossingPair(
+        { fingerprint: 'fp_a::flake' },
+        { fingerprint: 'fp-a::flake' },
+      ),
+    })
+    expect(
+      result.events
+        .filter((event) => event.kind === 'entered')
+        .map((event) => event.fingerprint),
+    ).toEqual([
+      'fp-a::flake',
+      'fp_a::flake',
+    ])
+  })
+
+  it('THE STATED GUARANTEE, ASSERTED: the same crossings in two input orders commit the same bytes', () => {
+    // The module says the committed ledger's bytes do not depend on projection iteration order.
+    // This feeds one set of crossings TWICE in different orders and compares the canonical bytes
+    // of the whole authored event sequence — entered group and released-auto group together.
+    const crossings: QuarantineDetectionFailure[] = [
+      failure({ filePath: 'tests/a_b.yaml', fingerprint: 'fp_a::flake' }),
+      failure({ filePath: 'tests/a-b.yaml', fingerprint: 'fp-a::flake' }),
+      failure({ filePath: 'tests/A.yaml', testName: 'café checkout' }),
+      failure({ filePath: 'tests/A.yaml', testName: 'café checkout' }),
+      failure({ filePath: 'tests/a.yaml', testName: 'Zebra' }),
+      failure({ filePath: 'tests/a.yaml', testName: 'apple' }),
+    ]
+    const releasing: QuarantineEntryState[] = [
+      activeEntry({ filePath: 'tests/r_1.yaml', testName: 'café exit' }),
+      activeEntry({ filePath: 'tests/r-1.yaml', testName: 'café exit' }),
+      activeEntry({ filePath: 'tests/R.yaml', testName: 'Zebra exit' }),
+      activeEntry({ filePath: 'tests/r.yaml', testName: 'apple exit' }),
+    ]
+    const windows = releasing.map((entry) => passingWindow(QUARANTINE_AUTO_EXIT_PASSES, {
+      filePath: entry.filePath,
+      testName: entry.testName,
+    }))
+
+    const forward = evaluate({
+      failures: crossings,
+      entries: releasing,
+      testWindows: windows,
+    })
+    const reversed = evaluate({
+      failures: [...crossings].reverse(),
+      entries: [...releasing].reverse(),
+      testWindows: [...windows].reverse(),
+    })
+
+    expect(forward.events).toHaveLength(crossings.length + releasing.length)
+    expect(canonicalJson(reversed.events)).toBe(canonicalJson(forward.events))
+    expect(canonicalJson(reversed.escalatedNotQuarantined))
+      .toBe(canonicalJson(forward.escalatedNotQuarantined))
+  })
+
+  it('exports ONE key builder and ONE comparator, and the comparator agrees with the key', () => {
+    // The subsystem carried two byte-identical spellings of the key and two different spellings of
+    // the ORDER. One of each now, and the comparator is defined over the key so they cannot drift.
+    const left = { product: PRODUCT, filePath: 'tests/A.yaml', testName: 'a' }
+    const right = { product: PRODUCT, filePath: 'tests/a.yaml', testName: 'a' }
+    expect(quarantineIdentityKey(left)).toBe(
+      JSON.stringify([PRODUCT, 'tests/A.yaml', 'a']),
+    )
+    const byKey = quarantineIdentityKey(left) < quarantineIdentityKey(right) ? -1 : 1
+    expect(Math.sign(compareQuarantineIdentity(left, right))).toBe(byKey)
   })
 })
 

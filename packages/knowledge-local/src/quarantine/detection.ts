@@ -413,12 +413,59 @@ export interface QuarantineDetectionResult {
 
 const MS_PER_DAY = 86_400_000
 
-function identityKey(identity: {
+/** The identity a quarantine record is keyed on: `(product, filePath, testName)`, never `testId`. */
+export interface QuarantineIdentity {
   product: string
   filePath: string
   testName: string
-}): string {
+}
+
+/**
+ * The identity key, spelled ONCE for the whole subsystem (390-22 / WR-06).
+ *
+ * `JSON.stringify` of the triple rather than a joined string: the parts are caller data and may
+ * contain any character, and a separator that can appear inside a part is a collision waiting to
+ * happen. This is also the key the ledger fold and the triage queue use — `operations.ts` imports
+ * it rather than carrying a second, byte-identical copy.
+ */
+export function quarantineIdentityKey(identity: QuarantineIdentity): string {
   return JSON.stringify([identity.product, identity.filePath, identity.testName])
+}
+
+/**
+ * The subsystem's ONE ordering rule: a TOTAL order over the identity key, by CODE UNIT.
+ *
+ * `<` on two strings compares UTF-16 code units. That is a total order over distinct strings — it
+ * answers 0 only for equal keys — and it is a property of the STRINGS, not of the machine. Both
+ * halves matter, and `String.prototype.localeCompare` (which this replaced) has neither:
+ *
+ *  - it resolves against the host's default locale and ICU build, so two checkouts of one commit
+ *    could order the same ledger differently;
+ *  - it answers 0 for canonically-equivalent-but-distinct names (an NFC/NFD pair), and
+ *    `Array.prototype.sort` is stable, so a 0 hands the ordering decision back to the caller's
+ *    iteration order — which is exactly the dependency `evaluateQuarantineDetection` denies.
+ *
+ * Every ordering site in the subsystem routes through here: both sorts in the detection ladder and
+ * the identity tiebreak in `operations.ts`'s `triageOrder`, which already compared bytes and is
+ * where this spelling was lifted from.
+ */
+export function compareQuarantineIdentity(
+  left: QuarantineIdentity,
+  right: QuarantineIdentity,
+): number {
+  return compareBytes(quarantineIdentityKey(left), quarantineIdentityKey(right))
+}
+
+/**
+ * Code-unit comparison, exported so no ordering site in the subsystem has to re-spell it.
+ *
+ * Used for the identity key and for the fingerprint tiebreak beside it: a comparison chain is only
+ * as deterministic as its least deterministic leg, so leaving one `localeCompare` in the chain
+ * would reproduce WR-06 on a narrower input class.
+ */
+export function compareBytes(left: string, right: string): number {
+  if (left === right) return 0
+  return left < right ? -1 : 1
 }
 
 function sighting(failure: QuarantineDetectionFailure): QuarantineDetectionSighting {
@@ -569,8 +616,18 @@ function ownerForAutoEntry(prior: QuarantineEntryState | undefined): QuarantineO
 /**
  * The ladder, evaluated over one run's failures and the current ledger state.
  *
- * Ordering is deterministic — entered events (identity-sorted) then released-auto events
- * (identity-sorted) — so the committed ledger's bytes do not depend on projection iteration order.
+ * ORDERING IS DETERMINISTIC ON ANY HOST — entered events (identity-sorted) then released-auto
+ * events (identity-sorted) — so the committed ledger's bytes are a function of ledger CONTENT and
+ * not of projection iteration order. What makes that true rather than merely stated is
+ * {@link compareQuarantineIdentity}: a TOTAL order over {@link quarantineIdentityKey} by code
+ * unit. Total is the load-bearing word. A comparator that answers 0 for two DISTINCT identities
+ * hands the decision back to the caller's iteration order, because `Array.prototype.sort` is
+ * stable — so a zero here would falsify this paragraph directly. Code units also make the answer a
+ * property of the strings rather than of the machine's locale and ICU build.
+ *
+ * Both sorts below and `operations.ts`'s `triageOrder` share that one comparator; the fingerprint
+ * tiebreak uses the same `compareBytes` primitive. There is one ordering rule in this subsystem and
+ * it is spelled once (390-22 / WR-06).
  *
  * Suppression is keyed on ledger STATE, not on the existence of an entry: only `'quarantined'`
  * suppresses a fresh `entered`. An `'expired'` entry has already stopped suppressing (D-11) and a
@@ -584,13 +641,13 @@ export function evaluateQuarantineDetection(
   const activeKeys = new Set(
     input.entries
       .filter((entry) => entry.state === 'quarantined')
-      .map((entry) => identityKey(entry)),
+      .map((entry) => quarantineIdentityKey(entry)),
   )
   // A SECOND lookup, over ALL entries. `activeKeys` deliberately holds only the suppressing ones,
   // and a re-entry by definition has none — so the set that answers "is this test already
   // quarantined" cannot also answer "did somebody claim this test's last window".
   const priorByKey = new Map(
-    input.entries.map((entry) => [identityKey(entry), entry] as const),
+    input.entries.map((entry) => [quarantineIdentityKey(entry), entry] as const),
   )
 
   const flagged: QuarantineDetectionSighting[] = []
@@ -605,12 +662,14 @@ export function evaluateQuarantineDetection(
   let floorAdmissions = 0
 
   for (const failure of [...input.failures].sort(
-    (a, b) => identityKey(a).localeCompare(identityKey(b))
-      || a.fingerprint.localeCompare(b.fingerprint),
+    // ONE ordering rule (390-22 / WR-06). Both legs compare CODE UNITS — the identity key through
+    // the shared comparator, the fingerprint tiebreak through the same primitive — because a
+    // comparison chain is only as deterministic as its least deterministic leg.
+    (a, b) => compareQuarantineIdentity(a, b) || compareBytes(a.fingerprint, b.fingerprint),
   )) {
     // An already-suppressed test needs neither a flag nor an escalation: it is already quarantined,
     // which is louder than either. Checked before the ladder so the whole rung is a no-op.
-    if (activeKeys.has(identityKey(failure))) continue
+    if (activeKeys.has(quarantineIdentityKey(failure))) continue
 
     if (failure.occurrenceOrdinals >= QUARANTINE_ESCALATE_THRESHOLD) {
       const admission = autoQuarantines(failure)
@@ -630,7 +689,7 @@ export function evaluateQuarantineDetection(
           testName: failure.testName,
           fingerprint: failure.fingerprint,
           verdictClass: failure.verdictClass,
-          owner: ownerForAutoEntry(priorByKey.get(identityKey(failure))),
+          owner: ownerForAutoEntry(priorByKey.get(quarantineIdentityKey(failure))),
           expiresAt,
         })
       } else {
@@ -642,12 +701,10 @@ export function evaluateQuarantineDetection(
   }
 
   const windowsByKey = new Map(
-    input.testWindows.map((window) => [identityKey(window), window] as const),
+    input.testWindows.map((window) => [quarantineIdentityKey(window), window] as const),
   )
   const released: QuarantineLedgerEvent[] = []
-  for (const entry of [...input.entries].sort(
-    (a, b) => identityKey(a).localeCompare(identityKey(b)),
-  )) {
+  for (const entry of [...input.entries].sort(compareQuarantineIdentity)) {
     // Release closes an entry that is still LISTED — `quarantined` or `expired`. Only a `released`
     // window is out of scope, and the old filter's justification was right about exactly that half:
     // re-releasing a closed window WOULD author an event that changes nothing while claiming the
@@ -662,7 +719,7 @@ export function evaluateQuarantineDetection(
     // states. Narrow either one alone and the pair is a no-op: this loop would answer correctly
     // over a window the fold never built.
     if (entry.state === 'released') continue
-    const window = windowsByKey.get(identityKey(entry))
+    const window = windowsByKey.get(quarantineIdentityKey(entry))
     if (window === undefined || !releasesOnPasses(window)) continue
     released.push({
       schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
