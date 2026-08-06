@@ -784,4 +784,125 @@ describe('the expiry lapse: what one lapsed deadline buys (D-11)', () => {
     expect(await sentenceFor('run-expiry-3')).toContain('quarantined until Sep 4')
     expect(await sentenceFor('run-expiry-3')).not.toContain('quarantine expired')
   }, 120_000)
+
+  // ---- CHARACTERIZATION: the loop, over four full cycles ---------------------------------------
+  //
+  // THIS LEG DOES NOT ASSERT THAT THE BEHAVIOUR IS DESIRABLE. It is a characterization pin: it
+  // records what the shipped system does so that a later change to it must red a test rather than
+  // pass unnoticed, and so that the corrected prose above SITE A/B/D has something enforcing it.
+  // Plan 390-18 is the follow-on that makes this loop legible to a human — a re-entry counter on
+  // the entry and a triage order that surfaces a test on its fourth lap differently from its
+  // first. When a bound on the repetition is eventually chosen, it will be chosen against the
+  // counter's evidence, and THIS is the baseline it starts from.
+  //
+  // The probe that produced it (390-UAT-DECISIONS-PROBE.md §4.1) is a document nobody can re-run.
+  // These seven runs are the same measurement, committed and re-runnable, through the same real
+  // `driveRun` path — real snapshot, real member loop, real fold, real ledger bytes.
+  //
+  // Three facts together say "unbounded, with no attenuation":
+  //   N entered lines · N DISTINCT full-lifetime deadlines · ZERO released.
+  // The zero is load-bearing in a way it was not before 390-17: the auto-exit now DOES admit a
+  // lapsed window, so nothing releases here because the test never recovers — not because the exit
+  // path cannot see the entry.
+  describe('the loop it repeats, characterized over four cycles', () => {
+    // One day past each preceding deadline, so every cycle starts on a genuinely lapsed entry.
+    // Deadlines are hand-computed from QUARANTINE_DEFAULT_EXPIRY_DAYS = 30 so the constant is
+    // pinned rather than re-derived by the assertion.
+    const CYCLE_1_AT = '2026-01-05T12:00:00.000Z'
+    const CYCLE_1_DEADLINE = '2026-02-04T12:00:00.000Z'
+    const CYCLE_2_AT = '2026-02-05T12:00:00.000Z'
+    const CYCLE_2_DEADLINE = '2026-03-07T12:00:00.000Z'
+    /** One day INSIDE cycle 2's fresh window — the build right after the single red one. */
+    const CYCLE_2_NEXT_DAY = '2026-02-06T12:00:00.000Z'
+    const CYCLE_3_AT = '2026-03-08T12:00:00.000Z'
+    const CYCLE_3_DEADLINE = '2026-04-07T12:00:00.000Z'
+    const CYCLE_4_AT = '2026-04-08T12:00:00.000Z'
+    const CYCLE_4_DEADLINE = '2026-05-08T12:00:00.000Z'
+
+    it('re-enters on every lapse with a fresh deadline, releases nothing, and never attenuates', async () => {
+      const env = harness('agent-qa-390-cycles-')
+
+      // CYCLE 1 — the crossing. Three failing ordinals mint the first entry.
+      for (const buildOrdinal of [1, 2, 3]) {
+        await driveRun(
+          env,
+          { runId: `run-cycle1-${String(buildOrdinal)}`, buildOrdinal, outcome: 'failed' },
+          CYCLE_1_AT,
+        )
+      }
+      expect(ledgerLines(env)).toHaveLength(1)
+
+      // CYCLE 2 — the deadline has lapsed. THE ONE RED BUILD: the run-start snapshot withholds
+      // suppression, so the build fails…
+      const lapsed = await driveRun(
+        env,
+        { runId: 'run-cycle2-lapsed', buildOrdinal: 4, outcome: 'failed' },
+        CYCLE_2_AT,
+      )
+      expect(lapsed.snapshotAtStart).toEqual([])
+      expect(lapsed.memberQuarantined).toBe(false)
+      expect(lapsed.exitCode).toBe(1)
+
+      // …and that SAME run's post-run fold re-suppressed it. The very next build — one day later,
+      // no ledger edit by anyone, no human notified — is green again. That is the whole cost of a
+      // lapse: exactly ONE red build, then the heartbeat resets.
+      const dayAfter = await driveRun(
+        env,
+        { runId: 'run-cycle2-next', buildOrdinal: 5, outcome: 'failed' },
+        CYCLE_2_NEXT_DAY,
+      )
+      expect(dayAfter.snapshotAtStart).toEqual([{
+        product: PRODUCT,
+        filePath: FILE_PATH,
+        testName: TEST_NAME,
+        expiresAt: CYCLE_2_DEADLINE,
+      }])
+      expect(dayAfter.memberQuarantined).toBe(true)
+      expect(dayAfter.exitCode).toBe(0)
+      expect(dayAfter.ledgerAfter).toEqual(dayAfter.ledgerBefore)
+
+      // CYCLES 3 and 4 — one lapsed build each. Nothing distinguishes them from cycle 2.
+      for (const [buildOrdinal, at] of [[6, CYCLE_3_AT], [7, CYCLE_4_AT]] as const) {
+        const cycle = await driveRun(
+          env,
+          { runId: `run-cycle-${String(buildOrdinal)}`, buildOrdinal, outcome: 'failed' },
+          at,
+        )
+        expect(cycle.snapshotAtStart).toEqual([])
+        expect(cycle.exitCode).toBe(1)
+      }
+
+      const lines = ledgerLines(env)
+
+      // FACT 1 — four `entered` lines, and NOTHING was released. The exit path saw every one of
+      // these lapsed entries (390-17) and correctly declined: the test never recovered.
+      expect(lines.map((line) => line.kind)).toEqual(['entered', 'entered', 'entered', 'entered'])
+      expect(lines.some((line) => line.kind.startsWith('released'))).toBe(false)
+
+      // FACT 2 — four DISTINCT full-lifetime deadlines. Each re-entry MINTS one from its own
+      // `now`; none is inherited, capped or shortened.
+      const deadlines = lines.map((line) => line.expiresAt)
+      expect(deadlines).toEqual([
+        CYCLE_1_DEADLINE,
+        CYCLE_2_DEADLINE,
+        CYCLE_3_DEADLINE,
+        CYCLE_4_DEADLINE,
+      ])
+      expect(new Set(deadlines).size).toBe(4)
+
+      // FACT 3 — no attenuation: cycle 4's line is indistinguishable from cycle 2's in every field
+      // except the two instants. Same unassigned owner, same identity, same event kind. There is
+      // no lap counter, no escalation, no forced owner assignment — nothing that a reader of the
+      // committed file could use to tell a test on its fourth lap from one on its first.
+      for (const line of lines) {
+        expect(line).toMatchObject({
+          kind: 'entered',
+          product: PRODUCT,
+          filePath: FILE_PATH,
+          testName: TEST_NAME,
+          owner: QUARANTINE_UNASSIGNED_OWNER,
+        })
+      }
+    }, 120_000)
+  })
 })
