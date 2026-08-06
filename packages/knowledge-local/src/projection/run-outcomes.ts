@@ -687,6 +687,20 @@ function evaluateQuarantineForFold(
       fingerprint: test.failure.fingerprint,
       verdictClass: test.failure.verdictClass,
       producer: test.failure.producer,
+      // A CONSTANT, DELIBERATELY, AND ONLY UNTIL PLAN 390-21. This is the only non-test
+      // construction site of a `QuarantineDetectionFailure` in the tree, and the fold cannot answer
+      // the signature yet: it would have to read this test's outcome window
+      // (`readTestOutcomeHistory`) per crossing and hand it to `hasSameBuildPassAndFail`. Plan
+      // 390-21's Task 1 replaces this literal with exactly that read.
+      //
+      // SAY THE CONSEQUENCE OUT LOUD, because an unexplained constant at a gate input is precisely
+      // the shape of the defect G-390-5 is about (T-390-19-06). Because this is the ONLY producing
+      // site, BETWEEN 390-19 AND 390-21 THE FLOOR DISJUNCT OF `autoQuarantines` IS INERT IN-TREE BY
+      // CONSTRUCTION — no in-tree caller can hand it a set field, so it cannot fire. That is a new
+      // dead disjunct, created on purpose and held briefly. The only things separating it from the
+      // one this round exists to close are that it is STATED here and that it is closed on a hard
+      // dependency: 390-21 declares `depends_on: ["390-19"]`.
+      sameBuildPassAndFail: false,
       ...fingerprintRecurrence(
         db,
         { product: projection.product, fingerprint: test.failure.fingerprint },

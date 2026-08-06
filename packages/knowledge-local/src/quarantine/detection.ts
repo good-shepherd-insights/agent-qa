@@ -220,6 +220,30 @@ export interface QuarantineDetectionFailure {
    * here so the next reader does not have to re-derive the choice (T-390-16-05, accepted).
    */
   producer: Verdict['producer']
+  /**
+   * THE PER-TEST FLAKE SIGNATURE for this crossing (390-19 / G-390-5): did this test both pass and
+   * not pass at some ONE build ordinal? Computed by `hasSameBuildPassAndFail` over the per-test
+   * outcome window the projection already keeps (`run_test_outcomes`.`last_outcomes_json`), so it
+   * is read off bytes this phase computes rather than invented for the gate.
+   *
+   * REQUIRED, not optional, on purpose: `tsc --noEmit` then enumerates every construction site,
+   * which is the completeness oracle 390-16 did not have and the reason its widening shipped with
+   * an unreachable arm.
+   *
+   * ITS TWO HONEST BOUNDS, so nobody reads a set field as a stronger claim than it is:
+   *
+   *  1. The window is CAPPED at LAST_OUTCOMES_LIMIT entries, so this is "a same-build pass∧fail
+   *     within the recorded window", never "ever".
+   *  2. WHAT IT TAKES TO PRODUCE ONE IN THE REAL WORLD — this is not a common event. An in-run
+   *     RETRY does NOT produce it: the member-runner collapses retries into a single member
+   *     outcome and `countedOutcome` maps `healed` to a PASS, so one applied run leaves exactly
+   *     ONE entry per member. Two entries at one ordinal therefore require TWO SEPARATE APPLIED
+   *     RUNS carrying the same `handoff.buildOrdinal` — in practice a CI job re-run without an
+   *     ordinal bump. Every claim in this phase that the floor path is "live without an analysis
+   *     budget" is true only under that condition, and this phase has already overstated
+   *     reachability three times.
+   */
+  sameBuildPassAndFail: boolean
   /** DISTINCT build ordinals inside the window carrying this fingerprint. */
   occurrenceOrdinals: number
   /** DISTINCT build ordinals inside the window carrying ANY failure — the honest denominator. */
@@ -311,22 +335,79 @@ function expiryFrom(now: string): string {
 }
 
 /**
+ * D-07's counting law — "two runs in one build are ONE ordinal" — spelled ONCE, for every reader of
+ * it (390-19).
+ *
+ * Both directions of that law now have a consumer: the EXIT path asks whether an ordinal passed,
+ * and the ENTRY path asks whether an ordinal disagreed with itself. Answering per ordinal whether
+ * ANY entry passed and whether ANY entry did not is strictly RICHER than the boolean AND-fold the
+ * exit path used to compute inline, and it has to be: under the AND-fold an ordinal carrying a pass
+ * and a fail is indistinguishable from an ordinal carrying only fails — which is exactly the
+ * distinction the flake signature is about.
+ *
+ * Shared IN CODE rather than pinned by a test on purpose. Two implementations that agree only
+ * because a fixture compares them are free to drift the moment somebody edits one, and the entry
+ * path and the exit path disagreeing about what a build ordinal IS would be a silent defect in
+ * both directions at once (T-390-19-04).
+ *
+ * Groups are non-empty by construction — a group exists only because an entry created it — so
+ * `anyPassed || anyFailed` holds for every returned element.
+ */
+function groupByBuildOrdinal(
+  ordinals: readonly QuarantineOrdinalOutcome[],
+): { buildOrdinal: number; anyPassed: boolean; anyFailed: boolean }[] {
+  const byOrdinal = new Map<number, { anyPassed: boolean; anyFailed: boolean }>()
+  for (const entry of ordinals) {
+    const seen = byOrdinal.get(entry.buildOrdinal) ?? { anyPassed: false, anyFailed: false }
+    if (entry.passed) seen.anyPassed = true
+    else seen.anyFailed = true
+    byOrdinal.set(entry.buildOrdinal, seen)
+  }
+  return [...byOrdinal.entries()]
+    .map(([buildOrdinal, seen]) => ({ buildOrdinal, ...seen }))
+    .sort((a, b) => a.buildOrdinal - b.buildOrdinal)
+}
+
+/**
  * Collapse a per-test outcome window onto DISTINCT ordinals. An ordinal counts as passing only when
  * EVERY recorded run at that ordinal passed — two runs in one build are one ordinal (D-07's counting
  * law), and the safe direction for a mixed build is "not a pass", so a same-build pass∧fail (the
  * §8.2 flake signature itself) can never buy an exit.
+ *
+ * Expressed over `groupByBuildOrdinal` since 390-19: "no entry at this ordinal failed" is the same
+ * answer the old AND-fold gave for every non-empty group, and every group is non-empty by
+ * construction. The stated law and this function's signature are unchanged.
  */
 function distinctOrdinalOutcomes(
   window: QuarantineDetectionTestWindow,
 ): { buildOrdinal: number; passed: boolean }[] {
-  const byOrdinal = new Map<number, boolean>()
-  for (const entry of window.ordinals) {
-    const existing = byOrdinal.get(entry.buildOrdinal)
-    byOrdinal.set(entry.buildOrdinal, (existing ?? true) && entry.passed)
-  }
-  return [...byOrdinal.entries()]
-    .map(([buildOrdinal, passed]) => ({ buildOrdinal, passed }))
-    .sort((a, b) => a.buildOrdinal - b.buildOrdinal)
+  return groupByBuildOrdinal(window.ordinals)
+    .map(({ buildOrdinal, anyFailed }) => ({ buildOrdinal, passed: !anyFailed }))
+}
+
+/**
+ * THE PER-TEST FLAKE SIGNATURE (390-19 / G-390-5): at some ONE build ordinal this test both passed
+ * and did not pass.
+ *
+ * This is the same shape `distinctOrdinalOutcomes` names above as "the §8.2 flake signature
+ * itself", read here in the opposite direction — there it is the reason an ordinal cannot buy an
+ * EXIT, here it is the per-test evidence the floor arm of the auto-quarantine gate requires before
+ * it may silence anything. Both read `groupByBuildOrdinal`, so the counting law has ONE spelling in
+ * code and not two that a test happens to compare.
+ *
+ * WHY THIS IS THE RIGHT PER-TEST SIGNAL, in the module's own vocabulary. The floor-eligibility
+ * table below asks one question: is the EVIDENCE behind a class a statement about THIS TEST, or
+ * about the run it happened to be in? A same-build pass∧fail is a statement about this test and
+ * nothing else — at one build ordinal the same test both passed and failed, which no run-level
+ * condition explains away.
+ *
+ * Deliberately NOT "some pass and some fail anywhere in the window": that is a test that broke and
+ * was fixed, which is the ordinary shape of software rather than flakiness.
+ */
+export function hasSameBuildPassAndFail(
+  ordinals: readonly QuarantineOrdinalOutcome[],
+): boolean {
+  return groupByBuildOrdinal(ordinals).some((entry) => entry.anyPassed && entry.anyFailed)
 }
 
 /** D-10's exit predicate: the M most recent DISTINCT ordinals exist and every one of them passed. */

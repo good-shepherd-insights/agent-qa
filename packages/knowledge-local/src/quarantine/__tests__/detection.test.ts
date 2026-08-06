@@ -40,10 +40,12 @@ import {
   QUARANTINE_FLOOR_ELIGIBILITY,
   QUARANTINE_WINDOW_ORDINALS,
   evaluateQuarantineDetection,
+  hasSameBuildPassAndFail,
 } from '../detection.js'
 import type {
   QuarantineDetectionFailure,
   QuarantineDetectionTestWindow,
+  QuarantineOrdinalOutcome,
 } from '../detection.js'
 
 /** The rule's own source — the purity assertions read it rather than trusting a doc comment. */
@@ -75,6 +77,10 @@ function failure(
     // both producer values named on both sides. A shared default of 'deterministic-classifier'
     // would have silently folded the two tables' effects together in every legacy assertion.
     producer: 'analyze-run',
+    // No signature by default (390-19), for the same reason the producer defaults to AUTHORED:
+    // every pre-existing leg keeps its exact current meaning and no legacy assertion silently
+    // changes direction. The signature axis is varied EXPLICITLY, on both sides, in its own suite.
+    sameBuildPassAndFail: false,
     occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
     windowOrdinals: QUARANTINE_WINDOW_ORDINALS,
     ...overrides,
@@ -468,6 +474,75 @@ describe("the auto-entry's owner over the prior entry's state (390-18)", () => {
     )
     expect(byName.get(TEST_NAME)).toBe('alice')
     expect(byName.get('a second test')).toBe(QUARANTINE_UNASSIGNED_OWNER)
+  })
+})
+
+// ---- The per-test flake signature: a same-build pass∧fail (390-19 / G-390-5) ----
+//
+// `distinctOrdinalOutcomes`' own docstring already names this shape "the §8.2 flake signature
+// itself", and the exit path reads it in the SAFE direction: a mixed ordinal collapses to
+// not-passed so it can never buy a release. 390-19 reads the SAME grouping in the other direction,
+// as the per-test evidence the floor arm of the auto-quarantine gate now requires.
+//
+// PAIRED AND DIRECTIONAL BY CONSTRUCTION. A predicate with only a positive case is satisfiable by
+// `return true`, so each leg below has a negative partner that a relaxation would flip: the
+// two-builds leg is what a "some pass and some fail ANYWHERE in the window" relaxation reds, and
+// the one-answer leg is what dropping the pass∧fail conjunction reds.
+describe('the same-build pass∧fail signature (390-19)', () => {
+  function ordinals(...entries: readonly [number, boolean][]): QuarantineOrdinalOutcome[] {
+    return entries.map(([buildOrdinal, passed]) => ({ buildOrdinal, passed }))
+  }
+
+  it('HOLDS when ONE build ordinal carries both a pass and a fail', () => {
+    expect(hasSameBuildPassAndFail(ordinals([5, true], [5, false]))).toBe(true)
+  })
+
+  it('does NOT hold when one build ordinal carries one answer', () => {
+    expect(hasSameBuildPassAndFail(ordinals([5, false], [5, false]))).toBe(false)
+    expect(hasSameBuildPassAndFail(ordinals([5, true], [5, true]))).toBe(false)
+  })
+
+  // The leg a "some pass and some fail anywhere in the window" relaxation reds. Two builds is a
+  // test that broke and was fixed, which is the ordinary shape of software, not a flake.
+  it('does NOT hold across TWO builds — a later fix is not a flake signature', () => {
+    expect(hasSameBuildPassAndFail(ordinals([5, false], [6, true]))).toBe(false)
+    expect(hasSameBuildPassAndFail(ordinals([5, true], [6, false]))).toBe(false)
+  })
+
+  it('does not hold on an empty window, nor on a single entry either way', () => {
+    expect(hasSameBuildPassAndFail([])).toBe(false)
+    expect(hasSameBuildPassAndFail(ordinals([5, true]))).toBe(false)
+    expect(hasSameBuildPassAndFail(ordinals([5, false]))).toBe(false)
+  })
+
+  it('answers identically for the same entries SHUFFLED — no projection read-order dependence', () => {
+    const withSignature = ordinals([4, true], [5, false], [5, true], [6, false])
+    expect(hasSameBuildPassAndFail(withSignature)).toBe(true)
+    expect(hasSameBuildPassAndFail([...withSignature].reverse())).toBe(true)
+
+    const withoutSignature = ordinals([4, true], [5, false], [6, false], [7, true])
+    expect(hasSameBuildPassAndFail(withoutSignature)).toBe(false)
+    expect(hasSameBuildPassAndFail([...withoutSignature].reverse())).toBe(false)
+  })
+
+  // AGREEMENT WITH THE SIBLING LAW, on ONE shared fixture. This is a cheap GUARD, not the
+  // mechanism: both `hasSameBuildPassAndFail` and `distinctOrdinalOutcomes` call the one
+  // `groupByBuildOrdinal` helper in detection.ts, so "two runs in one build are one ordinal" has a
+  // single spelling in CODE. If this leg were the only thing holding them together, the two would
+  // be free to drift the moment somebody edited one.
+  it('agrees with the exit path: a signature ordinal collapses to NOT-passed, buying no release', () => {
+    const window = passingWindow(QUARANTINE_AUTO_EXIT_PASSES)
+    // Ordinal 3 carries a pass (from `passingWindow`) and a fail — the signature, inside a window
+    // whose distinct-ordinal COUNT is still QUARANTINE_AUTO_EXIT_PASSES.
+    const mixed = [...window.ordinals, { buildOrdinal: 3, passed: false }]
+
+    expect(hasSameBuildPassAndFail(mixed)).toBe(true)
+    expect(
+      evaluate({
+        entries: [activeEntry()],
+        testWindows: [{ ...window, ordinals: mixed }],
+      }).events,
+    ).toEqual([])
   })
 })
 
