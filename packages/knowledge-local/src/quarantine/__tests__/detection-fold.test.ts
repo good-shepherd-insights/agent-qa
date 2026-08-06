@@ -97,10 +97,14 @@ function failingStep(): StepEvidence {
   } as unknown as StepEvidence
 }
 
-function rootCause(verdictClass: VerdictClass, perTest = 0): Verdict {
+function rootCause(
+  verdictClass: VerdictClass,
+  perTest = 0,
+  producer: Verdict['producer'] = 'deterministic-classifier',
+): Verdict {
   return {
     class: verdictClass,
-    producer: 'deterministic-classifier',
+    producer,
     confidence: 0.6,
     evidence: { citedSteps: [0], citedAnchors: [], citedArtifacts: [], rationale: ERROR_TEXT },
     memoryMisdirectionRuledOut: false,
@@ -113,6 +117,7 @@ function handoffFixture(input: {
   buildOrdinal: number
   passed?: boolean
   verdictClass?: VerdictClass
+  producer?: Verdict['producer']
   testName?: string
   filePath?: string
 }): CompletedRunHandoff {
@@ -137,7 +142,9 @@ function handoffFixture(input: {
       testIndex: 0,
       outcome: passed ? 'passed' : 'failed',
       steps: [failingStep()],
-      ...(passed ? {} : { rootCause: rootCause(input.verdictClass ?? 'flake') }),
+      ...(passed
+        ? {}
+        : { rootCause: rootCause(input.verdictClass ?? 'flake', 0, input.producer) }),
     } as unknown as PerTestOutcome],
   } as unknown as CompletedRunHandoff
 }
@@ -225,6 +232,7 @@ function ledgerLines(env: FoldHarness): Record<string, unknown>[] {
 /** The A3 crossing, driven through three real folds: ordinals 1, 2, then the 3rd that escalates. */
 function crossThreeInFive(env: FoldHarness, opts: {
   verdictClass?: VerdictClass
+  producer?: Verdict['producer']
   testName?: string
   filePath?: string
   policy?: GuardrailPolicy
@@ -235,6 +243,7 @@ function crossThreeInFive(env: FoldHarness, opts: {
       runId: `run-${opts.testName ?? 'default'}-${String(buildOrdinal)}`,
       buildOrdinal,
       ...(opts.verdictClass === undefined ? {} : { verdictClass: opts.verdictClass }),
+      ...(opts.producer === undefined ? {} : { producer: opts.producer }),
       ...(opts.testName === undefined ? {} : { testName: opts.testName }),
       ...(opts.filePath === undefined ? {} : { filePath: opts.filePath }),
     }), opts.policy === undefined ? {} : { policy: opts.policy })
@@ -548,5 +557,85 @@ describe('the anti-silencing differential: D-05 in BOTH directions', () => {
     expect(AUTO_QUARANTINE_CLASSES).not.toContain('app_bug')
     expect(QUARANTINE_CLASS_DISPOSITIONS.flake).toBe('auto-quarantine')
     expect(QUARANTINE_CLASS_DISPOSITIONS.app_bug).toBe('escalate-only')
+  })
+})
+
+// The floor-eligibility gate, driven to COMMITTED LEDGER BYTES (390-16, G-390-3).
+//
+// The pure rule's table cannot show what this suite shows. Until now the fold had only ever driven
+// `flake` and `app_bug` — the two classes this whole item is about, `environment` and `timeout`,
+// had zero end-to-end coverage, which is how a floor-minted crossing walked all the way to a
+// committed 30-day suppression through 44/44 green tests and a deep review.
+//
+// Every pair varies exactly ONE input: `rootCause.producer`. Same test, same step, same anchor,
+// same error text, same three build ordinals, same class.
+describe('a floor-produced crossing cannot buy a committed entry (390-16)', () => {
+  const AUTHORED_REQUIRED_AUTO_CLASSES: readonly VerdictClass[] = ['environment', 'timeout']
+
+  it.each(AUTHORED_REQUIRED_AUTO_CLASSES)(
+    'writes ZERO ledger bytes for a floor-produced %s crossing, and escalates it instead',
+    (verdictClass: VerdictClass) => {
+      const env = harness(`agent-qa-floor-refuse-${verdictClass}`)
+
+      const report = crossThreeInFive(env, {
+        verdictClass,
+        producer: 'deterministic-classifier',
+      })
+
+      expect(report.kind).toBe('applied')
+      if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+      expect(report.quarantine.events).toEqual([])
+      expect(ledgerLines(env)).toEqual([])
+      expect(report.quarantine.escalatedNotQuarantined).toHaveLength(1)
+      expect(report.quarantine.escalatedNotQuarantined[0]).toMatchObject({
+        product: PRODUCT,
+        testName: TEST_NAME,
+        verdictClass,
+        producer: 'deterministic-classifier',
+        occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
+      })
+      // FLAK-02's join: nothing suppresses, so the next failure still fails the build.
+      expect(foldQuarantineLedgerState(readQuarantineLedger(env.knowledgeRoot).events, NOW))
+        .toEqual([])
+    },
+  )
+
+  it.each(AUTHORED_REQUIRED_AUTO_CLASSES)(
+    'commits ONE entered line for the same %s crossing when analyze-run authored it',
+    (verdictClass: VerdictClass) => {
+      const env = harness(`agent-qa-floor-accept-${verdictClass}`)
+
+      const report = crossThreeInFive(env, { verdictClass, producer: 'analyze-run' })
+
+      if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+      expect(report.quarantine.escalatedNotQuarantined).toEqual([])
+      expect(report.quarantine.events).toHaveLength(1)
+      expect(ledgerLines(env)).toEqual([{
+        schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+        kind: 'entered',
+        at: NOW,
+        product: PRODUCT,
+        filePath: FILE_PATH,
+        testName: TEST_NAME,
+        fingerprint: expect.stringContaining(`::${verdictClass}`) as unknown as string,
+        verdictClass,
+        owner: QUARANTINE_UNASSIGNED_OWNER,
+        expiresAt: EXPECTED_EXPIRY,
+      }])
+    },
+  )
+
+  it('still commits an entered line for a FLOOR-produced flake — FLAK-01 is not gated', () => {
+    const env = harness('agent-qa-floor-flake')
+
+    const report = crossThreeInFive(env, {
+      verdictClass: 'flake',
+      producer: 'deterministic-classifier',
+    })
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(report.quarantine.escalatedNotQuarantined).toEqual([])
+    expect(ledgerLines(env)).toHaveLength(1)
+    expect(ledgerLines(env)[0]).toMatchObject({ kind: 'entered', verdictClass: 'flake' })
   })
 })

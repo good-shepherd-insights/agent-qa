@@ -186,6 +186,95 @@ describe('the class gate is TOTAL over the closed verdict vocabulary', () => {
   })
 })
 
+// A quarantine decision requires an AUTHORED verdict (390-16, G-390-3).
+//
+// The disposition table decides WHETHER a class may ever auto-quarantine. It cannot decide the
+// other axis: whether the EVIDENCE behind the class is about this test or about the whole run.
+// `classifyRootCause`'s `environment` arms are two run-scoped health-probe reads, so one down
+// dependency classifies every failing member of a suite identically; `timeout` is per-test but as
+// consistent with an app_bug as with flakiness. `flake` is the one class the floor observes
+// directly and per-test (the test literally passed on retry), so gating it would make
+// auto-quarantine unreachable on any project running without an analysis budget — FLAK-01's
+// promise itself.
+//
+// Every leg below is PAIRED. "Does not quarantine" is load-bearing only if the same fixture with
+// the producer flipped DOES quarantine — otherwise it could be passing for want of recurrence.
+describe('floor eligibility: an auto-quarantine class the floor may not act on alone', () => {
+  const AUTHORED_REQUIRED_AUTO_CLASSES: readonly VerdictClass[] = ['environment', 'timeout']
+
+  it.each(AUTHORED_REQUIRED_AUTO_CLASSES)(
+    'REFUSES to auto-quarantine a floor-produced %s crossing, loudly',
+    (verdictClass: VerdictClass) => {
+      const result = evaluate({
+        failures: [failure({
+          verdictClass,
+          producer: 'deterministic-classifier',
+          fingerprint: `fp::${verdictClass}`,
+        })],
+      })
+
+      expect(result.events).toEqual([])
+      expect(result.flagged).toEqual([])
+      // Refused is not dropped: the crossing lands where the curation tail already renders it and
+      // the build keeps failing. A silent third arm would be the anti-silencing defect in a hat.
+      expect(result.escalatedNotQuarantined).toHaveLength(1)
+      expect(result.escalatedNotQuarantined[0]).toMatchObject({
+        verdictClass,
+        producer: 'deterministic-classifier',
+        occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
+      })
+    },
+  )
+
+  it.each(AUTHORED_REQUIRED_AUTO_CLASSES)(
+    'ACCEPTS the same %s crossing once analyze-run authored it — the accept-direction control',
+    (verdictClass: VerdictClass) => {
+      const result = evaluate({
+        failures: [failure({
+          verdictClass,
+          producer: 'analyze-run',
+          fingerprint: `fp::${verdictClass}`,
+        })],
+      })
+
+      expect(result.escalatedNotQuarantined).toEqual([])
+      expect(result.events).toHaveLength(1)
+      expect(result.events[0]).toMatchObject({ kind: 'entered', verdictClass })
+    },
+  )
+
+  it.each(['deterministic-classifier', 'analyze-run'] as const)(
+    'auto-quarantines a %s-produced flake — FLAK-01 survives with no analysis budget',
+    (producer) => {
+      const result = evaluate({
+        failures: [failure({ verdictClass: 'flake', producer })],
+      })
+
+      expect(result.escalatedNotQuarantined).toEqual([])
+      expect(result.events).toHaveLength(1)
+      expect(result.events[0]).toMatchObject({ kind: 'entered', verdictClass: 'flake' })
+    },
+  )
+
+  it('leaves the five escalate-only classes untouched on BOTH producer values', () => {
+    const nonA3 = VERDICT_CLASSES.filter((name) => !AUTO_QUARANTINE_CLASSES.includes(name))
+    for (const producer of ['deterministic-classifier', 'analyze-run'] as const) {
+      const result = evaluate({
+        failures: nonA3.map((verdictClass) => failure({
+          verdictClass,
+          producer,
+          fingerprint: `fp::${verdictClass}`,
+          testName: `${TEST_NAME} ${verdictClass}`,
+        })),
+      })
+      // The disposition table refuses them FIRST, so the floor axis never gets a say — an
+      // authored config_error is still not quarantinable, which is the point of two tables.
+      expect(result.events).toEqual([])
+      expect(result.escalatedNotQuarantined).toHaveLength(5)
+    }
+  })
+})
+
 describe('ladder boundaries, pinned one step either side', () => {
   it('answers nothing at ONE occurrence ordinal — below the flag floor', () => {
     const result = evaluate({
