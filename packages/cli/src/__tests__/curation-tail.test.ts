@@ -25,6 +25,7 @@ import type {
   AuditSink,
 } from '@vostride/agent-qa-safety'
 import {
+  CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   guardCompletedRunHandoff,
   type CanaryOutcome,
   type CompletedRunHandoff,
@@ -1786,7 +1787,7 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
 
   function enteredFixture(): QuarantineLedgerEvent {
     return {
-      schemaVersion: 1,
+      schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
       kind: 'entered',
       at: '2026-08-05T12:00:00.000Z',
       product: sighting.product,
@@ -1801,7 +1802,7 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
 
   function releasedAutoFixture(): QuarantineLedgerEvent {
     return {
-      schemaVersion: 1,
+      schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
       kind: 'released-auto',
       at: '2026-08-05T12:00:00.000Z',
       product: sighting.product,

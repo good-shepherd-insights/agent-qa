@@ -78,7 +78,24 @@ export type QuarantineOwner = typeof QUARANTINE_UNASSIGNED_OWNER | (string & {})
  * three legs of stable test identity. Kind-specific fields hang off the arms below.
  */
 interface QuarantineEventBase {
-  schemaVersion: number
+  /**
+   * The CURRENT version literal, not `number` — and the literal is load-bearing rather than
+   * decorative. It closes the one producer no runtime check on the write path can reach: an
+   * in-tree TypeScript author hand-stamping a superseded version. That producer is not
+   * hypothetical — it got this wrong TWICE during phase 390, after the 390-08 bump
+   * (`cli/src/__tests__/curation-tail.test.ts:1789` and `:1804`, both `schemaVersion: 1`), and
+   * both survived review because of where those objects happened to go rather than because
+   * anything stopped them. Measured cost of the narrowing: those two fixtures, and nothing else —
+   * all five production mint sites already spell {@link CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION}
+   * literally.
+   *
+   * The literal is free only while {@link QUARANTINE_LEDGER_MIGRATIONS} stays empty by the stated
+   * decision below. If that decision is ever reversed, this type becomes a UNION of the current
+   * version plus every version carrying a registered migration — i.e. exactly the rule
+   * {@link guardQuarantineLedgerEvent} already enforces on the read — and the append's version
+   * pre-check widens the same way.
+   */
+  schemaVersion: typeof CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION
   kind: QuarantineEventKind
   /** ISO-8601 instant, stamped by the CALLER at write time (this module reads no clock). */
   at: string
