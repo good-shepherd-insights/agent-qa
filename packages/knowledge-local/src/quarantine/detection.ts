@@ -330,11 +330,17 @@ export interface QuarantineDetectionFailure {
    * which is the completeness oracle 390-16 did not have and the reason its widening shipped with
    * an unreachable arm.
    *
-   * ITS TWO HONEST BOUNDS, so nobody reads a set field as a stronger claim than it is:
+   * ITS THREE HONEST BOUNDS, so nobody reads a set field as a stronger claim than it is:
    *
    *  1. The window is CAPPED at LAST_OUTCOMES_LIMIT entries, so this is "a same-build pass∧fail
    *     within the recorded window", never "ever".
-   *  2. WHAT IT TAKES TO PRODUCE ONE IN THE REAL WORLD — this is not a common event. An in-run
+   *  2. IT IS CONTEMPORANEOUS, and that bound is ENFORCED, not advisory (390-24, WR-05). The fold
+   *     hands this predicate only the outcomes inside `[windowFloor(buildOrdinal), buildOrdinal]`
+   *     — the crossing's OWN recurrence window, same floor `fingerprintRecurrence` counts over —
+   *     so a same-build pass∧fail OLDER than that window answers false by construction. A
+   *     since-fixed flake episode therefore cannot license the floor arm for a new hard
+   *     regression. The scope lives at the construction site (`run-outcomes.ts`), named below.
+   *  3. WHAT IT TAKES TO PRODUCE ONE IN THE REAL WORLD — this is not a common event. An in-run
    *     RETRY does NOT produce it: the member-runner collapses retries into a single member
    *     outcome and `countedOutcome` maps `healed` to a PASS, so one applied run leaves exactly
    *     ONE entry per member. Two entries at one ordinal therefore require TWO SEPARATE APPLIED
@@ -564,6 +570,14 @@ function distinctOrdinalOutcomes(
  *
  * Deliberately NOT "some pass and some fail anywhere in the window": that is a test that broke and
  * was fixed, which is the ordinary shape of software rather than flakiness.
+ *
+ * TWO SITES, ONE RULE — WHO OWNS THE SCOPE (390-24). This function stays TOTAL over whatever
+ * window it is handed and deliberately holds no opinion about how far back that window reaches.
+ * The FOLD owns the scope: `evaluateQuarantineForFold` in `projection/run-outcomes.ts` filters the
+ * per-test outcomes to `[windowFloor(buildOrdinal), buildOrdinal]` before calling here, so the
+ * evidence licensing an entry is always about the SAME episode the recurrence counted. Narrowing
+ * or widening one site without the other is the WR-05 defect returning: this predicate would still
+ * be green over windows the fold no longer hands it.
  */
 export function hasSameBuildPassAndFail(
   ordinals: readonly QuarantineOrdinalOutcome[],

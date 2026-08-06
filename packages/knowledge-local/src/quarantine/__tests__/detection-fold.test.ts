@@ -45,6 +45,7 @@ import {
 } from '@vostride/agent-qa-runner'
 import type { TestResult } from '@vostride/agent-qa-runner'
 
+import { QUARANTINE_WINDOW_ORDINALS } from '../../projection/fingerprint-window-read.js'
 import { foldRunOutcomes } from '../../projection/run-outcomes.js'
 import type { FoldRunOutcomesReport } from '../../projection/run-outcomes.js'
 import {
@@ -1075,6 +1076,96 @@ describe('a CROSSING test carries its own same-build pass∧fail into the gate (
       verdictClass: 'timeout',
       occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
     })
+  })
+
+  // WR-05 — THE STALENESS DIRECTION, RUN (390-24; closes the regression 390-19/390-21 shipped).
+  //
+  // WHY THIS SHAPE MATTERS, in the module's own vocabulary. A test flaked at ordinal 1 — two
+  // applied runs at ONE ordinal, one of them passing — and was then FIXED. Several ordinals later
+  // it starts failing HARD and deterministically: ordinals 6, 7, 8, no pass anywhere near them.
+  // If that since-fixed episode still licenses the floor arm, a NEW hard regression silences
+  // itself and stops failing the build — the exact outcome the disposition table exists to
+  // prevent, and a direct violation of D-05's anti-silencing posture and of D-07's windows-forgive
+  // law (evidence must expire with the window that licensed nothing). Measured entered-1 /
+  // escalated-0 against HEAD in the round-4 staleness probe; red-by-design here.
+  //
+  // THE ORDINALS ARE DERIVED, NOT GUESSED. The crossing is at 8, so its recurrence window is
+  // [8 - QUARANTINE_WINDOW_ORDINALS + 1, 8] = [4, 8]. The three failing ordinals 6, 7, 8 give
+  // exactly QUARANTINE_ESCALATE_THRESHOLD distinct occurrences and nothing crosses before 8
+  // (ordinal 7's own window [3, 7] holds only two), while the ordinal-1 pass-and-fail sits three
+  // ordinals BELOW the floor and is therefore out of this episode entirely.
+  it('REFUSES a crossing whose only pass-and-fail is OLDER than its own recurrence window (WR-05)', () => {
+    const env = harness('agent-qa-390-24-stale-signature')
+
+    const CROSSING_ORDINAL = 8
+    const WINDOW_FLOOR = CROSSING_ORDINAL - QUARANTINE_WINDOW_ORDINALS + 1
+    const STALE_ORDINAL = WINDOW_FLOOR - 3
+    expect(STALE_ORDINAL).toBeLessThan(WINDOW_FLOOR)
+
+    // The since-fixed flake episode: two applied runs at ONE ordinal, one failing, one passing.
+    foldTimeout(env, { runId: 'run-stale-fail', buildOrdinal: STALE_ORDINAL })
+    foldTimeout(env, { runId: 'run-stale-pass', buildOrdinal: STALE_ORDINAL, passed: true })
+
+    // The NEW hard regression: threshold-many consecutive failing ordinals, all inside the window.
+    let report!: FoldRunOutcomesReport
+    for (let back = QUARANTINE_ESCALATE_THRESHOLD - 1; back >= 0; back -= 1) {
+      const buildOrdinal = CROSSING_ORDINAL - back
+      report = foldTimeout(env, { runId: `run-hard-${String(buildOrdinal)}`, buildOrdinal })
+    }
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(report.quarantine.events).toEqual([])
+    expect(ledgerLines(env)).toEqual([])
+    expect(report.quarantine.escalatedNotQuarantined).toHaveLength(1)
+    expect(report.quarantine.escalatedNotQuarantined[0]).toMatchObject({
+      testName: TEST_NAME,
+      verdictClass: 'timeout',
+      producer: 'deterministic-classifier',
+      occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
+    })
+  })
+
+  // THE OTHER SIDE OF THE SAME BOUNDARY (390-24). A guard needs a case it REJECTS and its exact
+  // edge, or the corpus is drawn from inside the rule's own assumption. Here the pass-and-fail
+  // sits EXACTLY at the window floor, so the `>=` comparison is pinned at the one ordinal where an
+  // off-by-one flips the answer — and the same ordinal is also the oldest occurrence carrying the
+  // crossing, which is what makes "one spelling of the floor" observable rather than asserted.
+  //
+  // ORDINAL SPACING, derived: occurrences at the floor, at crossing-1 and at the crossing are
+  // threshold-many inside [floor, crossing] while no EARLIER ordinal's own window holds
+  // threshold-many — ordinal crossing-1's window is [floor-1, crossing-1] and holds two. Contrast
+  // the plan's first sketch (floor, crossing-2, crossing-1, crossing), which crosses one ordinal
+  // EARLY and would have measured the entered line at crossing-1 instead of at the boundary.
+  it('ADMITS a pass-and-fail exactly AT the window floor — the boundary is inclusive', () => {
+    const env = harness('agent-qa-390-24-floor-boundary')
+
+    const CROSSING_ORDINAL = 8
+    const WINDOW_FLOOR = CROSSING_ORDINAL - QUARANTINE_WINDOW_ORDINALS + 1
+
+    // The flake episode, at the oldest ordinal the crossing's window still admits.
+    foldTimeout(env, { runId: 'run-floor-fail', buildOrdinal: WINDOW_FLOOR })
+    foldTimeout(env, { runId: 'run-floor-pass', buildOrdinal: WINDOW_FLOOR, passed: true })
+    foldTimeout(env, { runId: 'run-floor-mid', buildOrdinal: CROSSING_ORDINAL - 1 })
+    const report = foldTimeout(env, {
+      runId: 'run-floor-crossing',
+      buildOrdinal: CROSSING_ORDINAL,
+    })
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(report.quarantine.escalatedNotQuarantined).toEqual([])
+    expect(report.quarantine.events).toHaveLength(1)
+    expect(ledgerLines(env)).toEqual([{
+      schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+      kind: 'entered',
+      at: NOW,
+      product: PRODUCT,
+      filePath: FILE_PATH,
+      testName: TEST_NAME,
+      fingerprint: expect.stringContaining('::timeout') as unknown as string,
+      verdictClass: 'timeout',
+      owner: QUARANTINE_UNASSIGNED_OWNER,
+      expiresAt: EXPECTED_EXPIRY,
+    }])
   })
 })
 

@@ -67,8 +67,16 @@ export interface FingerprintRecurrence {
   windowOrdinals: number
 }
 
-/** Inclusive lower bound of the ordinal window ending at `currentBuildOrdinal`. */
-function windowFloor(currentBuildOrdinal: number): number {
+/**
+ * Inclusive lower bound of the ordinal window ending at `currentBuildOrdinal`.
+ *
+ * ONE SPELLING, TWO CONSUMERS (390-24). `fingerprintRecurrence` below bounds its SQL range with
+ * it, and `run-outcomes.ts` bounds the per-crossing flake-signature read with it — the scope of
+ * the evidence and the scope of the count are the same window BY CONSTRUCTION, not by two sites
+ * agreeing. Exported for that second consumer; re-deriving
+ * `buildOrdinal - QUARANTINE_WINDOW_ORDINALS + 1` anywhere else re-opens the drift.
+ */
+export function windowFloor(currentBuildOrdinal: number): number {
   return currentBuildOrdinal - QUARANTINE_WINDOW_ORDINALS + 1
 }
 

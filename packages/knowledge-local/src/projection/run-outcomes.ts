@@ -58,7 +58,7 @@ import type {
   QuarantineAppendOutcome,
   RefusedQuarantineLine,
 } from '../quarantine/ledger.js'
-import { fingerprintRecurrence } from './fingerprint-window-read.js'
+import { fingerprintRecurrence, windowFloor } from './fingerprint-window-read.js'
 import { readTestOutcomeHistory } from './run-outcome-read.js'
 
 /**
@@ -706,12 +706,22 @@ function evaluateQuarantineForFold(
       // A test with no history row answers false through the `?? []` — typed absence, never a
       // throw and never a fabricated window. (Defensive in-tree: the reads below run after
       // `applyRunOutcomes` returned `applied`, so a crossing test always has a row by now.)
+      //
+      // AND IT IS SCOPED TO THIS CROSSING'S OWN RECURRENCE WINDOW (390-24, WR-05). The per-test
+      // outcome window keeps LAST_OUTCOMES_LIMIT entries, which is DEEPER than the detection
+      // window, so an unscoped read let a since-fixed flake episode license a new hard regression
+      // several ordinals later — the gate silencing exactly what the disposition table exists to
+      // keep failing the build. The floor here is `fingerprintRecurrence`'s floor, from the same
+      // export: the evidence and the count are bounded by ONE window, so evidence expires with the
+      // window that licensed nothing (D-07 windows-forgive; D-05 anti-silencing).
       sameBuildPassAndFail: hasSameBuildPassAndFail(
-        readTestOutcomeHistory(db, {
+        (readTestOutcomeHistory(db, {
           product: projection.product,
           filePath: test.filePath,
           testName: test.testName,
-        })?.lastOutcomes ?? [],
+        })?.lastOutcomes ?? []).filter(
+          (outcome) => outcome.buildOrdinal >= windowFloor(projection.buildOrdinal),
+        ),
       ),
       ...fingerprintRecurrence(
         db,
