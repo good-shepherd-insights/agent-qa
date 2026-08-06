@@ -38,10 +38,16 @@
 //      leg deliberately does NOT hold the lease: the claim under test is about bytes, and
 //      attributing byte integrity to a lock that was never contended would be the wrong reading.
 //
-// WHAT THIS FILE DOES NOT PROVE: anything about more than two writers, anything about a network
-// filesystem (O_APPEND's atomicity is a local-filesystem guarantee), and nothing about the daemon's
-// handed-in authority remaining VALID — `underWriterLease` never re-checks it, which leg 2's
-// composition is the production shape of.
+// EVERY LEG BELOW MODELS A REAL LEASE HOLDER. The daemon-shaped writer in legs 1, 2 and 3 acquires
+// the MRSW lease and hands the acquired `{leaseId, epoch}` in, exactly as `daemon/host.ts:1875`
+// does. Legs 2 and 3 used to hand in a synthetic literal instead, on the reasoning that
+// `underWriterLease` could not tell the difference; since 390-15 it can — the authority arm
+// re-validates the pair against the monotonic epoch and the lease file — and a literal is refused
+// typed. Neither leg ever depended on the parent's authority being fake: what they force is that
+// the CHILD is unserialized, and that is unchanged.
+//
+// WHAT THIS FILE DOES NOT PROVE: anything about more than two writers, and anything about a
+// network filesystem (O_APPEND's atomicity is a local-filesystem guarantee).
 
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -74,7 +80,6 @@ import {
   DAEMON_OWNER,
   QUARANTINE_CHILD_ENV,
   READ_NOW,
-  SYNTHETIC_AUTHORITY,
   burstEvent,
   foldWithoutReleaseGuard,
   steppingClock,
@@ -342,13 +347,18 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
       })
       await waitFor('the child to load', () => existsSync(markers.ready), handle)
 
-      // Both processes now believe they have already serialized themselves. This is not a
-      // hypothetical composition: `underWriterLease` returns `decide()` for ANY handed-in
-      // authority and never re-checks that it is still current, so a daemon whose lease was
-      // reclaimed under it (stale heartbeat, bumped epoch) arrives in exactly this state.
+      // The daemon composition with a REAL standing lease, which is what production actually is:
+      // acquire once, hold, hand the acquired pair in. What makes this the CONTROL for leg 1 is
+      // not the parent's authority — it is that the child runs a lease-less replica of the cycle
+      // with a barrier forced open between its fold and its append, so the two writers overlap
+      // inside the critical region no matter what the parent holds.
+      const acquired = acquireWriterLease(root)
+      if (acquired.kind !== 'acquired') {
+        throw new Error(`expected an acquired writer lease, got ${acquired.kind}`)
+      }
       const operations = createQuarantineOperations({
         ...operationsOptions(steppingClock(0)),
-        resolveWriterAuthority: () => SYNTHETIC_AUTHORITY,
+        resolveWriterAuthority: () => ({ leaseId: acquired.leaseId, epoch: acquired.epoch }),
       })
 
       publishMarker(markers.go)
@@ -363,6 +373,7 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
       publishMarker(markers.resume)
 
       const report = await awaitChildReport(handle)
+      expect(releaseLease({ knowledgeRoot: root, leaseId: acquired.leaseId }).kind).toBe('released')
 
       // THE INTERLEAVING, MEASURED: the child folded, this process appended, the child appended.
       expect(report.foldedAtMs as number).toBeLessThanOrEqual(parentAppendedAtMs)
@@ -389,9 +400,16 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
   it(
     'CONTROL: a pre-release fold appending after a human release cannot undo it',
     async () => {
+      // Same daemon composition as leg 2, and for the same reason: a real acquisition, held
+      // across both verbs. The byte sequence this leg forces onto disk comes from the CHILD's
+      // lease-less fold, not from the parent's authority being unverifiable.
+      const acquired = acquireWriterLease(root)
+      if (acquired.kind !== 'acquired') {
+        throw new Error(`expected an acquired writer lease, got ${acquired.kind}`)
+      }
       const operations = createQuarantineOperations({
         ...operationsOptions(steppingClock(0)),
-        resolveWriterAuthority: () => SYNTHETIC_AUTHORITY,
+        resolveWriterAuthority: () => ({ leaseId: acquired.leaseId, epoch: acquired.epoch }),
       })
       expect((await operations.add({ ...CONTESTED, owner: DAEMON_OWNER })).kind).toBe('entered')
 
@@ -415,6 +433,7 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
       expect((await operations.release({ ...CONTESTED })).kind).toBe('released')
       publishMarker(markers.resume)
       await awaitChildReport(handle)
+      expect(releaseLease({ knowledgeRoot: root, leaseId: acquired.leaseId }).kind).toBe('released')
 
       // The harness really did force the dangerous byte order onto disk.
       const read = ledger()

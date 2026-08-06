@@ -43,19 +43,14 @@ export const QUARANTINE_CHILD_ENV = {
   burst: 'AGENT_QA_QUARANTINE_CHILD_BURST',
 } as const
 
-/**
- * The authority a process hands itself when it believes it has already serialized (the daemon arm).
- *
- * A literal rather than a real acquisition on purpose: `underWriterLease` returns `decide()` for
- * ANY handed-in authority and never re-checks it against disk, so what production supplies and what
- * this supplies are indistinguishable to the code under test. That indistinguishability is itself
- * the point of the control legs — a daemon whose lease was reclaimed under it (stale heartbeat,
- * bumped epoch) is in exactly this state and cannot tell.
- */
-export const SYNTHETIC_AUTHORITY = {
-  leaseId: '00000000-0000-4000-8000-00000000d004',
-  epoch: 1,
-} as const
+// A `SYNTHETIC_AUTHORITY` literal used to live here, for the daemon arm of the two control legs.
+// Its stated reason was that `underWriterLease` returned `decide()` for ANY handed-in authority and
+// never re-checked it against disk, which made a literal and a real acquisition indistinguishable
+// to the code under test. 390-15 removed that property: the authority arm now re-validates the
+// pair against the monotonic epoch and the lease file, so the literal is refused typed and both
+// legs acquire for real instead. The constant is deleted rather than retained with a new reason —
+// no leg needs an authority that is deliberately not current, and the refusal direction is pinned
+// where the refusal lives, in `../operations.test.ts`'s reclaim corpus.
 
 export type QuarantineChildRole =
   /** The PROTECTED leg: a CLI-shaped writer that acquires the MRSW lease on every verb call. */
