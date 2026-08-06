@@ -2,8 +2,15 @@
 //
 // FLAK-03's "quarantine is enumerable" in one op: every entry carries the three legs of stable
 // test identity, the fingerprint that keyed the window, the resolved class, the owner, the
-// entry instant, the deadline and the computed state. One producer, so a dashboard column, a
-// CLI table and a chat answer are the same rows by construction rather than by review.
+// entry instant, the accumulated re-entry history, the deadline and the computed state. One
+// producer, so a dashboard column, a CLI table and a chat answer are the same rows by
+// construction rather than by review.
+//
+// That enumeration is D-13's, and it is stated in the SCHEMA'S OWN WORDING because it is one
+// contract with two readers, not two paraphrases of one. `QuarantineEntrySchema`'s docstring is
+// the other copy; the re-entry history was added to that copy in 390-18 and to this one in
+// 390-20, and an enumeration contract that under-reports its own contents is precisely the
+// failure the contract exists to prevent (390 IN-01).
 //
 // THE OP RE-SORTS NOTHING. D-12 requires unassigned-owner entries FIRST — they are the triage
 // queue — with the rest ordered deterministically after them. That ordering is the PORT
