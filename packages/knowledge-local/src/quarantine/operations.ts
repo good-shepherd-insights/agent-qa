@@ -579,6 +579,12 @@ export function createQuarantineOperations(
             // OMITTED when the caller named nobody: an absent owner leaves the existing claim (or
             // the unassigned literal) exactly as it was. Writing `unassigned` here would silently
             // UN-claim a window somebody had taken.
+            //
+            // TWO AUTHORING PATHS, ONE RULE. `ownerForAutoEntry` (detection.ts) makes the same
+            // decision for an AUTO re-entry, stated over the prior entry's state: carry across a
+            // lapse, start unassigned after a deliberate release. Until 390-18 the rule was
+            // written down here and applied only here, and the auto path did exactly what this
+            // comment refuses to. If you change one, change the other.
             ...(input.owner === undefined ? {} : { owner: input.owner }),
           }])
           return {

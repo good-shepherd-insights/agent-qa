@@ -62,6 +62,7 @@ import {
 import type {
   QuarantineEntryState,
   QuarantineLedgerEvent,
+  QuarantineOwner,
   Verdict,
   VerdictClass,
 } from '@vostride/agent-qa-schema'
@@ -338,6 +339,44 @@ function releasesOnPasses(window: QuarantineDetectionTestWindow): boolean {
 }
 
 /**
+ * WHOSE NAME an auto-authored `entered` event carries, stated over the prior entry's state
+ * (390-18 / G-390-4). The rule is total across the three members of `QuarantineEntryStateName`:
+ *
+ *  - `'expired'` → CARRY the prior owner. A lapsed window is the SAME window continuing:
+ *    suppression stopped, nobody closed it, and the person who claimed it still holds it.
+ *    Re-stamping the unassigned literal here silently UN-CLAIMS a window somebody had taken.
+ *  - `'released'` → the UNASSIGNED literal. A release is a human deliberately closing the window;
+ *    a later crossing opens a genuinely new one, and D-12's honest-absence rule (no git-identity
+ *    stamping, no CODEOWNERS guessing) says the truthful answer for it is that nobody has claimed
+ *    it yet. Carrying a name here would attribute a new window to somebody who signed off on the
+ *    old one.
+ *  - `'quarantined'` → UNREACHABLE on this path, not silently absent. The ladder skips an
+ *    already-suppressed identity (`activeKeys`, above) before it ever reaches the authoring
+ *    branch, so there is no owner decision to make for a suppressing entry. Pinned as unreachable
+ *    in detection.test.ts rather than left to be re-derived.
+ *
+ * No prior entry at all → the unassigned literal, unchanged.
+ *
+ * TWO AUTHORING PATHS, ONE RULE ABOUT SOMEBODY'S CLAIM. `createQuarantineOperations`'s RENEW arm
+ * (operations.ts) makes the same decision from the other direction: it OMITS `owner` from the
+ * `renewed` event when the caller named nobody, with a comment saying that writing the unassigned
+ * literal there would silently un-claim a window somebody had taken. That is the identical rule
+ * over an open window; this is it over a re-entry. Naming the sibling here is cheaper than a test
+ * asserting the two agree — but it only works if a reader who changes one comes looking, so the
+ * cross-reference is deliberately in BOTH.
+ */
+function ownerForAutoEntry(prior: QuarantineEntryState | undefined): QuarantineOwner {
+  if (prior === undefined) return QUARANTINE_UNASSIGNED_OWNER
+  switch (prior.state) {
+    case 'expired':
+      return prior.owner
+    case 'released':
+    case 'quarantined':
+      return QUARANTINE_UNASSIGNED_OWNER
+  }
+}
+
+/**
  * The ladder, evaluated over one run's failures and the current ledger state.
  *
  * Ordering is deterministic — entered events (identity-sorted) then released-auto events
@@ -356,6 +395,12 @@ export function evaluateQuarantineDetection(
     input.entries
       .filter((entry) => entry.state === 'quarantined')
       .map((entry) => identityKey(entry)),
+  )
+  // A SECOND lookup, over ALL entries. `activeKeys` deliberately holds only the suppressing ones,
+  // and a re-entry by definition has none — so the set that answers "is this test already
+  // quarantined" cannot also answer "did somebody claim this test's last window".
+  const priorByKey = new Map(
+    input.entries.map((entry) => [identityKey(entry), entry] as const),
   )
 
   const flagged: QuarantineDetectionSighting[] = []
@@ -382,7 +427,7 @@ export function evaluateQuarantineDetection(
           testName: failure.testName,
           fingerprint: failure.fingerprint,
           verdictClass: failure.verdictClass,
-          owner: QUARANTINE_UNASSIGNED_OWNER,
+          owner: ownerForAutoEntry(priorByKey.get(identityKey(failure))),
           expiresAt,
         })
       } else {
