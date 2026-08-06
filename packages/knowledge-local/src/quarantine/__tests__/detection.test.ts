@@ -393,6 +393,84 @@ describe('re-entry suppression while a window is OPEN', () => {
   })
 })
 
+// ---- The auto-entry's owner, stated over the prior entry's state (390-18 / G-390-4) --
+
+// The auto-`entered` used to stamp the unassigned literal unconditionally, so a human who had
+// claimed an entry via `add --owner` lost that claim the next time the window lapsed and the
+// fingerprint re-crossed. `operations.ts`'s RENEW path already refuses to do this and says so in
+// its own comment — the rule was written down once and applied in one of the two places it governs.
+//
+// The rule is stated per prior-entry state because the two reachable states MEAN different things:
+// a lapsed window is the SAME window continuing (suppression stopped, nobody closed it, the person
+// who claimed it still holds it), while a released window was deliberately closed by a human and a
+// later crossing opens a genuinely new one — where D-12's honest-absence rule says `unassigned` is
+// the truthful answer. Both directions are pinned below on one fixture family, because a
+// carry-forward rule with only a positive case is satisfiable by carrying always.
+
+describe("the auto-entry's owner over the prior entry's state (390-18)", () => {
+  function enteredOwner(entries: QuarantineEntryState[]): unknown {
+    const result = evaluate({ failures: [failure()], entries })
+    expect(result.events).toHaveLength(1)
+    return (result.events[0] as unknown as Record<string, unknown>).owner
+  }
+
+  it('carries a claimed owner forward across a LAPSE — the same window continuing', () => {
+    expect(enteredOwner([activeEntry({ state: 'expired', owner: 'alice' })])).toBe('alice')
+  })
+
+  it('does NOT carry an owner across a deliberate RELEASE — a human closed that window', () => {
+    expect(enteredOwner([activeEntry({ state: 'released', owner: 'alice' })]))
+      .toBe(QUARANTINE_UNASSIGNED_OWNER)
+  })
+
+  it('carries the unassigned literal across a lapse when there was nothing to carry', () => {
+    expect(enteredOwner([activeEntry({ state: 'expired' })])).toBe(QUARANTINE_UNASSIGNED_OWNER)
+  })
+
+  it('stamps unassigned when there is no prior entry at all — unchanged', () => {
+    expect(enteredOwner([])).toBe(QUARANTINE_UNASSIGNED_OWNER)
+  })
+
+  it('reads the prior entry for THIS identity only, never another test\'s owner', () => {
+    expect(enteredOwner([
+      activeEntry({ testName: 'some other test', state: 'expired', owner: 'alice' }),
+    ])).toBe(QUARANTINE_UNASSIGNED_OWNER)
+  })
+
+  // The third member of the state union, asserted rather than assumed. A `quarantined` prior entry
+  // never reaches the authoring branch at all — the ladder skips an already-suppressed identity
+  // before it — so there is no owner decision to make for it, and this leg is what says so.
+  it("a 'quarantined' prior entry never reaches the owner rule — the ladder skipped it", () => {
+    const result = evaluate({
+      failures: [failure()],
+      entries: [activeEntry({ state: 'quarantined', owner: 'alice' })],
+    })
+    expect(result.events).toEqual([])
+    expect(result.flagged).toEqual([])
+    expect(result.escalatedNotQuarantined).toEqual([])
+  })
+
+  it('decides per identity across a batch — one carries, one does not', () => {
+    const other = { testName: 'a second test' }
+    const result = evaluate({
+      failures: [failure(), failure({ ...other })],
+      entries: [
+        activeEntry({ state: 'expired', owner: 'alice' }),
+        activeEntry({ ...other, state: 'released', owner: 'bob' }),
+      ],
+    })
+    expect(result.events).toHaveLength(2)
+    const byName = new Map(
+      result.events.map((event) => {
+        const line = event as unknown as Record<string, unknown>
+        return [line.testName as string, line.owner] as const
+      }),
+    )
+    expect(byName.get(TEST_NAME)).toBe('alice')
+    expect(byName.get('a second test')).toBe(QUARANTINE_UNASSIGNED_OWNER)
+  })
+})
+
 describe('auto-exit at M passing ordinals (D-10)', () => {
   it('releases after exactly QUARANTINE_AUTO_EXIT_PASSES distinct passing ordinals', () => {
     const result = evaluate({

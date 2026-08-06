@@ -578,6 +578,58 @@ describe('auto-exit through the real fold (D-10, FLAK-03)', () => {
   })
 })
 
+// The owner rule through the REAL fold (390-18 / G-390-4). The pure rule's table reads entries a
+// caller handed it; here the entries come from the committed ledger's own fold, so what is pinned
+// is that a claim a human wrote into the file survives the round trip through it — and that a
+// release they made deliberately ends the claim with the window.
+
+describe("the auto-entry's owner through the real fold (390-18)", () => {
+  it("carries a human's claim across a LAPSE and re-entry", () => {
+    const env = harness('agent-qa-detect-owner-lapse')
+    appendQuarantineEvents(
+      env.knowledgeRoot,
+      [enteredEvent({ owner: 'alice', expiresAt: '2026-07-10T12:00:00.000Z' })],
+      { auditBaseDir: env.auditBaseDir },
+    )
+
+    crossThreeInFive(env)
+
+    const lines = ledgerLines(env)
+    expect(lines.map((line) => line.kind)).toEqual(['entered', 'entered'])
+    expect(lines[1]).toMatchObject({ kind: 'entered', owner: 'alice', expiresAt: EXPECTED_EXPIRY })
+    // And the folded row a surface reads answers the claim too, not just the committed line.
+    const { events } = readQuarantineLedger(env.knowledgeRoot)
+    const state = foldQuarantineLedgerState(events, NOW)
+    expect(state).toHaveLength(1)
+    expect(state[0]).toMatchObject({ owner: 'alice', state: 'quarantined', enteredCount: 2 })
+  })
+
+  it('COMPLEMENT: starts unassigned after a window a human deliberately RELEASED', () => {
+    const env = harness('agent-qa-detect-owner-released')
+    appendQuarantineEvents(
+      env.knowledgeRoot,
+      [
+        enteredEvent({ owner: 'alice' }),
+        {
+          schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
+          kind: 'released-manual',
+          at: '2026-07-20T12:00:00.000Z',
+          product: PRODUCT,
+          filePath: FILE_PATH,
+          testName: TEST_NAME,
+        } as QuarantineLedgerEvent,
+      ],
+      { auditBaseDir: env.auditBaseDir },
+    )
+
+    crossThreeInFive(env)
+
+    const lines = ledgerLines(env)
+    expect(lines.map((line) => line.kind)).toEqual(['entered', 'released-manual', 'entered'])
+    expect(lines[2]).toMatchObject({ kind: 'entered', owner: QUARANTINE_UNASSIGNED_OWNER })
+  })
+})
+
 describe('the anti-silencing differential: D-05 in BOTH directions', () => {
   const FLAKE_TEST = `${TEST_NAME} [flake]`
   const APP_BUG_TEST = `${TEST_NAME} [app_bug]`
