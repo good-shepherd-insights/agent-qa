@@ -490,7 +490,9 @@ describe('the TST card serves quarantine state from the ledger (390)', () => {
       { label: QUARANTINE_FACT_LABELS.expires, value: '2026-09-04T10:00:00.000Z' },
       {
         label: QUARANTINE_FACT_LABELS.occurrence,
-        value: 'flake failures recurring; 4 quarantine windows since 2026-06-01T09:00:00.000Z',
+        value:
+          'flake failures recurring; 4 quarantine windows since 2026-06-01T09:00:00.000Z; ' +
+          'current window since 2026-08-05T10:00:00.000Z',
       },
     ])
 

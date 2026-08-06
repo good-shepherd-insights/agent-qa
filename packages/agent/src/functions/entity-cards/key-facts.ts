@@ -161,10 +161,25 @@ function quarantineFacts(entry: QuarantineEntryState | undefined): KeyFact[] {
  * NO DURATION, NO HUMANISED INTERVAL. The instant is what the ledger holds and what every other
  * quarantine fact renders; "214 days ago" would make this fact a function of the wall clock in a
  * producer whose determinism is pinned and which holds no clock to read.
+ *
+ * THE LATER-LAP ARM CARRIES BOTH INSTANTS (390-27, IN-02). The sibling `expires` fact is DERIVED
+ * from `enteredAt`, and an arm stating only `firstEnteredAt` put a computed deadline on the card
+ * beside a premise the card had dropped — a human reading "expires 2026-09-04" next to "4 windows
+ * since 2026-06-01" cannot check the one against the other, because the instant the deadline was
+ * measured from appears nowhere. The two instants answer DIFFERENT questions, in the fold's own
+ * words (`quarantine/ledger.ts`): `firstEnteredAt` is when this test's quarantine history began —
+ * what `triageOrder` sorts on, so the history clause still LEADS — and `enteredAt` is when the
+ * CURRENT window opened, which is what `expiresAt` and the computed state are about. Stating both
+ * is what makes the card self-checkable; dropping either re-opens one of the two defects.
+ *
+ * A first window has only one instant to state and states it exactly as it always has, so this
+ * addition cannot reach the first-window arm: that arm is byte-identical to the render that
+ * shipped before any history existed.
  */
 function occurrenceValue(entry: QuarantineEntryState): string {
   const history = entry.enteredCount > 1
-    ? `${entry.enteredCount} quarantine windows since ${entry.firstEnteredAt}`
+    ? `${entry.enteredCount} quarantine windows since ${entry.firstEnteredAt}` +
+      `; current window since ${entry.enteredAt}`
     : `quarantined since ${entry.enteredAt}`
   return `${entry.verdictClass} failures recurring; ${history}`
 }
