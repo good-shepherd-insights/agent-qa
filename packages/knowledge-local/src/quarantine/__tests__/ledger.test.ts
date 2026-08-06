@@ -113,6 +113,9 @@ describe('quarantine ledger read/fold', () => {
         enteredAt: ENTERED_AT,
         expiresAt: EXPIRES_AT,
         state: 'quarantined',
+        // The two history legs a single entry answers: it has been here once, since this instant.
+        enteredCount: 1,
+        firstEnteredAt: ENTERED_AT,
       },
     ])
   })
@@ -321,6 +324,155 @@ describe('quarantine ledger lifecycle fold', () => {
   it('treats an unparseable deadline as lapsed — never a silent forever-suppression', () => {
     const state = foldQuarantineLedgerState([entered({ expiresAt: 'whenever' })], ENTERED_AT)
     expect(state[0].state).toBe('expired')
+  })
+})
+
+// ---- The re-entry history the event log already held (390-18 / G-390-4) -
+
+// D-03 chose an append-only event log so that "this test has entered quarantine 3 times" is
+// answerable without a second artifact. The fold's `entered` arm discarded that answer with a
+// whole-record `entries.set(key, {…})`, so every read-side surface inherited an entry with no past.
+//
+// These are pins on a DERIVATION, not on a stored field. Nothing about the file format moves: no
+// new event kind, no `CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION` bump, no migration. Every ledger
+// that exists today answers both questions correctly on its next fold, off bytes it already holds.
+//
+// The two instants are DIFFERENT QUESTIONS and every leg below keeps them apart deliberately:
+// `enteredAt` is when the CURRENT window opened (what the expiry and the computed state are
+// relative to); `firstEnteredAt` is when this test's quarantine history began (what a human
+// triaging it is deciding about). A one-entry fixture cannot distinguish them, so none of the
+// legs below is a one-entry fixture.
+
+/** A second cycle's events, spelled once — release the first window, then cross again. */
+const SECOND_ENTRY_AT = '2026-08-30T10:00:00.000Z'
+const SECOND_EXPIRY = '2026-09-29T10:00:00.000Z'
+const THIRD_ENTRY_AT = '2026-09-25T10:00:00.000Z'
+const THIRD_EXPIRY = '2026-10-25T10:00:00.000Z'
+
+describe('quarantine ledger re-entry history (390-18)', () => {
+  it('answers entered-once, since its own instant, for a single entry', () => {
+    const state = foldQuarantineLedgerState([entered()], JUST_BEFORE_EXPIRY)
+    expect(state[0].enteredCount).toBe(1)
+    expect(state[0].firstEnteredAt).toBe(ENTERED_AT)
+    expect(state[0].enteredAt).toBe(ENTERED_AT)
+  })
+
+  it('counts a re-entry and keeps the FIRST instant while enteredAt tracks the latest', () => {
+    const state = foldQuarantineLedgerState(
+      [
+        entered(),
+        released('released-auto'),
+        entered({ at: SECOND_ENTRY_AT, expiresAt: SECOND_EXPIRY, fingerprint: 'fp-2' }),
+      ],
+      BETWEEN_EXPIRIES,
+    )
+    expect(state).toHaveLength(1)
+    expect(state[0].enteredCount).toBe(2)
+    expect(state[0].firstEnteredAt).toBe(ENTERED_AT)
+    // Separately pinned beside it, so a reader sees the two answering different questions on the
+    // same row rather than having to infer that they can differ.
+    expect(state[0].enteredAt).toBe(SECOND_ENTRY_AT)
+    expect(state[0].firstEnteredAt).not.toBe(state[0].enteredAt)
+  })
+
+  it('keeps counting across a THIRD cycle — the count is of entries, not of a flag', () => {
+    const state = foldQuarantineLedgerState(
+      [
+        entered(),
+        released('released-auto'),
+        entered({ at: SECOND_ENTRY_AT, expiresAt: SECOND_EXPIRY }),
+        released('released-manual'),
+        entered({ at: THIRD_ENTRY_AT, expiresAt: THIRD_EXPIRY }),
+      ],
+      '2026-10-01T10:00:00.000Z',
+    )
+    expect(state[0].enteredCount).toBe(3)
+    expect(state[0].firstEnteredAt).toBe(ENTERED_AT)
+    expect(state[0].enteredAt).toBe(THIRD_ENTRY_AT)
+  })
+
+  it('a RENEWAL does not increment the count — a renewal extends a window, it does not open one', () => {
+    // Without this leg `enteredCount` would silently become a count of WRITE events, which is a
+    // different and much less useful number: a test renewed monthly for a year would read as 12
+    // entries when it has had exactly one.
+    const state = foldQuarantineLedgerState([entered(), renewed(), renewed()], BETWEEN_EXPIRIES)
+    expect(state[0].enteredCount).toBe(1)
+    expect(state[0].firstEnteredAt).toBe(ENTERED_AT)
+  })
+
+  it('a released window still reports the history it accumulated', () => {
+    const state = foldQuarantineLedgerState(
+      [
+        entered(),
+        released('released-auto'),
+        entered({ at: SECOND_ENTRY_AT, expiresAt: SECOND_EXPIRY }),
+        released('released-manual'),
+      ],
+      BETWEEN_EXPIRIES,
+    )
+    expect(state[0].state).toBe('released')
+    expect(state[0].enteredCount).toBe(2)
+    expect(state[0].firstEnteredAt).toBe(ENTERED_AT)
+  })
+
+  it('counts per identity key, never across tests', () => {
+    const state = foldQuarantineLedgerState(
+      [
+        entered(),
+        released('released-auto'),
+        entered({ at: SECOND_ENTRY_AT, expiresAt: SECOND_EXPIRY }),
+        entered({ testName: 'a different test' }),
+      ],
+      BETWEEN_EXPIRIES,
+    )
+    const byName = new Map(state.map((entry) => [entry.testName, entry] as const))
+    expect(byName.get(TEST_NAME)?.enteredCount).toBe(2)
+    expect(byName.get('a different test')?.enteredCount).toBe(1)
+  })
+
+  it('stays PURE — the same (events, now) pair answers deep-equal, and no clock is read', () => {
+    const events = [
+      entered(),
+      released('released-auto'),
+      entered({ at: SECOND_ENTRY_AT, expiresAt: SECOND_EXPIRY }),
+    ]
+    expect(foldQuarantineLedgerState(events, BETWEEN_EXPIRIES)).toEqual(
+      foldQuarantineLedgerState(events, BETWEEN_EXPIRIES),
+    )
+    // And the derivation is a function of the EVENTS, not of when it was asked: a different `now`
+    // moves the computed state and leaves both history legs alone.
+    const later = foldQuarantineLedgerState(events, '2026-12-01T10:00:00.000Z')
+    expect(later[0].state).toBe('expired')
+    expect(later[0].enteredCount).toBe(2)
+    expect(later[0].firstEnteredAt).toBe(ENTERED_AT)
+  })
+
+  it('answers identically whether the events arrive from the FILE or from an array', async () => {
+    const knowledgeRoot = await mkdtemp(join(tmpdir(), 'quarantine-history-'))
+    try {
+      const events = [
+        entered(),
+        released('released-auto'),
+        entered({ at: SECOND_ENTRY_AT, expiresAt: SECOND_EXPIRY }),
+      ]
+      await writeFile(
+        join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME),
+        events.map((event) => JSON.stringify(event)).join('\n') + '\n',
+        'utf8',
+      )
+      const read = readQuarantineLedger(knowledgeRoot)
+      expect(foldQuarantineLedgerState(read.events, BETWEEN_EXPIRIES)).toEqual(
+        foldQuarantineLedgerState(events, BETWEEN_EXPIRIES),
+      )
+    } finally {
+      await rm(knowledgeRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('never synthesizes an entry from a leading renewal or release — the new fields cannot resurrect one', () => {
+    expect(foldQuarantineLedgerState([renewed()], BETWEEN_EXPIRIES)).toEqual([])
+    expect(foldQuarantineLedgerState([released('released-manual')], BETWEEN_EXPIRIES)).toEqual([])
+    expect(foldQuarantineLedgerState([renewed(), released('released-auto')], BETWEEN_EXPIRIES)).toEqual([])
   })
 })
 
