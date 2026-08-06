@@ -164,6 +164,8 @@ interface LedgerLine {
   product: string
   filePath: string
   testName: string
+  /** Present on every `entered` event; the class the run's verdict for the member carried. */
+  verdictClass?: string
   owner?: string
   expiresAt?: string
   reason?: string
@@ -831,7 +833,21 @@ describe('a failing member with no analysis budget can still be quarantined (G-3
     const crossing = await driveCrossing(env, { sameOrdinalPass: true })
 
     // (1) NO AUTHORED VERDICT PARTICIPATED — asserted POSITIVELY, off the handoff the run produced,
-    //     rather than by the absence of a file (which a path typo satisfies just as well).
+    //     rather than by the absence of a file (which a path typo satisfies just as well). That
+    //     sentence was always right; the ATTRIBUTION around it was backwards, so say plainly what
+    //     this block does and does not prove (both halves measured, round 4).
+    //
+    //     WHAT IT PROVES: the producer the crossing's handoff carries for this member is the
+    //     floor's. That is a fact about `resolveRunVerdicts` being PURE — it never writes an
+    //     authored verdict back onto the handoff it read — so these lines pass VERBATIM with an
+    //     authored `flake` analysis.json sitting beside every run. They pin identity; they are NOT
+    //     the budget control, and reading them as one launders the no-budget claim.
+    //
+    //     WHERE THE BUDGET CONTROL ACTUALLY LIVES: (i) the SIBLING negative leg below — same
+    //     crossing, no same-ordinal pass — which reds under a budget-on mutation because its
+    //     escalated line is then authored `flake` rather than the floor's `timeout`; and (ii) the
+    //     `verdictClass: 'timeout'` pin on the entered line in block (2), which reds in THIS leg
+    //     under that same mutation, because with an analyst present the member enters as `flake`.
     const tracked = crossing.handoff.tests.find((test) => test.testId === TRACKED_MEMBER.testId)
     expect(tracked?.rootCause).toMatchObject({
       class: 'timeout',
@@ -859,6 +875,9 @@ describe('a failing member with no analysis budget can still be quarantined (G-3
       testName: TEST_NAME,
       owner: QUARANTINE_UNASSIGNED_OWNER,
       expiresAt: EXPECTED_EXPIRY,
+      // The floor minted this class with no analyst in the run. An authored verdict would make it
+      // `flake` — so this one field is the leg's own budget control (see block (1)).
+      verdictClass: 'timeout',
     })
 
     // (3) THE PER-RUN FLOOR CAP IS NOT THE BINDING CONSTRAINT, by construction rather than by
