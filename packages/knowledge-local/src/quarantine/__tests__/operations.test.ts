@@ -4,14 +4,16 @@
 // being behaviour over the committed ledger. Four properties carry the weight here:
 //
 //  1. THE TRIAGE ORDER IS THE VERB'S LAW (D-12). Unassigned entries first — they are the queue a
-//     human works — then `enteredAt` ascending, ties broken on identity bytes. The corpus below is
-//     built so that a naive implementation differs at EVERY level: the fold's own iteration order
-//     is `C, A, E, D, B, F` and the answer is `A, D, E, B, F, C`. Dropping unassigned-first, or
-//     sorting on the FIRST entered event instead of the folded entry, or losing the identity
-//     tie-break each produce a different sequence.
+//     human works — then `firstEnteredAt` ascending, ties broken on identity bytes. The corpus
+//     below is built so that a naive implementation differs at EVERY level: the fold's own
+//     iteration order is `C, A, E, D, B, F` and the answer is `B, A, D, E, F, C`. Dropping
+//     unassigned-first, or sorting on the CURRENT window's instant instead of the first one, or
+//     losing the identity tie-break each produce a different sequence.
 //  2. RE-ENTRY IS THE INTENDED RECORD, NOT DUPLICATION (390-05). An entry that was released and
-//     crossed again carries several `entered` events; the fold answers ONE row whose `enteredAt` is
-//     the latest one, and the ordering reads that row.
+//     crossed again carries several `entered` events; the fold answers ONE row whose `enteredAt`
+//     is the latest one and whose `firstEnteredAt` is the earliest. The queue reads the EARLIEST
+//     (390-18), so a test on its seventh re-entry cannot present as the newest thing a human sees
+//     — which is what the sort did while it compared the current window's instant.
 //  3. WALL-CLOCK PURITY BY ARGUMENT (390-01, extended to serving by 390-03). `now` is REQUIRED and
 //     injected; this module reads no clock, asserted by a source scan, and each verb reads the
 //     injected clock exactly ONCE so two reads can never straddle one deadline.
@@ -217,7 +219,7 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
     expect(await operations().list()).toEqual([])
   })
 
-  it('orders unassigned first, then enteredAt ascending, ties on identity bytes (D-12)', async () => {
+  it('orders unassigned first, then firstEnteredAt ascending, ties on identity bytes (D-12)', async () => {
     // File order — and therefore the fold's Map iteration order — is C, A, E, D, B, F.
     await plant([
       entered(C, '2026-03-01T00:00:00.000Z', { owner: 'alice' }),
@@ -225,7 +227,8 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
       entered(E, '2026-02-01T00:00:00.000Z'),
       entered(D, '2026-02-01T00:00:00.000Z'),
       // B: released, then crossed AGAIN. The intended record (390-05), not duplication — one
-      // folded row whose enteredAt is the LATEST entry, which is what the ordering reads.
+      // folded row whose enteredAt is the LATEST entry and whose firstEnteredAt is the earliest.
+      // B is the whole point of this corpus: the two instants disagree on it and nowhere else.
       entered(B, '2025-12-01T00:00:00.000Z'),
       released(B, '2025-12-15T00:00:00.000Z'),
       entered(B, '2026-04-01T00:00:00.000Z'),
@@ -235,15 +238,17 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
     const entries = await operations().list()
 
     expect(shape(entries)).toEqual([
-      // Unassigned first — the triage queue. F is the EARLIEST entry of all and still sorts
-      // after them, which is what makes the owner partition load-bearing.
+      // b FIRST among the unassigned, carrying the LATEST enteredAt of any of them: its history
+      // began in December and that is what the queue is about. Under the old sort this row was
+      // last of the four — the longest-suffering test presented as the newest.
+      `tests/b.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-04-01T00:00:00.000Z`,
+      // Unassigned first — the triage queue. F is the earliest-STARTED entry of all and still
+      // sorts after them, which is what makes the owner partition load-bearing.
       `tests/a.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-01-01T00:00:00.000Z`,
-      // d before e at an IDENTICAL enteredAt, though the file lists e first: the identity
+      // d before e at an IDENTICAL instant, though the file lists e first: the identity
       // tie-break, and the only level of the rule this pair exercises.
       `tests/d.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-02-01T00:00:00.000Z`,
       `tests/e.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-02-01T00:00:00.000Z`,
-      // b last among the unassigned on its RE-ENTRY instant, not its first one.
-      `tests/b.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-04-01T00:00:00.000Z`,
       'tests/f.yaml:bob:2025-12-01T00:00:00.000Z',
       'tests/c.yaml:alice:2026-03-01T00:00:00.000Z',
     ])
@@ -255,6 +260,89 @@ describe('createQuarantineOperations (D-12/D-13)', () => {
       `tests/d.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-02-01T00:00:00.000Z`,
       `tests/b.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-04-01T00:00:00.000Z`,
       'tests/f.yaml:bob:2025-12-01T00:00:00.000Z',
+    ])
+    // And it is not the OLD answer either — the one that read the current window's instant.
+    expect(shape(entries)).not.toEqual([
+      `tests/a.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-01-01T00:00:00.000Z`,
+      `tests/d.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-02-01T00:00:00.000Z`,
+      `tests/e.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-02-01T00:00:00.000Z`,
+      `tests/b.yaml:${QUARANTINE_UNASSIGNED_OWNER}:2026-04-01T00:00:00.000Z`,
+      'tests/f.yaml:bob:2025-12-01T00:00:00.000Z',
+      'tests/c.yaml:alice:2026-03-01T00:00:00.000Z',
+    ])
+  })
+
+  // 390-18 / G-390-4. The inversion the probe named, isolated to a two-row corpus so it cannot be
+  // read off any other level of the sort: both rows unassigned, so the owner partition is silent;
+  // distinct identities and distinct instants, so the tie-break is silent. The ONLY thing that can
+  // decide this pair is which instant the comparison reads.
+  it('puts a test on its FOURTH entry ahead of one on its first, though its window is newer', async () => {
+    await plant([
+      // A: entered once, recently. One window, no history behind it.
+      entered(A, '2026-04-01T00:00:00.000Z'),
+      // B: entered in January and back three more times since. Its CURRENT window is the newest
+      // in the corpus; its history is the oldest.
+      entered(B, '2026-01-01T00:00:00.000Z'),
+      released(B, '2026-01-20T00:00:00.000Z'),
+      entered(B, '2026-02-01T00:00:00.000Z'),
+      released(B, '2026-02-20T00:00:00.000Z'),
+      entered(B, '2026-03-01T00:00:00.000Z'),
+      released(B, '2026-03-20T00:00:00.000Z'),
+      entered(B, '2026-04-15T00:00:00.000Z'),
+    ])
+
+    const entries = await operations().list()
+
+    expect(entries.map((entry) => entry.filePath)).toEqual(['tests/b.yaml', 'tests/a.yaml'])
+    const b = entries[0]
+    expect(b.enteredCount).toBe(4)
+    expect(b.firstEnteredAt).toBe('2026-01-01T00:00:00.000Z')
+    // Stated beside it: B sorts first while carrying the LATER enteredAt of the two. Without this
+    // line the ordering above is satisfiable by an implementation that simply reversed the sort.
+    expect(b.enteredAt).toBe('2026-04-15T00:00:00.000Z')
+    expect(entries[1].enteredAt).toBe('2026-04-01T00:00:00.000Z')
+    expect(entries[1].enteredCount).toBe(1)
+  })
+
+  it('still puts an OWNED entry after an unassigned one, whatever their histories say', async () => {
+    // The primary key is unchanged and must be proven so, not assumed: here the owned row has the
+    // older history AND the older window, and still sorts second.
+    await plant([
+      entered(F, '2025-01-01T00:00:00.000Z', { owner: 'bob' }),
+      entered(A, '2026-04-01T00:00:00.000Z'),
+    ])
+
+    const entries = await operations().list()
+
+    expect(entries.map((entry) => entry.filePath)).toEqual(['tests/a.yaml', 'tests/f.yaml'])
+  })
+
+  it('breaks a firstEnteredAt tie on identity bytes, never on append order', async () => {
+    // The tie-break is unchanged too. E is appended first and D sorts first, so the answer is a
+    // function of ledger CONTENT rather than of the order lines happened to be written in.
+    await plant([
+      entered(E, '2026-02-01T00:00:00.000Z'),
+      entered(D, '2026-02-01T00:00:00.000Z'),
+    ])
+
+    const entries = await operations().list()
+
+    expect(entries.map((entry) => entry.filePath)).toEqual(['tests/d.yaml', 'tests/e.yaml'])
+  })
+
+  it('carries the re-entry history onto every listed entry (390-18)', async () => {
+    await plant([
+      entered(A, '2026-01-01T00:00:00.000Z'),
+      released(A, '2026-01-20T00:00:00.000Z'),
+      entered(A, '2026-03-01T00:00:00.000Z'),
+      entered(C, '2026-02-01T00:00:00.000Z'),
+    ])
+
+    const entries = await operations().list()
+
+    expect(entries.map((entry) => [entry.filePath, entry.enteredCount, entry.firstEnteredAt])).toEqual([
+      ['tests/a.yaml', 2, '2026-01-01T00:00:00.000Z'],
+      ['tests/c.yaml', 1, '2026-02-01T00:00:00.000Z'],
     ])
   })
 
