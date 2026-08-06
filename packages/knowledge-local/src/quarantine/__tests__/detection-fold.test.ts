@@ -639,3 +639,127 @@ describe('a floor-produced crossing cannot buy a committed entry (390-16)', () =
     expect(ledgerLines(env)[0]).toMatchObject({ kind: 'entered', verdictClass: 'flake' })
   })
 })
+
+// The RUN-SCOPED mass-quarantine shape (390-16, G-390-3; measured in 390-UAT-DECISIONS-PROBE §3.1d).
+//
+// This is a SEPARATE pin from the per-class pairs above on purpose. It is the form the concern
+// actually takes in the field, it was invisible to the pure rule's table — which sees one failure
+// at a time and cannot express "one probe result applied to N tests" — and it survived 44/44 green
+// tests and a deep review.
+//
+// `classifyRootCause`'s `environment` arms `baselineProbe.error !== undefined` and
+// `baselineProbe.status >= 500` fire BEFORE any per-test signal and depend on nothing about the
+// individual test. One down staging dependency therefore classified 6 of 6 members as
+// `environment`; each crossed its own 3-in-5 independently; the result was 6 `entered` lines under
+// one shared 30-day deadline — a whole suite blanket-green off three red builds.
+//
+// THE BOUNDARY THIS PIN DOES NOT CLAIM. The producer gate closes the MEASURED mass event, because
+// the arms that produce it are floor arms. It does NOT make mass quarantine impossible in general:
+// six tests carrying AUTHORED `environment` verdicts still enter, and that is correct — an authored
+// verdict is a statement about each test, not one probe result applied to all of them. The
+// accept-direction leg below asserts exactly that, so the pin cannot be misread as the stronger
+// claim.
+describe('one down dependency cannot blanket-quarantine a suite (390-16)', () => {
+  const SUITE_SIZE = 6
+
+  /** N distinct failing members in ONE run — distinct TESTS, one shared failure signature. */
+  function suiteHandoff(input: {
+    runId: string
+    buildOrdinal: number
+    producer: Verdict['producer']
+  }): CompletedRunHandoff {
+    const member = (index: number) => ({
+      testId: `${input.runId}-${String(index)}`,
+      testName: `${TEST_NAME} ${String(index)}`,
+      filePath: `suite/member-${String(index)}.test.ts`,
+      testIndex: index,
+      outcome: 'failed',
+      steps: [{
+        ...failingStep(),
+        // MEASURED note, verified against the committed bytes rather than assumed: the error-text
+        // normalizer scrubs digits, so `(member 0)`…`(member 5)` collapse to ONE fingerprint. That
+        // is faithful, not a fixture accident — a down dependency produces the same failure
+        // signature on every member, which is what the 6/6 event looked like. Six distinct
+        // ENTRIES still result, because a quarantine entry is keyed on test identity
+        // (product, filePath, testName) while recurrence is keyed on (product, fingerprint).
+        verifierVerdict: { pass: false, reasoning: `${ERROR_TEXT} (member ${String(index)})` },
+      } as unknown as StepEvidence],
+      rootCause: rootCause('environment', index, input.producer),
+    } as unknown as PerTestOutcome)
+    return {
+      schemaVersion: 6,
+      runId: input.runId,
+      buildOrdinal: input.buildOrdinal,
+      scope: SHOP_SCOPE,
+      executionContext: 'ci',
+      aggregateVerdict: 'failed',
+      configDigests: {
+        suiteConfigDigest: 'detection-suite-digest',
+        testConfigDigest: 'detection-test-digest',
+      },
+      startedAt: input.buildOrdinal * 1_000,
+      endedAt: input.buildOrdinal * 1_000 + 1,
+      tests: Array.from({ length: SUITE_SIZE }, (_unused, index) => member(index)),
+    } as unknown as CompletedRunHandoff
+  }
+
+  function crossWholeSuite(
+    env: FoldHarness,
+    producer: Verdict['producer'],
+  ): FoldRunOutcomesReport {
+    let last: FoldRunOutcomesReport | undefined
+    for (const buildOrdinal of [1, 2, 3]) {
+      last = fold(env, suiteHandoff({
+        runId: `run-mass-${producer}-${String(buildOrdinal)}`,
+        buildOrdinal,
+        producer,
+      }))
+    }
+    if (last === undefined) throw new Error('no fold ran')
+    return last
+  }
+
+  it('writes ZERO entered lines for six floor-produced environment failures', () => {
+    const env = harness('agent-qa-mass-floor')
+
+    const report = crossWholeSuite(env, 'deterministic-classifier')
+
+    expect(report.kind).toBe('applied')
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(report.quarantine.events).toEqual([])
+    expect(ledgerLines(env)).toEqual([])
+
+    // All six are LOUD, and every one of them genuinely crossed — a zero that came from six
+    // sub-threshold windows would prove nothing about the gate.
+    const escalated = report.quarantine.escalatedNotQuarantined
+    expect(escalated).toHaveLength(SUITE_SIZE)
+    for (const sighting of escalated) {
+      expect(sighting.verdictClass).toBe('environment')
+      expect(sighting.producer).toBe('deterministic-classifier')
+      expect(sighting.occurrenceOrdinals).toBe(QUARANTINE_ESCALATE_THRESHOLD)
+    }
+    // Nothing suppresses anything: the whole suite still fails the next build.
+    expect(foldQuarantineLedgerState(readQuarantineLedger(env.knowledgeRoot).events, NOW))
+      .toEqual([])
+  })
+
+  it('writes SIX entered lines for the same six failures once analyze-run authored them', () => {
+    const env = harness('agent-qa-mass-authored')
+
+    const report = crossWholeSuite(env, 'analyze-run')
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(report.quarantine.escalatedNotQuarantined).toEqual([])
+    expect(report.quarantine.events).toHaveLength(SUITE_SIZE)
+
+    const lines = ledgerLines(env)
+    expect(lines).toHaveLength(SUITE_SIZE)
+    expect(lines.map((line) => line.testName).sort()).toEqual(
+      Array.from({ length: SUITE_SIZE }, (_unused, index) => `${TEST_NAME} ${String(index)}`).sort(),
+    )
+    // The measured event's signature: one shared 30-day deadline across the whole suite. The
+    // fixture is genuinely capable of mass-quarantining, so the zero above is the gate's doing.
+    expect(new Set(lines.map((line) => line.expiresAt))).toEqual(new Set([EXPECTED_EXPIRY]))
+    expect(new Set(lines.map((line) => line.verdictClass))).toEqual(new Set(['environment']))
+  })
+})
