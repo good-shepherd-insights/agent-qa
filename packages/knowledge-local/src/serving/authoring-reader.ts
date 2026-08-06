@@ -72,8 +72,8 @@ interface OutcomeRow {
  * same slugged partition the projection rows do.
  *
  * Only `'quarantined'` counts. `'expired'` and both released states are deliberately NOT excluded:
- * an entry whose deadline lapsed has stopped suppressing (that lapse is the forcing function D-11
- * exists for) while staying listed, and a released entry is a decision someone made.
+ * an entry whose deadline lapsed has stopped suppressing (D-11) while staying listed, and a
+ * released entry is a decision someone made.
  *
  * NO try/catch. A ledger this build cannot read propagates its typed error, because the one
  * outcome that must be impossible here is degrading unreadable committed truth to "nothing is

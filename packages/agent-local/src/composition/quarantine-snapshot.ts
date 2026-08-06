@@ -40,9 +40,15 @@ export interface RunQuarantineSnapshotInput {
 
 /**
  * Resolve the entries this run will apply: active (`'quarantined'`) and belonging to this run's
- * product. Expired entries are deliberately EXCLUDED — a lapsed entry's test fails builds again,
- * which is the forcing function that stops quarantine from becoming a graveyard (D-11) — and
- * released entries are gone.
+ * product. Expired entries are deliberately EXCLUDED — a lapsed entry's test fails builds again
+ * (D-11) — and released entries are gone.
+ *
+ * Measured consequence worth knowing at THIS seam, because this is where the exclusion is decided:
+ * for a test still crossing the threshold that is exactly ONE red build. The snapshot below is
+ * taken at run start (entry lapsed ⇒ not applied ⇒ red), and that same run's post-run fold
+ * re-enters it with a fresh full-lifetime deadline before the next run takes its own snapshot. No
+ * human is scheduled into that loop at any point, and nothing bounds the repetition
+ * (measured 2026-08-06).
  */
 export function resolveRunQuarantineSnapshot(
   input: RunQuarantineSnapshotInput,

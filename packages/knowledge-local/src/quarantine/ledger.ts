@@ -201,9 +201,16 @@ function entryKey(event: {
  * behavior is untouched.
  *
  * `'expired'` is then COMPUTED, never read from an event: an open window whose `expiresAt` is at or
- * before `now` answers `'expired'`. Its suppression has stopped — the test fails builds again — but
- * the entry stays LISTED, renewable and releasable. That is the forcing function that makes
- * quarantine a lifecycle rather than a graveyard (D-11).
+ * before `now` answers `'expired'`. Its suppression has stopped — the test fails builds again — and
+ * the entry stays LISTED, renewable and releasable (D-11).
+ *
+ * SCOPE OF THAT GUARANTEE, stated because it is narrower than it reads: the lapse ends THIS
+ * window, not the suppression. A fingerprint still crossing the threshold re-enters on the very
+ * next fold with a fresh full-lifetime deadline, so a permanently failing test costs one red build
+ * per lifetime and no human decision, indefinitely. Nothing in this fold or in the ladder bounds
+ * that repetition (measured 2026-08-06; pinned in `cli/src/__tests__/quarantine-lifecycle.e2e.test.ts`'s
+ * multi-cycle leg, and made legible to a human by plan 390-18's re-entry counter). What the lapse
+ * IS, honestly: a 30-day review cadence on an indefinitely renewable suppression.
  *
  * `now` is an ISO-8601 instant, compared on the same scale the events are stamped on.
  */

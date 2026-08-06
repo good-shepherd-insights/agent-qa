@@ -219,7 +219,7 @@ describe('the D-17 ladder arms (390)', () => {
     ))
   })
 
-  it('renders the expired arm saying failures count again (D-11 forcing function)', () => {
+  it('renders the expired arm saying failures count again (D-11 lapse)', () => {
     expect(renderWith({
       kth: 4,
       windowBuilds: 5,

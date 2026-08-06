@@ -93,8 +93,15 @@ export const QUARANTINE_AUTO_EXIT_PASSES = 5
 
 /**
  * D-11's default lifetime in days. On lapse suppression STOPS and the entry stays listed as
- * `expired` — the forcing function that keeps quarantine a lifecycle rather than a graveyard.
- * A human deadline in a human-reviewed file; retune from operational evidence, never from config.
+ * `expired`.
+ *
+ * This is a REVIEW CADENCE, not a cap, and the difference is the fact somebody retuning the number
+ * most needs: a still-crossing fingerprint re-enters with a fresh `expiryFrom(now)` on the very
+ * next fold, indefinitely and with no attenuation. Measured over four full cycles (2026-08-06): 4
+ * `entered` lines, 4 distinct deadlines, 0 released, cycle 4 indistinguishable from cycle 1. So
+ * raising this number lengthens the gap between red builds; it does not change how many there
+ * eventually are. A human deadline in a human-reviewed file; retune from operational evidence,
+ * never from config.
  */
 export const QUARANTINE_DEFAULT_EXPIRY_DAYS = 30
 

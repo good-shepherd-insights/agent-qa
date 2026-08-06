@@ -100,8 +100,8 @@ function statusFor(
  *  - REPORTED IDENTITY. The join key is `(product, filePath, testName)`, which the store must
  *    have REPORTED — never `machineId` (a per-run explicit id) and never the title. A descriptor
  *    that carries no identity answers `active`, which is honest: this store cannot say.
- *  - STATE. Only `quarantined` counts. An `expired` window has STOPPED suppressing (D-11 — the
- *    forcing function that keeps quarantine a lifecycle) and a `released` one is closed, so both
+ *  - STATE. Only `quarantined` counts. An `expired` window has STOPPED suppressing (D-11) and a
+ *    `released` one is closed, so both
  *    are `active` tests whose history lives in `quarantine.list`. A card that showed `expired`
  *    as `quarantined` would tell a reader the failing build in front of them is licensed.
  */

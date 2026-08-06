@@ -276,7 +276,7 @@ export const guardQuarantineLedgerEvent = createVersionGuard<QuarantineLedgerEve
  * sentence clause all speak the same three words.
  *
  * `'quarantined'` suppresses; `'expired'` does NOT (the entry stays listed, renewable and
- * releasable — the forcing function that makes quarantine a lifecycle rather than a graveyard);
+ * releasable — a lapsed window, not a closed one: a still-recurring fingerprint re-enters, D-11);
  * `'released'` is a closed window kept for the history the event log answers for free.
  */
 export const QUARANTINE_ENTRY_STATE_NAMES = ['quarantined', 'expired', 'released'] as const

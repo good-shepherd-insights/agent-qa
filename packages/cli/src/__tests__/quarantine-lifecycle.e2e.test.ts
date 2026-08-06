@@ -685,13 +685,20 @@ describe('a quarantined failure never silences an un-quarantined one (CR-01)', (
   }, 120_000)
 })
 
-// ---- the expiry forcing function --------------------------------------------------------------
+// ---- what the expiry lapse actually BUYS -------------------------------------------------------
 //
-// D-11's whole point: an entry can never silently suppress forever. Both consequences of ONE lapsed
-// deadline are pinned against the SAME ledger file — the run fails again, and the sentence a human
-// reads says why. Either one alone would leave the other free to drift.
+// What D-11's lapse does, pinned against ONE ledger file: suppression stops, the run fails again,
+// and the sentence a human reads says why. Either consequence alone would leave the other free to
+// drift, so both are asserted here.
+//
+// What it does NOT do — though this block's earlier name claimed a mechanism that would have — is
+// BOUND the suppression. Measured 2026-08-06: the lapse buys exactly
+// ONE red build, and the same run that goes red re-suppresses itself, because the snapshot is taken
+// at run start (entry lapsed ⇒ red) while the post-run fold immediately authors a fresh `entered`
+// with a full new deadline. Nobody has to notice, decide, claim, renew or release anything. The
+// multi-cycle characterization leg at the bottom of this block pins that loop directly.
 
-describe('the expiry forcing function (D-11)', () => {
+describe('the expiry lapse: what one lapsed deadline buys (D-11)', () => {
   // The crossing is driven at a `now` far enough in the past that the stamped 30-day deadline is
   // already behind BOTH the injected run-start instant and the composition's real system clock.
   const PAST_NOW = '2026-06-01T12:00:00.000Z'
@@ -735,7 +742,8 @@ describe('the expiry forcing function (D-11)', () => {
 
     // CONSEQUENCE 2 — the same lapsed entry stops suppressing. The run-start snapshot EXCLUDES an
     // expired entry, so the test that was green-listed is red again with no ledger edit at all: the
-    // forcing function is a consequence of the deadline passing, never of anyone acting.
+    // lapse is a consequence of the deadline passing, never of anyone acting. Which is also why it
+    // bounds nothing — nobody is required to act for the suppression to come straight back.
     const afterLapse = await driveRun(
       env,
       { runId: 'run-expiry-lapsed', buildOrdinal: 4, outcome: 'failed' },
@@ -749,11 +757,13 @@ describe('the expiry forcing function (D-11)', () => {
     expect(afterLapse.junitXml).not.toContain(JUNIT_QUARANTINE_MARKER_BLOCK)
     expect(afterLapse.consoleOutput).not.toContain(QUARANTINE_TEST_ANNOTATION)
 
-    // …and the honest red is what expiry BUYS: one failing build, not a permanent stop. That run's
-    // own fold sees a still-crossed window and RE-ENTERS with a fresh deadline (390-05's accepted
-    // re-entry shape; D-10's "re-entry needs no special rule"). Pinned rather than tolerated: the
-    // repeated `entered` lines ARE the history D-03 chose an event log to keep, and a reader of the
-    // committed file must be able to tell a re-entry from a duplicate.
+    // …and the honest red is ALL the lapse buys: exactly one failing build. That run's own fold
+    // sees a still-crossed window and RE-ENTERS with a fresh full-lifetime deadline (390-05's
+    // accepted re-entry shape; D-10's "re-entry needs no special rule"), so the very next build is
+    // green again with no human in the loop. Pinned rather than tolerated: the repeated `entered`
+    // lines ARE the history D-03 chose an event log to keep, and a reader of the committed file
+    // must be able to tell a re-entry from a duplicate. That the loop then repeats without
+    // attenuation is the multi-cycle leg's business, below.
     const afterReentry = ledgerLines(env)
     expect(afterReentry.map((line) => line.kind)).toEqual(['entered', 'entered'])
     expect(afterReentry[0]).toMatchObject({ kind: 'entered', expiresAt: LAPSED_EXPIRY })
