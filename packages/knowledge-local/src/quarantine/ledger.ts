@@ -23,7 +23,8 @@
 // WRITE POSTURE — fail-closed and audited, on TWO gates in a fixed order. Every append first
 // pre-checks each event against BOTH legs the READ's guard ranges — the VERSION IDENTITY
 // (`=== CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION`) and schema's `hasQuarantineEventShape`, which is
-// the LAST of that guard's four legs and asserts only that `schemaVersion` is a NUMBER — and then
+// the LAST of that guard's FIVE legs (390-22 / IN-02) and asserts only that `schemaVersion` is a
+// NUMBER — and then
 // passes the committed-egress checkpoint on this module's OWN channel; only after all of it does a
 // byte reach the file. The two gates answer different questions and answer them differently: the
 // pre-check asks "can this ever be read back?" and THROWS (a write the reader refuses is corruption
@@ -364,8 +365,27 @@ export function appendQuarantineEvents(
   // the STRUCTURAL predicate. One predicate was never enough on its own —
   // `hasQuarantineEventShape` asserts only that `schemaVersion` is a number, while the read
   // (`guardQuarantineLedgerEvent`) additionally requires it to BE the current version, so `3`, `1`,
-  // `2.5`, `NaN` and `Infinity` were all admitted here and then hard-failed the WHOLE file on read,
-  // taking `list`, `add` and `release` down together (390-14 / G-390-1).
+  // `2.5`, `NaN` and `Infinity` were all admitted here (390-14 / G-390-1).
+  //
+  // AND THE READ REFUSES THEM IN TWO DIFFERENT WAYS — stated per member, because an argument for a
+  // gate that misdescribes the failure it prevents will be trusted the next time it is quoted
+  // (390-22 / WR-02; this paragraph used to claim a whole-file failure for all five, which is
+  // false for two of them):
+  //
+  //   `3`, `1`, `2.5` are FINITE, so they reach the guard's reject-newer and migration-walk legs
+  //     and raise the typed `QuarantineLedgerVersionError`, which `readQuarantineLedger` lets
+  //     PROPAGATE. One such line hard-fails the WHOLE file, taking `list`, `add` and `release`
+  //     down together.
+  //
+  //   `NaN` and `Infinity` were never writable in that form at all: `canonicalJson` turns a
+  //     non-finite number into `null` before a byte reaches disk, so what the reader meets is a
+  //     NULL version, which fails the guard's finite-number leg with a plain `TypeError` and folds
+  //     into a LINE-LEVEL refusal — the neighbours still fold and all three verbs keep working.
+  //     They are refused here for a genuinely different reason than the reader refuses them for.
+  //
+  // The pre-check ranges both modes identically, and that is the symmetry argument: whichever way
+  // the read would refuse a line, no byte of it is written. Splitting the read side does not split
+  // the write side.
   //
   // `===`, not `<=`: two of those five are OLDER-side, and `NaN`/`Infinity` fail every ordering
   // comparison silently. The rule widens only if `QUARANTINE_LEDGER_MIGRATIONS` ever stops being

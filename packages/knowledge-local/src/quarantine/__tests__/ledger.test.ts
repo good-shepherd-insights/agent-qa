@@ -651,21 +651,55 @@ describe('appendQuarantineEvents (D-04)', () => {
     expect(readQuarantineLedger(knowledgeRoot).refusedLines).toEqual([])
   })
 
-  // 390-14 / G-390-1. The read is FOUR legs in order (`createVersionGuard`: object-ness →
-  // finite-number → reject-newer → migration walk over a permanently-empty registry → structural
-  // shape). The write pre-check ranged only the LAST of them, so five distinct finite/non-finite
-  // versions were admitted here and hard-failed on read — and the failure is all-or-nothing over
-  // the WHOLE file, so one such line takes `list`, `add` and `release` down together, leaving the
-  // operator's only recovery a hand-edit of a file the verb that would show them its contents also
-  // refuses to read. Two of the five (`1`, `2.5`) are OLDER-side, so a reject-newer comparison
-  // would not close this; `NaN`/`Infinity` fail every ordering comparison silently. The check is
-  // `=== CURRENT`.
-  const READ_REFUSED_VERSIONS: readonly (readonly [string, number])[] = [
+  // 390-14 / G-390-1, corrected 390-22 / WR-02 + IN-02.
+  //
+  // THE READ'S GUARD IS FIVE LEGS IN ORDER, named rather than counted (`createVersionGuard`,
+  // packages/schema/src/versioning/create-version-guard.ts):
+  //   1. OBJECT-NESS        — a non-null object, else `TypeError`
+  //   2. FINITE-NUMBER      — `schemaVersion` is a number AND `Number.isFinite`, else `TypeError`
+  //   3. REJECT-NEWER       — `version > current`, else `QuarantineLedgerVersionError`
+  //   4. MIGRATION WALK     — every step from `version` to `current` needs a registered migration,
+  //                           else `QuarantineLedgerVersionError`. The registry is permanently
+  //                           empty, so EVERY older version lands here.
+  //   5. STRUCTURAL SHAPE   — `hasQuarantineEventShape`, else `TypeError`
+  // The write pre-check ranges legs 2/3/4 through one `=== CURRENT` comparison and leg 5 through
+  // the structural predicate directly. Three comments in this subsystem said "four legs" with the
+  // count cited as if load-bearing for the symmetry argument; the guard runs five, and the
+  // argument needs to know WHICH legs the write ranges, which a count carries none of.
+  //
+  // AND THE READ REFUSES IN TWO DIFFERENT WAYS. The old corpus merged them behind a read-side
+  // control written as a disjunction — "either some lines were refused and no events survived, OR
+  // something threw" — which passes under either mode, so the corpus could not see that two of its
+  // five members were testing a different mechanism from the other three:
+  //
+  //   WHOLE-FILE — `3`, `1`, `2.5` are finite and reach legs 3/4, which raise the typed
+  //     `QuarantineLedgerVersionError`. `readQuarantineLedger` deliberately lets that PROPAGATE, so
+  //     one such line takes the whole file down and `list`, `add` and `release` with it, leaving
+  //     the operator's only recovery a hand-edit of a file the verb that would show them its
+  //     contents also refuses to read. Two of the three (`1`, `2.5`) are OLDER-side, so a
+  //     reject-newer comparison alone would not close this. The check is `=== CURRENT`.
+  //
+  //   LINE-LEVEL — `NaN` and `Infinity` never survive serialization at all: `canonicalJson` turns
+  //     a non-finite number into `null`, so the bytes that reach disk carry
+  //     `"schemaVersion":null`, which fails leg 2 with a plain `TypeError`, which the reader folds
+  //     into a line-level refusal. The neighbours still fold and all three verbs keep working.
+  //     These two members are really testing a NULL version, and the write pre-check refuses them
+  //     for a different reason than the reader does.
+  const WHOLE_FILE_REFUSED_VERSIONS: readonly (readonly [string, number])[] = [
     ['newer than this build', 3],
     ['older with no registered migration', 1],
     ['non-integer', 2.5],
+  ]
+
+  const LINE_REFUSED_VERSIONS: readonly (readonly [string, number])[] = [
     ['NaN', Number.NaN],
     ['Infinity', Number.POSITIVE_INFINITY],
+  ]
+
+  /** The WRITE ranges both modes identically — it refuses everything the read refuses, either way. */
+  const READ_REFUSED_VERSIONS: readonly (readonly [string, number])[] = [
+    ...WHOLE_FILE_REFUSED_VERSIONS,
+    ...LINE_REFUSED_VERSIONS,
   ]
 
   for (const [label, schemaVersion] of READ_REFUSED_VERSIONS) {
@@ -683,25 +717,78 @@ describe('appendQuarantineEvents (D-04)', () => {
       expect(existsSync(join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME))).toBe(false)
       expect(existsSync(join(auditBaseDir, 'guardrail_audit.jsonl'))).toBe(false)
     })
+  }
 
-    it(`and the READ genuinely refuses it — ${label} (${String(schemaVersion)})`, () => {
-      // The refusal above is load-bearing only because this same line, written past the gate, is
-      // one the reader cannot consume. Hand-write it (the D-12 human path) and watch the read.
-      writeFileSync(
-        join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME),
-        `${canonicalJson(entered({ schemaVersion }))}\n`,
-        'utf8',
-      )
-      let refused = false
-      try {
-        const read = readQuarantineLedger(knowledgeRoot)
-        refused = read.refusedLines.length > 0 && read.events.length === 0
-      } catch {
-        refused = true
-      }
-      expect(refused).toBe(true)
+  /** The D-12 human path: hand-write the line past the gate and watch what the read does with it. */
+  function handWrite(lines: readonly string[]): void {
+    writeFileSync(
+      join(knowledgeRoot, QUARANTINE_LEDGER_FILENAME),
+      `${lines.join('\n')}\n`,
+      'utf8',
+    )
+  }
+
+  const NEIGHBOUR = entered({ testName: 'the neighbour on the same file' })
+
+  for (const [label, schemaVersion] of WHOLE_FILE_REFUSED_VERSIONS) {
+    it(`and the READ hard-fails the WHOLE FILE on it — ${label} (${String(schemaVersion)})`, () => {
+      // The VALID line goes FIRST, so this asserts the sharp half of the mode: the reader had
+      // already folded a good event when it met the bad one, and it hands back neither. There is
+      // no partial read to salvage, which is why `list`, `add` and `release` all go down together.
+      handWrite([canonicalJson(NEIGHBOUR), canonicalJson(entered({ schemaVersion }))])
+
+      // The ERROR TYPE, asserted directly. Not a catch-all and not a disjunction: a
+      // `QuarantineLedgerVersionError` is what distinguishes this mode from the other one, and a
+      // test that accepts any throw cannot tell them apart.
+      expect(() => readQuarantineLedger(knowledgeRoot)).toThrow(QuarantineLedgerVersionError)
     })
   }
+
+  for (const [label, schemaVersion] of LINE_REFUSED_VERSIONS) {
+    it(`and the READ refuses only that LINE — ${label} (${String(schemaVersion)})`, () => {
+      // This member was never writable in the form its label claims. `canonicalJson` turns a
+      // non-finite number into `null` before a byte reaches disk, so what the reader actually
+      // meets is a NULL version — the guard's finite-number leg, a plain `TypeError`, a line-level
+      // refusal. Asserted on the bytes rather than assumed.
+      const offending = canonicalJson(entered({ schemaVersion }))
+      expect(offending).toContain('"schemaVersion":null')
+
+      handWrite([offending, canonicalJson(NEIGHBOUR)])
+
+      // The read RETURNS. Asserted by using its value — a `toThrow` wrapper would pass here for
+      // the wrong reason.
+      const read = readQuarantineLedger(knowledgeRoot)
+      expect(read.refusedLines).toEqual([
+        { lineNumber: 1, reason: 'QuarantineLedgerEvent requires a numeric schemaVersion' },
+      ])
+      // THE SURVIVING NEIGHBOUR — the observable difference between the two modes, and the reason
+      // the split matters operationally. A whole-file refusal loses this line; this mode keeps it,
+      // so the ledger stays listable and both other verbs keep working.
+      expect(read.events).toEqual([NEIGHBOUR])
+    })
+  }
+
+  it('the two modes are NOT interchangeable — the old disjunction was satisfied by both', () => {
+    // The control this replaced read: `refusedLines.length > 0 && events.length === 0`, OR a
+    // `catch` setting the same flag. A whole-file member satisfies it through the catch; a
+    // line-level member satisfies it through the refusedLines half — so a member could move
+    // between the groups and the corpus would not notice. This leg asserts the two directions the
+    // disjunction merged, so moving a member reds exactly one group.
+    handWrite([canonicalJson(entered({ schemaVersion: 3 }))])
+    expect(() => readQuarantineLedger(knowledgeRoot)).toThrow(QuarantineLedgerVersionError)
+
+    handWrite([canonicalJson(entered({ schemaVersion: Number.NaN }))])
+    const read = readQuarantineLedger(knowledgeRoot)
+    expect(read.refusedLines).toHaveLength(1)
+    expect(read.events).toEqual([])
+
+    // And the write side does NOT split: it refuses both, on the same `=== CURRENT` comparison.
+    for (const [, schemaVersion] of READ_REFUSED_VERSIONS) {
+      expect(() =>
+        appendQuarantineEvents(knowledgeRoot, [entered({ schemaVersion })], { auditBaseDir }),
+      ).toThrow(TypeError)
+    }
+  })
 
   it('the SAME append at the CURRENT version writes — the version refusal has a reddening domain', () => {
     // Accept-direction control on the identical fixture shape. Without it the five refusals above
