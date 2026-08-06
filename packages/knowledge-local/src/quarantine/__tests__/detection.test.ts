@@ -5,10 +5,13 @@
 //  1. The ladder boundaries. 1 ordinal is nothing, 2 is FLAGGED (visibility only — zero ledger
 //     bytes), 3 ESCALATES. One build of warning before action is the whole point of D-06, so the
 //     step below and the step above every threshold are both asserted.
-//  2. The class gate is TOTAL over the closed eight-class verdict vocabulary. Auto-quarantine is
-//     restricted to the three §6.4 A3 classes; the other FIVE escalate loudly and append nothing,
-//     so a real regression is never auto-silenced. The disposition table is asserted key-for-key
-//     against VERDICT_CLASSES itself, so a ninth class cannot be silently un-dispositioned.
+//  2. The gate is TWO tables, each TOTAL over the closed eight-class verdict vocabulary.
+//     DISPOSITION restricts auto-quarantine to the three §6.4 A3 classes; the other FIVE escalate
+//     loudly and append nothing, so a real regression is never auto-silenced. FLOOR ELIGIBILITY
+//     (390-16) then asks whether the evidence behind the class is about this test or about the
+//     run — only `flake` may auto-quarantine on the deterministic floor's word alone. Both tables
+//     are asserted key-for-key against VERDICT_CLASSES itself, so a ninth class cannot be
+//     silently un-decided on either axis.
 //  3. Purity. `now` arrives as an argument and the module reads no clock, no fs and no database —
 //     asserted behaviourally (identical inputs, identical bytes) AND by a source scan, because a
 //     rule that reads a clock cannot have its expiry boundary pinned.
@@ -34,6 +37,7 @@ import {
   QUARANTINE_DEFAULT_EXPIRY_DAYS,
   QUARANTINE_ESCALATE_THRESHOLD,
   QUARANTINE_FLAG_FLOOR,
+  QUARANTINE_FLOOR_ELIGIBILITY,
   QUARANTINE_WINDOW_ORDINALS,
   evaluateQuarantineDetection,
 } from '../detection.js'
@@ -201,6 +205,19 @@ describe('the class gate is TOTAL over the closed verdict vocabulary', () => {
 // the producer flipped DOES quarantine — otherwise it could be passing for want of recurrence.
 describe('floor eligibility: an auto-quarantine class the floor may not act on alone', () => {
   const AUTHORED_REQUIRED_AUTO_CLASSES: readonly VerdictClass[] = ['environment', 'timeout']
+
+  it('is TOTAL over the closed vocabulary — no member left un-decided', () => {
+    expect(Object.keys(QUARANTINE_FLOOR_ELIGIBILITY).sort()).toEqual([...VERDICT_CLASSES].sort())
+  })
+
+  it('makes authored-required the value of every class but flake', () => {
+    // Stated as data so the reason a reader can check is the reason the gate checks. The five
+    // escalate-only classes carry the STRICT value deliberately: it is unobservable today, which
+    // is exactly why a future one-line disposition flip must not silently license the floor too.
+    expect(
+      VERDICT_CLASSES.filter((name) => QUARANTINE_FLOOR_ELIGIBILITY[name] === 'floor-eligible'),
+    ).toEqual(['flake'])
+  })
 
   it.each(AUTHORED_REQUIRED_AUTO_CLASSES)(
     'REFUSES to auto-quarantine a floor-produced %s crossing, loudly',

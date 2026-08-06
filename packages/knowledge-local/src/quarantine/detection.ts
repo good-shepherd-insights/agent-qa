@@ -12,13 +12,30 @@
 // QUARANTINE_ESCALATE_THRESHOLD it ESCALATES. "Flags and then escalates" is temporally real: one
 // build of warning before anything changes.
 //
-// THE CLASS GATE IS TOTAL (D-05). Escalation routes through QUARANTINE_CLASS_DISPOSITIONS, a table
-// over the CLOSED eight-member VerdictClass union rather than a set membership test. That shape is
-// deliberate: a ninth verdict class cannot compile until someone decides what quarantine does with
-// it, so the gate's INPUT DOMAIN is enumerated, not just its outputs. Only the three classes
-// issue-curation §6.4 routes to A3 auto-quarantine. The other five escalate LOUDLY and append
-// nothing — the build keeps failing, because auto-silencing a real regression is the one outcome
-// this phase exists to prevent.
+// THE GATE IS TWO TOTAL TABLES OVER ONE CLOSED UNION (D-05, extended by 390-16). Escalation routes
+// through QUARANTINE_CLASS_DISPOSITIONS and QUARANTINE_FLOOR_ELIGIBILITY, both keyed on the CLOSED
+// eight-member VerdictClass union rather than a set membership test. That shape is deliberate: a
+// ninth verdict class cannot compile until someone decides BOTH answers for it, so each gate's
+// INPUT DOMAIN is enumerated, not just its outputs.
+//
+//  - DISPOSITION answers "may this class ever auto-quarantine". Only the three classes
+//    issue-curation §6.4 routes to A3 may. The other five escalate LOUDLY and append nothing.
+//  - FLOOR ELIGIBILITY answers the axis the class set alone cannot express: is the EVIDENCE behind
+//    the class about THIS TEST, or about the run? `flake` is the floor's one directly-observed
+//    per-test signal (it passed on retry) and is floor-eligible; everything else needs an AUTHORED
+//    `analyze-run` verdict before it may silence anything.
+//
+// A crossing that either table refuses lands in `escalatedNotQuarantined` — the build keeps
+// failing, because auto-silencing a real regression is the one outcome this phase exists to
+// prevent. There is deliberately NO third arm: a refused crossing that goes nowhere is the
+// anti-silencing defect wearing another hat.
+//
+// THE UPSTREAM SHARPENING THIS MODULE DELIBERATELY DOES NOT TAKE. `classifyRootCause`'s two
+// run-scoped probe arms arguably should not mint a PER-TEST verdict at all — a down dependency is
+// a run-level condition, closer to `config_error` — and fixing it there would be more correct and
+// would help every verdict consumer, not just this one. But that rewrites phase 373's documented,
+// pinned branch order, which is that module's contract and not this one's. Named here so the next
+// reader knows the producer gate closes the MEASURED path rather than the root cause.
 //
 // WHY THE OTHER FIVE ARE ESCALATE-ONLY, individually:
 //
@@ -110,6 +127,66 @@ export const QUARANTINE_CLASS_DISPOSITIONS = {
 export const AUTO_QUARANTINE_CLASSES: readonly VerdictClass[] = VERDICT_CLASSES.filter(
   (name) => QUARANTINE_CLASS_DISPOSITIONS[name] === 'auto-quarantine',
 )
+
+/** Whether a class may auto-quarantine on the deterministic floor's word alone. */
+export type QuarantineFloorEligibility = 'floor-eligible' | 'authored-required'
+
+/**
+ * The SECOND total table over the same closed vocabulary (390-16, G-390-3).
+ *
+ * The disposition table above answers "may this class ever auto-quarantine". It cannot answer the
+ * other question, because the answer is not a property of the class name: is the EVIDENCE behind
+ * the class a statement about THIS TEST, or about the run it happened to be in? This table answers
+ * that, and it is a table rather than `if (cls === 'environment' || cls === 'timeout')` for exactly
+ * the reason D-05 gave for the first one — a rule stated over a subset of its own input domain
+ * compiles forever while treating every future class as an accident. A ninth member of
+ * VERDICT_CLASSES is a compile error here until someone decides its floor eligibility.
+ *
+ * Per class, with the reasoning that decides it:
+ *
+ *  - `flake` → FLOOR-ELIGIBLE. `classifyRootCause`'s rule is `retryCount > 0` on a final-attempt
+ *    pass: the test LITERALLY passed on retry. That is the definition of flaky, observed directly,
+ *    per-test, needing no LLM. Gating it would make auto-quarantine unreachable on every project
+ *    running without an analysis budget — which is FLAK-01's promise itself.
+ *  - `environment` → AUTHORED-REQUIRED. Two of its three arms are RUN-SCOPED probe reads
+ *    (`baselineProbe.error !== undefined`, `baselineProbe.status >= 500`) that fire before any
+ *    per-test signal. One down staging dependency classifies every failing member of a suite
+ *    identically; the measured blast radius was 6 of 6 tests under one shared 30-day deadline.
+ *  - `timeout` → AUTHORED-REQUIRED. Per-test, but semantically thin: "exceeded the budget" is as
+ *    consistent with an `app_bug` (an infinite spinner, a deadlock) as with flakiness. Telling
+ *    those apart is what `analyze-run` exists for.
+ *  - THE FIVE ESCALATE-ONLY CLASSES → AUTHORED-REQUIRED. They never reach the auto-quarantine
+ *    branch today, so this value is not observable — which is precisely why it is the strict one.
+ *    It makes authored-required the DEFAULT for any future widening of the disposition table, so a
+ *    later one-line class flip cannot silently also license the floor (T-390-16-04).
+ *
+ * WHY NOT flip the disposition table instead. That is wrong in both directions: it would disable
+ * auto-quarantine for genuinely ANALYZED environment/timeout failures, and it would leave
+ * floor-minted `flake` firing. The consistent rule — the one 390-05 already ratified once when it
+ * made `unknown` escalate-only — is that a quarantine decision requires an AUTHORED verdict, and
+ * `producer` is what makes that rule expressible.
+ */
+export const QUARANTINE_FLOOR_ELIGIBILITY = {
+  flake: 'floor-eligible',
+  environment: 'authored-required',
+  timeout: 'authored-required',
+  app_bug: 'authored-required',
+  test_bug: 'authored-required',
+  config_error: 'authored-required',
+  llm_error: 'authored-required',
+  unknown: 'authored-required',
+} as const satisfies Record<VerdictClass, QuarantineFloorEligibility>
+
+/**
+ * Both tables must agree before a crossing may author an `entered` line: the class's disposition
+ * is auto-quarantine AND (the class is floor-eligible OR this crossing's verdict was authored).
+ * Everything else routes to `escalatedNotQuarantined` — loud, rendered, build still failing.
+ */
+function autoQuarantines(failure: QuarantineDetectionFailure): boolean {
+  if (QUARANTINE_CLASS_DISPOSITIONS[failure.verdictClass] !== 'auto-quarantine') return false
+  return QUARANTINE_FLOOR_ELIGIBILITY[failure.verdictClass] === 'floor-eligible'
+    || failure.producer === 'analyze-run'
+}
 
 /**
  * One failed fingerprint this run contributed, with the recurrence the projection answered for it.
@@ -288,7 +365,7 @@ export function evaluateQuarantineDetection(
     if (activeKeys.has(identityKey(failure))) continue
 
     if (failure.occurrenceOrdinals >= QUARANTINE_ESCALATE_THRESHOLD) {
-      if (QUARANTINE_CLASS_DISPOSITIONS[failure.verdictClass] === 'auto-quarantine') {
+      if (autoQuarantines(failure)) {
         entered.push({
           schemaVersion: CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
           kind: 'entered',
