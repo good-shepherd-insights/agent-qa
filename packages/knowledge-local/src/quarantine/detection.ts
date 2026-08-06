@@ -441,8 +441,14 @@ export interface QuarantineIdentity {
  *
  * `JSON.stringify` of the triple rather than a joined string: the parts are caller data and may
  * contain any character, and a separator that can appear inside a part is a collision waiting to
- * happen. This is also the key the ledger fold and the triage queue use — `operations.ts` imports
- * it rather than carrying a second, byte-identical copy.
+ * happen.
+ *
+ * ONCE IS NOW TRUE OF THE CODE, NOT ONLY OF THE SENTENCE (390-28 / WR-01). Both of the subsystem's
+ * other keying sites IMPORT this function rather than carrying a byte-identical copy: `ledger.ts`'s
+ * {@link foldQuarantineLedgerState}, which keys per-entry state on it, and `operations.ts`'s
+ * `triageOrder`, which keys the triage queue on it. Until 390-28 only the `operations.ts` half of
+ * that de-duplication had happened and the fold carried a private twin — measured by mutating this
+ * function's bytes, under which `ledger.test.ts` stayed 57/57 green. It reds now.
  */
 export function quarantineIdentityKey(identity: QuarantineIdentity): string {
   return JSON.stringify([identity.product, identity.filePath, identity.testName])
@@ -473,13 +479,21 @@ export function compareQuarantineIdentity(
 }
 
 /**
- * Code-unit comparison, exported so no ordering site in the subsystem has to re-spell it.
+ * Code-unit comparison. MODULE-PRIVATE, and the visibility is the honest claim (390-28 / IN-01).
  *
- * Used for the identity key and for the fingerprint tiebreak beside it: a comparison chain is only
- * as deterministic as its least deterministic leg, so leaving one `localeCompare` in the chain
- * would reproduce WR-06 on a narrower input class.
+ * It was exported "so no ordering site in the subsystem has to re-spell it" and had no consumer at
+ * all — not `operations.ts`, not `detection.test.ts`, not the package barrel, which never published
+ * it. An export that names consumers it does not have invites the next reader to preserve a
+ * compatibility surface nothing depends on. Its TWO REAL CALL SITES are both in this file:
+ * {@link compareQuarantineIdentity}, which compares the identity key with it, and the fingerprint
+ * tiebreak in {@link evaluateQuarantineDetection}'s failure sort. Ordering sites OUTSIDE this
+ * module reach the same primitive through `compareQuarantineIdentity`, which is exported.
+ *
+ * Both call sites want it for one reason: a comparison chain is only as deterministic as its least
+ * deterministic leg, so leaving one `localeCompare` in the chain would reproduce WR-06 on a
+ * narrower input class.
  */
-export function compareBytes(left: string, right: string): number {
+function compareBytes(left: string, right: string): number {
   if (left === right) return 0
   return left < right ? -1 : 1
 }

@@ -82,6 +82,11 @@ import type {
   QuarantineLedgerEvent,
   QuarantineOwner,
 } from '@vostride/agent-qa-schema'
+// The identity key, imported rather than re-spelled (390-28 / WR-01). The fold below keys entries
+// on exactly the bytes the detection ladder and `operations.ts`'s triage queue key on; a second
+// copy here is how two folds start disagreeing about which lines are the same test. No cycle:
+// `detection.ts` imports schema and the window read only, never this module.
+import { quarantineIdentityKey } from './detection.js'
 
 /** The ledger's fixed name directly under the committed knowledge root — never caller-supplied. */
 export const QUARANTINE_LEDGER_FILENAME = 'quarantine.jsonl'
@@ -179,14 +184,6 @@ interface MutableEntry {
   eventState: 'quarantined' | 'released'
 }
 
-function entryKey(event: {
-  product: string
-  filePath: string
-  testName: string
-}): string {
-  return JSON.stringify([event.product, event.filePath, event.testName])
-}
-
 /**
  * Fold the event log into current per-entry state. PURE — identical `(events, now)` inputs answer
  * identically, and no clock is read.
@@ -242,7 +239,7 @@ export function foldQuarantineLedgerState(
   const entries = new Map<string, MutableEntry>()
 
   for (const event of events) {
-    const key = entryKey(event)
+    const key = quarantineIdentityKey(event)
     switch (event.kind) {
       case 'entered': {
         // Read the prior record BEFORE overwriting it. The arm still overwrites every mutable
