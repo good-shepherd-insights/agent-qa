@@ -181,7 +181,12 @@ export const AUTO_QUARANTINE_CLASSES: readonly VerdictClass[] = VERDICT_CLASSES.
   (name) => QUARANTINE_CLASS_DISPOSITIONS[name] === 'auto-quarantine',
 )
 
-/** Whether a class may auto-quarantine on the deterministic floor's word alone. */
+/**
+ * Whether the deterministic floor may decide this KIND of failure AT ALL. Never sufficient on
+ * its own: since 390-19 the floor arm also requires the crossing's own `sameBuildPassAndFail`,
+ * so no class auto-quarantines on the floor's word alone. The pre-390-19 gloss on this line said
+ * otherwise and was the same false-reachability shape 390-25 removed from the corpus header.
+ */
 export type QuarantineFloorEligibility = 'floor-eligible' | 'authored-required'
 
 /**
