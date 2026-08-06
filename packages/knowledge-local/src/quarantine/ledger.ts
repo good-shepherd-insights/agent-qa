@@ -21,15 +21,16 @@
 // pinned one second either side with no flake.
 //
 // WRITE POSTURE — fail-closed and audited, on TWO gates in a fixed order. Every append first
-// STRUCTURALLY pre-checks each event against schema's `hasQuarantineEventShape` — the same
-// predicate the READ ranges — and then passes the committed-egress checkpoint on this module's OWN
-// channel; only after both does a byte reach the file. The two gates answer different questions and
-// answer them differently: the structural one asks "can this ever be read back?" and THROWS
-// (a write the reader refuses is corruption of a committed artifact, not a refusal a caller can
-// sensibly carry on from — it is invisible to `list`, unreleasable, and duplicates on retry), while
-// the egress one asks "does this leak a secret?" and comes back as DATA (never a bare catch, never
-// a throw the caller has to guess at). Quarantine events are
-// CODE-authored — threshold crossings, auto-exits, the gated verbs — never model output, which is
+// pre-checks each event against BOTH legs the READ's guard ranges — the VERSION IDENTITY
+// (`=== CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION`) and schema's `hasQuarantineEventShape`, which is
+// the LAST of that guard's four legs and asserts only that `schemaVersion` is a NUMBER — and then
+// passes the committed-egress checkpoint on this module's OWN channel; only after all of it does a
+// byte reach the file. The two gates answer different questions and answer them differently: the
+// pre-check asks "can this ever be read back?" and THROWS (a write the reader refuses is corruption
+// of a committed artifact, not a refusal a caller can sensibly carry on from — it is invisible to
+// `list`, unreleasable, and duplicates on retry), while the egress one asks "does this leak a
+// secret?" and comes back as DATA (never a bare catch, never a throw the caller has to guess at).
+// Quarantine events are CODE-authored — threshold crossings, auto-exits, the gated verbs — never model output, which is
 // why CTX-FUT-01's propose-only posture deliberately does not bind these writes (D-04; the dated
 // posture note lands in REQUIREMENTS.md).
 //
@@ -47,9 +48,13 @@
 // The residual is honest and small, and 390-11 / WR-07 closed half of it — say both halves plainly:
 //   - SERIALIZATION stays open. A THIRD caller of `appendQuarantineEvents`, added outside those two
 //     paths, would be unserialized and would have to take the lease itself.
-//   - SHAPE is closed AT THIS SEAM. A third caller cannot author a line the reader refuses, because
-//     the append pre-checks every event against the read's own predicate before writing. That class
-//     needed closing here rather than at each caller precisely because the caller set can grow.
+//   - SHAPE AND VERSION are both closed AT THIS SEAM. A third caller cannot author a structurally
+//     unreadable line, because the append pre-checks every event against the read's structural
+//     predicate before writing; and it cannot stamp a version the read refuses either, because the
+//     same loop compares `schemaVersion` against CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION (390-14 /
+//     G-390-1 — the structural predicate alone admitted five such versions, since it asks only that
+//     the field be a number). That class needed closing here rather than at each caller precisely
+//     because the caller set can grow.
 //
 // IDENTITY — entries are keyed by `(product, filePath, testName)`, never `testId`.
 
@@ -64,6 +69,7 @@ import {
 } from '@vostride/agent-qa-safety'
 import { JsonlAuditSink } from '@vostride/agent-qa-safety-local'
 import {
+  CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   canonicalJson,
   guardQuarantineLedgerEvent,
   hasQuarantineEventShape,
@@ -299,13 +305,14 @@ export type QuarantineAppendOutcome =
  * siblings too, and the existing file is left byte-unchanged. Partial writes are the failure mode
  * that would leave the committed truth half-updated and a reviewer unable to tell.
  *
- * Throws a `TypeError` naming the offending index when an event would not survive
- * {@link readQuarantineLedger}'s own guard (390-11 / WR-07). This is deliberately a THROW rather
- * than an outcome arm: every arm of {@link QuarantineAppendOutcome} describes a write that did not
- * happen for a reason the caller can act on, whereas authoring an unreadable line is a CALLER BUG
- * that would otherwise commit permanent, unlistable, unreleasable damage to a shared artifact.
+ * Throws a `TypeError` naming the offending index — and which leg refused — when an event would
+ * not survive {@link readQuarantineLedger}'s own guard, on EITHER of that guard's legs: the version
+ * identity (390-14 / G-390-1) or the structural predicate (390-11 / WR-07). This is deliberately a
+ * THROW rather than an outcome arm: every arm of {@link QuarantineAppendOutcome} describes a write
+ * that did not happen for a reason the caller can act on, whereas authoring an unreadable line is a
+ * CALLER BUG that would otherwise commit permanent, unlistable, unreleasable damage to a shared
+ * artifact.
  *
-
  * Callers stamp `at` and `expiresAt` themselves (D-11): this module reads no clock, which is what
  * keeps both the write path and the fold deterministic.
  */
@@ -316,10 +323,38 @@ export function appendQuarantineEvents(
 ): QuarantineAppendOutcome {
   if (events.length === 0) return { kind: 'appended', lines: 0 }
 
-  // The write refuses exactly what the read refuses — ONE predicate ranges both directions, so the
-  // two halves of the contract cannot disagree about what a valid line is. Runs before the egress
-  // checkpoint and before any filesystem call, so a refused unit leaves no byte and no audit row.
+  // The write refuses what the read refuses, on BOTH of the read's legs: the VERSION IDENTITY and
+  // the STRUCTURAL predicate. One predicate was never enough on its own —
+  // `hasQuarantineEventShape` asserts only that `schemaVersion` is a number, while the read
+  // (`guardQuarantineLedgerEvent`) additionally requires it to BE the current version, so `3`, `1`,
+  // `2.5`, `NaN` and `Infinity` were all admitted here and then hard-failed the WHOLE file on read,
+  // taking `list`, `add` and `release` down together (390-14 / G-390-1).
+  //
+  // `===`, not `<=`: two of those five are OLDER-side, and `NaN`/`Infinity` fail every ordering
+  // comparison silently. The rule widens only if `QUARANTINE_LEDGER_MIGRATIONS` ever stops being
+  // empty, at which point it becomes CURRENT plus every version with a registered migration — the
+  // read guard's own rule.
+  //
+  // Why an explicit comparison rather than simply calling `guardQuarantineLedgerEvent` (the read's
+  // whole predicate) here: that guard RETURNS a possibly-migrated value, while this append writes
+  // the CALLER'S original object. Routing through it would make the write's refusal type depend on
+  // the guard's internal leg order and would commit bytes the guard did not return — a latent
+  // divergence the permanently-empty migration registry currently hides. The explicit comparison
+  // has no such coupling, and it states the rule where the loop already states its sibling.
+  //
+  // Both legs run before the egress checkpoint and before any filesystem call, so a refused unit
+  // leaves no byte and no audit row. The message names the offending index AND which leg refused,
+  // so an operator reading the throw can tell a malformed record from a wrong-version one.
   for (let index = 0; index < events.length; index += 1) {
+    const version = events[index]?.schemaVersion
+    if (version !== CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION) {
+      throw new TypeError(
+        `quarantine event at index ${String(index)} would be refused by the ledger read: ` +
+          `schemaVersion ${String(version)} is not the current version ` +
+          `${String(CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION)} — the committed ledger must never ` +
+          'carry a line no checkout can consume',
+      )
+    }
     if (hasQuarantineEventShape(events[index])) continue
     throw new TypeError(
       `quarantine event at index ${String(index)} would be refused by the ledger read: ` +

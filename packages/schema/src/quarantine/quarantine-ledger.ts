@@ -222,7 +222,12 @@ function isWorkspaceRelativeIdentity(value: string): boolean {
  * — never a run abort (the T-390-04 posture is unchanged), and never healing to absence.
  *
  * This is also the predicate the WRITE side ranges: the knowledge-local ledger append pre-checks
- * every event with it, so no caller can commit bytes this guard will refuse (390-11 / WR-07).
+ * every event with it, so no caller can commit bytes THIS guard will refuse (390-11 / WR-07). Note
+ * the scope — this is the STRUCTURAL leg only, and its version clause asks merely that
+ * `schemaVersion` be a number. {@link guardQuarantineLedgerEvent} wraps it in a version identity
+ * check, which the append ranges SEPARATELY against
+ * {@link CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION} (390-14 / G-390-1) rather than through this
+ * predicate.
  */
 export function hasQuarantineEventShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
