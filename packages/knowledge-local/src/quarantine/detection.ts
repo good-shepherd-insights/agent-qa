@@ -393,10 +393,20 @@ export function evaluateQuarantineDetection(
   for (const entry of [...input.entries].sort(
     (a, b) => identityKey(a).localeCompare(identityKey(b)),
   )) {
-    // Release closes an OPEN window. An expired entry already stopped suppressing and a released
-    // one is closed, so neither is a candidate — releasing them would author an event that changes
-    // nothing while claiming the exit path worked.
-    if (entry.state !== 'quarantined') continue
+    // Release closes an entry that is still LISTED — `quarantined` or `expired`. Only a `released`
+    // window is out of scope, and the old filter's justification was right about exactly that half:
+    // re-releasing a closed window WOULD author an event that changes nothing while claiming the
+    // exit path worked. It was wrong about the other half. A LAPSED entry is still listed, still
+    // renewable, still in the triage queue and still the reason a human sees this test in
+    // `quarantine.list` — a release genuinely closes it, so refusing to author one is what left a
+    // FIXED test listed forever (390-17 / G-390-4). One condition was covering two states whose
+    // answers differ.
+    //
+    // TWO SITES, ONE RULE. `evaluateQuarantineForFold` (projection/run-outcomes.ts) builds the
+    // `testWindows` this loop reads, and its own exit-candidate filter must admit exactly the same
+    // states. Narrow either one alone and the pair is a no-op: this loop would answer correctly
+    // over a window the fold never built.
+    if (entry.state === 'released') continue
     const window = windowsByKey.get(identityKey(entry))
     if (window === undefined || !releasesOnPasses(window)) continue
     released.push({

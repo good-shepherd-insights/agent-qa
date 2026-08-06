@@ -694,10 +694,17 @@ function evaluateQuarantineForFold(
       ),
     }])
 
-  // Exit candidates are every OPEN entry in this product — not only the tests that ran here. A
-  // test whose window filled with passes several runs ago must still be released.
+  // Exit candidates are every entry in this product that is still LISTED — `quarantined` or
+  // `expired` — and not only the tests that ran here: a test whose window filled with passes
+  // several runs ago must still be released. A LAPSED entry is included because a test fixed while
+  // its window was lapsed is still listed and can otherwise only be closed by hand (390-17).
+  //
+  // TWO SITES, ONE RULE. `evaluateQuarantineDetection`'s release loop (quarantine/detection.ts)
+  // applies the same state test to the entries themselves. This filter decides whether a window is
+  // BUILT at all, so narrowing it alone silently disables the release for a whole state class while
+  // the pure rule's own tests stay green over windows the fold never hands it.
   const testWindows: QuarantineDetectionTestWindow[] = entries.flatMap((entry) => {
-    if (entry.state !== 'quarantined' || entry.product !== projection.product) return []
+    if (entry.state === 'released' || entry.product !== projection.product) return []
     const history = readTestOutcomeHistory(db, {
       product: entry.product,
       filePath: entry.filePath,
