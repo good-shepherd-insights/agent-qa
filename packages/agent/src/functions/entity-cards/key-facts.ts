@@ -62,6 +62,16 @@ export const ENTITY_RENAMED_TO_FACT_LABEL = 'renamed to'
  * context the LEDGER ITSELF records — which class of failure recurred, and since when. Reaching
  * for the count here would mean giving the card producer a store handle, which is the one thing
  * ENTY-02's determinism claim rests on it not having.
+ *
+ * THAT RULE DOES NOT RANGE THE RE-ENTRY HISTORY (390-20). D-17's occurrence count is a count over
+ * BUILDS — "3rd occurrence in 5 builds" is a join against a live provider, and it is still out of
+ * reach here for exactly the reason above. `enteredCount` and `firstEnteredAt` are a different
+ * number: the fold DERIVES them from `entered` events already committed to the ledger, and they
+ * arrive ON THE ENTRY this module is handed, beside the `owner` and `expiresAt` it has always
+ * rendered. Stating them costs this producer no handle, no port and no clock read — it stays a
+ * pure function of its argument, which is the whole of what ENTY-02 pins. This distinction is
+ * written down because the paragraph above, read alone, looks like it forbids that render, and a
+ * reader who found no answer here would be RIGHT to delete a purity violation.
  */
 export const QUARANTINE_FACT_LABELS = {
   owner: 'quarantine owner',
@@ -115,17 +125,48 @@ function renameFact(descriptor: EntityDescriptor): KeyFact[] {
  * decided is suppressing — an expired or released window contributes NOTHING here, because the
  * card's status says `active` for both and a fact announcing a quarantine beside it would be the
  * card contradicting itself.
+ *
+ * WHICH INSTANT THE OCCURRENCE FACT ANSWERS (390-20), and why it is not always the same one. An
+ * entry on its FIRST window has one instant to state and states it exactly as it always has. An
+ * entry on a LATER lap has two — the current window opened at `enteredAt`, this test's quarantine
+ * history began at `firstEnteredAt` — and it states the second, because that is the key
+ * `triageOrder` (knowledge-local `quarantine/operations.ts`) sorts the triage queue on. A card
+ * naming the current window's instant beside a clause promising RECURRENCE handed a human two
+ * different answers to one question: the queue ordering a test by January while the card said
+ * April. `quarantine-ledger.ts`'s own docstring calls these two instants close enough to be
+ * exactly that hazard; naming the sibling here is cheaper than a test asserting the two agree,
+ * and it is what keeps the next edit from re-opening the drift.
  */
 function quarantineFacts(entry: QuarantineEntryState | undefined): KeyFact[] {
   if (entry === undefined) return []
   return [
     { label: QUARANTINE_FACT_LABELS.owner, value: entry.owner },
     { label: QUARANTINE_FACT_LABELS.expires, value: entry.expiresAt },
-    {
-      label: QUARANTINE_FACT_LABELS.occurrence,
-      value: `${entry.verdictClass} failures recurring; quarantined since ${entry.enteredAt}`,
-    },
+    { label: QUARANTINE_FACT_LABELS.occurrence, value: occurrenceValue(entry) },
   ]
+}
+
+/**
+ * The occurrence sentence's two arms — ONE fact either way.
+ *
+ * The history rides in the sentence rather than in a second fact deliberately: the card's bound
+ * is on fact COUNT, and a test being quarantined more often must not be able to move a number
+ * {@link projectKeyFacts} reasons about below. Both arms are a fixed shape over the entry.
+ *
+ * The first-window arm is not an optimisation, it is the honest render. "1 quarantine window
+ * since <the same instant the sentence would otherwise have named>" announces a lap count of one
+ * and repeats itself, and every card rendered before the history existed was a first-window card
+ * that must stay byte-identical.
+ *
+ * NO DURATION, NO HUMANISED INTERVAL. The instant is what the ledger holds and what every other
+ * quarantine fact renders; "214 days ago" would make this fact a function of the wall clock in a
+ * producer whose determinism is pinned and which holds no clock to read.
+ */
+function occurrenceValue(entry: QuarantineEntryState): string {
+  const history = entry.enteredCount > 1
+    ? `${entry.enteredCount} quarantine windows since ${entry.firstEnteredAt}`
+    : `quarantined since ${entry.enteredAt}`
+  return `${entry.verdictClass} failures recurring; ${history}`
 }
 
 /**

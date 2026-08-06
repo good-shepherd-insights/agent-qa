@@ -466,6 +466,43 @@ describe('the TST card serves quarantine state from the ledger (390)', () => {
     ])
   })
 
+  // The FIRST-WINDOW arm above and the LATER-LAP arm below are ONE PAIR, and neither is
+  // sufficient alone. A render that always states the lap count satisfies the leg below while
+  // regressing every first-window card into announcing "1 window since <the instant the next
+  // clause already named>"; a render that never states it satisfies the leg above while leaving
+  // the card answering a different question than the queue sorted on. Both assert the WHOLE
+  // fact list BY VALUE rather than by substring — the defect closed here is a sentence whose
+  // two clauses disagreed, and a containment match cannot see a disagreement.
+  it('states the re-entry HISTORY on a later lap — the instant the triage queue ordered on', () => {
+    const laps = entry({
+      enteredCount: 4,
+      // Deliberately DISTINCT instants. `firstEnteredAt` defaults to `enteredAt` in the builder
+      // because that is what a first entry folds to; a later-lap fixture that left them equal
+      // could not tell the two renders apart, which is the whole defect.
+      enteredAt: '2026-08-05T10:00:00.000Z',
+      firstEnteredAt: '2026-06-01T09:00:00.000Z',
+    })
+    const card = produceEntityCard(tstDescriptor(), { quarantine: [laps] })
+
+    expect(card.status).toBe('quarantined')
+    expect(card.keyFacts.slice(1)).toEqual([
+      { label: QUARANTINE_FACT_LABELS.owner, value: 'unassigned' },
+      { label: QUARANTINE_FACT_LABELS.expires, value: '2026-09-04T10:00:00.000Z' },
+      {
+        label: QUARANTINE_FACT_LABELS.occurrence,
+        value: 'flake failures recurring; 4 quarantine windows since 2026-06-01T09:00:00.000Z',
+      },
+    ])
+
+    // ONE occurrence fact in both arms. The history rides in the sentence, not in a second
+    // fact, so a test being quarantined more often cannot move a card's fact count — and
+    // `ENTITY_CARD_MAX_KEY_FACTS`, which this file reasons about carefully elsewhere, is
+    // untouched by this render.
+    const firstWindow = produceEntityCard(tstDescriptor(), { quarantine: [entry()] })
+    expect(card.keyFacts).toHaveLength(firstWindow.keyFacts.length)
+    expect(card.keyFacts.length).toBeLessThanOrEqual(ENTITY_CARD_MAX_KEY_FACTS)
+  })
+
   it('serves EXPIRED as active — suppression stopped, so the card must not claim it (D-11)', () => {
     const card = produceEntityCard(tstDescriptor(), { quarantine: [entry({ state: 'expired' })] })
 
