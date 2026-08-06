@@ -1896,6 +1896,10 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
     // And the ACTIONABLE half: this producer means a verdict was already authored, so the operator
     // learns that re-running analysis will not change the answer.
     expect(withheld[0]).toMatch(/will not change the answer/)
+    // THE DIFFERENTIAL (390-23 / CR-01): each arm's sentence is its own, two-sided. The
+    // next-applied-run remedy belongs to the UNAUTHORED arm alone — an authored verdict's class
+    // refusal is settled, and a later fold re-reads the same authored answer.
+    expect(withheld[0]).not.toMatch(/next applied run/)
   })
 
   it('tells the two separable causes APART on the line — the unauthored one is actionable', async () => {
@@ -1911,7 +1915,11 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
         // does not tell an operator: it separates "never auto-quarantinable" from "would have been,
         // had a verdict been authored or had the crossing carried a per-test same-build signature",
         // and it does NOT separate the third cause (the run's per-run floor cap already spent).
-        // The line says `may`, which is what carries that residual honestly.
+        // ALL THREE unauthored causes converge on ONE remedy that is true by execution (390-23 /
+        // CR-01): the NEXT applied run's fold re-evaluates this crossing and may admit it then —
+        // measured 2/2/2 across three consecutive folds for the capped case (round-4 verification).
+        // The line no longer needs a `may` hedge over a distinction it cannot make, because the
+        // remedy it now names does not depend on which of the three causes withheld the crossing.
         escalatedNotQuarantined: [{ ...sighting, producer: 'deterministic-classifier' as const }],
         refusedLines: [],
       }),
@@ -1923,7 +1931,17 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
       .filter((message) => message.startsWith('Quarantine withheld for'))
     expect(withheld).toHaveLength(1)
     expect(withheld[0]).toContain('deterministic-classifier')
-    expect(withheld[0]).toMatch(/may change the answer/)
+    // THE REMEDY, PINNED BY POSITIVE CONTENT (390-23 / CR-01). This arm used to name
+    // an `analyze-run` invocation under the binary's name: a job kind enqueued programmatically at
+    // post-run-tail.ts:425, absent from the top-level `program.addCommand` registry in cli.ts under
+    // any subcommand — so the string it printed was not typeable by anyone. The
+    // advice was unreachable even had the verb existed — this line is emitted inside the fold that
+    // runs AFTER analysis had its turn, and `applyRunOutcomes` answers
+    // `{ kind: 'not-evaluated', reason: 'already-applied' }` (run-outcomes.ts:424, :792), so
+    // nothing re-decides THIS crossing. Pinned as POSITIVE CONTENT rather than as a blanket ban on
+    // command-shaped strings: a correct future fix naming a REAL verb must not red this leg, and
+    // replacing the remedy sentence with any other string must.
+    expect(withheld[0]).toMatch(/next applied run/)
     expect(withheld[0]).not.toMatch(/will not change the answer/)
   })
 

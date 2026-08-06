@@ -407,21 +407,39 @@ function logQuarantineDisposition(
     // THE PRODUCER REACHES THE LINE (390-22 / WR-03). It was carried onto the sighting in 390-16
     // so an operator could tell two refusal causes apart HERE, and it was never printed — the
     // field's claim was true of the shape and false of the operator, which is the defect class
-    // this round closes.
+    // 390-22 closed.
     //
-    // WHAT THE OPERATOR CAN CONCLUDE, and it is exactly two of the three causes. 390-19 enumerated
-    // them on `QuarantineDetectionSighting.producer` and that enumeration is the one this render
-    // is reduced to, not a paraphrase of it:
+    // WHAT THE `producer` FIELD TELLS THE OPERATOR. 390-19 enumerated the causes on
+    // `QuarantineDetectionSighting.producer`, and this render is reduced to that enumeration
+    // rather than paraphrasing it:
     //   `analyze-run`               — a verdict WAS authored and the class is still not
     //                                 auto-quarantinable. Re-running analysis will not change it.
-    //   `deterministic-classifier`  — no verdict was authored, so analysis MAY change it.
+    //   `deterministic-classifier`  — the crossing was withheld for want of an authored verdict,
+    //                                 OR for want of a per-test same-build signature, OR because
+    //                                 the run's per-run floor cap was already spent (390-19's
+    //                                 third cause, which this field deliberately does not
+    //                                 distinguish and which no field was added to carry).
     //
-    // WHAT IT CANNOT. `may` is doing honest work in the second arm rather than hedging. A crossing
-    // on the floor's producer is withheld for want of an authored verdict, OR for want of a
-    // per-test same-build signature, OR because the run's per-run floor cap was already spent
-    // (390-19's third cause, which this field deliberately does not distinguish and which no field
-    // was added to carry). All three are answered "run the analyst and look again", so the line
+    // ALL THREE UNAUTHORED CAUSES CONVERGE ON ONE HONEST REMEDY (390-23 / CR-01): the NEXT applied
+    // run's fold re-evaluates this crossing and may admit it THEN. That is the per-run floor cap's
+    // own vocabulary in `detection.ts` — "It crosses again on the next applied run and may be
+    // admitted THEN" — and it is true by execution: a capped/withheld identity IS admitted on a
+    // later evaluation, measured 2/2/2 across three consecutive folds (round-4 verification).
+    // Because the remedy does not depend on WHICH of the three withheld the crossing, the line
     // stays actionable without claiming a distinction it cannot make.
+    //
+    // AND THIS RUN IS SETTLED — which is why no re-run of anything is named here. The arm used to
+    // tell the operator to run a command, and that was false three separately checkable ways:
+    //   (1) REGISTRY — the top-level `program.addCommand` block in `cli.ts` exposes no such verb,
+    //       under any subcommand. `analyze-run` is a JOB KIND enqueued programmatically at
+    //       `post-run-tail.ts:425`, not something an operator can type.
+    //   (2) CHAIN POSITION — this line is emitted inside the fold that runs AFTER analysis has had
+    //       its turn in the chain, so any THIS-run remedy is false by position alone.
+    //   (3) IDEMPOTENCY (D-08) — `applyRunOutcomes` answers
+    //       `{ kind: 'not-evaluated', reason: 'already-applied' }` (run-outcomes.ts:424, :792), so
+    //       a refold of an applied run re-decides no crossing, whatever ran in between.
+    // Relief therefore begins at the NEXT applied run, and the sentence below says exactly that.
+    // No CLI invocation belongs in this block; the remedy here is temporal, not imperative.
     const authored = sighting.producer === 'analyze-run'
     log.warn(
       `Quarantine withheld for ${sighting.testName} (${sighting.filePath}): `
@@ -431,8 +449,8 @@ function logQuarantineDisposition(
       + (authored
         ? 'a verdict was already authored for this run, so re-running analysis '
           + 'will not change the answer.'
-        : 'no verdict was authored for this run, so running `agent-qa analyze-run` '
-          + 'may change the answer.'),
+        : 'no verdict was authored for this run - the next applied run\'s fold '
+          + 're-evaluates this crossing and may admit it then.'),
     )
   }
   if (outcome.append.kind === 'egress-blocked') {
