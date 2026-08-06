@@ -382,7 +382,12 @@ export interface QuarantineDetectionSighting {
   fingerprint: string
   verdictClass: VerdictClass
   /**
-   * The crossing run's producer, carried onto the sighting so an operator can ACT on it.
+   * The crossing run's producer, carried onto the sighting so an operator can ACT on it — and
+   * RENDERED on the curation tail's withheld line since 390-22 / WR-03. Until then this docstring
+   * claimed the field existed so an operator could tell two causes apart on that line, and the
+   * field never reached the line: the claim was true of the shape and false of the operator. It is
+   * reduced here to what the render delivers.
+   *
    * `escalatedNotQuarantined` has THREE distinct causes, and the producer separates the first two:
    * a class that is never auto-quarantinable (run `analyze-run` and it still will not be), versus a
    * class that would have been had a verdict been authored (run `analyze-run` and it will be).

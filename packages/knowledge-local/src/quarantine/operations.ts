@@ -32,7 +32,11 @@
 // `held` by itself). That handed-in authority is CHECKED, not believed (390-15): both write verbs
 // re-read the monotonic epoch and the lease file before deciding anything, and a process whose
 // lease was reclaimed under it — the heartbeat-starved daemon — is refused with the lease module's
-// own `WriterAuthorityLostError`, ledger byte-unchanged. Riding an unfenced authority is how a
+// own `WriterAuthorityLostError`, ledger byte-unchanged. WITH ITS BOUNDARY (390-22 / WR-07): that
+// check runs inside NO lock, unlike the lease module's own `withCurrentWriterAuthority`, so it
+// proves the authority was current at the moment of the check rather than for the duration of the
+// decide that follows. The window is one synchronous `decide` instead of forever; it is not zero.
+// See `assertHandedInAuthority` for the residual in full. Riding an unfenced authority is how a
 // reclaimed writer kept appending beside its reclaimer, which the two-OS-process harness measured
 // as two `entered` lines for one identity. Serializing only the append would leave the other half
 // of the interesting race intact: two writers folding a ledger with no entry for a test would both
@@ -241,6 +245,10 @@ export interface QuarantineOperationsOptions {
    * and whose lease was then taken answers yes to the second one forever, and the two-OS-process
    * harness measured what that costs — two `entered` lines for one identity, and the verb
    * returning an owner committed truth does not record. See {@link underWriterLease}.
+   *
+   * AND WHAT THE RE-VALIDATION DOES NOT BUY (390-22 / WR-07): it is a read, not a lock. It answers
+   * "still the holder?" as of the read, and the decide it licenses runs after it. A reclaim landing
+   * between the two is still unfenced. `assertHandedInAuthority` states the residual in full.
    */
   resolveWriterAuthority?: () => { leaseId: string; epoch: number } | undefined
   policy?: GuardrailPolicy
@@ -308,30 +316,6 @@ function defaultExpiry(now: string): string {
 type SynchronousDecision<T> = T extends PromiseLike<unknown> ? never : unknown
 
 /**
- * The write verbs' serialized section — the whole read-fold-decide-append cycle, not the append.
- *
- * Serializing only the file write would leave the interesting race intact: two writers could both
- * fold a ledger with no entry for a test, both decide `entered`, and both append, producing two
- * opening events for one window. So `decide` runs INSIDE the scope and is synchronous BY SIGNATURE
- * (see {@link SynchronousDecision}) — there is no await point between the read and the append for
- * another writer to be scheduled at.
- *
- * Three arms, and they are exhaustive over the acquisition outcome:
- *  - a handed-in authority is VALIDATED against disk and, if it is still current, means this
- *    process IS the holder; it then acquires nothing and releases nothing, because the lease it
- *    was given outlives this call (the `applyReview` arm). An authority this process no longer
- *    holds raises the lease module's own `WriterAuthorityLostError` before `decide` runs, so a
- *    reclaimed daemon writes nothing (390-15 / G-390-2R; see {@link assertHandedInAuthority});
- *  - `held` refuses typed, having written nothing and having taken nothing from the holder;
- *  - every other non-`acquired` outcome rethrows the union's own error, which every refusal arm
- *    carries precisely so a new arm surfaces by name instead of being swallowed here.
- *
- * Module-scope and exported so the compile-time refusal above has a call site a test can point a
- * `@ts-expect-error` at — a constraint nothing exercises is a claim, not a guard. Deliberately NOT
- * added to this package's barrel (`src/index.ts`), on 390-11's reasoning about
- * `appendQuarantineEvents`: the committed-write surface only ever shrinks.
- */
-/**
  * The handed-in authority, re-read against disk before it licenses a write (390-15 / G-390-2R).
  *
  * WHY THE EPOCH IS THE FENCING TOKEN, and why no clock is involved. `acquireWriterLease` bumps the
@@ -360,6 +344,23 @@ type SynchronousDecision<T> = T extends PromiseLike<unknown> ? never : unknown
  * the same inputs.
  *
  * Every reason raised here is an existing member of `WriterAuthorityLostReason`; nothing widens.
+ *
+ * THE RESIDUAL, STATED (390-22 / WR-07). This ladder is the same one `withCurrentWriterAuthority`
+ * runs in the lease module, with one difference that the prose elsewhere used to leave out: THAT
+ * one runs INSIDE `withMutationLock`, so its epoch and lease reads and the mutation they license
+ * are on one serialization boundary. THIS one runs inside nothing. What it proves is therefore
+ * bounded exactly: the authority was current AT THE MOMENT OF THE CHECK — not for the duration of
+ * the `decide` that follows it. A reclaim landing in that window is still unfenced, and the append
+ * it licenses still lands.
+ *
+ * Both halves are true and the prose should say both. Before this check, an authority was BELIEVED
+ * and the window was FOREVER — a heartbeat-starved daemon kept appending beside its reclaimer for
+ * the rest of its life, which the two-OS-process harness measured as two `entered` lines for one
+ * identity. After it, the window is ONE SYNCHRONOUS `decide` with no await point in it (the
+ * signature refuses an async one; see {@link SynchronousDecision}). Narrowing forever to one
+ * synchronous call is a real improvement, and it is not closure. Closing it needs the APPEND
+ * itself to carry a fence — the epoch travelling with the write and being validated at the file,
+ * not beside it — which is larger than this phase took.
  */
 function assertHandedInAuthority(
   knowledgeRoot: string,
@@ -387,6 +388,33 @@ function assertHandedInAuthority(
   }
 }
 
+/**
+ * The write verbs' serialized section — the whole read-fold-decide-append cycle, not the append.
+ *
+ * Serializing only the file write would leave the interesting race intact: two writers could both
+ * fold a ledger with no entry for a test, both decide `entered`, and both append, producing two
+ * opening events for one window. So `decide` runs INSIDE the scope and is synchronous BY SIGNATURE
+ * (see {@link SynchronousDecision}) — there is no await point between the read and the append for
+ * another writer to be scheduled at.
+ *
+ * Three arms, and they are exhaustive over the acquisition outcome:
+ *  - a handed-in authority is VALIDATED against disk and, if it is still current, means this
+ *    process IS the holder; it then acquires nothing and releases nothing, because the lease it
+ *    was given outlives this call (the `applyReview` arm). An authority this process no longer
+ *    holds raises the lease module's own `WriterAuthorityLostError` before `decide` runs, so a
+ *    reclaimed daemon writes nothing (390-15 / G-390-2R; see {@link assertHandedInAuthority}).
+ *    BOUNDED: "before `decide` runs" is the whole of it — the check holds no lock, so a reclaim
+ *    landing DURING the decide is not fenced by it (390-22 / WR-07). The synchronous-by-signature
+ *    constraint above is what keeps that window one call wide rather than arbitrarily long;
+ *  - `held` refuses typed, having written nothing and having taken nothing from the holder;
+ *  - every other non-`acquired` outcome rethrows the union's own error, which every refusal arm
+ *    carries precisely so a new arm surfaces by name instead of being swallowed here.
+ *
+ * Module-scope and exported so the compile-time refusal above has a call site a test can point a
+ * `@ts-expect-error` at — a constraint nothing exercises is a claim, not a guard. Deliberately NOT
+ * added to this package's barrel (`src/index.ts`), on 390-11's reasoning about
+ * `appendQuarantineEvents`: the committed-write surface only ever shrinks.
+ */
 export async function underWriterLease<T>(
   knowledgeRoot: string,
   resolveWriterAuthority: (() => { leaseId: string; epoch: number } | undefined) | undefined,

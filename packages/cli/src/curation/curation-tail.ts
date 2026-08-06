@@ -404,10 +404,35 @@ function logQuarantineDisposition(
     )
   }
   for (const sighting of outcome.escalatedNotQuarantined) {
+    // THE PRODUCER REACHES THE LINE (390-22 / WR-03). It was carried onto the sighting in 390-16
+    // so an operator could tell two refusal causes apart HERE, and it was never printed — the
+    // field's claim was true of the shape and false of the operator, which is the defect class
+    // this round closes.
+    //
+    // WHAT THE OPERATOR CAN CONCLUDE, and it is exactly two of the three causes. 390-19 enumerated
+    // them on `QuarantineDetectionSighting.producer` and that enumeration is the one this render
+    // is reduced to, not a paraphrase of it:
+    //   `analyze-run`               — a verdict WAS authored and the class is still not
+    //                                 auto-quarantinable. Re-running analysis will not change it.
+    //   `deterministic-classifier`  — no verdict was authored, so analysis MAY change it.
+    //
+    // WHAT IT CANNOT. `may` is doing honest work in the second arm rather than hedging. A crossing
+    // on the floor's producer is withheld for want of an authored verdict, OR for want of a
+    // per-test same-build signature, OR because the run's per-run floor cap was already spent
+    // (390-19's third cause, which this field deliberately does not distinguish and which no field
+    // was added to carry). All three are answered "run the analyst and look again", so the line
+    // stays actionable without claiming a distinction it cannot make.
+    const authored = sighting.producer === 'analyze-run'
     log.warn(
       `Quarantine withheld for ${sighting.testName} (${sighting.filePath}): `
       + `${sighting.verdictClass} recurred at ${String(sighting.occurrenceOrdinals)} of the last `
-      + `${String(sighting.windowOrdinals)} failing builds and will keep failing this build.`,
+      + `${String(sighting.windowOrdinals)} failing builds and will keep failing this build. `
+      + `Verdict producer: ${sighting.producer} — `
+      + (authored
+        ? 'a verdict was already authored for this run, so re-running analysis '
+          + 'will not change the answer.'
+        : 'no verdict was authored for this run, so running `agent-qa analyze-run` '
+          + 'may change the answer.'),
     )
   }
   if (outcome.append.kind === 'egress-blocked') {

@@ -1882,6 +1882,49 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
     )
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('Quarantine withheld for'))
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('app_bug'))
+
+    // THE PRODUCER REACHES THE LINE (390-22 / WR-03). The field was carried onto the sighting so
+    // an operator could tell an unauthorable class from an unauthored one, and it was never
+    // printed — the claim was true of the SHAPE and false of the OPERATOR. Asserted on the emitted
+    // text, not on the line's prefix: a rendering fix whose test matches only the prefix is the
+    // same defect again.
+    const withheld = warn.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.startsWith('Quarantine withheld for'))
+    expect(withheld).toHaveLength(1)
+    expect(withheld[0]).toContain('analyze-run')
+    // And the ACTIONABLE half: this producer means a verdict was already authored, so the operator
+    // learns that re-running analysis will not change the answer.
+    expect(withheld[0]).toMatch(/will not change the answer/)
+  })
+
+  it('tells the two separable causes APART on the line — the unauthored one is actionable', async () => {
+    const warn = vi.fn()
+
+    await runCurationTail(baseOptions(
+      withQuarantine({
+        kind: 'evaluated',
+        append: { kind: 'appended', lines: 0 },
+        events: [],
+        flagged: [],
+        // The SAME withheld shape on the floor's producer. 390-19 settled what this field does and
+        // does not tell an operator: it separates "never auto-quarantinable" from "would have been,
+        // had a verdict been authored or had the crossing carried a per-test same-build signature",
+        // and it does NOT separate the third cause (the run's per-run floor cap already spent).
+        // The line says `may`, which is what carries that residual honestly.
+        escalatedNotQuarantined: [{ ...sighting, producer: 'deterministic-classifier' as const }],
+        refusedLines: [],
+      }),
+      { log: { warn, info: vi.fn() } },
+    ))
+
+    const withheld = warn.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.startsWith('Quarantine withheld for'))
+    expect(withheld).toHaveLength(1)
+    expect(withheld[0]).toContain('deterministic-classifier')
+    expect(withheld[0]).toMatch(/may change the answer/)
+    expect(withheld[0]).not.toMatch(/will not change the answer/)
   })
 
   it('warns on a blocked append and names the self-healing path — never a silent loss', async () => {
