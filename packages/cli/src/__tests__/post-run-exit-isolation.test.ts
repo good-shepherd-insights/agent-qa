@@ -53,7 +53,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { curationTailLog } from '../commands/run.js'
 import { runVerdictFirstCurationTail } from '../curation/curation-tail.js'
 import {
-  analysisFetchCommand,
+  digestFetchCommand,
   runPostRunTail,
   type PostRunTailHostInput,
   type PostRunTailOperations,
@@ -453,13 +453,18 @@ describe('JOBQ-06 — an induced enqueue failure is invisible to the verdict', (
       .toBeGreaterThanOrEqual(failed.verdictScopedStderr.length)
     // The clean run's own close-out is the other half of the divergence: the suffixes DIFFER,
     // which is why the prefix identity above is a claim and not an artefact. Since 389 D-12
-    // the clean drain also prints the clustered sentence block after the close-out — the
-    // in-process drain completed analyze-run, so the sentences are IN the CI output, one
-    // representative per cluster, through the one `analysis.get` producer.
+    // the clean drain also prints a block after the close-out, and since 391 D-17 that block
+    // is the DIGEST — headed by the run, carrying the same clustered analysis section through
+    // the same relocated renderer, and then the chain and the decisions waiting on a human.
     const cleanLines = lines(cleanSuffix)
     expect(cleanLines[0]).toContain(`post-processing done for ${RUN_ID}`)
-    expect(cleanLines[1]).toBe('analysis — 2 distinct problems:')
-    expect(cleanLines).toHaveLength(4)
+    expect(cleanLines[1]).toBe(`digest — ${RUN_ID}`)
+    expect(cleanLines[2]).toBe('analysis — 2 distinct problems:')
+    // The sections D-18 names, all present and all counts: nothing is waiting on a human in
+    // this fixture, and the digest says so rather than omitting the line.
+    expect(cleanSuffix).toContain('proposals — none minted this run · 0 pending overall')
+    expect(cleanSuffix).toContain('candidates — ')
+    expect(cleanSuffix).toContain('quarantine — 0 quarantined · 0 expired')
     expect(cleanSuffix).not.toBe(failedSuffix)
 
     // 5. Nothing escaped the tail. The wrapper's defensive boundary was never needed — a tail
@@ -554,7 +559,7 @@ describe('JOBQ-06 — the structural halves', () => {
       expect(lines(suffix)).toEqual([
         'post-processing — analysis: pending · curation: pending · issues: reserved'
         // 389 D-12: nothing drained under --detach, so the line carries the fetch command.
-        + ` · sentences: ${analysisFetchCommand(RUN_ID)}`,
+        + ` · proposals: 0 pending · digest: ${digestFetchCommand(RUN_ID)}`,
       ])
     })
 

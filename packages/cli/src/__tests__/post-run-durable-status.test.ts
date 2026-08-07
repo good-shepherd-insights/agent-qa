@@ -97,9 +97,12 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
       expect(tail.info).toEqual([
         'post-processing — analysis: pending (daemon will drain) · curation: pending'
         + ' (deferred to a later local run) · issues: reserved'
-        // 389 D-12: the handed-off tail completed no analyze-run in-process, so the exit
-        // line carries the exact fetch command for the sentences the daemon will author.
-        + ` · sentences: agent-qa fn analysis.get --input '{"runId":"${RUN_ID}"}'`,
+        // 391 D-17: the handed-off tail completed no analyze-run in-process, so the exit line
+        // carries the pending-proposal count and the exact fetch command for the digest the
+        // daemon's chain will fill in. Nothing is waiting on a human in this fixture, and the
+        // line says `0 pending` rather than omitting the clause — the count is READ, so its
+        // absence would mean the digest could not be composed.
+        + ` · proposals: 0 pending · digest: agent-qa digest "${RUN_ID}"`,
       ])
       expect(tail.warn).toEqual([])
 

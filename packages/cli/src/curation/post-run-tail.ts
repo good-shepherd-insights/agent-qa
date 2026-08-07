@@ -23,20 +23,26 @@
 // ceremony: it is what keeps the run tail's reach identical to the reach the tail already had.
 
 import {
-  ANALYSIS_GET_FUNCTION_ID,
   chainJobIdsForRun,
   invokeFunction,
+  renderAnalysisClusterBlock,
+  RUNS_DIGEST_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
 } from '@vostride/agent-qa-agent'
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import type {
-  AnalysisGetOutput,
   PostProcessingChips,
   PostProcessingStatus,
+  RunDigest,
   RunNotification,
 } from '@vostride/agent-qa-schema'
+
+// 391-06: the clustered block layout moved to the ONE package that has two callers for it — the
+// tail's print and `runs.digest`'s first section. Re-exported from where it used to live so the
+// CLI's own suite still names it here, and so nothing in this package composes a second layout.
+export { renderAnalysisClusterBlock }
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { nudgeDaemon } from '../daemon/client.js'
@@ -138,14 +144,18 @@ export interface PostRunTailOperations {
    */
   readPostProcessingStatus(host: LocalAgentHost, runId: string): Promise<PostProcessingStatus>
   /**
-   * One run's analysis, through the ONE producer (`analysis.get`, 389 D-11/SC3).
+   * One run's DIGEST, through the ONE producer (`runs.digest`, 391 D-16/D-17).
    *
-   * Same discipline as the status read above: shaped as "ask this host's registry" so the
-   * tail can never compose a sentence of its own — the bytes it prints are the op result's
-   * bytes, which are the barrel renderer's bytes, which are what M5's run page and 392's
-   * chat will serve. A second sentence path here is exactly the drift SC3 forbids.
+   * Same discipline as the status read above, and it replaced the 389 analysis read for a
+   * reason that is D-17 rather than taste: the digest's first section IS the clustered verdict
+   * block this tail used to print, and its other sections are the chain, the decisions waiting
+   * on a human and the counts. Printing both would have been the same run's story told twice.
+   *
+   * Shaped as "ask this host's registry" so the tail can never compose a line of its own — the
+   * bytes it prints are the op result's bytes, which are the barrel renderer's bytes, which are
+   * what the `agent-qa digest` verb, M5's run page and 392's chat all serve.
    */
-  readRunAnalysis(host: LocalAgentHost, runId: string): Promise<AnalysisGetOutput>
+  readRunDigest(host: LocalAgentHost, runId: string): Promise<RunDigest>
   /** The one wall clock, read only at tail boundaries. */
   now(): number
 }
@@ -230,12 +240,12 @@ export function defaultPostRunTailOperations(): PostRunTailOperations {
       { runId },
       CLI_FUNCTION_CALLER,
     ) as PostProcessingStatus,
-    readRunAnalysis: async (host, runId) => await invokeFunction(
+    readRunDigest: async (host, runId) => await invokeFunction(
       host.registry,
-      ANALYSIS_GET_FUNCTION_ID,
+      RUNS_DIGEST_FUNCTION_ID,
       { runId },
       CLI_FUNCTION_CALLER,
-    ) as AnalysisGetOutput,
+    ) as RunDigest,
     now: Date.now,
   }
 }
@@ -625,21 +635,44 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         drainOutcome = 'detached'
       }
       /**
-       * The D-12 sentence block, printed AFTER whichever exit line rendered — and only when
-       * this process's own pump completed analyze-run (never a wait, never a poll: the
-       * analysis either finished under the one budget or the exit line carries the fetch
-       * command instead). A failed read costs the block and nothing else; the warning names
-       * the same fetch command, so the recovery path is identical either way.
+       * ONE digest read per tail, whichever arm consumes it (391 D-17).
+       *
+       * Read lazily and memoised, because exactly one of the two arms below needs it and both
+       * need it at most once: the block prints its lines, the exit line points at it and
+       * carries its pending count. Two reads would be two projections of one run — cheap,
+       * durable and still two answers to a question with one.
+       *
+       * A failed read costs the digest and nothing else. The warning names the SAME fetch
+       * command the exit line would have carried, so the reader's next step is identical
+       * whichever way the digest failed to arrive (JOBQ-06: the exit code froze long ago).
        */
-      const printSentenceBlock = async (openedHost: LocalAgentHost): Promise<void> => {
-        if (!analyzeRunCompleted) return
-        try {
-          const analysis = await ops().readRunAnalysis(openedHost, opts.runId)
-          const block = renderAnalysisClusterBlock(analysis)
-          if (block !== '') opts.log.info?.(block)
-        } catch (error) {
-          opts.log.warn(analysisReadFailureWarning(opts.runId, error))
+      let digestRead: { value: RunDigest | undefined } | undefined
+      const readDigest = async (openedHost: LocalAgentHost): Promise<RunDigest | undefined> => {
+        if (digestRead === undefined) {
+          try {
+            digestRead = { value: await ops().readRunDigest(openedHost, opts.runId) }
+          } catch (error) {
+            opts.log.warn(digestReadFailureWarning(opts.runId, error))
+            digestRead = { value: undefined }
+          }
         }
+        return digestRead.value
+      }
+      /**
+       * The D-17 digest block, printed AFTER whichever exit line rendered — and only when this
+       * process's own pump completed analyze-run (never a wait, never a poll: the chain either
+       * finished under the one budget or the exit line carries the fetch command instead).
+       *
+       * It REPLACED the 389 sentence block rather than joining it. The digest's first section
+       * is that same clustered block, rendered by the same relocated function from the same op
+       * result, so printing both would have told one run's story twice — which is exactly the
+       * "nothing printed twice" half of D-17.
+       */
+      const printDigestBlock = async (openedHost: LocalAgentHost): Promise<void> => {
+        if (!analyzeRunCompleted) return
+        const digest = await readDigest(openedHost)
+        if (digest === undefined || digest.lines.length === 0) return
+        opts.log.info?.(digest.lines.join('\n'))
       }
       try {
         // Nothing was composed ⇒ the enqueue never got as far as a host, which means nothing
@@ -650,22 +683,23 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           // D-09: this process ran the chain to its terminal, so the human line is the honest
           // close-out — it reports what HAPPENED, where the summary reports what is pending.
           // Rendered from the row and NOTHING else, so the fetch command never grafts onto
-          // it; the sentences themselves follow when this process authored them.
+          // it; the digest itself follows when this process authored the analysis.
           opts.log.info?.(renderChainTerminalLine(status.notification))
-          await printSentenceBlock(host)
+          await printDigestBlock(host)
           return
         }
         // D-08: work stays queued. The statuses are durable; the parenthetical is posture —
-        // and so is the D-12 suffix: when THIS process did not complete analyze-run, the
-        // line gains the exact fetch command (the sentence is one copy-paste away); when it
-        // did, the sentences print one line down and a fetch pointer would be noise.
+        // and so is the D-17 suffix: when THIS process did not complete analyze-run, the line
+        // gains the pending-proposal count and the exact fetch command (the whole digest is
+        // one copy-paste away); when it did, the digest prints one line down and a pointer
+        // would be noise. EITHER/OR, one story.
         opts.log.info?.(
           renderPostProcessingSummaryLine(status, postureOf(drainOutcome))
           + (analyzeRunCompleted
             ? ''
-            : `${SUMMARY_SEPARATOR}sentences: ${analysisFetchCommand(opts.runId)}`),
+            : renderDigestPointer(opts.runId, await readDigest(host))),
         )
-        await printSentenceBlock(host)
+        await printDigestBlock(host)
       } catch (error) {
         opts.log.warn(summaryFailureWarning(opts.runId, error))
       } finally {
@@ -834,55 +868,51 @@ export function renderChainTerminalLine(notification: RunNotification): string {
 }
 
 /**
- * The exact fetch command the extended exit line carries (D-12).
+ * The exact fetch command the extended exit line carries (391 D-17).
  *
- * The REAL `agent-qa fn` invocation, byte-for-byte — `fn <id> --input <json>` is the shape
- * `commands/fn.ts` parses, and the runId rides `JSON.stringify` so an id needing escaping
- * cannot silently produce a command that fails on paste. The op id is the imported constant,
- * never a re-spelled literal: `analysis.get` has ONE producer and this line points at it.
+ * The REAL `agent-qa digest` invocation, byte-for-byte — a positional runId is the shape
+ * `commands/digest.ts` parses, and the id rides `JSON.stringify` so one needing quoting cannot
+ * silently produce a command that fails on paste. It points at the VERB rather than at
+ * `agent-qa fn runs.digest`, because the verb is what a person was given to type; the two reach
+ * the same op, and offering the lower-level one here would be an invitation to learn the
+ * function layer in order to read a run.
+ *
+ * It replaced the 389 `analysis.get` pointer rather than joining it. The digest CONTAINS the
+ * clustered sentences that pointer fetched, so keeping both would have offered a strictly
+ * narrower second command for the same content — two stories about one run, which is the
+ * thing D-17's either/or exists to prevent.
  */
-export function analysisFetchCommand(runId: string): string {
-  return `agent-qa fn ${ANALYSIS_GET_FUNCTION_ID} --input '${JSON.stringify({ runId })}'`
+export function digestFetchCommand(runId: string): string {
+  return `agent-qa digest ${JSON.stringify(runId)}`
 }
 
 /**
- * The D-15 clustered presentation: one representative composed sentence per cluster, the
- * multi-member clusters annotated with their occurrence count and member refs
- * (`×40: TST-101, TST-102, …`), singleton clusters reading as one bare sentence.
+ * The exit line's D-17 suffix: what is waiting on a human, and the one command that shows it.
  *
- * A pure string fold over the `analysis.get` output and nothing else: the sentence bytes are
- * `representative.sentence` VERBATIM — already composed by the one barrel renderer inside
- * the op — so the CLI block and every other surface are byte-identical by construction
- * (SC3). Member refs print the run's own `testId`s; a degenerate member with none falls
- * back to `#testIndex` rather than an empty ref. Empty clusters render nothing at all: a
- * zero-failure run has no problems to enumerate and gets no header saying so.
+ * The COUNT is dropped when the digest could not be read, and the pointer is not. Printing a
+ * fabricated `0 pending` would be the one wrong answer that makes a person stop checking their
+ * inbox; printing the command regardless is honest, because it is exactly what they should run
+ * to find out. The failure itself was already warned about one line up.
  */
-export function renderAnalysisClusterBlock(analysis: AnalysisGetOutput): string {
-  if (analysis.clusters.length === 0) return ''
-  const problems = analysis.clusters.length
-  const entries = analysis.clusters.map((cluster) => {
-    if (cluster.count === 1) return cluster.representative.sentence
-    const refs = cluster.members
-      .map((member) => (member.testId === '' ? `#${member.testIndex}` : member.testId))
-      .join(', ')
-    return `×${cluster.count}: ${refs}\n${cluster.representative.sentence}`
-  })
-  return `analysis — ${problems} distinct problem${problems === 1 ? '' : 's'}:\n${
-    entries.join('\n')}`
+export function renderDigestPointer(runId: string, digest: RunDigest | undefined): string {
+  const pending = digest === undefined
+    ? ''
+    : `proposals: ${digest.pendingProposalCount} pending${SUMMARY_SEPARATOR}`
+  return `${SUMMARY_SEPARATOR}${pending}digest: ${digestFetchCommand(runId)}`
 }
 
 /**
- * A failed analysis read costs the SENTENCE BLOCK and nothing else.
+ * A failed digest read costs the DIGEST and nothing else.
  *
- * Same posture as `summaryFailureWarning`: warned so the line's absence is attributable,
+ * Same posture as `summaryFailureWarning`: warned so the block's absence is attributable,
  * never thrown (the exit code froze long ago — JOBQ-06), and the warning carries the same
  * fetch command the extended exit line would have, so the reader's next step is identical
- * whichever way the sentences failed to print.
+ * whichever way the digest failed to print.
  */
-function analysisReadFailureWarning(runId: string, error: unknown): string {
+function digestReadFailureWarning(runId: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error)
-  return `The analysis for ${runId} could not be read for printing (${detail}); the sentences `
-    + `remain readable via ${analysisFetchCommand(runId)}.`
+  return `The digest for ${runId} could not be read for printing (${detail}); it remains `
+    + `readable via ${digestFetchCommand(runId)}.`
 }
 
 /**

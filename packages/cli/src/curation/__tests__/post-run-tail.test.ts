@@ -1,15 +1,21 @@
-// The D-12 sentence surface on the post-run tail (Phase 389, plan 07 — ANLZ-03/ANLZ-04).
+// The DIGEST surface on the post-run tail (Phase 391 plan 06, D-17 — over 389's D-12 legs).
+//
+// 391-06 replaced the clustered sentence block with the per-run DIGEST, whose first section IS
+// that block — same relocated renderer, same op-result bytes — plus the chain, the decisions
+// waiting on a human and the counts. Printing both would have told one run's story twice, which
+// is the "nothing printed twice" half of D-17.
 //
 // Two legs, decided from THIS process's knowledge of the drain — never from chip status:
 //
-//   1. The in-process drain completed `analyze-run` under the one budget → the tail prints
-//      the clustered sentence block after the exit line. The sentence BYTES come from the
-//      `analysis.get` op result verbatim (SC3's one-renderer law) — the byte-equality legs
-//      below compose the expected sentence through the REAL agent-barrel renderer and assert
-//      the printed bytes are identical, so a local re-composition is a RED here.
+//   1. The in-process drain completed `analyze-run` under the one budget → the tail prints the
+//      digest block after the exit line. The BYTES are `RunDigest.lines` verbatim (the SC3
+//      one-renderer law, one layer up) — the byte-equality legs below compose the expected
+//      lines through the REAL agent-barrel renderer and assert the printed bytes are
+//      identical, so a local re-composition is a RED here.
 //   2. Anything else — handed off, `--detach`, budget spent — → NO block, NO wait; the exit
-//      summary line is extended with the exact fetch command (`agent-qa fn analysis.get
-//      --input '{"runId": …}'`, the real `fn` syntax) so the sentence is one copy-paste away.
+//      summary line is extended with the PENDING-PROPOSAL COUNT and the exact fetch command
+//      (`agent-qa digest "<runId>"`, the real verb syntax) so the whole digest is one
+//      copy-paste away.
 //
 // The never-wait prohibition (388 D-03 / 386 D-15) and the C13 print-not-publish posture are
 // pinned as source and behavioral assertions at the bottom.
@@ -25,13 +31,14 @@ import type {
   GuardrailPolicy,
   MaskingContext,
   PostProcessingStatus,
+  RunDigest,
   RunNotification,
   Verdict,
   VerdictSentenceParts,
 } from '@vostride/agent-qa-schema'
 
 import {
-  analysisFetchCommand,
+  digestFetchCommand,
   renderAnalysisClusterBlock,
   runPostRunTail,
   type PostRunTailOperations,
@@ -45,8 +52,8 @@ const knowledgeRoot = '/workspace/project/agent-qa-knowledge'
 const runId = 'run-post-run-tail-sentences'
 const OWN_CHAIN = chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE)
 
-/** The exact fetch command the extended exit line must carry — the real `fn` invocation. */
-const FETCH_COMMAND = `agent-qa fn analysis.get --input '{"runId":"${runId}"}'`
+/** The exact fetch command the extended exit line must carry — the real `digest` verb. */
+const FETCH_COMMAND = `agent-qa digest "${runId}"`
 
 const handoff = {
   runId,
@@ -135,6 +142,35 @@ function analysisOutput(): AnalysisGetOutput {
   }
 }
 
+/**
+ * The digest the op WOULD serve for this run, composed exactly as the op composes it: the
+ * analysis section through the REAL relocated block renderer over the REAL renderer's
+ * sentences, then the sections D-18 names. Built here rather than hand-written so the
+ * byte-equality legs below compare the tail's print against a renderer's own output, not
+ * against a string this file re-spelled — a check that restates a constant inside its own
+ * package binds nothing to reality.
+ */
+function digestOutput(analysis: AnalysisGetOutput = analysisOutput()): RunDigest {
+  const block = renderAnalysisClusterBlock(analysis)
+  return {
+    runId,
+    verdictClusters: analysis.clusters,
+    chain: { analysis: 'done', curation: 'pending', issues: 'reserved' },
+    proposalsMintedThisRun: [],
+    pendingProposalCount: 2,
+    candidates: { curated: 0, deprecated: 0 },
+    quarantine: { quarantined: 0, expired: 0, refs: [] },
+    lines: [
+      `digest — ${runId}`,
+      ...(block === '' ? [] : [block]),
+      'chain — analysis: done · curation: pending · issues: reserved',
+      'proposals — none minted this run · 2 pending overall',
+      'candidates — 0 curated · 0 deprecated',
+      'quarantine — 0 quarantined · 0 expired',
+    ],
+  }
+}
+
 function pendingStatus(): PostProcessingStatus {
   return {
     runId,
@@ -171,7 +207,7 @@ function terminalNotification(): RunNotification {
 interface Harness {
   operations: PostRunTailOperations
   runNextJob: ReturnType<typeof vi.fn>
-  readRunAnalysis: ReturnType<typeof vi.fn>
+  readRunDigest: ReturnType<typeof vi.fn>
   chipObserve: ReturnType<typeof vi.fn>
   info: Mock<(message: string) => void>
   warn: Mock<(message: string) => void>
@@ -182,16 +218,16 @@ function harness(overrides: {
   lease?: ReturnType<PostRunTailOperations['acquireWriterLease']>
   runNextJob?: ReturnType<typeof vi.fn>
   status?: PostProcessingStatus
-  analysis?: AnalysisGetOutput
-  readRunAnalysis?: ReturnType<typeof vi.fn>
+  digest?: RunDigest
+  readRunDigest?: ReturnType<typeof vi.fn>
 } = {}): Harness {
   const clock = { value: 1_000 }
   const info = vi.fn<(message: string) => void>()
   const warn = vi.fn<(message: string) => void>()
   const runNextJob = overrides.runNextJob
     ?? vi.fn(async () => ({ ran: false, reason: 'no-job' }))
-  const readRunAnalysis = overrides.readRunAnalysis
-    ?? vi.fn(async () => overrides.analysis ?? analysisOutput())
+  const readRunDigest = overrides.readRunDigest
+    ?? vi.fn(async () => overrides.digest ?? digestOutput())
   const chipObserve = vi.fn()
 
   const operations = {
@@ -222,11 +258,11 @@ function harness(overrides: {
     runCurationTail: vi.fn(async () => undefined),
     createChipEmitter: vi.fn(() => ({ observe: chipObserve })),
     readPostProcessingStatus: vi.fn(async () => overrides.status ?? pendingStatus()),
-    readRunAnalysis,
+    readRunDigest,
     now: () => clock.value,
   } as unknown as PostRunTailOperations
 
-  return { operations, runNextJob, readRunAnalysis, chipObserve, info, warn, clock }
+  return { operations, runNextJob, readRunDigest, chipObserve, info, warn, clock }
 }
 
 function options(h: Harness): RunPostRunTailOptions {
@@ -259,8 +295,8 @@ const ANALYZE_COMPLETED = {
   job: { id: String(OWN_CHAIN.analyzeRun) },
 }
 
-describe('the clustered sentence block — in-process analyze-run completed (D-12/D-15)', () => {
-  it('prints the block after the exit line, bytes identical to the op-rendered sentences', async () => {
+describe('the digest block — in-process analyze-run completed (D-17, over 389 D-12/D-15)', () => {
+  it('prints the digest after the exit line, bytes identical to the op result', async () => {
     const h = harness({ runNextJob: pump([ANALYZE_COMPLETED]), status: doneStatus() })
     const tail = runPostRunTail(options(h))
     await tail.enqueue()
@@ -269,15 +305,20 @@ describe('the clustered sentence block — in-process analyze-run completed (D-1
 
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toHaveLength(2)
-    // The exit line first — untouched vocabulary, and NO fetch command on this leg: the
-    // sentences themselves are one line down.
+    // The exit line first — untouched vocabulary, and NO pointer on this leg: the digest
+    // itself is one line down, so a fetch command would be noise (the D-17 either/or).
     expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · issues: reserved')
-    expect(lines[0]).not.toContain('analysis.get')
+    expect(lines[0]).not.toContain('agent-qa digest')
+    expect(lines[0]).not.toContain('pending overall')
 
-    // The block: one representative sentence per cluster; the multi-member cluster carries
-    // its occurrence count and member refs; the singleton reads as one sentence (D-15).
+    // The block IS the op result's lines, joined and printed — nothing added, nothing
+    // reordered, nothing annotated.
     const block = lines[1] as string
-    expect(block).toBe(
+    expect(block).toBe(digestOutput().lines.join('\n'))
+    // …and inside it, the analysis section still reads exactly as 389 D-15 pinned it: one
+    // representative sentence per cluster, the multi-member cluster carrying its occurrence
+    // count and member refs, the singleton reading as one sentence.
+    expect(block).toContain(
       'analysis — 2 distinct problems:\n'
       + `×2: TST-101, TST-102\n${CLUSTER_SENTENCE}\n`
       + SINGLETON_SENTENCE,
@@ -287,11 +328,13 @@ describe('the clustered sentence block — in-process analyze-run completed (D-1
     // renderer, never a local composer.
     expect(block).toContain(CLUSTER_SENTENCE)
     expect(block).toContain(SINGLETON_SENTENCE)
-    expect(h.readRunAnalysis).toHaveBeenCalledTimes(1)
-    expect(h.readRunAnalysis.mock.calls[0]![1]).toBe(runId)
+    // …and the digest carries what the sentence block never could: what is waiting on a human.
+    expect(block).toContain('2 pending overall')
+    expect(h.readRunDigest).toHaveBeenCalledTimes(1)
+    expect(h.readRunDigest.mock.calls[0]![1]).toBe(runId)
   })
 
-  it('prints the block after the terminal human line when the chain finished (D-09 + D-12)', async () => {
+  it('prints the block after the terminal human line when the chain finished (D-09 + D-17)', async () => {
     const h = harness({
       runNextJob: pump([ANALYZE_COMPLETED]),
       status: { ...doneStatus(), notification: terminalNotification() },
@@ -305,7 +348,7 @@ describe('the clustered sentence block — in-process analyze-run completed (D-1
     expect(lines).toHaveLength(2)
     // The D-09 line is rendered from the row and NOTHING else — no fetch command grafted on.
     expect(lines[0]).toContain(`post-processing done for ${runId}`)
-    expect(lines[0]).not.toContain('analysis.get')
+    expect(lines[0]).not.toContain('agent-qa digest')
     expect(lines[1]).toContain(CLUSTER_SENTENCE)
   })
 
@@ -331,11 +374,17 @@ describe('the clustered sentence block — in-process analyze-run completed (D-1
       expect(lines.some((line) => line.includes('analysis.get'))).toBe(false)
     })
 
-  it('prints no block line at all for a zero-failure run (empty clusters)', async () => {
+  it('drops the ANALYSIS SECTION for a zero-failure run, and still prints the digest', async () => {
+    // The behaviour 391-06 changed on purpose, pinned so it is a decision rather than a
+    // regression. 389's block printed nothing at all here, because a run with no failures has
+    // no problems to enumerate. A DIGEST still has something to say — what is waiting on a
+    // human, and what became of the chain — so the block prints and its analysis section is
+    // what disappears. `renderAnalysisClusterBlock`'s empty-string contract is unchanged; it
+    // is now consumed one layer up.
     const h = harness({
       runNextJob: pump([ANALYZE_COMPLETED]),
       status: doneStatus(),
-      analysis: { runId, verdicts: [], sentences: [], clusters: [] },
+      digest: digestOutput({ runId, verdicts: [], sentences: [], clusters: [] }),
     })
     const tail = runPostRunTail(options(h))
     await tail.enqueue()
@@ -343,16 +392,18 @@ describe('the clustered sentence block — in-process analyze-run completed (D-1
     await tail.finish()
 
     const lines = h.info.mock.calls.map(([message]) => String(message))
-    expect(lines).toHaveLength(1)
+    expect(lines).toHaveLength(2)
     expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · issues: reserved')
+    expect(lines[1]).not.toContain('analysis — ')
+    expect(lines[1]).toContain('2 pending overall')
   })
 
-  it('a failed analysis read costs the BLOCK and nothing else — warned, never thrown', async () => {
+  it('a failed digest read costs the BLOCK and nothing else — warned, never thrown', async () => {
     const h = harness({
       runNextJob: pump([ANALYZE_COMPLETED]),
       status: doneStatus(),
-      readRunAnalysis: vi.fn(async () => {
-        throw new Error('the analysis artifact is unreadable')
+      readRunDigest: vi.fn(async () => {
+        throw new Error('the digest could not be composed')
       }),
     })
     const tail = runPostRunTail(options(h))
@@ -365,13 +416,13 @@ describe('the clustered sentence block — in-process analyze-run completed (D-1
     expect(lines[0]).toContain('post-processing —')
     expect(h.warn).toHaveBeenCalledTimes(1)
     const warning = String(h.warn.mock.calls[0]![0])
-    expect(warning).toContain('the analysis artifact is unreadable')
+    expect(warning).toContain('the digest could not be composed')
     // The warning names the recovery path: the same fetch command the exit line carries.
     expect(warning).toContain(FETCH_COMMAND)
   })
 })
 
-describe('the extended exit line — everything else gets the fetch command (D-12, 388 D-08)', () => {
+describe('the extended exit line — everything else gets count + command (D-17, 388 D-08)', () => {
   it('extends the summary line under --detach: no block, no wait, one copy-paste', async () => {
     const h = harness()
     const tail = runPostRunTail(options(h))
@@ -382,9 +433,11 @@ describe('the extended exit line — everything else gets the fetch command (D-1
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toEqual([
       'post-processing — analysis: pending · curation: pending · issues: reserved'
-      + ` · sentences: ${FETCH_COMMAND}`,
+      + ` · proposals: 2 pending · digest: ${FETCH_COMMAND}`,
     ])
-    expect(h.readRunAnalysis).not.toHaveBeenCalled()
+    // The digest IS read on this leg — the count on the line is its answer, not a guess — and
+    // exactly once, because the pointer and the (unprinted) block share one read.
+    expect(h.readRunDigest).toHaveBeenCalledTimes(1)
   })
 
   it('extends the summary line on hand-off — the daemon may drain, the command still fetches',
@@ -399,12 +452,12 @@ describe('the extended exit line — everything else gets the fetch command (D-1
       const lines = h.info.mock.calls.map(([message]) => String(message))
       expect(lines).toHaveLength(1)
       const line = lines[0] as string
-      // The literal op id and the run's id, per the acceptance criterion.
-      expect(line).toContain('analysis.get')
+      // The literal verb and the run's id, per the acceptance criterion.
+      expect(line).toContain('agent-qa digest')
       expect(line).toContain(runId)
-      expect(line).toContain(`sentences: ${FETCH_COMMAND}`)
+      expect(line).toContain(`proposals: 2 pending · digest: ${FETCH_COMMAND}`)
       expect(line).not.toContain(CLUSTER_SENTENCE)
-      expect(h.readRunAnalysis).not.toHaveBeenCalled()
+      expect(h.readRunDigest).toHaveBeenCalledTimes(1)
     })
 
   it('extends the summary line when the budget went out before analyze-run completed', async () => {
@@ -427,8 +480,8 @@ describe('the extended exit line — everything else gets the fetch command (D-1
 
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain(`sentences: ${FETCH_COMMAND}`)
-    expect(h.readRunAnalysis).not.toHaveBeenCalled()
+    expect(lines[0]).toContain(`proposals: 2 pending · digest: ${FETCH_COMMAND}`)
+    expect(lines[0]).not.toContain(CLUSTER_SENTENCE)
   })
 
   it('an analyze-run that FAILED in-process is not a completed one — fetch command, no block',
@@ -447,9 +500,33 @@ describe('the extended exit line — everything else gets the fetch command (D-1
 
       const lines = h.info.mock.calls.map(([message]) => String(message))
       expect(lines).toHaveLength(1)
-      expect(lines[0]).toContain(`sentences: ${FETCH_COMMAND}`)
-      expect(h.readRunAnalysis).not.toHaveBeenCalled()
+      expect(lines[0]).toContain(`proposals: 2 pending · digest: ${FETCH_COMMAND}`)
+      expect(lines[0]).not.toContain(CLUSTER_SENTENCE)
     })
+
+  it('keeps the POINTER and drops the COUNT when the digest could not be read', async () => {
+    // A fabricated `0 pending` would be the one wrong answer that makes a person stop checking
+    // their inbox; the command is printed regardless, because it is exactly what they should
+    // run to find out. The failure itself is warned one line up.
+    const h = harness({
+      lease: { kind: 'held', holder: { pid: 4242 } } as never,
+      readRunDigest: vi.fn(async () => {
+        throw new Error('the digest could not be composed')
+      }),
+    })
+    const tail = runPostRunTail(options(h))
+    await tail.enqueue()
+    await tail.drain()
+    await tail.finish()
+
+    const line = String(h.info.mock.calls[0]![0])
+    expect(line).toContain(`digest: ${FETCH_COMMAND}`)
+    // `pending` on its own appears in the chip vocabulary; what must be absent is the
+    // proposals CLAUSE, which is the only place this line would state a count it never read.
+    expect(line).not.toContain('proposals:')
+    expect(line).not.toContain('pending overall')
+    expect(String(h.warn.mock.calls[0]![0])).toContain('the digest could not be composed')
+  })
 })
 
 describe('prohibitions: never-wait and print-not-publish (388 D-03 / C13)', () => {
@@ -462,7 +539,7 @@ describe('prohibitions: never-wait and print-not-publish (388 D-03 / C13)', () =
     expect(observedDuringPump).toBe(1)
     await tail.finish()
 
-    // `finish` printed the block; the emitter saw nothing new, and no call ever carried a
+    // `finish` printed the digest; the emitter saw nothing new, and no call ever carried a
     // sentence — the tail prints, it does not publish (C13; runFinished consumers untouched).
     expect(h.chipObserve.mock.calls.length).toBe(observedDuringPump)
     for (const call of h.chipObserve.mock.calls) {
@@ -509,11 +586,9 @@ describe('the pure renderers (exported for exactly these pins)', () => {
       .toContain('×2: #0, TST-102')
   })
 
-  it('analysisFetchCommand is the real fn invocation, byte-for-byte', () => {
-    expect(analysisFetchCommand(runId)).toBe(FETCH_COMMAND)
+  it('digestFetchCommand is the real verb invocation, byte-for-byte', () => {
+    expect(digestFetchCommand(runId)).toBe(FETCH_COMMAND)
     // JSON-quoted, so a runId needing escaping cannot silently produce a broken command.
-    expect(analysisFetchCommand('run"x')).toBe(
-      'agent-qa fn analysis.get --input \'{"runId":"run\\"x"}\'',
-    )
+    expect(digestFetchCommand('run"x')).toBe('agent-qa digest "run\\"x"')
   })
 })

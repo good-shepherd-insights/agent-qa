@@ -13,7 +13,9 @@ import {
   createDoctorCommand,
   createEntitiesCommand,
   createEvalCommand,
+  createDigestCommand,
   createFnCommand,
+  createProposalsCommand,
   createInitCommand,
   createInstallBrowsersCommand,
   createInstallMobileDriversCommand,
@@ -66,6 +68,9 @@ program.addCommand(createCreateTestCommand())
 program.addCommand(createCreateSuiteCommand())
 program.addCommand(createSkillsCommand())
 program.addCommand(createFnCommand())
+// 391 D-17: the proposals inbox + grants decision surface, and the per-run digest on demand.
+program.addCommand(createProposalsCommand())
+program.addCommand(createDigestCommand())
 program.addCommand(createDaemonCommand())
 
 program.parse()
