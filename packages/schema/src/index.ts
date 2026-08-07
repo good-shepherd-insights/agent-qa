@@ -415,22 +415,6 @@ export {
   jobEnqueueRequestSchema,
   jobHandlerOutcomeSchema,
 } from './job/index'
-export type {
-  Approval,
-  ActionProposal,
-  QaProposalKind,
-  ProposalStatus,
-  ApprovalPolicy,
-  ApprovalDecision,
-  ApprovalId,
-  ProposalId,
-} from './approval/index'
-export {
-  asApprovalId,
-  asProposalId,
-  approvalSchema,
-  actionProposalSchema,
-} from './approval/index'
 export type { Patch, FileChange, Hunk, PatchStatus, PatchId } from './patch/index'
 export { asPatchId, patchSchema } from './patch/index'
 

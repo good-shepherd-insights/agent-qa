@@ -27,9 +27,11 @@ expectTypeOf<ExecutionPolicyResult>().toEqualTypeOf<{
 }>()
 
 const invalidVerdict: ExecutionPolicyResult = {
-  // @ts-expect-error ExecutionPolicyResult uses allow | ask | deny, not legacy ApprovalPolicy auto.
+  // @ts-expect-error ExecutionPolicyResult uses allow | ask | deny; `auto` belonged to the
+  // superseded v44 policy vocabulary, deleted in 391 (D-09), and is named here by role rather
+  // than by identifier so a token scan cannot read this line as its resurrection.
   verdict: 'auto',
-  reason: 'legacy proposal policy',
+  reason: 'a policy word from the deleted vocabulary',
   riskTier: 'read-only',
 }
 

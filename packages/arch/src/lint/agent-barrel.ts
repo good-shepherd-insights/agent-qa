@@ -225,7 +225,6 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AnalysisArtifactReaderPort',
   'AnalysisCluster',
   'AnalysisClusterMember',
-  'ApprovalsPort',
   'AuthoringReadPort',
   'BoundRecordLlmAuthorship',
   'CancelJobInput',
