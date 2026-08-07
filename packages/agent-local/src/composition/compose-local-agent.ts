@@ -49,6 +49,7 @@ import {
   acquireWriterLease,
   countPendingCurationJobs,
   createMemorySightingSource,
+  createProposalsInbox,
   createQuarantineOperations,
   createStandingApprovalReader,
   QUARANTINE_FLAG_FLOOR,
@@ -531,7 +532,7 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
   }
 
   return {
-    async propose(request) {
+    async propose(request, origin) {
       const { knowledgeRoot } = await roots()
       const ledger = openAddressingLedgerForReview({
         path: join(input.agentQaRoot, ADDRESSING_LEDGER_DB_FILE),
@@ -541,6 +542,10 @@ export function createKnowledgeReview(input: CreateKnowledgeReviewInput): Knowle
           agentQaRoot: input.agentQaRoot,
           knowledgeRoot,
           request: request as ProposeReviewRequest,
+          // 391 D-08/D-15: handed straight through, unspread only when absent — the envelope's
+          // `at` is stamped by the mint from the SAME instant it writes `proposedAt`, so nothing
+          // here samples a clock and the two cannot disagree about when one act happened.
+          ...(origin === undefined ? {} : { origin }),
           // READS the ledger and never mints: an apply is not a sighting, and minting an address
           // for an id nobody surfaced would make every review call a write to the one durable
           // store this system never rebuilds (D-01/D-02).
@@ -1466,6 +1471,33 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // `===`, so a host that supplied nothing would be back to storing whatever a human typed —
       // the round-2 regression. Unlike the authority above there is no host without a checkout
       // root, so the absent case is a compile error rather than a second posture.
+      // 391 PROP-03 / D-15: the enumerable inbox, bound HERE and therefore on BOTH hosts — the
+      // CLI and 386's daemon compose the same root, which is the whole point of 385 D-15 (a
+      // second binding site would be a second answer to "what is waiting on you").
+      //
+      // Bound over `agentQaRoot` rather than the knowledge root, and the difference is the
+      // proposals store's own placement rather than an oversight: D-10 makes proposals
+      // machine-local working state under the GITIGNORED runtime root, precisely because the
+      // human who can accept one is at this machine or its daemon. A proposal is not a committed
+      // artifact and a pull request has no business showing one.
+      //
+      // The root is a FACTORY and the clock is an argument, so this composition supplies both and
+      // the implementation reads neither of its own accord — the same shape its quarantine
+      // neighbour takes, for the same reason. Nothing opens here; the first byte is read when a
+      // verb is invoked, which is what lets this be unconditional: an empty inbox and an absent
+      // proposals directory are the same answer.
+      //
+      // THE SAME `clock`, converted at the one place the two representations meet. `ClockPort`
+      // answers the ISO string every store column and dump row in this host is written in, while
+      // the proposal lifecycle compares against `proposedAt`, which is epoch milliseconds because
+      // that is what `KnowledgeProposalV1` has recorded since 387. Binding `Date.now` here instead
+      // would have been shorter and would have quietly given the inbox a SECOND clock — so a host
+      // that pinned `clock` for a test would still have had its proposals expire against real
+      // wall time, which is the one thing a pinned clock exists to prevent.
+      proposalsInbox: createProposalsInbox({
+        resolveAgentQaRoot: () => input.agentQaRoot,
+        now: () => Date.parse(clock.now()),
+      }),
       quarantine: createQuarantineOperations({
         resolveKnowledgeRoot: input.knowledgeRoot,
         auditBaseDir: input.agentQaRoot,

@@ -63,6 +63,11 @@ const ALLOWED_ID_DOMAINS = new Set([
   // — a lifecycle with its own enumeration, exit and entry verbs — and filing it under one of
   // those would have made this list decorative for a third time. 397 folds all three.
   'quarantine',
+  // 2026-08-07 (391 D-15): `proposals` is the fourth taxonomy EXTENSION, on exactly the same
+  // footing. A proposal is neither a run, a memory nor an analysis, and filing the inbox under
+  // `knowledge.` would have been the tempting move and the wrong one — the envelope is
+  // kind-generic, so 393-396's test-draft, config and MCP proposals reach these same verbs.
+  'proposals',
 ])
 
 /**
@@ -104,6 +109,14 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // A host with no port must still refuse by name rather than answer an empty list about a
   // ledger it cannot read — an empty answer would say "nothing is quarantined" about a file
   // it has never been able to open.
+  // 391 PROP-03: the three inbox verbs, UNBOUND here for the 390 reason — this fixture supplies
+  // no proposals-inbox port. `composeLocalAgent` binds one, so both production hosts list all
+  // three `bound`. A host with no port must refuse by name rather than answer an empty inbox
+  // about a directory it has never been able to open: an empty answer reads as "nothing is
+  // waiting on you", which is the wrong answer that makes a person stop checking.
+  'proposals.list': 'unbound',
+  'proposals.reject': 'unbound',
+  'proposals.show': 'unbound',
   'quarantine.add': 'unbound',
   'quarantine.list': 'unbound',
   'quarantine.release': 'unbound',
@@ -184,6 +197,14 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // verb — while the two write verbs take the three legs of stable test identity, and a
   // partial address would report an input error where the unbound-refusal leg needs a binding
   // refusal. The test named here exists in no fixture; nothing is dispatched either way.
+  // 391 PROP-03: PARSING inputs for three capabilities this composition cannot run, on the same
+  // reasoning as every row above. `list` genuinely takes the empty query — both filters are
+  // optional and absent means everything — while `show` and `reject` take a `ProposalIdSchema`
+  // id, so a bare string would report an INPUT error exactly where the unbound-refusal leg needs
+  // a binding refusal. The id below is well-formed and names nothing in any fixture.
+  'proposals.list': {},
+  'proposals.show': { proposalId: 'prop_0123456789ab' },
+  'proposals.reject': { proposalId: 'prop_0123456789ab', reason: 'not this one' },
   'quarantine.add': {
     product: 'shop',
     filePath: 'tests/checkout.test.yaml',
@@ -275,7 +296,12 @@ const FULLY_GRANTED: FunctionCaller = {
   surface: 'conformance',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
-  origin: 'agent',
+  // 391 D-06: `human`, and it is a deliberate answer rather than a relaxation. This caller's
+  // whole job is to REACH every capability so the coverage legs measure what they claim to —
+  // the docstring on `grantedScopes` above makes exactly that argument for scopes, and origin is
+  // the same hazard on a new axis: an origin-refused op never reaches the binding check, so the
+  // unbound-refusal leg would certify nothing about `proposals.reject` while looking green.
+  origin: 'human',
 }
 
 /** Discards every row: this file asserts on coverage, never on the audit trail. */

@@ -31,6 +31,7 @@ import type {
   KnowledgeRecordsInspectInput,
   KnowledgeRejectInput,
   MaskedResolvedConfig,
+  ProposalsInboxPort,
   QuarantineOperationsPort,
   RecordChange,
   RiskActionDescriptor,
@@ -99,6 +100,7 @@ export type OptionalFunctionDepKey =
   | 'analysis'
   | 'recurrence'
   | 'quarantine'
+  | 'proposalsInbox'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -402,7 +404,21 @@ export interface KnowledgeReviewPort {
    * would be removed" has to be answerable before anything is removed, or the answer arrives
    * too late to act on.
    */
-  propose(request: KnowledgeProposalRequest): Promise<KnowledgeProposeOutcome>
+  propose(
+    request: KnowledgeProposalRequest,
+    /**
+     * WHO is proposing (391 D-08 / D-15) — the emitting op's id, and the run when the caller has
+     * one. The proposal it mints rides into the envelope carrying this, which is what makes the
+     * inbox able to answer "where did this come from" and the per-run digest able to group by run.
+     *
+     * A SECOND PARAMETER rather than a field on the request union, because it is a fact about the
+     * CALL and not about the verb: adding it to each arm would have made every future arm restate
+     * it, and an arm that forgot would mint unattributed proposals that look identical to 387-era
+     * ones. Optional so a host that genuinely does not know an emitter writes the bare 387
+     * document instead of a fabricated attribution.
+     */
+    origin?: ProposalMintOrigin,
+  ): Promise<KnowledgeProposeOutcome>
   /**
    * Apply a minted proposal by id, routing its deltas through the one commit path (D-18).
    *
@@ -432,6 +448,12 @@ export interface KnowledgeReviewPort {
 export type KnowledgeProposeOutcome =
   | { readonly kind: 'proposed'; readonly proposal: KnowledgeProposalV1 }
   | { readonly kind: 'target-not-found'; readonly target: KnowledgeTargetRef }
+
+/** The attribution a propose carries into the envelope. `at` is the store's to stamp, not ours. */
+export interface ProposalMintOrigin {
+  readonly emittedBy: string
+  readonly runId?: string
+}
 
 export type KnowledgeProposalRequest =
   | { readonly verb: 'accept'; readonly input: KnowledgeAcceptInput }
@@ -682,4 +704,21 @@ export interface FunctionDeps {
    * depending on the function layer.
    */
   quarantine?: QuarantineOperationsPort
+  /**
+   * 391 PROP-03 / D-15: the proposals inbox's three verbs — list, show, reject.
+   *
+   * OPTIONAL for the reason `knowledgeReview` and `quarantine` are, and the stakes here sit on
+   * the READ side rather than the write side for once. A host with no agent-qa runtime root
+   * genuinely cannot enumerate proposals, and the alternative to saying so by name is answering
+   * an empty inbox about a directory it has never been able to open — which reads exactly like
+   * "nothing is waiting on you" and is the one wrong answer that makes a person stop looking.
+   *
+   * ONE port for all three verbs, on the quarantine port's stated reasoning: the read/write
+   * asymmetry is declared where it is ENFORCED — `list`/`show` take read scopes and read-only
+   * descriptors, `reject` takes `approval-write`, `readOnly: false` and `requiresHumanOrigin` —
+   * so a second port would restate at the composition root a distinction the gate makes at every
+   * call. The port TYPE is minted in schema, so knowledge-local can implement it without
+   * depending on the function layer.
+   */
+  proposalsInbox?: ProposalsInboxPort
 }

@@ -218,6 +218,13 @@ const ALL_FUNCTION_IDS = [
   'knowledge.records.diff',
   'knowledge.records.inspect',
   'knowledge.reject.propose',
+  // 391 PROP-03: three more ids in SORT position (`proposals.` falls between `knowledge.` and
+  // `quarantine.`). `list` and `show` are read-tier and survive safe-mode filtering; `reject` is
+  // approval-write-tier and drops out with the other non-read verbs, so the derived non-read set
+  // grows from seven to eight and the filter assertion keeps testing the RULE.
+  'proposals.list',
+  'proposals.reject',
+  'proposals.show',
   // 390 D-12/D-13: three more ids, and they land in SORT position rather than appended —
   // this list is compared against the registry's lexicographic listing, so an appended id
   // would fail on order while every member was present. `quarantine.list` is read-tier and

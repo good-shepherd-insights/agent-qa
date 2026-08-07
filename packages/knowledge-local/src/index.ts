@@ -707,6 +707,11 @@ export {
   rejectPendingProposal,
   showProposalEnvelope,
 } from './review/proposals-store.js'
+// 391 PROP-03: the inbox port the composition root binds. The port TYPE lives in schema (both
+// `agent` and this package consume it and neither may import the other); what is published here
+// is the factory, on the `createQuarantineOperations` precedent.
+export { createProposalsInbox } from './review/proposals-inbox.js'
+export type { ProposalsInboxOptions } from './review/proposals-inbox.js'
 export type {
   AppliedProposalRecord,
   ProposalInboxEntry,

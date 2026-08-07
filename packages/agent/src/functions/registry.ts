@@ -25,6 +25,9 @@ import { knowledgeRecordShowSpec } from './ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from './ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from './ops/knowledge-records-inspect.js'
 import { knowledgeRejectProposeSpec } from './ops/knowledge-reject-propose.js'
+import { proposalsListSpec } from './ops/proposals-list.js'
+import { proposalsRejectSpec } from './ops/proposals-reject.js'
+import { proposalsShowSpec } from './ops/proposals-show.js'
 import { quarantineAddSpec } from './ops/quarantine-add.js'
 import { quarantineListSpec } from './ops/quarantine-list.js'
 import { quarantineReleaseSpec } from './ops/quarantine-release.js'
@@ -119,6 +122,17 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   quarantineListSpec as FunctionSpec,
   quarantineReleaseSpec as FunctionSpec,
   quarantineAddSpec as FunctionSpec,
+  // 391 PROP-03 / D-15: a new `proposals.` domain — the inbox §3.3 said was missing. A taxonomy
+  // extension exactly as `quarantine.` was, and deliberately NOT filed under `knowledge.`: the
+  // envelope is kind-generic, so 393-396's test-draft, config and MCP proposals reach these same
+  // three verbs. All three bind through the OPTIONAL `proposalsInbox` dep, so a host with no
+  // runtime root lists them `unbound` BY NAME rather than answering an empty inbox about a
+  // directory it cannot open. `list` and `show` are read-tier; `reject` is the phase's first
+  // shipped `requiresHumanOrigin` op — an agent that could decline proposals could curate the
+  // inbox a human checks.
+  proposalsListSpec as FunctionSpec,
+  proposalsShowSpec as FunctionSpec,
+  proposalsRejectSpec as FunctionSpec,
   // 387 D-09: a new `entities.` domain, a taxonomy extension exactly as `knowledge.` was.
   // Both read-tier, both bound in every composition — the directory is a REQUIRED dep, so
   // there is no host that lists these and cannot run them.

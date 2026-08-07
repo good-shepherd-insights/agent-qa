@@ -595,6 +595,28 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 391 PROP-03: the three inbox verbs, BOUND here because `composeLocalAgent` binds the
+      // proposals-inbox port over this host's agent-qa runtime root — and the row is a statement
+      // about THIS host, exactly like its neighbours: a composition supplying no port lists all
+      // three `unbound` and refuses them by name (agent's `parity-coverage.test.ts` asserts it).
+      // `reject` is the phase's first shipped `requiresHumanOrigin` op; the origin requirement is
+      // not part of this projection's three fields, and the declaration-level pin for it lives in
+      // agent, where the enforcement does.
+      'proposals.list': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
+      'proposals.reject': {
+        requiredScopes: ['approval-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
+      'proposals.show': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       // 390 D-12/D-13: the three quarantine verbs, FLIPPED to bound by plan 06 (plan 04
       // registered the specs and left this row saying so). BOUND here for the same reason the
       // knowledge-write rows above are — the CLI composes a local host that owns the committed

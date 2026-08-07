@@ -26,3 +26,27 @@ export type {
   ProposalOrigin,
   ProposalRecord,
 } from './envelope'
+
+// 391 PROP-03: the inbox's three verbs — their IO contracts, the wire projection of the envelope,
+// and the ONE port both `agent` (which declares against it) and `knowledge-local` (which
+// implements it) consume. Minted here on the `QuarantineOperationsPort` precedent.
+export {
+  ProposalEnvelopeSchema,
+  ProposalInboxEntrySchema,
+  ProposalsListInputSchema,
+  ProposalsListOutputSchema,
+  ProposalsRejectInputSchema,
+  ProposalsRejectOutputSchema,
+  ProposalsShowInputSchema,
+  ProposalsShowOutputSchema,
+} from './inbox-ops'
+export type {
+  ProposalInboxEntryDto,
+  ProposalsInboxPort,
+  ProposalsListInput,
+  ProposalsListOutput,
+  ProposalsRejectInput,
+  ProposalsRejectOutput,
+  ProposalsShowInput,
+  ProposalsShowOutput,
+} from './inbox-ops'

@@ -39,6 +39,13 @@ export const knowledgeForgetProposeSpec: FunctionSpec<KnowledgeForgetInput, Know
     // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a refusal at
     // the gate, so dispatch is only reached in a composition that supplied one. The two answers
     // come from the SAME `deps` record `resolveBindingStatus` reads, so they cannot disagree.
-    return deps.knowledgeReview!.propose({ verb: 'forget', input })
+    // 391 D-15: the mint carries THIS op's id into the envelope, so the inbox can say where
+    // the proposal came from and the digest can group by it. The id literal is the one in
+    // `knowledge-review-ids.ts` — never re-spelled here, where a typo would be attribution
+    // nothing could resolve.
+    return deps.knowledgeReview!.propose(
+      { verb: 'forget', input },
+      { emittedBy: KNOWLEDGE_FORGET_PROPOSE_FUNCTION_ID },
+    )
   },
 }

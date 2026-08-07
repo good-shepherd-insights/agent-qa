@@ -66,7 +66,12 @@ const RUN_CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
-  origin: 'agent',
+  // 391 D-06: `human` for the reason the scope note directly above gives, on a second axis.
+  // `invokeFunction` checks origin BEFORE binding, so an agent-origin caller turns a
+  // human-only capability's unbound refusal into an origin refusal — which the parity case
+  // below, distinguishing only `FunctionNotBoundError`, would read as `dispatched`. Measured on
+  // 391-03's `proposals.reject`, which is the first shipped op to declare the requirement.
+  origin: 'human',
 }
 
 /**
@@ -99,6 +104,11 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
     filePath: 'tests/checkout.test.yaml',
     testName: 'checkout completes',
   },
+  // 391 PROP-03: `show` and `reject` take a refined proposal id, so the `{}` default fails their
+  // contract and turns an unbound refusal into an input error. `proposals.list` genuinely takes
+  // the empty query (both filters optional) and needs no row here.
+  'proposals.show': { proposalId: 'prop_0123456789ab' },
+  'proposals.reject': { proposalId: 'prop_0123456789ab' },
 }
 
 /**

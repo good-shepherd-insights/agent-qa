@@ -63,6 +63,8 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // three verbs. It fired on this one too, and that is the whole mechanism working: `tsc` refused
 // the union edit until this line acknowledged it. (Note the dual-witness rule — vitest reported
 // `Type Errors  no errors` for the same tree; only `tsc --noEmit` saw it.)
+// 391 PROP-03 extends it a fifth time, by name again: `proposalsInbox` — the enumerable inbox's
+// three verbs. It fired on this one too, and once more only under `tsc --noEmit`.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -71,6 +73,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'analysis'
     | 'recurrence'
     | 'quarantine'
+    | 'proposalsInbox'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half
