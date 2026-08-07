@@ -51,6 +51,7 @@ import {
   isProtectedActionClass,
   sha256hex16,
   CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+  GrantRecordInputSchema,
 } from '@vostride/agent-qa-schema'
 import type {
   ActiveStandingGrant,
@@ -241,13 +242,21 @@ export function createGrantOperations(options: GrantOperationsOptions): Standing
       return { grants: foldActiveGrants(read.events), refusedLines: read.refusedLines }
     },
 
-    async record(input: GrantRecordInput): Promise<GrantRecordOutcome> {
+    async record(rawInput: GrantRecordInput): Promise<GrantRecordOutcome> {
       // FIRST, before the root is resolved and before the lease is acquired: the D-05 mint half.
       // A class no grant may ever cover has no business taking a lock or opening a committed file,
-      // and an input tripping BOTH this and a held lease answers THIS.
-      if (isProtectedActionClass(input.actionClass)) {
-        return { kind: 'protected-class', actionClass: input.actionClass }
+      // and an input tripping BOTH this and a held lease answers THIS. It stays an ARM rather than
+      // becoming a parse error, because an accept whose apply committed must report both halves.
+      if (isProtectedActionClass(rawInput.actionClass)) {
+        return { kind: 'protected-class', actionClass: rawInput.actionClass }
       }
+
+      // THEN the declared contract, made load-bearing at the one implementation of this port: an
+      // off-contract scope is refused HERE, before the root and before the lease, rather than late
+      // by the append's structural pre-check. The mint can no longer author a line `grants.list`
+      // cannot render — a grant in force that the enumeration verb hides is D-11's reviewability
+      // broken.
+      const input = GrantRecordInputSchema.parse(rawInput)
 
       const knowledgeRoot = await options.resolveKnowledgeRoot()
       return await serialized(knowledgeRoot, () => {
