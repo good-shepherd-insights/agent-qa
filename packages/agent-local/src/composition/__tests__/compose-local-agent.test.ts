@@ -74,6 +74,7 @@ const CALLER: FunctionCaller = {
   surface: 'cli',
   grantedScopes: ['read', 'run', 'config-write'],
   safeMode: false,
+  origin: 'agent',
 }
 
 const AUTHORSHIP_KIND = 'analyze-run' as const
@@ -899,6 +900,7 @@ describe('composeLocalAgent (D-15)', () => {
       surface: 'cli',
       grantedScopes: ['read', 'knowledge-write'],
       safeMode: false,
+      origin: 'agent',
     }
 
     const IDENTITY = { product: PRODUCT, filePath: TEST_FILE_PATH, testName: TEST_NAME }

@@ -1,6 +1,9 @@
 export { FunctionScopeSchema } from './function-scope'
 export type { FunctionScope } from './function-scope'
-export type { FunctionCaller } from './function-caller'
+// 391 D-06: the actor-origin axis. The vocabulary is a VALUE so a composition root can iterate
+// it and a test can pin its closure; the caller record's `origin` field is required.
+export { FUNCTION_CALLER_ORIGINS } from './function-caller'
+export type { FunctionCaller, FunctionCallerOrigin } from './function-caller'
 export {
   RUN_SUMMARY_SCHEMA_VERSION,
   RUN_DETAIL_SCHEMA_VERSION,

@@ -91,6 +91,7 @@ const CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
+  origin: 'agent',
 }
 
 /** Captures what the gate wrote, which is the only place `trustSource` is observable. */

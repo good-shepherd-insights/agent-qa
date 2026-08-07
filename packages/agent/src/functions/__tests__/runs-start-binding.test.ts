@@ -66,6 +66,7 @@ const RUN_CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
+  origin: 'agent',
 }
 
 /**

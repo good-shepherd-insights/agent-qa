@@ -93,12 +93,14 @@ const ZERO_SCOPE_CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: [],
   safeMode: false,
+  origin: 'agent',
 }
 
 const FULLY_GRANTED: FunctionCaller = {
   surface: 'test',
   grantedScopes: ['read', 'run', 'config-write'],
   safeMode: false,
+  origin: 'agent',
 }
 
 function byId(declarations: readonly FunctionDeclaration[], id: string): FunctionDeclaration {

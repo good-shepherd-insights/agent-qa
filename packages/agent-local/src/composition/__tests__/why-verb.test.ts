@@ -85,6 +85,7 @@ const CALLER: FunctionCaller = {
   surface: 'cli',
   grantedScopes: ['read'],
   safeMode: false,
+  origin: 'agent',
 }
 
 const MASKED_CONFIG: MaskedResolvedConfig = {

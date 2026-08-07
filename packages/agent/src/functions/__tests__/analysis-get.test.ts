@@ -43,6 +43,7 @@ const CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
+  origin: 'agent',
 }
 
 function upgradedAppBug(perTest: number): Verdict {

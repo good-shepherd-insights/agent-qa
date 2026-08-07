@@ -50,6 +50,7 @@ const CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
+  origin: 'agent',
 }
 
 const IDENTITY = {

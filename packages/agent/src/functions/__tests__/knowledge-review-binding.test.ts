@@ -33,6 +33,7 @@ const CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: ['read', 'config-write'],
   safeMode: false,
+  origin: 'agent',
 }
 
 const CONTEXT: () => ExecutionContext = () => 'local-interactive'

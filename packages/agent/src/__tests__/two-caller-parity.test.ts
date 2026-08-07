@@ -550,13 +550,15 @@ describe('a declared human-origin requirement is enforced uniformly (391 D-06)',
   })
 
   it('names the op and the required origin, the way the scope refusal names its scopes', async () => {
-    const error: FunctionOriginError = await invokeFunction(
-      originRegistry,
-      'synthetic.human-only',
-      {},
-      CALLER_A_AGENT,
-    ).catch((thrown: unknown) => thrown as FunctionOriginError)
+    let thrown: unknown
+    try {
+      await invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A_AGENT)
+    } catch (caught: unknown) {
+      thrown = caught
+    }
 
+    expect(thrown).toBeInstanceOf(FunctionOriginError)
+    const error = thrown as FunctionOriginError
     expect(error.functionId).toBe('synthetic.human-only')
     expect(error.requiredOrigin).toBe('human')
     expect(error.message).toContain('synthetic.human-only')

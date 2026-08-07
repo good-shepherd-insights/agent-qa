@@ -29,7 +29,12 @@ import { describe, expect, it } from 'vitest'
 
 import { createMaskedConfigReader } from '../local-agent-host.js'
 
-const CALLER: FunctionCaller = { surface: 'cli', grantedScopes: ['read'], safeMode: false }
+const CALLER: FunctionCaller = {
+  surface: 'cli',
+  grantedScopes: ['read'],
+  safeMode: false,
+  origin: 'agent',
+}
 
 const AUDIT_SINK: AuditSink = {
   appendExecutionAudit: () => undefined,

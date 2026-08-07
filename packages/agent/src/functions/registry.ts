@@ -262,6 +262,11 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
     id: spec.id,
     summary: spec.summary,
     requiredScopes: Object.freeze([...spec.requiredScopes]),
+    // 391 D-06: carried onto the declaration for the reason `requiredScopes` is — what a caller
+    // was SHOWN and what the gate enforces read the same field, so a chat toolset that filters
+    // the verb out of its listing and `invokeFunction` refusing it cannot disagree (D-16). The
+    // filter is UX; this field's enforcement is one check in the dispatch path.
+    ...(spec.requiresHumanOrigin === undefined ? {} : { requiresHumanOrigin: true as const }),
     resultKind: spec.resultKind,
     bindingStatus: resolveBindingStatus(spec, deps),
     input: toSchemaProjection(spec.input),

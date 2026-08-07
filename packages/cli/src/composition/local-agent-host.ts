@@ -52,8 +52,15 @@ import { buildMaskedResolvedConfig } from './masked-config.js'
  */
 export const CLI_FUNCTION_CALLER: FunctionCaller = {
   surface: 'cli',
-  grantedScopes: ['read', 'run', 'config-write', 'knowledge-write'],
+  // 391 D-06: `approval-write` joins because the CLI is where a person accepts a proposal and
+  // revokes a standing grant. The scope is the POWER; the origin below is who may exercise it,
+  // and this host is the only one that mints both.
+  grantedScopes: ['read', 'run', 'config-write', 'knowledge-write', 'approval-write'],
   safeMode: false,
+  // A person typed the command. This is the mint the whole self-grant rule turns on, so it is
+  // stated here rather than defaulted anywhere: the origin is a property of the composition,
+  // never of the call, and nothing downstream may set it.
+  origin: 'human',
 }
 
 /**

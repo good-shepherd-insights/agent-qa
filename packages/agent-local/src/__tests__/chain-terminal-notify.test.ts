@@ -60,6 +60,7 @@ const CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
+  origin: 'agent',
 }
 
 // 389-04's author swap put the unknown-floor member (`t_unclassified`) on the model path, so

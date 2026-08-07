@@ -86,6 +86,7 @@ const RUN_CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: ['read', 'run'],
   safeMode: false,
+  origin: 'agent',
 }
 
 /** Discards every row — for the cases that do not assert on the audit trail. */
@@ -206,6 +207,7 @@ describe('runs.start is visibly unbound, never silently missing', () => {
       surface: 'test',
       grantedScopes: ['read'],
       safeMode: false,
+      origin: 'agent',
     }
 
     const thrown = await invokeFunction(

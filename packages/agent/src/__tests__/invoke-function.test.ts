@@ -123,7 +123,7 @@ function capturingSink(): CapturedSink {
 }
 
 function caller(grantedScopes: readonly FunctionScope[], safeMode = false): FunctionCaller {
-  return { surface: 'test', grantedScopes, safeMode }
+  return { surface: 'test', grantedScopes, safeMode, origin: 'agent' }
 }
 
 /**

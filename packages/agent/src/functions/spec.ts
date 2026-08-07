@@ -138,6 +138,24 @@ export interface FunctionMetadata {
   summary: string
   /** Capability scopes a caller's grants must cover. Enforced in `invokeFunction`. */
   requiredScopes: readonly FunctionScope[]
+  /**
+   * This op may only be run on behalf of a person (391 D-06). Enforced in `invokeFunction`.
+   *
+   * The self-grant rule, expressed as DATA on the op rather than as a rule about callers. An op
+   * that widens what the agent may do without asking — accepting a proposal, revoking a standing
+   * grant — cannot be the agent's own decision to make, and the alternative spelling for that is
+   * `if (caller.surface === 'chat')` in the dispatch path, which is the private-powers pattern
+   * this whole layer abolishes. Here the requirement is declared where the capability is, checked
+   * once, and visible on the declaration a listing renders.
+   *
+   * `true` is the only value: `requiresHumanOrigin: false` and an absent field would be two
+   * spellings of the same permission, and a boolean invites a caller-supplied one.
+   *
+   * OPTIONAL because the overwhelming majority of ops genuinely do not care who is asking —
+   * reads, run starts, everything the agent is supposed to do autonomously. A required field
+   * would have made every spec state an opinion it does not have.
+   */
+  requiresHumanOrigin?: true
   resultKind: FunctionResultKind
   /** The descriptor this op projects into for the policy gate. */
   risk: RiskActionDescriptor

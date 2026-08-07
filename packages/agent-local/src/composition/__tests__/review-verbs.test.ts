@@ -72,6 +72,7 @@ const CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
+  origin: 'agent',
 }
 
 describe('the mutating review verbs bind, refuse and commit by name', () => {

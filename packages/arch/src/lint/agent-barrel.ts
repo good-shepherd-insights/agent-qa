@@ -83,6 +83,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'FunctionDeniedError',
   'FunctionInputError',
   'FunctionNotBoundError',
+  // 391 D-06. A caller-facing refusal a surface legitimately catches and reports, on exactly
+  // the footing of its four siblings here: it is an error CLASS, not a dispatch path, so a
+  // surface holding it can run nothing. It lands in SORT position rather than appended,
+  // because this list is compared by exact equality against the barrel's own order.
+  'FunctionOriginError',
   'FunctionScopeError',
   'IncompleteJobKindDeclarationError',
   'InconsistentJobKindDeclarationError',

@@ -20,7 +20,22 @@ import { z } from 'zod'
  * the §7.7 tombstone. 384's CR-04 is the same shape of defect (one handle reaching a power it
  * was never granted), and the scope union exists precisely so a capability's cost is stated
  * where it is enforced. 397 inherits this member rather than re-minting it.
+ *
+ * Dated counter-note (2026-08-07, Phase 391 / PROP-01): extended once more, with
+ * `approval-write`, and on exactly the reasoning above rather than by appeal to it. The
+ * alternative was to spend `knowledge-write` on the approval-policy verbs, and that is the same
+ * privilege conflation one rung up: a caller granted the power to change what the system learned
+ * would thereby have been granted the power to change what it may do WITHOUT ASKING — to accept
+ * proposals and revoke the standing grants that constrain it. One of those is a decision about
+ * content and the other is a decision about consent, and the whole sovereignty argument of this
+ * phase is that they are not the same power. 397 inherits this member rather than re-minting it.
  */
-export const FunctionScopeSchema = z.enum(['read', 'run', 'config-write', 'knowledge-write'])
+export const FunctionScopeSchema = z.enum([
+  'read',
+  'run',
+  'config-write',
+  'knowledge-write',
+  'approval-write',
+])
 
 export type FunctionScope = z.infer<typeof FunctionScopeSchema>

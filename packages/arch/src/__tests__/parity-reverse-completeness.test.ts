@@ -79,6 +79,7 @@ const REGISTRY_IDS = createFunctionRegistry({
     surface: 'arch-conformance',
     grantedScopes: ['read', 'run', 'config-write'],
     safeMode: false,
+    origin: 'agent',
   })
   .map(declaration => declaration.id)
 

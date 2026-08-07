@@ -157,7 +157,12 @@ const NOW = '2026-08-05T12:00:00.000Z'
 /** `NOW` + QUARANTINE_DEFAULT_EXPIRY_DAYS (30), which is what the ledger must stamp. */
 const EXPECTED_EXPIRY = '2026-09-04T12:00:00.000Z'
 
-const CALLER: FunctionCaller = { surface: 'cli', grantedScopes: ['read'], safeMode: false }
+const CALLER: FunctionCaller = {
+  surface: 'cli',
+  grantedScopes: ['read'],
+  safeMode: false,
+  origin: 'agent',
+}
 
 interface LedgerLine {
   kind: string

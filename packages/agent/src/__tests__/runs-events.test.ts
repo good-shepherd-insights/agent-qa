@@ -136,6 +136,7 @@ const READ_CALLER: FunctionCaller = {
   surface: 'test',
   grantedScopes: ['read'],
   safeMode: false,
+  origin: 'agent',
 }
 
 async function drain(stream: FunctionStream<RunEventEnvelope>): Promise<RunEventEnvelope[]> {

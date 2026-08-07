@@ -74,6 +74,7 @@ const FULL_CALLER: FunctionCaller = {
   surface: 'cli',
   grantedScopes: ['read', 'run', 'config-write'],
   safeMode: false,
+  origin: 'agent',
 }
 
 const SAFE_CALLER: FunctionCaller = { ...FULL_CALLER, safeMode: true }

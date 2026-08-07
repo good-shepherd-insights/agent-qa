@@ -657,6 +657,7 @@ export {
 // 384 function-layer contract vocabulary (D-13/D-16): capability scopes, the caller
 // record, and the seed op DTOs surfaces type against under the import firewall.
 export {
+  FUNCTION_CALLER_ORIGINS,
   FunctionScopeSchema,
   RUN_SUMMARY_SCHEMA_VERSION,
   RUN_DETAIL_SCHEMA_VERSION,
@@ -692,6 +693,7 @@ export {
 } from './functions/index'
 export type {
   FunctionCaller,
+  FunctionCallerOrigin,
   FunctionScope,
   RunSummary,
   RunDetail,

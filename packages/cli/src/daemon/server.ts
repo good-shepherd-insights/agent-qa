@@ -74,8 +74,16 @@ export const DAEMON_FUNCTION_CALLER: FunctionCaller = Object.freeze({
   // `invokeFunction` gates scopes before it consults binding — so without the grant the
   // leaseholder would refuse the very work only it can do, and the refusal would read as a
   // permission problem rather than as the routing being wrong.
-  grantedScopes: ['read', 'run', 'config-write', 'knowledge-write'] as const,
+  // 391 D-06: `approval-write` is held here too, and holding it is not a contradiction of the
+  // origin below — it is the point of separating them. The daemon runs background jobs that
+  // legitimately touch approval state (listing grants, applying an already-accepted proposal);
+  // what it cannot do is the subset of that work an op declares human-only. Autonomy here rides
+  // GRANTS, which a person committed to the ledger, not on origin.
+  grantedScopes: ['read', 'run', 'config-write', 'knowledge-write', 'approval-write'] as const,
   safeMode: false,
+  // Nobody typed anything. The daemon is the standing counterexample to reading `surface` as a
+  // proxy for a person: it shares `cli`'s process shape and none of its consent.
+  origin: 'agent',
 })
 
 export class DaemonSocketInUseError extends Error {

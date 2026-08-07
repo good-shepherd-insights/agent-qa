@@ -22,14 +22,19 @@
 // two-caller-parity.test.ts, which asserts a scope-refused caller leaves no audit row —
 // so moving the scope check is a decision those phases make, not a local edit.
 //
-// Caller-as-data (FUNC-03): the caller record is read in exactly two places in this file —
-// the scope subset check below and the credential passthrough into the gate — plus the
-// registry's safe-mode listing filter. `if (caller.surface === 'cli')` is the anti-pattern
-// this layer exists to make impossible.
+// Caller-as-data (FUNC-03): the caller record is read in exactly three places in this file —
+// the scope subset check below, the actor-origin check beside it (391 D-06), and the
+// credential passthrough into the gate — plus the registry's safe-mode listing filter.
+// `if (caller.surface === 'cli')` is the anti-pattern this layer exists to make impossible,
+// and the origin check is what keeps the self-grant rule from being written that way.
 
 import { evaluate } from '@vostride/agent-qa-safety'
 import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import type {
+  FunctionCaller,
+  FunctionCallerOrigin,
+  FunctionScope,
+} from '@vostride/agent-qa-schema'
 
 import { registryInternals, resolveBindingStatus } from './registry.js'
 import type { FunctionRegistry } from './registry.js'
@@ -69,6 +74,29 @@ export class FunctionScopeError extends Error {
   }
 }
 
+/**
+ * The op declares a human-origin requirement and this caller is agent-origin (391 D-06).
+ *
+ * Mirrors {@link FunctionScopeError} deliberately, because it is the same KIND of refusal: a
+ * caller-capability check against a composition-minted field, decided from op-declared data
+ * before the gate is consulted. What a caller does next differs though, which is why it is a
+ * distinct class rather than a scope error with a different message — a missing scope is
+ * something a composition could grant, and a missing human is not.
+ */
+export class FunctionOriginError extends Error {
+  readonly requiredOrigin: FunctionCallerOrigin = 'human'
+
+  constructor(
+    readonly functionId: string,
+    readonly callerOrigin: FunctionCallerOrigin,
+  ) {
+    super(
+      `${functionId} requires a human-origin caller; this call is ${callerOrigin}-origin`,
+    )
+    this.name = 'FunctionOriginError'
+  }
+}
+
 /** The policy gate returned `deny` for this invocation. */
 export class FunctionDeniedError extends Error {
   constructor(
@@ -96,12 +124,13 @@ function issueSummary(issues: readonly { path: PropertyKey[]; message: string }[
  *   1. resolve the spec        — unknown id fails before any dependency is touched
  *   2. validate the input      — malformed input never reaches an implementation
  *   3. scope subset check      — computed here from composition-minted grants
- *   4. evaluate()              — verdict + audit row, for every op without exception
- *   5. binding check           — a declared-but-unbound op refuses AFTER it is audited
- *   6. dispatch                — the only place a spec implementation ever runs
- *   7. validate the output     — unary results honour their declared contract
+ *   4. actor-origin check      — op-declared, against the composition-minted origin (391 D-06)
+ *   5. evaluate()              — verdict + audit row, for every op without exception
+ *   6. binding check           — a declared-but-unbound op refuses AFTER it is audited
+ *   7. dispatch                — the only place a spec implementation ever runs
+ *   8. validate the output     — unary results honour their declared contract
  *
- * Stream ops (D-08) run through the SAME six steps: the gate verdict and its audit row are
+ * Stream ops (D-08) run through the SAME steps: the gate verdict and its audit row are
  * therefore computed before a single event can be observed.
  */
 export async function invokeFunction(
@@ -126,6 +155,25 @@ export async function invokeFunction(
   )
   if (missingScopes.length > 0) {
     throw new FunctionScopeError(functionId, missingScopes)
+  }
+
+  // 391 D-06: the actor-origin check, placed HERE and not elsewhere — the choice is stated
+  // because it is a choice, and because the file's order is a pinned contract.
+  //
+  // It sits in the pre-gate band beside the scope check because it is the same kind of thing: a
+  // caller-capability question answered from op-declared data and a composition-minted field,
+  // with no dependency touched and no implementation reachable. It therefore inherits that
+  // band's audit posture — no row — which is the same gap 384 named for the other three
+  // pre-gate refusals and which the same phases own closing. It comes AFTER the scope check so
+  // the cheaper, more actionable refusal wins: a caller told which scopes it lacks has
+  // something to do about it, and being told "this needs a human" first would have buried that.
+  //
+  // Two fields are read and neither is `surface`. `if (caller.surface === 'chat')` would have
+  // been the same behaviour today and the wrong mechanism forever: it makes the rule a property
+  // of where a call came from rather than of what the op is, so a new surface arrives
+  // unprotected and an op that stops needing a human keeps being refused.
+  if (spec.requiresHumanOrigin === true && caller.origin !== 'human') {
+    throw new FunctionOriginError(functionId, caller.origin)
   }
 
   // 391 PROP-01: the ask arm's two dependencies, resolved here because this is the only place the

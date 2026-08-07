@@ -275,6 +275,7 @@ const FULLY_GRANTED: FunctionCaller = {
   surface: 'conformance',
   grantedScopes: [...FunctionScopeSchema.options],
   safeMode: false,
+  origin: 'agent',
 }
 
 /** Discards every row: this file asserts on coverage, never on the audit trail. */
