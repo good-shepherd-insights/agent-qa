@@ -24,11 +24,12 @@
 // and its absence from this run's digest is asserted BESIDE its presence in its own — an
 // absence claim is load-bearing only if the same input could have produced the presence.
 //
-// EVERY PROPOSAL IS PRODUCED, NEVER WRITTEN. `proposeReview` is the function the composition's
-// `KnowledgeReviewPort.propose` delegates to, called with the run attribution its own signature
-// already takes. No store file is hand-placed: a corpus assembled as a literal can pin an input
-// the producer cannot make, and a differential over impossible fixtures cannot tell a vacuous
-// corpus from a real closure.
+// EVERY PROPOSAL IS PRODUCED THROUGH THE PRODUCTION PATH. Each mint below is an `invokeFunction`
+// call on the shipped `knowledge.forget.propose` op, with the run on the op's own input contract
+// — the exact bytes a run-scoped caller sends. Nothing is written at the store seam and no origin
+// is hand-composed: a corpus assembled at a seam production never reaches can pin an input the
+// producer cannot make, and a differential over impossible fixtures cannot tell a vacuous corpus
+// from a real closure (391-VERIFICATION Gap 1(c)).
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -41,7 +42,7 @@ import {
   DIGEST_JOB_ID_SOURCE,
   type LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
-import { proposeReview, publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import type { AuditSink } from '@vostride/agent-qa-safety'
@@ -54,6 +55,7 @@ import type {
   Anchor,
   CompletedRunHandoff,
   GuardrailPolicy,
+  KnowledgeProposeOutcomeDto,
   RunDigest,
   Verdict,
 } from '@vostride/agent-qa-schema'
@@ -68,6 +70,15 @@ import {
 } from '../curation/post-run-tail.js'
 
 const MINT_IDENTITY = (filePath: string): string => filePath
+
+/**
+ * The propose op's WIRE id, spelled as a caller spells it (391-03's fixture precedent).
+ *
+ * Not imported from the agent barrel: that barrel exports an op id only when a production
+ * SURFACE has to name one, and a fixture is not one. What is being exercised here is the
+ * dispatch a caller performs by name, so naming it is the point.
+ */
+const FORGET_PROPOSE_ID = 'knowledge.forget.propose'
 
 /** The heartbeat run whose chain drains in-process — the digest's subject. */
 const RUN_ID = 'run-391-06-batching'
@@ -261,8 +272,26 @@ function storeConfig(f: Fixture): BundleStoreConfig {
 
 let ordinal = 40
 
-/** One real record, then one real proposal about it — the seam the KREV proposes ride. */
-function mint(f: Fixture, runId: string, summary: string): string {
+/**
+ * A COLD composition over the fixture's roots — nothing in memory carries between two of these.
+ *
+ * One helper rather than three copies, because the file now composes for three different reasons
+ * (minting through the op, reading the notify rows, reading the digest) and three drifting
+ * spellings of one composition is how two of them end up reading different roots.
+ */
+function composeCold(f: Fixture): LocalAgentHost {
+  return composeLocalAgent({
+    mintQuarantineIdentityPath: MINT_IDENTITY,
+    agentQaRoot: f.agentQaRoot,
+    config: TEST_CONFIG,
+    knowledgeRoot: () => f.knowledgeRoot,
+    model: () => TEST_MODEL,
+    idSource: DIGEST_JOB_ID_SOURCE,
+  })
+}
+
+/** One real published record for a proposal below to be about. */
+function publishRecord(f: Fixture, summary: string): string {
   ordinal += 1
   const published = publishBundleForTest(storeConfig(f), {
     draft: {
@@ -289,14 +318,31 @@ function mint(f: Fixture, runId: string, summary: string): string {
     artifacts: [],
   })
   if (published.kind !== 'published') throw new Error(`fixture publish failed: ${published.kind}`)
-  const outcome = proposeReview({
-    agentQaRoot: f.agentQaRoot,
-    knowledgeRoot: f.knowledgeRoot,
-    request: { verb: 'forget', input: { target: { grain: 'record', recordId: published.id } } },
-    origin: { emittedBy: 'knowledge.forget.propose', runId },
-  })
-  if (outcome.kind !== 'proposed') throw new Error(`fixture propose failed: ${outcome.kind}`)
-  return outcome.proposal.proposalId
+  return published.id
+}
+
+/**
+ * One real record, then one real proposal about it — minted the way PRODUCTION mints one.
+ *
+ * `invokeFunction` on the shipped `knowledge.forget.propose` op, with the run on the op's own
+ * input, through a cold composition and the CLI's own caller. Everything the digest later reads
+ * about this proposal — its origin, its emitter, its run — was written by the op, not by here.
+ */
+async function mint(f: Fixture, runId: string, summary: string): Promise<string> {
+  const recordId = publishRecord(f, summary)
+  const host = composeCold(f)
+  try {
+    const outcome = await invokeFunction(
+      host.registry,
+      FORGET_PROPOSE_ID,
+      { target: { grain: 'record', recordId }, runId },
+      CLI_FUNCTION_CALLER,
+    ) as KnowledgeProposeOutcomeDto
+    if (outcome.kind !== 'proposed') throw new Error(`fixture propose failed: ${outcome.kind}`)
+    return outcome.proposal.proposalId
+  } finally {
+    await host.close()
+  }
 }
 
 /** Read the notify rows through a SECOND cold composition, so nothing in memory can agree. */
@@ -304,14 +350,7 @@ async function notificationsFor(f: Fixture, runId: string): Promise<readonly {
   runId: string
   payload: unknown
 }[]> {
-  const host = composeLocalAgent({
-    mintQuarantineIdentityPath: MINT_IDENTITY,
-    agentQaRoot: f.agentQaRoot,
-    config: TEST_CONFIG,
-    knowledgeRoot: () => f.knowledgeRoot,
-    model: () => TEST_MODEL,
-    idSource: DIGEST_JOB_ID_SOURCE,
-  })
+  const host = composeCold(f)
   try {
     const jobs = await host.jobs()
     const rows = await jobs.store.listNotifications()
@@ -323,14 +362,7 @@ async function notificationsFor(f: Fixture, runId: string): Promise<readonly {
 
 /** The digest through a SECOND cold composition — the same non-circularity discipline. */
 async function digestThroughTheOp(f: Fixture, runId: string): Promise<RunDigest> {
-  const host = composeLocalAgent({
-    mintQuarantineIdentityPath: MINT_IDENTITY,
-    agentQaRoot: f.agentQaRoot,
-    config: TEST_CONFIG,
-    knowledgeRoot: () => f.knowledgeRoot,
-    model: () => TEST_MODEL,
-    idSource: DIGEST_JOB_ID_SOURCE,
-  })
+  const host = composeCold(f)
   try {
     return await invokeFunction(
       host.registry,
@@ -351,9 +383,9 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
     // Three proposals mint into ONE store while one run's chain is about to drain: two belong
     // to this run, one to another. Forty events would have produced forty notifications under
     // a per-event design; here the count of renders is what is measured.
-    const first = mint(f, RUN_ID, 'checkout button')
-    const second = mint(f, RUN_ID, 'payment button')
-    const foreign = mint(f, OTHER_RUN, 'coupon field')
+    const first = await mint(f, RUN_ID, 'checkout button')
+    const second = await mint(f, RUN_ID, 'payment button')
+    const foreign = await mint(f, OTHER_RUN, 'coupon field')
 
     const tail = runPostRunTail(f.options(RUN_ID))
     await tail.enqueue()
@@ -393,9 +425,9 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
 
   it('leaves the durable notify row a single, unwidened, guard-passing record (D-16)', async () => {
     const f = fixture()
-    mint(f, RUN_ID, 'checkout button')
-    mint(f, RUN_ID, 'payment button')
-    mint(f, OTHER_RUN, 'coupon field')
+    await mint(f, RUN_ID, 'checkout button')
+    await mint(f, RUN_ID, 'payment button')
+    await mint(f, OTHER_RUN, 'coupon field')
 
     const tail = runPostRunTail(f.options(RUN_ID))
     await tail.enqueue()
@@ -423,7 +455,7 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
   it('reports candidates staged this run as COUNTS, never as proposals to decide (D-13)',
     async () => {
       const f = fixture()
-      mint(f, RUN_ID, 'checkout button')
+      await mint(f, RUN_ID, 'checkout button')
 
       const tail = runPostRunTail(f.options(RUN_ID))
       await tail.enqueue()
@@ -456,8 +488,8 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
     // The store is NOT empty: two proposals exist, both belonging to the OTHER run. That makes
     // this the zero-ATTRIBUTION arm rather than the zero-store arm, and the two fail
     // differently — a filter that returned everything would pass on an empty store.
-    mint(f, OTHER_RUN, 'checkout button')
-    mint(f, OTHER_RUN, 'payment button')
+    await mint(f, OTHER_RUN, 'checkout button')
+    await mint(f, OTHER_RUN, 'payment button')
 
     // Handed off rather than drained, so this leg takes the exit-line arm of D-17's either/or:
     // no digest block, and the pointer carries the count instead.
