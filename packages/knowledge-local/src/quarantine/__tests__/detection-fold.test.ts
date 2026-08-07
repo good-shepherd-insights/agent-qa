@@ -1366,6 +1366,12 @@ describe('one down dependency cannot blanket-quarantine a suite (390-16)', () =>
 //  - PROVED: the cap's counter is per-call and it bites. Three members cross one evaluation on the
 //    floor arm; exactly CAP enter, chosen BY IDENTITY ORDER rather than by handoff order; the
 //    overflow member routes to `escalatedNotQuarantined` LOUDLY with the build still failing.
+//  - PROVED, and this is what makes the ORDER half of that sentence testable rather than asserted
+//    (390-32): the first leg hands the fold its members in the exact REVERSE of identity order, so
+//    the two orders can no longer agree by accident. Its expectation is unchanged from when they
+//    did agree, which is the whole point — the same admitted set, in the same order, out of the
+//    opposite arrival sequence. The second leg keeps the agreeing order, so the pair pins the
+//    property from both directions.
 //  - PROVED: it RATE-LIMITS, it does not CONTAIN. The very next applied run admits the member the
 //    previous one refused — no human decision, no new evidence, just another red build — so the
 //    cumulative entered count reaches the full suite size one run later than it otherwise would.
@@ -1392,11 +1398,18 @@ describe('the floor cap rate-limits a multi-member fan-out (390-28)', () => {
    * normalizer scrubs digits, so `(member 0)`…`(member N)` fold to ONE fingerprint — the real
    * signature of a shared cause — while each member still gets its OWN quarantine entry, because
    * recurrence is keyed on (product, fingerprint) and an entry is keyed on test identity.
+   *
+   * ARRIVAL ORDER IS AN INPUT (390-32). `reversed` emits the same members back to front, which is
+   * the exact opposite of the identity order the ladder admits in. Nothing else about the fixture
+   * moves — each member keeps its own index, name, path and verdict — so the flag is purely a
+   * statement about the SEQUENCE the fold is handed, and a leg that sets it is asserting that the
+   * sequence does not matter.
    */
   function capSuiteHandoff(input: {
     runId: string
     buildOrdinal: number
     passed?: boolean
+    reversed?: boolean
   }): CompletedRunHandoff {
     const passed = input.passed === true
     const member = (index: number) => ({
@@ -1427,7 +1440,10 @@ describe('the floor cap rate-limits a multi-member fan-out (390-28)', () => {
       },
       startedAt: input.buildOrdinal * 1_000,
       endedAt: input.buildOrdinal * 1_000 + 1,
-      tests: Array.from({ length: CAP_SUITE_SIZE }, (_unused, index) => member(index)),
+      tests: Array.from(
+        { length: CAP_SUITE_SIZE },
+        (_unused, index) => member(input.reversed === true ? CAP_SUITE_SIZE - 1 - index : index),
+      ),
     } as unknown as CompletedRunHandoff
   }
 
@@ -1435,6 +1451,7 @@ describe('the floor cap rate-limits a multi-member fan-out (390-28)', () => {
     runId: string
     buildOrdinal: number
     passed?: boolean
+    reversed?: boolean
   }): FoldRunOutcomesReport {
     return fold(env, capSuiteHandoff(input))
   }
@@ -1449,19 +1466,27 @@ describe('the floor cap rate-limits a multi-member fan-out (390-28)', () => {
    * at 3 has recurrence window [3 - QUARANTINE_WINDOW_ORDINALS + 1, 3] = [-1, 3], so the ordinal-1
    * signature sits INSIDE it under 390-24's window scoping — which is what keeps this leg about
    * the cap rather than accidentally about staleness.
+   *
+   * `reversed` applies to the WHOLE episode, not just the crossing run: every fold on the way in
+   * sees the same back-to-front sequence, so no earlier run can quietly re-establish the agreeing
+   * order the crossing run is meant to contradict.
    */
-  function driveToCrossing(env: FoldHarness): FoldRunOutcomesReport {
+  function driveToCrossing(
+    env: FoldHarness,
+    options: { reversed?: boolean } = {},
+  ): FoldRunOutcomesReport {
+    const reversed = options.reversed === true
     expect(3 - QUARANTINE_WINDOW_ORDINALS + 1).toBeLessThanOrEqual(1)
-    foldCapSuite(env, { runId: 'run-cap-1-fail', buildOrdinal: 1 })
-    foldCapSuite(env, { runId: 'run-cap-1-pass', buildOrdinal: 1, passed: true })
-    foldCapSuite(env, { runId: 'run-cap-2', buildOrdinal: 2 })
-    return foldCapSuite(env, { runId: 'run-cap-3', buildOrdinal: 3 })
+    foldCapSuite(env, { runId: 'run-cap-1-fail', buildOrdinal: 1, reversed })
+    foldCapSuite(env, { runId: 'run-cap-1-pass', buildOrdinal: 1, passed: true, reversed })
+    foldCapSuite(env, { runId: 'run-cap-2', buildOrdinal: 2, reversed })
+    return foldCapSuite(env, { runId: 'run-cap-3', buildOrdinal: 3, reversed })
   }
 
-  it('admits exactly CAP of three floor-admissible crossings in ONE evaluation, by identity order', () => {
+  it('admits exactly CAP of three floor-admissible crossings in ONE evaluation, by identity order — handed to the fold BACK TO FRONT', () => {
     const env = harness('agent-qa-390-28-cap-domain')
 
-    const report = driveToCrossing(env)
+    const report = driveToCrossing(env, { reversed: true })
 
     expect(report.kind).toBe('applied')
     if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
@@ -1472,11 +1497,14 @@ describe('the floor cap rate-limits a multi-member fan-out (390-28)', () => {
     expect(report.quarantine.events.length + report.quarantine.escalatedNotQuarantined.length)
       .toBe(CAP_SUITE_SIZE)
 
-    // ADMITTED BY IDENTITY ORDER, asserted by value. The identity key is
-    // JSON.stringify([product, filePath, testName]) compared by code unit, and the three members
-    // share a product, so `suite/cap-member-0` < `suite/cap-member-1` < `suite/cap-member-2`
-    // decides it. Handoff order happens to agree here; what makes the assertion about ORDER rather
-    // than about arrival is that the ladder sorts before it counts, pinned in `detection.test.ts`.
+    // ADMITTED BY IDENTITY ORDER, asserted by value — WITH ARRIVAL ORDER DISAGREEING. The identity
+    // key is JSON.stringify([product, filePath, testName]) compared by code unit, and the three
+    // members share a product, so `suite/cap-member-0` < `suite/cap-member-1` <
+    // `suite/cap-member-2` decides it. Every fold in this episode hands the members over back to
+    // front (cap 2 first, cap 0 last), so the two orders are exact opposites and the unchanged
+    // expectation below IS the order pin, not a coincidence riding on the fixture: a ladder that
+    // counted arrivals before sorting them admits [cap 2, cap 1] and reds right here. Measured
+    // 390-32 by bypassing the ladder's sort — this leg went red naming the arrival-order members.
     expect(report.quarantine.events).toHaveLength(QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP)
     expect(report.quarantine.events.map((event) => event.testName)).toEqual([
       'checkout retries the payment sheet [cap 0]',

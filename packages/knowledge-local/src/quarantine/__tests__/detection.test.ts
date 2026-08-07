@@ -481,16 +481,23 @@ describe('the per-run floor cap contains fan-out (390-19)', () => {
   })
 
   // THE FAN-OUT DIFFERENTIAL. Removing the cap check reds THIS leg.
-  it('admits exactly K of SIX floor-produced crossings in ONE evaluation, by identity', () => {
+  //
+  // The input arrives in REVERSE identity order (390-32) — member 5 first, member 0 last — while
+  // the expected admissions below are unchanged from when the two orders agreed. That is what
+  // gives the by-identity half of this leg a reddening domain: a ladder that counted the crossings
+  // in the sequence it received them would admit members 5 and 4 and red on the first assertion.
+  it('admits exactly K of SIX floor-produced crossings in ONE evaluation, by identity — input reversed', () => {
     const result = evaluate({
-      failures: suite({
+      failures: [...suite({
         verdictClass: 'timeout',
         producer: 'deterministic-classifier',
         sameBuildPassAndFail: true,
-      }),
+      })].reverse(),
     })
 
-    // BY IDENTITY, not by position: the leg keeps its meaning when 390-22 replaces the comparator.
+    // BY IDENTITY, not by arrival and not by position: the ladder sorts before it counts, so the
+    // reversed input above admits the SAME two members in the SAME order. The leg also keeps its
+    // meaning when 390-22 replaces the comparator.
     expect(result.events.map((event) => event.testName)).toEqual(MEMBER_NAMES.slice(0, K))
     expect(result.escalatedNotQuarantined.map((s) => s.testName)).toEqual(MEMBER_NAMES.slice(K))
     expect(result.events).toHaveLength(K)
