@@ -720,7 +720,8 @@ function evaluateQuarantineForFold(
           filePath: test.filePath,
           testName: test.testName,
         })?.lastOutcomes ?? []).filter(
-          (outcome) => outcome.buildOrdinal >= windowFloor(projection.buildOrdinal),
+          (outcome) => outcome.buildOrdinal >= windowFloor(projection.buildOrdinal)
+            && outcome.buildOrdinal <= projection.buildOrdinal,
         ),
       ),
       ...fingerprintRecurrence(

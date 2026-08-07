@@ -1168,6 +1168,59 @@ describe('a CROSSING test carries its own same-build pass∧fail into the gate (
       expiresAt: EXPECTED_EXPIRY,
     }])
   })
+
+  // THE OTHER END OF THE SAME WINDOW (390-29). 390-24 closed the floor; the ceiling stayed open,
+  // so the evidence filter implemented the half-open ray [windowFloor(b), infinity) while the
+  // recurrence SQL it is supposed to share a window with counts over the CLOSED interval
+  // [windowFloor(b), b]. A flake episode recorded ABOVE a crossing therefore licensed the floor
+  // arm of a hard regression sitting several ordinals BELOW it — D-05 anti-silencing violated in
+  // the mirror direction, and the three shipped docstrings that call the bound ENFORCED were
+  // simply not true of the code.
+  //
+  // THE SHAPE IS REACHABLE, MEASURED NOT ASSUMED. `buildOrdinal` is caller data copied verbatim
+  // from `RunConfig` (handoff-assembly.ts:169, shell.ts:100), so folds arrive out of ordinal
+  // order; `mergeOutcomeEntries` keeps the HIGHEST LAST_OUTCOMES_LIMIT entries, so a high-ordinal
+  // pair survives every later low-ordinal fold; and the writer's own `Math.max` at
+  // run-outcomes.ts:478-481 exists for no other reason than that lower-ordinal folds are reachable.
+  //
+  // THE ORDINALS ARE DERIVED. The crossing is at 8, so its recurrence window is [4, 8]. The three
+  // hard failing ordinals 6, 7 and 8 are exactly QUARANTINE_ESCALATE_THRESHOLD distinct
+  // occurrences and nothing crosses early (ordinal 7's own window [3, 7] holds two). The
+  // pass-and-fail pair sits at ordinal 12, strictly ABOVE the crossing, where the two-sided
+  // recurrence SQL never counts it — only the one-sided evidence filter could see it. All five
+  // entries fit inside LAST_OUTCOMES_LIMIT, so nothing is dropped by the merge.
+  it('REFUSES a crossing whose only pass-and-fail is ABOVE the crossing ordinal — the window is closed on both ends (390-29)', () => {
+    const env = harness('agent-qa-390-29-future-signature')
+
+    const CROSSING_ORDINAL = 8
+    const WINDOW_FLOOR = CROSSING_ORDINAL - QUARANTINE_WINDOW_ORDINALS + 1
+    const FUTURE_ORDINAL = CROSSING_ORDINAL + QUARANTINE_WINDOW_ORDINALS - 1
+    expect(FUTURE_ORDINAL).toBeGreaterThan(CROSSING_ORDINAL)
+    expect(WINDOW_FLOOR).toBeLessThan(CROSSING_ORDINAL)
+
+    // The flake episode recorded ABOVE the crossing: two applied runs at ONE ordinal, one failing,
+    // one passing — folded first, exactly as an out-of-order build ordinal arrives.
+    foldTimeout(env, { runId: 'run-future-fail', buildOrdinal: FUTURE_ORDINAL })
+    foldTimeout(env, { runId: 'run-future-pass', buildOrdinal: FUTURE_ORDINAL, passed: true })
+
+    // The hard regression BELOW it: threshold-many consecutive failing ordinals, no pass near them.
+    let report!: FoldRunOutcomesReport
+    for (let back = QUARANTINE_ESCALATE_THRESHOLD - 1; back >= 0; back -= 1) {
+      const buildOrdinal = CROSSING_ORDINAL - back
+      report = foldTimeout(env, { runId: `run-below-${String(buildOrdinal)}`, buildOrdinal })
+    }
+
+    if (report.quarantine.kind !== 'evaluated') throw new Error('expected an evaluation')
+    expect(report.quarantine.events).toEqual([])
+    expect(ledgerLines(env)).toEqual([])
+    expect(report.quarantine.escalatedNotQuarantined).toHaveLength(1)
+    expect(report.quarantine.escalatedNotQuarantined[0]).toMatchObject({
+      testName: TEST_NAME,
+      verdictClass: 'timeout',
+      producer: 'deterministic-classifier',
+      occurrenceOrdinals: QUARANTINE_ESCALATE_THRESHOLD,
+    })
+  })
 })
 
 // The RUN-SCOPED mass-quarantine shape (390-16, G-390-3; measured in 390-UAT-DECISIONS-PROBE §3.1d).
