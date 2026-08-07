@@ -216,7 +216,52 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
       // listing too would hide the one line a reviewer most needs to find — and would leave the
       // revoke verb unable to name it.
       const listed = await ops().list()
-      expect(listed.map((grant) => grant.actionClass)).toEqual([PROTECTED_CLASS])
+      expect(listed.grants.map((grant) => grant.actionClass)).toEqual([PROTECTED_CLASS])
+    })
+  })
+
+  // ---- the damage report (391-08, closing 391-VERIFICATION gap 2) -----------------------------
+
+  describe('list reports the file\'s damage beside what folds', () => {
+    /** The same corruption the reader's suite refuses on: a merge marker fused onto a real line. */
+    function damageLastLine(): void {
+      const path = grantsLedgerPath(knowledgeRoot)
+      const lines = readFileSync(path, 'utf8').split('\n')
+      let last = lines.length - 1
+      while (last >= 0 && (lines[last] ?? '').trim().length === 0) last -= 1
+      if (last < 0) throw new Error('the fixture ledger has no line to damage')
+      lines[last] = `<<<<<<< HEAD${lines[last] ?? ''}`
+      writeFileSync(path, lines.join('\n'), 'utf8')
+    }
+
+    it('answers an EMPTY damage report over an intact ledger — the guard\'s admit side', async () => {
+      const verbs = ops()
+      await verbs.record({ actionClass: OPEN_CLASS, scope: STANDING_APPROVAL_SCOPE })
+
+      const listed = await verbs.list()
+      expect(listed.grants.map((grant) => grant.actionClass)).toEqual([OPEN_CLASS])
+      expect(listed.refusedLines).toEqual([])
+    })
+
+    it('names the refused line while the grants that fold still list', async () => {
+      const verbs = ops()
+      const recorded = await verbs.record({
+        actionClass: OPEN_CLASS,
+        scope: STANDING_APPROVAL_SCOPE,
+      })
+      if (recorded.kind !== 'recorded') throw new Error('expected a recorded grant')
+      now = LATER
+      const revoked = await verbs.revoke({ grantId: recorded.grant.grantId })
+      expect(revoked.outcome).toBe('revoked')
+      damageLastLine()
+
+      const listed = await verbs.list()
+      // The REPORT stays fail-open on purpose — a reviewer has to be able to see what folds, and
+      // the grant that folds here is precisely the one the damaged revoke was meant to withdraw.
+      expect(listed.grants.map((grant) => grant.grantId)).toEqual([recorded.grant.grantId])
+      // 1-based, matching what an editor shows the human who has to fix the file.
+      expect(listed.refusedLines.map((line) => line.lineNumber)).toEqual([2])
+      expect(listed.refusedLines[0]?.reason).toMatch(/unparseable line/)
     })
   })
 
@@ -232,7 +277,7 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
       })
       if (recorded.kind !== 'recorded') throw new Error('expected a recorded grant')
 
-      expect(await verbs.list()).toEqual([recorded.grant])
+      expect(await verbs.list()).toEqual({ grants: [recorded.grant], refusedLines: [] })
 
       now = LATER
       const revoked = await verbs.revoke({ grantId: recorded.grant.grantId })
@@ -240,7 +285,7 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
       if (revoked.outcome !== 'revoked') throw new Error('expected a revoked grant')
       expect(revoked.grant).toEqual(recorded.grant)
 
-      expect(await verbs.list()).toEqual([])
+      expect(await verbs.list()).toEqual({ grants: [], refusedLines: [] })
       // BOTH events survive, in order. A revoke that rewrote or removed the grant line would leave
       // a reviewer unable to see that an approval was ever given.
       expect(ledgerLines().map((event) => event.kind)).toEqual(['grant', 'revoke'])
@@ -322,7 +367,7 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
       const holder = acquireWriterLease(knowledgeRoot)
       if (holder.kind !== 'acquired') throw new Error('fixture could not take the lease')
       try {
-        expect((await verbs.list()).map((grant) => grant.actionClass)).toEqual([OPEN_CLASS])
+        expect((await verbs.list()).grants.map((grant) => grant.actionClass)).toEqual([OPEN_CLASS])
       } finally {
         releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
       }

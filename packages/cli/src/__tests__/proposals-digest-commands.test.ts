@@ -16,10 +16,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { invokeFunction, RUNS_DIGEST_FUNCTION_ID } from '@vostride/agent-qa-agent'
-import { proposeReview, publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
+import {
+  grantsLedgerPath,
+  proposeReview,
+  publishBundleForTest,
+} from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { asRunId, CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  asRunId,
+  canonicalJson,
+  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  STANDING_APPROVAL_SCOPE,
+} from '@vostride/agent-qa-schema'
 import type { Anchor, CompletedRunHandoff, RunDigest, Verdict } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -125,6 +135,18 @@ function storeConfig(ws: Workspace): BundleStoreConfig {
     auditBaseDir: ws.agentQaRoot,
     commitArtifacts: 'none',
   }
+}
+
+/**
+ * Write the committed grant ledger by hand.
+ *
+ * The ONE place in this file that authors bytes rather than driving a verb, and it is the hand-edit
+ * the whole read posture exists for: no producer can emit a damaged line, because the producer is
+ * exactly the thing that refuses one.
+ */
+function writeGrantLedger(ws: Workspace, lines: readonly string[]): void {
+  mkdirSync(ws.knowledgeRoot, { recursive: true })
+  writeFileSync(grantsLedgerPath(ws.knowledgeRoot), `${lines.join('\n')}\n`, 'utf8')
 }
 
 /** A real record, then a real proposal about it, attributed to a run — the shipped seams. */
@@ -319,6 +341,48 @@ describe('agent-qa proposals (D-17, the decision surface)', () => {
     expect(revoked.stderr).toContain('fail-closed: ask in local-headless without trust')
     expect(revoked.stderr).toContain('--trust-session')
     expect(revoked.exitCode).toBe(1)
+
+    // The intact direction of the damage report: nothing was corrupted, so nothing is warned
+    // about. Without this the warning case below would be satisfied by a rendering that printed
+    // the warning unconditionally.
+    expect(grants.stdout).not.toContain('unreadable line')
+  })
+
+  it('names every unreadable line on the same surface that lists the approvals', async () => {
+    const ws = workspace()
+    // A grant that FOLDS and a damaged line beside it: the operator most needing the warning is
+    // the one whose ledger still lists approvals that will no longer authorize anything.
+    writeGrantLedger(ws, [
+      canonicalJson({
+        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+        kind: 'grant',
+        at: '2026-08-08T10:00:00.000Z',
+        grantId: 'grant_cli_damage_case',
+        actionClass: 'fn:knowledge.proposal.apply',
+        scope: STANDING_APPROVAL_SCOPE,
+      }),
+      // What a merge leaves behind when two branches both appended.
+      '<<<<<<< HEAD{"schemaVersion":1,"kind":"revoke"}',
+    ])
+
+    const grants = await run(ws, ['proposals', 'grants', 'list'])
+    expect(grants.stdout).toContain('grant_cli_damage_case')
+    expect(grants.stdout).toContain('1 unreadable line')
+    expect(grants.stdout).toContain('line 2')
+    expect(grants.exitCode).toBeUndefined()
+  })
+
+  it('warns about the damage even when nothing folds at all', async () => {
+    const ws = workspace()
+    // The empty-fold arm. A ledger whose every line is damaged reads as "no standing approvals",
+    // which is the answer that would send an operator looking in the wrong place.
+    writeGrantLedger(ws, ['<<<<<<< HEAD{"schemaVersion":1,"kind":"grant"}'])
+
+    const grants = await run(ws, ['proposals', 'grants', 'list'])
+    expect(grants.stdout).toContain('No standing approvals are in force.')
+    expect(grants.stdout).toContain('1 unreadable line')
+    expect(grants.stdout).toContain('line 1')
+    expect(grants.exitCode).toBeUndefined()
   })
 })
 

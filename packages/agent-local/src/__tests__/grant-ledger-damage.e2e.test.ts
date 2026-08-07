@@ -50,6 +50,7 @@ import {
 import type {
   ExecutionContext,
   FunctionCaller,
+  GrantsListOutput,
   MaskedResolvedConfig,
   RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
@@ -63,6 +64,7 @@ import {
 } from '../composition/compose-local-agent.js'
 
 const APPLY_ID = 'knowledge.proposal.apply'
+const GRANTS_LIST_ID = 'grants.list'
 const NOW_ISO = '2026-08-08T12:00:00.000Z'
 
 /** What a merge leaves behind when two branches both appended: a marker fused onto a real line. */
@@ -279,6 +281,22 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
 
       expect(sink.rows.at(-1)?.outcome).toBe('fail-closed-denied')
       expect(sink.rows.at(-1)?.trustSource).toBeUndefined()
+    })
+
+    it('and `grants.list` carries the explanation the denial does not', async () => {
+      // The operator staring at the denial above checks the surface that lists their approvals.
+      // A listing that showed the grant with no word about the damage would send them looking
+      // for a revoke that never took, on a file whose problem is a line nobody named.
+      const listed = (await invokeFunction(
+        headless,
+        GRANTS_LIST_ID,
+        {},
+        HUMAN,
+      )) as GrantsListOutput
+
+      expect(listed.grants.map((grant) => grant.grantId)).toEqual([grantId])
+      expect(listed.refusedLines.map((line) => line.lineNumber)).toEqual([2])
+      expect(listed.refusedLines[0]?.reason).toMatch(/unparseable line/)
     })
   })
 })
