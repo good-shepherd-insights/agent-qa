@@ -795,6 +795,25 @@ export type {
 
 // 342 safety contracts
 export { guardrailPolicySchema } from './safety/index'
+// 391 D-04/D-11: the committed standing-grant ledger's event vocabulary, both guard legs, and the
+// ONE canonical action scope the mint and the gate call-site both read (never re-spell).
+export {
+  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+  GRANT_LEDGER_EVENT_KINDS,
+  GRANT_LEDGER_MIGRATIONS,
+  GrantLedgerVersionError,
+  STANDING_APPROVAL_SCOPE,
+  guardGrantLedgerEvent,
+  hasGrantEventShape,
+  isGrantLedgerEventKind,
+} from './safety/index'
+export type {
+  ActiveStandingGrant,
+  GrantLedgerEvent,
+  GrantLedgerEventKind,
+  GrantRecordedEvent,
+  GrantRevokedEvent,
+} from './safety/index'
 export type {
   RiskActionDescriptor,
   RiskTier,

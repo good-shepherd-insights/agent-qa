@@ -19,7 +19,12 @@ import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID, invokeFunction } from '@vostride/
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { appendGrantLedgerEvents } from '@vostride/agent-qa-knowledge-local'
+import {
+  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+  FunctionScopeSchema,
+  STANDING_APPROVAL_SCOPE,
+} from '@vostride/agent-qa-schema'
 import type {
   FunctionCaller,
   KnowledgeApplyOutcomeDto,
@@ -143,6 +148,38 @@ async function seedRecord(where: Fixture): Promise<string> {
   return outcome.id
 }
 
+/**
+ * Record the standing approval the ask-tier apply requires (391 D-02/D-04).
+ *
+ * 391 raised `knowledge.proposal.apply` to `mutating-shared`, so in a headless context — which is
+ * every context here — the apply now fail-closes without a covering grant. These cases are about
+ * LEASE ROUTING, not policy, so the approval is recorded first and the routing claim is measured
+ * exactly as before.
+ *
+ * The class is read off the op's own declaration and the event goes through the real append API:
+ * the gate compares that exact string with `===`, and a literal typed here would keep covering a
+ * name the op had stopped carrying.
+ */
+function grantApply(where: Fixture, agent: LocalAgentHost): void {
+  const declaration = agent.registry
+    .list(CALLER)
+    .find((entry) => entry.id === KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID)
+  if (declaration === undefined) throw new Error('the apply op is not registered')
+  const outcome = appendGrantLedgerEvents(
+    where.knowledgeRoot,
+    [{
+      schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+      kind: 'grant',
+      at: '2026-08-07T12:00:00.000Z',
+      grantId: 'grant_apply_delegate',
+      actionClass: declaration.risk.name,
+      scope: STANDING_APPROVAL_SCOPE,
+    }],
+    { auditBaseDir: where.agentQaRoot },
+  )
+  if (outcome.kind !== 'appended') throw new Error(`grant append refused: ${outcome.kind}`)
+}
+
 async function proposeForget(agent: LocalAgentHost, recordId: string): Promise<string> {
   const proposed = await invokeFunction(
     agent.registry,
@@ -159,6 +196,7 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
     const where = fixture('free')
     const recordId = await seedRecord(where)
     const agent = host(where)
+    grantApply(where, agent)
 
     const applied = await invokeFunction(
       agent.registry,
@@ -222,6 +260,7 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
       },
     })
 
+    grantApply(where, caller)
     const proposalId = await proposeForget(caller, recordId)
     const leaseBefore = readWriterLease(where.knowledgeRoot)
 
@@ -269,6 +308,7 @@ describe('knowledge.proposal.apply routes by lease state (D-18)', () => {
       // review module accepts.
       applyDelegate: () => new Promise(() => {}),
     })
+    grantApply(where, caller)
     const proposalId = await proposeForget(caller, recordId)
 
     const started = Date.now()

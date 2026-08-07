@@ -7,7 +7,7 @@
 // crosses the gate.
 
 import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
-import type { AuditSink } from '@vostride/agent-qa-safety'
+import type { AuditSink, ConfirmPort, StandingApprovalReader } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
 import { toSchemaProjection } from './declaration-projection.js'
@@ -144,6 +144,29 @@ export interface CreateFunctionRegistryOptions {
    * cast and a plain-JS consumer of the published package as well.
    */
   auditSink: AuditSink
+  /**
+   * Resolves the standing-approval reader the gate's ask arm consults (391, PROP-01).
+   *
+   * A RESOLVER rather than the reader itself, because the two ends have incompatible timing: the
+   * gate's port answers synchronously, while the local composition learns its knowledge root
+   * asynchronously. Awaiting the resolver once per invocation, inside `invokeFunction`'s own async
+   * body, is what lets a synchronous reader be built over an asynchronously-resolved root without
+   * either side pretending to be the other. It is resolved on EVERY invocation rather than cached
+   * here, so a composition may hand back a reader over whatever the root currently is.
+   *
+   * OPTIONAL, and its absence is the shipped default: `evaluate()` falls back to the no-grants
+   * reader, so a composition that omits this behaves exactly as every composition did before grants
+   * existed.
+   */
+  standingApprovalReader?: () => StandingApprovalReader | Promise<StandingApprovalReader>
+  /**
+   * The interactive confirmation the gate's ask arm reaches when nothing else satisfied it.
+   *
+   * OPTIONAL, and its absence means `evaluate()`'s deny-by-default confirm. Note that the arm is
+   * only reachable in a `local-interactive` context at all — every other context fail-closes first
+   * — so a host with no terminal is right to omit it.
+   */
+  confirm?: ConfirmPort
   /** Defaults to safety's ambient resolver; injected in tests for determinism. */
   resolveExecutionContext?: () => ExecutionContext
 }
@@ -161,6 +184,8 @@ interface RegistryInternals {
   specs: ReadonlyMap<string, FunctionSpec>
   deps: FunctionDeps
   auditSink: AuditSink
+  standingApprovalReader?: () => StandingApprovalReader | Promise<StandingApprovalReader>
+  confirm?: ConfirmPort
   resolveExecutionContext: () => ExecutionContext
 }
 
@@ -313,6 +338,13 @@ export function createRegistryFromSpecs(
     specs: byId,
     deps: options.deps,
     auditSink,
+    // Conditionally spread rather than assigned through: an absent gate dependency must be an
+    // ABSENT field and not a present `undefined` one, so the gate's own defaulting is what decides
+    // the no-grants and deny-confirm behaviour, in exactly one place.
+    ...(options.standingApprovalReader === undefined
+      ? {}
+      : { standingApprovalReader: options.standingApprovalReader }),
+    ...(options.confirm === undefined ? {} : { confirm: options.confirm }),
     resolveExecutionContext: options.resolveExecutionContext ?? getActiveExecutionContext,
   })
 

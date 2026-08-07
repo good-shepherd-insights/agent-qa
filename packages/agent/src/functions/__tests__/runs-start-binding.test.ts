@@ -32,7 +32,13 @@ import type {
   RunStartAcknowledgement,
   RunsStartInput,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
+import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
+import type {
+  AuditSink,
+  ExecutionAuditRow,
+  GuardrailAuditRow,
+  StandingApprovalReader,
+} from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { FunctionNotBoundError, invokeFunction } from '../invoke.js'
@@ -224,6 +230,22 @@ function capturingSink(): CapturedSink {
   }
 }
 
+/**
+ * A composition where every ask is already standing-approved (391).
+ *
+ * The claims in this file are about BINDING, and 391 raised `knowledge.proposal.apply` to the ask
+ * tier — so without this, an ask-tier capability would be refused by the GATE before the binding
+ * check ever ran, and the loop below would be measuring policy while reporting on bindings. The
+ * grant is built from the action's own name, which is the string `grantCovers` compares, so it
+ * covers whatever the registry happens to list rather than a class spelled here.
+ *
+ * It is a control, not a bypass: the real gate still runs and still writes its audit row; what
+ * changes is which arm of the ask ladder answers.
+ */
+const EVERY_ASK_STANDING_APPROVED: StandingApprovalReader = {
+  grantsFor: (action) => [{ actionClass: action.name, scope: STANDING_APPROVAL_SCOPE }],
+}
+
 function registryWith(
   runInvocation: RunInvocationPort | undefined,
   options: { context?: ExecutionContext; auditSink?: AuditSink } = {},
@@ -231,6 +253,7 @@ function registryWith(
   return createFunctionRegistry({
     deps: deps(runInvocation === undefined ? {} : { runInvocation }),
     resolveExecutionContext: () => options.context ?? 'local-interactive',
+    standingApprovalReader: () => EVERY_ASK_STANDING_APPROVED,
     auditSink: options.auditSink ?? {
       appendExecutionAudit() {},
       appendGuardrailAudit() {},

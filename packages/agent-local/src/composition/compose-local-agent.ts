@@ -50,6 +50,7 @@ import {
   countPendingCurationJobs,
   createMemorySightingSource,
   createQuarantineOperations,
+  createStandingApprovalReader,
   QUARANTINE_FLAG_FLOOR,
   describeAllEntities,
   embedPendingEntities,
@@ -116,10 +117,12 @@ import type {
 import type { KnowledgeReviewPort } from '@vostride/agent-qa-agent'
 import { ReplayIncompleteError } from '@vostride/agent-qa-runner'
 import {
+  NO_STANDING_APPROVALS,
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
+import type { ConfirmPort } from '@vostride/agent-qa-safety'
 import {
   FsEventLog,
   FsEvidenceArtifactStore,
@@ -1020,6 +1023,19 @@ export interface ComposeLocalAgentInput {
   readonly analysisTokenBudget?: () =>
     | Promise<PostRunJobCapabilities['analysisTokenBudget']>
     | PostRunJobCapabilities['analysisTokenBudget']
+  /**
+   * How this host asks a human to confirm an ask-tier capability (391 PROP-01), on the same
+   * optional-operation idiom `runExecution` and `applyDelegate` use.
+   *
+   * OPTIONAL, and the optionality is a real report about a real difference between hosts: a
+   * terminal can ask and a daemon cannot. Absent, the gate keeps its deny-by-default confirm, which
+   * is also the only correct answer for a host with nobody to ask. Note that the arm is reachable
+   * only in a `local-interactive` context to begin with — every other context fail-closes before
+   * the prompt — so a headless host loses nothing by omitting it.
+   *
+   * No host binds it yet; the CLI's terminal confirmation is plan 04's.
+   */
+  readonly confirm?: ConfirmPort
 }
 
 /**
@@ -1461,6 +1477,36 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       }),
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
+    // 391 PROP-01 / D-11: the real standing-approval reader, over the SAME committed knowledge root
+    // the quarantine ledger and the review verbs serve from. Bound HERE and therefore on BOTH hosts,
+    // for the 385 D-15 reason a second binding site is never acceptable: two bindings would be two
+    // answers to the question of which approvals are in force.
+    //
+    // Rebuilt per invocation over a freshly resolved root, rather than closed over one resolved
+    // once. Resolving once would be a cache of a fact this composition does not own — the CLI
+    // resolves its root asynchronously and per call — and a stale root would read approvals from a
+    // knowledge tree the invocation is not serving from.
+    //
+    // A RESOLUTION FAILURE FOLDS TO THE NO-GRANTS READER, swallowed HERE and nowhere else, the same
+    // posture the recurrence provider above takes. Two reasons, and the second is the one that
+    // matters. The honest one: a host that cannot resolve a knowledge root has no grant ledger, so
+    // "no standing approvals" is the true answer and the ask it fails to satisfy denies — the safe
+    // direction. The load-bearing one: this resolver runs on EVERY invocation, including reads that
+    // never reach the ask arm, so a propagating failure here would take a whole composition's read
+    // capabilities down with the knowledge root. That is measured rather than hypothetical — three
+    // analysis-binding cases in this package's own suite hand `composeLocalAgent` a rejecting and a
+    // sync-throwing root resolver on purpose, and assert the analysis read still renders its
+    // no-history clause. Reads must not start depending on a root only the ask arm needs.
+    standingApprovalReader: async () => {
+      try {
+        return createStandingApprovalReader({ knowledgeRoot: await input.knowledgeRoot() })
+      } catch {
+        return NO_STANDING_APPROVALS
+      }
+    },
+    // Conditionally spread like its neighbours: an absent confirmation authority must be an ABSENT
+    // field, so the gate's own deny-by-default is what answers, in one place.
+    ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
   })
 
   let opened: LocalAgentJobs | undefined

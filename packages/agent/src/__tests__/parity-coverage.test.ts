@@ -19,13 +19,14 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   ExecutionContext,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
-import type { AuditSink } from '@vostride/agent-qa-safety'
+import type { AuditSink, StandingApprovalReader } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { FunctionNotBoundError, invokeFunction } from '../functions/invoke.js'
@@ -284,10 +285,25 @@ function noOpSink(): AuditSink {
   }
 }
 
+/**
+ * A composition where every ask is already standing-approved (391).
+ *
+ * The claims in this file are about the CATALOGUE — coverage, contracts, and the by-name refusal of
+ * an unbound capability — and 391 raised `knowledge.proposal.apply` to the ask tier. Without this,
+ * that capability would be refused by the GATE before the binding check ran, and the unbound-refusal
+ * case would be asserting a policy verdict while claiming to assert a binding one. The grant is
+ * built from the action's own name, so it covers whatever the registry lists rather than a class
+ * spelled here, and the real gate still runs and still audits.
+ */
+const EVERY_ASK_STANDING_APPROVED: StandingApprovalReader = {
+  grantsFor: (action) => [{ actionClass: action.name, scope: STANDING_APPROVAL_SCOPE }],
+}
+
 function registry() {
   return createFunctionRegistry({
     deps: fakeDeps(),
     auditSink: noOpSink(),
+    standingApprovalReader: () => EVERY_ASK_STANDING_APPROVED,
     resolveExecutionContext: FIXED_CONTEXT,
   })
 }

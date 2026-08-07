@@ -21,10 +21,17 @@ import {
 } from '@vostride/agent-qa-agent'
 import type { EntityDirectoryPort, FunctionRegistry } from '@vostride/agent-qa-agent'
 import {
+  appendGrantLedgerEvents,
+  createStandingApprovalReader,
   publishBundleForTest,
   type BundleStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
-import { FunctionScopeSchema, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+  FunctionScopeSchema,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  STANDING_APPROVAL_SCOPE,
+} from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   EntityCard,
@@ -161,13 +168,51 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
           : {}),
       },
       auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} } as never,
+      // 391: the apply is ask-tier now, so this composition binds the REAL reader over the same
+      // knowledge root the verbs serve from, and each case records the approval it needs through
+      // `approveApply` below. The alternative — a stub that says yes — would have made three cases
+      // about binding quietly depend on a policy fixture nothing else in the repo uses.
+      standingApprovalReader: () => createStandingApprovalReader({ knowledgeRoot }),
       resolveExecutionContext: () => 'local-interactive',
     })
+  }
+
+  /**
+   * Record the standing approval the ask-tier apply requires (391, D-02/D-04).
+   *
+   * The covered class is read off the op's OWN declaration rather than spelled here, because that
+   * is the exact string the gate compares — a literal would keep covering a name the op had stopped
+   * carrying. The event goes through the real append API for the same reason: a hand-written JSONL
+   * line pins a contract no producer necessarily emits.
+   *
+   * This restores what these three cases were always about. Before the tier raise the apply was
+   * allowed unconditionally, so the only thing that could refuse it was the binding — which is the
+   * claim under test. The approval puts that back, without stubbing the gate out.
+   */
+  function approveApply(host: FunctionRegistry): void {
+    const declaration = host
+      .list(CALLER)
+      .find((entry) => entry.id === 'knowledge.proposal.apply')
+    if (declaration === undefined) throw new Error('the apply op is not registered')
+    const outcome = appendGrantLedgerEvents(
+      knowledgeRoot,
+      [{
+        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+        kind: 'grant',
+        at: '2026-08-07T12:00:00.000Z',
+        grantId: 'grant_review_verbs_apply',
+        actionClass: declaration.risk.name,
+        scope: STANDING_APPROVAL_SCOPE,
+      }],
+      { auditBaseDir: agentQaRoot },
+    )
+    if (outcome.kind !== 'appended') throw new Error(`grant append refused: ${outcome.kind}`)
   }
 
   it('lists all four as UNBOUND by name and refuses each by name without a review port', async () => {
     const recordId = publish()
     const readOnly = registry(false)
+    approveApply(readOnly)
 
     const listed = readOnly.list(CALLER)
     const byId = new Map(listed.map((declaration) => [declaration.id, declaration]))
@@ -198,6 +243,7 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
   it('the SAME four ids are bound and reach the store when a review port is supplied', async () => {
     const recordId = publish()
     const host = registry(true)
+    approveApply(host)
 
     for (const id of MUTATING_FUNCTION_IDS) {
       expect(
@@ -257,6 +303,7 @@ describe('the mutating review verbs bind, refuse and commit by name', () => {
       true,
       createEntityDirectory({ agentQaRoot, resolveKnowledgeRoot: () => knowledgeRoot }),
     )
+    approveApply(host)
 
     // BEFORE. This is also the mint: resolving the bundle id is what gives the entity its
     // permanent MEM address (D-01), and every later render below goes through that address.

@@ -674,8 +674,17 @@ describe('composeLocalAgent (D-15)', () => {
       // A CLI host whose async config resolution rejects, plus one analysis.get over a run
       // with >=2 verdicts. The op must RESOLVE with the explicit no-history clause in every
       // sentence, zero unhandled rejections may fire, and the resolver is consulted exactly
-      // twice: prime's mint plus ONE re-mint by the first join after the rejection reset —
-      // the second join in the same synchronous loop reuses the in-flight promise.
+      // three times.
+      //
+      // THE THREE ARE TWO DIFFERENT MECHANISMS and the number is a SUM, so read it as one:
+      //   2 — the recurrence provider: prime's mint plus ONE re-mint by the first join after
+      //       the rejection reset. The second join in the same synchronous loop reuses the
+      //       in-flight promise, and THAT is the single-flight property this case pins. It is
+      //       still pinned: a regression there pushes the total to four, not to three.
+      //   1 — the 391 standing-approval binding, which resolves the root once per invocation
+      //       to build the grant reader the gate's ask arm consults. Its resolution failure is
+      //       swallowed into the no-grants reader (see the binding's comment), which is why a
+      //       rejecting resolver still leaves this read rendering rather than throwing.
       const runId = 'run_rejecting_resolver'
       plantHandoff(twoFailureHandoff(runId, 1))
 
@@ -706,7 +715,7 @@ describe('composeLocalAgent (D-15)', () => {
           expect(entry.sentence).toContain('no failure history is recorded for this test')
         }
         expect(orphaned).toEqual([])
-        expect(resolverCalls).toBe(2)
+        expect(resolverCalls).toBe(3)
       } finally {
         process.removeListener('unhandledRejection', capture)
         await rejectingHost.close()

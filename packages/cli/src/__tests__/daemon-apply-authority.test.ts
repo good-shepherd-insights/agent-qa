@@ -30,7 +30,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
-import { readWriterLease } from '@vostride/agent-qa-knowledge-local'
+import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import { appendGrantLedgerEvents, readWriterLease } from '@vostride/agent-qa-knowledge-local'
+import {
+  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+  STANDING_APPROVAL_SCOPE,
+} from '@vostride/agent-qa-schema'
 import type {
   KnowledgeApplyOutcomeDto,
   KnowledgeProposeOutcomeDto,
@@ -200,6 +205,35 @@ async function startDaemon(paths: Paths): Promise<LiveDaemon> {
   }
 }
 
+/**
+ * Record the standing approval the ask-tier apply requires (391 D-02/D-04).
+ *
+ * 391 raised `knowledge.proposal.apply` to `mutating-shared`, and a daemon is `local-headless` by
+ * definition — the one context that fail-closes hardest. That is the intended posture, and it is
+ * exactly why the daemon needs the committed ledger: it has nobody to ask. This case is about
+ * WRITER AUTHORITY, so the approval is recorded first and the authority claim is measured as before.
+ *
+ * The covered class is built from the op id and the gate's own `fn:` prefix. That prefix is not
+ * re-derived guesswork: the relation between an op id and the action name the gate compares is
+ * pinned against the live declaration in `agent-local`'s grant-spine tracer, and this fixture is a
+ * consumer of that pinned rule. The daemon exposes no listing route to read it from directly.
+ */
+function grantApply(where: Paths): void {
+  const outcome = appendGrantLedgerEvents(
+    where.knowledgeRoot,
+    [{
+      schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+      kind: 'grant',
+      at: '2026-08-07T12:00:00.000Z',
+      grantId: 'grant_daemon_apply_authority',
+      actionClass: `fn:${KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID}`,
+      scope: STANDING_APPROVAL_SCOPE,
+    }],
+    { auditBaseDir: where.agentQaRoot },
+  )
+  if (outcome.kind !== 'appended') throw new Error(`grant append refused: ${outcome.kind}`)
+}
+
 function callDaemon(where: Paths, functionId: string, input: unknown): Promise<unknown> {
   return invokeViaDaemon({
     agentQaRoot: where.agentQaRoot,
@@ -220,6 +254,7 @@ describe('the daemon commits its own applies in process (CR-01, D-18)', () => {
   it('applies a forget through the real daemon entry while holding the writer lease', async () => {
     const paths = makePaths('held')
     const recordId = await seedRecord(paths)
+    grantApply(paths)
     const daemon = await startDaemon(paths)
 
     try {

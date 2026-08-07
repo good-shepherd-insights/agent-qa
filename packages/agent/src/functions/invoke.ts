@@ -28,6 +28,7 @@
 // this layer exists to make impossible.
 
 import { evaluate } from '@vostride/agent-qa-safety'
+import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
 import { registryInternals, resolveBindingStatus } from './registry.js'
@@ -127,11 +128,31 @@ export async function invokeFunction(
     throw new FunctionScopeError(functionId, missingScopes)
   }
 
+  // 391 PROP-01: the ask arm's two dependencies, resolved here because this is the only place the
+  // gate is ever called from. Before this, the call passed neither — and it also passed no action
+  // scope, which the gate defaults to the empty object. An empty scope matches NOTHING on either
+  // side of the comparison, so a standing approval was structurally unconsumable through this layer
+  // whatever a reader returned. The scope below is the ONE pinned constant both the mint and this
+  // call-site read; neither ever re-spells it, because the match demands byte equality.
+  //
+  // The scope is COMPOSITION-supplied, never caller input. A caller that could name the scope its
+  // own action is evaluated under could widen any grant into a match by claiming the grant's scope.
+  const reader =
+    internals.standingApprovalReader === undefined
+      ? undefined
+      : await internals.standingApprovalReader()
   const policy = await evaluate(
     spec.risk,
     internals.resolveExecutionContext(),
-    caller.credential === undefined ? {} : { credential: caller.credential },
-    { auditSink: internals.auditSink },
+    {
+      actionScope: STANDING_APPROVAL_SCOPE,
+      ...(caller.credential === undefined ? {} : { credential: caller.credential }),
+    },
+    {
+      auditSink: internals.auditSink,
+      ...(reader === undefined ? {} : { reader }),
+      ...(internals.confirm === undefined ? {} : { confirm: internals.confirm }),
+    },
   )
   if (policy.verdict === 'deny') {
     throw new FunctionDeniedError(functionId, policy.reason)

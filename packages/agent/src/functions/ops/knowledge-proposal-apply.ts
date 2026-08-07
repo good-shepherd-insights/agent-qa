@@ -35,7 +35,33 @@ export const knowledgeProposalApplySpec: FunctionSpec<
   input: KnowledgeProposalApplyInputSchema,
   output: KnowledgeApplyOutcomeSchema,
   boundThrough: 'knowledgeReview',
-  risk: { name: `fn:${KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID}`, recognized: true, readOnly: false },
+  // 391 D-02, and every field is load-bearing:
+  //   `recognized: true` with `readOnly: false` puts the classifier's floor at mutating-local;
+  //   `declaredTier` raises it above that floor, and the raise is the point;
+  //   the name tokens hit neither destructive lexicon, so nothing lifts it further.
+  //
+  // WHY THE RAISE. `mutating-local` allows in EVERY execution context by ratified spec, so this op
+  // — the ONE place in this layer where committed knowledge changes — was never asked about. A
+  // standing approval can only ever satisfy an ASK, so at the local floor there was no ask for a
+  // grant to satisfy and the whole approval loop was unreachable on the one verb that needs it.
+  // `mutating-shared` is also the honest classification independently of that: applying a proposal
+  // writes the committed knowledge tree, which travels in pull requests to everyone sharing the
+  // repository. It is not this machine's business alone.
+  //
+  // WHAT THE RAISE COSTS, stated plainly rather than discovered later: in a fail-closed context —
+  // which is every context except an interactive terminal — an apply with no covering grant and no
+  // credential now DENIES rather than proceeding. That is the intended posture (a commit to shared
+  // knowledge should not happen unasked in CI or under the daemon), and the way through it is a
+  // recorded standing approval, an interactive confirmation, or session trust.
+  //
+  // The three KREV propose verbs deliberately stay at the recognized-mutating floor: a proposal
+  // commits nothing, so gating it would be asking about the request rather than the act.
+  risk: {
+    name: `fn:${KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID}`,
+    recognized: true,
+    readOnly: false,
+    declaredTier: 'mutating-shared',
+  },
   invoke(input, deps) {
     // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a refusal at
     // the gate, both decided off this same `deps` record.
