@@ -14,6 +14,12 @@
 //          made through the function layer is what lets a later headless run commit unasked.
 //   leg 5  `grants.revoke` -> the same headless apply is refused again, and BOTH events survive
 //
+// AND THE ADJACENCY NEGATIVES (391 plan 05, D-04). A second case appends three committed lines that
+// are each ONE character-class away from the one leg 3 mints — the bare op id, the same scope value
+// under a different key, and a superset scope — and proves that none of them satisfies the ask
+// while the exactly-equal line does. Exact-match semantics are the whole of the narrowing in 391
+// (scope is not yet a narrowing dimension), so "close enough" has to be pinned as "not at all".
+//
 // THE DOOR IS NAMED, because `proposals.accept` and `grants.revoke` are both `mutating-shared` AND
 // both members of the closed PROTECTED set — so no standing approval can ever satisfy their own
 // asks (D-05), and in a fail-closed context they simply deny. The door used here is
@@ -34,6 +40,7 @@ import {
 } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import {
+  appendGrantLedgerEvents,
   createGrantOperations,
   createProposalsInbox,
   createStandingApprovalReader,
@@ -42,6 +49,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import {
+  CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   STANDING_APPROVAL_SCOPE,
@@ -58,6 +66,7 @@ import type {
   MaskedResolvedConfig,
   ProposalsAcceptOutput,
   ProposalsListOutput,
+  ProposalsShowOutput,
   RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
 import type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from '@vostride/agent-qa-safety'
@@ -75,6 +84,7 @@ const ACCEPT_ID = 'proposals.accept'
 const GRANTS_LIST_ID = 'grants.list'
 const GRANTS_REVOKE_ID = 'grants.revoke'
 const PROPOSALS_LIST_ID = 'proposals.list'
+const PROPOSALS_SHOW_ID = 'proposals.show'
 
 const NOW_ISO = '2026-08-07T12:00:00.000Z'
 
@@ -215,6 +225,19 @@ describe('the grant loop: a person accepts with always, and a later headless app
       .map((line) => JSON.parse(line) as GrantLedgerEvent)
   }
 
+  /**
+   * The class the gate compares against, read off the apply op's OWN declaration.
+   *
+   * Never spelled as a literal anywhere in this file: every fixture below is DERIVED from this, so
+   * a rename of the op moves the fixtures with it instead of silently turning the whole file into
+   * a set of misses that still passes its negative cases.
+   */
+  function applyClass(registry: FunctionRegistry): string {
+    const name = registry.list(HUMAN).find((entry) => entry.id === APPLY_ID)?.risk.name
+    if (name === undefined) throw new Error(`${APPLY_ID} is not registered`)
+    return name
+  }
+
   async function propose(registry: FunctionRegistry, recordId: string): Promise<string> {
     const proposed = (await invokeFunction(
       registry,
@@ -269,16 +292,14 @@ describe('the grant loop: a person accepts with always, and a later headless app
 
     // The class the gate will compare against, taken from the op's OWN declaration rather than
     // spelled here: if the apply renamed itself, this assertion follows it.
-    const applyClass = interactive
-      .list(HUMAN)
-      .find((entry) => entry.id === APPLY_ID)?.risk.name
-    expect(escalated.grant.grant.actionClass).toBe(applyClass)
+    const applyClassName = applyClass(interactive)
+    expect(escalated.grant.grant.actionClass).toBe(applyClassName)
     expect(escalated.grant.grant.scope).toEqual(STANDING_APPROVAL_SCOPE)
     expect(escalated.grant.grant.proposalId).toBe(secondProposal)
 
     const afterMint = committedEvents()
     expect(afterMint).toHaveLength(1)
-    expect(afterMint[0]).toMatchObject({ kind: 'grant', actionClass: applyClass })
+    expect(afterMint[0]).toMatchObject({ kind: 'grant', actionClass: applyClassName })
 
     // It is enumerable — a grant nobody can list is PROP-03's hole reversed.
     const grants = (await invokeFunction(
@@ -288,6 +309,21 @@ describe('the grant loop: a person accepts with always, and a later headless app
       HUMAN,
     )) as GrantsListOutput
     expect(grants.grants.map((grant) => grant.grantId)).toEqual([escalated.grant.grant.grantId])
+
+    // And the DECISION is readable afterwards under the same id a person listed it by. The store's
+    // own suite pins the applied status against the bytes; what is asserted here is that the ACCEPT
+    // VERB, dispatched through the composed host, is what left that trail — so `proposals.show` is
+    // a receipt for a decision that was made and not only a preview of one that has not been.
+    const shownAfter = (await invokeFunction(
+      interactive,
+      PROPOSALS_SHOW_ID,
+      { proposalId: secondProposal },
+      HUMAN,
+    )) as ProposalsShowOutput
+    expect(shownAfter.kind).toBe('found')
+    if (shownAfter.kind !== 'found') throw new Error('the accepted proposal is no longer readable')
+    expect(shownAfter.entry.envelope.id).toBe(secondProposal)
+    expect(shownAfter.entry.envelope.status).toBe('applied')
 
     // ── LEG 4: the loop closing. A THIRD proposal, applied HEADLESS — where no prompt exists and
     // fail-closed would otherwise deny. The only thing that can satisfy this ask is the ledger.
@@ -301,7 +337,7 @@ describe('the grant loop: a person accepts with always, and a later headless app
     expect(headlessApply.outcome).toBe('applied')
 
     const allowed = sink.rows.at(-1)
-    expect(allowed?.action).toBe(applyClass)
+    expect(allowed?.action).toBe(applyClassName)
     expect(allowed?.verdict).toBe('allow')
     // The whole point of the phase in one field: what satisfied the ask was a decision a person
     // made through `proposals.accept`, not trust mode, not a credential, and not a prompt.
@@ -326,6 +362,118 @@ describe('the grant loop: a person accepts with always, and a later headless app
     // BOTH events survive, in order. A revoke that rewrote or removed the grant line would leave a
     // reviewer unable to see that an approval was ever given.
     expect(committedEvents().map((event) => event.kind)).toEqual(['grant', 'revoke'])
+  }, 120_000)
+
+  it('admits the exactly-equal grant line and no adjacent one', async () => {
+    // D-04's exact-match rule, driven as a differential rather than asserted as a property of
+    // `grantCovers`. Three committed lines go in that are each one small step away from the line
+    // leg 3 mints; then the exactly-equal line goes in after them. The subject is the same
+    // headless `knowledge.proposal.apply` throughout, so the ONLY variable across the two verdicts
+    // is what the ledger says.
+    const interactive = host('local-interactive')
+    const headless = host('local-headless')
+
+    const exactClass = applyClass(interactive)
+    // Derived, never re-spelled: `STANDING_APPROVAL_SCOPE` is the ONE constant the mint and the
+    // invoke call-site both read, and the near-misses below are built by moving its value to
+    // another key or by adding a second one — so they follow the constant if it is ever retuned.
+    const scopeValue = STANDING_APPROVAL_SCOPE.project
+    if (scopeValue === undefined) {
+      throw new Error('the pinned standing-approval scope no longer populates `project`')
+    }
+
+    // WHY THESE ARE ASSEMBLED HERE and not minted through `record`: the mint reads the class off
+    // the apply op's own descriptor and stamps the pinned scope, so it structurally CANNOT produce
+    // any of the three. They are still authored through the real committed-append API, so each one
+    // passes both of the read's guards and the egress checkpoint, and what lands is an ordinary
+    // well-formed line that folds, lists, and reads to a human exactly like an approval. That is
+    // the entire point: the only thing wrong with them is that they are not EQUAL.
+    const adjacent: GrantLedgerEvent[] = [
+      {
+        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+        kind: 'grant',
+        at: NOW_ISO,
+        grantId: 'grant_bare_op_id',
+        // The bare op id, with the `fn:` prefix the gate compares against stripped off. This is the
+        // silent failure the ledger's own module head names: it authorizes nothing, forever.
+        actionClass: exactClass.replace(/^fn:/, ''),
+        scope: STANDING_APPROVAL_SCOPE,
+      },
+      {
+        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+        kind: 'grant',
+        at: NOW_ISO,
+        grantId: 'grant_scope_other_key',
+        actionClass: exactClass,
+        // The same VALUE under a different KEY. `scopeMatches` compares populated key sets, so an
+        // org-scoped approval does not cover a project-scoped action even at the same string.
+        scope: { org: scopeValue },
+      },
+      {
+        schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+        kind: 'grant',
+        at: NOW_ISO,
+        grantId: 'grant_scope_superset',
+        actionClass: exactClass,
+        // A WIDER grant, which is the counter-intuitive one and the reason it is here: exact
+        // matching means a grant carrying an extra populated key covers LESS, not more.
+        scope: { ...STANDING_APPROVAL_SCOPE, org: scopeValue },
+      },
+    ]
+
+    expect(
+      appendGrantLedgerEvents(knowledgeRoot, adjacent, { auditBaseDir: agentQaRoot }),
+    ).toEqual({ kind: 'appended', lines: 3 })
+
+    // All three are ACTIVE as far as the committed file is concerned, and a reviewer can see them.
+    // That is what makes the denial below the MATCH's answer rather than the ledger's: nothing was
+    // filtered out on the way in, and `grants.list` is the report that says so.
+    const listed = (await invokeFunction(interactive, GRANTS_LIST_ID, {}, HUMAN)) as GrantsListOutput
+    expect([...listed.grants].map((grant) => grant.grantId).sort()).toEqual([
+      'grant_bare_op_id',
+      'grant_scope_other_key',
+      'grant_scope_superset',
+    ])
+
+    const refusedProposal = await propose(headless, publish('adjacent'))
+    await expect(
+      invokeFunction(headless, APPLY_ID, { proposalId: refusedProposal }, HUMAN),
+    ).rejects.toBeInstanceOf(FunctionDeniedError)
+    // Fail-closed, with no trust source: the ask arm consulted the reader, got nothing that covered
+    // this action, and fell through. Three approvals in the file and none of them applied.
+    expect(sink.rows.at(-1)?.action).toBe(exactClass)
+    expect(sink.rows.at(-1)?.outcome).toBe('fail-closed-denied')
+    expect(sink.rows.at(-1)?.trustSource).toBeUndefined()
+
+    // ── THE ADMITTED SIDE. Without it the three assertions above are indistinguishable from an ask
+    // that nothing could ever have satisfied — a headless apply denies with an EMPTY ledger too.
+    expect(
+      appendGrantLedgerEvents(
+        knowledgeRoot,
+        [
+          {
+            schemaVersion: CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
+            kind: 'grant',
+            at: NOW_ISO,
+            grantId: 'grant_exact',
+            actionClass: exactClass,
+            scope: STANDING_APPROVAL_SCOPE,
+          },
+        ],
+        { auditBaseDir: agentQaRoot },
+      ),
+    ).toEqual({ kind: 'appended', lines: 1 })
+
+    const admittedProposal = await propose(headless, publish('exact'))
+    const applied = (await invokeFunction(
+      headless,
+      APPLY_ID,
+      { proposalId: admittedProposal },
+      HUMAN,
+    )) as KnowledgeApplyOutcomeDto
+    expect(applied.outcome).toBe('applied')
+    expect(sink.rows.at(-1)?.verdict).toBe('allow')
+    expect(sink.rows.at(-1)?.trustSource).toBe('standing-approval')
   }, 120_000)
 
   it('refuses an agent-origin accept and revoke, leaving the committed ledger untouched', async () => {
