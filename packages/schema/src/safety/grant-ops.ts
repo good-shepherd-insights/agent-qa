@@ -100,8 +100,19 @@ export const GrantsListInputSchema = z.object({}).strict()
 
 export type GrantsListInput = z.infer<typeof GrantsListInputSchema>
 
+/**
+ * `grants.list`'s output: what folds, AND what the read could not consume.
+ *
+ * The listing is a report about the FILE, and a report that omits the file's damage is the wrong
+ * answer that stops an operator finding out why their revoke did not take. Each refused line is
+ * named by its 1-based number, which is what an editor shows the person who has to fix it.
+ */
 export const GrantsListOutputSchema = z.object({
   grants: z.array(StandingGrantSchema),
+  refusedLines: z.array(z.object({
+    lineNumber: z.number().int().positive(),
+    reason: z.string().min(1),
+  }).strict()),
 }).strict()
 
 export type GrantsListOutput = z.infer<typeof GrantsListOutputSchema>
@@ -184,7 +195,17 @@ export type GrantRecordOutcome = z.infer<typeof GrantRecordOutcomeSchema>
  * are host facts, and a port that took them as arguments would let a caller decide them.
  */
 export interface StandingGrantsPort {
-  list(): Promise<readonly ActiveStandingGrant[]>
+  /**
+   * What folds, beside what the read refused.
+   *
+   * The damage rides the same answer rather than a second call, because an implementation reads the
+   * file ONCE and a caller that had to ask twice could report a fold and a damage report taken from
+   * two different states of a file a `git pull` may replace between them.
+   */
+  list(): Promise<{
+    grants: readonly ActiveStandingGrant[]
+    refusedLines: readonly { lineNumber: number; reason: string }[]
+  }>
   record(input: GrantRecordInput): Promise<GrantRecordOutcome>
   revoke(input: GrantsRevokeInput): Promise<GrantsRevokeOutput>
 }

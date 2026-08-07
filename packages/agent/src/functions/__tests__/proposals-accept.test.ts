@@ -110,7 +110,7 @@ function recordingGrants(
   return {
     calls,
     port: {
-      list: () => Promise.resolve([]),
+      list: () => Promise.resolve({ grants: [], refusedLines: [] }),
       revoke: ({ grantId }) => Promise.resolve({ outcome: 'no-grant', grantId }),
       record: (input) => {
         calls.push(input)

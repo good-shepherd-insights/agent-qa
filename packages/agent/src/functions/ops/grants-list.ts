@@ -50,6 +50,13 @@ export const grantsListSpec: FunctionSpec<GrantsListInput, GrantsListOutput> = {
 
     // An EMPTY listing is a result, not an absence: a project where nobody has granted standing
     // approval is the default state, and it reads identically to one whose ledger was never created.
-    return { grants: [...await grants.list()] }
+    //
+    // The unfiltered-report argument above is unchanged; what is new is that lines which do NOT
+    // fold are counted and named here instead of vanishing between the read and the surface.
+    const answer = await grants.list()
+    return {
+      grants: [...answer.grants],
+      refusedLines: answer.refusedLines.map((line) => ({ ...line })),
+    }
   },
 }

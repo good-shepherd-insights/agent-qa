@@ -204,7 +204,7 @@ export function createGrantOperations(options: GrantOperationsOptions): Standing
   }
 
   return {
-    async list(): Promise<readonly ActiveStandingGrant[]> {
+    async list() {
       // Acquisition-free ON PURPOSE — see the module head.
       //
       // UNFILTERED, including any grant whose class is protected. That is deliberate and it is the
@@ -212,7 +212,11 @@ export function createGrantOperations(options: GrantOperationsOptions): Standing
       // and `grantsFor` is an AUTHORIZATION answer. A protected line that reached the committed
       // ledger by a hand-edit authorizes nothing, but it is exactly the line a reviewer has to be
       // able to find — and hiding it would leave `grants.revoke` unable to name the id.
-      return readActive(await options.resolveKnowledgeRoot())
+      //
+      // ONE read serves both halves: the fold and the damage report describe the same bytes, which
+      // a second read of a committed file could not promise.
+      const read = readGrantLedger(await options.resolveKnowledgeRoot())
+      return { grants: foldActiveGrants(read.events), refusedLines: read.refusedLines }
     },
 
     async record(input: GrantRecordInput): Promise<GrantRecordOutcome> {

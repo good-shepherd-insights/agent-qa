@@ -178,9 +178,32 @@ function renderReject(result: ProposalsRejectOutput): string {
     : `${result.outcome}\n${renderEntry(result.entry)}`
 }
 
+/**
+ * The damage report, on the quarantine ledger's wording.
+ *
+ * Rendered in BOTH fold arms: the operator who most needs it is the one whose ledger still lists
+ * approvals, because those approvals no longer authorize anything while a line stays unreadable.
+ */
+function renderRefusedLines(result: GrantsListOutput): string[] {
+  if (result.refusedLines.length === 0) return []
+  return [
+    '',
+    pc.yellow(
+      `The grant ledger has ${result.refusedLines.length} unreadable line(s): ${
+        result.refusedLines
+          .map((line) => `line ${line.lineNumber} (${line.reason})`)
+          .join(', ')
+      }. Until they are repaired no standing approval authorizes anything.`,
+    ),
+  ]
+}
+
 function renderGrantsList(result: GrantsListOutput): string {
   if (result.grants.length === 0) {
-    return pc.dim('No standing approvals are in force. Every ask reaches you.')
+    return [
+      pc.dim('No standing approvals are in force. Every ask reaches you.'),
+      ...renderRefusedLines(result),
+    ].join('\n')
   }
   return [
     pc.bold(`Standing approvals in force (${result.grants.length})`),
@@ -191,6 +214,7 @@ function renderGrantsList(result: GrantsListOutput): string {
       `  granted: ${grant.grantedAt}${
         grant.proposalId === undefined ? '' : ` · from ${grant.proposalId}`}`,
     ].join('\n')),
+    ...renderRefusedLines(result),
   ].join('\n')
 }
 
