@@ -41,6 +41,7 @@ import {
   createGrantOperations,
   createStandingApprovalReader,
   grantsLedgerPath,
+  readGrantLedger,
 } from '@vostride/agent-qa-knowledge-local'
 import {
   FunctionScopeSchema,
@@ -64,8 +65,13 @@ import {
 } from '../composition/compose-local-agent.js'
 
 const APPLY_ID = 'knowledge.proposal.apply'
+/** A second registered, unprotected op — the intact sibling grant's class (391-10). */
+const SIBLING_ID = 'knowledge.forget.propose'
 const GRANTS_LIST_ID = 'grants.list'
 const NOW_ISO = '2026-08-08T12:00:00.000Z'
+
+/** A scope key outside `TRUST_SCOPE_KEYS` — what `TrustScopeSchema.strict()` has always refused. */
+const UNKNOWN_SCOPE_KEY = 'tenant'
 
 /** What a merge leaves behind when two branches both appended: a marker fused onto a real line. */
 const CONFLICT_MARKER = '<<<<<<< HEAD'
@@ -163,10 +169,14 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
    * Never spelled as a literal here: a rename of the op moves the fixture with it instead of
    * turning this whole file into a set of misses that still passes its negative cases.
    */
-  function applyClass(registry: FunctionRegistry): string {
-    const name = registry.list(HUMAN).find((entry) => entry.id === APPLY_ID)?.risk.name
-    if (name === undefined) throw new Error(`${APPLY_ID} is not registered`)
+  function riskClass(registry: FunctionRegistry, opId: string): string {
+    const name = registry.list(HUMAN).find((entry) => entry.id === opId)?.risk.name
+    if (name === undefined) throw new Error(`${opId} is not registered`)
     return name
+  }
+
+  function applyClass(registry: FunctionRegistry): string {
+    return riskClass(registry, APPLY_ID)
   }
 
   function action(name: string): RiskActionDescriptor {
@@ -197,14 +207,16 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
     }
   }
 
-  /** Record a standing approval for the apply class, through the real mint. */
-  async function recordApplyGrant(registry: FunctionRegistry): Promise<string> {
-    const outcome = await grantVerbs().record({
-      actionClass: applyClass(registry),
-      scope: STANDING_APPROVAL_SCOPE,
-    })
+  /** Record a standing approval for one class, through the real mint. */
+  async function recordGrantFor(actionClass: string): Promise<string> {
+    const outcome = await grantVerbs().record({ actionClass, scope: STANDING_APPROVAL_SCOPE })
     if (outcome.kind !== 'recorded') throw new Error(`fixture mint failed: ${outcome.kind}`)
     return outcome.grant.grantId
+  }
+
+  /** Record a standing approval for the apply class, through the real mint. */
+  async function recordApplyGrant(registry: FunctionRegistry): Promise<string> {
+    return await recordGrantFor(applyClass(registry))
   }
 
   /**
@@ -331,6 +343,100 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
 
       const refusedRevoke = await damageRefusal(() => verbs.revoke({ grantId }))
       expect(refusedRevoke.name).toBe('GrantLedgerDamagedError')
+    })
+  })
+
+  // ---- 391-10, gap 2: a grant whose scope carries a key the wire contract refuses ----
+  //
+  // The verifier measured the divergence end-to-end: the structural guard admitted an unknown scope
+  // key that `TrustScopeSchema` (`.strict()`) refuses, so the line PARSED, folded, and `grantsFor`
+  // RETURNED it as a standing approval — while `GrantsListOutputSchema` refused the same object at
+  // `invokeFunction`'s output parse, throwing the WHOLE listing away. One such line authorized
+  // silently and hid every other grant from the enumeration verb.
+  //
+  // The fixture carries an intact producer-built sibling grant beside it, so the refusal under test
+  // is about a line the listing depends on rather than about a file nothing could read.
+  describe('a grant line whose scope carries an UNKNOWN key', () => {
+    let headless: FunctionRegistry
+    let siblingGrantId: string
+
+    beforeEach(async () => {
+      headless = host('local-headless')
+      // Line 1: the intact sibling, minted through the real verb.
+      siblingGrantId = await recordGrantFor(riskClass(headless, SIBLING_ID))
+      // Line 2: the apply-class grant, minted intact and then fused with the unknown key.
+      await recordApplyGrant(headless)
+    })
+
+    /**
+     * Fuse an unknown scope key ONTO a committed line, in place.
+     *
+     * Rewritten rather than appended: a separate garbage line would leave every real line readable,
+     * and the refusal under test would then be about a line nothing depends on.
+     */
+    function smuggleUnknownScopeKey(lineNumber: number): void {
+      const path = grantsLedgerPath(knowledgeRoot)
+      const lines = readFileSync(path, 'utf8').split('\n')
+      const index = lineNumber - 1
+      const parsed = JSON.parse(lines[index] ?? '') as Record<string, unknown>
+      lines[index] = JSON.stringify({
+        ...parsed,
+        scope: { ...(parsed.scope as Record<string, unknown>), [UNKNOWN_SCOPE_KEY]: 'smuggled' },
+      })
+      writeFileSync(path, lines.join('\n'), 'utf8')
+    }
+
+    async function listedGrants(): Promise<GrantsListOutput> {
+      return (await invokeFunction(headless, GRANTS_LIST_ID, {}, HUMAN)) as GrantsListOutput
+    }
+
+    it('ADMIT CONTROL — untouched, both grants fold, authorize and list', async () => {
+      // What stops the three cases below being satisfied by a fixture that never recorded anything,
+      // or by an enumeration verb that is broken for every input.
+      const read = readGrantLedger(knowledgeRoot)
+      expect(read.refusedLines).toEqual([])
+
+      const reader = createStandingApprovalReader({ knowledgeRoot })
+      expect(
+        reader
+          .grantsFor(action(applyClass(headless)), STANDING_APPROVAL_SCOPE)
+          .map((grant) => grant.actionClass),
+      ).toEqual([applyClass(headless)])
+
+      const listed = await listedGrants()
+      expect(listed.grants).toHaveLength(2)
+      expect(listed.refusedLines).toEqual([])
+    })
+
+    it('is a valid fixture: the unknown-key line is REFUSED by number while the sibling folds', () => {
+      smuggleUnknownScopeKey(2)
+
+      const read = readGrantLedger(knowledgeRoot)
+      expect(read.refusedLines.map((line) => line.lineNumber)).toEqual([2])
+      expect(read.events.map((event) => event.grantId)).toEqual([siblingGrantId])
+    })
+
+    it('authorizes NOTHING: grantsFor is empty for the unknown-key grant\'s own class', () => {
+      smuggleUnknownScopeKey(2)
+      const reader = createStandingApprovalReader({ knowledgeRoot })
+
+      // It never folds — and the file now carries a refused line, so 391-08's fail-closed rule
+      // applies file-wide: the byte-perfect sibling grants nothing either.
+      expect(reader.grantsFor(action(applyClass(headless)), STANDING_APPROVAL_SCOPE)).toEqual([])
+      expect(
+        reader.grantsFor(action(riskClass(headless, SIBLING_ID)), STANDING_APPROVAL_SCOPE),
+      ).toEqual([])
+    })
+
+    it('and `grants.list` RESOLVES, naming the refused line beside the grant that folds', async () => {
+      smuggleUnknownScopeKey(2)
+
+      // The headline harm: this call used to throw a ZodError at the op's output parse, so the CLI
+      // printed no grants at all. The enumeration verb now survives the very line that blanked it.
+      const listed = await listedGrants()
+
+      expect(listed.grants.map((grant) => grant.grantId)).toEqual([siblingGrantId])
+      expect(listed.refusedLines.map((line) => line.lineNumber)).toEqual([2])
     })
   })
 })

@@ -137,6 +137,51 @@ describe('grant ledger read and fold', () => {
     expect(foldActiveGrants(read.events).map((active) => active.grantId)).toEqual([GRANT_ID])
   })
 
+  it('refuses a grant whose scope carries an UNKNOWN key, by line number', async () => {
+    // The structural guard refuses exactly what the strict wire contract refuses: a key outside
+    // TRUST_SCOPE_KEYS. Authored as raw bytes BECAUSE the fixed mint refuses to produce it — the
+    // same sanctioned hand-written-line exception the forged-protected-line case relies on.
+    await writeLedger([
+      canonicalJson(grant()),
+      canonicalJson({
+        ...grant(),
+        grantId: OTHER_GRANT_ID,
+        scope: { ...STANDING_APPROVAL_SCOPE, tenant: 'smuggled' },
+      }),
+    ])
+
+    const read = readGrantLedger(knowledgeRoot)
+    expect(read.refusedLines.map((line) => line.lineNumber)).toEqual([2])
+    expect(read.events).toEqual([grant()])
+    expect(foldActiveGrants(read.events).map((active) => active.grantId)).toEqual([GRANT_ID])
+  })
+
+  it('ADMITS every legal scope key combination — org-only, project-only and both', async () => {
+    // The admit side of the guard above. Without it, "refuses an unknown key" would be
+    // indistinguishable from "refuses anything that is not the one canonical scope literal".
+    await writeLedger([
+      canonicalJson({ ...grant(), grantId: 'grant_scope_org', scope: { org: 'acme' } }),
+      canonicalJson({
+        ...grant(),
+        grantId: 'grant_scope_project',
+        scope: { project: 'local-workspace' },
+      }),
+      canonicalJson({
+        ...grant(),
+        grantId: 'grant_scope_both',
+        scope: { org: 'acme', project: 'local-workspace' },
+      }),
+    ])
+
+    const read = readGrantLedger(knowledgeRoot)
+    expect(read.refusedLines).toEqual([])
+    expect(foldActiveGrants(read.events).map((active) => active.grantId)).toEqual([
+      'grant_scope_org',
+      'grant_scope_project',
+      'grant_scope_both',
+    ])
+  })
+
   it('PROPAGATES a newer-version line as a typed error — committed truth hard-fails', async () => {
     await writeLedger([
       canonicalJson(grant()),
