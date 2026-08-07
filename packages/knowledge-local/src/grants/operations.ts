@@ -68,6 +68,7 @@ import { underKnowledgeWriterLease } from '../lease/under-writer-lease.js'
 import type { SynchronousDecision } from '../lease/under-writer-lease.js'
 import type { WriterLease } from '../lease/writer-lease.js'
 import { appendGrantLedgerEvents, foldActiveGrants, readGrantLedger } from './ledger.js'
+import type { RefusedGrantLine } from './ledger.js'
 
 /**
  * A grant write the committed-egress checkpoint refused.
@@ -111,6 +112,25 @@ export class GrantLeaseHeldError extends Error {
         + 'Retry once that writer finishes.',
     )
     this.name = 'GrantLeaseHeldError'
+  }
+}
+
+/**
+ * The ledger carries lines this build cannot read, so a mutating verb refused to DECIDE on it
+ * (D-11). The ledger is byte-unchanged when this is raised — the read precedes every append.
+ */
+export class GrantLedgerDamagedError extends Error {
+  constructor(readonly refusedLines: readonly RefusedGrantLine[]) {
+    super(
+      'the standing-grant ledger write was refused: '
+        + `${String(refusedLines.length)} line(s) of grants.jsonl could not be read — `
+        + refusedLines
+          .map((line) => `line ${String(line.lineNumber)}: ${line.reason}`)
+          .join('; ')
+        + '. Nothing was decided and the ledger is byte-unchanged. Repair the named line(s) in '
+        + 'grants.jsonl — a hand edit, or git checkout of the committed file — and retry.',
+    )
+    this.name = 'GrantLedgerDamagedError'
   }
 }
 
@@ -177,9 +197,11 @@ function covers(grant: ActiveStandingGrant, input: GrantRecordInput): boolean {
 export function createGrantOperations(options: GrantOperationsOptions): StandingGrantsPort {
   /** One fold of the committed file — the whole state a verb decides on. */
   function readActive(knowledgeRoot: string): ActiveStandingGrant[] {
-    // Typed refusals propagate — see the module head. `refusedLines` are the ledger's own
-    // line-level damage report and do not stop the neighbours from folding.
-    return foldActiveGrants(readGrantLedger(knowledgeRoot).events)
+    // The ONE read, taken inside the lease by both callers. An authorization file this build cannot
+    // fully read is no substrate for DECIDING, so line-level damage refuses the verb outright.
+    const read = readGrantLedger(knowledgeRoot)
+    if (read.refusedLines.length > 0) throw new GrantLedgerDamagedError(read.refusedLines)
+    return foldActiveGrants(read.events)
   }
 
   /** This composition's serialized section, over the ONE shared lease scope. */

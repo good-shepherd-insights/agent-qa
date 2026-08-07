@@ -101,6 +101,7 @@ export type {
 // bytes" needs the classes, and both are errors rather than powers.
 export {
   GrantLeaseHeldError,
+  GrantLedgerDamagedError,
   GrantWriteBlockedError,
   createGrantOperations,
 } from './grants/operations.js'
