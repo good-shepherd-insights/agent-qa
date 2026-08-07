@@ -11,18 +11,20 @@
 // built from anything the command held in memory, the value compared here — read out of a cold
 // registry over the same directories — would be free to disagree with it.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { invokeFunction, RUNS_DIGEST_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import {
+  createGrantOperations,
   grantsLedgerPath,
   proposeReview,
   publishBundleForTest,
 } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
   asRunId,
   canonicalJson,
@@ -30,7 +32,14 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
-import type { Anchor, CompletedRunHandoff, RunDigest, Verdict } from '@vostride/agent-qa-schema'
+import type {
+  Anchor,
+  CompletedRunHandoff,
+  ProposalsAcceptOutput,
+  ProposalsShowOutput,
+  RunDigest,
+  Verdict,
+} from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -383,6 +392,131 @@ describe('agent-qa proposals (D-17, the decision surface)', () => {
     expect(grants.stdout).toContain('1 unreadable line')
     expect(grants.stdout).toContain('line 1')
     expect(grants.exitCode).toBeUndefined()
+  })
+})
+
+// ---- accept --always over a damaged ledger (391-09, closing round-2 gap 1's missing (c)) -------
+//
+// A person told `standing approval RECORDED` for an approval the reader refuses has no path to the
+// explanation. After 391-09 the mint refuses BY NAME instead, and the whole damage report rides the
+// error's own message — which is what `reportError` prints verbatim on this very surface, so no new
+// render branch exists to go stale.
+
+describe('agent-qa proposals accept --always, over a grant ledger the build cannot fully read', () => {
+  const LEDGER_AT = '2026-08-08T10:00:00.000Z'
+  /** Two real, unprotected classes — deliberately NOT the apply class the accept below mints. */
+  const FIRST_CLASS = 'fn:knowledge.forget.propose'
+  const SECOND_CLASS = 'fn:knowledge.reject.propose'
+  const ACCEPT_ID = 'proposals.accept'
+  const SHOW_ID = 'proposals.show'
+
+  /** Two committed lines through the REAL mint — the produced-not-literal corpus law. */
+  async function committedGrants(ws: Workspace): Promise<void> {
+    const verbs = createGrantOperations({
+      resolveKnowledgeRoot: () => ws.knowledgeRoot,
+      auditBaseDir: ws.agentQaRoot,
+      now: () => LEDGER_AT,
+    })
+    for (const actionClass of [FIRST_CLASS, SECOND_CLASS]) {
+      const outcome = await verbs.record({ actionClass, scope: STANDING_APPROVAL_SCOPE })
+      if (outcome.kind !== 'recorded') throw new Error(`fixture mint failed: ${outcome.kind}`)
+    }
+  }
+
+  /** Fuse a merge marker onto the LAST committed line, in place — never an appended garbage line. */
+  function damageLastLine(ws: Workspace): void {
+    const path = grantsLedgerPath(ws.knowledgeRoot)
+    const lines = readFileSync(path, 'utf8').split('\n')
+    let last = lines.length - 1
+    while (last >= 0 && (lines[last] ?? '').trim().length === 0) last -= 1
+    if (last < 0) throw new Error('the fixture ledger has no line to damage')
+    lines[last] = `<<<<<<< HEAD${lines[last] ?? ''}`
+    writeFileSync(path, lines.join('\n'), 'utf8')
+  }
+
+  /**
+   * The accept, driven on the PRODUCTION CLI composition.
+   *
+   * `confirm` is injected for the seam's documented purpose: this process has no tty, and the ask
+   * arm has to ALLOW for the accept to reach the mint at all. The execution context is scoped for
+   * the same reason — a headless process is fail-closed-denied before any ledger is touched, which
+   * would answer a question about the gate rather than about the ledger.
+   */
+  async function acceptAlways<T>(
+    ws: Workspace,
+    call: (invoke: <R>(id: string, input: unknown) => Promise<R>) => Promise<T>,
+  ): Promise<T> {
+    const host = composeCliLocalAgent({
+      agentQaRoot: ws.agentQaRoot,
+      configPath: ws.configPath,
+      confirm: () => true,
+    })
+    try {
+      return await runSafetyScope({ executionContext: 'local-interactive' }, async () =>
+        await call(async <R>(id: string, input: unknown): Promise<R> =>
+          await invokeFunction(host.registry, id, input, CLI_FUNCTION_CALLER) as R))
+    } finally {
+      await host.close()
+    }
+  }
+
+  it('refuses the mint BY NAME with the whole damage report on the surface payload', async () => {
+    const ws = workspace()
+    const proposalId = mintProposal(ws, NEWER_RUN, 'damaged ledger button', 21)
+    await committedGrants(ws)
+    damageLastLine(ws)
+
+    // Fixture validity first: one line still folds and the other is genuinely refused.
+    const before = readFileSync(grantsLedgerPath(ws.knowledgeRoot), 'utf8')
+    expect(before.split('\n').filter((line) => line.trim().length > 0)).toHaveLength(2)
+
+    const { refusal, shown } = await acceptAlways(ws, async (invoke) => {
+      let caught: unknown
+      try {
+        await invoke<ProposalsAcceptOutput>(ACCEPT_ID, { proposalId, always: true })
+      } catch (error) {
+        caught = error
+      }
+      // The refusal is matched by NAME. A `FunctionDeniedError` here would mean the confirm
+      // injection never took and the mint was never reached, so it must NOT be folded into a pass.
+      if (!(caught instanceof Error) || caught.name !== 'GrantLedgerDamagedError') {
+        throw new Error(
+          `expected GrantLedgerDamagedError, got ${
+            caught instanceof Error ? `${caught.name}: ${caught.message}` : String(caught)}`,
+        )
+      }
+      return {
+        refusal: caught,
+        shown: await invoke<ProposalsShowOutput>(SHOW_ID, { proposalId }),
+      }
+    })
+
+    // MISSING (c): the report is on the payload `reportError` prints — name, then message.
+    expect(refusal.message).toContain('line 2')
+    expect(refusal.message).toContain('unparseable line')
+    expect(refusal.message).toContain('grants.jsonl')
+
+    // Honesty of the two halves. The apply committed BEFORE the mint refused, and a person has to
+    // be able to see that: a refusal that read as "nothing happened" would send them to re-apply.
+    expect(shown.kind).toBe('found')
+    if (shown.kind !== 'found') throw new Error('expected the applied proposal to be readable')
+    expect(shown.entry.envelope.status).toBe('applied')
+    // And the refused mint changed no byte of the committed authorization file.
+    expect(readFileSync(grantsLedgerPath(ws.knowledgeRoot), 'utf8')).toBe(before)
+  })
+
+  it('records the standing approval over an UNDAMAGED workspace — the composition\'s admit side', async () => {
+    const ws = workspace()
+    const proposalId = mintProposal(ws, NEWER_RUN, 'intact ledger button', 22)
+    await committedGrants(ws)
+
+    const accepted = await acceptAlways(ws, async (invoke) =>
+      await invoke<ProposalsAcceptOutput>(ACCEPT_ID, { proposalId, always: true }))
+
+    // Same fixture, same composition, same confirm — only the damage is missing. So the refusal
+    // above is the damaged line's and not the CLI host's.
+    expect(accepted.apply.outcome).toBe('applied')
+    expect(accepted.grant.kind).toBe('recorded')
   })
 })
 
