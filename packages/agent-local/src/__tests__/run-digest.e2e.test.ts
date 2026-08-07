@@ -13,11 +13,12 @@
 // ids, and the absence claim is asserted in BOTH directions: run B's proposal is missing from
 // run A's digest, and PRESENT in run B's, from the same store on the same call pair.
 //
-// PRODUCED, NEVER LITERAL. Every proposal is minted through `proposeReview` — the same function
-// the composition's `KnowledgeReviewPort.propose` delegates to, against a real published record
-// — with the run attribution the port's own signature already accepts. Nothing here writes a
-// store file by hand: a corpus assembled as a literal can pin an input the producer cannot make,
-// and a differential over impossible fixtures cannot tell a vacuous corpus from a real closure.
+// PRODUCED THROUGH THE PRODUCTION PATH, NEVER LITERAL. Every proposal below is minted by an
+// `invokeFunction` call on a shipped propose op, against a real published record, with the run on
+// the op's own input contract — the exact bytes a run-scoped caller sends. Nothing here reaches
+// the store seam and nothing hand-composes an origin: a corpus assembled at a seam production
+// never reaches can pin an input the producer cannot make, and a differential over impossible
+// fixtures cannot tell a vacuous corpus from a real closure (391-VERIFICATION Gap 1(c)).
 
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,7 +30,7 @@ import {
   RUNS_DIGEST_FUNCTION_ID,
 } from '@vostride/agent-qa-agent'
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
-import { proposeReview, publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
+import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
@@ -43,6 +44,7 @@ import type {
   Anchor,
   CompletedRunHandoff,
   FunctionCaller,
+  KnowledgeProposeOutcomeDto,
   MaskedResolvedConfig,
   ProposalsListOutput,
   RunDigest,
@@ -54,6 +56,17 @@ import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost } from '../composition/compose-local-agent.js'
 
 const MINT_IDENTITY = (filePath: string): string => filePath
+
+/**
+ * The three propose ops' WIRE ids, spelled as a caller spells them (391-03's fixture precedent).
+ *
+ * Not imported from the agent barrel: that barrel exports an op id only where a production
+ * SURFACE has to name one, and a fixture is not one. What is exercised here is the dispatch a
+ * caller performs BY NAME, so naming it is the point.
+ */
+const FORGET_PROPOSE_ID = 'knowledge.forget.propose'
+const ACCEPT_PROPOSE_ID = 'knowledge.accept.propose'
+const REJECT_PROPOSE_ID = 'knowledge.reject.propose'
 
 const RUN_A = 'run-391-digest-a'
 const RUN_B = 'run-391-digest-b'
@@ -218,34 +231,33 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
   }
 
   /**
-   * Mint ONE proposal attributed to a run, through the REAL mint seam.
+   * Mint ONE proposal attributed to a run, through the PRODUCTION path.
    *
-   * `proposeReview` is the function `createKnowledgeReview.propose` delegates to inside the
-   * composition, and the `origin` argument is the one that function already takes — the KREV
-   * ops pass `{ emittedBy }` because a function invocation knows no run, while a run-scoped
-   * caller passes the run too. So this is the shipped writer with the attribution it was built
-   * to carry, not a fixture-only path invented so a field could be populated.
+   * The op's input contract carries the caller's run, and that is how production mints one.
    */
-  function mintForRun(
+  async function mintForRun(
     runId: string | undefined,
     summary: string,
-  ): { proposalId: string; recordId: string } {
+    proposeId: string = FORGET_PROPOSE_ID,
+    extraInput: Record<string, unknown> = {},
+  ): Promise<{ proposalId: string; recordId: string }> {
     const recordId = publish(summary)
-    const outcome = proposeReview({
-      agentQaRoot,
-      knowledgeRoot,
-      request: { verb: 'forget', input: { target: { grain: 'record', recordId } } },
-      origin: {
-        emittedBy: 'knowledge.forget.propose',
+    const outcome = (await invokeFunction(
+      host.registry,
+      proposeId,
+      {
+        target: { grain: 'record', recordId },
+        ...extraInput,
         ...(runId === undefined ? {} : { runId }),
       },
-    })
+      HUMAN,
+    )) as KnowledgeProposeOutcomeDto
     if (outcome.kind !== 'proposed') throw new Error(`fixture propose failed: ${outcome.kind}`)
     return { proposalId: outcome.proposal.proposalId, recordId }
   }
 
-  function proposeForRun(runId: string | undefined, summary: string): string {
-    return mintForRun(runId, summary).proposalId
+  async function proposeForRun(runId: string | undefined, summary: string): Promise<string> {
+    return (await mintForRun(runId, summary)).proposalId
   }
 
   async function digest(runId: string, on: LocalAgentHost = host): Promise<RunDigest> {
@@ -259,9 +271,9 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
 
   it('lists exactly the proposals attributed to the run, and the OTHER run\'s in its own digest',
     async () => {
-      const firstOfA = proposeForRun(RUN_A, 'checkout button')
-      const secondOfA = proposeForRun(RUN_A, 'payment button')
-      const onlyOfB = proposeForRun(RUN_B, 'coupon field')
+      const firstOfA = await proposeForRun(RUN_A, 'checkout button')
+      const secondOfA = await proposeForRun(RUN_A, 'payment button')
+      const onlyOfB = await proposeForRun(RUN_B, 'coupon field')
 
       const digestA = await digest(RUN_A)
       const digestB = await digest(RUN_B)
@@ -294,8 +306,8 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
       // The store is NOT empty — two proposals exist, both belonging to another run. That is
       // what makes this the zero-ATTRIBUTION arm rather than the zero-store arm, and the two
       // fail differently: a filter that returned everything would pass on an empty store.
-      proposeForRun(RUN_A, 'checkout button')
-      proposeForRun(RUN_A, 'payment button')
+      await proposeForRun(RUN_A, 'checkout button')
+      await proposeForRun(RUN_A, 'payment button')
 
       const empty = await digest(RUN_EMPTY)
 
@@ -307,14 +319,42 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
       expect(empty.lines.some((line) => line.includes('none minted this run'))).toBe(true)
     })
 
+  it('batches ALL THREE propose ops under ONE run, which is what "per-run" means (SC3)',
+    async () => {
+      // The batching noun is the RUN, not the emitter. Three different proposal-emitting job
+      // types serve one run — exactly PROP-04's "multiple proposal-emitting job types" — and the
+      // digest groups them under one heading rather than firing three times. If the grouping key
+      // were `emittedBy`, this case would need three digests to say the same thing.
+      const forgotten = (await mintForRun(RUN_A, 'checkout button', FORGET_PROPOSE_ID)).proposalId
+      const accepted = (await mintForRun(RUN_A, 'payment button', ACCEPT_PROPOSE_ID)).proposalId
+      const rejected = (await mintForRun(
+        RUN_A, 'coupon field', REJECT_PROPOSE_ID, { reason: 'superseded' },
+      )).proposalId
+      // The cross-run control, minted through the same op as one of the three above, so its
+      // absence below is about the RUN and not about the verb.
+      const foreign = (await mintForRun(RUN_B, 'shipping field', ACCEPT_PROPOSE_ID)).proposalId
+
+      const digestA = await digest(RUN_A)
+      expect(digestA.proposalsMintedThisRun.map((row) => row.id))
+        .toEqual([forgotten, accepted, rejected])
+      expect(digestA.proposalsMintedThisRun.map((row) => row.id)).not.toContain(foreign)
+      expect(digestA.runAttributionAvailable).toBe(true)
+      expect(digestA.lines.some((line) =>
+        line.includes('3 minted this run · 4 pending overall'))).toBe(true)
+
+      // Direction two: the fourth is in ITS run's digest, from the same store on the same call
+      // pair, which is what makes the absence above a claim about the filter.
+      expect((await digest(RUN_B)).proposalsMintedThisRun.map((row) => row.id)).toEqual([foreign])
+    })
+
   it('says attribution is UNAVAILABLE rather than "none minted" when nothing carries a run',
     async () => {
       // A non-empty store where NOT ONE entry carries attribution — the 387-era shape, and the
       // shape every host produced before a producer wrote the key. The affirmative "none minted
       // this run" would be a claim the digest cannot measure, sitting next to a pending count
       // that contradicts it in the same line (T-391-21).
-      proposeForRun(undefined, 'legacy button')
-      proposeForRun(undefined, 'older button')
+      await proposeForRun(undefined, 'legacy button')
+      await proposeForRun(undefined, 'older button')
 
       const digestA = await digest(RUN_A)
 
@@ -342,8 +382,8 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
 
   it('renders a DECIDED proposal\'s status in the decision slot, never a decision to make (WR-05)',
     async () => {
-      const declined = proposeForRun(RUN_A, 'checkout button')
-      const stillPending = proposeForRun(RUN_A, 'payment button')
+      const declined = await proposeForRun(RUN_A, 'checkout button')
+      const stillPending = await proposeForRun(RUN_A, 'payment button')
 
       // Through the shipped decision verb, human-origin — the path a person actually takes.
       const outcome = (await invokeFunction(
@@ -371,8 +411,8 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
     async () => {
       // A 387-era mint — no origin at all, which the store deliberately still accepts. It is
       // waiting on a human (so it counts) and belongs to no run (so it is listed nowhere).
-      proposeForRun(undefined, 'legacy button')
-      const attributed = proposeForRun(RUN_A, 'checkout button')
+      await proposeForRun(undefined, 'legacy button')
+      const attributed = await proposeForRun(RUN_A, 'checkout button')
 
       const digestA = await digest(RUN_A)
       expect(digestA.proposalsMintedThisRun.map((row) => row.id)).toEqual([attributed])
@@ -382,9 +422,9 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
 
   it('orders the listing minted-at then id, stably across renders (edge PROP-04/ordering)',
     async () => {
-      const first = proposeForRun(RUN_A, 'first button')
-      const second = proposeForRun(RUN_A, 'second button')
-      const third = proposeForRun(RUN_A, 'third button')
+      const first = await proposeForRun(RUN_A, 'first button')
+      const second = await proposeForRun(RUN_A, 'second button')
+      const third = await proposeForRun(RUN_A, 'third button')
 
       const once = await digest(RUN_A)
       const twice = await digest(RUN_A)
@@ -410,7 +450,7 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
 
   it('carries the analysis op\'s OWN cluster views, sentence bytes included (D-18 / 389 D-05)',
     async () => {
-      proposeForRun(RUN_A, 'checkout button')
+      await proposeForRun(RUN_A, 'checkout button')
 
       const analysis = (await invokeFunction(
         host.registry,
@@ -439,7 +479,7 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
 
   it('composes the chain section from the chip vocabulary, and persists NOTHING (D-16)',
     async () => {
-      proposeForRun(RUN_A, 'checkout button')
+      await proposeForRun(RUN_A, 'checkout button')
       const before = readdirSync(join(agentQaRoot, 'proposals')).sort()
 
       const digestA = await digest(RUN_A)
@@ -470,7 +510,7 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
 
   it('carries refs and counts and NO receipt bytes, on a forget proposal that has them (D-18)',
     async () => {
-      const { proposalId, recordId } = mintForRun(RUN_A, 'checkout button')
+      const { proposalId, recordId } = await mintForRun(RUN_A, 'checkout button')
       // A second real record, published and never proposed about — the control that makes the
       // absence claims below about WHAT THE DIGEST SELECTS rather than about an empty store.
       const untouchedRecordId = publish('unrelated button')
