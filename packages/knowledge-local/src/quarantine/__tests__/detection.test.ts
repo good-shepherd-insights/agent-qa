@@ -66,8 +66,8 @@ import {
   compareQuarantineIdentity,
   evaluateQuarantineDetection,
   hasSameBuildPassAndFail,
-  quarantineIdentityKey,
 } from '../detection.js'
+import { quarantineIdentityKey } from '../identity.js'
 import type {
   QuarantineDetectionFailure,
   QuarantineDetectionTestWindow,

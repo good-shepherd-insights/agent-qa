@@ -85,11 +85,8 @@ import {
   releaseLease,
 } from '../lease/writer-lease.js'
 import type { WriterLease, WriterLeaseAuthority } from '../lease/writer-lease.js'
-import {
-  QUARANTINE_DEFAULT_EXPIRY_DAYS,
-  compareQuarantineIdentity,
-  quarantineIdentityKey,
-} from './detection.js'
+import { QUARANTINE_DEFAULT_EXPIRY_DAYS, compareQuarantineIdentity } from './detection.js'
+import { quarantineIdentityKey } from './identity.js'
 import {
   appendQuarantineEvents,
   foldQuarantineLedgerState,

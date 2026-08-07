@@ -84,9 +84,16 @@ import type {
 } from '@vostride/agent-qa-schema'
 // The identity key, imported rather than re-spelled (390-28 / WR-01). The fold below keys entries
 // on exactly the bytes the detection ladder and `operations.ts`'s triage queue key on; a second
-// copy here is how two folds start disagreeing about which lines are the same test. No cycle:
-// `detection.ts` imports schema and the window read only, never this module.
-import { quarantineIdentityKey } from './detection.js'
+// copy here is how two folds start disagreeing about which lines are the same test.
+//
+// THIS IMPORT sits on no cycle BY CONSTRUCTION (390-31): `identity.ts` is a leaf with zero import
+// statements, so there is no path out of it and therefore none back here. The claim is about this
+// edge and nothing more. It replaced a sentence asserting subsystem acyclicity off a check run one
+// hop deep, which was false — while the key lived in `detection.ts`, this import closed a four-edge
+// value cycle through the window read (`-> detection.ts -> fingerprint-window-read.ts ->
+// run-outcomes.ts -> ledger.ts`), round-5 gap 3a. That is why the key moved to a leaf rather than
+// getting a longer comment. Other cycles in this subsystem are unaffected and still stand.
+import { quarantineIdentityKey } from './identity.js'
 
 /** The ledger's fixed name directly under the committed knowledge root — never caller-supplied. */
 export const QUARANTINE_LEDGER_FILENAME = 'quarantine.jsonl'

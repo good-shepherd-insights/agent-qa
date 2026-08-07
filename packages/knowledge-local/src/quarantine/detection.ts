@@ -76,6 +76,12 @@ import type {
   VerdictClass,
 } from '@vostride/agent-qa-schema'
 
+// The identity key and its input type live in the subsystem's zero-import leaf (390-31), not here:
+// the ladder is only one of four keying sites, and hosting the key made every other site pay an
+// import edge into this module. `compareQuarantineIdentity` below still composes it.
+import { quarantineIdentityKey } from './identity.js'
+import type { QuarantineIdentity } from './identity.js'
+
 // §7.3's locked window is spelled ONCE, beside the table it slides over. Re-exported here because
 // the ladder's own contract is incomplete without it, and a second declaration is how a threshold
 // and the window it is counted against drift apart.
@@ -458,31 +464,6 @@ export interface QuarantineDetectionResult {
 }
 
 const MS_PER_DAY = 86_400_000
-
-/** The identity a quarantine record is keyed on: `(product, filePath, testName)`, never `testId`. */
-export interface QuarantineIdentity {
-  product: string
-  filePath: string
-  testName: string
-}
-
-/**
- * The identity key, spelled ONCE for the whole subsystem (390-22 / WR-06).
- *
- * `JSON.stringify` of the triple rather than a joined string: the parts are caller data and may
- * contain any character, and a separator that can appear inside a part is a collision waiting to
- * happen.
- *
- * ONCE IS NOW TRUE OF THE CODE, NOT ONLY OF THE SENTENCE (390-28 / WR-01). Both of the subsystem's
- * other keying sites IMPORT this function rather than carrying a byte-identical copy: `ledger.ts`'s
- * {@link foldQuarantineLedgerState}, which keys per-entry state on it, and `operations.ts`'s
- * `triageOrder`, which keys the triage queue on it. Until 390-28 only the `operations.ts` half of
- * that de-duplication had happened and the fold carried a private twin — measured by mutating this
- * function's bytes, under which `ledger.test.ts` stayed 57/57 green. It reds now.
- */
-export function quarantineIdentityKey(identity: QuarantineIdentity): string {
-  return JSON.stringify([identity.product, identity.filePath, identity.testName])
-}
 
 /**
  * The subsystem's ONE ordering rule: a TOTAL order over the identity key, by CODE UNIT.
