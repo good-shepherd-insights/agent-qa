@@ -143,9 +143,10 @@ export interface RunDigest {
    *
    * True when the store is empty (nothing was minted, which is measurable and true) or when at
    * least one entry carries run attribution (so the filter had a populated key to range over).
-   * False means no entry in a NON-EMPTY store carries a run, and the digest therefore cannot
-   * tell "this run minted nothing" apart from "nobody wrote down which run minted these" — so
-   * the rendered line says exactly that instead of the affirmative negative (T-391-21).
+   * False means no entry in a NON-EMPTY store carries a run, so the digest cannot distinguish
+   * a run that minted nothing (a measurement) from a store where nobody wrote down which run
+   * minted what (an absence of data) — and it says exactly that rather than picking the
+   * affirmative negative and hoping (T-391-21).
    */
   runAttributionAvailable: boolean
   candidates: RunDigestCandidateReport
