@@ -125,6 +125,7 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // approval arises only from the accept escalation (D-01).
   'grants.list': 'unbound',
   'grants.revoke': 'unbound',
+  'proposals.accept': 'unbound',
   'proposals.list': 'unbound',
   'proposals.reject': 'unbound',
   'proposals.show': 'unbound',
@@ -219,6 +220,9 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // below is well-formed and names nothing in any fixture.
   'grants.list': {},
   'grants.revoke': { grantId: 'grant_0123456789abcdef' },
+  // 391 PROP-01: the accept takes the same refined id; `always` is optional and omitted here,
+  // because the unbound-refusal leg needs a PARSING input and nothing more.
+  'proposals.accept': { proposalId: 'prop_0123456789ab' },
   'proposals.list': {},
   'proposals.show': { proposalId: 'prop_0123456789ab' },
   'proposals.reject': { proposalId: 'prop_0123456789ab', reason: 'not this one' },

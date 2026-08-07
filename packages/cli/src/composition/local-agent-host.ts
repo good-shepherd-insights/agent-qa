@@ -7,6 +7,13 @@
 // a run is executed. Each of those is a port the composition takes, so the two hosts share a
 // composition rather than each writing one.
 //
+// 391 PROP-01: the interactive confirmation lives here for the same class of reason. Whether there
+// is a PERSON on the other end of this process is a fact only a surface knows, and it is the
+// difference between the two hosts that compose the same registry: a terminal can ask, a daemon
+// cannot. So the gate's ConfirmPort is bound at THIS host and at no other, and the daemon's own
+// composition passes none — which leaves the gate's deny-by-default confirm in place, the only
+// correct answer for a host with nobody to ask.
+//
 // The run executor lives HERE rather than in a file of its own for the reason plan 09's model
 // binding did: minting a run id needs `@vostride/agent-qa-core`, the FUNC-02 firewall forbids a
 // surface naming it without a ledger entry, and the ledger only ever SHRINKS — new surface code
@@ -14,6 +21,7 @@
 
 import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
+import { createInterface } from 'node:readline'
 
 import type {
   ConfigReaderPort,
@@ -311,6 +319,15 @@ export function createCliRunExecution(input: CreateCliRunExecutionInput): RunExe
 export interface ComposeCliLocalAgentInput {
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. */
   agentQaRoot: string
+  /**
+   * How this invocation asks a person to confirm an ask-tier capability (391 PROP-01).
+   *
+   * Defaults to {@link createTtyConfirmPort}, which answers `undefined` when this process has no
+   * terminal — so the default is "prompt where there is somebody to prompt, and nowhere else".
+   * Overridable on the same optional-operation idiom `runExecution` and `model` use, so the
+   * prompt's behaviour can be driven without a real tty behind it.
+   */
+  confirm?: ComposeLocalAgentInput['confirm']
   /** The configuration file this invocation resolves against. */
   configPath: string
   /**
@@ -410,6 +427,68 @@ export function createQuarantineIdentityMint(configPath: string): (filePath: str
   return (filePath: string) => workspaceRelativeIdentityPath(configDir, filePath)
 }
 
+/**
+ * The terminal confirmation the gate's ask arm reaches when nothing else satisfied it (391 PROP-01).
+ *
+ * ANSWERS `undefined` WHEN THERE IS NO TERMINAL, and that is the whole binding rule rather than a
+ * convenience. An absent confirm leaves `evaluate()`'s own deny-by-default in place, which is the
+ * only correct answer for a process with nobody to ask — and it is what keeps a piped `agent-qa`,
+ * a CI job and the daemon on the fail-closed arm they are supposed to be on. BOTH streams are
+ * checked: a process with a tty on input and a pipe on output would print the question where
+ * nobody can read it and then wait for an answer nobody knows to give.
+ *
+ * DEFAULT NO. Anything other than an explicit yes is a refusal, including an empty line, an EOF and
+ * a closed stream — the direction of that error costs a retry, and the other direction costs an
+ * unasked commit to shared knowledge. The `[y/N]` in the prompt says so where the person is.
+ *
+ * NO TIMEOUT, and no knob for one (386 D-15 / D-17's spirit). A prompt that gave up after N seconds
+ * would turn "the person went to get coffee" into a policy decision, and the decision it would make
+ * is the one nobody asked for.
+ */
+export function createTtyConfirmPort(
+  options: {
+    readonly isTty?: boolean
+    readonly input?: NodeJS.ReadableStream
+    readonly output?: NodeJS.WritableStream
+  } = {},
+): ComposeLocalAgentInput['confirm'] {
+  const isTty = options.isTty ?? (process.stdin.isTTY === true && process.stdout.isTTY === true)
+  if (!isTty) return undefined
+
+  const input = options.input ?? process.stdin
+  const output = options.output ?? process.stdout
+  return (action) => new Promise<boolean>((answer) => {
+    const prompt = createInterface({ input, output })
+    let settled = false
+    const settle = (approved: boolean): void => {
+      if (settled) return
+      settled = true
+      prompt.close()
+      answer(approved)
+    }
+
+    // EOF IS A REFUSAL, and it needs its own handler rather than falling out of the question.
+    // `question` never settles when the stream simply ends — it waits for a line that is not
+    // coming — so a piped or closed stdin that slipped past the tty check above would leave a
+    // capability call hanging forever instead of denying. Measured, not anticipated: the
+    // closed-stream case in this port's own suite timed out at 30s until this handler existed.
+    prompt.on('close', () => {
+      settle(false)
+    })
+
+    // The ACTION NAME, verbatim — the same string the audit row carries and the same one a
+    // standing grant would have to match. A friendlier paraphrase here would leave a person
+    // unable to connect what they were asked about to what a `grants.list` later shows them.
+    prompt.question(
+      `agent-qa: ${action.name} needs your approval. Proceed? [y/N] `,
+      (typed: string) => {
+        const normalized = typed.trim().toLowerCase()
+        settle(normalized === 'y' || normalized === 'yes')
+      },
+    )
+  })
+}
+
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {
   const knowledgeRoot = async (): Promise<string> => {
     const config = await resolveConfig({ configPath: input.configPath, loadAuthPlugins: false })
@@ -447,5 +526,11 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     analysisTokenBudget:
       input.analysisTokenBudget ?? (() => resolveCliAnalysisTokenBudget(input.configPath)),
     ...(input.postRun === undefined ? {} : { postRun: input.postRun }),
+    // 391 PROP-01: conditionally spread, so a host with no terminal leaves the field ABSENT and the
+    // gate's own deny-by-default is what answers — in exactly one place.
+    ...(() => {
+      const confirm = input.confirm ?? createTtyConfirmPort()
+      return confirm === undefined ? {} : { confirm }
+    })(),
   })
 }

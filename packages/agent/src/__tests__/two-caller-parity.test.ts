@@ -228,6 +228,7 @@ const ALL_FUNCTION_IDS = [
   // `quarantine.`). `list` and `show` are read-tier and survive safe-mode filtering; `reject` is
   // approval-write-tier and drops out with the other non-read verbs, so the derived non-read set
   // grows from seven to eight and the filter assertion keeps testing the RULE.
+  'proposals.accept',
   'proposals.list',
   'proposals.reject',
   'proposals.show',

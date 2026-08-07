@@ -16,6 +16,9 @@
 import { z } from 'zod'
 
 import { KnowledgeProposalV1Schema, ProposalIdSchema } from '../knowledge/proposal'
+import { KnowledgeApplyOutcomeSchema } from '../knowledge/review-verbs'
+import { GrantRecordOutcomeSchema } from '../safety/grant-ops'
+import type { GrantRecordOutcome } from '../safety/grant-ops'
 import {
   PROPOSAL_ENVELOPE_STATUSES,
   PROPOSAL_KINDS,
@@ -164,6 +167,108 @@ export const ProposalsRejectOutputSchema = z.discriminatedUnion('outcome', [
 ])
 
 export type ProposalsRejectOutput = z.infer<typeof ProposalsRejectOutputSchema>
+
+/**
+ * `proposals.accept`'s input — the decision, and the ESCALATION on the same surface (391 D-01).
+ *
+ * `always` is a flag on the SAME request rather than a second verb, and that is the whole of D-01
+ * expressed as a type. Two verbs would have made "apply this" and "apply this and stop asking" two
+ * capabilities a surface chooses between, so a chat toolset or an MCP client could offer the second
+ * without ever offering the first — and standing approval would have become a thing you could reach
+ * without deciding anything. One request, one decision, one escalation you have to ask for.
+ *
+ * ABSENT MEANS NO. There is no default and no tri-state: plain accept applies THIS proposal only,
+ * and a grant is minted by nothing else. Grants never accrete silently, which is the property the
+ * whole phase turns on.
+ */
+export const ProposalsAcceptInputSchema = z.object({
+  proposalId: ProposalIdSchema,
+  /** Also record a standing approval covering this kind's apply verb. Absent means no. */
+  always: z.literal(true).optional(),
+}).strict()
+
+export type ProposalsAcceptInput = z.infer<typeof ProposalsAcceptInputSchema>
+
+/**
+ * What the apply half of an accept COMMITTED, per kind.
+ *
+ * Discriminated on `kind` at one member, on the envelope's own reasoning: 393-396's payload arms
+ * reach this same verb, and their apply outcomes are their own. A flat `KnowledgeApplyOutcome` here
+ * would have baked one kind into the generic decision surface.
+ */
+export const ProposalsAcceptAppliedSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('knowledge'), outcome: KnowledgeApplyOutcomeSchema }).strict(),
+])
+
+export type ProposalsAcceptApplied = z.infer<typeof ProposalsAcceptAppliedSchema>
+
+/**
+ * What became of the apply — five arms, mirroring `ProposalsRejectOutputSchema`'s five because they
+ * are answers to the same five situations, and none of them is a throw.
+ *
+ * `expired` is the arm that keeps D-12's lifecycle from being decorative. An expired proposal is
+ * still durably pending — nothing happens at the moment one expires, which is why there is no
+ * reaper — so an accept that routed it through would commit deltas computed against evidence the
+ * lifecycle has already declared too old to act on. Refusing here is what makes the computed status
+ * mean something at the one verb that COMMITS; `proposals.reject` deliberately does not refuse an
+ * expired proposal, because declining something stale is always a reasonable thing to do.
+ */
+export const ProposalsAcceptOutcomeSchema = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('applied'), applied: ProposalsAcceptAppliedSchema }).strict(),
+  z.object({ outcome: z.literal('already-rejected'), entry: ProposalInboxEntrySchema }).strict(),
+  z.object({ outcome: z.literal('expired'), entry: ProposalInboxEntrySchema }).strict(),
+  z.object({ outcome: z.literal('apply-in-flight'), proposalId: z.string().min(1) }).strict(),
+  z.object({ outcome: z.literal('not-found'), proposalId: z.string().min(1) }).strict(),
+])
+
+export type ProposalsAcceptOutcome = z.infer<typeof ProposalsAcceptOutcomeSchema>
+
+/**
+ * What became of the MINT — the port's three arms, plus the two only this verb can answer.
+ *
+ * `not-requested` is a plain accept, and it is a first-class ANSWER rather than an omitted field:
+ * a surface rendering a decision receipt has to be able to distinguish "nothing was granted" and
+ * "the grant half never ran", and an absent value would collapse the two.
+ *
+ * `not-applied` is `always: true` on a request whose apply never happened. Minting there would
+ * record a standing approval for a commit that did not occur, which is the one way this surface
+ * could widen autonomy without anything having been decided at all.
+ */
+export const ProposalsAcceptGrantOutcomeSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('not-requested') }).strict(),
+  z.object({ kind: z.literal('not-applied') }).strict(),
+  ...GrantRecordOutcomeSchema.options,
+])
+
+export type ProposalsAcceptGrantOutcome = z.infer<typeof ProposalsAcceptGrantOutcomeSchema>
+
+/**
+ * The pin that keeps the two spellings honest: everything on the grant half that is NOT one of this
+ * verb's own two arms must be EXACTLY the port's outcome union. An arm added to the mint and not
+ * carried here would be an arm this surface silently cannot report.
+ */
+const _acceptGrantArmsCoverThePort: ExactlyEqual<
+  Exclude<ProposalsAcceptGrantOutcome, { kind: 'not-requested' | 'not-applied' }>,
+  GrantRecordOutcome
+> = true
+void _acceptGrantArmsCoverThePort
+
+/**
+ * The whole answer: what the apply did, and — separately — what the mint did.
+ *
+ * TWO FIELDS RATHER THAN ONE UNION, and the separation is load-bearing (D-01/D-05). An
+ * accept-with-always whose apply COMMITTED and whose mint was REFUSED — because the kind's apply
+ * verb turned out to be a protected class — has to report both halves truthfully. Folding them into
+ * one outcome would force a choice between reporting the refusal (and losing the receipt for a
+ * commit that really happened) and reporting the apply (and silently swallowing the refusal),
+ * which is exactly how a person ends up believing they hold a standing approval they do not.
+ */
+export const ProposalsAcceptOutputSchema = z.object({
+  apply: ProposalsAcceptOutcomeSchema,
+  grant: ProposalsAcceptGrantOutcomeSchema,
+}).strict()
+
+export type ProposalsAcceptOutput = z.infer<typeof ProposalsAcceptOutputSchema>
 
 /**
  * The injected capability the three inbox ops dispatch through — one OPTIONAL dep, three verbs.

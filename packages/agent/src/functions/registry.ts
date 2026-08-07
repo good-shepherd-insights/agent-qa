@@ -27,6 +27,7 @@ import { knowledgeRecordShowSpec } from './ops/knowledge-record-show.js'
 import { knowledgeRecordsDiffSpec } from './ops/knowledge-records-diff.js'
 import { knowledgeRecordsInspectSpec } from './ops/knowledge-records-inspect.js'
 import { knowledgeRejectProposeSpec } from './ops/knowledge-reject-propose.js'
+import { proposalsAcceptSpec } from './ops/proposals-accept.js'
 import { proposalsListSpec } from './ops/proposals-list.js'
 import { proposalsRejectSpec } from './ops/proposals-reject.js'
 import { proposalsShowSpec } from './ops/proposals-show.js'
@@ -135,6 +136,11 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   proposalsListSpec as FunctionSpec,
   proposalsShowSpec as FunctionSpec,
   proposalsRejectSpec as FunctionSpec,
+  // 391 PROP-01 / D-01: the DECISION verb, and the one door in this catalogue to a standing
+  // approval. It is registered beside its siblings and bound through the same inbox dep, but it
+  // is the only op here that carries BOTH `knowledge-write` and `approval-write` — because one
+  // call can commit knowledge AND change what the system may do without asking.
+  proposalsAcceptSpec as FunctionSpec,
   // 391 PROP-01 / D-03: a new `grants.` domain — the standing approvals a person has given, and
   // the way back. A taxonomy extension exactly as `proposals.` was, and separate from it because
   // a grant outlives the proposal that minted it: a revoke is about what the agent may do, not

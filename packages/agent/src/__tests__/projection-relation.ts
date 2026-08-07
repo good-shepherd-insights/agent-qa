@@ -26,6 +26,7 @@ import { analysisGetSpec } from '../functions/ops/analysis-get.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { grantsListSpec } from '../functions/ops/grants-list.js'
+import { proposalsAcceptSpec } from '../functions/ops/proposals-accept.js'
 import { grantsRevokeSpec } from '../functions/ops/grants-revoke.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
 import { knowledgeBriefWhySpec } from '../functions/ops/knowledge-brief-why.js'
@@ -92,6 +93,11 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // envelope, payload and all — so an unchecked projection is exactly where a published
   // catalogue could lose `decision` or `evidenceRefs` and leave a surface unable to render the
   // decision trail it exists to render.
+  // 391 PROP-01 / D-01. Paired the day it is registered. Its OUTPUT is the first in this map with
+  // TWO independent unions in one object — the apply half and the mint half — which is exactly the
+  // shape a careless projection flattens, and flattening it would leave a surface unable to say
+  // that an apply committed while its escalation was refused.
+  'proposals.accept': proposalsAcceptSpec,
   'proposals.list': proposalsListSpec,
   'proposals.reject': proposalsRejectSpec,
   'proposals.show': proposalsShowSpec,

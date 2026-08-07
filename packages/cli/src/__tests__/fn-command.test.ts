@@ -613,6 +613,14 @@ describe('agent-qa fn (generic function invoker)', () => {
       // `reject` is the phase's first shipped `requiresHumanOrigin` op; the origin requirement is
       // not part of this projection's three fields, and the declaration-level pin for it lives in
       // agent, where the enforcement does.
+      // 391 PROP-01: the DECISION verb, BOUND on this host — and the only entry in this catalogue
+      // carrying two write scopes, because one call can commit knowledge AND change what the
+      // system may do without asking.
+      'proposals.accept': {
+        requiredScopes: ['knowledge-write', 'approval-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       'proposals.list': {
         requiredScopes: ['read'],
         resultKind: 'unary',

@@ -33,6 +33,11 @@ export type {
 export {
   ProposalEnvelopeSchema,
   ProposalInboxEntrySchema,
+  ProposalsAcceptAppliedSchema,
+  ProposalsAcceptGrantOutcomeSchema,
+  ProposalsAcceptInputSchema,
+  ProposalsAcceptOutcomeSchema,
+  ProposalsAcceptOutputSchema,
   ProposalsListInputSchema,
   ProposalsListOutputSchema,
   ProposalsRejectInputSchema,
@@ -42,6 +47,11 @@ export {
 } from './inbox-ops'
 export type {
   ProposalInboxEntryDto,
+  ProposalsAcceptApplied,
+  ProposalsAcceptGrantOutcome,
+  ProposalsAcceptInput,
+  ProposalsAcceptOutcome,
+  ProposalsAcceptOutput,
   ProposalsInboxPort,
   ProposalsListInput,
   ProposalsListOutput,
