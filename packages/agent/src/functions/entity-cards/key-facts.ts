@@ -128,14 +128,20 @@ function renameFact(descriptor: EntityDescriptor): KeyFact[] {
  *
  * WHICH INSTANT THE OCCURRENCE FACT ANSWERS (390-20), and why it is not always the same one. An
  * entry on its FIRST window has one instant to state and states it exactly as it always has. An
- * entry on a LATER lap has two — the current window opened at `enteredAt`, this test's quarantine
- * history began at `firstEnteredAt` — and it states the second, because that is the key
- * `triageOrder` (knowledge-local `quarantine/operations.ts`) sorts the triage queue on. A card
- * naming the current window's instant beside a clause promising RECURRENCE handed a human two
- * different answers to one question: the queue ordering a test by January while the card said
- * April. `quarantine-ledger.ts`'s own docstring calls these two instants close enough to be
- * exactly that hazard; naming the sibling here is cheaper than a test asserting the two agree,
- * and it is what keeps the next edit from re-opening the drift.
+ * entry on a LATER lap has two, and since 390-27 it states BOTH, in this order and for these
+ * reasons: this test's quarantine history began at `firstEnteredAt`, which LEADS because it is the
+ * key `triageOrder` (knowledge-local `quarantine/operations.ts`) sorts the triage queue on; the
+ * CURRENT window opened at `enteredAt`, which follows because it is the premise the sibling
+ * `expires` fact is DERIVED from. Each half answers a hazard the other cannot. Leading with the
+ * current window's instant beside a clause promising RECURRENCE handed a human two different
+ * answers to one question: the queue ordering a test by January while the card said April. Stating
+ * the history's instant alone printed a computed deadline beside a premise the card had dropped,
+ * so a reader could not check `expires` against anything the card showed (IN-02). Stating both, in
+ * that order, is what closes each without re-opening the other — see the `occurrenceValue`
+ * docstring below, which renders exactly this. `quarantine-ledger.ts`'s own docstring calls these
+ * two instants close enough to be exactly the first hazard; naming the sibling here is cheaper
+ * than a test asserting the two agree, and it is what keeps the next edit from re-opening the
+ * drift.
  */
 function quarantineFacts(entry: QuarantineEntryState | undefined): KeyFact[] {
   if (entry === undefined) return []
