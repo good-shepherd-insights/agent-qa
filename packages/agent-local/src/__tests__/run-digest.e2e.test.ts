@@ -307,6 +307,66 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
       expect(empty.lines.some((line) => line.includes('none minted this run'))).toBe(true)
     })
 
+  it('says attribution is UNAVAILABLE rather than "none minted" when nothing carries a run',
+    async () => {
+      // A non-empty store where NOT ONE entry carries attribution — the 387-era shape, and the
+      // shape every host produced before a producer wrote the key. The affirmative "none minted
+      // this run" would be a claim the digest cannot measure, sitting next to a pending count
+      // that contradicts it in the same line (T-391-21).
+      proposeForRun(undefined, 'legacy button')
+      proposeForRun(undefined, 'older button')
+
+      const digestA = await digest(RUN_A)
+
+      expect(digestA.runAttributionAvailable).toBe(false)
+      expect(digestA.proposalsMintedThisRun).toEqual([])
+      expect(digestA.pendingProposalCount).toBe(2)
+      expect(digestA.lines.some((line) =>
+        line === 'proposals — run attribution unavailable · 2 pending overall')).toBe(true)
+      // …and the sentence it replaces is ABSENT, which is the whole of the claim: an honesty
+      // branch that added a line without removing the falsehood would pass a presence check.
+      expect(digestA.lines.some((line) => line.includes('none minted this run'))).toBe(false)
+    })
+
+  it('still says "none minted" on an EMPTY store, where the claim is measurable and true',
+    async () => {
+      // The vacuous case is the honest one: nothing is waiting, so "none minted this run · 0
+      // pending overall" is true and does not contradict itself. This is what keeps the branch
+      // above a statement about UNPOPULATED ATTRIBUTION rather than about an empty list.
+      const empty = await digest(RUN_EMPTY)
+
+      expect(empty.runAttributionAvailable).toBe(true)
+      expect(empty.lines.some((line) =>
+        line === 'proposals — none minted this run · 0 pending overall')).toBe(true)
+    })
+
+  it('renders a DECIDED proposal\'s status in the decision slot, never a decision to make (WR-05)',
+    async () => {
+      const declined = proposeForRun(RUN_A, 'checkout button')
+      const stillPending = proposeForRun(RUN_A, 'payment button')
+
+      // Through the shipped decision verb, human-origin — the path a person actually takes.
+      const outcome = (await invokeFunction(
+        host.registry,
+        'proposals.reject',
+        { proposalId: declined, reason: 'not this one' },
+        HUMAN,
+      )) as { outcome: string }
+      expect(outcome.outcome).toBe('rejected')
+
+      const digestA = await digest(RUN_A)
+      const rows = new Map(digestA.proposalsMintedThisRun.map((row) => [row.id, row]))
+
+      // A proposal nobody can act on any more must not be listed as one somebody owes an answer
+      // to: the slot carries what BECAME of it.
+      expect(rows.get(declined)?.requiredDecision).toBe('rejected')
+      // …beside a sibling that IS still waiting, which is what makes the first assertion about
+      // the STATUS rather than about the column having been emptied.
+      expect(rows.get(stillPending)?.requiredDecision).toBe('accept or reject')
+      expect(digestA.lines.some((line) =>
+        line.includes(declined.slice(0, 12)) && line.endsWith('— rejected'))).toBe(true)
+    })
+
   it('carries an unattributed proposal in NO run\'s digest, and still counts it as pending',
     async () => {
       // A 387-era mint — no origin at all, which the store deliberately still accepts. It is
