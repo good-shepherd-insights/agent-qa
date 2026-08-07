@@ -213,6 +213,24 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
    * Rewritten rather than appended: a whole extra garbage line would leave the revoke perfectly
    * readable, and the refusal under test would then be about a line nothing depends on.
    */
+  /**
+   * The write verbs' damage refusal, matched BY NAME and never by "something threw".
+   *
+   * A lease refusal, an egress refusal or a fixture bug is rethrown rather than folded into a pass.
+   */
+  async function damageRefusal(call: () => Promise<unknown>): Promise<Error> {
+    let answered: unknown
+    try {
+      answered = await call()
+    } catch (error) {
+      if (error instanceof Error && error.name === 'GrantLedgerDamagedError') return error
+      throw error
+    }
+    throw new Error(
+      `expected the verb to refuse a damaged ledger, it answered ${JSON.stringify(answered)}`,
+    )
+  }
+
   function damageLastLine(): void {
     const path = grantsLedgerPath(knowledgeRoot)
     const lines = readFileSync(path, 'utf8').split('\n')
@@ -297,6 +315,22 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
       expect(listed.grants.map((grant) => grant.grantId)).toEqual([grantId])
       expect(listed.refusedLines.map((line) => line.lineNumber)).toEqual([2])
       expect(listed.refusedLines[0]?.reason).toMatch(/unparseable line/)
+    })
+
+    it('and BOTH write verbs refuse to DECIDE over the same damaged root, by name', async () => {
+      // The sibling-input corpus law: `readGrantLedger` has four consumers and this one fixture now
+      // fault-injects all four. The reader refuses to authorize, `list` reports — and these two
+      // refuse to decide, so no person is told RECORDED for an approval the reader refuses.
+      const verbs = grantVerbs()
+
+      const refusedRecord = await damageRefusal(() =>
+        verbs.record({ actionClass: applyClass(headless), scope: STANDING_APPROVAL_SCOPE }),
+      )
+      expect(refusedRecord.name).toBe('GrantLedgerDamagedError')
+      expect(refusedRecord.message).toContain('line 2')
+
+      const refusedRevoke = await damageRefusal(() => verbs.revoke({ grantId }))
+      expect(refusedRevoke.name).toBe('GrantLedgerDamagedError')
     })
   })
 })

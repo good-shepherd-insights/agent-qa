@@ -71,6 +71,11 @@ function action(name: string): RiskActionDescriptor {
   return { name, recognized: true, readOnly: false }
 }
 
+/** What a write verb raises when the ledger carries a line the build cannot read (391-09). */
+interface DamageRefusal extends Error {
+  readonly refusedLines?: readonly { lineNumber: number; reason: string }[]
+}
+
 describe('the grant verbs: record, revoke, list — under the lease, protected at both sides', () => {
   let root: string
   let knowledgeRoot: string
@@ -100,11 +105,54 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
   }
 
   function ledgerLines(): GrantLedgerEvent[] {
+    return rawLedgerLines().map((line) => JSON.parse(line) as GrantLedgerEvent)
+  }
+
+  /** Every non-blank committed line, UNPARSED — the only reading a damaged file survives. */
+  function rawLedgerLines(): string[] {
     if (!existsSync(grantsLedgerPath(knowledgeRoot))) return []
     return readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
       .split('\n')
       .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as GrantLedgerEvent)
+  }
+
+  /**
+   * The same corruption the reader's suite refuses on: a merge marker fused onto a real line.
+   *
+   * Rewritten in place rather than appended — a whole extra garbage line would leave every
+   * committed line perfectly readable, and the refusal under test would be about a line nothing
+   * depends on.
+   */
+  function damageLastLine(): void {
+    const path = grantsLedgerPath(knowledgeRoot)
+    const lines = readFileSync(path, 'utf8').split('\n')
+    let last = lines.length - 1
+    while (last >= 0 && (lines[last] ?? '').trim().length === 0) last -= 1
+    if (last < 0) throw new Error('the fixture ledger has no line to damage')
+    lines[last] = `<<<<<<< HEAD${lines[last] ?? ''}`
+    writeFileSync(path, lines.join('\n'), 'utf8')
+  }
+
+  /**
+   * The damage refusal, matched BY NAME — never by "something threw".
+   *
+   * A lease refusal, an egress refusal or a fixture bug is rethrown rather than folded into a pass:
+   * a pre-read denial masquerading as the asserted one would turn every case below green for a
+   * reason that has nothing to do with the damage.
+   */
+  async function damageRefusal(call: () => Promise<unknown>): Promise<DamageRefusal> {
+    let answered: unknown
+    try {
+      answered = await call()
+    } catch (error) {
+      if (error instanceof Error && error.name === 'GrantLedgerDamagedError') {
+        return error as DamageRefusal
+      }
+      throw error
+    }
+    throw new Error(
+      `expected the verb to refuse a damaged ledger, it answered ${JSON.stringify(answered)}`,
+    )
   }
 
   // ---- D-05, the MINT half -------------------------------------------------------------------
@@ -223,17 +271,6 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
   // ---- the damage report (391-08, closing 391-VERIFICATION gap 2) -----------------------------
 
   describe('list reports the file\'s damage beside what folds', () => {
-    /** The same corruption the reader's suite refuses on: a merge marker fused onto a real line. */
-    function damageLastLine(): void {
-      const path = grantsLedgerPath(knowledgeRoot)
-      const lines = readFileSync(path, 'utf8').split('\n')
-      let last = lines.length - 1
-      while (last >= 0 && (lines[last] ?? '').trim().length === 0) last -= 1
-      if (last < 0) throw new Error('the fixture ledger has no line to damage')
-      lines[last] = `<<<<<<< HEAD${lines[last] ?? ''}`
-      writeFileSync(path, lines.join('\n'), 'utf8')
-    }
-
     it('answers an EMPTY damage report over an intact ledger — the guard\'s admit side', async () => {
       const verbs = ops()
       await verbs.record({ actionClass: OPEN_CLASS, scope: STANDING_APPROVAL_SCOPE })
@@ -262,6 +299,110 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
       // 1-based, matching what an editor shows the human who has to fix the file.
       expect(listed.refusedLines.map((line) => line.lineNumber)).toEqual([2])
       expect(listed.refusedLines[0]?.reason).toMatch(/unparseable line/)
+    })
+  })
+
+  // ---- the WRITE verbs on a damaged ledger (391-09, closing round-2 gap 1) --------------------
+  //
+  // The write half of the rule 391-08 closed on the read half. `list` REPORTS damage and
+  // `grantsFor` refuses to AUTHORIZE over it; these two refuse to DECIDE over it — an authorization
+  // file this build cannot fully read is not a substrate for minting or withdrawing an approval.
+  // Every damage case sits beside the intact admit it is attributable against.
+
+  describe('record and revoke refuse to decide on a ledger the build cannot fully read', () => {
+    it('records and revokes over an INTACT ledger — the admit side the refusals are read against', async () => {
+      const verbs = ops()
+      const recorded = await verbs.record({
+        actionClass: OPEN_CLASS,
+        scope: STANDING_APPROVAL_SCOPE,
+      })
+      expect(recorded.kind).toBe('recorded')
+      if (recorded.kind !== 'recorded') throw new Error('expected a recorded grant')
+
+      now = LATER
+      expect((await verbs.revoke({ grantId: recorded.grant.grantId })).outcome).toBe('revoked')
+      // Undamaged, and it says so: without this the refusals below could be a fixture that denies
+      // universally rather than a guard that fires on damage.
+      expect(readGrantLedger(knowledgeRoot).refusedLines).toEqual([])
+    })
+
+    it('record refuses by name over a damaged ledger, appending NOTHING', async () => {
+      const verbs = ops()
+      const recorded = await verbs.record({
+        actionClass: OPEN_CLASS,
+        scope: STANDING_APPROVAL_SCOPE,
+      })
+      if (recorded.kind !== 'recorded') throw new Error('expected a recorded grant')
+      now = LATER
+      if ((await verbs.revoke({ grantId: recorded.grant.grantId })).outcome !== 'revoked') {
+        throw new Error('fixture revoke failed')
+      }
+      damageLastLine()
+
+      // FIXTURE VALIDITY FIRST: the damage is real and its neighbour still parses, so the refusal
+      // below cannot be explained by an unreadable file with nothing in it.
+      const read = readGrantLedger(knowledgeRoot)
+      expect(read.refusedLines.map((line) => line.lineNumber)).toEqual([2])
+      expect(read.events).toHaveLength(1)
+
+      const before = readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
+      const refusal = await damageRefusal(() =>
+        verbs.record({ actionClass: SECOND_OPEN_CLASS, scope: STANDING_APPROVAL_SCOPE }),
+      )
+
+      expect(refusal.refusedLines?.map((line) => line.lineNumber)).toEqual([2])
+      // The MESSAGE is the surface payload: the CLI renders name + message verbatim, so a report
+      // that lived only on the field would never reach the person who has to repair the file.
+      expect(refusal.message).toContain('line 2')
+      expect(refusal.message).toContain('unparseable line')
+      expect(refusal.message).toContain('grants.jsonl')
+      // Byte-unchanged. No false receipt, and no half-decided approval in committed history.
+      expect(readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')).toBe(before)
+    })
+
+    it('revoke refuses by name when the grant\'s OWN line is damaged — never the no-grant arm', async () => {
+      const verbs = ops()
+      const recorded = await verbs.record({
+        actionClass: OPEN_CLASS,
+        scope: STANDING_APPROVAL_SCOPE,
+      })
+      if (recorded.kind !== 'recorded') throw new Error('expected a recorded grant')
+      damageLastLine()
+
+      const read = readGrantLedger(knowledgeRoot)
+      expect(read.refusedLines.map((line) => line.lineNumber)).toEqual([1])
+      expect(read.events).toEqual([])
+
+      const before = readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')
+      now = LATER
+      const refusal = await damageRefusal(() => verbs.revoke({ grantId: recorded.grant.grantId }))
+
+      // `no-grant` here would tell an operator the approval they can SEE in the file is not there.
+      expect(refusal.refusedLines?.map((line) => line.lineNumber)).toEqual([1])
+      expect(refusal.message).toContain('line 1')
+      expect(readFileSync(grantsLedgerPath(knowledgeRoot), 'utf8')).toBe(before)
+    })
+
+    it('cannot ACCRETE a second line for a class whose covering grant sits on the damaged line', async () => {
+      const verbs = ops()
+      const recorded = await verbs.record({
+        actionClass: OPEN_CLASS,
+        scope: STANDING_APPROVAL_SCOPE,
+      })
+      if (recorded.kind !== 'recorded') throw new Error('expected a recorded grant')
+      damageLastLine()
+
+      expect(readGrantLedger(knowledgeRoot).refusedLines.map((line) => line.lineNumber))
+        .toEqual([1])
+
+      now = LATER
+      await damageRefusal(() =>
+        verbs.record({ actionClass: OPEN_CLASS, scope: STANDING_APPROVAL_SCOPE }),
+      )
+
+      // ONE approval, ONE line. The `already-granted` arm cannot see a covering grant through a
+      // refused fold, so without the guard this class ends with two lines and needs two revokes.
+      expect(rawLedgerLines().filter((line) => line.includes(OPEN_CLASS))).toHaveLength(1)
     })
   })
 
