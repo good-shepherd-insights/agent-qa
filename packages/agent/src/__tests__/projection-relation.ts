@@ -25,6 +25,8 @@ import type { z } from 'zod'
 import { analysisGetSpec } from '../functions/ops/analysis-get.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
+import { grantsListSpec } from '../functions/ops/grants-list.js'
+import { grantsRevokeSpec } from '../functions/ops/grants-revoke.js'
 import { entitiesResolveSpec } from '../functions/ops/entities-resolve.js'
 import { knowledgeBriefWhySpec } from '../functions/ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from '../functions/ops/knowledge-bundles-list.js'
@@ -70,6 +72,12 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'config.get': configGetSpec,
   'entities.get': entitiesGetSpec,
   'entities.resolve': entitiesResolveSpec,
+  // 391 PROP-01 / D-03. Paired the day they are registered. `grants.list`'s output is the first
+  // in this map carrying the WIRE projection of a committed-ledger fold, so an unchecked
+  // projection is exactly where a published catalogue could lose `proposalId` — the one field
+  // that answers "which decision widened this?" for a reviewer reading a diff.
+  'grants.list': grantsListSpec,
+  'grants.revoke': grantsRevokeSpec,
   'knowledge.accept.propose': knowledgeAcceptProposeSpec,
   'knowledge.bundles.list': knowledgeBundlesListSpec,
   'knowledge.brief.why': knowledgeBriefWhySpec,

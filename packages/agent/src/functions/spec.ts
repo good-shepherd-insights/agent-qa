@@ -39,6 +39,7 @@ import type {
   RunId,
   RunNotification,
   RunsStartInput,
+  StandingGrantsPort,
   StepEvidence,
 } from '@vostride/agent-qa-schema'
 
@@ -101,6 +102,7 @@ export type OptionalFunctionDepKey =
   | 'recurrence'
   | 'quarantine'
   | 'proposalsInbox'
+  | 'standingGrants'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -721,4 +723,23 @@ export interface FunctionDeps {
    * depending on the function layer.
    */
   proposalsInbox?: ProposalsInboxPort
+  /**
+   * 391 PROP-01 / D-03: the committed standing-grant ledger's three verbs — list, record, revoke.
+   *
+   * OPTIONAL for the reason `quarantine` is, and the stakes are the phase's whole subject. A host
+   * with no knowledge root genuinely cannot enumerate standing approvals, and the alternative to
+   * saying so by name is answering an empty list about a ledger it has never been able to read —
+   * which reads as "the agent has no standing permissions" and is the one wrong answer that makes
+   * a person stop checking. On the write side it is worse still: an unbound `revoke` that no-opped
+   * would tell somebody they had withdrawn an approval that is still in force.
+   *
+   * ONE port for all three, on the quarantine and inbox ports' stated reasoning — the read/write
+   * asymmetry is declared where it is ENFORCED. `record` is on the port and on NO op: a standing
+   * approval arises only from `proposals.accept`'s deliberate always form (D-01), so a registered
+   * mint verb would be a second door into the same power, reachable without deciding anything.
+   *
+   * The port TYPE is minted in schema, so knowledge-local can implement it without depending on
+   * the function layer.
+   */
+  standingGrants?: StandingGrantsPort
 }

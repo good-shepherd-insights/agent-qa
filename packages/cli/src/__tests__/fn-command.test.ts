@@ -541,6 +541,17 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 391 PROP-01 / D-03: both BOUND, because `composeLocalAgent` binds the standing-grants
+      // port on every local host — the CLI owns the committed knowledge root the ledger lives at.
+      // `revoke` is the second shipped `requiresHumanOrigin` verb and takes `approval-write`; the
+      // CLI's caller record mints both the scope and the human origin, which is why the person at
+      // this terminal is the only one who can reach it.
+      'grants.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'grants.revoke': {
+        requiredScopes: ['approval-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       'knowledge.bundles.list': {
         requiredScopes: ['read'],
         resultKind: 'unary',

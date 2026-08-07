@@ -94,6 +94,17 @@ export type {
   GrantLedgerStandingApprovalReader,
   StandingApprovalReaderOptions,
 } from './grants/reader.js'
+// 391 D-03/D-05: the three grant verbs behind `StandingGrantsPort`. Published because the binding
+// site is `composeLocalAgent`, in another package — the same reason the append one file up is
+// published and the quarantine append is not. The two typed refusals travel with the factory:
+// a caller that must distinguish "somebody else is writing" from "the checkpoint refused these
+// bytes" needs the classes, and both are errors rather than powers.
+export {
+  GrantLeaseHeldError,
+  GrantWriteBlockedError,
+  createGrantOperations,
+} from './grants/operations.js'
+export type { GrantOperationsOptions } from './grants/operations.js'
 // 390 D-01/D-03/D-11: the committed quarantine ledger — read, pure state fold. The event DTOs and
 // the state vocabulary live in schema; this package owns the bytes and the fold over them.
 // The APPEND is deliberately NOT published (390-11 / WR-07): it writes a committed artifact whose

@@ -49,6 +49,7 @@ import {
   acquireWriterLease,
   countPendingCurationJobs,
   createMemorySightingSource,
+  createGrantOperations,
   createProposalsInbox,
   createQuarantineOperations,
   createStandingApprovalReader,
@@ -1503,6 +1504,32 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         auditBaseDir: input.agentQaRoot,
         now: () => clock.now(),
         mintIdentityPath: input.mintQuarantineIdentityPath,
+        ...(input.resolveWriterAuthority === undefined
+          ? {}
+          : { resolveWriterAuthority: input.resolveWriterAuthority }),
+      }),
+      // 391 PROP-01 / D-03: the standing-grant verbs, bound HERE and therefore on BOTH hosts, over
+      // the SAME committed knowledge root the quarantine ledger, the review verbs and the gate's
+      // own standing-approval reader all serve from. A second binding site would be a second answer
+      // to "which approvals are in force" — and one of the two would be the one the gate reads.
+      //
+      // Bound over the KNOWLEDGE root rather than `agentQaRoot`, which is the opposite of the inbox
+      // one binding up, and the difference is the artifacts' own placement rather than an
+      // inconsistency: proposals are machine-local working state under the gitignored runtime root
+      // because the human who can accept one is at this machine, while a grant is COMMITTED
+      // precisely so a pull request shows every widening of agent autonomy and a fresh checkout
+      // inherits it (D-10 against D-11).
+      //
+      // The root is a FACTORY and the clock is an argument, so this composition supplies both and
+      // the implementation reads neither of its own accord. It rides the SAME
+      // `resolveWriterAuthority` the apply path and the quarantine verbs consume, conditionally
+      // spread for the same reason: an absent authority must be an ABSENT field, so the
+      // implementation's `?.()` arm distinguishes the leaseholding daemon from the CLI that
+      // acquires per call. Nothing opens here; the first byte is read when a verb is invoked.
+      standingGrants: createGrantOperations({
+        resolveKnowledgeRoot: input.knowledgeRoot,
+        auditBaseDir: input.agentQaRoot,
+        now: () => clock.now(),
         ...(input.resolveWriterAuthority === undefined
           ? {}
           : { resolveWriterAuthority: input.resolveWriterAuthority }),

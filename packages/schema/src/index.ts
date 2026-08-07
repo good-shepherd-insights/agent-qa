@@ -805,6 +805,28 @@ export type {
 // would be self-referentially mutable, which is the hole PROP-05 closes.
 export { PROTECTED_ACTION_CLASSES, isProtectedActionClass } from './safety/index'
 export type { ProtectedActionClass } from './safety/index'
+// 391 D-03/D-05: the grant verbs' contracts and the ONE standing-grants port. `record` is on the
+// port and on no registry entry — a standing approval arises only from the accept escalation.
+export {
+  GrantRecordInputSchema,
+  GrantRecordOutcomeSchema,
+  GrantsListInputSchema,
+  GrantsListOutputSchema,
+  GrantsRevokeInputSchema,
+  GrantsRevokeOutputSchema,
+  StandingGrantSchema,
+  TrustScopeSchema,
+} from './safety/index'
+export type {
+  GrantRecordInput,
+  GrantRecordOutcome,
+  GrantsListInput,
+  GrantsListOutput,
+  GrantsRevokeInput,
+  GrantsRevokeOutput,
+  StandingGrantDto,
+  StandingGrantsPort,
+} from './safety/index'
 // 391 D-08/D-12: the generic kind-discriminated proposal envelope. The durable record, the
 // four-state lifecycle, the pinned expiry and the read-time DTO the inbox, the decision surfaces
 // and the per-run digest all range over. `KnowledgeProposalV1` rides inside as the `knowledge`

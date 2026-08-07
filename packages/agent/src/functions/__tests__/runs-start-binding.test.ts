@@ -109,6 +109,10 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // the empty query (both filters optional) and needs no row here.
   'proposals.show': { proposalId: 'prop_0123456789ab' },
   'proposals.reject': { proposalId: 'prop_0123456789ab' },
+  // 391 PROP-01 / D-03: `grants.revoke` takes the grant's durable id, so the `{}` default fails
+  // its contract and turns an unbound refusal into an input error — which the parity case below
+  // reads as `dispatched`. `grants.list` genuinely takes the empty query and needs no row here.
+  'grants.revoke': { grantId: 'grant_0123456789abcdef' },
 }
 
 /**

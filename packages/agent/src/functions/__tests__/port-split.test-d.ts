@@ -65,6 +65,10 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // `Type Errors  no errors` for the same tree; only `tsc --noEmit` saw it.)
 // 391 PROP-03 extends it a fifth time, by name again: `proposalsInbox` — the enumerable inbox's
 // three verbs. It fired on this one too, and once more only under `tsc --noEmit`.
+// 391 PROP-01 / D-03 extends it a sixth time, by name again: `standingGrants` — the committed
+// grant ledger's list/record/revoke. It fired on this one too. Note that `record` is a member of
+// the PORT and of no registered op, so this union is also the only place a reader can see that the
+// mint capability exists at all: the accept escalation is its one caller.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -74,6 +78,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'recurrence'
     | 'quarantine'
     | 'proposalsInbox'
+    | 'standingGrants'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

@@ -25,6 +25,29 @@ export type {
 // and the read side consult THIS value; nothing sources it from config.
 export { PROTECTED_ACTION_CLASSES, isProtectedActionClass } from './protected-classes'
 export type { ProtectedActionClass } from './protected-classes'
+// 391 D-03/D-05: the grant verbs' IO contracts, the wire projections of the fold's DTO and the
+// trust scope, and the ONE port both `agent` (which declares against it) and `knowledge-local`
+// (which implements it) consume. There is no `record` OP — only the accept escalation reaches it.
+export {
+  GrantRecordInputSchema,
+  GrantRecordOutcomeSchema,
+  GrantsListInputSchema,
+  GrantsListOutputSchema,
+  GrantsRevokeInputSchema,
+  GrantsRevokeOutputSchema,
+  StandingGrantSchema,
+  TrustScopeSchema,
+} from './grant-ops'
+export type {
+  GrantRecordInput,
+  GrantRecordOutcome,
+  GrantsListInput,
+  GrantsListOutput,
+  GrantsRevokeInput,
+  GrantsRevokeOutput,
+  StandingGrantDto,
+  StandingGrantsPort,
+} from './grant-ops'
 export type { ScanAction, ScanResult } from './scan'
 export type { ContentOrigin } from './content-origin'
 export type { MaskingContext } from './masking'

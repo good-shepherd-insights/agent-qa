@@ -36,7 +36,7 @@
 // check runs inside NO lock, unlike the lease module's own `withCurrentWriterAuthority`, so it
 // proves the authority was current at the moment of the check rather than for the duration of the
 // decide that follows. The window is one synchronous `decide` instead of forever; it is not zero.
-// See `assertHandedInAuthority` for the residual in full. Riding an unfenced authority is how a
+// See `lease/under-writer-lease.ts` for the residual in full. Riding an unfenced authority is how a
 // reclaimed writer kept appending beside its reclaimer, which the two-OS-process harness measured
 // as two `entered` lines for one identity. Serializing only the append would leave the other half
 // of the interesting race intact: two writers folding a ledger with no entry for a test would both
@@ -77,14 +77,9 @@ import type {
   VerdictClass,
 } from '@vostride/agent-qa-schema'
 
-import {
-  WriterAuthorityLostError,
-  acquireWriterLease,
-  assertEpochCurrent,
-  readWriterLease,
-  releaseLease,
-} from '../lease/writer-lease.js'
-import type { WriterLease, WriterLeaseAuthority } from '../lease/writer-lease.js'
+import { underKnowledgeWriterLease } from '../lease/under-writer-lease.js'
+import type { SynchronousDecision } from '../lease/under-writer-lease.js'
+import type { WriterLease } from '../lease/writer-lease.js'
 import { QUARANTINE_DEFAULT_EXPIRY_DAYS, compareQuarantineIdentity } from './detection.js'
 import { quarantineIdentityKey } from './identity.js'
 import {
@@ -245,7 +240,7 @@ export interface QuarantineOperationsOptions {
    *
    * AND WHAT THE RE-VALIDATION DOES NOT BUY (390-22 / WR-07): it is a read, not a lock. It answers
    * "still the holder?" as of the read, and the decide it licenses runs after it. A reclaim landing
-   * between the two is still unfenced. `assertHandedInAuthority` states the residual in full.
+   * between the two is still unfenced. `lease/under-writer-lease.ts` states the residual in full.
    */
   resolveWriterAuthority?: () => { leaseId: string; epoch: number } | undefined
   policy?: GuardrailPolicy
@@ -295,145 +290,38 @@ function defaultExpiry(now: string): string {
 }
 
 /**
- * A `decide` that returns a promise, refused at COMPILE time (390-12 / WR-02).
+ * This module's serialized section — DELEGATED, since 391, to the one shared spelling of the rule.
  *
- * `underWriterLease` releases the lease in a `finally`, so an async `decide` would hand back a
- * PENDING promise, the `finally` would run immediately, and the lease would be given up while the
- * work it serializes is still running — reinstating precisely the race CR-03 closed, without
- * failing to compile (`Promise<Promise<X>>` collapses in the return position, so nothing objects).
- * This module's own history is a serialization claim that turned out to be false; a signature that
- * permits the false version by construction is the wrong default here specifically.
+ * The whole read-fold-decide-append cycle (never just the append), the handed-in-authority
+ * re-validation, the compile-time refusal of an async `decide` and the three exhaustive acquisition
+ * arms all live in {@link underKnowledgeWriterLease} now. They moved because the grant verbs mutate
+ * a SECOND committed artifact under the SAME writer lease, and a serialization rule written twice
+ * is a serialization rule that agrees until it does not — this module's own history is a
+ * serialization claim that turned out to be false, so a second copy of the corrected one is exactly
+ * the wrong thing to author beside it. Read that module for the ladder, the ordering and the WR-07
+ * residual in full.
  *
- * Spelled as an INTERSECTION on the callback's return rather than as a constraint on the type
- * parameter (`T extends NotSynchronous<T>` is rejected as a circular constraint) and rather than as
- * a conditional RETURN type (which resolves to `never`, and `never` is assignable to everything, so
- * the call site would still compile). In this position inference is preserved — `T` is still read
- * off the callback — and a promise-returning closure fails to satisfy `never`.
- */
-type SynchronousDecision<T> = T extends PromiseLike<unknown> ? never : unknown
-
-/**
- * The handed-in authority, re-read against disk before it licenses a write (390-15 / G-390-2R).
+ * What stays HERE is the one thing that is genuinely this subsystem's: which refusal a held lease
+ * raises. The port contract carries no lease arm (390-04), so it surfaces as a typed throw, and a
+ * throw naming the wrong committed artifact would send an operator looking in the wrong file.
  *
- * WHY THE EPOCH IS THE FENCING TOKEN, and why no clock is involved. `acquireWriterLease` bumps the
- * monotonic epoch on EVERY acquisition including a reclaim, so "my epoch is no longer the disk
- * epoch" is exactly "somebody took this lease from under me" — no TTL, no timing window, nothing
- * to tune. And the daemon's captured epoch never legitimately moves during its lifetime:
- * `refreshWriterLeaseAuthority` heartbeats and returns THE SAME authority, throwing rather than
- * renumbering, so the value `daemon/host.ts` closes over is a fixed constant that stays valid for
- * exactly as long as the daemon holds the lease. This check therefore cannot refuse a healthy
- * daemon; the accept-direction control in the suite is what keeps that a measurement.
- *
- * WHY THE LEASE IS READ TOO. `releaseLease` deliberately RETAINS the epoch forever, so a holder
- * that released still carries a matching counter while owning nothing. The epoch answers "did
- * anybody reclaim?"; the lease answers "am I still the holder?", and neither subsumes the other.
- * This is `withCurrentWriterAuthority`'s presence/malformed/unreadable/id/epoch ladder, applied at
- * the boundary where THIS module's mutation happens.
- *
- * WHY NOT `refreshWriterLeaseAuthority`, which asks nearly the same question. It also HEARTBEATS —
- * it rewrites the lease file — and a read-fold-decide-append verb has no business mutating the
- * lease as a side effect of answering a question about it. Both legs here are read-only.
- *
- * FAIL-CLOSED ON A STATE NOBODY CAN EVALUATE. `readCurrentEpoch` throws `CorruptEpochStateError`
- * for an unreadable or malformed epoch file and that propagates unflattened, exactly as an
- * `unreadable` lease raises rather than degrading to "nobody holds it". Authority that cannot be
- * proven is not a licence to write, which is the posture `acquireWriterLease` already takes for
- * the same inputs.
- *
- * Every reason raised here is an existing member of `WriterAuthorityLostReason`; nothing widens.
- *
- * THE RESIDUAL, STATED (390-22 / WR-07). This ladder is the same one `withCurrentWriterAuthority`
- * runs in the lease module, with one difference that the prose elsewhere used to leave out: THAT
- * one runs INSIDE `withMutationLock`, so its epoch and lease reads and the mutation they license
- * are on one serialization boundary. THIS one runs inside nothing. What it proves is therefore
- * bounded exactly: the authority was current AT THE MOMENT OF THE CHECK — not for the duration of
- * the `decide` that follows it. A reclaim landing in that window is still unfenced, and the append
- * it licenses still lands.
- *
- * Both halves are true and the prose should say both. Before this check, an authority was BELIEVED
- * and the window was FOREVER — a heartbeat-starved daemon kept appending beside its reclaimer for
- * the rest of its life, which the two-OS-process harness measured as two `entered` lines for one
- * identity. After it, the window is ONE SYNCHRONOUS `decide` with no await point in it (the
- * signature refuses an async one; see {@link SynchronousDecision}). Narrowing forever to one
- * synchronous call is a real improvement, and it is not closure. Closing it needs the APPEND
- * itself to carry a fence — the epoch travelling with the write and being validated at the file,
- * not beside it — which is larger than this phase took.
- */
-function assertHandedInAuthority(
-  knowledgeRoot: string,
-  authority: { leaseId: string; epoch: number },
-): void {
-  const full: WriterLeaseAuthority = { knowledgeRoot, ...authority }
-
-  const epoch = assertEpochCurrent({ knowledgeRoot, epoch: authority.epoch })
-  if (!epoch.current) {
-    throw new WriterAuthorityLostError(full, 'stale-epoch', epoch.observedEpoch)
-  }
-
-  const current = readWriterLease(knowledgeRoot)
-  if (current.kind === 'absent') {
-    throw new WriterAuthorityLostError(full, 'lease-missing', authority.epoch)
-  }
-  if (current.kind === 'malformed') {
-    throw new WriterAuthorityLostError(full, 'lease-malformed', authority.epoch)
-  }
-  if (current.kind === 'unreadable') {
-    throw new WriterAuthorityLostError(full, 'lease-unreadable', authority.epoch)
-  }
-  if (current.lease.leaseId !== authority.leaseId) {
-    throw new WriterAuthorityLostError(full, 'lease-id-mismatch', authority.epoch)
-  }
-}
-
-/**
- * The write verbs' serialized section — the whole read-fold-decide-append cycle, not the append.
- *
- * Serializing only the file write would leave the interesting race intact: two writers could both
- * fold a ledger with no entry for a test, both decide `entered`, and both append, producing two
- * opening events for one window. So `decide` runs INSIDE the scope and is synchronous BY SIGNATURE
- * (see {@link SynchronousDecision}) — there is no await point between the read and the append for
- * another writer to be scheduled at.
- *
- * Three arms, and they are exhaustive over the acquisition outcome:
- *  - a handed-in authority is VALIDATED against disk and, if it is still current, means this
- *    process IS the holder; it then acquires nothing and releases nothing, because the lease it
- *    was given outlives this call (the `applyReview` arm). An authority this process no longer
- *    holds raises the lease module's own `WriterAuthorityLostError` before `decide` runs, so a
- *    reclaimed daemon writes nothing (390-15 / G-390-2R; see {@link assertHandedInAuthority}).
- *    BOUNDED: "before `decide` runs" is the whole of it — the check holds no lock, so a reclaim
- *    landing DURING the decide is not fenced by it (390-22 / WR-07). The synchronous-by-signature
- *    constraint above is what keeps that window one call wide rather than arbitrarily long;
- *  - `held` refuses typed, having written nothing and having taken nothing from the holder;
- *  - every other non-`acquired` outcome rethrows the union's own error, which every refusal arm
- *    carries precisely so a new arm surfaces by name instead of being swallowed here.
- *
- * Module-scope and exported so the compile-time refusal above has a call site a test can point a
- * `@ts-expect-error` at — a constraint nothing exercises is a claim, not a guard. Deliberately NOT
- * added to this package's barrel (`src/index.ts`), on 390-11's reasoning about
- * `appendQuarantineEvents`: the committed-write surface only ever shrinks.
+ * The signature is UNCHANGED and the export is kept: the `@ts-expect-error` pin that proves the
+ * async-`decide` refusal is a guard rather than a claim points at this name, and a constraint
+ * nothing exercises is a claim. Deliberately NOT added to this package's barrel (`src/index.ts`),
+ * on 390-11's reasoning about `appendQuarantineEvents`: the committed-write surface only ever
+ * shrinks.
  */
 export async function underWriterLease<T>(
   knowledgeRoot: string,
   resolveWriterAuthority: (() => { leaseId: string; epoch: number } | undefined) | undefined,
   decide: () => T & SynchronousDecision<T>,
 ): Promise<T> {
-  const authority = resolveWriterAuthority?.()
-  if (authority !== undefined) {
-    assertHandedInAuthority(knowledgeRoot, authority)
-    return decide()
-  }
-
-  const acquired = acquireWriterLease(knowledgeRoot)
-  if (acquired.kind === 'held') throw new QuarantineLeaseHeldError(acquired.holder)
-  if (acquired.kind !== 'acquired') throw acquired.error
-
-  try {
-    return decide()
-  } finally {
-    // Given back on EVERY exit, including the typed ledger refusals the read raises: a verb that
-    // failed must not leave the next drain locked out of the knowledge root.
-    releaseLease({ knowledgeRoot, leaseId: acquired.leaseId })
-  }
+  return await underKnowledgeWriterLease(
+    knowledgeRoot,
+    resolveWriterAuthority,
+    decide,
+    (holder: WriterLease) => new QuarantineLeaseHeldError(holder),
+  )
 }
 
 /**

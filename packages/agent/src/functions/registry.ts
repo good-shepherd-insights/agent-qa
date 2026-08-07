@@ -16,6 +16,8 @@ import { analysisGetSpec } from './ops/analysis-get.js'
 import { configGetSpec } from './ops/config-get.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
+import { grantsListSpec } from './ops/grants-list.js'
+import { grantsRevokeSpec } from './ops/grants-revoke.js'
 import { knowledgeAcceptProposeSpec } from './ops/knowledge-accept-propose.js'
 import { knowledgeBriefWhySpec } from './ops/knowledge-brief-why.js'
 import { knowledgeBundlesListSpec } from './ops/knowledge-bundles-list.js'
@@ -133,6 +135,17 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   proposalsListSpec as FunctionSpec,
   proposalsShowSpec as FunctionSpec,
   proposalsRejectSpec as FunctionSpec,
+  // 391 PROP-01 / D-03: a new `grants.` domain — the standing approvals a person has given, and
+  // the way back. A taxonomy extension exactly as `proposals.` was, and separate from it because
+  // a grant outlives the proposal that minted it: a revoke is about what the agent may do, not
+  // about any one decision. Both bind through the OPTIONAL `standingGrants` dep.
+  //
+  // THERE IS NO `grants.record`. That absence is D-01 expressed as a missing capability rather
+  // than as a rule: a standing approval arises only from the deliberate accept-with-always form,
+  // so a registered mint verb would be a second door into the same power — reachable without ever
+  // deciding a proposal, which is precisely the silent accretion D-01 forbids.
+  grantsListSpec as FunctionSpec,
+  grantsRevokeSpec as FunctionSpec,
   // 387 D-09: a new `entities.` domain, a taxonomy extension exactly as `knowledge.` was.
   // Both read-tier, both bound in every composition — the directory is a REQUIRED dep, so
   // there is no host that lists these and cannot run them.

@@ -202,6 +202,12 @@ const ALL_FUNCTION_IDS = [
   // id that drops out, and it now drops out of a set two entries larger.
   'entities.get',
   'entities.resolve',
+  // 391 PROP-01 / D-03: two more ids in SORT position (`grants.` falls between `entities.` and
+  // `knowledge.`). `list` is read-tier and survives safe-mode filtering; `revoke` is
+  // approval-write-tier and drops out with the other non-read verbs, so the derived non-read set
+  // grows again and the filter assertion keeps testing the RULE rather than a frozen list.
+  'grants.list',
+  'grants.revoke',
   // 387 KREV-01/KREV-02: four more read-tier ids, so they too survive safe-mode filtering and
   // the filter assertion below sharpens rather than merely lengthens — 'runs.start' is still
   // the one id that drops out, now out of a set six entries larger than 384 shipped.

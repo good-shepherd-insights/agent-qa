@@ -361,7 +361,10 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
         ops().record({
           actionClass: OPEN_CLASS,
           scope: STANDING_APPROVAL_SCOPE,
-          proposalId: `prop_${AWS_KEY}`,
+          // The provenance leg is CALLER data, which is what makes it the honest place to drive
+          // this: the checkpoint's job is to refuse secret-shaped bytes wherever they appear in a
+          // line bound for a committed, PR-visible file.
+          proposalId: `prop.${AWS_KEY}`,
         }),
       ).rejects.toBeInstanceOf(GrantWriteBlockedError)
 

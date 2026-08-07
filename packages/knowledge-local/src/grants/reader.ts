@@ -24,7 +24,26 @@
 // arms fail closed — an unreadable ledger grants nothing either way — so the choice is only about
 // whether the human is told. Silence would leave an operator staring at a denial with a perfectly
 // good approval sitting in their file.
+//
+// THE READ HALF OF D-05 IS HERE (Phase 391 plan 04). A grant whose action class is PROTECTED never
+// comes back from this filter, and the mint in `operations.ts` would never have produced one. Both
+// halves are necessary and neither subsumes the other, which is the whole argument for spending
+// two guards on one rule:
+//
+//  - the MINT guards what a producer may author. It cannot guard what is already in the file.
+//  - THIS guards what a COMMITTED file may authorize. `grants.jsonl` travels in pull requests and
+//    is meant to be read by humans, which means it can be edited by them — and by anything that
+//    can write into a checkout. A line typed in by hand parses, folds, and lists exactly like a
+//    minted one, because it IS exactly like a minted one; the only thing that can refuse it is a
+//    rule applied at the moment it would authorize something.
+//
+// The predicate is IMPORTED from schema and never re-spelled here: one definition, two consumers,
+// in two different packages (388 C13). A local copy of the membership list is how the two sides of
+// a two-sided contract start disagreeing about what they are protecting.
 
+import {
+  isProtectedActionClass,
+} from '@vostride/agent-qa-schema'
 import {
   foldActiveGrants,
   readGrantLedger,
@@ -65,6 +84,11 @@ export function createStandingApprovalReader(
     grantsFor(action: RiskActionDescriptor): readonly StandingApprovalGrant[] {
       const { events } = readGrantLedger(options.knowledgeRoot)
       return foldActiveGrants(events)
+        // The D-05 read half runs FIRST, on the fold rather than on the match: what is being
+        // refused is a class no approval may ever cover, and that is true of the LINE regardless of
+        // which action happens to be in front of the gate. Ordering it before the exact-match
+        // filter also means the refusal cannot be mistaken for a near-miss.
+        .filter((grant) => !isProtectedActionClass(grant.actionClass))
         .filter((grant) => grant.actionClass === action.name)
         .map((grant) => ({ actionClass: grant.actionClass, scope: grant.scope }))
     },

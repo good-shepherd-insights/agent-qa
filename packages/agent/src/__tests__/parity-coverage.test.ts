@@ -68,6 +68,11 @@ const ALLOWED_ID_DOMAINS = new Set([
   // `knowledge.` would have been the tempting move and the wrong one — the envelope is
   // kind-generic, so 393-396's test-draft, config and MCP proposals reach these same verbs.
   'proposals',
+  // 2026-08-07 (391 D-03): `grants` is the fifth taxonomy EXTENSION, on exactly the same footing.
+  // A standing approval outlives the proposal that minted it — it is a fact about what the agent
+  // may do, not about any one decision — so filing the list/revoke pair under `proposals.` would
+  // have made the two indistinguishable at exactly the moment a person needs to tell them apart.
+  'grants',
 ])
 
 /**
@@ -114,6 +119,12 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // three `bound`. A host with no port must refuse by name rather than answer an empty inbox
   // about a directory it has never been able to open: an empty answer reads as "nothing is
   // waiting on you", which is the wrong answer that makes a person stop checking.
+  // 391 PROP-01 / D-03: the two grant verbs, UNBOUND here for the 390/391 reason — this fixture
+  // supplies no standing-grants port. There is deliberately no `grants.record` row, and never
+  // will be: the mint is a member of the PORT and of no registry entry, because a standing
+  // approval arises only from the accept escalation (D-01).
+  'grants.list': 'unbound',
+  'grants.revoke': 'unbound',
   'proposals.list': 'unbound',
   'proposals.reject': 'unbound',
   'proposals.show': 'unbound',
@@ -202,6 +213,12 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // optional and absent means everything — while `show` and `reject` take a `ProposalIdSchema`
   // id, so a bare string would report an INPUT error exactly where the unbound-refusal leg needs
   // a binding refusal. The id below is well-formed and names nothing in any fixture.
+  // 391 PROP-01 / D-03: `list` genuinely takes the empty query — the fold is bounded, so there is
+  // nothing to filter — while `revoke` takes the grant's durable id, and the `{}` default would
+  // report an INPUT error exactly where the unbound-refusal leg needs a binding refusal. The id
+  // below is well-formed and names nothing in any fixture.
+  'grants.list': {},
+  'grants.revoke': { grantId: 'grant_0123456789abcdef' },
   'proposals.list': {},
   'proposals.show': { proposalId: 'prop_0123456789ab' },
   'proposals.reject': { proposalId: 'prop_0123456789ab', reason: 'not this one' },
