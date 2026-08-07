@@ -798,6 +798,42 @@ export type {
   GrantRecordedEvent,
   GrantRevokedEvent,
 } from './safety/index'
+// 391 D-05/D-07: the closed grant-ineligible action-class set and its membership predicate. One
+// export, consulted by BOTH the grant mint and the grant read — a config-sourced protected list
+// would be self-referentially mutable, which is the hole PROP-05 closes.
+export { PROTECTED_ACTION_CLASSES, isProtectedActionClass } from './safety/index'
+export type { ProtectedActionClass } from './safety/index'
+// 391 D-08/D-12: the generic kind-discriminated proposal envelope. The durable record, the
+// four-state lifecycle, the pinned expiry and the read-time DTO the inbox, the decision surfaces
+// and the per-run digest all range over. `KnowledgeProposalV1` rides inside as the `knowledge`
+// arm's payload, unforked.
+export {
+  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+  PROPOSAL_DECISIONS,
+  PROPOSAL_DURABLE_STATES,
+  PROPOSAL_ENVELOPE_STATUSES,
+  PROPOSAL_EVIDENCE_GRAINS,
+  PROPOSAL_EXPIRY_MS,
+  PROPOSAL_KINDS,
+  ProposalDecisionRecordSchema,
+  ProposalEvidenceRefSchema,
+  ProposalOriginSchema,
+  ProposalRecordSchema,
+  computeProposalEnvelopeStatus,
+  isProposalKind,
+} from './proposal/index'
+export type {
+  ProposalDecision,
+  ProposalDecisionRecord,
+  ProposalDurableState,
+  ProposalEnvelope,
+  ProposalEnvelopeStatus,
+  ProposalEvidenceGrain,
+  ProposalEvidenceRef,
+  ProposalKind,
+  ProposalOrigin,
+  ProposalRecord,
+} from './proposal/index'
 export type {
   RiskActionDescriptor,
   RiskTier,

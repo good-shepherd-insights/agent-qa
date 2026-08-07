@@ -21,6 +21,10 @@ export type {
   GrantRecordedEvent,
   GrantRevokedEvent,
 } from './grant-ledger'
+// 391 D-05/D-07: the closed grant-ineligible action-class set, exported ONCE. Both the mint side
+// and the read side consult THIS value; nothing sources it from config.
+export { PROTECTED_ACTION_CLASSES, isProtectedActionClass } from './protected-classes'
+export type { ProtectedActionClass } from './protected-classes'
 export type { ScanAction, ScanResult } from './scan'
 export type { ContentOrigin } from './content-origin'
 export type { MaskingContext } from './masking'
