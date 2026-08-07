@@ -141,11 +141,18 @@ beforeAll(async () => {
   acceptance = await buildAcceptanceFixture()
 }, 120_000)
 
+// The teardown gets an explicit budget for the same reason the setup above has one, and it is the
+// SAME budget question rather than a new one: this fixture builds a real embedded index under a
+// temp root, and recursively removing it competes for the disk with every other worker under
+// whole-monorepo parallelism. Vitest's DEFAULT hook timeout is 10s, so the file passed every
+// assertion and then failed the run on cleanup — a red gate with zero failing assertions, observed
+// across waves 18 and 19 of phase 390 and again on 391-01's own full-suite gate. Sixty seconds is
+// half what the build side already declares for the same tree.
 afterAll(() => {
   if (acceptance !== undefined) {
     rmSync(acceptance.tempRoot, { recursive: true, force: true })
   }
-})
+}, 60_000)
 
 function fixture(): AcceptanceFixture {
   if (acceptance === undefined) throw new Error('acceptance fixture is unavailable')
