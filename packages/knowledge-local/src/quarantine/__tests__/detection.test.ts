@@ -318,7 +318,12 @@ describe('the floor arm: a floor-eligible class AND a per-test signature (390-19
   //
   // A CONTROL ON AN ARM THIS ROUND DOES NOT TOUCH. `environment` is refused before this change and
   // after it, which is what makes this a control — it is NOT evidence about the blast radius of the
-  // arm this round widens, and it is not the containment. See the per-run cap for that.
+  // arm this round widens.
+  //
+  // IT IS ALSO THE GATE THAT ANSWERED FOR THE HISTORICALLY MEASURED FAN-OUT (390-28). Those six
+  // members classed `environment`, so they are refused right here, one conjunct BEFORE the per-run
+  // cap is ever consulted — which is why that event cannot be cited as evidence about the cap in
+  // either direction, and why the cap's value is not calibrated against it.
   it('REFUSES a floor-produced environment crossing EVEN WITH the signature', () => {
     const result = evaluate({
       failures: [failure({
@@ -423,21 +428,35 @@ describe('the floor arm: a floor-eligible class AND a per-test signature (390-19
   })
 })
 
-// THE CONTAINMENT: a PER-RUN cap on floor-path auto-quarantines (390-19).
+// THE PER-RUN BUDGET on floor-path auto-quarantines (390-19, restated to 390-28's framing).
 //
-// 390-16's motivating observation was a COUNT — one probe failure auto-quarantined 6 of 6 tests in
-// a suite — and 390-16 read it as a statement about a CLASS. That reading is unsound under
-// `classifyRootCause`'s branch order: its `outcome === 'timeout'` arm RETURNS before the
-// `baselineProbe` arms that mint `environment`, so a run-scoped hang or a flapping dependency
-// arrives classed `timeout` — the class this round makes floor-eligible. Every class the floor can
-// mint on a FAILING member is reachable from a run-scoped cause, so no class-based gate contains
-// fan-out. The containment is therefore stated as the count it always was.
+// WHY A COUNT AND NOT A CLASS — the half of the 390-19 reasoning that survives. 390-16's motivating
+// observation was a COUNT: one probe failure auto-quarantined six of six tests in a suite, and
+// 390-16 read it as a statement about a CLASS. That reading is unsound under `classifyRootCause`'s
+// branch order: its `outcome === 'timeout'` arm RETURNS before the `baselineProbe` arms that mint
+// `environment`, so a run-scoped hang or a flapping dependency arrives classed `timeout` — the class
+// this round makes floor-eligible. Every class the floor can mint on a FAILING member is reachable
+// from a run-scoped cause, so no class-based gate can bound fan-out. The gate is therefore a count.
+//
+// WHAT THE COUNT BUYS — TIME AND VISIBILITY, PER RUN. It RATE-LIMITS the floor arm and bounds
+// nothing eventual, which is the framing `detection.ts`'s module header and the constant's docstring
+// now state and which these titles are aligned to (390-28 / WR-02). Two readings the earlier text
+// carried were withdrawn there and are not restated here:
+//
+//  1. The historically measured fan-out event never reaches this counter at all. Those six members
+//     classed `environment`, whose floor eligibility is `authored-required`, so `autoQuarantines`
+//     answers `'refused'` one conjunct EARLIER and the cap is never consulted. Their zero entered
+//     lines are the CLASS gate's doing — pinned in detection-fold.test.ts, not here — so this
+//     constant's value cannot be calibrated against that observation.
+//  2. It does not bound eventual entries. Every refused member crosses again on the next applied
+//     run and may be admitted THEN, with no human decision and no new evidence; the two-call drain
+//     leg below shows exactly that rather than asserting it, and detection-fold.test.ts carries the
+//     same shape through a real fold.
 //
 // Overflow is LOUD: past the cap an identity routes to `escalatedNotQuarantined` with the build
-// still failing (D-05's posture for a class-gated refusal, applied to a count-gated one), crosses
-// again on the next applied run, and may be admitted THEN. The cap slows the floor path down; it
-// does not close it — which is what the two-call drain leg shows rather than asserts.
-describe('the per-run floor cap contains fan-out (390-19)', () => {
+// still failing — D-05's posture for a class-gated refusal, applied to a count-gated one. The cap
+// slows the floor path down; it does not close it.
+describe('the per-run floor cap RATE-LIMITS fan-out — a budget, not a ceiling (390-19/390-28)', () => {
   const SUITE_SIZE = 6
   const K = QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP
 
@@ -474,7 +493,12 @@ describe('the per-run floor cap contains fan-out (390-19)', () => {
     return indices.map((index) => activeEntry({ ...member(index), state: 'quarantined' }))
   }
 
-  it('pins the cap as its own constant — 2, below the measured 6-of-6 fan-out and above 1', () => {
+  // The two bounds below are stated against THIS CORPUS'S OWN FIXTURE, never against a field
+  // observation: SUITE_SIZE is the size of the suite these legs build, so `< SUITE_SIZE` says only
+  // that the fixture is large enough to overflow the cap and therefore capable of measuring it.
+  // Strictly above 1 keeps the mechanism from being a de facto single-shot — two genuinely
+  // independent flaky tests can still both land in one run.
+  it('pins the cap as its own constant — 2, a per-run budget above 1 and under this suite size', () => {
     expect(QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP).toBe(2)
     expect(QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP).toBeLessThan(SUITE_SIZE)
     expect(QUARANTINE_FLOOR_AUTO_QUARANTINE_CAP).toBeGreaterThan(1)
