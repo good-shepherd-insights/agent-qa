@@ -438,5 +438,22 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
       expect(listed.grants.map((grant) => grant.grantId)).toEqual([siblingGrantId])
       expect(listed.refusedLines.map((line) => line.lineNumber)).toEqual([2])
     })
+
+    it('and BOTH write verbs refuse to DECIDE over it, by name (the composed 391-09 posture)', async () => {
+      smuggleUnknownScopeKey(2)
+      // An unknown-key line stops being a special case anywhere: it is simply a refused line, and
+      // every consumer already answers refused lines. Measured rather than derived — before the
+      // guard closed, this same call answered `already-granted` for the line it could not render.
+      const verbs = grantVerbs()
+
+      const refusedRecord = await damageRefusal(() =>
+        verbs.record({ actionClass: applyClass(headless), scope: STANDING_APPROVAL_SCOPE }),
+      )
+      expect(refusedRecord.name).toBe('GrantLedgerDamagedError')
+      expect(refusedRecord.message).toContain('line 2')
+
+      const refusedRevoke = await damageRefusal(() => verbs.revoke({ grantId: siblingGrantId }))
+      expect(refusedRevoke.name).toBe('GrantLedgerDamagedError')
+    })
   })
 })
