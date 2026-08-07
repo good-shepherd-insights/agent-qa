@@ -30,6 +30,7 @@ import {
   VersionGuardError,
 } from '../versioning/create-version-guard'
 import type { MigrationRegistry } from '../versioning/create-version-guard'
+import { TRUST_SCOPE_KEYS } from './trust-credential'
 import type { TrustScope } from './trust-credential'
 
 /**
@@ -154,17 +155,26 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 /**
- * A scope the gate could ever match on: an object carrying at least one populated key.
+ * A scope the gate could ever match on: an object whose keys all come from
+ * {@link TRUST_SCOPE_KEYS}, carrying at least one populated key.
  *
  * The gate refuses an all-empty scope outright, so a grant carrying one is a line that folds,
  * lists, reads as authorization — and satisfies nothing, forever. Refusing it structurally keeps
  * the committed file free of approvals that only look like approvals.
+ *
+ * UNKNOWN KEYS ARE REFUSED, and that clause is this guard's alignment with the wire contract rather
+ * than an extra rule of its own: `TrustScopeSchema` is `.strict()`, so a scope key outside the set
+ * makes `grants.list` fail its own output parse — one such line used to authorize at the gate while
+ * throwing the WHOLE enumeration away, which is a grant in force that no reviewer can see.
  */
 function isMatchableScope(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
-  const populated = (['org', 'project'] as const).filter((key) => isNonEmptyString(value[key]))
+  if (!Object.keys(value).every((key) => (TRUST_SCOPE_KEYS as readonly string[]).includes(key))) {
+    return false
+  }
+  const populated = TRUST_SCOPE_KEYS.filter((key) => isNonEmptyString(value[key]))
   if (populated.length === 0) return false
-  return (['org', 'project'] as const).every(
+  return TRUST_SCOPE_KEYS.every(
     (key) => value[key] === undefined || isNonEmptyString(value[key]),
   )
 }
