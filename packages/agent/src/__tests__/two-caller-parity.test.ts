@@ -2,14 +2,21 @@
 //
 // The claim under test is that caller differences are DATA, never control flow: two callers
 // hit ONE registry instance and ONE dispatch path, and every difference in what happens to
-// them is fully explained by three fields on their records — `grantedScopes`, `safeMode`,
-// and `credential`.
+// them is fully explained by four fields on their records — `grantedScopes`, `safeMode`,
+// `credential`, and (391 D-06) `origin`.
+//
+// `origin` joined as the FOURTH permission-shaped field rather than as a special case, and
+// that is the whole point of it. The self-grant rule it enforces could have been written as
+// `if (caller.surface === 'chat')`, which is the anti-pattern this file exists to refute; it
+// is instead an op-declared requirement checked against a composition-minted field, so it
+// reads exactly like the scope check one line above it and separates callers for a reason
+// that is on the record rather than in the code.
 //
 // Two things make this a proof rather than an illustration:
 //
 //   1. The premise is machine-checked. The first case computes which keys actually differ
-//      between the two records and asserts the set is exactly those three. If a later edit
-//      makes the callers differ in a fourth way, every conclusion below stops following and
+//      between the two records and asserts the set is exactly those four. If a later edit
+//      makes the callers differ in a fifth way, every conclusion below stops following and
 //      the suite says so instead of quietly proving something weaker.
 //   2. The registry is a single module-scope instance, shared by every caller in the file.
 //      "One shared path" is therefore structural here, not a claim in a comment.
@@ -38,6 +45,7 @@ import {
   FunctionDeniedError,
   FunctionInputError,
   FunctionNotBoundError,
+  FunctionOriginError,
   FunctionScopeError,
   invokeFunction,
 } from '../functions/invoke.js'
@@ -63,22 +71,28 @@ const CALLER_A: FunctionCaller = {
   grantedScopes: ['read', 'run', 'config-write'],
   safeMode: false,
   credential: CREDENTIAL,
+  origin: 'human',
 }
 
 const CALLER_B: FunctionCaller = {
   surface: 'synthetic',
   grantedScopes: ['read'],
   safeMode: true,
+  origin: 'agent',
 }
 
 /** A differs from this one ONLY in `safeMode` — the isolate for "listing is cosmetic". */
 const CALLER_A_SAFE: FunctionCaller = { ...CALLER_A, safeMode: true }
+
+/** A differs from this one ONLY in `origin` — the isolate for the 391 D-06 refusal. */
+const CALLER_A_AGENT: FunctionCaller = { ...CALLER_A, origin: 'agent' }
 
 /** The would-be scope claimant: no `run` grant, and the record is the only thing read. */
 const CALLER_C: FunctionCaller = {
   surface: 'synthetic',
   grantedScopes: ['read'],
   safeMode: false,
+  origin: 'human',
 }
 
 /** C plus the one grant it lacked — the counterfactual for what the subset check reads. */
@@ -243,15 +257,15 @@ function field(caller: FunctionCaller, key: string): unknown {
   return (caller as unknown as Record<string, unknown>)[key]
 }
 
-describe('the premise: two records differing in exactly three fields', () => {
-  it('differ in grantedScopes, safeMode and credential — and in nothing else', () => {
+describe('the premise: two records differing in exactly four fields', () => {
+  it('differ in grantedScopes, safeMode, credential and origin — and in nothing else', () => {
     const keys = [...new Set([...Object.keys(CALLER_A), ...Object.keys(CALLER_B)])]
     const differing = keys.filter((key) => (
       JSON.stringify(field(CALLER_A, key)) !== JSON.stringify(field(CALLER_B, key))
     ))
 
     // If this goes red, every conclusion in this file stops following from its premise.
-    expect(differing.sort()).toEqual(['credential', 'grantedScopes', 'safeMode'])
+    expect(differing.sort()).toEqual(['credential', 'grantedScopes', 'origin', 'safeMode'])
     expect(CALLER_A.surface).toBe(CALLER_B.surface)
   })
 })
@@ -483,5 +497,123 @@ describe('the credential flows to the gate untouched (D-13)', () => {
 
     expect(withCredential.verdict).toBe('allow')
     expect(withoutCredential.verdict).toBe('deny')
+  })
+})
+
+/**
+ * The origin axis (391 D-06).
+ *
+ * Two fixtures that are IDENTICAL but for the declaration, because that is the only way the
+ * "unaffected" leg means anything: an op with no declaration invoked by an agent-origin caller
+ * proves nothing unless the very same invocation would have been refused had the op declared.
+ * Both are read-tier and inside the `read` scope every caller here holds, so neither the gate
+ * nor the scope check can be what separates them.
+ */
+const humanOnlySpec: FunctionSpec<Record<string, never>, { ok: true }> = {
+  id: 'synthetic.human-only',
+  summary: 'Synthetic capability that declares a human-origin requirement.',
+  requiredScopes: ['read'],
+  resultKind: 'unary',
+  requiresHumanOrigin: true,
+  input: z.object({}).strict(),
+  output: z.object({ ok: z.literal(true) }).strict(),
+  risk: { name: 'fn:synthetic.human-only', recognized: true, readOnly: true },
+  invoke: () => Promise.resolve({ ok: true as const }),
+}
+
+/** The control: the same op minus the one field. */
+const anyOriginSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
+  id: 'synthetic.any-origin',
+  summary: 'Synthetic capability that declares nothing about origin.',
+  requiredScopes: ['read'],
+  resultKind: 'unary',
+  input: z.object({}).strict(),
+  output: z.object({ ok: z.literal(true) }).strict(),
+  risk: { name: 'fn:synthetic.any-origin', recognized: true, readOnly: true },
+  invoke: () => Promise.resolve({ ok: true as const }),
+}
+
+describe('a declared human-origin requirement is enforced uniformly (391 D-06)', () => {
+  const originAudit = capturingSink()
+  const originRegistry = createRegistryFromSpecs(
+    [humanOnlySpec as FunctionSpec, anyOriginSpec as FunctionSpec],
+    { deps: DEPS, auditSink: originAudit.sink, resolveExecutionContext: CONTEXT },
+  )
+
+  beforeEach(() => {
+    originAudit.take()
+  })
+
+  it('refuses an agent-origin caller at a declaring op, with a typed error', async () => {
+    await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A_AGENT))
+      .rejects.toBeInstanceOf(FunctionOriginError)
+  })
+
+  it('names the op and the required origin, the way the scope refusal names its scopes', async () => {
+    const error: FunctionOriginError = await invokeFunction(
+      originRegistry,
+      'synthetic.human-only',
+      {},
+      CALLER_A_AGENT,
+    ).catch((thrown: unknown) => thrown as FunctionOriginError)
+
+    expect(error.functionId).toBe('synthetic.human-only')
+    expect(error.requiredOrigin).toBe('human')
+    expect(error.message).toContain('synthetic.human-only')
+    expect(error.message).toContain('human')
+  })
+
+  it('admits the SAME op for a human-origin caller — the other corpus side', async () => {
+    // Without this the refusal above is consistent with the op being broken for everyone.
+    // A_AGENT differs from A in `origin` and in nothing else, so this pair isolates the field.
+    await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A))
+      .resolves.toEqual({ ok: true })
+  })
+
+  it('leaves an op WITHOUT the declaration unaffected by origin', async () => {
+    // Load-bearing that the driver is agent-origin: an assertion that nothing happened is
+    // only worth having when the input could have made it happen.
+    await expect(invokeFunction(originRegistry, 'synthetic.any-origin', {}, CALLER_A_AGENT))
+      .resolves.toEqual({ ok: true })
+    await expect(invokeFunction(originRegistry, 'synthetic.any-origin', {}, CALLER_A))
+      .resolves.toEqual({ ok: true })
+  })
+
+  it('refuses BEFORE the gate: an origin-refused caller leaves no audit row', async () => {
+    // The placement claim, measured rather than stated. The origin check sits beside the scope
+    // check in the pre-gate band, so it inherits that band's audit posture exactly — the same
+    // gap 384 named for the other three pre-gate refusals, and the same phases own closing it.
+    await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A_AGENT))
+      .rejects.toBeInstanceOf(FunctionOriginError)
+    expect(originAudit.take()).toEqual([])
+
+    // And the admitted side DOES audit, so the emptiness above is about the refusal rather
+    // than about this registry never auditing anything.
+    await invokeFunction(originRegistry, 'synthetic.human-only', {}, CALLER_A)
+    expect(originAudit.take()).toHaveLength(1)
+  })
+
+  it('refuses AFTER the scope check: a caller missing both is told about scopes first', async () => {
+    // Order is the contract, and the order is the one the file's other refusals follow: the
+    // cheaper, more specific refusal wins. A caller told "you lack read" and a caller told
+    // "this needs a human" have different things to do next.
+    const scopeless: FunctionCaller = { ...CALLER_A_AGENT, grantedScopes: [] }
+    await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, scopeless))
+      .rejects.toBeInstanceOf(FunctionScopeError)
+  })
+
+  it('never branches on surface: the refusal follows origin across every surface name', async () => {
+    // The anti-pattern check, driven rather than reviewed. If the rule were a surface branch,
+    // renaming the surface would move the outcome; it does not.
+    for (const surface of ['cli', 'daemon', 'mcp', 'chat', 'synthetic']) {
+      await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, {
+        ...CALLER_A_AGENT,
+        surface,
+      })).rejects.toBeInstanceOf(FunctionOriginError)
+      await expect(invokeFunction(originRegistry, 'synthetic.human-only', {}, {
+        ...CALLER_A,
+        surface,
+      })).resolves.toEqual({ ok: true })
+    }
   })
 })
