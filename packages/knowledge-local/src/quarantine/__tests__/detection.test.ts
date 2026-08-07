@@ -446,8 +446,8 @@ describe('the floor arm: a floor-eligible class AND a per-test signature (390-19
 //  1. The historically measured fan-out event never reaches this counter at all. Those six members
 //     classed `environment`, whose floor eligibility is `authored-required`, so `autoQuarantines`
 //     answers `'refused'` one conjunct EARLIER and the cap is never consulted. Their zero entered
-//     lines are the CLASS gate's doing — pinned in detection-fold.test.ts, not here — so this
-//     constant's value cannot be calibrated against that observation.
+//     lines are the FLOOR-ELIGIBILITY gate's doing — pinned in detection-fold.test.ts, not here —
+//     so this constant's value cannot be calibrated against that observation.
 //  2. It does not bound eventual entries. Every refused member crosses again on the next applied
 //     run and may be admitted THEN, with no human decision and no new evidence; the two-call drain
 //     leg below shows exactly that rather than asserting it, and detection-fold.test.ts carries the

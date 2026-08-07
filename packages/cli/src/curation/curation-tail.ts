@@ -370,18 +370,14 @@ export interface CurateCompletedRunReport {
 }
 
 /**
- * The withheld line's remedy, as a function of the crossing's ADMISSIBILITY (390-30, round-5 gap 2).
+ * The withheld line's remedy, as a function of the crossing's ADMISSIBILITY.
  *
- * Branch order mirrors `autoQuarantines`' conjunct order exactly — disposition, then the authored
- * arm, then eligibility — so the sentence an operator reads and the refusal the gate made are two
- * renderings of one decision rather than two rules that can disagree. Each of the four sentences is
- * TRUE for every (verdictClass, producer) pair that can reach it, which is the whole point: the
- * shipped line branched on the producer alone and told every `deterministic-classifier` sighting
- * that a later fold might admit it — false for `environment` (authored-required forever) and for
- * `unknown` (escalate-only, and `classifyRootCause`'s terminal arm, so the dominant real-world
- * case on a project with no analysis budget).
- *
- * The authored sentence is byte-unchanged from 390-23: it was never in question.
+ * Branch order is AUTHORED, then disposition, then eligibility. Each of the four sentences is TRUE
+ * for every (verdictClass, producer) pair that can reach it, which is the whole point: the shipped
+ * line branched on the producer alone and told every `deterministic-classifier` sighting that a
+ * later fold might admit it — false for `environment` (authored-required forever) and for `unknown`
+ * (escalate-only, and `classifyRootCause`'s terminal arm, so the dominant real-world case on a
+ * project with no analysis budget).
  */
 function remedyFor(crossing: {
   authored: boolean
@@ -460,7 +456,7 @@ function logQuarantineDisposition(
     // round-5 gap 2). The earlier enumeration here named three and concluded that all of them
     // converge on the next-applied-run remedy. The cause it omitted is the one that breaks the
     // convergence: the gate can refuse the CLASS OUTRIGHT, and no run supplies a class. Read the
-    // four against `autoQuarantines`' own conjunct order (`detection.ts`), which this branch mirrors:
+    // four against `autoQuarantines`' own conjunct order (`detection.ts`):
     //   (1) DISPOSITION REFUSAL — QUARANTINE_CLASS_DISPOSITIONS says `escalate-only`. Refused at the
     //       FIRST conjunct, before eligibility is consulted. NO later run and no authored verdict
     //       admits it; the class itself is the refusal. `unknown` — `classifyRootCause`'s terminal
