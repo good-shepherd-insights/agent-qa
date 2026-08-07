@@ -110,6 +110,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // alternative is a literal in the CLI, which is a second declaration of a capability's name.
   // A string is not a dispatch handle — naming an op still buys nothing without a registry, a
   // caller and the gate.
+  // 391 D-16/D-17: the per-run digest op's id, on exactly the footing of the four op-id
+  // constants around it. The CLI's `digest` verb and the tail's fetch pointer both have to put
+  // this name on the wire, and the alternative is a literal in the CLI — a second declaration of
+  // a capability's name. A string is not a dispatch handle.
+  'RUNS_DIGEST_FUNCTION_ID',
   'RUNS_POST_PROCESSING_FUNCTION_ID',
   'RunNotFoundError',
   'RunNotRecordedError',
@@ -138,6 +143,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'createRealJobKindRegistry',
   'invokeFunction',
   'recordLlmAuthorship',
+  // 391-06: the clustered BLOCK layout, relocated out of the CLI when `runs.digest` became its
+  // second caller. Published on the sentence renderer's footing and for its reason — one layout,
+  // imported once. A pure string fold over an op result: no storage, no capability, no dispatch.
+  'renderAnalysisClusterBlock',
   // 389 plan 05: THE sentence renderer (D-05). A pure string composer over typed parts — it
   // reads no storage, holds no capability and dispatches nothing; it is published precisely so
   // plan 07's CLI print and every later surface compose sentences through ONE symbol instead of

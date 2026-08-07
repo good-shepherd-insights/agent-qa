@@ -86,6 +86,10 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   'runs.get': { runId: 'run-alpha' },
   'runs.events': { runId: 'run-alpha' },
   'runs.postprocessing': { runId: 'run-alpha' },
+  // 391 D-16: a PARSING input for the same reason its `runs.` siblings carry one — the digest
+  // names a run, so the `{}` default fails its contract and turns an unbound refusal into an
+  // input error, which the parity case below would read as `dispatched`.
+  'runs.digest': { runId: 'run-alpha' },
   'knowledge.accept.propose': { target: { grain: 'record', recordId: 'rec-x' } },
   'knowledge.reject.propose': { target: { grain: 'record', recordId: 'rec-x' }, reason: 'no' },
   'knowledge.forget.propose': { target: { grain: 'record', recordId: 'rec-x' } },

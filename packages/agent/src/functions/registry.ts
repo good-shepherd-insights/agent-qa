@@ -35,6 +35,7 @@ import { quarantineAddSpec } from './ops/quarantine-add.js'
 import { quarantineListSpec } from './ops/quarantine-list.js'
 import { quarantineReleaseSpec } from './ops/quarantine-release.js'
 import { runsEventsSpec } from './ops/runs-events.js'
+import { runsDigestSpec } from './ops/runs-digest.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
 import { runsPostProcessingSpec } from './ops/runs-post-processing.js'
@@ -152,6 +153,13 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // deciding a proposal, which is precisely the silent accretion D-01 forbids.
   grantsListSpec as FunctionSpec,
   grantsRevokeSpec as FunctionSpec,
+  // 391 PROP-04 / D-16: the per-run digest. Filed under `runs.` beside `runs.postprocessing`
+  // because what it answers is a fact about a RUN, and bound through the same OPTIONAL
+  // `proposalsInbox` dep the four verbs above use — a host that cannot open the proposals
+  // directory lists it `unbound` BY NAME rather than composing a digest whose decision section
+  // says "nothing was minted" about a store it has never read. Read-tier, and it registers NO
+  // new dep: the projection composes from four capabilities this catalogue already had.
+  runsDigestSpec as FunctionSpec,
   // 387 D-09: a new `entities.` domain, a taxonomy extension exactly as `knowledge.` was.
   // Both read-tier, both bound in every composition — the directory is a REQUIRED dep, so
   // there is no host that lists these and cannot run them.

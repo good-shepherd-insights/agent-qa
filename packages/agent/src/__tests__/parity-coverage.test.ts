@@ -140,6 +140,10 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // answer all-pending about a chain it has never been able to observe, so this row is a claim
   // about the composition and not about the op.
   'runs.postprocessing': 'unbound',
+  // 391 D-16: UNBOUND for the proposals-inbox reason rather than the queue one. The digest
+  // binds through `proposalsInbox` — a host that cannot open the proposals directory would
+  // otherwise compose a digest saying nothing is waiting on you about a store it never read.
+  'runs.digest': 'unbound',
   // D-09: declared in full, bound by nothing in this composition. 386 flips one field.
   'runs.start': 'unbound',
 }
@@ -244,6 +248,8 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // reasoning above — validation precedes the binding check, so a sample that failed the
   // contract would make the unbound-refusal leg report an input error and certify nothing.
   'runs.postprocessing': { runId: FIXTURE_RUN_ID },
+  // 391 D-16: a PARSING input for a capability this composition cannot run, exactly as above.
+  'runs.digest': { runId: FIXTURE_RUN_ID },
   'runs.start': {},
 }
 

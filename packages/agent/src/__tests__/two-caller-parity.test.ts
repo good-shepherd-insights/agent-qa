@@ -241,6 +241,10 @@ const ALL_FUNCTION_IDS = [
   'quarantine.add',
   'quarantine.list',
   'quarantine.release',
+  // 391 D-16: the per-run digest, in SORT position ahead of its `runs.` siblings. Read-tier, so
+  // it survives safe-mode filtering and the derived non-read set below is unchanged — which is
+  // what keeps the filter assertion a test of the RULE rather than of a frozen list.
+  'runs.digest',
   'runs.events',
   'runs.get',
   'runs.list',

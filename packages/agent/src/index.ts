@@ -91,6 +91,11 @@ export { RUNS_POST_PROCESSING_FUNCTION_ID } from './functions/ops/runs-post-proc
 // analysis read through the registry, and the alternative is a string literal in the CLI — a
 // second declaration of a capability's name, free to drift. An ID is not a dispatch handle.
 export { ANALYSIS_GET_FUNCTION_ID } from './functions/ops/analysis-get.js'
+// 391 D-16/D-17: the per-run digest's id, on exactly the footing of the three above. The CLI's
+// `digest` verb, the tail's digest block and the exit-line fetch pointer all have to put this
+// name on the wire, and the alternative is a string literal in each — a second declaration of a
+// capability's name, free to drift. An ID is not a dispatch handle.
+export { RUNS_DIGEST_FUNCTION_ID } from './functions/ops/runs-digest.js'
 // 390 D-13: the three quarantine verb ids, on exactly the footing of the three constants above.
 // A later plan's CLI verbs and M5's quarantine management both have to put a name on the wire,
 // and the alternative is a string literal in each surface — a second declaration of a
@@ -103,6 +108,13 @@ export { ANALYSIS_GET_FUNCTION_ID } from './functions/ops/analysis-get.js'
 export { QUARANTINE_ADD_FUNCTION_ID } from './functions/ops/quarantine-add.js'
 export { QUARANTINE_LIST_FUNCTION_ID } from './functions/ops/quarantine-list.js'
 export { QUARANTINE_RELEASE_FUNCTION_ID } from './functions/ops/quarantine-release.js'
+
+// 391-06: the clustered BLOCK layout, relocated here from the CLI when it acquired its second
+// caller (`runs.digest`'s first section). Published on the same footing as the sentence renderer
+// below and for the same reason — one layout, imported, never a second composition per surface.
+// Pure string work over an op result: no fs, no model, no store, no dispatch. It sits ahead of
+// its sibling because the barrel pin compares by the barrel's OWN order.
+export { renderAnalysisClusterBlock } from './analysis/render-cluster-block.js'
 
 // 389 D-05/D-08: THE sentence renderer, and the recurrence seam it joins through. The value
 // is a pure string composer over typed parts — no fs, no model, no store — published so plan

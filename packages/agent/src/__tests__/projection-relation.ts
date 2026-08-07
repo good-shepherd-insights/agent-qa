@@ -45,6 +45,7 @@ import { quarantineAddSpec } from '../functions/ops/quarantine-add.js'
 import { quarantineListSpec } from '../functions/ops/quarantine-list.js'
 import { quarantineReleaseSpec } from '../functions/ops/quarantine-release.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
+import { runsDigestSpec } from '../functions/ops/runs-digest.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
 import { runsPostProcessingSpec } from '../functions/ops/runs-post-processing.js'
@@ -117,6 +118,11 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // unchecked projection would have been the first place a `notification` could quietly stop
   // appearing in a published catalogue.
   'runs.postprocessing': runsPostProcessingSpec,
+  // 391 D-16/D-18: the digest's output is the SECOND contract here with a nested optional
+  // object (`chain.outcome`) and the first with an imported nested array schema — the analysis
+  // cluster view, borrowed rather than restated — so an unchecked projection would be the first
+  // place a borrowed sub-contract could quietly stop appearing in a published catalogue.
+  'runs.digest': runsDigestSpec,
   'runs.start': runsStartSpec,
 }
 

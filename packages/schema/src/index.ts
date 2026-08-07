@@ -161,10 +161,19 @@ export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } fro
 // vocabulary. Both are minted here rather than beside a consumer because each has several —
 // the notification row is read by chat and by the dashboard, and the chip words are spoken by
 // the bus, the read op and the CLI's summary line.
+// 391 D-16/D-18: the per-run digest's read-time contract, minted beside the frozen row it
+// deliberately does not widen. Nothing persists a digest — it is composed live, keyed by runId,
+// which is what makes "exactly one digest per run" structural rather than throttled.
 export {
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
   POST_PROCESSING_CHIP_STATUSES,
+  RunDigestCandidateReportSchema,
+  RunDigestChainOutcomesSchema,
+  RunDigestProposalRowSchema,
+  RunDigestQuarantineReportSchema,
+  RunDigestSchema,
   RunNotificationSchemaError,
+  RunsDigestInputSchema,
   guardRunNotification,
   isPostProcessingChipStatus,
 } from './notification/index'
@@ -172,11 +181,17 @@ export type {
   PostProcessingChipStatus,
   PostProcessingChips,
   PostProcessingStatus,
+  RunDigest,
+  RunDigestCandidateReport,
+  RunDigestChainOutcomes,
+  RunDigestProposalRow,
+  RunDigestQuarantineReport,
   RunNotification,
   RunNotificationOutcome,
   RunNotificationStageStatus,
   RunNotificationStages,
   RunNotificationVerdictSummary,
+  RunsDigestInput,
 } from './notification/index'
 export type { RunStatus, ExecutionContext, RunId } from './run/index'
 export type {
