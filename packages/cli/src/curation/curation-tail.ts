@@ -393,8 +393,8 @@ function remedyFor(crossing: {
       + 'will not change the answer.'
   }
   if (crossing.disposition === 'escalate-only') {
-    return 'this class is never auto-quarantined, so no later run and no authored '
-      + 'verdict admits this crossing - it escalates for a human.'
+    return 'this class is never auto-quarantined, so no later run admits this crossing - '
+      + 'only a verdict reclassifying it can, and this run has none.'
   }
   if (crossing.floorEligibility === 'authored-required') {
     return 'auto-quarantine for this class requires an authored verdict rather than '

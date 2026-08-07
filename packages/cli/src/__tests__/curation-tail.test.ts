@@ -1990,13 +1990,19 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
   it('tells an ESCALATE-ONLY unauthored class that no run admits it, ever', async () => {
     // `unknown` is `classifyRootCause`'s TERMINAL arm — the dominant real-world shape on a project
     // with no analysis budget — and its disposition is `escalate-only`: it is refused at the FIRST
-    // conjunct of `autoQuarantines`, before eligibility is even consulted. No number of applied runs
-    // and no authored verdict for this class changes that; the class itself is the refusal.
+    // conjunct of `autoQuarantines`, before eligibility is even consulted. The class itself is the
+    // refusal.
     const line = await withheldLineFor('unknown')
     expect(line).toMatch(/never auto-quarantined/)
     expect(line).not.toMatch(/next applied run/)
     expect(line).not.toMatch(/requires an authored verdict/)
     expect(line).not.toMatch(/will not change the answer/)
+  })
+
+  it('names RECLASSIFICATION as the one thing that admits an escalate-only crossing', async () => {
+    const line = await withheldLineFor('unknown')
+    expect(line).toMatch(/only a verdict reclassifying it can/)
+    expect(line).not.toMatch(/no authored verdict admits/)
   })
 
   it('warns on a blocked append and names the self-healing path — never a silent loss', async () => {
