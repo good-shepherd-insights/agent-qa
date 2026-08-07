@@ -44,7 +44,7 @@ import {
   canonicalJson,
   isProtectedActionClass,
 } from '@vostride/agent-qa-schema'
-import type { GrantLedgerEvent, RiskActionDescriptor } from '@vostride/agent-qa-schema'
+import type { GrantLedgerEvent, RiskActionDescriptor, TrustScope } from '@vostride/agent-qa-schema'
 
 import { acquireWriterLease, releaseLease, WriterAuthorityLostError } from '../../lease/writer-lease.js'
 import { foldActiveGrants, grantsLedgerPath, readGrantLedger } from '../ledger.js'
@@ -207,6 +207,117 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
       } finally {
         releaseLease({ knowledgeRoot, leaseId: holder.leaseId })
       }
+    })
+  })
+
+  // ---- 391-10: the declared input contract, load-bearing at the mint entry (IN-04) -------------
+  //
+  // `GrantRecordInputSchema` had zero consumers, so the port accepted a scope the committed listing
+  // cannot render. The append pre-check refuses the same bytes — but LATE, from inside the lease,
+  // as a TypeError about the ledger rather than as the contract's own refusal of the caller's input.
+  describe('record parses its declared input contract at the port entry', () => {
+    let rootResolutions: number
+
+    beforeEach(() => {
+      rootResolutions = 0
+    })
+
+    /**
+     * The same verbs, with the root resolution COUNTED.
+     *
+     * `record` resolves the root and then takes the lease, so a zero count is the measurable form of
+     * "refused before the lease and before any filesystem effect".
+     */
+    function countingOps() {
+      return createGrantOperations({
+        resolveKnowledgeRoot: () => {
+          rootResolutions += 1
+          return knowledgeRoot
+        },
+        auditBaseDir,
+        now: () => now,
+      })
+    }
+
+    interface ParseRefusal extends Error {
+      readonly issues?: readonly { readonly code?: string; readonly keys?: readonly string[] }[]
+    }
+
+    /**
+     * The parse refusal, matched by error NAME and by its issue shape — never by "something threw".
+     *
+     * The append pre-check raises a TypeError for these same inputs from inside the lease, so a bare
+     * rejection assertion would pass identically before and after the entry parse exists.
+     */
+    async function parseRefusal(call: () => Promise<unknown>): Promise<ParseRefusal> {
+      let answered: unknown
+      try {
+        answered = await call()
+      } catch (error) {
+        if (error instanceof Error && error.name === 'ZodError') return error as ParseRefusal
+        throw error
+      }
+      throw new Error(`expected the input parse to refuse, it answered ${JSON.stringify(answered)}`)
+    }
+
+    it('refuses a scope carrying an UNKNOWN key, before the root resolves and before the lease', async () => {
+      const refusal = await parseRefusal(() =>
+        countingOps().record({
+          actionClass: OPEN_CLASS,
+          scope: { ...STANDING_APPROVAL_SCOPE, tenant: 'smuggled' } as TrustScope,
+        }),
+      )
+
+      expect(refusal.name).toBe('ZodError')
+      expect(
+        refusal.issues?.some(
+          (issue) => issue.code === 'unrecognized_keys' && (issue.keys ?? []).includes('tenant'),
+        ),
+      ).toBe(true)
+      // The measurable form of "no lock and no byte": the root was never even asked for.
+      expect(rootResolutions).toBe(0)
+      expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
+    })
+
+    it('refuses an EMPTY-STRING scope value — the wire contract\'s min-1 rule on the write path', async () => {
+      const refusal = await parseRefusal(() =>
+        countingOps().record({ actionClass: OPEN_CLASS, scope: { project: '' } }),
+      )
+
+      expect(refusal.name).toBe('ZodError')
+      expect(rootResolutions).toBe(0)
+      expect(existsSync(grantsLedgerPath(knowledgeRoot))).toBe(false)
+    })
+
+    it('ADMITS the canonical scope through the same entry — the parse\'s admit side', async () => {
+      const outcome = await countingOps().record({
+        actionClass: OPEN_CLASS,
+        scope: STANDING_APPROVAL_SCOPE,
+      })
+
+      expect(outcome.kind).toBe('recorded')
+      expect(rootResolutions).toBe(1)
+      expect(ledgerLines()).toHaveLength(1)
+    })
+
+    it('ADMITS an org-only scope — the wire contract and the ledger guard admit the same set', async () => {
+      const outcome = await countingOps().record({ actionClass: OPEN_CLASS, scope: { org: 'acme' } })
+
+      expect(outcome.kind).toBe('recorded')
+      expect(readGrantLedger(knowledgeRoot).refusedLines).toEqual([])
+      expect(ledgerLines()).toHaveLength(1)
+    })
+
+    it('leaves D-05\'s mint refusal an ARM: a protected class with a valid scope is DATA', async () => {
+      // The parse must not displace the protected-class answer for a well-formed input — an accept
+      // whose apply committed and whose mint was refused has to be able to report both halves.
+      const outcome = await countingOps().record({
+        actionClass: PROTECTED_CLASS,
+        scope: STANDING_APPROVAL_SCOPE,
+      })
+
+      expect(outcome).toEqual({ kind: 'protected-class', actionClass: PROTECTED_CLASS })
+      expect(rootResolutions).toBe(0)
     })
   })
 
