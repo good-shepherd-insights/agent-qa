@@ -82,7 +82,10 @@ export function createStandingApprovalReader(
 ): GrantLedgerStandingApprovalReader {
   return {
     grantsFor(action: RiskActionDescriptor): readonly StandingApprovalGrant[] {
-      const { events } = readGrantLedger(options.knowledgeRoot)
+      const { events, refusedLines } = readGrantLedger(options.knowledgeRoot)
+      // The version arm's rule one grain smaller: a build that cannot read the authorization truth
+      // must not guess at it, and the refused line may be the REVOKE somebody already issued.
+      if (refusedLines.length > 0) return []
       return foldActiveGrants(events)
         // The D-05 read half runs FIRST, on the fold rather than on the match: what is being
         // refused is a class no approval may ever cover, and that is true of the LINE regardless of
