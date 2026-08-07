@@ -36,6 +36,26 @@ export {
   readQuarantineLedger,
 } from './quarantine/ledger.js'
 export type { QuarantineLedgerRead, RefusedQuarantineLine } from './quarantine/ledger.js'
+// 390-30: the gate's TWO TOTAL TABLES, on this entry for the same reason the ledger's read half is
+// here — they open nothing, write nothing and hold no lease. They are frozen constant maps from a
+// closed verdict vocabulary to a decision, and reading them decides nothing on its own:
+// `autoQuarantines` (main entry) is what turns them into an admission, and it stays there.
+//
+// The consumer is the curation tail's withheld-line render, which must branch its remedy on
+// ADMISSIBILITY — an escalate-only class is told no run admits it, an authored-required class is
+// told it needs an analyst, and only the floor-eligible classes are told the next applied run may
+// admit them. That render and the gate must read ONE vocabulary or the line's promise and the
+// refusal drift apart per class, which is how the shipped line came to promise relief no fold
+// grants. Publishing the tables — rather than restating them at the render — is what makes the
+// drift impossible rather than merely unlikely.
+export {
+  QUARANTINE_CLASS_DISPOSITIONS,
+  QUARANTINE_FLOOR_ELIGIBILITY,
+} from './quarantine/detection.js'
+export type {
+  QuarantineDisposition,
+  QuarantineFloorEligibility,
+} from './quarantine/detection.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export type { BuildRange, ReadOptions, SearchOptions } from '@vostride/agent-qa-schema'

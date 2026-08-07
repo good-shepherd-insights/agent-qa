@@ -88,6 +88,10 @@ export type {
 // 390 D-05/D-06/D-07/D-10: the detection ladder's pure rule and its pinned thresholds. Plan 06's
 // provider composes these; QUARANTINE_WINDOW_ORDINALS is deliberately absent here because it is
 // already published below from the window read that declares it — one symbol, one export site.
+// 390-30: QUARANTINE_FLOOR_ELIGIBILITY travels with QUARANTINE_CLASS_DISPOSITIONS because the
+// curation tail's withheld-line render branches its remedy on ADMISSIBILITY — the same two total
+// tables `autoQuarantines` refuses on. Publishing one without the other would let the line's promise
+// and the gate's refusal drift apart per class, which is the defect this pairing exists to prevent.
 export {
   AUTO_QUARANTINE_CLASSES,
   QUARANTINE_AUTO_EXIT_PASSES,
@@ -95,6 +99,7 @@ export {
   QUARANTINE_DEFAULT_EXPIRY_DAYS,
   QUARANTINE_ESCALATE_THRESHOLD,
   QUARANTINE_FLAG_FLOOR,
+  QUARANTINE_FLOOR_ELIGIBILITY,
   evaluateQuarantineDetection,
 } from './quarantine/detection.js'
 export type {
@@ -104,6 +109,7 @@ export type {
   QuarantineDetectionSighting,
   QuarantineDetectionTestWindow,
   QuarantineDisposition,
+  QuarantineFloorEligibility,
   QuarantineOrdinalOutcome,
 } from './quarantine/detection.js'
 // 390 D-12/D-13: the three verbs' one implementation. The PORT type lives in schema (both `agent`

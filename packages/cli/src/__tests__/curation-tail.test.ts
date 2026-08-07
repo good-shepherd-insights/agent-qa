@@ -20,7 +20,10 @@ import {
   RUNS_SUBDIR,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
-import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
+import type {
+  DeterministicRootCauseClass,
+  KnowledgeHintReader,
+} from '@vostride/agent-qa-runner'
 import type {
   AuditSink,
 } from '@vostride/agent-qa-safety'
@@ -1902,7 +1905,28 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
     expect(withheld[0]).not.toMatch(/next applied run/)
   })
 
-  it('tells the two separable causes APART on the line — the unauthored one is actionable', async () => {
+  // THE UNAUTHORED CORPUS IS BUILT FROM PRODUCIBLE SHAPES ONLY (390-30, produced-not-literal law).
+  // The leg this replaces spread `verdictClass: 'app_bug'` over `producer: 'deterministic-classifier'`
+  // — a pair NO deterministic producer can mint (`classifyRootCause` returns exactly
+  // `timeout | environment | flake | unknown`) and, worse, the class for which the sentence it pinned
+  // is FALSE. A corpus written as a literal of the type under test cannot fail; the compile-guard
+  // below is what keeps it that way. `cls` is typed `DeterministicRootCauseClass`, imported from the
+  // runner that declares it, so an `app_bug` fixture here stops COMPILING rather than passing
+  // vacuously. No `as` cast may bypass it — a cast reinstates exactly the defect.
+  //
+  // `flake` is producible by the type but unreachable on a FAILING member (a passing member carries
+  // no `failure` row, so no crossing can carry class `flake` AND the deterministic producer —
+  // detection.ts's own eligibility docstring), so the three legs below are the reachable arms.
+  function unauthoredSighting(cls: DeterministicRootCauseClass) {
+    return {
+      ...sighting,
+      fingerprint: `fp::${cls}`,
+      verdictClass: cls,
+      producer: 'deterministic-classifier' as const,
+    }
+  }
+
+  async function withheldLineFor(cls: DeterministicRootCauseClass): Promise<string> {
     const warn = vi.fn()
 
     await runCurationTail(baseOptions(
@@ -1911,16 +1935,7 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
         append: { kind: 'appended', lines: 0 },
         events: [],
         flagged: [],
-        // The SAME withheld shape on the floor's producer. 390-19 settled what this field does and
-        // does not tell an operator: it separates "never auto-quarantinable" from "would have been,
-        // had a verdict been authored or had the crossing carried a per-test same-build signature",
-        // and it does NOT separate the third cause (the run's per-run floor cap already spent).
-        // ALL THREE unauthored causes converge on ONE remedy that is true by execution (390-23 /
-        // CR-01): the NEXT applied run's fold re-evaluates this crossing and may admit it then —
-        // measured 2/2/2 across three consecutive folds for the capped case (round-4 verification).
-        // The line no longer needs a `may` hedge over a distinction it cannot make, because the
-        // remedy it now names does not depend on which of the three causes withheld the crossing.
-        escalatedNotQuarantined: [{ ...sighting, producer: 'deterministic-classifier' as const }],
+        escalatedNotQuarantined: [unauthoredSighting(cls)],
         refusedLines: [],
       }),
       { log: { warn, info: vi.fn() } },
@@ -1931,6 +1946,17 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
       .filter((message) => message.startsWith('Quarantine withheld for'))
     expect(withheld).toHaveLength(1)
     expect(withheld[0]).toContain('deterministic-classifier')
+    return withheld[0] as string
+  }
+
+  it('tells a FLOOR-ELIGIBLE unauthored class that the next applied run may admit it', async () => {
+    // `timeout` is floor-eligible (QUARANTINE_FLOOR_ELIGIBILITY) and auto-quarantinable
+    // (QUARANTINE_CLASS_DISPOSITIONS), so it was withheld only for want of the per-test same-build
+    // signature or because the per-run floor cap was spent — BOTH of which a later run can supply.
+    // For this class alone the next-applied-run remedy is TRUE, and it is true by execution:
+    // a capped identity IS admitted on a later evaluation, measured 2/2/2 across three consecutive
+    // folds (round-4 verification).
+    //
     // THE REMEDY, PINNED BY POSITIVE CONTENT (390-23 / CR-01). This arm used to name
     // an `analyze-run` invocation under the binary's name: a job kind enqueued programmatically at
     // post-run-tail.ts:425, absent from the top-level `program.addCommand` registry in cli.ts under
@@ -1941,8 +1967,36 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
     // nothing re-decides THIS crossing. Pinned as POSITIVE CONTENT rather than as a blanket ban on
     // command-shaped strings: a correct future fix naming a REAL verb must not red this leg, and
     // replacing the remedy sentence with any other string must.
-    expect(withheld[0]).toMatch(/next applied run/)
-    expect(withheld[0]).not.toMatch(/will not change the answer/)
+    const line = await withheldLineFor('timeout')
+    expect(line).toMatch(/next applied run/)
+    // Cross-arm negative twins: the other two arms' sentences belong to their own classes.
+    expect(line).not.toMatch(/never auto-quarantined/)
+    expect(line).not.toMatch(/requires an authored verdict/)
+    expect(line).not.toMatch(/will not change the answer/)
+  })
+
+  it('tells an AUTHORED-REQUIRED unauthored class that no later run substitutes for a verdict', async () => {
+    // `environment` IS auto-quarantinable but is `authored-required` — its evidence is a run-scoped
+    // health probe, so a same-build signature does not make it per-test and the floor arm refuses it
+    // FOREVER. Telling this operator "the next applied run may admit it then" promises relief no
+    // fold grants: the crossing needs an ANALYST, not another run.
+    const line = await withheldLineFor('environment')
+    expect(line).toMatch(/requires an authored verdict/)
+    expect(line).not.toMatch(/next applied run/)
+    expect(line).not.toMatch(/never auto-quarantined/)
+    expect(line).not.toMatch(/will not change the answer/)
+  })
+
+  it('tells an ESCALATE-ONLY unauthored class that no run admits it, ever', async () => {
+    // `unknown` is `classifyRootCause`'s TERMINAL arm — the dominant real-world shape on a project
+    // with no analysis budget — and its disposition is `escalate-only`: it is refused at the FIRST
+    // conjunct of `autoQuarantines`, before eligibility is even consulted. No number of applied runs
+    // and no authored verdict for this class changes that; the class itself is the refusal.
+    const line = await withheldLineFor('unknown')
+    expect(line).toMatch(/never auto-quarantined/)
+    expect(line).not.toMatch(/next applied run/)
+    expect(line).not.toMatch(/requires an authored verdict/)
+    expect(line).not.toMatch(/will not change the answer/)
   })
 
   it('warns on a blocked append and names the self-healing path — never a silent loss', async () => {

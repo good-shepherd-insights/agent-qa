@@ -15,8 +15,12 @@ import { join } from 'node:path'
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
 import {
   LOCAL_CURATION_CAPABILITIES,
+  QUARANTINE_CLASS_DISPOSITIONS,
+  QUARANTINE_FLOOR_ELIGIBILITY,
   type LocalCurationCapabilities,
   type OpenServingKnowledgeReaderConfig,
+  type QuarantineDisposition,
+  type QuarantineFloorEligibility,
 } from '@vostride/agent-qa-agent-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import {
@@ -366,6 +370,42 @@ export interface CurateCompletedRunReport {
 }
 
 /**
+ * The withheld line's remedy, as a function of the crossing's ADMISSIBILITY (390-30, round-5 gap 2).
+ *
+ * Branch order mirrors `autoQuarantines`' conjunct order exactly — disposition, then the authored
+ * arm, then eligibility — so the sentence an operator reads and the refusal the gate made are two
+ * renderings of one decision rather than two rules that can disagree. Each of the four sentences is
+ * TRUE for every (verdictClass, producer) pair that can reach it, which is the whole point: the
+ * shipped line branched on the producer alone and told every `deterministic-classifier` sighting
+ * that a later fold might admit it — false for `environment` (authored-required forever) and for
+ * `unknown` (escalate-only, and `classifyRootCause`'s terminal arm, so the dominant real-world
+ * case on a project with no analysis budget).
+ *
+ * The authored sentence is byte-unchanged from 390-23: it was never in question.
+ */
+function remedyFor(crossing: {
+  authored: boolean
+  disposition: QuarantineDisposition
+  floorEligibility: QuarantineFloorEligibility
+}): string {
+  if (crossing.authored) {
+    return 'a verdict was already authored for this run, so re-running analysis '
+      + 'will not change the answer.'
+  }
+  if (crossing.disposition === 'escalate-only') {
+    return 'this class is never auto-quarantined, so no later run and no authored '
+      + 'verdict admits this crossing - it escalates for a human.'
+  }
+  if (crossing.floorEligibility === 'authored-required') {
+    return 'auto-quarantine for this class requires an authored verdict rather than '
+      + 'another run - its evidence is run-scoped, so no fold admits it on the '
+      + 'deterministic floor\'s word.'
+  }
+  return 'no verdict was authored for this run - the next applied run\'s fold '
+    + 're-evaluates this crossing and may admit it then.'
+}
+
+/**
  * Render the fold's quarantine disposition (390 D-08, Pitfall 4).
  *
  * Silent unless there is something a human must know. Loud in three cases, each of which is a
@@ -414,19 +454,38 @@ function logQuarantineDisposition(
     // rather than paraphrasing it:
     //   `analyze-run`               — a verdict WAS authored and the class is still not
     //                                 auto-quarantinable. Re-running analysis will not change it.
-    //   `deterministic-classifier`  — the crossing was withheld for want of an authored verdict,
-    //                                 OR for want of a per-test same-build signature, OR because
-    //                                 the run's per-run floor cap was already spent (390-19's
-    //                                 third cause, which this field deliberately does not
-    //                                 distinguish and which no field was added to carry).
+    //   `deterministic-classifier`  — the crossing was withheld for one of FOUR causes, below.
     //
-    // ALL THREE UNAUTHORED CAUSES CONVERGE ON ONE HONEST REMEDY (390-23 / CR-01): the NEXT applied
-    // run's fold re-evaluates this crossing and may admit it THEN. That is the per-run floor cap's
-    // own vocabulary in `detection.ts` — "It crosses again on the next applied run and may be
-    // admitted THEN" — and it is true by execution: a capped/withheld identity IS admitted on a
-    // later evaluation, measured 2/2/2 across three consecutive folds (round-4 verification).
-    // Because the remedy does not depend on WHICH of the three withheld the crossing, the line
-    // stays actionable without claiming a distinction it cannot make.
+    // THE UNAUTHORED SIDE HAS FOUR CAUSES, NOT THREE, AND THEY DO NOT SHARE ONE REMEDY (390-30,
+    // round-5 gap 2). The earlier enumeration here named three and concluded that all of them
+    // converge on the next-applied-run remedy. The cause it omitted is the one that breaks the
+    // convergence: the gate can refuse the CLASS OUTRIGHT, and no run supplies a class. Read the
+    // four against `autoQuarantines`' own conjunct order (`detection.ts`), which this branch mirrors:
+    //   (1) DISPOSITION REFUSAL — QUARANTINE_CLASS_DISPOSITIONS says `escalate-only`. Refused at the
+    //       FIRST conjunct, before eligibility is consulted. NO later run and no authored verdict
+    //       admits it; the class itself is the refusal. `unknown` — `classifyRootCause`'s terminal
+    //       arm, and so the dominant shape on a project with no analysis budget — lives here.
+    //   (2) ELIGIBILITY REFUSAL — the class may auto-quarantine, but QUARANTINE_FLOOR_ELIGIBILITY
+    //       says `authored-required`: its evidence is run-scoped (a health probe), so a same-build
+    //       signature never makes it per-test and the floor arm refuses it FOREVER. It needs an
+    //       ANALYST, not another run. `environment` lives here.
+    //   (3) MISSING SIGNATURE — floor-eligible class, but this crossing carries no per-test
+    //       same-build pass∧fail.
+    //   (4) SPENT CAP — floor-eligible class WITH the signature, but the run's per-run floor cap was
+    //       already spent (390-19's third cause).
+    // ONLY (3) AND (4) SHARE THE NEXT-APPLIED-RUN REMEDY: the NEXT applied run's fold re-evaluates
+    // this crossing and may admit it THEN. That is the per-run floor cap's own vocabulary in
+    // `detection.ts` — "It crosses again on the next applied run and may be admitted THEN" — and it
+    // is true by execution: a capped/withheld identity IS admitted on a later evaluation, measured
+    // 2/2/2 across three consecutive folds (round-4 verification). The sighting still cannot tell (3)
+    // from (4), and no field was added to carry the distinction — 390-19's residual, unchanged,
+    // D-05 posture. It does not have to: they have the SAME remedy, which is why the line collapses
+    // exactly those two and no others.
+    //
+    // The remedy is therefore branched on ADMISSIBILITY, read from the same two total tables the
+    // gate refuses on rather than from the producer alone. Reading the line's promise and the gate's
+    // refusal out of ONE vocabulary is what stops them drifting apart per class — a promise of
+    // admission a fold will never grant sends a human to wait for relief that cannot come.
     //
     // AND THIS RUN IS SETTLED — which is why no re-run of anything is named here. The arm used to
     // tell the operator to run a command, and that was false three separately checkable ways:
@@ -438,19 +497,20 @@ function logQuarantineDisposition(
     //   (3) IDEMPOTENCY (D-08) — `applyRunOutcomes` answers
     //       `{ kind: 'not-evaluated', reason: 'already-applied' }` (run-outcomes.ts:424, :792), so
     //       a refold of an applied run re-decides no crossing, whatever ran in between.
-    // Relief therefore begins at the NEXT applied run, and the sentence below says exactly that.
-    // No CLI invocation belongs in this block; the remedy here is temporal, not imperative.
+    // Those three falsifications are why no CLI invocation appears on ANY arm below, and they hold
+    // for all four: none of the sentences names a command, because none of the remedies is one. Note
+    // what 390-30 changes and what it does not — the remedy is still TEMPORAL rather than imperative
+    // on causes (3) and (4), and on causes (1) and (2) it is not temporal EITHER, which is precisely
+    // the correction: for those two, relief does not begin at a later run at all.
     const authored = sighting.producer === 'analyze-run'
+    const disposition = QUARANTINE_CLASS_DISPOSITIONS[sighting.verdictClass]
+    const floorEligibility = QUARANTINE_FLOOR_ELIGIBILITY[sighting.verdictClass]
     log.warn(
       `Quarantine withheld for ${sighting.testName} (${sighting.filePath}): `
       + `${sighting.verdictClass} recurred at ${String(sighting.occurrenceOrdinals)} of the last `
       + `${String(sighting.windowOrdinals)} failing builds and will keep failing this build. `
       + `Verdict producer: ${sighting.producer} — `
-      + (authored
-        ? 'a verdict was already authored for this run, so re-running analysis '
-          + 'will not change the answer.'
-        : 'no verdict was authored for this run - the next applied run\'s fold '
-          + 're-evaluates this crossing and may admit it then.'),
+      + remedyFor({ authored, disposition, floorEligibility }),
     )
   }
   if (outcome.append.kind === 'egress-blocked') {

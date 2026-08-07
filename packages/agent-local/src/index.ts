@@ -93,6 +93,31 @@ export type { ConstructKnowledgeReaderInput } from './composition/knowledge-read
 export { resolveRunQuarantineSnapshot } from './composition/quarantine-snapshot.js'
 export type { RunQuarantineSnapshotInput } from './composition/quarantine-snapshot.js'
 
+// 390-30: the quarantine gate's TWO TOTAL TABLES, re-exported verbatim from the package that
+// declares them. The CLI's withheld-line render must branch its remedy on ADMISSIBILITY — an
+// escalate-only class is told no run admits it, an authored-required class is told it needs an
+// analyst, and only the floor-eligible classes are told the next applied run may admit them. That
+// render and `autoQuarantines` must read one vocabulary or the line's promise and the gate's
+// refusal drift apart per class, which is exactly how the shipped line came to promise relief no
+// fold grants.
+//
+// THROUGH THIS BARREL AND NOT DIRECTLY, on three measured refusals (390-30). A surface naming
+// `@vostride/agent-qa-knowledge-local` fails validate:arch three separate ways: 387 D-20 removed it
+// from the CLI's dependency contract ("unexpected internal dep"), the reader carve-out admits only
+// the `/reader` subpath without a writer allowlist, and the FUNC-02 surface firewall ledger only
+// ever SHRINKS — new surface code is fixed, never waived. The composition root is the sanctioned
+// way a host acquires what a private package holds, so these travel here. They are frozen constant
+// tables, not powers: no store, no writer, no new reach. The hop's own reasoning — including why it
+// holds to `/reader` rather than spending SC5's single main-entry importer — lives on the module.
+export {
+  QUARANTINE_CLASS_DISPOSITIONS,
+  QUARANTINE_FLOOR_ELIGIBILITY,
+} from './composition/quarantine-vocabulary.js'
+export type {
+  QuarantineDisposition,
+  QuarantineFloorEligibility,
+} from './composition/quarantine-vocabulary.js'
+
 // 2026-07-29 (Phase 385 plan 09, D-15): the one local composition root. `composeLocalAgent` is
 // what a host calls instead of wiring a registry of its own, so it is published for the same
 // reason the run composition is: a host that cannot reach it re-derives it.
