@@ -161,6 +161,36 @@ export const KnowledgeForgetInputSchema = z.object({
 
 export type KnowledgeForgetInput = z.infer<typeof KnowledgeForgetInputSchema>
 
+/**
+ * What a PROPOSE op takes on top of the verb it proposes: the run the caller is serving (391-07).
+ *
+ * Run identity is a fact about the CALL, not about the verb — which is why it lives on the op's
+ * input rather than on {@link KnowledgeForgetInput} and friends beneath it, and why the port
+ * takes it as a second parameter rather than as a field on the request union. The verb answers
+ * "what would change"; the run answers "who asked, on whose behalf", and only a run-scoped caller
+ * knows it. A composition-bound alternative would have named the wrong noun: a composition is a
+ * HOST — a daemon serves many runs over its lifetime and a CLI one-shot is no run at all — so
+ * binding identity there would attribute proposals to a process.
+ *
+ * OPTIONAL, and its absence is a true statement rather than a gap: a proposal minted by a
+ * directly invoked CLI verb belongs to no run, and inventing one so the field could be required
+ * is the fabricated attribution the origin vocabulary refuses elsewhere.
+ *
+ * DISPLAY AND GROUPING ONLY (T-391-20). Nothing authorizes on this value: the gate never reads
+ * `origin.runId`, and no scope, grant or protected-class decision consumes it. A caller that
+ * misstates its run can mislead a digest reader and gains no capability, which is why it is
+ * accepted from the input rather than derived from a trusted source.
+ */
+const PROPOSE_RUN_ATTRIBUTION = { runId: z.string().min(1).optional() }
+
+/** {@link KnowledgeForgetInputSchema} as the forget-propose OP takes it. */
+export const KnowledgeForgetProposeInputSchema = z.object({
+  ...KnowledgeForgetInputSchema.shape,
+  ...PROPOSE_RUN_ATTRIBUTION,
+}).strict()
+
+export type KnowledgeForgetProposeInput = z.infer<typeof KnowledgeForgetProposeInputSchema>
+
 /** Apply a proposal by id — the second half of the two-step (D-17). */
 export const KnowledgeProposalApplyInputSchema = z.object({
   proposalId: ProposalIdSchema,
