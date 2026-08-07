@@ -137,6 +137,7 @@ export {
   BriefWhyResultSchema,
   KNOWLEDGE_APPLY_OUTCOMES,
   KnowledgeAcceptInputSchema,
+  KnowledgeAcceptProposeInputSchema,
   KnowledgeApplyOutcomeSchema,
   KnowledgeProposeOutcomeSchema,
   KnowledgeForgetInputSchema,
@@ -150,6 +151,7 @@ export {
   KnowledgeRecordsInspectInputSchema,
   KnowledgeRecordsInspectOutputSchema,
   KnowledgeRejectInputSchema,
+  KnowledgeRejectProposeInputSchema,
 } from './review-verbs'
 export type {
   BriefWhyInput,
@@ -157,6 +159,7 @@ export type {
   BriefWhyResult,
   BriefWhyResultKind,
   KnowledgeAcceptInput,
+  KnowledgeAcceptProposeInput,
   KnowledgeApplyOutcomeDto,
   KnowledgeApplyOutcomeKind,
   KnowledgeProposeOutcomeDto,
@@ -171,4 +174,5 @@ export type {
   KnowledgeRecordsInspectInput,
   KnowledgeRecordsInspectOutput,
   KnowledgeRejectInput,
+  KnowledgeRejectProposeInput,
 } from './review-verbs'

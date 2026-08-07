@@ -17,34 +17,48 @@
 // requires one: a verb that admitted an empty reason would be inventing a justification for a
 // human decision.
 
-import { KnowledgeRejectInputSchema, KnowledgeProposeOutcomeSchema } from '@vostride/agent-qa-schema'
-import type { KnowledgeRejectInput, KnowledgeProposeOutcomeDto } from '@vostride/agent-qa-schema'
+import {
+  KnowledgeRejectProposeInputSchema,
+  KnowledgeProposeOutcomeSchema,
+} from '@vostride/agent-qa-schema'
+import type {
+  KnowledgeRejectProposeInput,
+  KnowledgeProposeOutcomeDto,
+} from '@vostride/agent-qa-schema'
 
 import type { FunctionSpec } from '../spec.js'
 import { KNOWLEDGE_REJECT_PROPOSE_FUNCTION_ID } from './knowledge-review-ids.js'
 
 export { KNOWLEDGE_REJECT_PROPOSE_FUNCTION_ID } from './knowledge-review-ids.js'
 
-export const knowledgeRejectProposeSpec: FunctionSpec<KnowledgeRejectInput, KnowledgeProposeOutcomeDto> = {
+export const knowledgeRejectProposeSpec: FunctionSpec<KnowledgeRejectProposeInput, KnowledgeProposeOutcomeDto> = {
   id: KNOWLEDGE_REJECT_PROPOSE_FUNCTION_ID,
   summary: 'Compute what rejecting a knowledge candidate would change, committing nothing.',
   requiredScopes: ['knowledge-write'],
   resultKind: 'unary',
-  input: KnowledgeRejectInputSchema,
+  input: KnowledgeRejectProposeInputSchema,
   output: KnowledgeProposeOutcomeSchema,
   boundThrough: 'knowledgeReview',
   risk: { name: `fn:${KNOWLEDGE_REJECT_PROPOSE_FUNCTION_ID}`, recognized: true, readOnly: false },
-  invoke(input, deps) {
+  invoke({ runId, ...input }, deps) {
     // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a refusal at
     // the gate, so dispatch is only reached in a composition that supplied one. The two answers
     // come from the SAME `deps` record `resolveBindingStatus` reads, so they cannot disagree.
     // 391 D-15: the mint carries THIS op's id into the envelope, so the inbox can say where
-    // the proposal came from and the digest can group by it. The id literal is the one in
-    // `knowledge-review-ids.ts` — never re-spelled here, where a typo would be attribution
-    // nothing could resolve.
+    // the proposal came from. The id literal is the one in `knowledge-review-ids.ts` — never
+    // re-spelled here, where a typo would be attribution nothing could resolve.
+    // 391-07: `runId` is destructured OFF the input and travels in the origin instead, because
+    // the run is a fact about the call rather than about the verb — the verb input below stays
+    // exactly what `knowledge.proposal.apply` will replay. It is what the per-run digest groups
+    // by; `emittedBy` distinguishes the job types WITHIN a run and groups nothing.
     return deps.knowledgeReview!.propose(
       { verb: 'reject', input },
-      { emittedBy: KNOWLEDGE_REJECT_PROPOSE_FUNCTION_ID },
+      {
+        emittedBy: KNOWLEDGE_REJECT_PROPOSE_FUNCTION_ID,
+        // Spread rather than `runId` outright: an explicitly present `undefined` is a different
+        // value from an absent key to `.strict()` schemas and to key-set comparisons downstream.
+        ...(runId === undefined ? {} : { runId }),
+      },
     )
   },
 }

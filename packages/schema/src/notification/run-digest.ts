@@ -138,6 +138,16 @@ export interface RunDigest {
   proposalsMintedThisRun: RunDigestProposalRow[]
   /** Across the WHOLE store, not just this run: what is waiting on a human right now. */
   pendingProposalCount: number
+  /**
+   * Whether an empty {@link proposalsMintedThisRun} is a MEASUREMENT or an absence of data.
+   *
+   * True when the store is empty (nothing was minted, which is measurable and true) or when at
+   * least one entry carries run attribution (so the filter had a populated key to range over).
+   * False means no entry in a NON-EMPTY store carries a run, and the digest therefore cannot
+   * tell "this run minted nothing" apart from "nobody wrote down which run minted these" — so
+   * the rendered line says exactly that instead of the affirmative negative (T-391-21).
+   */
+  runAttributionAvailable: boolean
   candidates: RunDigestCandidateReport
   quarantine: RunDigestQuarantineReport
   lines: string[]
@@ -185,6 +195,7 @@ export const RunDigestSchema = z.object({
   chain: RunDigestChainOutcomesSchema,
   proposalsMintedThisRun: z.array(RunDigestProposalRowSchema),
   pendingProposalCount: z.number().int().nonnegative(),
+  runAttributionAvailable: z.boolean(),
   candidates: RunDigestCandidateReportSchema,
   quarantine: RunDigestQuarantineReportSchema,
   lines: z.array(z.string()),

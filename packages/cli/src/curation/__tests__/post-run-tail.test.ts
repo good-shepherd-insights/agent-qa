@@ -158,6 +158,9 @@ function digestOutput(analysis: AnalysisGetOutput = analysisOutput()): RunDigest
     chain: { analysis: 'done', curation: 'pending', issues: 'reserved' },
     proposalsMintedThisRun: [],
     pendingProposalCount: 2,
+    // The op computes this; a fixture that carried `false` here would be pinning the tail's
+    // print against the attribution-unavailable wording, which is a different claim.
+    runAttributionAvailable: true,
     candidates: { curated: 0, deprecated: 0 },
     quarantine: { quarantined: 0, expired: 0, refs: [] },
     lines: [

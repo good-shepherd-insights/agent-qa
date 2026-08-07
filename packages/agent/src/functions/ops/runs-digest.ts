@@ -113,7 +113,14 @@ function proposalRow(envelope: ProposalEnvelope): RunDigestProposalRow {
     id: envelope.id,
     shortId: envelope.id.slice(0, SHORT_ID_LENGTH),
     summaryLine: summaryLineFor(envelope.payload),
-    requiredDecision: REQUIRED_DECISION[envelope.kind],
+    // WR-05: only a PENDING proposal is owed a decision. An applied, rejected or expired one is
+    // listed because it is part of what this run produced, and asking a person to accept or
+    // reject something already decided is an instruction they cannot carry out — so the slot
+    // carries what BECAME of it instead. Every lifecycle member is a legal value here because
+    // `RunDigestProposalRowSchema.requiredDecision` is a non-empty string rather than an enum.
+    requiredDecision: envelope.status === 'pending'
+      ? REQUIRED_DECISION[envelope.kind]
+      : envelope.status,
   }
 }
 
@@ -154,7 +161,13 @@ function renderDigestLines(digest: Omit<RunDigest, 'lines'>): string[] {
   const minted = digest.proposalsMintedThisRun
   const pending = `${digest.pendingProposalCount} pending overall`
   if (minted.length === 0) {
-    lines.push(`proposals — none minted this run${DIGEST_SEPARATOR}${pending}`)
+    // An empty list has TWO causes and they are not the same statement. "None minted this run"
+    // is a measurement, and it is only available when something in the store carries a run to
+    // range over; otherwise the digest would be asserting a negative about a key nothing
+    // populated, one separator away from a pending count that contradicts it (T-391-21).
+    lines.push(digest.runAttributionAvailable
+      ? `proposals — none minted this run${DIGEST_SEPARATOR}${pending}`
+      : `proposals — run attribution unavailable${DIGEST_SEPARATOR}${pending}`)
   } else {
     lines.push(
       `proposals — ${minted.length} minted this run${DIGEST_SEPARATOR}${pending}:`,
@@ -250,6 +263,11 @@ export const runsDigestSpec: FunctionSpec<RunsDigestInput, RunDigest> = {
       },
       proposalsMintedThisRun: mintedThisRun.map((entry) => proposalRow(entry.envelope)),
       pendingProposalCount,
+      // Computed over the SAME `entries` the filter above ranged over, not re-queried: the two
+      // answers are about one read of one store, so a digest cannot report an empty batch and an
+      // availability verdict taken a moment apart.
+      runAttributionAvailable: entries.length === 0
+        || entries.some((entry) => entry.envelope.origin?.runId !== undefined),
       candidates: {
         // Absent counts read as zero HERE and only here: the row omits them when curation never
         // committed a bundle (388 D-11), and a digest section is a place a person reads a

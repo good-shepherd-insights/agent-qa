@@ -191,6 +191,22 @@ export const KnowledgeForgetProposeInputSchema = z.object({
 
 export type KnowledgeForgetProposeInput = z.infer<typeof KnowledgeForgetProposeInputSchema>
 
+/** {@link KnowledgeAcceptInputSchema} as the accept-propose OP takes it. */
+export const KnowledgeAcceptProposeInputSchema = z.object({
+  ...KnowledgeAcceptInputSchema.shape,
+  ...PROPOSE_RUN_ATTRIBUTION,
+}).strict()
+
+export type KnowledgeAcceptProposeInput = z.infer<typeof KnowledgeAcceptProposeInputSchema>
+
+/** {@link KnowledgeRejectInputSchema} as the reject-propose OP takes it. */
+export const KnowledgeRejectProposeInputSchema = z.object({
+  ...KnowledgeRejectInputSchema.shape,
+  ...PROPOSE_RUN_ATTRIBUTION,
+}).strict()
+
+export type KnowledgeRejectProposeInput = z.infer<typeof KnowledgeRejectProposeInputSchema>
+
 /** Apply a proposal by id — the second half of the two-step (D-17). */
 export const KnowledgeProposalApplyInputSchema = z.object({
   proposalId: ProposalIdSchema,
