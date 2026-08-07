@@ -148,6 +148,13 @@ export const KNOWLEDGE_GITIGNORE_PROBES = [
     expected: 'ignored',
     requiredRule: DURABLE_TEMPORARY_GITIGNORE_RULE,
   },
+  // 391 D-11: the committed standing-grant ledger. Registered as a `visible` probe rather than
+  // merely left unmatched by the ignore rules, because the two are different guarantees: unmatched
+  // is what the DEFAULT rules do, while this refuses an operator's CUSTOM ignore file that hides
+  // it. A hidden grants ledger is the one failure that makes the whole artifact pointless — the
+  // reason grants are committed at all is that a pull request shows every widening of agent
+  // autonomy, and an ignored file shows nothing while continuing to authorize.
+  { path: 'grants.jsonl', expected: 'visible' },
   { path: 'memory/example/bundles/fact-example/record.md', expected: 'visible' },
   { path: 'memory/example/bundles/fact-example/manifest.json', expected: 'visible' },
   {

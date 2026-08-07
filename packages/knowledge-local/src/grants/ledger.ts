@@ -6,7 +6,10 @@
 // ignore rules — memory/index, memory/queue, the lease and epoch markers, **/artifacts,
 // skills/.staging, the init temporary — matches this filename, so it is committed by default. That
 // is pinned by a probe in the CLI suite against the .gitignore `agent-qa init` actually emits,
-// rather than asserted here against a copy of the rules.
+// rather than asserted here against a copy of the rules. It is ALSO a `visible` entry in the init
+// verifier's own knowledge probe table, which is a second and different guarantee: unmatched is
+// what the default rules do, while the probe refuses an operator's CUSTOM ignore file that hides
+// the ledger — the failure that would leave approvals authorizing while showing a reviewer nothing.
 //
 // READ POSTURE — refusal as data, never healing to absence. This file is COMMITTED TRUTH that
 // humans may hand-edit, and healing a malformed line to absent could silently drop a REVOKE, which
