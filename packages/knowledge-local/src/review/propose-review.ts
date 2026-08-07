@@ -70,6 +70,19 @@ export interface ProposeReviewInput {
   readonly resolveBundleShortId?: ResolveBundleShortId
   readonly now?: () => number
   readonly randomUuid?: () => string
+  /**
+   * WHO is emitting this proposal (391 D-08) — the function-op id, and the run when there is one.
+   *
+   * OPTIONAL, and the `at` field is deliberately NOT on it: this function already stamps
+   * `proposedAt`, and a caller that could supply a second instant could make the envelope's
+   * attribution disagree with the proposal's own timestamp about when the same act happened.
+   * Absent means the mint writes the bare 387 document, which is what every direct caller of
+   * this module did before the function layer had an id to name.
+   */
+  readonly origin?: {
+    readonly emittedBy: string
+    readonly runId?: string
+  }
 }
 
 /**
@@ -218,6 +231,7 @@ export function proposeReview(input: ProposeReviewInput): ProposeReviewOutcome {
   if (resolved === undefined) return { kind: 'target-not-found', target }
 
   const proposalId = mintProposalId(input.randomUuid ?? randomUUID)
+  const proposedAt = (input.now ?? Date.now)()
   const proposal: KnowledgeProposalV1 = {
     schemaVersion: 1,
     proposalId,
@@ -225,10 +239,16 @@ export function proposeReview(input: ProposeReviewInput): ProposeReviewOutcome {
     targetRef: target,
     deltas: deltasFor(input.request, resolved, proposalId),
     ...(input.request.verb === 'forget' ? { receiptPreview: forgetPreview(resolved) } : {}),
-    proposedAt: (input.now ?? Date.now)(),
+    proposedAt,
     status: 'pending',
   }
 
-  writePendingProposal(input.agentQaRoot, proposal)
+  // The envelope's `at` IS the proposal's `proposedAt`, read off the same value rather than
+  // sampled a second time: two clock reads for one act is two answers to when it happened.
+  writePendingProposal(
+    input.agentQaRoot,
+    proposal,
+    input.origin === undefined ? undefined : { ...input.origin, at: proposedAt },
+  )
   return { kind: 'proposed', proposal }
 }

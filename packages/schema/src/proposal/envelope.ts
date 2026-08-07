@@ -212,7 +212,18 @@ export interface ProposalEnvelope {
   kind: ProposalKind
   /** Computed by {@link computeProposalEnvelopeStatus}, never read off a file. */
   status: ProposalEnvelopeStatus
-  origin: ProposalOrigin
+  /**
+   * OPTIONAL, and the absence is a true statement rather than a gap (391 plan 03).
+   *
+   * The durable {@link ProposalRecordSchema} requires an origin, so every proposal minted through
+   * the envelope carries one. But 387 shipped a store whose files are bare
+   * `KnowledgeProposalV1` documents with no attribution field at all, and D-08 absorbs those as
+   * data — unmigrated, byte-untouched. An inbox listing one of them has nobody to name, and the
+   * two ways to make this field required are both worse than saying so: fabricating an emitter
+   * from the proposal's verb is exactly the invented attribution `runId`'s own note refuses one
+   * paragraph above, and refusing to list the file would hide a real pending decision.
+   */
+  origin?: ProposalOrigin
   /** What to go and look at before deciding. Empty is allowed and means exactly that. */
   evidenceRefs: readonly ProposalEvidenceRef[]
   /** Present exactly when somebody decided. Absent for `pending` and for `expired`. */

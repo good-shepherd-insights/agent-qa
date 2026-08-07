@@ -683,6 +683,7 @@ export {
   // else is applying this right now" and "no such proposal" call for different words to a
   // person, and a surface that could only catch `Error` would have to guess from a message.
   ProposalApplyInFlightError,
+  ProposalRejectedError,
   ProposalTargetVanishedError,
   applyReview,
 } from './review/apply-review.js'
@@ -695,12 +696,25 @@ export type {
 export {
   PROPOSALS_DIR_NAME,
   ProposalNotFoundError,
+  extractStoredProposal,
+  isProcessAlive,
+  listProposalEnvelopes,
   proposalsDir,
   readAppliedProposal,
   readPendingProposal,
   readProposal,
+  readRejectedProposal,
+  rejectPendingProposal,
+  showProposalEnvelope,
 } from './review/proposals-store.js'
-export type { AppliedProposalRecord } from './review/proposals-store.js'
+export type {
+  AppliedProposalRecord,
+  ProposalInboxEntry,
+  ProposalInboxReadOptions,
+  RejectProposalOutcome,
+  RejectedProposalRecord,
+  StoredProposal,
+} from './review/proposals-store.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'
 export type { KnowledgeMaintenanceScanIssue } from './maintenance-scan.js'
 export {

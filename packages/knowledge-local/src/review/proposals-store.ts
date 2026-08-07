@@ -24,17 +24,60 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 
 import { join } from 'node:path'
 
 import {
+  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
   KnowledgeProposalV1Schema,
   ForgetReceiptV1Schema,
+  ProposalDecisionRecordSchema,
   ProposalIdSchema,
+  ProposalOriginSchema,
+  ProposalRecordSchema,
+  computeProposalEnvelopeStatus,
 } from '@vostride/agent-qa-schema'
-import type { ForgetReceiptV1, KnowledgeProposalV1 } from '@vostride/agent-qa-schema'
+import type {
+  ForgetReceiptV1,
+  KnowledgeProposalV1,
+  ProposalDecisionRecord,
+  ProposalDurableState,
+  ProposalEnvelope,
+  ProposalEvidenceRef,
+  ProposalOrigin,
+} from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import { durableRename, fsyncDirectory, fsyncFile } from '../durable-fs.js'
 
 /** The one directory name proposals live under, beneath the agent-qa runtime root. */
 export const PROPOSALS_DIR_NAME = 'proposals'
+
+/**
+ * THE FIVE DURABLE NAME SHAPES, spelled once (Phase 391, D-10).
+ *
+ * 387 wrote four of them and left enumeration owner-less on purpose ("391 is the owner; this
+ * module is the substrate"). 391 adds the fifth — the `.rejected.json` sibling of the `.applied`
+ * idiom — and, because it now has to CLASSIFY every name in the directory rather than look one
+ * up, the suffixes stop being string literals scattered across four functions and become this
+ * table. A classifier and a writer that spell a shape differently is how an inbox starts
+ * reporting a file nobody can decide about.
+ *
+ *   `<id>.json`                  pending, awaiting a decision
+ *   `<id>.applied.json`          applied — the winner's record plus what applying produced
+ *   `<id>.rejected.json`         rejected — the proposal plus the decision that declined it
+ *   `<id>.json.claimed.<pid>`    somebody is mid-apply (or died mid-apply: the WR-03 reap)
+ *   `<id>.applied.json.claim`    a RETIRED marker; its durable name is already on disk
+ *   `<id>.rejected.json.claim`   the same, on the rejection path
+ *
+ * The claim infix keeps the collision-safety argument stated at `findClaimMarker`: it starts
+ * `<id>.json.` so a proposal id of `p1` cannot match `p12`'s claim, and the rejected sibling
+ * added here does not begin with it either — `<id>.rejected.json` shares no prefix with
+ * `<id>.json.claimed.`, so nothing about that argument moves.
+ */
+const PENDING_SUFFIX = '.json'
+const APPLIED_SUFFIX = '.applied.json'
+const REJECTED_SUFFIX = '.rejected.json'
+const CLAIM_INFIX = '.json.claimed.'
+const RETIRED_CLAIM_SUFFIX = '.claim'
+/** `writeFileAtomically`'s in-flight sibling. Never a proposal; never enumerated. */
+const TEMP_SUFFIX = '.tmp'
 
 /**
  * The applied file carries the proposal AND what applying it produced.
@@ -46,9 +89,47 @@ export const PROPOSALS_DIR_NAME = 'proposals'
 export const AppliedProposalRecordSchema = z.object({
   proposal: KnowledgeProposalV1Schema,
   forgetReceipt: ForgetReceiptV1Schema.optional(),
+  /**
+   * 391: the mint's attribution, CARRIED ACROSS the apply rather than dropped at it.
+   *
+   * The pending file holds it and the applied file is what replaces the pending file, so
+   * without this field an apply would erase who proposed the thing it applied — and the inbox
+   * would answer "nobody knows" about a proposal it could have answered about ten seconds
+   * earlier. Optional because a 387-era applied record genuinely has none.
+   */
+  origin: ProposalOriginSchema.optional(),
+  /**
+   * 391 D-12: when the apply happened. Optional for the same reason — 387-era applied records
+   * carry no instant, and a fabricated one is worse than an absent one on a decision trail.
+   */
+  decision: ProposalDecisionRecordSchema.optional(),
 }).strict()
 
 export type AppliedProposalRecord = z.infer<typeof AppliedProposalRecordSchema>
+
+/**
+ * The rejected record: the proposal, and the decision that declined it (391, D-10 / D-12).
+ *
+ * Deliberately the SAME wrapper shape as {@link AppliedProposalRecordSchema} — a proposal plus
+ * what the decision produced — because they are the same kind of thing: the durable, permanent
+ * answer to "what became of this proposal", read back by whoever asks next instead of recomputed.
+ *
+ * `decision` is the SHIPPED `ProposalDecisionRecordSchema` narrowed to its rejected arm, not a
+ * restatement of its fields. The narrowing is the honest part: a `.rejected.json` file whose
+ * decision says `applied` is a corrupt file, and the boundary that reads it should say so rather
+ * than pass it through to a surface that renders "applied" off a rejection.
+ *
+ * NOTHING IS DELETED HERE. The proposal rides inside the wrapper because 387's retention law is
+ * what gives a forget receipt its second life (D-04), and a rejection that dropped the proposal
+ * would be the one lifecycle transition that loses data.
+ */
+export const RejectedProposalRecordSchema = z.object({
+  proposal: KnowledgeProposalV1Schema,
+  decision: ProposalDecisionRecordSchema.extend({ decision: z.literal('rejected') }),
+  origin: ProposalOriginSchema.optional(),
+}).strict()
+
+export type RejectedProposalRecord = z.infer<typeof RejectedProposalRecordSchema>
 
 /** Thrown when a proposal id names nothing this store has ever written. */
 export class ProposalNotFoundError extends Error {
@@ -67,7 +148,45 @@ function pendingPath(agentQaRoot: string, proposalId: string): string {
 }
 
 function appliedPath(agentQaRoot: string, proposalId: string): string {
-  return join(proposalsDir(agentQaRoot), `${proposalId}.applied.json`)
+  return join(proposalsDir(agentQaRoot), `${proposalId}${APPLIED_SUFFIX}`)
+}
+
+function rejectedPath(agentQaRoot: string, proposalId: string): string {
+  return join(proposalsDir(agentQaRoot), `${proposalId}${REJECTED_SUFFIX}`)
+}
+
+/**
+ * A proposal as it was STORED: the payload, and the attribution if the file carried any.
+ *
+ * Two on-disk shapes reach this type and both are legitimate. 387 wrote a bare
+ * `KnowledgeProposalV1` document; 391 writes the envelope's `ProposalRecord` around it when the
+ * mint knows who emitted it. `origin` absent means the file is one of the former — a fact about
+ * the file, never a value this module invents.
+ */
+export interface StoredProposal {
+  readonly payload: KnowledgeProposalV1
+  readonly origin?: ProposalOrigin
+}
+
+/**
+ * THE ONE PLACE either on-disk shape becomes a proposal (D-08, absorb-as-data).
+ *
+ * A migration was the obvious alternative and it is the wrong one twice over: rewriting files
+ * this store's whole contract says are retained forever is a destructive answer to a
+ * non-problem, and it would have to run somewhere — at read, where it turns a listing into a
+ * write, or at startup, where a crash halfway leaves a directory in two formats anyway. Reading
+ * both shapes costs one discriminant and leaves 387-era files byte-identical for good.
+ *
+ * The discriminant is `payload`, which is the wrapper's own field and cannot appear on a bare
+ * `KnowledgeProposalV1` — that schema is `.strict()`, so a document carrying one would have been
+ * refused at the boundary that wrote it.
+ */
+export function extractStoredProposal(raw: unknown): StoredProposal {
+  if (typeof raw === 'object' && raw !== null && 'payload' in raw) {
+    const record = ProposalRecordSchema.parse(raw)
+    return { payload: record.payload, origin: record.origin }
+  }
+  return { payload: KnowledgeProposalV1Schema.parse(raw) }
 }
 
 function readJsonIfPresent(path: string): unknown | undefined {
@@ -103,6 +222,14 @@ function writeFileAtomically(path: string, contents: string): void {
 export function writePendingProposal(
   agentQaRoot: string,
   proposal: KnowledgeProposalV1,
+  /**
+   * Who emitted this proposal (391 D-08). OPTIONAL, and the optionality is the whole
+   * no-fabrication rule rather than a convenience: supplying it makes this mint write the
+   * envelope's `ProposalRecord` wrapper, and omitting it writes the bare 387 document, because
+   * `ProposalOriginSchema` requires an `emittedBy` and there is no honest value for a caller
+   * that does not know one. A default would have put a guess on every proposal in the store.
+   */
+  origin?: ProposalOrigin,
 ): void {
   const directory = proposalsDir(agentQaRoot)
   mkdirSync(directory, { recursive: true })
@@ -112,9 +239,18 @@ export function writePendingProposal(
   // refinement — and kept because the redundancy is a fact about a neighbouring schema rather
   // than about this module. The id becomes a path on the line below either way.
   ProposalIdSchema.parse(validated.proposalId)
+  const document = origin === undefined
+    ? validated
+    : ProposalRecordSchema.parse({
+        schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+        id: validated.proposalId,
+        kind: 'knowledge',
+        origin,
+        payload: validated,
+      })
   writeFileAtomically(
     pendingPath(agentQaRoot, validated.proposalId),
-    `${JSON.stringify(validated, undefined, 2)}\n`,
+    `${JSON.stringify(document, undefined, 2)}\n`,
   )
   fsyncDirectory(directory)
 }
@@ -124,9 +260,27 @@ export function readPendingProposal(
   agentQaRoot: string,
   proposalId: string,
 ): KnowledgeProposalV1 | undefined {
+  return readPendingStoredProposal(agentQaRoot, proposalId)?.payload
+}
+
+/** As {@link readPendingProposal}, keeping the attribution the file carried. */
+export function readPendingStoredProposal(
+  agentQaRoot: string,
+  proposalId: string,
+): StoredProposal | undefined {
   const raw = readJsonIfPresent(pendingPath(agentQaRoot, proposalId))
   if (raw === undefined) return undefined
-  return KnowledgeProposalV1Schema.parse(raw)
+  return extractStoredProposal(raw)
+}
+
+/** The rejected record under this id, or `undefined` if this proposal was not rejected. */
+export function readRejectedProposal(
+  agentQaRoot: string,
+  proposalId: string,
+): RejectedProposalRecord | undefined {
+  const raw = readJsonIfPresent(rejectedPath(agentQaRoot, proposalId))
+  if (raw === undefined) return undefined
+  return RejectedProposalRecordSchema.parse(raw)
 }
 
 /** The applied record under this id, or `undefined` if this proposal has not been applied. */
@@ -146,11 +300,23 @@ export function readProposal(
 ): KnowledgeProposalV1 | undefined {
   return readPendingProposal(agentQaRoot, proposalId)
     ?? readAppliedProposal(agentQaRoot, proposalId)?.proposal
+    ?? readRejectedProposal(agentQaRoot, proposalId)?.proposal
 }
 
 export type ConsumeProposalOutcome =
-  | { kind: 'consumed'; proposal: KnowledgeProposalV1 }
+  | { kind: 'consumed'; proposal: KnowledgeProposalV1; origin?: ProposalOrigin }
   | { kind: 'already-applied'; record: AppliedProposalRecord }
+  /**
+   * A HUMAN DECLINED THIS PROPOSAL (391 D-12), and it is a separate arm from `not-found` for
+   * exactly the reason `apply-in-flight` is.
+   *
+   * Before rejection existed, an apply reaching a proposal nobody could claim had two honest
+   * explanations and 387 covered both. Rejection adds a third, and folding it into `not-found`
+   * would have made the store tell a caller that a proposal it can still read off disk "names
+   * nothing this store has ever written" — a wrong answer wearing a correct one's clothes, on a
+   * path whose whole design is about never guessing what a proposal said.
+   */
+  | { kind: 'already-rejected'; record: RejectedProposalRecord }
   /**
    * SOMEBODY ELSE IS HANDLING THIS PROPOSAL. Distinct from `not-found`, and the distinction is
    * the whole arm.
@@ -360,13 +526,19 @@ function resolveClaim(
     // why it ships disclosed. The case that reds this mechanism if it is removed is the
     // three-participant interleave in `propose-apply.test.ts` (search `onAfterClaimScan`); a
     // further narrowing needs a further pass and a case that drives it, not another sentence here.
-    const applied = readAppliedProposal(agentQaRoot, proposalId)
-    if (applied !== undefined) return { kind: 'already-applied', record: applied }
+    //
+    // THE REJECTED NAME IS READ WHEREVER THE APPLIED NAME IS, and for the same reason: 391's
+    // reject lands its durable name BEFORE it retires the claim marker, exactly as the publish
+    // above does, so it inherits the single-retirement-totality property rather than needing a
+    // new argument. A pass that read only the applied name would satisfy that property and still
+    // answer `not-found` about a proposal sitting on disk under the other decided name.
+    const decided = readDecidedProposal(agentQaRoot, proposalId)
+    if (decided !== undefined) return decided
     hooks?.onAfterFirstRead?.()
     const marker = findClaimMarker(agentQaRoot, proposalId)
     hooks?.onAfterClaimScan?.()
-    const published = readAppliedProposal(agentQaRoot, proposalId)
-    if (published !== undefined) return { kind: 'already-applied', record: published }
+    const published = readDecidedProposal(agentQaRoot, proposalId)
+    if (published !== undefined) return published
     if (marker !== undefined) return { kind: 'apply-in-flight', claimPath: marker }
     // No marker and no applied file: if the pending name is back, the retirement was a RESTORE
     // and this proposal is applicable again. Answering `apply-in-flight` hands it to the caller's
@@ -383,7 +555,29 @@ function resolveClaim(
     // guessing what the proposal said is exactly the thing propose+apply exists to prevent.
     throw new ProposalNotFoundError(proposalId)
   }
-  return { kind: 'consumed', proposal: KnowledgeProposalV1Schema.parse(raw) }
+  const stored = extractStoredProposal(raw)
+  return {
+    kind: 'consumed',
+    proposal: stored.payload,
+    ...(stored.origin === undefined ? {} : { origin: stored.origin }),
+  }
+}
+
+/**
+ * EITHER decided name under this id, as the outcome arm that names it — or `undefined`.
+ *
+ * One reader for both decisions, so the two reads in `resolveClaim` cannot drift into checking
+ * different sets of names at different points of the same pass.
+ */
+function readDecidedProposal(
+  agentQaRoot: string,
+  proposalId: string,
+): ConsumeProposalOutcome | undefined {
+  const applied = readAppliedProposal(agentQaRoot, proposalId)
+  if (applied !== undefined) return { kind: 'already-applied', record: applied }
+  const rejected = readRejectedProposal(agentQaRoot, proposalId)
+  if (rejected !== undefined) return { kind: 'already-rejected', record: rejected }
+  return undefined
 }
 
 /** The path a claim parked the proposal at. Exported only so the two halves agree on it. */
@@ -440,4 +634,324 @@ export function restorePendingProposal(agentQaRoot: string, proposalId: string):
 /** Mint a proposal id in the shape `ProposalIdSchema` refines for. */
 export function mintProposalId(randomUuid: () => string): string {
   return `prop_${randomUuid().toLowerCase()}`
+}
+
+// ---- 391: the decision half and the inbox (PROP-03 · D-10 · D-12) ----------------------------
+
+/** What a reject did, or why it did nothing. Every arm is a RESULT; none is a throw. */
+export type RejectProposalOutcome =
+  | { kind: 'rejected'; record: RejectedProposalRecord }
+  | { kind: 'already-applied'; record: AppliedProposalRecord }
+  | { kind: 'already-rejected'; record: RejectedProposalRecord }
+  | { kind: 'apply-in-flight'; claimPath?: string }
+  | { kind: 'not-found' }
+
+/**
+ * Decline a pending proposal, permanently and with a trail (D-10, D-12).
+ *
+ * THE RACE RESOLVER IS THE SAME RENAME the apply path uses, deliberately reusing the claim
+ * marker rather than minting a sixth name shape. Two rejects, or a reject racing an apply,
+ * therefore resolve exactly as two applies do: `renameSync` has one winner, the loser gets
+ * ENOENT and is told what the winner recorded. A check-then-write here — "is there a pending
+ * file? yes? write the rejection" — would have had a window in which both callers believed they
+ * were deciding, and the second decision would have overwritten the first's timestamp and reason
+ * while both callers were told they had succeeded.
+ *
+ * THE ORDER IS THE PUBLISH ORDER, and it is load-bearing rather than symmetric. The durable
+ * `.rejected.json` name lands and is fsynced BEFORE the claim marker is retired, which is the
+ * property `resolveClaim`'s ORDER note names as the rule a future marker-retiring rename must
+ * inherit: a scan that sees no marker has seen one that was retired, and every retirement leaves
+ * a durable name already on disk. A crash between the two leaves a claim to recover, never a
+ * proposal that exists under no name at all.
+ */
+export function rejectPendingProposal(
+  agentQaRoot: string,
+  proposalId: string,
+  decision: { readonly at: number; readonly reason?: string },
+): RejectProposalOutcome {
+  // IN-03, extended to the new verb: the shape check lives where the joining happens, and the
+  // joining is two lines below. Before any syscall, so a refused id leaves no probe behind.
+  ProposalIdSchema.parse(proposalId)
+
+  const claimed = claimedProposalPath(agentQaRoot, proposalId)
+  try {
+    renameSync(pendingPath(agentQaRoot, proposalId), claimed)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    const decided = readDecidedProposal(agentQaRoot, proposalId)
+    if (decided?.kind === 'already-applied') return decided
+    if (decided?.kind === 'already-rejected') return decided
+    const marker = findClaimMarker(agentQaRoot, proposalId)
+    if (marker !== undefined) return { kind: 'apply-in-flight', claimPath: marker }
+    return { kind: 'not-found' }
+  }
+
+  const stored = extractStoredProposal(readJsonIfPresent(claimed))
+  const record = RejectedProposalRecordSchema.parse({
+    proposal: stored.payload,
+    decision: {
+      decision: 'rejected',
+      at: decision.at,
+      ...(decision.reason === undefined ? {} : { reason: decision.reason }),
+    },
+    ...(stored.origin === undefined ? {} : { origin: stored.origin }),
+  })
+  writeFileAtomically(
+    rejectedPath(agentQaRoot, proposalId),
+    `${JSON.stringify(record, undefined, 2)}\n`,
+  )
+  try {
+    renameSync(claimed, `${rejectedPath(agentQaRoot, proposalId)}${RETIRED_CLAIM_SUFFIX}`)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  fsyncDirectory(proposalsDir(agentQaRoot))
+  return { kind: 'rejected', record }
+}
+
+/**
+ * Whether a pid names a process that still exists — the WR-03 reap's one dependency.
+ *
+ * `process.kill(pid, 0)` sends no signal; it asks the kernel the question and reports the answer
+ * through `errno`. `ESRCH` is the one that means dead. `EPERM` means the process exists and
+ * belongs to somebody else, which is ALIVE — reading it as dead would let this store reap a
+ * claim held by a daemon running as another user and hand the same proposal to two appliers.
+ *
+ * PID REUSE IS THE KNOWN RESIDUAL, disclosed rather than papered over: a recycled pid reads as
+ * alive and its orphaned claim survives one more enumeration, which costs nothing but a delay —
+ * the opposite direction from the failure that matters. Closing it needs a start-time recorded
+ * in the marker, which is a change to the name shape the apply path owns.
+ */
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/** One row of the inbox: the read-time envelope, plus the one fact only the store knows. */
+export interface ProposalInboxEntry {
+  readonly envelope: ProposalEnvelope
+  /**
+   * A LIVE claim marker sits beside this proposal: somebody is applying it right now.
+   *
+   * Deliberately NOT a `ProposalEnvelopeStatus` member. The envelope's four states are what has
+   * become of the human DECISION, and an apply in flight has not changed that — the proposal is
+   * still pending, it is simply also being acted on. Widening the lifecycle union with a
+   * transient filesystem fact would have made every consumer of that union — the digest, the
+   * grant machinery, 393-396's kinds — learn about claim markers.
+   */
+  readonly applyInFlight: boolean
+}
+
+export interface ProposalInboxReadOptions {
+  /** Epoch milliseconds. Supplied by the caller; this module reads no clock (D-12). */
+  readonly now: number
+  /** Injected for the reap's corpus; production callers take {@link isProcessAlive}. */
+  readonly isProcessAlive?: (pid: number) => boolean
+}
+
+/**
+ * EVERY proposal this store holds, as read-time envelopes (PROP-03 — 391 is the owner).
+ *
+ * 387's substrate note said enumeration, reaping and the standing grants that make an inbox
+ * meaningful belong to 391. This is the enumeration half, and the reaping rides inside it rather
+ * than in a background process on purpose: nothing happens at the moment a proposal expires
+ * (D-12), and an orphaned claim is only interesting to somebody looking at the inbox. A reaper
+ * would be a second thing that has to be running for the store to be correct.
+ *
+ * NOTHING IS EVER DELETED. Expiry is computed from the payload's own `proposedAt` against the
+ * supplied `now`; the expired file is not touched, and an inbox filtered to `pending` simply
+ * stops showing it. The one write this function can perform is the WR-03 restore, which moves a
+ * claim marker back to the pending name it came from — a recovery, not a collection.
+ */
+export function listProposalEnvelopes(
+  agentQaRoot: string,
+  options: ProposalInboxReadOptions,
+): readonly ProposalInboxEntry[] {
+  const directory = proposalsDir(agentQaRoot)
+  let names: readonly string[]
+  try {
+    names = readdirSync(directory)
+  } catch (error) {
+    // AN EMPTY LISTING IS A RESULT (edge PROP-03/empty). A project that has never proposed
+    // anything has an empty inbox, and it must read identically to one whose directory simply
+    // has not been created yet — the two are the same fact about the same project.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+
+  const durable = new Map<string, { readonly state: ProposalDurableState; readonly path: string }>()
+  const markers: { readonly id: string; readonly pid: number; readonly path: string }[] = []
+
+  for (const name of names) {
+    // Retired markers and in-flight temps are NOISE, not proposals: each sits beside a durable
+    // name that is already in this listing, so counting them would double-report a proposal.
+    if (name.endsWith(RETIRED_CLAIM_SUFFIX) || name.endsWith(TEMP_SUFFIX)) continue
+    const claimAt = name.indexOf(CLAIM_INFIX)
+    if (claimAt > 0) {
+      const pid = Number(name.slice(claimAt + CLAIM_INFIX.length))
+      // A marker whose suffix is not a pid is not a name this store writes. Left alone rather
+      // than guessed at: reaping a file nobody can explain is how an inbox loses a proposal.
+      if (Number.isInteger(pid) && pid > 0) {
+        markers.push({ id: name.slice(0, claimAt), pid, path: join(directory, name) })
+      }
+      continue
+    }
+    if (name.endsWith(APPLIED_SUFFIX)) {
+      durable.set(name.slice(0, -APPLIED_SUFFIX.length), {
+        state: 'applied',
+        path: join(directory, name),
+      })
+      continue
+    }
+    if (name.endsWith(REJECTED_SUFFIX)) {
+      durable.set(name.slice(0, -REJECTED_SUFFIX.length), {
+        state: 'rejected',
+        path: join(directory, name),
+      })
+      continue
+    }
+    if (name.endsWith(PENDING_SUFFIX)) {
+      durable.set(name.slice(0, -PENDING_SUFFIX.length), {
+        state: 'pending',
+        path: join(directory, name),
+      })
+    }
+  }
+
+  const alive = options.isProcessAlive ?? isProcessAlive
+  const inFlight = new Set<string>()
+  for (const marker of markers) {
+    // A durable name already exists for this id: the marker's retirement was the winner's, and
+    // the proposal is decided (or restored). Touching it would undo a completed decision.
+    if (durable.has(marker.id)) continue
+    if (alive(marker.pid)) {
+      inFlight.add(marker.id)
+      durable.set(marker.id, { state: 'pending', path: marker.path })
+      continue
+    }
+    // WR-03, the reap. The holder is gone, so the proposal is applicable again — and it is put
+    // back under the name a fresh apply CLAIMS, not merely reported as pending. A read-time
+    // story would leave the next apply staring at the same orphaned marker forever, which is the
+    // state 387's `apply-in-flight` arm says "keeps surfacing here until somebody restores it".
+    try {
+      durableRename(marker.path, pendingPath(agentQaRoot, marker.id))
+      durable.set(marker.id, { state: 'pending', path: pendingPath(agentQaRoot, marker.id) })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+
+  const entries: ProposalInboxEntry[] = []
+  for (const [id, located] of durable) {
+    const envelope = envelopeAt(located.path, located.state, options.now)
+    if (envelope === undefined) continue
+    entries.push({ envelope, applyInFlight: inFlight.has(id) })
+  }
+
+  // DETERMINISTIC ORDER (edge PROP-03/ordering): minted-at, then id. `readdirSync` order is a
+  // filesystem fact and differs between machines and between two calls after a rename, so a
+  // listing that inherited it would render two different tables from one store.
+  return entries.sort((left, right) =>
+    left.envelope.payload.proposedAt - right.envelope.payload.proposedAt
+    || (left.envelope.id < right.envelope.id ? -1 : left.envelope.id > right.envelope.id ? 1 : 0),
+  )
+}
+
+/**
+ * ONE proposal, in full — the envelope a human reads BEFORE deciding (PROP-03, D-15).
+ *
+ * Answered by filtering the enumeration rather than by three point reads, and that is the whole
+ * reason it is written this way: `show` and `list` must agree about what a name shape means, and
+ * the cheapest way to guarantee that is for there to be one classifier. A second, faster path
+ * here would be free to disagree about an orphaned claim on exactly the proposal somebody is
+ * looking at.
+ */
+export function showProposalEnvelope(
+  agentQaRoot: string,
+  proposalId: string,
+  options: ProposalInboxReadOptions,
+): ProposalInboxEntry | undefined {
+  // IN-03: parsed before the enumeration compares it to anything, so a traversal id is refused
+  // by the same law on this verb as on the other two.
+  ProposalIdSchema.parse(proposalId)
+  return listProposalEnvelopes(agentQaRoot, options)
+    .find((entry) => entry.envelope.id === proposalId)
+}
+
+/** Read one durable file and project it into the read-time envelope its state implies. */
+function envelopeAt(
+  path: string,
+  state: ProposalDurableState,
+  now: number,
+): ProposalEnvelope | undefined {
+  const raw = readJsonIfPresent(path)
+  if (raw === undefined) return undefined
+  if (state === 'applied') {
+    const record = AppliedProposalRecordSchema.parse(raw)
+    return envelopeOf(
+      { payload: record.proposal, origin: record.origin },
+      'applied',
+      record.decision,
+      now,
+    )
+  }
+  if (state === 'rejected') {
+    const record = RejectedProposalRecordSchema.parse(raw)
+    return envelopeOf(
+      { payload: record.proposal, origin: record.origin },
+      'rejected',
+      record.decision,
+      now,
+    )
+  }
+  return envelopeOf(extractStoredProposal(raw), 'pending', undefined, now)
+}
+
+function envelopeOf(
+  stored: StoredProposal,
+  durableState: ProposalDurableState,
+  decision: ProposalDecisionRecord | undefined,
+  now: number,
+): ProposalEnvelope {
+  return {
+    id: stored.payload.proposalId,
+    kind: 'knowledge',
+    // The ONE lifecycle rule, computed by the schema's own function rather than re-derived from
+    // the suffix this module happened to classify. A second spelling of "what does 30 days mean"
+    // is how the inbox and the digest start disagreeing about the same file.
+    status: computeProposalEnvelopeStatus({
+      durableState,
+      proposedAt: stored.payload.proposedAt,
+      now,
+    }),
+    ...(stored.origin === undefined ? {} : { origin: stored.origin }),
+    evidenceRefs: evidenceRefsFor(stored),
+    ...(decision === undefined ? {} : { decision }),
+    payload: stored.payload,
+  }
+}
+
+/**
+ * What to go and look at before deciding.
+ *
+ * Drawn from what the proposal itself addresses rather than assembled from a second source: the
+ * target ref IS the thing a reviewer opens, and the run ref is present exactly when the mint
+ * recorded one. The grains are the envelope's own three, and `record`/`bundle` are deliberately
+ * the same two words `KnowledgeTargetRef` discriminates on, so a surface resolving a ref out of
+ * the inbox resolves it the same way it resolves one out of the verb that proposed it.
+ */
+function evidenceRefsFor(stored: StoredProposal): readonly ProposalEvidenceRef[] {
+  const refs: ProposalEvidenceRef[] = [
+    stored.payload.targetRef.grain === 'record'
+      ? { grain: 'record', ref: stored.payload.targetRef.recordId }
+      : { grain: 'bundle', ref: stored.payload.targetRef.shortId },
+  ]
+  if (stored.origin?.runId !== undefined) {
+    refs.push({ grain: 'run', ref: stored.origin.runId })
+  }
+  return refs
 }

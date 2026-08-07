@@ -253,13 +253,16 @@ describe('the proposals inbox (PROP-03, D-10/D-12)', () => {
       expect(rejectPendingProposal(agentQaRoot, rejected.proposalId, { at: 4_500 }).kind)
         .toBe('rejected')
 
-      // The five shapes really are on disk, spelled as the store spells them.
+      // The five shapes really are on disk, spelled as the store spells them. The reject path
+      // retires its OWN claim marker in the same publish order the apply path uses — durable
+      // name first — which is why there are two retired markers and not one.
       expect(names()).toEqual([
         `${applied.proposalId}.applied.json`,
         `${applied.proposalId}.applied.json.claim`,
         `${claimed.proposalId}.json.claimed.${process.pid}`,
         `${pending.proposalId}.json`,
         `${rejected.proposalId}.rejected.json`,
+        `${rejected.proposalId}.rejected.json.claim`,
       ].sort())
 
       const entries = listProposalEnvelopes(agentQaRoot, { now: 5_000, isProcessAlive: ALIVE })

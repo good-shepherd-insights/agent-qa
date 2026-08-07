@@ -30,6 +30,7 @@ import type {
   ForgetReceiptV1,
   KnowledgeProjection,
   KnowledgeProposalV1,
+  ProposalOrigin,
 } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
@@ -86,6 +87,25 @@ export const APPLY_IN_FLIGHT_WAIT_MS = 5_000
  * paid for in latency, long enough that the wait is not a spin on `readdirSync`.
  */
 export const APPLY_IN_FLIGHT_POLL_MS = 25
+
+/**
+ * The proposal was DECLINED by a human, so there is nothing here to apply (Phase 391, D-12).
+ *
+ * Distinct from `ProposalNotFoundError` because the two send an operator to different places: a
+ * not-found means look for the mint, and this means look at the decision. The instant is carried
+ * because the decision trail is the point of the rejected record — a refusal that made somebody
+ * open the file to learn when it was declined would be a disclosure in name only (WR-06).
+ */
+export class ProposalRejectedError extends Error {
+  constructor(readonly proposalId: string, readonly rejectedAt: number) {
+    super(
+      `Proposal ${proposalId} was rejected at ${new Date(rejectedAt).toISOString()} and cannot ` +
+        'be applied. The proposal and the decision that declined it are both retained — nothing ' +
+        'was deleted — so the record remains readable under this id.',
+    )
+    this.name = 'ProposalRejectedError'
+  }
+}
 
 /**
  * The typed refusal when another caller holds the claim and has not finished (CR-03).
@@ -352,7 +372,12 @@ async function commitInProcess(
  */
 async function settleClaim(
   input: ApplyReviewInput,
-): Promise<Exclude<ReturnType<typeof claimPendingProposal>, { kind: 'apply-in-flight' | 'not-found' }>> {
+): Promise<
+  Exclude<
+    ReturnType<typeof claimPendingProposal>,
+    { kind: 'apply-in-flight' | 'not-found' | 'already-rejected' }
+  >
+> {
   const waitMs = input.inFlightWaitMs ?? APPLY_IN_FLIGHT_WAIT_MS
   const deadline = Date.now() + waitMs
   for (;;) {
@@ -362,6 +387,14 @@ async function settleClaim(
       // The id names nothing this store ever minted — a different fact from "somebody else is
       // applying it right now", and since 387-12 the two are told apart rather than merged.
       throw new ProposalNotFoundError(input.proposalId)
+    }
+    if (claim.kind === 'already-rejected') {
+      // 391 D-12: a human declined this proposal, and that is a THIRD fact — not an absence and
+      // not an in-flight apply. Told apart here for the reason the other two are: an operator
+      // whose apply came back "no such proposal" would go looking for a mint that never
+      // happened, when what actually happened is that somebody said no and the record saying so
+      // is on disk under this id.
+      throw new ProposalRejectedError(input.proposalId, claim.record.decision.at)
     }
     if (Date.now() >= deadline) {
       // The arm's own data reaches the refusal: whichever claim file the LAST resolution actually
@@ -420,10 +453,14 @@ export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewR
   }
 
   const { proposal } = claim
+  // 391 D-08: the mint's attribution rides from the claimed bytes onto the applied record. Read
+  // off the claim rather than re-read from disk — the pending name is gone by now, so a second
+  // read would find nothing and the attribution would be lost exactly when it is needed.
+  const origin = claim.origin
   if (input.writerAuthority !== undefined) {
     // This caller IS the holder. No acquisition, no delegation, no release — the lease it was
     // handed is one it owns for longer than this apply.
-    return await commitAndPublish(input, proposal, input.writerAuthority)
+    return await commitAndPublish(input, proposal, input.writerAuthority, origin)
   }
 
   const acquired = acquireWriterLease(input.knowledgeRoot)
@@ -444,9 +481,31 @@ export async function applyReview(input: ApplyReviewInput): Promise<ApplyReviewR
   }
 
   try {
-    return await commitAndPublish(input, proposal, acquired)
+    return await commitAndPublish(input, proposal, acquired, origin)
   } finally {
     releaseLease({ knowledgeRoot: input.knowledgeRoot, leaseId: acquired.leaseId })
+  }
+}
+
+/**
+ * What the applied record carries about the DECISION this apply is (391 D-08 / D-12).
+ *
+ * Both fields are what the inbox reads back: `origin` says who proposed it, `decision` says when
+ * somebody applied it. Assembled once here rather than at the three publish sites, because three
+ * copies of "what does an apply record about itself" is three chances for one of them to stop
+ * recording the timestamp and for nobody to notice until a decision trail comes back empty.
+ *
+ * The instant comes from the SAME `input.now` seam the forget receipt's `forgottenAt` uses, so a
+ * test that pins a clock pins both, and a receipt and its decision cannot disagree about when the
+ * apply happened.
+ */
+function decisionTrail(
+  input: ApplyReviewInput,
+  origin: ProposalOrigin | undefined,
+): { origin?: ProposalOrigin; decision: { decision: 'applied'; at: number } } {
+  return {
+    ...(origin === undefined ? {} : { origin }),
+    decision: { decision: 'applied', at: (input.now ?? Date.now)() },
   }
 }
 
@@ -455,6 +514,7 @@ async function commitAndPublish(
   input: ApplyReviewInput,
   proposal: KnowledgeProposalV1,
   authority: { readonly leaseId: string; readonly epoch: number },
+  origin: ProposalOrigin | undefined,
 ): Promise<ApplyReviewResult> {
   try {
     // FUNC-04's adjacency edge, decided BEFORE the commit rather than hoped for after it.
@@ -477,7 +537,10 @@ async function commitAndPublish(
       const already: KnowledgeProposalV1 = { ...proposal, status: 'applied' }
       if (proposal.verb !== 'forget') {
         // reject carries no receipt on any path; the applied record is the whole answer.
-        publishAppliedProposal(input.agentQaRoot, { proposal: already })
+        publishAppliedProposal(input.agentQaRoot, {
+          proposal: already,
+          ...decisionTrail(input, origin),
+        })
         return { outcome: 'applied', proposal: already }
       }
       // WR-02: no commit ran on this branch, so no projection was rebuilt and no recall row was
@@ -488,7 +551,11 @@ async function commitAndPublish(
         (input.now ?? Date.now)(),
         [],
       )
-      publishAppliedProposal(input.agentQaRoot, { proposal: already, forgetReceipt: receipt })
+      publishAppliedProposal(input.agentQaRoot, {
+        proposal: already,
+        forgetReceipt: receipt,
+        ...decisionTrail(input, origin),
+      })
       return { outcome: 'applied', proposal: already, forgetReceipt: receipt }
     }
 
@@ -506,6 +573,7 @@ async function commitAndPublish(
     publishAppliedProposal(input.agentQaRoot, {
       proposal: applied,
       ...(forgetReceipt === undefined ? {} : { forgetReceipt }),
+      ...decisionTrail(input, origin),
     })
     return {
       outcome: 'applied',
