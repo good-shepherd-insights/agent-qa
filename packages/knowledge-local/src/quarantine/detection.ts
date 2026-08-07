@@ -77,7 +77,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 // The identity key and its input type live in the subsystem's zero-import leaf (390-31), not here:
-// the ladder is only one of four keying sites, and hosting the key made every other site pay an
+// the ladder is only one of three keying sites, and hosting the key made every other site pay an
 // import edge into this module. `compareQuarantineIdentity` below still composes it.
 import { quarantineIdentityKey } from './identity.js'
 import type { QuarantineIdentity } from './identity.js'

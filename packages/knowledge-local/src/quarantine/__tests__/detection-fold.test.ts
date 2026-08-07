@@ -1498,7 +1498,7 @@ describe('the floor cap rate-limits a multi-member fan-out (390-28)', () => {
       .toBe(CAP_SUITE_SIZE)
 
     // ADMITTED BY IDENTITY ORDER, asserted by value — WITH ARRIVAL ORDER DISAGREEING. The identity
-    // key is JSON.stringify([product, filePath, testName]) compared by code unit, and the three
+    // key is `quarantineIdentityKey`'s, compared by code unit, and the three
     // members share a product, so `suite/cap-member-0` < `suite/cap-member-1` <
     // `suite/cap-member-2` decides it. Every fold in this episode hands the members over back to
     // front (cap 2 first, cap 0 last), so the two orders are exact opposites and the unchanged

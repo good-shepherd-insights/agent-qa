@@ -13,6 +13,7 @@ import { existsSync, renameSync, writeFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
+import { quarantineIdentityKey } from '../../identity.js'
 import {
   appendQuarantineEvents,
   foldQuarantineLedgerState,
@@ -198,11 +199,8 @@ async function runUnserializedCycle(context: ChildContext): Promise<Record<strin
   const at = now()
   const read = readQuarantineLedger(context.root)
   const entries = foldQuarantineLedgerState(read.events, at)
-  const key = JSON.stringify([CONTESTED.product, CONTESTED.filePath, CONTESTED.testName])
-  const entry = entries.find(
-    (candidate) =>
-      JSON.stringify([candidate.product, candidate.filePath, candidate.testName]) === key,
-  )
+  const key = quarantineIdentityKey(CONTESTED)
+  const entry = entries.find((candidate) => quarantineIdentityKey(candidate) === key)
   // `operations.add`'s own routing, verbatim: an OPEN window (suppressing or lapsed) extends,
   // anything else opens. This is why a stale fold can never author `entered` over a release —
   // pre-release state is `quarantined`, which routes here to `renewed`.
