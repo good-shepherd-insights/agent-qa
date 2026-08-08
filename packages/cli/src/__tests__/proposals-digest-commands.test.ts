@@ -495,9 +495,19 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
     // report would ship a refusal that names nothing, and this is what reds instead.
     expect(damaged.refusedLines.length).toBeGreaterThan(0)
     expect(damaged.refusedLines.map((line) => line.lineNumber)).toContain(2)
+    expect(damaged.reason).toContain('1 line(s)')
     expect(damaged.reason).toContain('line 2')
     expect(damaged.reason).toContain('unparseable line')
     expect(damaged.reason).toContain('grants.jsonl')
+    // WHAT THE REFUSAL SAYS ABOUT THE FILE, and only about the file. The write was refused, so no
+    // line was appended and the ledger's bytes are unchanged — both true of `record` and of
+    // `revoke`, which share this error and only one of which mints anything.
+    expect(damaged.reason).toContain('No line was appended')
+    expect(damaged.reason).toContain('byte-unchanged')
+    // AND WHAT IT MUST NOT SAY. This call's apply COMMITTED before the mint ran, so a refusal
+    // claiming the operation decided nothing is false of exactly the payload this arm exists to
+    // carry — and the predictable thing a person does when told nothing happened is do it again.
+    expect(damaged.reason).not.toContain('Nothing was decided')
 
     // And the refused mint changed no byte of the committed authorization file.
     expect(readFileSync(grantsLedgerPath(ws.knowledgeRoot), 'utf8')).toBe(before)
