@@ -36,7 +36,6 @@ import type {
   Anchor,
   CompletedRunHandoff,
   ProposalsAcceptOutput,
-  ProposalsShowOutput,
   RunDigest,
   Verdict,
 } from '@vostride/agent-qa-schema'
@@ -395,12 +394,15 @@ describe('agent-qa proposals (D-17, the decision surface)', () => {
   })
 })
 
-// ---- accept --always over a damaged ledger (391-09, closing round-2 gap 1's missing (c)) -------
+// ---- accept --always over a damaged ledger (391-09, then 391-12 closing round-3 gap G-391-2) ----
 //
 // A person told `standing approval RECORDED` for an approval the reader refuses has no path to the
-// explanation. After 391-09 the mint refuses BY NAME instead, and the whole damage report rides the
-// error's own message — which is what `reportError` prints verbatim on this very surface, so no new
-// render branch exists to go stale.
+// explanation, so 391-09 made the mint refuse BY NAME. That refusal then propagated out of `invoke`
+// as a throw and DISCARDED the `{apply, grant}` payload — telling a person the accept failed for a
+// knowledge commit that had already happened, and sending them back to re-apply.
+//
+// 391-12 makes the refusal travel as DATA in a fourth `ledger-damaged` arm, so both halves of one
+// decision ride one payload: the apply that committed, and the mint that did not.
 
 describe('agent-qa proposals accept --always, over a grant ledger the build cannot fully read', () => {
   const LEDGER_AT = '2026-08-08T10:00:00.000Z'
@@ -408,7 +410,6 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
   const FIRST_CLASS = 'fn:knowledge.forget.propose'
   const SECOND_CLASS = 'fn:knowledge.reject.propose'
   const ACCEPT_ID = 'proposals.accept'
-  const SHOW_ID = 'proposals.show'
 
   /** Two committed lines through the REAL mint — the produced-not-literal corpus law. */
   async function committedGrants(ws: Workspace): Promise<void> {
@@ -460,7 +461,7 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
     }
   }
 
-  it('refuses the mint BY NAME with the whole damage report on the surface payload', async () => {
+  it('reports the refused mint BESIDE the apply that committed, on ONE payload', async () => {
     const ws = workspace()
     const proposalId = mintProposal(ws, NEWER_RUN, 'damaged ledger button', 21)
     await committedGrants(ws)
@@ -470,37 +471,33 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
     const before = readFileSync(grantsLedgerPath(ws.knowledgeRoot), 'utf8')
     expect(before.split('\n').filter((line) => line.trim().length > 0)).toHaveLength(2)
 
-    const { refusal, shown } = await acceptAlways(ws, async (invoke) => {
-      let caught: unknown
-      try {
-        await invoke<ProposalsAcceptOutput>(ACCEPT_ID, { proposalId, always: true })
-      } catch (error) {
-        caught = error
-      }
-      // The refusal is matched by NAME. A `FunctionDeniedError` here would mean the confirm
-      // injection never took and the mint was never reached, so it must NOT be folded into a pass.
-      if (!(caught instanceof Error) || caught.name !== 'GrantLedgerDamagedError') {
-        throw new Error(
-          `expected GrantLedgerDamagedError, got ${
-            caught instanceof Error ? `${caught.name}: ${caught.message}` : String(caught)}`,
-        )
-      }
-      return {
-        refusal: caught,
-        shown: await invoke<ProposalsShowOutput>(SHOW_ID, { proposalId }),
-      }
-    })
+    // No try/catch, deliberately. The accept must RESOLVE — a throw here is the defect, and a
+    // `FunctionDeniedError` would mean the context scoping stopped taking and the mint was never
+    // reached at all, so neither may be folded into a pass. Both fail this case loudly.
+    const accepted = await acceptAlways(ws, async (invoke) =>
+      await invoke<ProposalsAcceptOutput>(ACCEPT_ID, { proposalId, always: true }))
 
-    // MISSING (c): the report is on the payload `reportError` prints — name, then message.
-    expect(refusal.message).toContain('line 2')
-    expect(refusal.message).toContain('unparseable line')
-    expect(refusal.message).toContain('grants.jsonl')
+    // The apply half, ON THE ACCEPT PAYLOAD. It used to take a second `proposals show` round-trip
+    // to establish this, and that round-trip only ever existed because the payload was discarded.
+    expect(accepted.apply.outcome).toBe('applied')
 
-    // Honesty of the two halves. The apply committed BEFORE the mint refused, and a person has to
-    // be able to see that: a refusal that read as "nothing happened" would send them to re-apply.
-    expect(shown.kind).toBe('found')
-    if (shown.kind !== 'found') throw new Error('expected the applied proposal to be readable')
-    expect(shown.entry.envelope.status).toBe('applied')
+    // The refusal travels as DATA. Compared as a STRING VALUE rather than through an imported
+    // type, so this file stays loadable against the unmodified schema and the intact-ledger admit
+    // control below is measurably green before the fix.
+    expect(accepted.grant.kind).toBe('ledger-damaged')
+    const damaged = accepted.grant as unknown as {
+      kind: string
+      reason: string
+      refusedLines: readonly { lineNumber: number; reason: string }[]
+    }
+    // NON-EMPTY, and naming the line: a defensive extraction that quietly degraded to an empty
+    // report would ship a refusal that names nothing, and this is what reds instead.
+    expect(damaged.refusedLines.length).toBeGreaterThan(0)
+    expect(damaged.refusedLines.map((line) => line.lineNumber)).toContain(2)
+    expect(damaged.reason).toContain('line 2')
+    expect(damaged.reason).toContain('unparseable line')
+    expect(damaged.reason).toContain('grants.jsonl')
+
     // And the refused mint changed no byte of the committed authorization file.
     expect(readFileSync(grantsLedgerPath(ws.knowledgeRoot), 'utf8')).toBe(before)
   })
