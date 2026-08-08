@@ -21,6 +21,7 @@ import {
   grantsLedgerPath,
   proposeReview,
   publishBundleForTest,
+  readGrantLedger,
 } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
@@ -32,6 +33,7 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   ProposalsAcceptOutputSchema,
   STANDING_APPROVAL_SCOPE,
+  TRUST_SCOPE_KEYS,
 } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
@@ -425,6 +427,55 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
     }
   }
 
+  /**
+   * A scope key OUTSIDE `TRUST_SCOPE_KEYS`, resolved at FIXTURE-BUILD time.
+   *
+   * COPIED VERBATIM from the helper 391-11 Task 2 installed in
+   * `agent-local/…/grant-ledger-damage.e2e.test.ts`, BOTH BRANCHES, rather than re-derived. The
+   * computed branch is what stops a hard-coded key becoming legal the day the constant grows, and
+   * the `AGENT_QA_TEST_UNKNOWN_SCOPE_KEY` branch — honoured verbatim and BEFORE any legality
+   * check — is what lets 391-13's revert B pin the key it is about to legalise. A copy keeping only
+   * the computed branch cannot be reverted against: a derivation free to re-compute simply picks
+   * the next illegal candidate the moment the mutation lands, the line stays refused, and the case
+   * below reports green while appearing to have been falsified.
+   */
+  const UNKNOWN_SCOPE_KEY_CANDIDATES = ['tenant', 'workspace', 'region', 'cell'] as const
+
+  function anUnknownScopeKey(): string {
+    const pinned = process.env.AGENT_QA_TEST_UNKNOWN_SCOPE_KEY
+    if (typeof pinned === 'string' && pinned.length > 0) return pinned
+
+    const declared = TRUST_SCOPE_KEYS as readonly string[]
+    const found = UNKNOWN_SCOPE_KEY_CANDIDATES.find((candidate) => !declared.includes(candidate))
+    if (found === undefined) {
+      throw new Error(
+        `every candidate scope key (${UNKNOWN_SCOPE_KEY_CANDIDATES.join(', ')}) is now legal in ` +
+          `TRUST_SCOPE_KEYS (${declared.join(', ')}); this case can no longer measure a refusal — ` +
+          'add a candidate rather than letting it pass',
+      )
+    }
+    return found
+  }
+
+  /**
+   * Fuse an unknown scope key ONTO a committed line, in place.
+   *
+   * Rewritten rather than appended, exactly as the conflict-marker helper above: a separate garbage
+   * line would leave every real line readable, and the refusal under test would then be about a
+   * line nothing depends on. Only the kind of damage differs.
+   */
+  function smuggleUnknownScopeKey(ws: Workspace, lineNumber: number, key: string): void {
+    const path = grantsLedgerPath(ws.knowledgeRoot)
+    const lines = readFileSync(path, 'utf8').split('\n')
+    const index = lineNumber - 1
+    const parsed = JSON.parse(lines[index] ?? '') as Record<string, unknown>
+    lines[index] = JSON.stringify({
+      ...parsed,
+      scope: { ...(parsed.scope as Record<string, unknown>), [key]: 'smuggled' },
+    })
+    writeFileSync(path, lines.join('\n'), 'utf8')
+  }
+
   /** Fuse a merge marker onto the LAST committed line, in place — never an appended garbage line. */
   function damageLastLine(ws: Workspace): void {
     const path = grantsLedgerPath(ws.knowledgeRoot)
@@ -566,6 +617,58 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
     expect(damage).toContain('line(s) 2')
     expect(damage).toContain('grants.jsonl')
     expect(damage).toContain('WAS applied')
+  })
+
+  // ---- 391-13: the two round-3 mechanisms on ONE path ----
+  //
+  // The case above damages a line by fusing a merge marker onto it, which is a JSON parse failure
+  // and has nothing to do with the scope key set. This one damages a line the OTHER way: the bytes
+  // are perfectly valid JSON, and what refuses them is the structural guard's unknown-key clause —
+  // the clause 391-11 aligned with the strict wire contract by building the wire projection from
+  // `TRUST_SCOPE_KEYS` instead of restating it.
+  //
+  // So this is the one path where both round-3 fixes are load-bearing at once: the line is REFUSED
+  // because of 391-11, and the refusal reaches the operator as DATA beside the apply that committed
+  // because of 391-12. Neither mechanism alone produces this payload — with the guard's key set
+  // drifted the line is not refused at all, and with the mint unguarded the whole payload is
+  // discarded by a throw.
+  it('reports an UNKNOWN-KEY refusal beside the apply — both round-3 mechanisms on ONE path', async () => {
+    const ws = workspace()
+    const proposalId = mintProposal(ws, NEWER_RUN, 'unknown key ledger button', 23)
+    await committedGrants(ws)
+    smuggleUnknownScopeKey(ws, 2, anUnknownScopeKey())
+
+    // FIXTURE VALIDITY FIRST, and asserted before anything is invoked. Two non-empty lines, the
+    // read refusing EXACTLY line 2 while line 1 still folds. Without this, a fixture whose damage
+    // stopped being damage — the key having become legal — would sail through as a green case
+    // measuring nothing, which is the failure 391-11 measured first-hand on three other fixtures.
+    const before = readFileSync(grantsLedgerPath(ws.knowledgeRoot), 'utf8')
+    expect(before.split('\n').filter((line) => line.trim().length > 0)).toHaveLength(2)
+    const read = readGrantLedger(ws.knowledgeRoot)
+    expect(read.refusedLines.map((line) => line.lineNumber)).toEqual([2])
+    expect(read.events).toHaveLength(1)
+
+    // No try/catch, deliberately — a throw here is 391-12's defect, reproduced.
+    const accepted = await acceptAlways(ws, async (invoke) =>
+      await invoke<ProposalsAcceptOutput>(ACCEPT_ID, { proposalId, always: true }))
+
+    // The apply half: it committed, and its receipt survives the mint's refusal.
+    expect(accepted.apply.outcome).toBe('applied')
+
+    // The refusal half, as DATA on the same payload, naming the line an editor would show.
+    expect(accepted.grant.kind).toBe('ledger-damaged')
+    const damaged = accepted.grant as unknown as {
+      kind: string
+      reason: string
+      refusedLines: readonly { lineNumber: number; reason: string }[]
+    }
+    expect(damaged.refusedLines.length).toBeGreaterThan(0)
+    expect(damaged.refusedLines.map((line) => line.lineNumber)).toContain(2)
+    expect(damaged.reason).toContain('line 2')
+    expect(damaged.reason).toContain('grants.jsonl')
+
+    // And the refused mint changed no byte of the committed authorization file.
+    expect(readFileSync(grantsLedgerPath(ws.knowledgeRoot), 'utf8')).toBe(before)
   })
 
   it('records the standing approval over an UNDAMAGED workspace — the composition\'s admit side', async () => {
