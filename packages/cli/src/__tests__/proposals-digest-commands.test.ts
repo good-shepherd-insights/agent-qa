@@ -507,7 +507,13 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
     // AND WHAT IT MUST NOT SAY. This call's apply COMMITTED before the mint ran, so a refusal
     // claiming the operation decided nothing is false of exactly the payload this arm exists to
     // carry — and the predictable thing a person does when told nothing happened is do it again.
-    expect(damaged.reason).not.toContain('Nothing was decided')
+    //
+    // Ranged as a PATTERN rather than as the one removed sentence, for two reasons: the exact
+    // sentence is already negative-grepped out of the whole package tree by this plan's gate, so
+    // restating it here would only re-introduce the string it bans; and the property is the CLASS
+    // of claim, not one spelling of it. Any future clause denying that the call decided/recorded/
+    // did anything reds here, whatever words it picks.
+    expect(damaged.reason).not.toMatch(/nothing was (?:decided|recorded|done)/iu)
 
     // And the refused mint changed no byte of the committed authorization file.
     expect(readFileSync(grantsLedgerPath(ws.knowledgeRoot), 'utf8')).toBe(before)

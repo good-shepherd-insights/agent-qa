@@ -119,6 +119,16 @@ export class GrantLeaseHeldError extends Error {
 /**
  * The ledger carries lines this build cannot read, so a mutating verb refused to DECIDE on it
  * (D-11). The ledger is byte-unchanged when this is raised — the read precedes every append.
+ *
+ * THE MESSAGE SPEAKS ONLY ABOUT THE FILE (391-12). It once carried a clause denying that the
+ * CALLING OPERATION had decided anything, and that clause was false of the one caller that matters
+ * most: `proposals.accept --always` reaches this refusal only AFTER its apply has committed durable
+ * knowledge, so a person told the operation decided nothing holds no receipt for a change that
+ * really happened — and the predictable next thing they do is apply it again. What this error
+ * actually knows is a fact about the WRITE: no line was appended, the bytes did not move, and here
+ * is what to repair. That is also the only wording true of BOTH raising verbs — `revoke` shares
+ * this error and mints nothing at all, so a clause about approvals, or about what a call decided,
+ * would be wrong on one of the two every time.
  */
 export class GrantLedgerDamagedError extends Error {
   constructor(readonly refusedLines: readonly RefusedGrantLine[]) {
@@ -128,7 +138,7 @@ export class GrantLedgerDamagedError extends Error {
         + refusedLines
           .map((line) => `line ${String(line.lineNumber)}: ${line.reason}`)
           .join('; ')
-        + '. Nothing was decided and the ledger is byte-unchanged. Repair the named line(s) in '
+        + '. No line was appended and the file is byte-unchanged. Repair the named line(s) in '
         + 'grants.jsonl — a hand edit, or git checkout of the committed file — and retry.',
     )
     this.name = 'GrantLedgerDamagedError'
