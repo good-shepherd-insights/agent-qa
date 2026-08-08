@@ -41,8 +41,10 @@
 // THREE DEPS, ONE `boundThrough`. This op needs the inbox (to learn which KIND it is deciding), the
 // kind's apply port (to commit), and the grants port (to mint). `boundThrough` names ONE, and it
 // names the inbox because that is the first thing this verb touches and the thing whose absence
-// means "this host has no proposals at all". The other two are re-checked at dispatch with the same
-// typed refusal, so a partially composed host refuses BY NAME rather than crashing. In practice
+// means "this host has no proposals at all". What dispatch does with that name is exactly one key:
+// `resolveBindingStatus` returns `deps[spec.boundThrough] === undefined ? 'unbound' : 'bound'`, so
+// the registry checks the inbox and nothing else. The other two are checked inside `invoke` — the
+// apply port at the route, and the grants port AFTER the apply has already committed. In practice
 // `composeLocalAgent` binds all three together, because all three are facts about a host that owns
 // a knowledge root.
 
@@ -127,6 +129,20 @@ const GRANT_NOT_APPLIED: ProposalsAcceptGrantOutcome = { kind: 'not-applied' }
  * Nothing else may be folded. A lease refusal, an egress refusal and a contract refusal are
  * different facts about different problems, and reporting any of them as ledger damage would send
  * an operator to repair a file that is perfectly readable.
+ *
+ * WHAT THE FOLD LEAVES OUT, OBSERVED RATHER THAN INFERRED. Read at submodule commit `d7966f04` on
+ * 2026-08-08 with `grep -n 'throw new\|\.parse(\|new Grant' packages/knowledge-local/src/grants/operations.ts`,
+ * the raisers that port declared on its `record` path were five: `GrantLedgerDamagedError` (`:214`),
+ * `GrantWriteBlockedError` (`:236`), a `GrantRecordInputSchema.parse` failure (`:269`),
+ * `GrantLeaseHeldError` (class at `:108`, raised from the lease wrapper at `:227`), and version or
+ * fs errors propagating out of `readActive` (`:210`). Only the first is folded here. The other four
+ * leave `invoke` and take the whole `{apply, grant}` payload with them, so a caller is told their
+ * accept failed for a knowledge commit that is already durable on disk.
+ *
+ * That asymmetry is a DECISION taken in gap-closure round 4, not an omission. Re-applying is
+ * idempotent, so the cost is operator confusion rather than corruption. It is not an exotic edge
+ * either: the ordinary version-conflict case — a teammate committed a line, you pulled — is among
+ * the four, as the version error out of `readActive`.
  */
 const GRANT_LEDGER_DAMAGED_ERROR_NAME = 'GrantLedgerDamagedError'
 
@@ -195,6 +211,14 @@ export const proposalsAcceptSpec: FunctionSpec<ProposalsAcceptInput, ProposalsAc
       return { apply, grant: GRANT_NOT_REQUESTED }
     }
 
+    // REACHABILITY OF THIS THROW, OBSERVED RATHER THAN ASSUMED. At submodule commit `d7966f04` on
+    // 2026-08-08, `grep -rn 'createFunctionRegistry(' packages --include=*.ts | grep -v '/dist/' |
+    // grep -v '__tests__'` returned two lines: the definition at `registry.ts:401`, and one call
+    // site, `agent-local/src/composition/compose-local-agent.ts:1388`. In that composition
+    // `proposalsInbox:` (`:1498`) and `standingGrants:` (`:1529`) were both plain properties of the
+    // one `deps` literal, bound unconditionally, so on the shipped host of that tree this throw was
+    // not reachable. It becomes reachable the first time a host composes partially — the milestone's
+    // MCP projection phase is the first candidate to do so.
     const grants = deps.standingGrants
     if (grants === undefined) throw new FunctionNotBoundError(PROPOSALS_ACCEPT_FUNCTION_ID)
 
