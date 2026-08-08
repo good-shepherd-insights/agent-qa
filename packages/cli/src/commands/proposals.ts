@@ -159,10 +159,21 @@ function renderGrantOutcome(grant: ProposalsAcceptOutput['grant']): string {
         `standing approval REFUSED: ${grant.actionClass} is a protected class — `
         + 'no standing approval can ever cover it, and this proposal was applied anyway.',
       )
+    case 'ledger-damaged':
+      // Same posture as the sovereignty refusal above and for the same reason: the apply on the
+      // line above DID happen, so this cannot read as a footnote to it. The line numbers are what
+      // the operator acts on, so they are named here and not only inside the op's reason string.
+      return pc.yellow(
+        'standing approval NOT recorded: the committed grant ledger has unreadable line(s) '
+        + `${grant.refusedLines.map((line) => String(line.lineNumber)).join(', ')} — `
+        + 'this proposal WAS applied, and no standing approval was recorded. '
+        + grant.reason,
+      )
   }
 }
 
-function renderAccept(result: ProposalsAcceptOutput): string {
+/** Exported so a differential can range it rather than restate it (the package's own precedent). */
+export function renderAccept(result: ProposalsAcceptOutput): string {
   const apply = result.apply
   const applyLine = apply.outcome === 'applied'
     ? `applied (${apply.applied.kind})`

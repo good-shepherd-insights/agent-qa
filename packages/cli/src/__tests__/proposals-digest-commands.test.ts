@@ -30,6 +30,7 @@ import {
   canonicalJson,
   CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  ProposalsAcceptOutputSchema,
   STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -43,7 +44,7 @@ import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createDigestCommand } from '../commands/digest.js'
-import { createProposalsCommand } from '../commands/proposals.js'
+import { createProposalsCommand, renderAccept } from '../commands/proposals.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 
 const OLDER_RUN = 'run-391-06-cmd-older'
@@ -500,6 +501,55 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
 
     // And the refused mint changed no byte of the committed authorization file.
     expect(readFileSync(grantsLedgerPath(ws.knowledgeRoot), 'utf8')).toBe(before)
+
+    // The render, over the payload the PRODUCTION composition actually produced — parsed through
+    // the contract first, so an off-contract payload could not be rendered at all. Both halves,
+    // and the damage on its own line so it cannot read as a footnote to the apply above it.
+    const rendered = renderAccept(ProposalsAcceptOutputSchema.parse(accepted)).split('\n')
+    expect(rendered[0]).toContain('applied (knowledge)')
+    expect(rendered.slice(1).join('\n')).toContain('standing approval NOT recorded')
+    expect(rendered.slice(1).join('\n')).toContain('2')
+  })
+
+  it('renders BOTH halves of a contract-parsed ledger-damaged payload', () => {
+    // The cheap twin of the assertion above: no composition, no disk, no ledger — only the render
+    // contract. `parse` is the guard that keeps a hand-built payload honest; an off-contract shape
+    // throws here rather than reaching the renderer.
+    const payload = ProposalsAcceptOutputSchema.parse({
+      apply: {
+        outcome: 'applied',
+        applied: {
+          kind: 'knowledge',
+          outcome: {
+            outcome: 'applied',
+            proposal: {
+              schemaVersion: 1,
+              proposalId: 'prop_render-fixture',
+              verb: 'reject',
+              targetRef: { grain: 'record', recordId: 'rec-render-fixture' },
+              deltas: [],
+              proposedAt: 0,
+              status: 'applied',
+            },
+          },
+        },
+      },
+      grant: {
+        kind: 'ledger-damaged',
+        reason: 'GrantLedgerDamagedError: 1 line(s) of grants.jsonl could not be read — '
+          + 'line 2: unparseable line. Repair the named line(s) in grants.jsonl and retry.',
+        refusedLines: [{ lineNumber: 2, reason: 'unparseable line' }],
+      },
+    })
+
+    const lines = renderAccept(payload).split('\n')
+    expect(lines[0]).toContain('applied (knowledge)')
+    // On its OWN line, and carrying the operator's two facts: the apply happened, the mint did not.
+    const damage = lines.slice(1).join('\n')
+    expect(damage).toContain('standing approval NOT recorded')
+    expect(damage).toContain('line(s) 2')
+    expect(damage).toContain('grants.jsonl')
+    expect(damage).toContain('WAS applied')
   })
 
   it('records the standing approval over an UNDAMAGED workspace — the composition\'s admit side', async () => {

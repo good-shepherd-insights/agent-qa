@@ -233,10 +233,34 @@ export type ProposalsAcceptOutcome = z.infer<typeof ProposalsAcceptOutcomeSchema
  * `not-applied` is `always: true` on a request whose apply never happened. Minting there would
  * record a standing approval for a commit that did not occur, which is the one way this surface
  * could widen autonomy without anything having been decided at all.
+ *
+ * `ledger-damaged` is the mint that could not be DECIDED at all, because the committed grant ledger
+ * carries a line this build cannot read (391-09's typed refusal). It lives HERE, with this verb's
+ * own arms, and deliberately NOT inside {@link GrantRecordOutcomeSchema}: the port keeps its THROW,
+ * because a refusal to decide is not a decision and widening the port's union would make every
+ * existing exhaustive switch over it silently incomplete rather than loudly broken. Only this op
+ * converts that throw into data, and only because its apply has ALREADY COMMITTED by the time the
+ * mint runs — a caller told only about the refusal would hold no receipt for a change that really
+ * happened, and the predictable next thing they do is re-apply it.
  */
 export const ProposalsAcceptGrantOutcomeSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('not-requested') }).strict(),
   z.object({ kind: z.literal('not-applied') }).strict(),
+  z.object({
+    kind: z.literal('ledger-damaged'),
+    /** The refusal in the operator's words — what is wrong, and what repairs it. */
+    reason: z.string().min(1),
+    /**
+     * The refused lines, in the ledger reader's OWN field names (`RefusedGrantLine`), so a refused
+     * line has one spelling in the repo and a renderer can print either source unchanged.
+     */
+    refusedLines: z.array(
+      z.object({
+        lineNumber: z.number().int().positive(),
+        reason: z.string().min(1),
+      }).strict(),
+    ),
+  }).strict(),
   ...GrantRecordOutcomeSchema.options,
 ])
 
@@ -244,11 +268,21 @@ export type ProposalsAcceptGrantOutcome = z.infer<typeof ProposalsAcceptGrantOut
 
 /**
  * The pin that keeps the two spellings honest: everything on the grant half that is NOT one of this
- * verb's own two arms must be EXACTLY the port's outcome union. An arm added to the mint and not
- * carried here would be an arm this surface silently cannot report.
+ * verb's own arms must be EXACTLY the port's outcome union.
+ *
+ * WHAT IT STILL BUYS AFTER THE WIDENING, because an exclusion list that grows without a restated
+ * purpose is the next decorative assertion. The exclusion names only arms THIS VERB mints itself
+ * and the port cannot produce — the two no-mint answers, and the refusal-to-decide this op converts
+ * from the port's throw. Everything left over is still required to be the port's union EXACTLY, so
+ * an arm the PORT gains and this surface does not carry still fails to compile here. The pin's
+ * direction is unchanged: it constrains the port's arms, and the exclusion is the list of arms the
+ * port was never asked to have.
  */
 const _acceptGrantArmsCoverThePort: ExactlyEqual<
-  Exclude<ProposalsAcceptGrantOutcome, { kind: 'not-requested' | 'not-applied' }>,
+  Exclude<
+    ProposalsAcceptGrantOutcome,
+    { kind: 'not-requested' | 'not-applied' | 'ledger-damaged' }
+  >,
   GrantRecordOutcome
 > = true
 void _acceptGrantArmsCoverThePort

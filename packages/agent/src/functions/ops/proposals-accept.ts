@@ -121,6 +121,40 @@ const GRANT_NOT_REQUESTED: ProposalsAcceptGrantOutcome = { kind: 'not-requested'
 /** The escalation was asked for, but the apply never happened — so nothing may be recorded. */
 const GRANT_NOT_APPLIED: ProposalsAcceptGrantOutcome = { kind: 'not-applied' }
 
+/**
+ * The ONE refusal this op folds into data, named as a string because the class is unimportable.
+ *
+ * Nothing else may be folded. A lease refusal, an egress refusal and a contract refusal are
+ * different facts about different problems, and reporting any of them as ledger damage would send
+ * an operator to repair a file that is perfectly readable.
+ */
+const GRANT_LEDGER_DAMAGED_ERROR_NAME = 'GrantLedgerDamagedError'
+
+function isGrantLedgerDamaged(error: unknown): error is Error {
+  return error instanceof Error && error.name === GRANT_LEDGER_DAMAGED_ERROR_NAME
+}
+
+/**
+ * The refused lines off an error whose shape this package cannot type — read defensively.
+ *
+ * `name` and `message` are always there; `refusedLines` is a property of an implementation class
+ * across a boundary, so it is kept only when it is genuinely an array of `{lineNumber, reason}`.
+ * The degradation is honest rather than silent: the composed CLI case asserts this array is
+ * NON-EMPTY and names the damaged line, so an extraction that started returning `[]` reds instead
+ * of shipping a refusal that names nothing.
+ */
+function refusedLinesOf(error: Error): { lineNumber: number; reason: string }[] {
+  const candidate = (error as { refusedLines?: unknown }).refusedLines
+  if (!Array.isArray(candidate)) return []
+  return candidate.flatMap((line: unknown) => {
+    if (typeof line !== 'object' || line === null) return []
+    const { lineNumber, reason } = line as { lineNumber?: unknown; reason?: unknown }
+    if (typeof lineNumber !== 'number' || !Number.isInteger(lineNumber) || lineNumber < 1) return []
+    if (typeof reason !== 'string' || reason.length === 0) return []
+    return [{ lineNumber, reason }]
+  })
+}
+
 export const proposalsAcceptSpec: FunctionSpec<ProposalsAcceptInput, ProposalsAcceptOutput> = {
   id: PROPOSALS_ACCEPT_FUNCTION_ID,
   summary: 'Apply a pending proposal, optionally recording a standing approval for its kind.',
@@ -167,14 +201,39 @@ export const proposalsAcceptSpec: FunctionSpec<ProposalsAcceptInput, ProposalsAc
     // The mint's refusal arms — protected-class above all — come back as DATA and travel BESIDE the
     // apply outcome rather than replacing it. The apply already committed; a caller told only about
     // the refusal would have no receipt for a change that really happened.
-    const grant = await grants.record({
-      actionClass: ROUTE_FOR_KIND[apply.applied.kind].actionClass,
-      scope: STANDING_APPROVAL_SCOPE,
-      // The provenance link, and the ONLY one: the envelope deliberately carries no grant
-      // reference, so this id pointing back is the whole of the relation (391-02's argument that
-      // two copies of a link is how one of them starts pointing at nothing).
-      proposalId: input.proposalId,
-    })
+    //
+    // The TRY IS PART OF THAT RULE, not a hedge against it (391-12). The port raises rather than
+    // answers when the committed grant ledger carries a line it cannot read — a refusal to DECIDE,
+    // which is not a decision and therefore not an arm the port may have. Uncaught, that throw
+    // leaves `invoke` and takes this whole payload with it, telling a person their accept failed
+    // for a knowledge commit that is already durable on disk. So it is folded into `ledger-damaged`
+    // HERE, at the one seam where something has already committed by the time the mint runs.
+    let grant: ProposalsAcceptGrantOutcome
+    try {
+      grant = await grants.record({
+        actionClass: ROUTE_FOR_KIND[apply.applied.kind].actionClass,
+        scope: STANDING_APPROVAL_SCOPE,
+        // The provenance link, and the ONLY one: the envelope deliberately carries no grant
+        // reference, so this id pointing back is the whole of the relation (391-02's argument that
+        // two copies of a link is how one of them starts pointing at nothing).
+        proposalId: input.proposalId,
+      })
+    } catch (error) {
+      // MATCHED BY NAME, NOT BY CLASS, and the reason is architectural rather than stylistic: this
+      // package declares against the schema-owned `StandingGrantsPort` and may not import the
+      // `knowledge-local` implementation that raises the error — that import edge is exactly what
+      // `validate:arch` refuses. The cost of the choice, stated rather than discovered: a rename on
+      // the raising side stops this match SILENTLY. What holds the line is not a type but the
+      // composed case in `cli/…/proposals-digest-commands.test.ts`, which drives the production CLI
+      // composition end to end over a real damaged ledger and reds the moment the name stops
+      // matching.
+      if (!isGrantLedgerDamaged(error)) throw error
+      grant = {
+        kind: 'ledger-damaged',
+        reason: `${error.name}: ${error.message}`,
+        refusedLines: refusedLinesOf(error),
+      }
+    }
 
     return { apply, grant }
   },
