@@ -487,4 +487,86 @@ describe('a grant ledger the build cannot fully read authorizes nothing', () => 
       expect(refusedRevoke.name).toBe('GrantLedgerDamagedError')
     })
   })
+
+  // ---- 391-13: the accept seam's data arm did NOT relocate the port's contract ----
+  //
+  // 391-12 gave `proposals.accept --always` a fourth `ledger-damaged` ARM, because by the time its
+  // mint runs the apply has already committed and an uncaught throw would discard that receipt.
+  // That conversion is licensed at exactly ONE seam. Had it instead been done by widening the
+  // PORT's own outcome union, every other caller would have started receiving a refusal-to-DECIDE
+  // dressed as a decision — and every exhaustive switch over that union would have gone silently
+  // incomplete rather than loudly broken, which is the failure shape that produced rounds 2 and 3
+  // of this phase's arc.
+  //
+  // So the port is pinned here, at the composed-host grain and in this package rather than on the
+  // word of the plan that changed the seam. Written over a DESCRIPTION of how each call settled
+  // rather than as a bare rejection assertion: a port that had grown the arm fails these cases
+  // naming the arm it answered with, instead of merely failing to throw.
+  describe('the write verbs still refuse by THROWING, not by answering an arm', () => {
+    type Settled =
+      | { settled: 'threw'; error: Error }
+      | { settled: 'answered'; value: unknown }
+
+    async function settle(call: () => Promise<unknown>): Promise<Settled> {
+      try {
+        return { settled: 'answered', value: await call() }
+      } catch (error) {
+        // A non-Error throw is a fixture bug, not a refusal, and is rethrown rather than folded in.
+        if (!(error instanceof Error)) throw error
+        return { settled: 'threw', error }
+      }
+    }
+
+    /** One string carrying BOTH halves of the contract: THAT it threw, and WHAT it threw. */
+    function howItSettled(result: Settled): string {
+      return result.settled === 'threw'
+        ? `threw ${result.error.name}`
+        : `answered ${JSON.stringify(result.value)}`
+    }
+
+    let headless: FunctionRegistry
+    let applyGrantId: string
+
+    beforeEach(async () => {
+      headless = host('local-headless')
+      // Line 1: the apply-class grant, the revoke target below.
+      applyGrantId = await recordApplyGrant(headless)
+      // Line 2: the sibling grant — and the line the damage lands on.
+      await recordGrantFor(riskClass(headless, SIBLING_ID))
+    })
+
+    it('over a DAMAGED root, record and revoke BOTH raise GrantLedgerDamagedError', async () => {
+      damageLastLine()
+      const verbs = grantVerbs()
+
+      // `record` is the verb the accept seam calls. Its throw is what 391-12 catches THERE; this
+      // is the pin that the catch did not quietly become a change of contract HERE.
+      expect(howItSettled(await settle(() =>
+        verbs.record({ actionClass: riskClass(headless, SIBLING_ID), scope: STANDING_APPROVAL_SCOPE }),
+      ))).toBe('threw GrantLedgerDamagedError')
+
+      // `revoke` mints nothing and has no committed receipt to protect, so it has no reason to
+      // convert at any seam — 391-12 enumerated `grants-revoke.ts` and consciously left it alone.
+      expect(howItSettled(await settle(() => verbs.revoke({ grantId: applyGrantId }))))
+        .toBe('threw GrantLedgerDamagedError')
+    })
+
+    it('ADMIT CONTROL — over an INTACT root the SAME two calls ANSWER', async () => {
+      // The differential's other half, and what stops the case above being satisfied by a port that
+      // refuses everything or by a fixture that committed nothing for the damage to land on. Same
+      // two calls, same arguments, same composition — only the damage is missing — and both of them
+      // come back as ordinary arms. So the throws above are the damaged line's doing, and "throws"
+      // is not simply what this port does.
+      const verbs = grantVerbs()
+
+      const recorded = await verbs.record({
+        actionClass: riskClass(headless, SIBLING_ID),
+        scope: STANDING_APPROVAL_SCOPE,
+      })
+      expect(recorded.kind).toBe('already-granted')
+
+      const revoked = await verbs.revoke({ grantId: applyGrantId })
+      expect(revoked.outcome).toBe('revoked')
+    })
+  })
 })
