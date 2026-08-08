@@ -39,7 +39,8 @@
 import { z } from 'zod'
 
 import type { ActiveStandingGrant } from './grant-ledger'
-import type { TrustScope } from './trust-credential'
+import { TRUST_SCOPE_KEYS } from './trust-credential'
+import type { TrustScope, TrustScopeKey } from './trust-credential'
 
 /** True only when the two types are mutually assignable — a real equality, not a subtype check. */
 type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -52,19 +53,48 @@ type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : f
  * every declared contract (384 D-14), so the projection is minted here, at the boundary that needs
  * one, and never in the module that owns the type.
  *
- * Both members are `.min(1)` even though the DTO says only `string`, and that is the gate's own
+ * Every member is `.min(1)` even though the DTO says only `string`, and that is the gate's own
  * rule made structural rather than a widening: `scopeMatches` treats a scope with zero POPULATED
  * keys as matching nothing on either side, so an empty-string member is a key that reads as present
  * and matches as absent.
+ *
+ * THE KEY SET IS NOT SPELLED HERE (391-11, closing G-391-1). The shape is BUILT from
+ * {@link TRUST_SCOPE_KEYS}, the same constant `isMatchableScope` ranges on the structural leg, so
+ * the two readers of a committed grant scope cannot drift apart. They previously agreed by
+ * coincidence: this file restated `{project, org}` as its own literal, and the assertion below was
+ * the only thing meant to tie them.
+ *
+ * WHY THAT ASSERTION WAS NOT ENOUGH, and why the two `keyof` pins now sit beside it: mutual
+ * assignability over an all-optional object type is satisfied by a SUPERSET and a SUBSET alike, so
+ * adding an optional key to one side breaks neither direction and `ExactlyEqual` holds vacuously.
+ * TypeScript's excess-property check would catch it only on a fresh object literal, and this repo
+ * does not enable `exactOptionalPropertyTypes`. `keyof` produces a string-literal union instead, and
+ * `ExactlyEqual` over unions IS exact — which is precisely why the key-union assertion at
+ * `trust-credential.ts:32` holds while the shape-only one did not.
  */
-export const TrustScopeSchema = z.object({
-  project: z.string().min(1).optional(),
-  org: z.string().min(1).optional(),
-}).strict()
+export const TrustScopeSchema = z.object(
+  Object.fromEntries(
+    TRUST_SCOPE_KEYS.map((key) => [key, z.string().min(1).optional()]),
+  ) as Record<TrustScopeKey, z.ZodOptional<z.ZodString>>,
+).strict()
 
+/** The member VALUE type and its optionality — this pin survives, it was never the weak one. */
 const _trustScopeProjectionMatchesDto: ExactlyEqual<z.infer<typeof TrustScopeSchema>, TrustScope> =
   true
 void _trustScopeProjectionMatchesDto
+
+/** KEY-SET EXACT, in both directions a single leg can move. */
+const _trustScopeProjectionKeysMatchTheConstant: ExactlyEqual<
+  keyof z.infer<typeof TrustScopeSchema>,
+  TrustScopeKey
+> = true
+void _trustScopeProjectionKeysMatchTheConstant
+
+const _trustScopeProjectionKeysMatchTheDto: ExactlyEqual<
+  keyof z.infer<typeof TrustScopeSchema>,
+  keyof TrustScope
+> = true
+void _trustScopeProjectionKeysMatchTheDto
 
 /**
  * The WIRE projection of one folded standing approval — pinned EXACTLY EQUAL to the fold's DTO.

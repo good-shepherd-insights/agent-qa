@@ -1,6 +1,10 @@
 export type { RiskTier, PolicyVerdict, ExecutionPolicyResult } from './risk-tier'
 export type { RiskActionDescriptor } from './action-descriptor'
-export type { TrustCredential, TrustScope } from './trust-credential'
+// 391-11 (REVIEW WR-05): the scope key set, spelled ONCE and PUBLISHED — same posture as the
+// sibling constant `PROTECTED_ACTION_CLASSES` below, on the identical 388-C13 argument. Keeping it
+// package-private is what stopped any out-of-package differential from ranging the key set.
+export { TRUST_SCOPE_KEYS } from './trust-credential'
+export type { TrustCredential, TrustScope, TrustScopeKey } from './trust-credential'
 export type { StandingApprovalGrant } from './standing-approval'
 // 391 D-04/D-11: the committed standing-grant ledger's event contract. The DTOs and both guard legs
 // live here; knowledge-local owns the bytes and the fold over them.
