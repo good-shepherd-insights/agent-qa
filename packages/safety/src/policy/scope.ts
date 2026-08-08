@@ -1,15 +1,17 @@
+import { TRUST_SCOPE_KEYS } from '@vostride/agent-qa-schema'
 import type {
   RiskActionDescriptor,
   StandingApprovalGrant,
   TrustScope,
+  TrustScopeKey,
 } from '@vostride/agent-qa-schema'
 
-type TrustScopeKey = keyof TrustScope
-
-const SCOPE_KEYS = ['org', 'project'] as const satisfies readonly TrustScopeKey[]
-
+// This file does not spell the scope key set; it ranges the published constant. The declared order
+// is project-then-org, which is behaviour-neutral here: the result feeds a length comparison and an
+// `every`/`includes` pair, both order-independent. `policy/__tests__/scope.test.ts` reds when this
+// leg stops ranging the constant.
 function populatedKeys(scope: TrustScope): TrustScopeKey[] {
-  return SCOPE_KEYS.filter((key) => scope[key] !== undefined && scope[key] !== '')
+  return TRUST_SCOPE_KEYS.filter((key) => scope[key] !== undefined && scope[key] !== '')
 }
 
 export function scopeMatches(credentialScope: TrustScope, actionScope: TrustScope): boolean {
