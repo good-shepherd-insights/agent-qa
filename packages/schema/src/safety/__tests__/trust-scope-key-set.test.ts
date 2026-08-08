@@ -1,11 +1,9 @@
-// The scope key set has ONE spelling, and the two legs that range it agree BY CONSTRUCTION
-// (Phase 391 plan 11, closing G-391-1).
-//
-// Two readers decide what a scope key is: the structural guard on the committed grant ledger
+// What this file measures (Phase 391 plan 11, closing G-391-1): the two legs it imports admit and
+// refuse the same scope keys — the structural guard on the committed grant ledger
 // (`hasGrantEventShape` -> `isMatchableScope`, which ranges `TRUST_SCOPE_KEYS`) and the strict wire
-// projection `TrustScopeSchema`, which `grants.list` parses its OWN output through. A key one leg
-// admits and the other refuses is a grant in force that the enumeration verb cannot render — the
-// line authorizes at the gate and throws the whole listing away.
+// projection `TrustScopeSchema`, which `grants.list` parses its OWN output through. A key one of
+// these two admits and the other refuses is a grant in force that the enumeration verb cannot
+// render — the line authorizes at the gate and throws the whole listing away.
 //
 // THE TWO CONTROLS ARE NOT THE SAME KIND OF CASE, and conflating them is what made the UAT probe
 // pass over a dead fixture:

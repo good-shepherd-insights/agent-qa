@@ -821,9 +821,9 @@ export type {
   GrantRecordedEvent,
   GrantRevokedEvent,
 } from './safety/index'
-// 391-11 (REVIEW WR-05): the scope key set, spelled ONCE. `TrustScopeSchema`'s shape is built from
-// it and the ledger's structural guard ranges it, so a test that wants a key OUTSIDE the set must
-// compute it against this value rather than hard-code one that a later key addition could legalise.
+// 391-11 (REVIEW WR-05): the scope key set, spelled ONCE. A test that wants a key OUTSIDE the set
+// must compute it against this value rather than hard-code one that a later key addition could
+// legalise.
 export { TRUST_SCOPE_KEYS } from './safety/index'
 // 391 D-05/D-07: the closed grant-ineligible action-class set and its membership predicate. One
 // export, consulted by BOTH the grant mint and the grant read — a config-sourced protected list

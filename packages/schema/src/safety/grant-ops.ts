@@ -59,10 +59,8 @@ type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : f
  * and matches as absent.
  *
  * THE KEY SET IS NOT SPELLED HERE (391-11, closing G-391-1). The shape is BUILT from
- * {@link TRUST_SCOPE_KEYS}, the same constant `isMatchableScope` ranges on the structural leg, so
- * the two readers of a committed grant scope cannot drift apart. They previously agreed by
- * coincidence: this file restated `{project, org}` as its own literal, and the assertion below was
- * the only thing meant to tie them.
+ * {@link TRUST_SCOPE_KEYS}. This file previously restated `{project, org}` as its own literal, and
+ * the assertion below was the only thing meant to tie them.
  *
  * WHY THAT ASSERTION WAS NOT ENOUGH, and why the two `keyof` pins now sit beside it: mutual
  * assignability over an all-optional object type is satisfied by a SUPERSET and a SUBSET alike, so
