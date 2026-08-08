@@ -47,6 +47,7 @@ import {
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   STANDING_APPROVAL_SCOPE,
+  TRUST_SCOPE_KEYS,
 } from '@vostride/agent-qa-schema'
 import type {
   ExecutionContext,
@@ -70,8 +71,38 @@ const SIBLING_ID = 'knowledge.forget.propose'
 const GRANTS_LIST_ID = 'grants.list'
 const NOW_ISO = '2026-08-08T12:00:00.000Z'
 
-/** A scope key outside `TRUST_SCOPE_KEYS` — what `TrustScopeSchema.strict()` has always refused. */
-const UNKNOWN_SCOPE_KEY = 'tenant'
+/**
+ * A scope key OUTSIDE `TRUST_SCOPE_KEYS` — what `TrustScopeSchema.strict()` refuses. COMPUTED
+ * against the published constant rather than typed: a hard-coded key becomes LEGAL the day the
+ * constant grows, and these cases then report green while measuring nothing. 391-11 measured
+ * exactly that, reding the four cases below under a mutation that legalised the `'tenant'` this
+ * line used to spell.
+ *
+ * `AGENT_QA_TEST_UNKNOWN_SCOPE_KEY` is set by a falsifiability revert (391-13 revert B). It wins
+ * outright and is deliberately NOT legality-checked: pinning a key that HAS just become legal is
+ * the entire point of that branch, and a helper free to re-compute would quietly pick the next
+ * illegal candidate, refuse the line exactly as before, and report green while appearing to have
+ * been falsified.
+ */
+const UNKNOWN_SCOPE_KEY_CANDIDATES = ['tenant', 'workspace', 'region', 'cell'] as const
+
+function anUnknownScopeKey(): string {
+  const pinned = process.env.AGENT_QA_TEST_UNKNOWN_SCOPE_KEY
+  if (typeof pinned === 'string' && pinned.length > 0) return pinned
+
+  const declared = TRUST_SCOPE_KEYS as readonly string[]
+  const found = UNKNOWN_SCOPE_KEY_CANDIDATES.find((candidate) => !declared.includes(candidate))
+  if (found === undefined) {
+    throw new Error(
+      `every candidate scope key (${UNKNOWN_SCOPE_KEY_CANDIDATES.join(', ')}) is now legal in ` +
+        `TRUST_SCOPE_KEYS (${declared.join(', ')}); these cases can no longer measure a refusal — ` +
+        'add a candidate rather than letting them pass',
+    )
+  }
+  return found
+}
+
+const UNKNOWN_SCOPE_KEY = anUnknownScopeKey()
 
 /** What a merge leaves behind when two branches both appended: a marker fused onto a real line. */
 const CONFLICT_MARKER = '<<<<<<< HEAD'

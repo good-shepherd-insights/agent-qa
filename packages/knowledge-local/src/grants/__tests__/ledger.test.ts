@@ -27,6 +27,7 @@ import {
   CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
   GrantLedgerVersionError,
   STANDING_APPROVAL_SCOPE,
+  TRUST_SCOPE_KEYS,
   canonicalJson,
 } from '@vostride/agent-qa-schema'
 import type { GrantLedgerEvent } from '@vostride/agent-qa-schema'
@@ -39,6 +40,38 @@ import {
   grantsLedgerPath,
   readGrantLedger,
 } from '../ledger.js'
+
+/**
+ * A scope key OUTSIDE `TRUST_SCOPE_KEYS`, COMPUTED against the published constant rather than
+ * typed. A hard-coded key becomes LEGAL the day the constant grows, and this case then reports
+ * green while measuring nothing — 391-11 measured exactly that, reding this case under a mutation
+ * that legalised the `'tenant'` it used to spell.
+ *
+ * `AGENT_QA_TEST_UNKNOWN_SCOPE_KEY` is set by a falsifiability revert (391-13 revert B). It wins
+ * outright and is deliberately NOT legality-checked: pinning a key that HAS just become legal is
+ * the entire point of that branch, and a helper free to re-compute would quietly pick the next
+ * illegal candidate, refuse the line exactly as before, and report green while appearing to have
+ * been falsified.
+ */
+const UNKNOWN_SCOPE_KEY_CANDIDATES = ['tenant', 'workspace', 'region', 'cell'] as const
+
+function anUnknownScopeKey(): string {
+  const pinned = process.env.AGENT_QA_TEST_UNKNOWN_SCOPE_KEY
+  if (typeof pinned === 'string' && pinned.length > 0) return pinned
+
+  const declared = TRUST_SCOPE_KEYS as readonly string[]
+  const found = UNKNOWN_SCOPE_KEY_CANDIDATES.find((candidate) => !declared.includes(candidate))
+  if (found === undefined) {
+    throw new Error(
+      `every candidate scope key (${UNKNOWN_SCOPE_KEY_CANDIDATES.join(', ')}) is now legal in ` +
+        `TRUST_SCOPE_KEYS (${declared.join(', ')}); this case can no longer measure a refusal — ` +
+        'add a candidate rather than letting it pass',
+    )
+  }
+  return found
+}
+
+const UNKNOWN_SCOPE_KEY = anUnknownScopeKey()
 
 const ACTION_CLASS = 'fn:knowledge.proposal.apply'
 const GRANT_ID = 'grant_apply_alpha'
@@ -138,15 +171,17 @@ describe('grant ledger read and fold', () => {
   })
 
   it('refuses a grant whose scope carries an UNKNOWN key, by line number', async () => {
-    // The structural guard refuses exactly what the strict wire contract refuses: a key outside
-    // TRUST_SCOPE_KEYS. Authored as raw bytes BECAUSE the fixed mint refuses to produce it — the
-    // same sanctioned hand-written-line exception the forged-protected-line case relies on.
+    // The structural guard refuses exactly what the strict wire contract refuses: a key that is NOT
+    // a member of TRUST_SCOPE_KEYS. The key is computed from that constant, so this case states the
+    // RELATION rather than naming a spelling that a later key addition could legalise. Authored as
+    // raw bytes BECAUSE the fixed mint refuses to produce it — the same sanctioned hand-written-line
+    // exception the forged-protected-line case relies on.
     await writeLedger([
       canonicalJson(grant()),
       canonicalJson({
         ...grant(),
         grantId: OTHER_GRANT_ID,
-        scope: { ...STANDING_APPROVAL_SCOPE, tenant: 'smuggled' },
+        scope: { ...STANDING_APPROVAL_SCOPE, [UNKNOWN_SCOPE_KEY]: 'smuggled' },
       }),
     ])
 

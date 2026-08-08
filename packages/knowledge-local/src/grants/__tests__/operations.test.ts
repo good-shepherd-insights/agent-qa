@@ -41,6 +41,7 @@ import {
   CURRENT_GRANT_LEDGER_SCHEMA_VERSION,
   PROTECTED_ACTION_CLASSES,
   STANDING_APPROVAL_SCOPE,
+  TRUST_SCOPE_KEYS,
   canonicalJson,
   isProtectedActionClass,
 } from '@vostride/agent-qa-schema'
@@ -54,6 +55,38 @@ import {
   createGrantOperations,
 } from '../operations.js'
 import { createStandingApprovalReader } from '../reader.js'
+
+/**
+ * A scope key OUTSIDE `TRUST_SCOPE_KEYS`, COMPUTED against the published constant rather than
+ * typed. A hard-coded key becomes LEGAL the day the constant grows, and this case then reports
+ * green while measuring nothing — 391-11 measured exactly that, reding this case under a mutation
+ * that legalised the `'tenant'` it used to spell.
+ *
+ * `AGENT_QA_TEST_UNKNOWN_SCOPE_KEY` is set by a falsifiability revert (391-13 revert B). It wins
+ * outright and is deliberately NOT legality-checked: pinning a key that HAS just become legal is
+ * the entire point of that branch, and a helper free to re-compute would quietly pick the next
+ * illegal candidate, refuse the input exactly as before, and report green while appearing to have
+ * been falsified.
+ */
+const UNKNOWN_SCOPE_KEY_CANDIDATES = ['tenant', 'workspace', 'region', 'cell'] as const
+
+function anUnknownScopeKey(): string {
+  const pinned = process.env.AGENT_QA_TEST_UNKNOWN_SCOPE_KEY
+  if (typeof pinned === 'string' && pinned.length > 0) return pinned
+
+  const declared = TRUST_SCOPE_KEYS as readonly string[]
+  const found = UNKNOWN_SCOPE_KEY_CANDIDATES.find((candidate) => !declared.includes(candidate))
+  if (found === undefined) {
+    throw new Error(
+      `every candidate scope key (${UNKNOWN_SCOPE_KEY_CANDIDATES.join(', ')}) is now legal in ` +
+        `TRUST_SCOPE_KEYS (${declared.join(', ')}); this case can no longer measure a refusal — ` +
+        'add a candidate rather than letting it pass',
+    )
+  }
+  return found
+}
+
+const UNKNOWN_SCOPE_KEY = anUnknownScopeKey()
 
 /** A real op's class, and deliberately NOT a protected one — the guard's ADMIT side. */
 const OPEN_CLASS = 'fn:knowledge.proposal.apply'
@@ -261,17 +294,20 @@ describe('the grant verbs: record, revoke, list — under the lease, protected a
     }
 
     it('refuses a scope carrying an UNKNOWN key, before the root resolves and before the lease', async () => {
+      // The key is a NON-MEMBER of TRUST_SCOPE_KEYS, computed from that constant rather than
+      // spelled — the relation is what this case is about, not any one key's name.
       const refusal = await parseRefusal(() =>
         countingOps().record({
           actionClass: OPEN_CLASS,
-          scope: { ...STANDING_APPROVAL_SCOPE, tenant: 'smuggled' } as TrustScope,
+          scope: { ...STANDING_APPROVAL_SCOPE, [UNKNOWN_SCOPE_KEY]: 'smuggled' } as TrustScope,
         }),
       )
 
       expect(refusal.name).toBe('ZodError')
       expect(
         refusal.issues?.some(
-          (issue) => issue.code === 'unrecognized_keys' && (issue.keys ?? []).includes('tenant'),
+          (issue) =>
+            issue.code === 'unrecognized_keys' && (issue.keys ?? []).includes(UNKNOWN_SCOPE_KEY),
         ),
       ).toBe(true)
       // The measurable form of "no lock and no byte": the root was never even asked for.
