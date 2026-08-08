@@ -77,19 +77,10 @@ const NOW_ISO = '2026-08-08T12:00:00.000Z'
  * constant grows, and these cases then report green while measuring nothing. 391-11 measured
  * exactly that, reding the four cases below under a mutation that legalised the `'tenant'` this
  * line used to spell.
- *
- * `AGENT_QA_TEST_UNKNOWN_SCOPE_KEY` is set by a falsifiability revert (391-13 revert B). It wins
- * outright and is deliberately NOT legality-checked: pinning a key that HAS just become legal is
- * the entire point of that branch, and a helper free to re-compute would quietly pick the next
- * illegal candidate, refuse the line exactly as before, and report green while appearing to have
- * been falsified.
  */
 const UNKNOWN_SCOPE_KEY_CANDIDATES = ['tenant', 'workspace', 'region', 'cell'] as const
 
 function anUnknownScopeKey(): string {
-  const pinned = process.env.AGENT_QA_TEST_UNKNOWN_SCOPE_KEY
-  if (typeof pinned === 'string' && pinned.length > 0) return pinned
-
   const declared = TRUST_SCOPE_KEYS as readonly string[]
   const found = UNKNOWN_SCOPE_KEY_CANDIDATES.find((candidate) => !declared.includes(candidate))
   if (found === undefined) {

@@ -431,20 +431,12 @@ describe('agent-qa proposals accept --always, over a grant ledger the build cann
    * A scope key OUTSIDE `TRUST_SCOPE_KEYS`, resolved at FIXTURE-BUILD time.
    *
    * COPIED VERBATIM from the helper 391-11 Task 2 installed in
-   * `agent-local/…/grant-ledger-damage.e2e.test.ts`, BOTH BRANCHES, rather than re-derived. The
-   * computed branch is what stops a hard-coded key becoming legal the day the constant grows, and
-   * the `AGENT_QA_TEST_UNKNOWN_SCOPE_KEY` branch — honoured verbatim and BEFORE any legality
-   * check — is what lets 391-13's revert B pin the key it is about to legalise. A copy keeping only
-   * the computed branch cannot be reverted against: a derivation free to re-compute simply picks
-   * the next illegal candidate the moment the mutation lands, the line stays refused, and the case
-   * below reports green while appearing to have been falsified.
+   * `agent-local/…/grant-ledger-damage.e2e.test.ts` rather than re-derived. The
+   * computed branch is what stops a hard-coded key becoming legal the day the constant grows.
    */
   const UNKNOWN_SCOPE_KEY_CANDIDATES = ['tenant', 'workspace', 'region', 'cell'] as const
 
   function anUnknownScopeKey(): string {
-    const pinned = process.env.AGENT_QA_TEST_UNKNOWN_SCOPE_KEY
-    if (typeof pinned === 'string' && pinned.length > 0) return pinned
-
     const declared = TRUST_SCOPE_KEYS as readonly string[]
     const found = UNKNOWN_SCOPE_KEY_CANDIDATES.find((candidate) => !declared.includes(candidate))
     if (found === undefined) {
