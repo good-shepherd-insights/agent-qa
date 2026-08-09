@@ -31,6 +31,29 @@ export interface ResolvedClause {
 }
 
 /**
+ * WHICH STAGE PROVED A BINDING (RESEARCH Pitfall 1 / 391 D-06).
+ *
+ * The same word names the caller mint and the action's provenance on purpose: the origin a clause
+ * executes under is decided by which stage bound it, and giving the two ideas separate vocabularies
+ * would let them drift into disagreeing about the same clause.
+ */
+export type ChatBindingStage = 'resolver' | 'planner'
+
+/**
+ * One step of an execute verdict: a binding, and the stage that proved it.
+ *
+ * `source` is carried rather than re-derived, and that is a correctness decision rather than a
+ * convenience. The engine has to mint a caller per action, and the only honest input to that choice
+ * is which stage produced the binding — a fact reconciliation KNOWS and every later consumer would
+ * have to guess at by matching the action back against the mapper set. A guess that matched on
+ * `functionId` would mint `human` for a planner-planned call to an op the table also knows, which
+ * is exactly the self-grant 391 D-06 withholds.
+ */
+export interface ClauseAction extends ResolvedClause {
+  readonly source: ChatBindingStage
+}
+
+/**
  * One tool call the model proposed. UNEXECUTED, and unexecutable — the tools it was offered carry
  * no execute callback, so the SDK returned a description of an intention and nothing more.
  *
@@ -117,7 +140,7 @@ export interface ReconcileInput {
 export type ReconcileVerdict =
   | {
       readonly kind: 'execute'
-      readonly plan: readonly ResolvedClause[]
+      readonly plan: readonly ClauseAction[]
       /**
        * The prose a turn answers with when the model answered rather than acted (CHAT-01).
        *
@@ -157,7 +180,7 @@ export type ClauseSplitter = (utterance: string) => readonly ChatClause[]
  * the planner the self-grant power 391 D-06 deliberately withholds.
  */
 export interface CallerMint {
-  forStage(stage: 'resolver' | 'planner'): FunctionCaller
+  forStage(stage: ChatBindingStage): FunctionCaller
 }
 
 /**

@@ -332,6 +332,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // whole point of naming it here.
   'ChainJobIds',
   'ChainTerminalRecord',
+  // 392 plan 07, Pitfall 1 / 391 D-06: which stage proved a binding. Pinned because the caller a
+  // clause executes under is decided by this value and by nothing else — a third member here would
+  // be a third origin story for an invocation, and the pin makes adding one a visible edit.
+  'ChatBindingStage',
   'ChatClause',
   // 392 plan 06, CHAT-04 / D-20: the compaction vocabulary. `ChatTokenAccounting` (below) is the
   // one that carries the design decision — it is the SHAPE of the accounting instance a host hands
@@ -369,6 +373,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // nobody a store; the exclusion it names is honoured inside the sqlite SELECT and set once
   // at queue construction (`unclaimableKinds` on `CreateAgentJobQueueOptions`, already pinned).
   'ClaimNextOptions',
+  // 392 plan 07: one step of an execute verdict — a binding plus the stage that proved it. A TYPE,
+  // so it dispatches nothing; what it carries across the barrel is the fact the engine mints a
+  // caller with, which a consumer re-deriving it would have to guess at by matching op ids.
+  'ClauseAction',
   'ClauseSplitter',
   'ClockPort',
   'CompactionHook',

@@ -200,10 +200,17 @@ export type {
 // repair contract's were: a composition root that can supply a planner but cannot NAME what one
 // answers with would spell the shapes again locally (388 C13). None of them is dispatch: a tool
 // call is a description of an intention, and the only thing that can act on one is the reconciler.
+//
+// 392 plan 07: `ClauseAction` and the stage name it carries. An execute verdict's steps now say
+// WHICH stage proved each binding, because the caller a clause runs under is decided by that fact
+// and by nothing else (Pitfall 1) — and a consumer holding a verdict it cannot fully NAME would
+// spell the shape again locally, which is the second vocabulary this subtree avoids (388 C13).
 export type {
   CallerMint,
+  ChatBindingStage,
   ChatClause,
   ChatInvokeBinding,
+  ClauseAction,
   ClauseSplitter,
   CompactionHook,
   PlannerStageFailure,
