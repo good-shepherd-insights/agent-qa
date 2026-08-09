@@ -23,7 +23,8 @@ export interface ExecutionAuditRow {
   verdict: PolicyVerdict
   /**
    * Secret-free coded outcome value:
-   * proceeded, prompted-approved, prompted-denied, fail-closed-denied, or blocked.
+   * proceeded, prompted-approved, prompted-denied, fail-closed-denied, blocked,
+   * or session-pin-denied (392 D-21 — a session `/pin` refused the action class).
    */
   outcome: string
   reason: string

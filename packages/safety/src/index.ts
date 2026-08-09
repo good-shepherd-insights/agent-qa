@@ -68,6 +68,11 @@ export type {
   GateTrust,
   ExecutionPolicyOutcome,
   ExecutionPolicyTrustSource,
+  // 392 D-21: published on the same footing as `ConfirmPort` below — a composition root that can
+  // hand the gate a session deny overlay but cannot NAME its type would spell the signature again
+  // locally, and a second spelling of a tighten-only contract is a place for a widening one to
+  // appear. Nothing here is a gate call-site: this is a type.
+  SessionDenyOverlay,
 } from './policy/gate'
 export type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from './ports/audit-sink'
 export type { StandingApprovalReader, ConfirmPort } from './ports/policy-ports'

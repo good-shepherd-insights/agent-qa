@@ -21,6 +21,11 @@ export type ExecutionPolicyOutcome =
   | 'prompted-denied'
   | 'fail-closed-denied'
   | 'blocked'
+  // 392 D-21: a session-scoped `/pin` refused this action class. Its OWN outcome value rather
+  // than a reuse of `blocked`, because the two answer different questions for an operator
+  // reading the audit trail: `blocked` means the tier makes this action non-executable for
+  // everyone forever, while this means a person, in this conversation, asked for it to stop.
+  | 'session-pin-denied'
 
 export type ExecutionPolicyTrustSource =
   | 'session-trust-mode'
@@ -34,10 +39,35 @@ export interface GateTrust {
   actionScope?: TrustScope
 }
 
+/**
+ * A TIGHTEN-ONLY session overlay (392 D-21).
+ *
+ * Answers one question — "is this action class refused for this session?" — and the answer is a
+ * boolean because `true` is the only thing it is allowed to be able to say. A hook returning a
+ * verdict, or a map of per-class verdicts, would be able to express "allow this", and the thing
+ * it would be loosening is the authorization ladder. Tighten-only is therefore a property of this
+ * signature, not a rule the gate remembers to apply in one direction.
+ *
+ * SYNCHRONOUS, unlike {@link ConfirmPort}. A pin is an in-memory set that dies with the session;
+ * an awaited overlay would admit an I/O-backed or model-backed deny, which is a network call
+ * placed between a caller and its authorization decision.
+ *
+ * `false` means "no opinion", never "allow": the gate's own ladder still decides. The absence of
+ * the hook and a hook answering `false` are the same behaviour, deep-equal down to the audit row,
+ * and that equivalence is asserted rather than assumed.
+ */
+export type SessionDenyOverlay = (action: RiskActionDescriptor) => boolean
+
 export interface GateDeps {
   auditSink?: AuditSink
   reader?: StandingApprovalReader
   confirm?: ConfirmPort
+  /**
+   * Optional session-scoped deny overlay (392 D-21). ABSENT BY DEFAULT and absent in every
+   * composition that does not run a chat session — the ladder below is untouched when nothing
+   * supplies one.
+   */
+  deny?: SessionDenyOverlay
 }
 
 export interface ResolveAskInput extends GateTrust {
@@ -152,8 +182,22 @@ export async function evaluate(
 ): Promise<ExecutionPolicyResult> {
   const { riskTier, reason: classificationReason } = classifyRisk(action)
   const base = baseVerdict(riskTier, ctx)
-  const resolved =
-    base === 'allow'
+  // 392 D-21. The session pin is consulted AFTER classification — so the refusal carries the
+  // classified action and lands an ordinary execution-audit row a few lines below, rather than
+  // being a pre-gate throw that writes nothing (the repudiation gap `invokeFunction` names at
+  // its head) — and BEFORE `resolveAsk`, which is what makes §2.4 structural here. A grant, a
+  // credential, or session trust mode cannot resurrect a pinned action because none of them is
+  // read: there is no ordering between the pin and the trust sources for a later edit to invert.
+  // Placing it after `resolveAsk` would have been the same verdict today and a live confirm
+  // prompt for an action the person had already refused.
+  //
+  // `base === 'deny'` is deliberately NOT consulted: a restricted action was never executable and
+  // §2.4's finality clause is what an operator needs to read, so the pin does not relabel a
+  // decision the tier had already made. That also makes the overlay idempotent over a deny.
+  const pinDenied = base !== 'deny' && deps.deny !== undefined && deps.deny(action)
+  const resolved = pinDenied
+    ? ({ verdict: 'deny', outcome: 'session-pin-denied' } satisfies ResolveAskResult)
+    : base === 'allow'
       ? ({ verdict: 'allow', outcome: 'proceeded' } satisfies ResolveAskResult)
       : base === 'deny'
         ? ({ verdict: 'deny', outcome: 'blocked' } satisfies ResolveAskResult)
@@ -208,5 +252,11 @@ function buildDecisionReason(
       // D-16: the human denied at the interactive prompt; it can be re-run and
       // approved, or trusted for the session with --trust-session.
       return `prompted-denied: ${classificationReason}: the interactive prompt was declined; re-run and approve, or opt in with --trust-session`
+    case 'session-pin-denied':
+      // 392 D-21: name the classification AND the way out, in the same shape the two clauses
+      // above use. The way out is the session boundary, because a pin has no revoke verb by
+      // design — an overlay that could be lifted mid-conversation would be a loosening path, and
+      // the whole point of `/pin` is that it only ever goes one way.
+      return `session-pin-denied: ${classificationReason}: this action class is pinned DENY for this chat session; a pin cannot be lifted — it ends when the session does`
   }
 }
