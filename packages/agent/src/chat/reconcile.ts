@@ -213,10 +213,16 @@ type ClauseDisposition =
  * come from the same pass, because a second predicate computing "which clauses need a proposal"
  * would be free to drift from the one the binder walks.
  *
- * WHEN NO CLAUSE NEEDS A PROPOSAL there is no subject a refusal could name, nothing can be
- * mis-bound, and the calls are discarded whole. That is the asymmetry this file has always had,
- * now stated as the only case in which it applies: the model may lose a proposal, and the person
- * may never lose a request.
+ * WHEN NO CLAUSE NEEDS A PROPOSAL nothing can be mis-bound — no call is popped by anybody — and
+ * the calls are discarded whole. This is a CHOICE, not an absence of alternatives: through the
+ * engine there is always a clause a refusal could name here, because stage 2 is skipped entirely
+ * when every clause is mapped (`turn-engine.ts`), so a non-empty proposal list beside an empty
+ * needy list means at least one clause was ANSWERED. Naming it is available and is not taken. The
+ * asymmetry this file has always had is what decides it: the model may lose a proposal, and the
+ * person may never lose a request. A clause that was answered did not lose its request — its prose
+ * reaches the person — so the discarded call costs the model, not the person. Ratified 2026-08-10
+ * against the alternative of refusing by name, which would move this case and cost every such turn
+ * a refusal instead of an answer.
  */
 export const deterministicOverrideStrategy: ReconcileStrategy = (
   input: ReconcileInput,
@@ -312,7 +318,9 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
   }
   // SURPLUS — more calls than clauses needing one, with at least one clause needing one. `needy[0]`
   // is undefined exactly when nothing needs a proposal, which is the whole-discard case: no call
-  // can be popped by anybody, so nothing is mis-bound and there is no subject to refuse about.
+  // can be popped by anybody, so nothing is mis-bound. A subject to refuse about does exist there
+  // (an ANSWERED clause — see the header); discarding rather than refusing is the ratified choice,
+  // not a consequence of having nobody to name.
   const unattributable = proposed.length > needy.length ? needy[0] : undefined
   if (unattributable !== undefined) {
     return {
