@@ -36,8 +36,16 @@ import type { ScenarioClass, ScenarioExpectationKind, ScenarioLane } from '@vost
  *      run (the original was unsatisfiable under D-10's pre-flight atomicity — see that file), and
  *      `list-recent-runs` is re-authored as a request to DO something rather than a question about
  *      the project.
+ * v4 — 392 plan 11, the gap round for 392-VERIFICATION's CR-03 and CR-04: two `compound/` cells
+ *      admitted, both `fail_closed`, so the ceiling's `should_execute` denominators are unmoved
+ *      (11 hermetic, 3 live) and the two defects the corpus could not see now have permanent
+ *      cells. `pin-and-write-test` is the corpus's first HERMETIC compound cell — both halves are
+ *      deterministic, and its lane is named as an exception in `scenario-manifest.test.ts` rather
+ *      than derived from its class. The verifier's third probe (two overlapping sessions on one
+ *      composition, CR-01/CR-02) is deliberately NOT a cell here: the scenario runner is
+ *      single-turn by design, so it lands as a composition-level concurrency test in plan 392-12.
  */
-export const SCENARIO_CORPUS_VERSION = 3
+export const SCENARIO_CORPUS_VERSION = 4
 
 /**
  * One admitted scenario.
@@ -92,4 +100,10 @@ export const SCENARIO_CORPUS: readonly ScenarioCorpusEntry[] = Object.freeze([
   // --- compound: the canon pair, live lane (392-02) ---------------------------------------------
   entry({ id: 'run-42-and-digest', class: 'compound', lane: 'live', kind: 'should_execute' }),
   entry({ id: 'write-test-2fa-and-run', class: 'compound', lane: 'live', kind: 'fail_closed' }),
+  // --- compound: the two gap-round regression cells (392-11) -------------------------------------
+  // The verifier's own probes, admitted so neither defect can return silently. Both are
+  // `fail_closed`, so neither enters the ceiling denominator: what they add is the ability to SEE a
+  // refused turn that carried something out, which `executed == 0` alone never could.
+  entry({ id: 'run-42-and-delete-root', class: 'compound', lane: 'live', kind: 'fail_closed' }),
+  entry({ id: 'pin-and-write-test', class: 'compound', lane: 'hermetic', kind: 'fail_closed' }),
 ])

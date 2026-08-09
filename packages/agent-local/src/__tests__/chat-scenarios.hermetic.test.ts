@@ -29,12 +29,20 @@
 //                    a turn that did nothing at all would show (392-08).
 //
 //   fail_closed    — NOTHING was carried out (`executed` count 0, matching `expect.executed`), the
-//                    turn did not complete, and the refusal NAMES the clause. The naming is checked
-//                    against `unhandled.reason` OR a failed receipt's clause, because the two
-//                    fail-closed cells refuse at different depths and both are honest refusals:
-//                    `near-miss-alias` never routes and leaves a `mark_unhandled` row, while
-//                    `fn-unknown-op` reaches `invokeFunction` step 1, which raises
-//                    `UnknownFunctionError` naming the op before any dependency is touched.
+//                    turn did not complete, the refusal NAMES the clause, AND the session log
+//                    carries none of the rows a side effect leaves. The naming is checked against
+//                    `unhandled.reason` OR a failed receipt's clause, because the fail-closed cells
+//                    refuse at different depths and all are honest refusals: `near-miss-alias`
+//                    never routes and leaves a `mark_unhandled` row, while `fn-unknown-op` reaches
+//                    `invokeFunction` step 1, which raises `UnknownFunctionError` naming the op
+//                    before any dependency is touched.
+//
+// `executed == 0` WAS NOT ENOUGH, AND 392-VERIFICATION IS WHY (392-11). Both defects that arm
+// missed stayed true through it: a directive never crosses the function layer, so a `/pin` carried
+// out on a refused turn moved no count; and a clause erased by a model answer left no receipt to
+// count either. So the arm now asserts the EVENTS — no `approval_decision`, no verb-sourced
+// `model_change`, no `executed` receipt row — which is what a refused turn's own log must look
+// like. `pin-and-write-test` is the cell that makes the assertion bite rather than pass vacuously.
 //
 // THE PORTS THE OP-BOUND CELLS NEED ARE BOUND (392-02's handover note, discharged). A run executor
 // and one seeded run handoff, and nothing else. Without them `run`, `quoted-conjunction` and
@@ -254,14 +262,15 @@ describe('the hermetic lane: the frozen deterministic corpus over the real compo
 
   it('walks a real corpus rather than an empty one', () => {
     // Every assertion below is `it.each` over the manifest, and an empty manifest would make the
-    // whole file green while measuring nothing.
-    expect(HERMETIC_CORPUS.length).toBe(13)
-    expect(HERMETIC_DENOMINATOR).toBeGreaterThan(0)
+    // whole file green while measuring nothing. 14 as of corpus v4: the 13 deterministic cells plus
+    // `compound/pin-and-write-test`, whose halves are both deterministic (392-11).
+    expect(HERMETIC_CORPUS.length).toBe(14)
+    expect(HERMETIC_DENOMINATOR).toBe(11)
   })
 
-  it.each(HERMETIC_CORPUS.map((entry) => [entry.id, entry] as const))(
-    'deterministic/%s routes as its file says',
-    async (_id, entry) => {
+  it.each(HERMETIC_CORPUS.map((entry) => [`${entry.class}/${entry.id}`, entry] as const))(
+    '%s routes as its file says',
+    async (_label, entry) => {
       const scenario = readScenario(entry)
       const cell = await runCell(scenario)
       const { result } = cell
@@ -293,6 +302,24 @@ describe('the hermetic lane: the frozen deterministic corpus over the real compo
           ...result.receipts.map((receipt) => receipt.clause),
         ]
         expect(namings.some((text) => text.includes(named ?? ''))).toBe(true)
+        // THE SIDE-EFFECT ROWS, which is the half `executed == 0` could not see (392-11). A turn
+        // that told a person "nothing in the request was carried out" must have a log that says the
+        // same thing: no pin decision, no verb-sourced model switch, no executed receipt.
+        expect(
+          cell.events.filter(
+            (event) =>
+              event.kind === 'approval_decision'
+              || (event.kind === 'model_change' && event.source === 'verb')
+              || (event.kind === 'clause_receipt' && event.status === 'executed'),
+          ),
+        ).toEqual([])
+      }
+
+      // ONE RECEIPT PER PLANNED ACTION, where the cell says how many (D-11, W-01). The field was
+      // declared in the vocabulary and supplied by the cells that pin it, and until now no runner
+      // read it — a pin nothing consumes is a comment with a schema.
+      if (scenario.expect.planned !== undefined) {
+        expect(result.receipts).toHaveLength(scenario.expect.planned)
       }
 
       if (scenario.expect.emitsSessionEvent !== undefined) {

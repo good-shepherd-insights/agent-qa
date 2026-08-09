@@ -71,10 +71,49 @@ describe('the corpus manifest is versioned and internally coherent', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('assigns each class its D-13 lane, with no third lane and no exception', () => {
+  it('is exactly the corpus its version says it is', () => {
+    // THE SIZE AND THE VERSION MOVE TOGETHER, in one commit, or the ratio reported afterwards is a
+    // number about a set nobody can name. v4 is 392-11's gap round: 18 + the two regression cells.
+    expect(SCENARIO_CORPUS.length).toBe(20)
+    expect(SCENARIO_CORPUS_VERSION).toBe(4)
+    // The denominators the ceiling is computed over, pinned per lane. Both gap-round cells are
+    // `fail_closed` precisely so these two numbers did NOT move — a corpus round that quietly grew
+    // the denominator would report a better rate for having done work (the treadmill law).
+    const denominator = (lane: string): number =>
+      SCENARIO_CORPUS.filter((entry) => entry.lane === lane && entry.kind === 'should_execute')
+        .length
+    expect(denominator('hermetic')).toBe(11)
+    expect(denominator('live')).toBe(3)
+  })
+
+  it('assigns each class its D-13 lane, with every exception NAMED', () => {
+    // The rule is about what a cell NEEDS, and the class is usually a faithful proxy for it:
+    // `deterministic` never touches the LLM by contract, `planner` cannot be answered without one.
+    // A `compound` cell is live BY DEFAULT because its clauses usually reach a model — but a
+    // compound turn whose every half is deterministic buys nothing from a live one. That exception
+    // is a LIST rather than a predicate, so a cell cannot choose its own lane quietly: joining it
+    // is an edit to this file as well as to the manifest.
+    const HERMETIC_COMPOUND = new Set(['pin-and-write-test'])
     for (const entry of SCENARIO_CORPUS) {
-      expect(entry.lane).toBe(entry.class === 'deterministic' ? 'hermetic' : 'live')
+      const expected =
+        entry.class === 'deterministic'
+          ? 'hermetic'
+          : entry.class === 'compound' && HERMETIC_COMPOUND.has(entry.id)
+            ? 'hermetic'
+            : 'live'
+      expect(entry.lane).toBe(expected)
     }
+    // The two arms with NO exception, asserted apart so the list above can never grow into them.
+    expect(
+      SCENARIO_CORPUS.filter((entry) => entry.class === 'deterministic').every(
+        (entry) => entry.lane === 'hermetic',
+      ),
+    ).toBe(true)
+    expect(
+      SCENARIO_CORPUS.filter((entry) => entry.class === 'planner').every(
+        (entry) => entry.lane === 'live',
+      ),
+    ).toBe(true)
   })
 })
 

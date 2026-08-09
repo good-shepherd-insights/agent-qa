@@ -48,8 +48,20 @@ const EDGE_SCENARIOS = [
   'fn-unknown-op',
 ] as const
 
-/** The canon compound pair, as committed data (CONTEXT specifics). */
-const COMPOUND_SCENARIOS = ['write-test-2fa-and-run', 'run-42-and-digest'] as const
+/**
+ * The compound cells, as committed data (CONTEXT specifics; 392-11's gap round).
+ *
+ * The canon PAIR plus the two regression cells the gap round admitted — the verifier's own probes
+ * for CR-03 (a model answer erasing an unroutable action clause) and CR-04 (a directive carried out
+ * on a turn that was then refused). They are listed here for the same reason the pair was: this set
+ * is exact, so a file appearing in `compound/` without a line here fails the build.
+ */
+const COMPOUND_SCENARIOS = [
+  'write-test-2fa-and-run',
+  'run-42-and-digest',
+  'run-42-and-delete-root',
+  'pin-and-write-test',
+] as const
 
 function scenarioIdsIn(directory: string): string[] {
   return readdirSync(directory)
@@ -120,6 +132,23 @@ describe('the canon compound pair exists as committed data (CHAT-02)', () => {
   it('is an EXACT set — the frozen denominator, never a directory listing', () => {
     expect(scenarioIdsIn(COMPOUND_ROOT)).toEqual([...COMPOUND_SCENARIOS].sort())
   })
+
+  it.each(['run-42-and-delete-root', 'pin-and-write-test'])(
+    'gap-round cell %s pins a refusal that NAMES its clause and leaves a countable row',
+    (id) => {
+      // Both cells exist because a refusal that carried something out was invisible to
+      // `executed == 0`. What each one pins is the pair: nothing ran, AND the refusal is on the
+      // log — the `mark_unhandled` row is what CHAT-03's field rate is a projection over, so a
+      // clause erased without one would be missing from the measurement as well as from the answer.
+      const scenario = readScenario(COMPOUND_ROOT, id)
+      expect(scenario.class).toBe('compound')
+      expect(scenario.expect.kind).toBe('fail_closed')
+      expect(scenario.expect.executed).toBe(0)
+      expect(scenario.expect.namesClause).toBeTruthy()
+      expect(scenario.expect.emitsSessionEvent).toBe('mark_unhandled')
+      expect(scenario.utterance).toContain(scenario.expect.namesClause ?? '')
+    },
+  )
 
   it('pins the spec example on the fail-closed arm with ZERO executions (D-08/D-10)', () => {
     const scenario = readScenario(COMPOUND_ROOT, 'write-test-2fa-and-run')

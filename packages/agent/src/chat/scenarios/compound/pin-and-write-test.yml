@@ -1,0 +1,29 @@
+# THE CR-04 PROBE, ADMITTED AS A PERMANENT CELL (392-11, gap round).
+#
+# A DIRECTIVE PLUS AN UNROUTABLE CLAUSE. Run through the shipped stack this returned `fail_closed`
+# with the message "The turn was refused before anything ran, so nothing in the request was carried
+# out" — while the pin was already recorded, the gate's deny predicate already fired, and an
+# `approval_decision` row was already on the append-only log. The pin is irrevocable by design (the
+# holder publishes no unpin), so the refusal's message was not merely inaccurate: it described a
+# session that no longer existed.
+#
+# THE CORPUS COULD NOT SEE IT, and that is the second finding this file answers. A directive never
+# crosses `invokeFunction`, so `executed == 0` — the only thing the fail-closed arm asserted — was
+# true throughout. The runner now asserts the EVENTS a refused turn must not have left, and this
+# cell is what makes that assertion bite: it is the one cell in the corpus that names a directive
+# on a turn that fails.
+#
+# HERMETIC, DELIBERATELY. Both halves are deterministic: `/pin` resolves at stage 1 by the table,
+# and the second clause is unroutable in a lane whose bound model is a tripwire that throws — which
+# is itself a fail-closed path (392-09's scoping decision keeps the zero-calls assertion on the
+# `should_execute` arm, so a fail_closed cell may legitimately reach stage 2). No live model can
+# make this cell's outcome different, so nothing is bought by spending one.
+id: pin-and-write-test
+class: compound
+lane: hermetic
+utterance: /pin fn:runs.start and write a test for 2FA
+expect:
+  kind: fail_closed
+  executed: 0
+  namesClause: write a test for 2FA
+  emitsSessionEvent: mark_unhandled

@@ -139,7 +139,10 @@ describe('the live lane announces which lane actually ran (T-392-32)', () => {
     )
     // The corpus this gate would measure exists whether or not the gate runs — so a live lane that
     // silently lost its cells is visible from the hermetic run too.
-    expect(LIVE_CORPUS.length).toBe(5)
+    // 6 as of corpus v4: the five original live cells plus `compound/run-42-and-delete-root`,
+    // the CR-03 regression cell. It is `fail_closed`, so the DENOMINATOR did not move — a gap
+    // round that grew the denominator would report a better rate for having done work.
+    expect(LIVE_CORPUS.length).toBe(6)
     expect(LIVE_DENOMINATOR).toBe(3)
   })
 })
@@ -253,7 +256,8 @@ describe.skipIf(SKIP_REASON !== undefined)(
       { timeout: 180_000 },
       async (_label, entry) => {
         const scenario = readScenario(entry)
-        const { result } = await runCell(scenario)
+        const cell = await runCell(scenario)
+        const { result } = cell
         const executed = result.receipts.filter((receipt) => receipt.status === 'executed')
 
         if (scenario.expect.kind === 'should_execute') {
@@ -278,6 +282,23 @@ describe.skipIf(SKIP_REASON !== undefined)(
             ...result.receipts.map((receipt) => receipt.clause),
           ]
           expect(namings.some((text) => text.includes(named))).toBe(true)
+          // THE SIDE-EFFECT ROWS (392-11). `executed == 0` stayed true through both defects the
+          // gap round closed — a directive never crosses the function layer, and an erased clause
+          // leaves no receipt — so the arm reads the log a refused turn left instead.
+          expect(
+            cell.events.filter(
+              (event) =>
+                event.kind === 'approval_decision'
+                || (event.kind === 'model_change' && event.source === 'verb')
+                || (event.kind === 'clause_receipt' && event.status === 'executed'),
+            ),
+          ).toEqual([])
+        }
+
+        // ONE RECEIPT PER PLANNED ACTION, where the cell says how many (D-11, W-01): the field was
+        // supplied by the cells that pin it and read by no runner until now.
+        if (scenario.expect.planned !== undefined) {
+          expect(result.receipts).toHaveLength(scenario.expect.planned)
         }
       },
     )
