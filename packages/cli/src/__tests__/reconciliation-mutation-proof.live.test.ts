@@ -225,7 +225,19 @@ describe('the mutation proof announces which lane actually ran (T-392-32)', () =
     // process against one build, so the hazard is not between the arms — it is that the whole file
     // ran against a dist predating 392-09's correction, in which case the on-arm would be measuring
     // an utterance that could only ever fail closed and the proof would be red-versus-red.
-    expect(SCENARIO_CORPUS_VERSION).toBe(3)
+    //
+    // MEASURED AGAINST THE SOURCE, not against a number written here (392-11). A literal pin made
+    // this guard fire on every later corpus edit — a red that says "the manifest moved" while
+    // claiming to say "your dist is stale", which is the way a tripwire teaches people to edit it.
+    // What the check is actually about is the DISTANCE between the built package and the source it
+    // was built from, so it reads both: the version the imported dist reports must equal the
+    // version the manifest source declares, and it must not predate 392-09's correction.
+    const declared = /SCENARIO_CORPUS_VERSION = (\d+)/.exec(
+      readFileSync(join(SCENARIOS_ROOT, 'manifest.ts'), 'utf8'),
+    )?.[1]
+    expect(declared, 'the manifest source no longer declares a corpus version').toBeDefined()
+    expect(SCENARIO_CORPUS_VERSION).toBe(Number(declared))
+    expect(SCENARIO_CORPUS_VERSION).toBeGreaterThanOrEqual(3)
     const onDisk = parseYamlDocument(
       readFileSync(join(SCENARIOS_ROOT, scenarioRelativePath(SUBJECT!)), 'utf8'),
     ) as { utterance?: string }
