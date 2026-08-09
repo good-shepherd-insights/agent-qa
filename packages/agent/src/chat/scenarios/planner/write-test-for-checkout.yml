@@ -1,0 +1,23 @@
+# D-08's LIVE ARM: an absent capability, asked for in prose.
+#
+# The hermetic corpus already proves the backstop names an unknown OP ID (`fn-unknown-op`), but that
+# cell reaches `invokeFunction` with an id somebody typed. This one is the harder half and the only
+# one a live model can answer: nothing in the tool set can author a test, so the model has no call
+# to make, and the turn must fail closed NAMING the clause rather than inventing a neighbouring op
+# — running the checkout tests, listing them, opening a proposal about them.
+#
+# THIS IS THE CELL THE CEILING EXISTS FOR. `mark_unhandled` is expected to fire here, and it is a
+# fail-closed path rather than an error path: the honest answer to "write me a test" from a build
+# that cannot write tests is a refusal that says so. The ceiling holds the OTHER direction — that
+# the refusal does not start firing on requests the build can serve.
+#
+# FLIPS TO should_execute when the authoring loop lands (393/394), and the flip moves this file AND
+# its manifest line, which is that phase's arrival proof.
+id: write-test-for-checkout
+class: planner
+lane: live
+utterance: write a test for the checkout flow
+expect:
+  kind: fail_closed
+  executed: 0
+  namesClause: write a test for the checkout flow

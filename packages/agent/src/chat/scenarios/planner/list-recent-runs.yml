@@ -1,0 +1,21 @@
+# THE PLANNER'S SINGLE-CLAUSE HAPPY PATH (D-07, live lane).
+#
+# One request, phrased the way a person phrases it rather than the way the canon spells it. `status`
+# is the alias that binds `runs.list` deterministically; NOTHING here matches it, so stage 1 leaves
+# the clause unresolved and the model is the only thing that can route it. That is the whole point
+# of the cell: it measures the projection D-07 makes — every registry op bound 1:1 as an action tool
+# — rather than the table, which the hermetic lane already covers.
+#
+# A READ, deliberately. `runs.list` takes `{}` and answers honestly on a project with no runs, so
+# the scenario needs no fixture between the utterance and the assertion, and a live gate run cannot
+# start a browser by being run.
+id: list-recent-runs
+class: planner
+lane: live
+utterance: which test runs have happened in this project lately?
+expect:
+  kind: should_execute
+  planned: 1
+  executed: 1
+  ops:
+    - runs.list

@@ -154,6 +154,14 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'RUNS_POST_PROCESSING_FUNCTION_ID',
   'RunNotFoundError',
   'RunNotRecordedError',
+  // 392 plan 09, D-15 / CHAT-03: THE frozen corpus and its version. This is the ceiling's
+  // denominator, and it is on this list for the reason the treadmill law states — both lane
+  // runners must iterate the SAME admitted set, and a manifest each assembled for itself would be
+  // two denominators that drift silently. A frozen array of records: no storage, no dispatch, and
+  // nothing in its reach can decode a byte, which is what stops it from becoming the glob it
+  // exists to refuse.
+  'SCENARIO_CORPUS',
+  'SCENARIO_CORPUS_VERSION',
   'StaleJobStoreEpochError',
   'StreamReplayFloorError',
   'UndeclaredJobCheckpointError',
@@ -218,6 +226,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // (messages, accounting, turnId, clock) returning a conversation and at most one event — no
   // storage, no dispatch, and no branch that fails to return a conversation.
   'maybeCompact',
+  // 392 plan 09, CHAT-02: the ONE validator that turns a decoded scenario document into a
+  // `ChatScenario`. It takes an already-decoded value rather than a path, which is why it can live
+  // in a storageNeutral package at all: no `node:fs` is in its reach, and the eight lines of file
+  // reading stay in the runners. Published because both lane gates — hermetic in `agent-local`,
+  // live in `cli` — must reach the same verdict about a malformed corpus file.
+  'parseScenario',
   // 392 plan 07: the registry walk projected to execute-less tools. Safe here for a reason the
   // absence of a callback makes structural: what it returns cannot run anything, so a surface
   // holding it holds a catalogue description and not a dispatch path.
@@ -246,6 +260,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'replayToModelMessages',
   // 392 plan 01: the pure table walk stage 1 is (see `CHAT_RESOLVER_TABLE` above).
   'resolveClause',
+  // 392 plan 09: how a scenario is ADDRESSED — `<class>/<id>.yml`. A pure string join, published
+  // beside the manifest so the two runners and the closure walk cannot spell a corpus path three
+  // ways.
+  'scenarioRelativePath',
   // 392 plan 02, D-09: THE conjunction grammar — the quote-aware tokenizer the composition root
   // binds as the engine's `ClauseSplitter`. It REPLACES `wholeUtteranceSplitter`, which plan 01
   // published as the tracer's placeholder and which this plan deletes: a published splitter that
@@ -544,6 +562,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'RunNextJobInput',
   'RunNextJobOutcome',
   'RunsReaderPort',
+  // 392 plan 09: one admitted line of the frozen corpus. A TYPE, and it is here because a runner
+  // filtering the manifest by lane has to NAME what it is filtering — every field on it is a claim
+  // the closure walk checks against the file, so a consumer that could not name the record would
+  // be re-deriving the corpus vocabulary a third time.
+  'ScenarioCorpusEntry',
   'SessionLogLine',
   'SessionRepair',
   'SessionReplay',

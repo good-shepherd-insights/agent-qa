@@ -168,6 +168,16 @@ export type {
 // no reader of its own, and has no timer — the suite pins the last of those as source text,
 // because a scheduler would pass every behavioural case.
 export { composeBanner } from './chat/banner.js'
+// 392 plan 09, D-15 / CHAT-03: the frozen corpus and the one validator that reads a scenario back.
+// Published because the two lane runners live outside this package — the hermetic gate in
+// `agent-local` and the live gate in `cli` — and both must iterate THE SAME admitted list. A
+// manifest each runner assembled for itself would be two denominators, which is the treadmill this
+// list exists to stop. Neither export can reach a host: the manifest is a frozen array of records,
+// and `parseScenario` takes an already-decoded document precisely so no file reader lives in a
+// storageNeutral package.
+export { parseScenario, scenarioRelativePath } from './chat/scenario-loader.js'
+export { SCENARIO_CORPUS, SCENARIO_CORPUS_VERSION } from './chat/scenarios/manifest.js'
+export type { ScenarioCorpusEntry } from './chat/scenarios/manifest.js'
 // 392 plan 06, CHAT-04 / D-20: the compaction trigger policy. Published because the ONLY thing
 // that can bind it is outside this package — the composition root, which is also the only place
 // holding a `TokenAccounting` instance and a session log to emit onto. An unpublished hook would
