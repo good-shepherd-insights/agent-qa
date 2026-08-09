@@ -980,6 +980,7 @@ export type {
   ClauseReceipt,
   ClauseReceiptStatus,
   OpenedChatSession,
+  RefusedChatSessionLine,
   ScenarioClass,
   ScenarioExpectation,
   ScenarioExpectationKind,

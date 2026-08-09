@@ -30,7 +30,11 @@ export { CLAUSE_RECEIPT_STATUSES } from './turn-receipts'
 export type { ClauseReceipt, ClauseReceiptStatus } from './turn-receipts'
 export { AgentAskInputSchema, AgentAskResultSchema, ClauseReceiptSchema } from './agent-ask'
 export type { AgentAskInput, AgentAskResult } from './agent-ask'
-export type { OpenedChatSession, SessionLogPort } from './session-log-port'
+export type {
+  OpenedChatSession,
+  RefusedChatSessionLine,
+  SessionLogPort,
+} from './session-log-port'
 export {
   ChatScenarioSchema,
   SCENARIO_CLASSES,

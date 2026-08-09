@@ -14,10 +14,32 @@
 
 import type { ChatSessionEvent, ChatSessionHeader } from './session-events'
 
-/** What `open` answers: the header in force and every event already on file. */
+/**
+ * One line an open could not read, surfaced as data rather than thrown over.
+ *
+ * MINTED HERE rather than beside the repair logic, for this vocabulary's usual reason: the shape
+ * crosses the port, so `agent`'s repair produces it and `agent-local`'s adapters hand it back, and
+ * neither package may import the other. `lineNumber` is 1-based and counts the header line, so it
+ * names what an editor shows the person who has to go and look.
+ */
+export interface RefusedChatSessionLine {
+  lineNumber: number
+  reason: string
+}
+
+/**
+ * What `open` answers: the header in force, every event already on file, and what it could not read.
+ *
+ * `refusedLines` IS PART OF THE ANSWER, not an aside. A session file can carry damage that the
+ * append-only law forbids ever removing — a line another build wrote, or one edited in place — and
+ * the open path is the single moment in the system where that is known. Dropping it here would
+ * leave every later surface to re-derive it with a second parser, which is how two readers end up
+ * disagreeing about whether a conversation is intact. A clean session answers with an empty list.
+ */
 export interface OpenedChatSession {
   header: ChatSessionHeader
   events: readonly ChatSessionEvent[]
+  refusedLines: readonly RefusedChatSessionLine[]
 }
 
 export interface SessionLogPort {

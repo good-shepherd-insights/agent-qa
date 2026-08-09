@@ -129,7 +129,26 @@ export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile
 // it as the engine's `ClauseSplitter`, and it REPLACES the tracer's whole-utterance splitter,
 // which is deleted rather than left beside it — one bound answer, not two available ones.
 export { splitClauses } from './chat/clause-split.js'
+// 392 plan 03, CHAT-05 / D-19: what a damaged session file MEANS, and what a resumed session
+// remembers. Published because every storage adapter has to reach the SAME verdict about a
+// half-written log — `agent-local`'s JSONL adapter and its in-memory twin both call `repairSession`
+// on the resume path, and M5's session reader will too. A second adapter deciding for itself
+// whether a turn dangled is two hosts disagreeing about whether a conversation happened.
+//
+// Neither is dispatch and neither can reach a host capability: both are pure functions over
+// records, with no filesystem, no model and no registry anywhere in their reach.
+export { repairSession, replaySession } from './chat/session-repair.js'
 export type { TurnEngine, TurnEngineDeps } from './chat/turn-engine.js'
+// The repair contract's own vocabulary. A caller that could invoke `repairSession` but not NAME
+// what it hands over or gets back would spell the shapes again locally, which is the second
+// vocabulary this subtree is written to avoid (388 C13).
+export type {
+  ChatReplayMessage,
+  RepairSessionOptions,
+  SessionLogLine,
+  SessionRepair,
+  SessionReplay,
+} from './chat/session-repair.js'
 // 392 plan 02: `ChatResolution` joins the three plan-01 shapes because it is what the published
 // `resolveClause` now RETURNS — a two-variant union with no confidence member, and pinning it on
 // the barrel is what makes a third variant (or a number) a visible edit rather than an incidental

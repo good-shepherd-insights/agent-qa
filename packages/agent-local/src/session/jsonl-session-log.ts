@@ -50,6 +50,7 @@ import {
 } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 
+import { repairSession } from '@vostride/agent-qa-agent'
 import { CURRENT_CHAT_SESSION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   ChatSessionEvent,
@@ -417,7 +418,9 @@ export function createJsonlSessionLogOn(
     }
   }
 
-  function readLines(sessionId: string): { lineNumber: number; text: string }[] | undefined {
+  function readLines(
+    sessionId: string,
+  ): { lines: { lineNumber: number; text: string }[]; terminated: boolean } | undefined {
     let text: string
     try {
       text = fs.readFileSync(pathFor(sessionId), 'utf8')
@@ -425,12 +428,18 @@ export function createJsonlSessionLogOn(
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
       throw error
     }
-    // Line numbers are 1-based and count the header, so a refusal names what an editor shows the
-    // person who has to go and look at the file.
-    return text
-      .split('\n')
-      .map((line, index) => ({ lineNumber: index + 1, text: line }))
-      .filter((line) => line.text !== '')
+    return {
+      // Line numbers are 1-based and count the header, so a refusal names what an editor shows the
+      // person who has to go and look at the file.
+      lines: text
+        .split('\n')
+        .map((line, index) => ({ lineNumber: index + 1, text: line }))
+        .filter((line) => line.text !== ''),
+      // Every line this adapter writes ends in a newline, so a file that does not is a file whose
+      // last write was cut short. That fact cannot be recovered once the lines are split, and the
+      // append path needs it BEFORE it writes anything (see `terminateTornTail`).
+      terminated: text === '' || text.endsWith('\n'),
+    }
   }
 
   function writeEvent(target: number, event: ChatSessionEvent): void {
@@ -446,14 +455,45 @@ export function createJsonlSessionLogOn(
 
       if (sessionId !== undefined) {
         const id = requireSessionId(sessionId)
-        const lines = readLines(id)
+        const read = readLines(id)
         // The refusal, not a create. See `UnknownChatSessionError`.
-        if (lines === undefined || lines.length === 0) throw new UnknownChatSessionError(id)
-        const header = guardHeader(id, lines[0]!.text)
-        const events = lines.slice(1).map((line) => JSON.parse(line.text) as ChatSessionEvent)
+        if (read === undefined || read.lines.length === 0) throw new UnknownChatSessionError(id)
+        const header = guardHeader(id, read.lines[0]!.text)
+        // REPAIR BEFORE ANY CALLER SEES AN EVENT (CHAT-05). The declared version travels as an
+        // argument, taken off the header this path has just validated — the log states its version
+        // once and no line restates it (392-01's decision, unchanged).
+        const repair = repairSession(read.lines.slice(1), {
+          declaredVersion: header.schemaVersion,
+          now: options.now,
+        })
         if (fd !== undefined) fs.closeSync(fd)
         fd = fs.openSync(pathFor(id), 'a')
-        return Promise.resolve({ header, events })
+        // TERMINATE A TORN TAIL BEFORE APPENDING ANYTHING. A crash leaves the last line without
+        // its newline, so the very next append would land ON that fragment and fuse two records
+        // into one unreadable line — turning a bounded, understood loss into permanent damage
+        // that the next open would mistake for a fresh tear and lose all over again. One newline
+        // closes the fragment where it stopped. It is still an APPEND: no existing byte moves,
+        // and the fragment survives verbatim as its own refused line for anyone auditing the file.
+        let wroteDuringRepair = false
+        if (!read.terminated) {
+          fs.writeFileSync(fd, '\n', 'utf8')
+          wroteDuringRepair = true
+        }
+        for (const event of repair.synthesized) {
+          writeEvent(fd, event)
+          wroteDuringRepair = true
+        }
+        if (wroteDuringRepair) {
+          // A repair CLOSES the dangling turn, so it lands like any other turn boundary. A
+          // synthesized abort a second crash could lose would leave the same session dangling
+          // again, and the loss bound would stop being the in-flight turn.
+          fs.fsyncSync(fd)
+        }
+        return Promise.resolve({
+          header,
+          events: repair.repaired,
+          refusedLines: repair.refusedLines,
+        })
       }
 
       const createdAt = options.now()
@@ -478,7 +518,7 @@ export function createJsonlSessionLogOn(
       bestEffortFsyncDirectory(sessionsRoot)
       if (fd !== undefined) fs.closeSync(fd)
       fd = fs.openSync(pathFor(id), 'a')
-      return Promise.resolve({ header, events: [] })
+      return Promise.resolve({ header, events: [], refusedLines: [] })
     },
 
     append(event: ChatSessionEvent): Promise<void> {

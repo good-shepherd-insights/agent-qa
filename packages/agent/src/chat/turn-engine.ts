@@ -46,6 +46,7 @@ import type {
   ResolvedClause,
 } from './ports.js'
 import { directiveNotBoundReason, resolveClause } from './resolver-table.js'
+import { replaySession } from './session-repair.js'
 import type { ChatDirectiveName, ChatResolverTable } from './resolver-table.js'
 
 export interface TurnEngineDeps {
@@ -105,8 +106,15 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         return { sessionId, turnId, status, ...result }
       }
 
+      // REPAIR, THEN REPLAY, THEN PRUNE (CHAT-05). `open()` has already run the replay-safety
+      // repair — that is the adapter's contract, not this engine's option — so the events in hand
+      // are the repaired ones and the replay below cannot see an unrepaired conversation. The
+      // degrade pass then receives that replay and has nothing else to work on, which is what
+      // makes the ordering a property of the code rather than a convention.
+      const replay = replaySession(opened.events)
+
       await append({ kind: 'user_message', turnId, at: deps.now(), text: input.message })
-      await deps.compaction?.({ turnId })
+      await deps.compaction?.({ turnId, replay })
 
       // ---- Stage 1: the deterministic resolver over the clause split.
       const clauses = deps.split(input.message)

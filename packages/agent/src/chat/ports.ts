@@ -14,6 +14,8 @@
 
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
+import type { SessionReplay } from './session-repair.js'
+
 /** One piece of an utterance, as the splitter produced it. */
 export interface ChatClause {
   /** The clause text exactly as the person typed it — what a refusal has to be able to name. */
@@ -113,7 +115,15 @@ export type ChatInvokeBinding = (
  * Declared now for the reason every other seat here is: plan 06 fills it over the shipped
  * `TokenAccounting` substrate, and an engine that grew a compaction call later would grow it in the
  * middle of the turn contract this file pins.
+ *
+ * IT IS HANDED THE REPLAY, AND THAT IS WHAT MAKES CHAT-05'S ORDERING STRUCTURAL. The requirement is
+ * that the replay-safety repair runs BEFORE pruning, and a hook that received nothing would have to
+ * fetch its own messages — at which point nothing in the type stops it fetching them from an
+ * unrepaired source. Receiving an already-repaired replay leaves the degrade pass no other input to
+ * prune, so "repair first" is a fact about the argument rather than a rule someone has to remember.
  */
 export type CompactionHook = (context: {
   readonly turnId: string
+  /** The conversation as of this turn's start: repaired, aborted turns already excluded. */
+  readonly replay: SessionReplay
 }) => Promise<void> | void

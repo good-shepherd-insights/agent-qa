@@ -174,6 +174,14 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // plan 07's CLI print and every later surface compose sentences through ONE symbol instead of
   // spelling a second one (SC3 structural).
   'renderVerdictSentence',
+  // 392 plan 03, CHAT-05: the two pure functions that decide what a damaged session log means and
+  // what a resumed session remembers. They are on this list because BOTH session-log adapters and
+  // any later session reader must reach the same verdict — a second adapter deciding for itself
+  // whether a turn dangled would be two hosts disagreeing about whether a conversation happened.
+  // Neither is dispatch: they take records and return records, and nothing in their reach can
+  // touch a filesystem, a model or the registry.
+  'repairSession',
+  'replaySession',
   // 392 plan 01: the pure table walk stage 1 is (see `CHAT_RESOLVER_TABLE` above).
   'resolveClause',
   // 392 plan 02, D-09: THE conjunction grammar — the quote-aware tokenizer the composition root
@@ -296,6 +304,8 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // of the one path in the system that OVERRIDES a model's plan (D-09/D-12).
   'ChatDirectiveName',
   'ChatInvokeBinding',
+  // 392 plan 03: one rebuilt line of conversation — refs and one-liners, never a payload body.
+  'ChatReplayMessage',
   'ChatResolution',
   'ChatResolverEntry',
   'ChatResolverRule',
@@ -380,12 +390,20 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'RecurrenceLadder',
   'RecurrenceProvider',
   'RecurrenceQuery',
+  // 392 plan 03: the repair contract's own vocabulary. A caller able to invoke `repairSession`
+  // but unable to NAME what it hands over or gets back would spell the shapes again locally,
+  // which is the second vocabulary this subtree exists to avoid (388 C13). The refused-line shape
+  // is deliberately NOT here — it crosses the session-log port, so `schema` mints it.
+  'RepairSessionOptions',
   'ReplayedRunEvent',
   'ResolvedClause',
   'RunInvocationPort',
   'RunNextJobInput',
   'RunNextJobOutcome',
   'RunsReaderPort',
+  'SessionLogLine',
+  'SessionRepair',
+  'SessionReplay',
   'StandInJobScript',
   'StartedRun',
   'StepEvidenceAddress',
