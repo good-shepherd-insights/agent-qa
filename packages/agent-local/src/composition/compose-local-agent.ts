@@ -1855,10 +1855,36 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // the turn: `/model` moves that conversation's model, `/pin` writes into that conversation's
     // deny set, `/quit` asks that loop to end.
     directives: (sessionId) => ({
+      // THE BATCH PRE-FLIGHT (392-14, E3/E3b). The engine asks this of EVERY directive of a turn
+      // before it applies the first one, so `/pin fn:runs.start and /pin nonsense.notacapability`
+      // refuses with neither pin recorded and no `approval_decision` row — the shape the round-2
+      // verification measured surviving on a `fail_closed` turn. Both effectful directives are
+      // covered here; a member left out would silently return the engine to per-entry atomicity
+      // for that directive alone.
+      //
+      // IT APPLIES NOTHING. `/pin` asks the holder's pure `classFor` rather than `pin`, so no
+      // entry reaches the deny set and no event is appended. `/model` RESOLVES the model and
+      // caches it under its name — a cache is not the session's state, and the session's own
+      // `activeModel` is left exactly where it was. The resolution is also the only part of
+      // `/model` that can fail, so caching it here is what makes the later apply unable to throw
+      // after an earlier directive has already been carried out.
+      validate: async (directive, argument) => {
+        if (directive === 'pin' && argument !== undefined) {
+          chatScopeFor(sessionId).pins.classFor(argument)
+          return
+        }
+        if (directive === 'model' && argument !== undefined && input.chatModelFor !== undefined) {
+          chatModelsByName.set(argument, await input.chatModelFor(argument))
+        }
+      },
       model: async (name) => {
         const scope = chatScopeFor(sessionId)
         const from = scope.state.read().activeModel
-        if (input.chatModelFor !== undefined) {
+        // Resolved ALREADY, when this host publishes `validate` — the pre-flight cached it under
+        // this name and the apply reuses it rather than resolving a second time. Two resolutions
+        // of one name on one turn would be two chances to disagree, and the second of them would
+        // be running after the batch had been declared safe.
+        if (input.chatModelFor !== undefined && !chatModelsByName.has(name)) {
           // Resolved by the HOST (CHAT-06): the chat subtree may not construct a model, so a
           // session-scoped switch is a capability this composition was handed. A resolution
           // failure throws, and the engine turns it into the same named refusal every other

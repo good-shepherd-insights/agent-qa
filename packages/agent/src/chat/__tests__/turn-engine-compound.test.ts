@@ -145,6 +145,15 @@ interface HarnessOptions {
    * own seat, and this is it.
    */
   readonly directives?: boolean
+  /**
+   * The `/pin` argument the spy handler REFUSES, by throwing before it records (392-14, E3).
+   *
+   * The composed host's holder does exactly this: `pin-overlay.ts` raises `ChatPinError` for a
+   * class no registered op answers to, and the engine's catch turns that into the refusal path.
+   * The fixture needs its own copy because the claim under test is about the ORDER a batch is
+   * applied in, and a batch needs a second directive that says no.
+   */
+  readonly unpinnable?: string
 }
 
 function harness(options: HarnessOptions = {}): Harness {
@@ -201,7 +210,29 @@ function harness(options: HarnessOptions = {}): Harness {
           // ignores the id and the spies stay the same objects — what is under test here is the
           // ORDER effects happen in, and the per-session keying has its own composed differential.
           directives: (): ChatDirectiveHandlers => ({
+            // THE BATCH PRE-FLIGHT, mirroring the composition: it asks the same question `pin`
+            // answers and records NOTHING, so a turn whose second directive is unpinnable is
+            // refused before the first one is applied. A fixture whose validate accepted
+            // everything would leave the engine's new pass unexercised on the arm it exists for.
+            validate: (directive, argument): void => {
+              ordering.push('directive:validate')
+              if (directive === 'pin' && argument === options.unpinnable) {
+                throw new Error(
+                  `Cannot pin "${argument ?? ''}": "fn:${argument ?? ''}" is not an action class `
+                    + 'this host declares',
+                )
+              }
+            },
             pin: (actionClass: string): string => {
+              // Throws BEFORE recording, exactly as the shipped holder does: a refused pin leaves
+              // no entry, so `pinCalls` measures what was actually carried out rather than what
+              // was attempted.
+              if (actionClass === options.unpinnable) {
+                throw new Error(
+                  `Cannot pin "${actionClass}": "fn:${actionClass}" is not an action class this `
+                    + 'host declares',
+                )
+              }
               ordering.push('directive:pin')
               pinCalls.push(actionClass)
               return actionClass
@@ -390,6 +421,46 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       expect(run.plannerCalls).toBe(0)
       expect(result.unhandled?.reason).toContain('no handler')
       expect(result.unhandled?.clause).toBe('/model claude-fixture')
+    })
+  })
+
+  // 392-14, the CR-04 RESIDUAL (392-VERIFICATION round 2, E3/E3b). The primary fix above is real —
+  // the execution loop moved below the verdict and the single-directive control proves it. But the
+  // loop itself applies directives ONE AT A TIME and returns on the first refusal, so a turn whose
+  // SECOND directive says no kept the first one's irrevocable effect and its append-only row. The
+  // status was already right; that is what makes this shape so hard to see from the outside, and
+  // why each case folds the status and the two effects into one `toEqual` rather than asserting
+  // them in sequence. A refusal that carried something out is worse than a refusal that lied about
+  // it, because the person is told the session is unchanged and it is not.
+  describe('E3 — the directive BATCH is refused whole: no earlier directive survives a later one', () => {
+    it('records NO pin when a LATER directive in the same turn refuses', async () => {
+      const run = harness({ directives: true, unpinnable: 'nonsense.notacapability' })
+      const result = await run.runTurn({
+        message: '/pin fn:runs.start and /pin nonsense.notacapability',
+      })
+
+      expect({
+        status: result.status,
+        pinned: run.pinCalls,
+        approvalDecisions: run.log.events.filter((event) => event.kind === 'approval_decision')
+          .length,
+      }).toEqual({ status: 'fail_closed', pinned: [], approvalDecisions: 0 })
+      expect(result.unhandled?.clause).toBe('/pin nonsense.notacapability')
+    })
+
+    it('applies NO model override when a LATER directive in the same turn refuses', async () => {
+      const run = harness({ directives: true, unpinnable: 'nonsense.notacapability' })
+      const result = await run.runTurn({
+        message: '/model claude-fast and /pin nonsense.notacapability',
+      })
+
+      expect({
+        status: result.status,
+        switched: run.modelCalls,
+        verbModelChanges: run.log.events.filter(
+          (event) => event.kind === 'model_change' && event.source === 'verb',
+        ).length,
+      }).toEqual({ status: 'fail_closed', switched: [], verbModelChanges: 0 })
     })
   })
 

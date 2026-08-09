@@ -465,6 +465,38 @@ async function runTurnThrough(
     if (notBound !== undefined) return refuse(entry.clause.text, notBound)
   }
 
+  // ---- The directive BATCH, VALIDATED BEFORE THE FIRST ONE IS APPLIED (392-14, E3/E3b).
+  //
+  // The binding loop above asks "can this build carry this out at all"; this one asks "will THIS
+  // argument be accepted", and both are asked of every entry before any entry is carried out.
+  // Without it the execution loop below applied directives one at a time and returned on the first
+  // refusal — so `/pin fn:runs.start and /pin nonsense.notacapability` recorded the first pin,
+  // irrevocably, and left its `approval_decision` row on the log of a turn that then told the
+  // person nothing in the request was carried out (392-VERIFICATION round 2). Moving the loop
+  // below the verdict closed the single-directive case and left the BATCH open; a batch is atomic
+  // or it is not, and D-10 has no reading under which the second half of a request may undo only
+  // the second half.
+  //
+  // ASKING IS NOT APPLYING, which is what lets this sit above stage 2 beside the binding check:
+  // `validate` mutates no session state by its port contract, so a turn refused here has had
+  // nothing done to it. `runDirective`'s catch stays as the belt for a host that publishes no
+  // validate — such a host is exactly as safe as it was, and no safer.
+  //
+  // ONE CONSEQUENCE, ACCEPTED: a turn refused here never reaches stage 2, so its log carries the
+  // resolver `stage_outcome` row alone rather than three. Every event carries `turnId` and `at`,
+  // and the refusal still leaves the same `mark_unhandled` row every other refusal does.
+  if (directiveHandlers?.validate !== undefined) {
+    for (const entry of directives) {
+      try {
+        await directiveHandlers.validate(entry.directive, entry.argument)
+      } catch (error) {
+        // The refusal's own message, for the reason `runDirective`'s catch takes it: the handler
+        // knows what it can accept, and re-deriving that here would be a second answer to it.
+        return refuse(entry.clause.text, error instanceof Error ? error.message : String(error))
+      }
+    }
+  }
+
   // Everything the directives did not claim. Computed rather than reusing `clauses`, so a turn
   // that is ENTIRELY directives reaches stage 3 with nothing to reconcile and completes through
   // the same four stages as any other — one path, rather than a fast one and a careful one.
@@ -537,6 +569,13 @@ async function runTurnThrough(
   // recorded, a model is overridden or an `approval_decision` row is written on a turn that got
   // refused. A handler that THROWS here — `/pin` against a class this host does not declare —
   // still routes through `refuse()`, so a refusal at this depth stays as countable as any other.
+  //
+  // AND THAT SENTENCE IS TRUE OF A BATCH ONLY BECAUSE OF THE PRE-FLIGHT ABOVE (392-14). Read
+  // alone, this loop applies entries one at a time and returns on the first refusal — which is
+  // precisely the arrangement it claims does not exist, one clause over. What removes it is that
+  // every entry's `validate` has already been asked and none of them said no; the catch below is
+  // the belt for a host that publishes no validate, and on such a host the batch claim holds only
+  // for a single directive.
   //
   // TWO CONSEQUENCES, ACCEPTED. A same-turn `/model` now applies AFTER the verdict, so this
   // turn's planner call ran under the previous model; that is the fail-safe direction, and the

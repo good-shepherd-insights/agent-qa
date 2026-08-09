@@ -21,6 +21,7 @@ import type {
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
 
+import type { ChatDirectiveName } from './resolver-table.js'
 import type { SessionReplay } from './session-repair.js'
 
 /** One piece of an utterance, as the splitter produced it. */
@@ -299,6 +300,29 @@ export interface ChatDirectiveHandlers {
   readonly pin?: (actionClass: string) => string | Promise<string>
   readonly help?: () => string
   readonly quit?: () => string
+  /**
+   * THE BATCH PRE-FLIGHT: state the refusal before ANY directive of this turn is applied (392-14).
+   *
+   * The engine runs this over EVERY collected directive and only then applies the first one, so a
+   * throw here refuses the whole turn with zero effects. That is D-10's own shape — reconciliation
+   * completes before the first side effect — applied to the one class of effect it did not yet
+   * cover: a directive BATCH. Applying entries one at a time and returning on the first refusal
+   * left the earlier entry's irrevocable pin and its `approval_decision` row standing on a turn
+   * the person was told carried nothing out (392-VERIFICATION round 2, E3/E3b).
+   *
+   * IT MUTATES NOTHING, and that is the member's whole contract. Asking whether a directive CAN be
+   * carried out is a different act from carrying it out, exactly as `directiveBindingRefusal` is —
+   * a `validate` that recorded a pin or applied an override would be the defect wearing the fix's
+   * name. Resolving and caching a value the apply will reuse is permitted, because a cache is not
+   * a session's state; recording into the session's own deny set is not.
+   *
+   * OPTIONAL, so a host that publishes none is exactly as safe as it was: `runDirective`'s catch
+   * remains the belt, and the only thing such a host loses is the batch guarantee it never had.
+   */
+  readonly validate?: (
+    directive: ChatDirectiveName,
+    argument?: string,
+  ) => void | Promise<void>
 }
 
 /**

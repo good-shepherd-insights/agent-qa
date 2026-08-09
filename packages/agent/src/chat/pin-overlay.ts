@@ -2,8 +2,11 @@
 //
 // THREE PROPERTIES, and each one closes a specific way this feature could be a lie.
 //
-// 1. TIGHTEN-ONLY BY TYPE. The holder publishes `pin`, `list`, `asGateDeny` and nothing else: no
-//    unpin, no clear, no replace. A pin dies when the session does, and that is not a policy this
+// 1. TIGHTEN-ONLY BY TYPE. The holder publishes `pin`, `classFor`, `list`, `asGateDeny` and
+//    nothing else: no unpin, no clear, no replace. (`classFor` is 392-14's split of the VALIDATION
+//    out of `pin` for the engine's batch pre-flight; it records nothing, so it cannot loosen
+//    anything either — it is the question `pin` was already asking, asked without the answer being
+//    written down.) A pin dies when the session does, and that is not a policy this
 //    module remembers — it is the absence of a method. The DTO underneath carries a deny list and
 //    no allow list (see the schema module), so "a pin loosened something" is not a state either
 //    half can represent. The gate's own hook answers a boolean whose only true branch writes a
@@ -86,6 +89,22 @@ export interface PinOverlaySource {
  */
 export interface ChatPinOverlayHolder {
   /**
+   * VALIDATE AND NORMALISE, RECORDING NOTHING — the question `pin` answers, asked alone (392-14).
+   *
+   * The engine's directive batch pre-flight needs to know whether a `/pin` WILL be accepted before
+   * any directive of the turn is applied, because a batch whose second entry refuses must leave
+   * the first entry's irrevocable pin unrecorded (392-VERIFICATION round 2, E3). A caller that had
+   * to call `pin` to find out would have already recorded it, which is the defect rather than a
+   * check for it.
+   *
+   * `pin` is implemented AS this plus the record, so the two cannot answer differently — a second
+   * copy of the normalisation would be the "two answers to what is pinnable" this module's head
+   * refuses everywhere else.
+   *
+   * @throws {ChatPinError} when the input names no registered op's action class.
+   */
+  classFor(input: string): string
+  /**
    * Record a pin, returning the normalised action class actually recorded.
    *
    * The RETURN VALUE is what a session event should log: a person typed `proposals.accept` and
@@ -146,21 +165,30 @@ export function createPinOverlay(
     deniedActionClasses: Object.freeze([...pinned]),
   })
 
+  // The whole of the validation, named once and called by both members below. `pin` is `classFor`
+  // plus one `add`, which is what makes "asking cannot record" a property of the shape rather than
+  // of a rule the two implementations both remember.
+  const classFor = (input: string): string => {
+    const actionClass = normalisePinInput(input)
+    const known = knownActionClasses()
+    if (actionClass === PIN_ACTION_CLASS_PREFIX) {
+      throw new ChatPinError(input, known, 'an action class is required')
+    }
+    if (!known.includes(actionClass)) {
+      throw new ChatPinError(
+        input,
+        known,
+        `"${actionClass}" is not an action class this host declares — a pin recorded against a `
+          + 'name nothing answers to would be accepted and then deny nothing at all',
+      )
+    }
+    return actionClass
+  }
+
   return {
+    classFor,
     pin(input) {
-      const actionClass = normalisePinInput(input)
-      const known = knownActionClasses()
-      if (actionClass === PIN_ACTION_CLASS_PREFIX) {
-        throw new ChatPinError(input, known, 'an action class is required')
-      }
-      if (!known.includes(actionClass)) {
-        throw new ChatPinError(
-          input,
-          known,
-          `"${actionClass}" is not an action class this host declares — a pin recorded against a `
-            + 'name nothing answers to would be accepted and then deny nothing at all',
-        )
-      }
+      const actionClass = classFor(input)
       pinned.add(actionClass)
       return actionClass
     },
