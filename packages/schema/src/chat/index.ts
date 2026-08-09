@@ -31,6 +31,7 @@ export type { ClauseReceipt, ClauseReceiptStatus } from './turn-receipts'
 export { AgentAskInputSchema, AgentAskResultSchema, ClauseReceiptSchema } from './agent-ask'
 export type { AgentAskInput, AgentAskResult } from './agent-ask'
 export type {
+  ChatSessionHandle,
   OpenedChatSession,
   RefusedChatSessionLine,
   SessionLogPort,

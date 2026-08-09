@@ -970,6 +970,7 @@ export type {
   ChatSessionEvent,
   ChatSessionEventBase,
   ChatSessionEventKind,
+  ChatSessionHandle,
   ChatSessionHeader,
   ChatStageOutcome,
   ChatStageOutcomeEvent,

@@ -20,9 +20,9 @@ import type {
   AgentAskInput,
   AgentAskResult,
   ChatSessionEvent,
+  ChatSessionHandle,
   ChatSessionHeader,
   FunctionCaller,
-  OpenedChatSession,
   SessionLogPort,
 } from '@vostride/agent-qa-schema'
 
@@ -67,6 +67,9 @@ class FunctionDeniedError extends Error {
 interface MemoryLog extends SessionLogPort {
   readonly events: ChatSessionEvent[]
   boundaries: number
+  /** How many handles this log handed out, and how many came back (392-12). */
+  opens: number
+  closes: number
 }
 
 function memoryLog(): MemoryLog {
@@ -78,24 +81,35 @@ function memoryLog(): MemoryLog {
     model: 'unbound',
     toolsetHash: 'hash-0',
   }
-  return {
+  // The double answers the HANDLE contract (392-12): the write verbs come back from `open()`
+  // scoped to the session it opened, so a turn cannot reach a log-level append — there is none.
+  const log: MemoryLog = {
     events,
     boundaries: 0,
-    open(): Promise<OpenedChatSession> {
-      return Promise.resolve({ header, events: [...events], refusedLines: [] })
-    },
-    append(event: ChatSessionEvent): Promise<void> {
-      events.push(event)
-      return Promise.resolve()
-    },
-    turnBoundary(): Promise<void> {
-      this.boundaries += 1
-      return Promise.resolve()
-    },
-    close(): Promise<void> {
-      return Promise.resolve()
+    opens: 0,
+    closes: 0,
+    open(): Promise<ChatSessionHandle> {
+      log.opens += 1
+      return Promise.resolve({
+        header,
+        events: [...events],
+        refusedLines: [],
+        append(event: ChatSessionEvent): Promise<void> {
+          events.push(event)
+          return Promise.resolve()
+        },
+        turnBoundary(): Promise<void> {
+          log.boundaries += 1
+          return Promise.resolve()
+        },
+        close(): Promise<void> {
+          log.closes += 1
+          return Promise.resolve()
+        },
+      })
     },
   }
+  return log
 }
 
 interface Invocation {

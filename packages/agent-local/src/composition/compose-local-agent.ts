@@ -166,6 +166,7 @@ import {
   STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
+  ChatSessionHandle,
   CompletedRunHandoff,
   FunctionCaller,
   FunctionScope,
@@ -176,6 +177,7 @@ import type {
   RunEventEnvelope,
   RunId,
   RunsStartInput,
+  SessionLogPort,
 } from '@vostride/agent-qa-schema'
 
 import { createKnowledgeReaderPort } from './knowledge-review-reader.js'
@@ -1618,6 +1620,53 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     toolsetHash: () => chatToolsetHash(composedRegistry),
   })
 
+  // 392-12 / CR-01: WHICH SESSIONS ARE OPEN RIGHT NOW, and which turns each of them has recorded.
+  //
+  // The engine owns a session for the length of a turn, but two writers here are OUTSIDE a turn's
+  // call stack and still belong to one: the confirm port's `onDecision`, reached from inside the
+  // gate during dispatch, and `chat.abortActiveTurn`, reached from a signal handler. Both used to
+  // append through the adapter, which — while the adapter had one descriptor — meant "whichever
+  // session opened last". They now write through the handle of the session whose file already
+  // carries the turn in question, and the ATTRIBUTION IS THE LOG'S OWN: every event carries a
+  // `turnId`, so the wrapper records the ids it has written per handle and a later writer names a
+  // turn rather than guessing a session. A turn nobody here is holding gets no row, which is the
+  // fail-safe direction — the alternative is a row in the wrong conversation, and that is CR-01.
+  const liveChatSessions = new Map<string, { handle: ChatSessionHandle; turnIds: Set<string> }>()
+
+  const trackedChatSessionLog: SessionLogPort = {
+    async open(sessionId?: string): Promise<ChatSessionHandle> {
+      const opened = await chatSessionLog.open(sessionId)
+      const id = opened.header.sessionId
+      const turnIds = new Set<string>()
+      const tracked: ChatSessionHandle = {
+        header: opened.header,
+        events: opened.events,
+        refusedLines: opened.refusedLines,
+        append: async (event) => {
+          turnIds.add(event.turnId)
+          await opened.append(event)
+        },
+        turnBoundary: () => opened.turnBoundary(),
+        close: async () => {
+          // Unregistered BEFORE the descriptor goes, so nothing can pick this handle up in the
+          // window between the two and write through a closed one.
+          liveChatSessions.delete(id)
+          await opened.close()
+        },
+      }
+      liveChatSessions.set(id, { handle: tracked, turnIds })
+      return tracked
+    },
+  }
+
+  /** The open session whose file already carries this turn, or none if nobody here holds it. */
+  const chatSessionHoldingTurn = (turnId: string): ChatSessionHandle | undefined => {
+    for (const entry of liveChatSessions.values()) {
+      if (entry.turnIds.has(turnId)) return entry.handle
+    }
+    return undefined
+  }
+
   // 392 D-21 / plan 05: the session pin holder, created once per composition and read LIVE by the
   // gate hook. It cannot be built until the registry exists — the classes it validates against are
   // the registry's own declared risk names — so the hook below closes over the holder rather than
@@ -1671,14 +1720,14 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         }
 
   // CHAT-04's degrade pass, bound when the host supplied the accounting instance (plan 06).
-  // `emit` appends to the SAME log the engine appends to — the hook holds none of its own, so
-  // there is exactly one writer per session.
+  // Its one event goes through the HANDLE the engine hands it per turn (392-12) — the hook holds
+  // no log of its own and no longer holds a binding to one, so there is exactly one writer per
+  // session and it is that session's own.
   const chatCompaction: CompactionHook | undefined =
     input.chatAccounting === undefined
       ? undefined
       : createChatCompactionHook({
           accounting: input.chatAccounting,
-          emit: (event) => chatSessionLog.append(event),
           now: () => clock.now(),
           // 392-06's flagged consumer, wired: what compaction leaves IS the conversation the
           // prompt renders, and it lands in the live state on EVERY turn rather than only on a
@@ -1695,7 +1744,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // whole-utterance placeholder is gone; this is the seam filled, not widened.
     split: splitClauses,
     reconcile: input.chatReconcile ?? deterministicOverrideStrategy,
-    sessionLog: chatSessionLog,
+    sessionLog: trackedChatSessionLog,
     // RESEARCH Pitfall 1: per-STAGE minting, because origin is a per-call fact. A deterministic
     // table hit is a person typing and mints `human`; a planner-planned call mints `agent`, so a
     // `requiresHumanOrigin` op refuses it without chat knowing such ops exist.
@@ -1790,7 +1839,12 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // from the `/pin` verb's own decision row.
       const turnId = chatState.read().activeTurnId
       if (turnId === undefined) return
-      await chatSessionLog.append({
+      // The session whose file already carries this turn (392-12). Absent means no open session
+      // here recorded it — a row would have to be guessed into somebody's conversation, and a
+      // guess is the defect this refactor removed.
+      const session = chatSessionHoldingTurn(turnId)
+      if (session === undefined) return
+      await session.append({
         kind: 'approval_decision',
         turnId,
         at: clock.now(),
@@ -2083,16 +2137,23 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         // row on a turn that already carries its `turn_complete` — which the next open's repair
         // would then read as an interrupted turn and prune from the conversation.
         if (turnId === undefined) return
-        await chatSessionLog.append({
-          kind: 'aborted',
-          turnId,
-          at: clock.now(),
-          source: 'explicit',
-        })
-        // Fsynced immediately rather than at a turn boundary that is not coming: this is the last
-        // thing this process writes, and an unflushed `aborted` is exactly the event the repair it
-        // exists to make unnecessary would have to reconstruct.
-        await chatSessionLog.turnBoundary()
+        // EVERY LIVE SESSION IS ASKED, and the one holding this turn answers (392-12). Iterating
+        // rather than reaching for "the" session is the shape graceful shutdown needs on a host
+        // serving several conversations; that only ONE turn id is knowable here is `chatState`
+        // being per-composition, which plan 13 keys by session.
+        for (const entry of liveChatSessions.values()) {
+          if (!entry.turnIds.has(turnId)) continue
+          await entry.handle.append({
+            kind: 'aborted',
+            turnId,
+            at: clock.now(),
+            source: 'explicit',
+          })
+          // Fsynced immediately rather than at a turn boundary that is not coming: this is the
+          // last thing this process writes, and an unflushed `aborted` is exactly the event the
+          // repair it exists to make unnecessary would have to reconstruct.
+          await entry.handle.turnBoundary()
+        }
       },
     },
     curation: LOCAL_CURATION_CAPABILITIES,

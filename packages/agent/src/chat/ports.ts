@@ -14,7 +14,12 @@
 
 import type { ModelMessage } from 'ai'
 
-import type { ChatTurnStatus, ClauseReceipt, FunctionCaller } from '@vostride/agent-qa-schema'
+import type {
+  ChatCompactionEvent,
+  ChatTurnStatus,
+  ClauseReceipt,
+  FunctionCaller,
+} from '@vostride/agent-qa-schema'
 
 import type { SessionReplay } from './session-repair.js'
 
@@ -217,6 +222,17 @@ export type CompactionHook = (context: {
   readonly turnId: string
   /** The conversation as of this turn's start: repaired, aborted turns already excluded. */
   readonly replay: SessionReplay
+  /**
+   * Where this pass's one event goes: the SESSION HANDLE of the turn being compacted (392-12).
+   *
+   * The hook used to hold an `emit` bound at composition time, which — while the adapter owned a
+   * single mutable descriptor — meant "the session whose open ran most recently" rather than "the
+   * session this turn belongs to". Passing the append IN makes the destination a fact about the
+   * call, so a compaction event cannot land in another conversation however many turns are in
+   * flight. The hook still holds no log of its own; it holds one turn's writer for the length of
+   * one call.
+   */
+  readonly append: (event: ChatCompactionEvent) => Promise<void>
 }) => Promise<void> | void
 
 /**

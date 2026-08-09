@@ -148,8 +148,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
     // ---- ARM ONE. What a Ctrl+C handler writes: the turn it was in the middle of, and its own
     // `aborted` record, landed at a boundary. Written through the REAL adapter, because a process
     // that can handle a signal is a process still holding this exact code.
-    const graceful = sideLog()
-    await graceful.open(sessionId)
+    const graceful = await sideLog().open(sessionId)
     await graceful.append({ kind: 'user_message', turnId: 'turn-ctrlc', at: AT, text: 'digest RUN-1' })
     await graceful.append({ kind: 'aborted', turnId: 'turn-ctrlc', at: AT, source: 'explicit' })
     await graceful.turnBoundary()
@@ -174,8 +173,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
     // ---- ARM TWO. A turn that started and never finished, then the bytes cut mid-line. This is
     // the shape a SIGKILL leaves: a fragment where a JSON document should be, and no abort record
     // anywhere, because nothing was alive to write one.
-    const dying = sideLog()
-    await dying.open(sessionId)
+    const dying = await sideLog().open(sessionId)
     await dying.append({ kind: 'user_message', turnId: 'turn-kill', at: AT, text: 'digest RUN-2' })
     await dying.append({
       kind: 'stage_outcome',
@@ -239,8 +237,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
     const sessionId = first.sessionId
     const path = pathOf(sessionId)
 
-    const dying = sideLog()
-    await dying.open(sessionId)
+    const dying = await sideLog().open(sessionId)
     await dying.append({ kind: 'user_message', turnId: 'turn-kill', at: AT, text: 'digest RUN-2' })
     await dying.append({
       kind: 'stage_outcome',
@@ -255,8 +252,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
     const fragment = readFileSync(path, 'utf8').split('\n').at(-1)!
     expect(fragment).not.toBe('')
 
-    const resumed = sideLog()
-    const opened = await resumed.open(sessionId)
+    const opened = await sideLog().open(sessionId)
 
     const lines = readFileSync(path, 'utf8').split('\n').filter((line) => line !== '')
     // The fragment is still exactly the bytes the crash left, on a line of its own.
@@ -272,19 +268,18 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
     })
     expect(unparseable).toEqual([fragment])
     expect(opened.events.at(-1)).toMatchObject({ kind: 'aborted', source: 'synthesized' })
-    await resumed.close()
+    await opened.close()
 
     // NOT POISONED FOREVER. On the next open the fragment is no longer the tail, so it is reported
     // as ordinary mid-file damage — permanent, named, and costing the session nothing else. The
     // abort earned by the first repair is still there, so nothing further is synthesized.
-    const again = sideLog()
-    const reopened = await again.open(sessionId)
+    const reopened = await sideLog().open(sessionId)
     expect(reopened.refusedLines).toHaveLength(1)
     expect(reopened.refusedLines[0]?.reason).toContain('unparseable line')
     expect(
       reopened.events.filter((event) => event.kind === 'aborted'),
     ).toHaveLength(1)
-    await again.close()
+    await reopened.close()
   })
 
   // The third crash shape, named so that nobody reads the two arms above as a claim about all
@@ -355,10 +350,10 @@ describe('CHAT-05: the compaction pass is handed an already-repaired conversatio
       mintTurnId: () => 'turn-resumed',
     })
 
-    const opened = await sessionLog.open()
-    const sessionId = opened.header.sessionId
-    await sessionLog.append({ kind: 'user_message', turnId: 'turn-1', at: AT, text: 'proposals' })
-    await sessionLog.append({
+    const seeded = await sessionLog.open()
+    const sessionId = seeded.header.sessionId
+    await seeded.append({ kind: 'user_message', turnId: 'turn-1', at: AT, text: 'proposals' })
+    await seeded.append({
       kind: 'clause_receipt',
       turnId: 'turn-1',
       at: AT,
@@ -368,11 +363,13 @@ describe('CHAT-05: the compaction pass is handed an already-repaired conversatio
       status: 'executed',
       outcome: 'proposals.list completed',
     })
-    await sessionLog.append({ kind: 'turn_complete', turnId: 'turn-1', at: AT, status: 'completed' })
+    await seeded.append({ kind: 'turn_complete', turnId: 'turn-1', at: AT, status: 'completed' })
     // The dangling turn: a user message and nothing that closes it.
-    await sessionLog.append({ kind: 'user_message', turnId: 'turn-dead', at: AT, text: 'digest RUN-9' })
-    await sessionLog.turnBoundary()
-    await sessionLog.close()
+    await seeded.append({ kind: 'user_message', turnId: 'turn-dead', at: AT, text: 'digest RUN-9' })
+    await seeded.turnBoundary()
+    // CLOSED BEFORE THE ENGINE RUNS (392-12): one live handle per session, so a seeding writer
+    // that kept its handle would be refused rather than silently interleaved with the turn.
+    await seeded.close()
 
     await engine.runTurn({ message: 'proposals', sessionId })
 

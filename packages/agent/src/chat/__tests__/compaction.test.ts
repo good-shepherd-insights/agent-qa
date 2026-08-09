@@ -286,16 +286,22 @@ describe('CHAT-04 / the assumption-delta invariant: ONE event per pass', () => {
     const retained: (readonly ModelMessage[])[] = []
     const hook = createChatCompactionHook({
       accounting: accountingFor(contextWindow),
-      emit: (event) => {
-        emitted.push(event)
-      },
       now,
       onConversation: (messagesOut) => {
         retained.push(messagesOut)
       },
       conversationFor: () => messages,
     })
-    await hook({ turnId: 'turn-7', replay: { messages: [], abortedTurnIds: [] } })
+    // The append arrives per CALL now (392-12), because it is the handle of the session whose turn
+    // is being compacted — a hook bound to one log at construction could not know which that is.
+    await hook({
+      turnId: 'turn-7',
+      replay: { messages: [], abortedTurnIds: [] },
+      append: (event) => {
+        emitted.push(event)
+        return Promise.resolve()
+      },
+    })
     return { emitted, retained }
   }
 
@@ -332,9 +338,6 @@ describe('CHAT-04 / the assumption-delta invariant: ONE event per pass', () => {
     const retained: (readonly ModelMessage[])[] = []
     const hook = createChatCompactionHook({
       accounting: accountingFor(32768),
-      emit: (event) => {
-        emitted.push(event)
-      },
       now,
       onConversation: (messagesOut) => {
         retained.push(messagesOut)
@@ -348,7 +351,14 @@ describe('CHAT-04 / the assumption-delta invariant: ONE event per pass', () => {
       ],
       abortedTurnIds: [],
     }
-    await hook({ turnId: 't2', replay })
+    await hook({
+      turnId: 't2',
+      replay,
+      append: (event) => {
+        emitted.push(event)
+        return Promise.resolve()
+      },
+    })
     expect(emitted).toHaveLength(1)
     expect(retained[0]?.length).toBeGreaterThan(0)
   })

@@ -31,6 +31,15 @@
 // the repair below knows how to handle. Syncing per event would buy a guarantee finer than any
 // reader can use, and syncing at close would leave a killed process with a turn nobody landed.
 //
+// ONE DESCRIPTOR PER SESSION, HELD BY THAT SESSION'S HANDLE (392-12, CR-01). This adapter used to
+// keep ONE mutable `fd` and repoint it on every `open()`, which made session identity adapter state
+// rather than a parameter of the write path: two turns whose awaits interleaved both wrote into
+// whichever file opened last, and the loser was left with a turn that never closed — synthesized as
+// `aborted` and pruned out of the conversation, the user's own message with it, on the next open.
+// Descriptors are now keyed by session id and reachable only through the handle `open()` returned,
+// so there is no expression in this file that can write to a session the caller did not open. A
+// second open of a session already held is `ChatSessionBusyError`, not a second descriptor.
+//
 // WHAT REPAIR DECIDES LIVES ELSEWHERE. `repairSession` is a pure function in `packages/agent`
 // beside the turn engine, because deciding what a DAMAGED file means is a different kind of work
 // than moving bytes, and it deserves its own corpus rather than a branch in a read loop. This
@@ -54,6 +63,7 @@ import { repairSession } from '@vostride/agent-qa-agent'
 import { CURRENT_CHAT_SESSION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   ChatSessionEvent,
+  ChatSessionHandle,
   ChatSessionHeader,
   OpenedChatSession,
   SessionLogPort,
@@ -109,6 +119,26 @@ export class UnknownChatSessionError extends Error {
 
   constructor(readonly sessionId: string) {
     super(`No chat session ${sessionId} exists under this project's runtime root.`)
+  }
+}
+
+/**
+ * A session somebody is already holding open (Phase 392 plan 12, T-392-BUSY).
+ *
+ * A REFUSAL BY NAME rather than a second descriptor. Two handles on one file would interleave two
+ * turns inside a single conversation — the same damage the cross-session aliasing did, one level
+ * down — and it is exactly what a double-submit of one `sessionId` over the daemon socket asks for.
+ * The remedy is to wait for the holder, which is why the id is on the error rather than only in
+ * the message.
+ */
+export class ChatSessionBusyError extends Error {
+  override readonly name = 'ChatSessionBusyError'
+
+  constructor(readonly sessionId: string) {
+    super(
+      `Chat session ${sessionId} is already open in this process. One writer at a time: a second `
+      + 'handle would interleave two turns in one conversation.',
+    )
   }
 }
 
@@ -400,7 +430,12 @@ export function createJsonlSessionLogOn(
   const sessionsRoot = join(options.root, CHAT_SESSIONS_SUBDIR)
   const random = options.random ?? Math.random
 
-  let fd: number | undefined
+  // THE WHOLE OF THE RE-KEYING (392-12, CR-01). What used to be `let fd` — one descriptor for the
+  // adapter, repointed by whichever `open()` ran last — is a map from SESSION ID to the descriptor
+  // that session's handle owns. Nothing here is "current": an adapter serving two conversations
+  // holds two entries and no opinion about which of them a given caller means, because a caller
+  // never asks. It holds its handle.
+  const liveDescriptors = new Map<string, number>()
 
   function pathFor(sessionId: string): string {
     return join(sessionsRoot, `${sessionId}.jsonl`)
@@ -449,12 +484,67 @@ export function createJsonlSessionLogOn(
     fs.writeFileSync(target, `${JSON.stringify(event)}\n`, 'utf8')
   }
 
+  /**
+   * One session's handle, closing over the descriptor THAT session's open produced.
+   *
+   * The descriptor is a closure variable of one handle rather than a field of the adapter, which is
+   * the structural statement of the contract: there is no expression anywhere in this module that
+   * reaches another session's fd, so no interleaving of two callers' awaits can produce one.
+   */
+  function handleFor(
+    id: string,
+    fd: number,
+    opened: OpenedChatSession,
+  ): ChatSessionHandle {
+    let live = true
+    const requireLive = (verb: string): void => {
+      if (!live) {
+        throw new TypeError(
+          `a chat session ${verb} cannot go through a closed handle for ${id}. Open the session `
+          + 'again to write to it.',
+        )
+      }
+    }
+    const handle: ChatSessionHandle = {
+      header: opened.header,
+      events: opened.events,
+      refusedLines: opened.refusedLines,
+      append(event: ChatSessionEvent): Promise<void> {
+        requireLive('event')
+        writeEvent(fd, event)
+        return Promise.resolve()
+      },
+      turnBoundary(): Promise<void> {
+        // A REFUSAL rather than a silent no-op: a boundary that quietly skipped its fsync would
+        // report a durability guarantee it did not buy, which is the one lie this file is built
+        // to make impossible.
+        requireLive('turn boundary')
+        fs.fsyncSync(fd)
+        return Promise.resolve()
+      },
+      close(): Promise<void> {
+        // Idempotent, so a caller's `finally` may call it unconditionally — the turn engine's does.
+        if (live) {
+          live = false
+          liveDescriptors.delete(id)
+          fs.closeSync(fd)
+        }
+        return Promise.resolve()
+      },
+    }
+    liveDescriptors.set(id, fd)
+    return handle
+  }
+
   return {
-    open(sessionId?: string): Promise<OpenedChatSession> {
+    open(sessionId?: string): Promise<ChatSessionHandle> {
       fs.mkdirSync(sessionsRoot, { recursive: true })
 
       if (sessionId !== undefined) {
         const id = requireSessionId(sessionId)
+        // BEFORE ANY WORK, and before any byte is read: a busy session is a refusal, not a second
+        // descriptor. Asked first so a double-submit costs a caller nothing but the answer.
+        if (liveDescriptors.has(id)) throw new ChatSessionBusyError(id)
         const read = readLines(id)
         // The refusal, not a create. See `UnknownChatSessionError`.
         if (read === undefined || read.lines.length === 0) throw new UnknownChatSessionError(id)
@@ -466,8 +556,7 @@ export function createJsonlSessionLogOn(
           declaredVersion: header.schemaVersion,
           now: options.now,
         })
-        if (fd !== undefined) fs.closeSync(fd)
-        fd = fs.openSync(pathFor(id), 'a')
+        const resumed = fs.openSync(pathFor(id), 'a')
         // TERMINATE A TORN TAIL BEFORE APPENDING ANYTHING. A crash leaves the last line without
         // its newline, so the very next append would land ON that fragment and fuse two records
         // into one unreadable line — turning a bounded, understood loss into permanent damage
@@ -476,24 +565,26 @@ export function createJsonlSessionLogOn(
         // and the fragment survives verbatim as its own refused line for anyone auditing the file.
         let wroteDuringRepair = false
         if (!read.terminated) {
-          fs.writeFileSync(fd, '\n', 'utf8')
+          fs.writeFileSync(resumed, '\n', 'utf8')
           wroteDuringRepair = true
         }
         for (const event of repair.synthesized) {
-          writeEvent(fd, event)
+          writeEvent(resumed, event)
           wroteDuringRepair = true
         }
         if (wroteDuringRepair) {
           // A repair CLOSES the dangling turn, so it lands like any other turn boundary. A
           // synthesized abort a second crash could lose would leave the same session dangling
           // again, and the loss bound would stop being the in-flight turn.
-          fs.fsyncSync(fd)
+          fs.fsyncSync(resumed)
         }
-        return Promise.resolve({
-          header,
-          events: repair.repaired,
-          refusedLines: repair.refusedLines,
-        })
+        return Promise.resolve(
+          handleFor(id, resumed, {
+            header,
+            events: repair.repaired,
+            refusedLines: repair.refusedLines,
+          }),
+        )
       }
 
       const createdAt = options.now()
@@ -516,30 +607,8 @@ export function createJsonlSessionLogOn(
         fs.closeSync(created)
       }
       bestEffortFsyncDirectory(sessionsRoot)
-      if (fd !== undefined) fs.closeSync(fd)
-      fd = fs.openSync(pathFor(id), 'a')
-      return Promise.resolve({ header, events: [], refusedLines: [] })
-    },
-
-    append(event: ChatSessionEvent): Promise<void> {
-      if (fd === undefined) {
-        throw new TypeError('a chat session event cannot be appended before the session is opened')
-      }
-      writeEvent(fd, event)
-      return Promise.resolve()
-    },
-
-    turnBoundary(): Promise<void> {
-      if (fd !== undefined) fs.fsyncSync(fd)
-      return Promise.resolve()
-    },
-
-    close(): Promise<void> {
-      if (fd !== undefined) {
-        fs.closeSync(fd)
-        fd = undefined
-      }
-      return Promise.resolve()
+      const appendFd = fs.openSync(pathFor(id), 'a')
+      return Promise.resolve(handleFor(id, appendFd, { header, events: [], refusedLines: [] }))
     },
   }
 }

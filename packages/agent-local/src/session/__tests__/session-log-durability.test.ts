@@ -211,9 +211,9 @@ describe('the session log appends as it goes and fsyncs at the turn boundary', (
     const log = createJsonlSessionLogOn(fs, options(root))
 
     const opened = await log.open()
-    await log.append(userMessage('t1', 'proposals'))
-    await log.append(turnComplete('t1'))
-    await log.turnBoundary()
+    await opened.append(userMessage('t1', 'proposals'))
+    await opened.append(turnComplete('t1'))
+    await opened.turnBoundary()
 
     expect(opened.header.sessionId).toBe(SESSION_ID)
     expect(describeSequence(calls, root, opened.header.sessionId)).toEqual(
@@ -228,9 +228,9 @@ describe('the session log appends as it goes and fsyncs at the turn boundary', (
     const log = createJsonlSessionLogOn(fs, options(root))
 
     const opened = await log.open()
-    await log.append(userMessage('t1', 'proposals'))
-    await log.append(turnComplete('t1'))
-    await log.turnBoundary()
+    await opened.append(userMessage('t1', 'proposals'))
+    await opened.append(turnComplete('t1'))
+    await opened.turnBoundary()
 
     const sequence = describeSequence(calls, root, opened.header.sessionId)
     const boundary = sequence.lastIndexOf('fsync file')
@@ -242,9 +242,9 @@ describe('the session log appends as it goes and fsyncs at the turn boundary', (
     const log = createJsonlSessionLogOn(fs, options(root))
 
     const opened = await log.open()
-    await log.append(userMessage('t1', 'proposals'))
-    await log.append(turnComplete('t1'))
-    await log.turnBoundary()
+    await opened.append(userMessage('t1', 'proposals'))
+    await opened.append(turnComplete('t1'))
+    await opened.turnBoundary()
 
     // Two on the whole life of the session: the header's own, and the turn boundary's. A third
     // would mean an event-level sync; a first-only would mean the turn never landed.
@@ -264,10 +264,10 @@ describe('the session log appends as it goes and fsyncs at the turn boundary', (
     const first = createRecordingFs()
     const creating = createJsonlSessionLogOn(first.fs, options(root))
     const opened = await creating.open()
-    await creating.append(userMessage('t1', 'proposals'))
-    await creating.append(turnComplete('t1'))
-    await creating.turnBoundary()
-    await creating.close()
+    await opened.append(userMessage('t1', 'proposals'))
+    await opened.append(turnComplete('t1'))
+    await opened.turnBoundary()
+    await opened.close()
 
     const second = createRecordingFs()
     const resuming = createJsonlSessionLogOn(second.fs, options(root, LATER))
@@ -319,9 +319,9 @@ describe('the observation seam cannot become a production escape hatch', () => {
     try {
       const log = createJsonlSessionLog(options(root))
       const opened = await log.open()
-      await log.append(userMessage('t1', 'proposals'))
-      await log.turnBoundary()
-      await log.close()
+      await opened.append(userMessage('t1', 'proposals'))
+      await opened.turnBoundary()
+      await opened.close()
 
       const file = join(root, CHAT_SESSIONS_SUBDIR, `${opened.header.sessionId}.jsonl`)
       expect(existsSync(file)).toBe(true)
@@ -410,10 +410,10 @@ describe('sessions are listable without loading a whole log (D-17)', () => {
   it('reports id, creation instant, opening model and event count from the header', async () => {
     const log = createJsonlSessionLog(options(root))
     const opened = await log.open()
-    await log.append(userMessage('t1', 'proposals'))
-    await log.append(turnComplete('t1'))
-    await log.turnBoundary()
-    await log.close()
+    await opened.append(userMessage('t1', 'proposals'))
+    await opened.append(turnComplete('t1'))
+    await opened.turnBoundary()
+    await opened.close()
 
     expect(listSessions(root)).toEqual({
       sessions: [
@@ -431,9 +431,9 @@ describe('sessions are listable without loading a whole log (D-17)', () => {
   it('lists the good session and REPORTS the damaged one by name, never throwing over it', async () => {
     const log = createJsonlSessionLog(options(root))
     const opened = await log.open()
-    await log.append(turnComplete('t1'))
-    await log.turnBoundary()
-    await log.close()
+    await opened.append(turnComplete('t1'))
+    await opened.turnBoundary()
+    await opened.close()
 
     const damaged = join(root, CHAT_SESSIONS_SUBDIR, 'chat-20260101-000000-zzzz.jsonl')
     writeFileSync(damaged, 'this first line is not JSON at all\n', 'utf8')
@@ -457,9 +457,9 @@ describe('sessions are listable without loading a whole log (D-17)', () => {
   it('never parses an event line: a session with damaged events still lists from its header', async () => {
     const log = createJsonlSessionLog(options(root))
     const opened = await log.open()
-    await log.append(turnComplete('t1'))
-    await log.turnBoundary()
-    await log.close()
+    await opened.append(turnComplete('t1'))
+    await opened.turnBoundary()
+    await opened.close()
 
     const file = join(root, CHAT_SESSIONS_SUBDIR, `${opened.header.sessionId}.jsonl`)
     writeFileSync(file, `${readFileSync(file, 'utf8')}not an event at all\n`, 'utf8')
@@ -475,9 +475,9 @@ describe('sessions are listable without loading a whole log (D-17)', () => {
   it('scans in a pinned constant-size chunk, so a huge log costs a listing one buffer', async () => {
     const log = createJsonlSessionLog(options(root))
     const opened = await log.open()
-    await log.append(userMessage('t1', 'x'.repeat(300_000)))
-    await log.turnBoundary()
-    await log.close()
+    await opened.append(userMessage('t1', 'x'.repeat(300_000)))
+    await opened.turnBoundary()
+    await opened.close()
 
     // A chunk bigger than a filesystem read buys nothing and a chunk that grows with the file is
     // the very thing "without loading full logs" forbids.
@@ -489,11 +489,9 @@ describe('sessions are listable without loading a whole log (D-17)', () => {
 
   it('sorts by id, which is sorted by time — a plain listing IS the session list', async () => {
     const first = createJsonlSessionLog(options(root, '2026-08-09T10:11:12.000Z'))
-    await first.open()
-    await first.close()
+    await (await first.open()).close()
     const second = createJsonlSessionLog(options(root, '2026-08-09T10:11:13.000Z'))
-    await second.open()
-    await second.close()
+    await (await second.open()).close()
 
     const ids = listSessions(root).sessions.map((session) => session.sessionId)
     expect(ids).toEqual([...ids].sort())
@@ -546,20 +544,30 @@ describe.each(FACTORIES)('SessionLogPort contract: %s', (_name, factory) => {
     expect(error).toBeInstanceOf(UnknownChatSessionError)
   })
 
-  it('refuses an append before the session is open', async () => {
+  // RE-SPELLED BY THE HANDLE CONTRACT (392-12), and the property it names is stronger than the one
+  // it replaces. "Append before open" is no longer expressible — there is no log-level append to
+  // reach — so what remains to prove is the other end of ownership: a handle that has been closed
+  // refuses rather than writing somewhere. A silent no-op there, or a quiet reopen, would be the
+  // aliasing this refactor removed, wearing a different name.
+  it('refuses an append through a CLOSED handle rather than writing somewhere', async () => {
     const log = factory(root)
-    const error = await refusalOf(() => log.append(turnComplete('t1')))
+    const opened = await log.open()
+    await opened.close()
 
+    const error = await refusalOf(() => opened.append(turnComplete('t1')))
     expect(error).toBeInstanceOf(TypeError)
+
+    const boundary = await refusalOf(() => opened.turnBoundary())
+    expect(boundary).toBeInstanceOf(TypeError)
   })
 
   it('round-trips appended events through a close and a reopen', async () => {
     const log = factory(root)
     const opened = await log.open()
-    await log.append(userMessage('t1', 'proposals'))
-    await log.append(turnComplete('t1'))
-    await log.turnBoundary()
-    await log.close()
+    await opened.append(userMessage('t1', 'proposals'))
+    await opened.append(turnComplete('t1'))
+    await opened.turnBoundary()
+    await opened.close()
 
     const reopened = await log.open(opened.header.sessionId)
     expect(reopened.events).toEqual([userMessage('t1', 'proposals'), turnComplete('t1')])
@@ -583,7 +591,7 @@ describe('a header this build cannot read is a refusal, never a silent new sessi
   ])('refuses %s', async (_label, headerLine) => {
     const log = createJsonlSessionLog(options(root))
     const opened = await log.open()
-    await log.close()
+    await opened.close()
 
     const file = join(root, CHAT_SESSIONS_SUBDIR, `${opened.header.sessionId}.jsonl`)
     writeFileSync(file, `${headerLine}\n`, 'utf8')

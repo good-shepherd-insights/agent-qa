@@ -37,6 +37,7 @@ import type {
   AgentAskInput,
   AgentAskResult,
   ChatSessionEvent,
+  ChatSessionHandle,
   ClauseReceipt,
   ChatTurnStatus,
   SessionLogPort,
@@ -269,316 +270,344 @@ async function runDirective(
 export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
   return {
     async runTurn(input: AgentAskInput): Promise<AgentAskResult> {
-      const opened = await deps.sessionLog.open(input.sessionId)
-      const sessionId = opened.header.sessionId
-      const turnId = deps.mintTurnId()
-      // Published BEFORE anything can fail, because the state this names is "a turn is in flight"
-      // and that becomes true here. A surface interrupted between this line and the boundary below
-      // has the id it needs to write the explicit `aborted` event.
-      deps.state?.beginTurn(turnId)
-
-      const append = async (event: ChatSessionEvent): Promise<void> => {
-        await deps.sessionLog.append(event)
+      // THE HANDLE THIS TURN OWNS (392-12, CR-01). Every write below goes through the object this
+      // one `open()` returned, so a second turn running concurrently on the same adapter cannot be
+      // written to by this one and cannot write to this one — session identity is a parameter of
+      // the write path rather than adapter state. The `try/finally` around the whole body is what
+      // makes "closed on every exit path exactly once" a property of the shape: a refusal, a
+      // completion and a throw between here and `finish` all pass through the same release.
+      const handle = await deps.sessionLog.open(input.sessionId)
+      try {
+        return await runTurnThrough(deps, handle, input)
+      } finally {
+        await handle.close()
       }
-      // Carried onto EVERY result of this turn, refusal arms included: a person whose session is
-      // damaged needs to hear about it on the turn that reopened it, and the refusal arms are the
-      // ones a damaged log makes more likely rather than less (392-03's note to this plan).
-      const refusedLineCount =
-        opened.refusedLines.length === 0
-          ? {}
-          : { refusedLineCount: opened.refusedLines.length }
-
-      const finish = async (
-        status: ChatTurnStatus,
-        result: Omit<AgentAskResult, 'sessionId' | 'turnId' | 'status'>,
-      ): Promise<AgentAskResult> => {
-        await append({ kind: 'turn_complete', turnId, at: deps.now(), status })
-        // The fsync point (D-19). Per TURN, so the loss bound is exactly the in-flight turn —
-        // the case the next-turn repair already knows how to handle.
-        await deps.sessionLog.turnBoundary()
-        deps.state?.endTurn({ turnId, status, receipts: result.receipts, ...(result.answer === undefined ? {} : { answer: result.answer }) })
-        return { sessionId, turnId, status, ...refusedLineCount, ...result }
-      }
-      /**
-       * The ONE way this engine refuses a turn (D-08 / D-10 / D-15).
-       *
-       * Every fail-closed arm goes through here, and that is what makes the `mark_unhandled` event
-       * a property of refusing rather than a line somebody remembered to add at three call sites.
-       * The event is what CHAT-03's FIELD rate is a projection over — the gated ceiling is computed
-       * across the frozen corpus, but the ungated number a live deployment produces is only
-       * observable if every refusal in every session left a row. A refusal that returned the right
-       * message and logged nothing would be invisible to exactly the measurement D-15 asks for.
-       *
-       * A DIRECTIVE WITH NO HANDLER GOES THROUGH HERE TOO, and that is a deliberate reading rather
-       * than a shortcut: `/model` in a build that binds nothing for it IS a clause this build
-       * cannot carry out, so it belongs in the same count as any other. The two facts stay
-       * distinguishable in the log through the REASON, which says `recognised but no handler`
-       * rather than `no capability handles`, and plan 08 removes the arm entirely by binding them.
-       */
-      const refuse = async (clause: string, reason: string): Promise<AgentAskResult> => {
-        await append({ kind: 'mark_unhandled', turnId, at: deps.now(), clause, reason })
-        return finish('fail_closed', { receipts: [], unhandled: { clause, reason } })
-      }
-
-      // REPAIR, THEN REPLAY, THEN PRUNE (CHAT-05). `open()` has already run the replay-safety
-      // repair — that is the adapter's contract, not this engine's option — so the events in hand
-      // are the repaired ones and the replay below cannot see an unrepaired conversation. The
-      // degrade pass then receives that replay and has nothing else to work on, which is what
-      // makes the ordering a property of the code rather than a convention.
-      const replay = replaySession(opened.events)
-      // The ONE projection, applied once (392-06's mismatch, resolved in `chat-state.ts`): the
-      // repaired replay becomes the conversation a surface and a prompt read. A bound degrade pass
-      // publishes again over the top with the pruned form.
-      deps.state?.setConversation(replayToModelMessages(replay))
-
-      // CONFIG DRIFT, BEFORE THE MESSAGE (D-04, CHAT-05). The re-read happens on EVERY turn, which
-      // makes the session-start case the first turn's case rather than a second code path — one
-      // fold, one diff, one place a `model_change` can be born. The events carry the id of the turn
-      // they precede (the base type's own rule for session-scoped facts) and are appended ahead of
-      // the user message, so a reader folding the log has the configuration in hand before it sees
-      // what was asked under it.
-      if (deps.config !== undefined) {
-        const current: ChatConfigState = await deps.config()
-        const previous = foldChatConfigState(opened.header, opened.events)
-        for (const event of diffChatConfig(previous, current, {
-          turnId,
-          at: deps.now(),
-          source: 'config_reread',
-        })) {
-          await append(event)
-        }
-      }
-
-      await append({ kind: 'user_message', turnId, at: deps.now(), text: input.message })
-      await deps.compaction?.({ turnId, replay })
-
-      // ---- Stage 1: the deterministic resolver over the clause split.
-      const clauses = deps.split(input.message)
-      const mapped: ResolvedClause[] = []
-      const directives: DirectiveEntry[] = []
-      for (const clause of clauses) {
-        const resolution = resolveClause(deps.table, clause.text)
-        if (resolution.kind === 'unresolved') continue
-        if (resolution.entry.kind === 'directive') {
-          // Resolved, and NOT executable through the function layer: a directive names no
-          // capability (D-04/D-21). It is collected rather than dropped, because a clause the
-          // table understood and the engine silently ignored is the exact silent-drop shape D-08
-          // and D-10 exist to make impossible.
-          directives.push({
-            clause,
-            directive: resolution.entry.directive,
-            ...(resolution.entry.argument === undefined
-              ? {}
-              : { argument: resolution.entry.argument }),
-          })
-          continue
-        }
-        mapped.push({
-          clause,
-          functionId: resolution.entry.functionId,
-          args: resolution.entry.input,
-        })
-      }
-      await append({
-        kind: 'stage_outcome',
-        turnId,
-        at: deps.now(),
-        stage: 'resolver',
-        // Directives count as RESOLVED here, because they were: the table matched them. Whether
-        // anything can carry them out is the next question, and answering it in this field would
-        // make "stage 1 did not recognise this" and "this build cannot do it" the same bytes.
-        outcome:
-          mapped.length + directives.length === clauses.length ? 'resolved' : 'unresolved',
-      })
-
-      // ---- Directives, ASKED ABOUT here and carried out below the verdict (D-10, CR-04).
-      //
-      // A directive names no capability — it changes what this SESSION is, and that is why it does
-      // not travel `invokeFunction` and why a model may never reach one (391 D-07: the mechanism
-      // deciding what a model may do is the one mechanism it must not touch, even in the
-      // tightening direction). A directive with no handler still refuses the whole turn by name,
-      // through the same `refuse()` every other refusal takes, so a build that recognises `/pin`
-      // and cannot carry it out leaves a countable row rather than a silent no-op (D-08 / D-15).
-      //
-      // WHAT MOVED, AND WHY. This loop USED TO CARRY THE DIRECTIVES OUT here, above stage 2 —
-      // which put an irrevocable pin and an `approval_decision` row on the log of a turn that then
-      // got refused, under a message reading "nothing in the request was carried out"
-      // (392-VERIFICATION CR-04). D-10's pre-flight atomicity was applied only to `invokeFunction`
-      // dispatches; it is now applied to every effect a turn can have. What stays here is the
-      // BINDING question, which mutates nothing.
-      for (const entry of directives) {
-        const notBound = directiveBindingRefusal(deps, entry)
-        if (notBound !== undefined) return refuse(entry.clause.text, notBound)
-      }
-
-      // Everything the directives did not claim. Computed rather than reusing `clauses`, so a turn
-      // that is ENTIRELY directives reaches stage 3 with nothing to reconcile and completes through
-      // the same four stages as any other — one path, rather than a fast one and a careful one.
-      const routable = clauses.filter(
-        (clause) => !directives.some((entry) => entry.clause.index === clause.index),
-      )
-
-      // ---- Stage 2: the planner, consulted ONLY for what stage 1 could not answer.
-      const unmapped = routable.filter(
-        (clause) => !mapped.some((resolved) => resolved.clause.index === clause.index),
-      )
-      let planned: PlannerStageOutcome = NO_PLAN
-      if (unmapped.length === 0) {
-        // The tracer's path, and a permanent one: a fully canonical utterance is model-independent.
-        await append({
-          kind: 'stage_outcome',
-          turnId,
-          at: deps.now(),
-          stage: 'planner',
-          outcome: 'skipped',
-        })
-      } else if (deps.planner === undefined) {
-        // Headless. Not a stub and not an error — a real host posture whose correct behaviour is
-        // to refuse by name rather than to guess (D-08).
-        await append({
-          kind: 'stage_outcome',
-          turnId,
-          at: deps.now(),
-          stage: 'planner',
-          outcome: 'unresolved',
-        })
-      } else {
-        planned = await deps.planner.plan({ utterance: input.message, clauses: unmapped })
-        await append({
-          kind: 'stage_outcome',
-          turnId,
-          at: deps.now(),
-          stage: 'planner',
-          // The stage RESOLVED when the model produced something to reconcile — a plan, or an
-          // answer. It did not when the model was unreachable or said nothing. Whether what it
-          // produced survives reconciliation is the next stage's question, and answering it in
-          // this field would make "the model proposed nothing" and "the reconciler refused the
-          // proposal" the same bytes for every reader of the log.
-          outcome:
-            planned.failure === undefined
-            && (planned.toolCalls.length > 0 || planned.answer !== undefined)
-              ? 'resolved'
-              : 'unresolved',
-        })
-      }
-
-      // ---- Stage 3: deterministic reconciliation, BEFORE any side effect (D-10).
-      const verdict = deps.reconcile({ clauses: routable, mapped, planned })
-      await append({
-        kind: 'stage_outcome',
-        turnId,
-        at: deps.now(),
-        stage: 'reconcile',
-        outcome: verdict.kind === 'execute' ? 'resolved' : 'unresolved',
-      })
-      if (verdict.kind === 'unhandled') {
-        return refuse(verdict.clause.text, verdict.reason)
-      }
-
-      // ---- The directives' side effects, on the execute arm and NOWHERE ELSE (D-10, CR-04).
-      //
-      // Reachable only from here, by the same control-flow discrimination stage 4 uses: the verdict
-      // is a discriminated union, the `unhandled` arm returned above, and this loop lives on the
-      // other side of that return. There is no arrangement of these statements in which a pin is
-      // recorded, a model is overridden or an `approval_decision` row is written on a turn that got
-      // refused. A handler that THROWS here — `/pin` against a class this host does not declare —
-      // still routes through `refuse()`, so a refusal at this depth stays as countable as any other.
-      //
-      // TWO CONSEQUENCES, ACCEPTED. A same-turn `/model` now applies AFTER the verdict, so this
-      // turn's planner call ran under the previous model; that is the fail-safe direction, and the
-      // alternative is an effect preceding the verdict. And the verb-sourced `model_change` /
-      // `approval_decision` rows now follow this turn's `stage_outcome` rows — every event carries
-      // `turnId` and `at`, so no reader's ordering claim rests on which came first within a turn.
-      const directiveLines: string[] = []
-      for (const entry of directives) {
-        const line = await runDirective(deps, entry, {
-          turnId,
-          append,
-          now: deps.now,
-        })
-        if (line.kind === 'refused') return refuse(entry.clause.text, line.reason)
-        directiveLines.push(line.text)
-      }
-
-      // ---- Stage 4: sequential execution in utterance order, stopping on failure (D-11).
-      //
-      // THE LOOP IS UNREACHABLE FROM A REFUSAL BY CONSTRUCTION, which is D-10 expressed as control
-      // flow rather than as a check: the verdict is a discriminated union, the `unhandled` arm
-      // returns above, and the plan this loop walks exists only on the other arm. There is no
-      // ordering of these statements in which a side effect happens before the verdict, because
-      // there is no plan to walk until the verdict has produced one.
-      const receipts: ClauseReceipt[] = []
-      let failed = false
-
-      for (const step of verdict.plan) {
-        // The mint follows the stage that PROVED the binding, which the verdict states (Pitfall 1).
-        // Re-deriving it by matching the action back against the mapper set would answer `human`
-        // for any planner-produced call to an op the table also knows — handing a model-originated
-        // invocation the self-grant power `requiresHumanOrigin` ops withhold (391 D-06, T-392-23).
-        const caller = deps.mint.forStage(step.source)
-        let receipt: ClauseReceipt
-        if (failed) {
-          // `not-run` is a fact, not an absence: a person reading the receipt must be able to tell
-          // a clause nobody attempted from one that was attempted and failed (D-11). It is LOGGED
-          // like every other receipt, because "the log is the triage report" (D-18) is false the
-          // moment the log carries only the clauses that got as far as a call.
-          receipt = {
-            clause: step.clause.text,
-            functionId: step.functionId,
-            origin: caller.origin,
-            status: 'not-run',
-            outcome: 'an earlier clause failed, so this one was never attempted',
-          }
-        } else {
-          try {
-            await deps.invoke(step.functionId, step.args, caller)
-            receipt = {
-              clause: step.clause.text,
-              functionId: step.functionId,
-              origin: caller.origin,
-              status: 'executed',
-              outcome: summarise(step.functionId),
-            }
-          } catch (error) {
-            failed = true
-            receipt = {
-              clause: step.clause.text,
-              functionId: step.functionId,
-              origin: caller.origin,
-              status: 'failed',
-              outcome: refusalName(error),
-            }
-          }
-        }
-        receipts.push(receipt)
-        await append({
-          kind: 'clause_receipt',
-          turnId,
-          at: deps.now(),
-          clause: receipt.clause,
-          functionId: receipt.functionId,
-          origin: receipt.origin,
-          status: receipt.status,
-          outcome: receipt.outcome,
-        })
-      }
-
-      // The answer rides the completed turn (CHAT-01). A turn the model answered in prose reaches
-      // here with an empty plan, so the loop above ran zero times and `receipts` is empty — which
-      // is the assertion "answering executes nothing" is made of, rather than a claim about it.
-      // The directive lines lead, because they are what the person asked for FIRST in the
-      // utterance order this whole engine preserves, and because a `/model` confirmation printed
-      // after the receipts of the clauses that ran under the old model would misreport which model
-      // ran them.
-      const answer = [...directiveLines, verdict.answer].filter(
-        (line): line is string => line !== undefined && line !== '',
-      )
-      return finish(failed ? 'failed' : 'completed', {
-        receipts,
-        ...(answer.length === 0 ? {} : { answer: answer.join('\n') }),
-      })
     },
   }
+}
+
+/**
+ * The turn itself, written entirely through ONE session's handle.
+ *
+ * Lifted out of the closure so the open/close pair above can be a plain `try/finally` — the release
+ * is then structural rather than a line each return path has to remember, which is the same reason
+ * stage 4 is unreachable from a refusal by control flow rather than by a check.
+ */
+async function runTurnThrough(
+  deps: TurnEngineDeps,
+  opened: ChatSessionHandle,
+  input: AgentAskInput,
+): Promise<AgentAskResult> {
+  const sessionId = opened.header.sessionId
+  const turnId = deps.mintTurnId()
+  // Published BEFORE anything can fail, because the state this names is "a turn is in flight"
+  // and that becomes true here. A surface interrupted between this line and the boundary below
+  // has the id it needs to write the explicit `aborted` event.
+  deps.state?.beginTurn(turnId)
+
+  // THROUGH THE HANDLE, NEVER THROUGH THE ADAPTER (392-12). There is no adapter-level write verb
+  // left to reach for, which is what makes "this turn's events go to this turn's session" a
+  // property of the type rather than of everybody remembering.
+  const append = async (event: ChatSessionEvent): Promise<void> => {
+    await opened.append(event)
+  }
+  // Carried onto EVERY result of this turn, refusal arms included: a person whose session is
+  // damaged needs to hear about it on the turn that reopened it, and the refusal arms are the
+  // ones a damaged log makes more likely rather than less (392-03's note to this plan).
+  const refusedLineCount =
+    opened.refusedLines.length === 0
+      ? {}
+      : { refusedLineCount: opened.refusedLines.length }
+
+  const finish = async (
+    status: ChatTurnStatus,
+    result: Omit<AgentAskResult, 'sessionId' | 'turnId' | 'status'>,
+  ): Promise<AgentAskResult> => {
+    await append({ kind: 'turn_complete', turnId, at: deps.now(), status })
+    // The fsync point (D-19). Per TURN, so the loss bound is exactly the in-flight turn —
+    // the case the next-turn repair already knows how to handle.
+    await opened.turnBoundary()
+    deps.state?.endTurn({ turnId, status, receipts: result.receipts, ...(result.answer === undefined ? {} : { answer: result.answer }) })
+    return { sessionId, turnId, status, ...refusedLineCount, ...result }
+  }
+  /**
+   * The ONE way this engine refuses a turn (D-08 / D-10 / D-15).
+   *
+   * Every fail-closed arm goes through here, and that is what makes the `mark_unhandled` event
+   * a property of refusing rather than a line somebody remembered to add at three call sites.
+   * The event is what CHAT-03's FIELD rate is a projection over — the gated ceiling is computed
+   * across the frozen corpus, but the ungated number a live deployment produces is only
+   * observable if every refusal in every session left a row. A refusal that returned the right
+   * message and logged nothing would be invisible to exactly the measurement D-15 asks for.
+   *
+   * A DIRECTIVE WITH NO HANDLER GOES THROUGH HERE TOO, and that is a deliberate reading rather
+   * than a shortcut: `/model` in a build that binds nothing for it IS a clause this build
+   * cannot carry out, so it belongs in the same count as any other. The two facts stay
+   * distinguishable in the log through the REASON, which says `recognised but no handler`
+   * rather than `no capability handles`, and plan 08 removes the arm entirely by binding them.
+   */
+  const refuse = async (clause: string, reason: string): Promise<AgentAskResult> => {
+    await append({ kind: 'mark_unhandled', turnId, at: deps.now(), clause, reason })
+    return finish('fail_closed', { receipts: [], unhandled: { clause, reason } })
+  }
+
+  // REPAIR, THEN REPLAY, THEN PRUNE (CHAT-05). `open()` has already run the replay-safety
+  // repair — that is the adapter's contract, not this engine's option — so the events in hand
+  // are the repaired ones and the replay below cannot see an unrepaired conversation. The
+  // degrade pass then receives that replay and has nothing else to work on, which is what
+  // makes the ordering a property of the code rather than a convention.
+  const replay = replaySession(opened.events)
+  // The ONE projection, applied once (392-06's mismatch, resolved in `chat-state.ts`): the
+  // repaired replay becomes the conversation a surface and a prompt read. A bound degrade pass
+  // publishes again over the top with the pruned form.
+  deps.state?.setConversation(replayToModelMessages(replay))
+
+  // CONFIG DRIFT, BEFORE THE MESSAGE (D-04, CHAT-05). The re-read happens on EVERY turn, which
+  // makes the session-start case the first turn's case rather than a second code path — one
+  // fold, one diff, one place a `model_change` can be born. The events carry the id of the turn
+  // they precede (the base type's own rule for session-scoped facts) and are appended ahead of
+  // the user message, so a reader folding the log has the configuration in hand before it sees
+  // what was asked under it.
+  if (deps.config !== undefined) {
+    const current: ChatConfigState = await deps.config()
+    const previous = foldChatConfigState(opened.header, opened.events)
+    for (const event of diffChatConfig(previous, current, {
+      turnId,
+      at: deps.now(),
+      source: 'config_reread',
+    })) {
+      await append(event)
+    }
+  }
+
+  await append({ kind: 'user_message', turnId, at: deps.now(), text: input.message })
+  await deps.compaction?.({ turnId, replay, append })
+
+  // ---- Stage 1: the deterministic resolver over the clause split.
+  const clauses = deps.split(input.message)
+  const mapped: ResolvedClause[] = []
+  const directives: DirectiveEntry[] = []
+  for (const clause of clauses) {
+    const resolution = resolveClause(deps.table, clause.text)
+    if (resolution.kind === 'unresolved') continue
+    if (resolution.entry.kind === 'directive') {
+      // Resolved, and NOT executable through the function layer: a directive names no
+      // capability (D-04/D-21). It is collected rather than dropped, because a clause the
+      // table understood and the engine silently ignored is the exact silent-drop shape D-08
+      // and D-10 exist to make impossible.
+      directives.push({
+        clause,
+        directive: resolution.entry.directive,
+        ...(resolution.entry.argument === undefined
+          ? {}
+          : { argument: resolution.entry.argument }),
+      })
+      continue
+    }
+    mapped.push({
+      clause,
+      functionId: resolution.entry.functionId,
+      args: resolution.entry.input,
+    })
+  }
+  await append({
+    kind: 'stage_outcome',
+    turnId,
+    at: deps.now(),
+    stage: 'resolver',
+    // Directives count as RESOLVED here, because they were: the table matched them. Whether
+    // anything can carry them out is the next question, and answering it in this field would
+    // make "stage 1 did not recognise this" and "this build cannot do it" the same bytes.
+    outcome:
+      mapped.length + directives.length === clauses.length ? 'resolved' : 'unresolved',
+  })
+
+  // ---- Directives, ASKED ABOUT here and carried out below the verdict (D-10, CR-04).
+  //
+  // A directive names no capability — it changes what this SESSION is, and that is why it does
+  // not travel `invokeFunction` and why a model may never reach one (391 D-07: the mechanism
+  // deciding what a model may do is the one mechanism it must not touch, even in the
+  // tightening direction). A directive with no handler still refuses the whole turn by name,
+  // through the same `refuse()` every other refusal takes, so a build that recognises `/pin`
+  // and cannot carry it out leaves a countable row rather than a silent no-op (D-08 / D-15).
+  //
+  // WHAT MOVED, AND WHY. This loop USED TO CARRY THE DIRECTIVES OUT here, above stage 2 —
+  // which put an irrevocable pin and an `approval_decision` row on the log of a turn that then
+  // got refused, under a message reading "nothing in the request was carried out"
+  // (392-VERIFICATION CR-04). D-10's pre-flight atomicity was applied only to `invokeFunction`
+  // dispatches; it is now applied to every effect a turn can have. What stays here is the
+  // BINDING question, which mutates nothing.
+  for (const entry of directives) {
+    const notBound = directiveBindingRefusal(deps, entry)
+    if (notBound !== undefined) return refuse(entry.clause.text, notBound)
+  }
+
+  // Everything the directives did not claim. Computed rather than reusing `clauses`, so a turn
+  // that is ENTIRELY directives reaches stage 3 with nothing to reconcile and completes through
+  // the same four stages as any other — one path, rather than a fast one and a careful one.
+  const routable = clauses.filter(
+    (clause) => !directives.some((entry) => entry.clause.index === clause.index),
+  )
+
+  // ---- Stage 2: the planner, consulted ONLY for what stage 1 could not answer.
+  const unmapped = routable.filter(
+    (clause) => !mapped.some((resolved) => resolved.clause.index === clause.index),
+  )
+  let planned: PlannerStageOutcome = NO_PLAN
+  if (unmapped.length === 0) {
+    // The tracer's path, and a permanent one: a fully canonical utterance is model-independent.
+    await append({
+      kind: 'stage_outcome',
+      turnId,
+      at: deps.now(),
+      stage: 'planner',
+      outcome: 'skipped',
+    })
+  } else if (deps.planner === undefined) {
+    // Headless. Not a stub and not an error — a real host posture whose correct behaviour is
+    // to refuse by name rather than to guess (D-08).
+    await append({
+      kind: 'stage_outcome',
+      turnId,
+      at: deps.now(),
+      stage: 'planner',
+      outcome: 'unresolved',
+    })
+  } else {
+    planned = await deps.planner.plan({ utterance: input.message, clauses: unmapped })
+    await append({
+      kind: 'stage_outcome',
+      turnId,
+      at: deps.now(),
+      stage: 'planner',
+      // The stage RESOLVED when the model produced something to reconcile — a plan, or an
+      // answer. It did not when the model was unreachable or said nothing. Whether what it
+      // produced survives reconciliation is the next stage's question, and answering it in
+      // this field would make "the model proposed nothing" and "the reconciler refused the
+      // proposal" the same bytes for every reader of the log.
+      outcome:
+        planned.failure === undefined
+        && (planned.toolCalls.length > 0 || planned.answer !== undefined)
+          ? 'resolved'
+          : 'unresolved',
+    })
+  }
+
+  // ---- Stage 3: deterministic reconciliation, BEFORE any side effect (D-10).
+  const verdict = deps.reconcile({ clauses: routable, mapped, planned })
+  await append({
+    kind: 'stage_outcome',
+    turnId,
+    at: deps.now(),
+    stage: 'reconcile',
+    outcome: verdict.kind === 'execute' ? 'resolved' : 'unresolved',
+  })
+  if (verdict.kind === 'unhandled') {
+    return refuse(verdict.clause.text, verdict.reason)
+  }
+
+  // ---- The directives' side effects, on the execute arm and NOWHERE ELSE (D-10, CR-04).
+  //
+  // Reachable only from here, by the same control-flow discrimination stage 4 uses: the verdict
+  // is a discriminated union, the `unhandled` arm returned above, and this loop lives on the
+  // other side of that return. There is no arrangement of these statements in which a pin is
+  // recorded, a model is overridden or an `approval_decision` row is written on a turn that got
+  // refused. A handler that THROWS here — `/pin` against a class this host does not declare —
+  // still routes through `refuse()`, so a refusal at this depth stays as countable as any other.
+  //
+  // TWO CONSEQUENCES, ACCEPTED. A same-turn `/model` now applies AFTER the verdict, so this
+  // turn's planner call ran under the previous model; that is the fail-safe direction, and the
+  // alternative is an effect preceding the verdict. And the verb-sourced `model_change` /
+  // `approval_decision` rows now follow this turn's `stage_outcome` rows — every event carries
+  // `turnId` and `at`, so no reader's ordering claim rests on which came first within a turn.
+  const directiveLines: string[] = []
+  for (const entry of directives) {
+    const line = await runDirective(deps, entry, {
+      turnId,
+      append,
+      now: deps.now,
+    })
+    if (line.kind === 'refused') return refuse(entry.clause.text, line.reason)
+    directiveLines.push(line.text)
+  }
+
+  // ---- Stage 4: sequential execution in utterance order, stopping on failure (D-11).
+  //
+  // THE LOOP IS UNREACHABLE FROM A REFUSAL BY CONSTRUCTION, which is D-10 expressed as control
+  // flow rather than as a check: the verdict is a discriminated union, the `unhandled` arm
+  // returns above, and the plan this loop walks exists only on the other arm. There is no
+  // ordering of these statements in which a side effect happens before the verdict, because
+  // there is no plan to walk until the verdict has produced one.
+  const receipts: ClauseReceipt[] = []
+  let failed = false
+
+  for (const step of verdict.plan) {
+    // The mint follows the stage that PROVED the binding, which the verdict states (Pitfall 1).
+    // Re-deriving it by matching the action back against the mapper set would answer `human`
+    // for any planner-produced call to an op the table also knows — handing a model-originated
+    // invocation the self-grant power `requiresHumanOrigin` ops withhold (391 D-06, T-392-23).
+    const caller = deps.mint.forStage(step.source)
+    let receipt: ClauseReceipt
+    if (failed) {
+      // `not-run` is a fact, not an absence: a person reading the receipt must be able to tell
+      // a clause nobody attempted from one that was attempted and failed (D-11). It is LOGGED
+      // like every other receipt, because "the log is the triage report" (D-18) is false the
+      // moment the log carries only the clauses that got as far as a call.
+      receipt = {
+        clause: step.clause.text,
+        functionId: step.functionId,
+        origin: caller.origin,
+        status: 'not-run',
+        outcome: 'an earlier clause failed, so this one was never attempted',
+      }
+    } else {
+      try {
+        await deps.invoke(step.functionId, step.args, caller)
+        receipt = {
+          clause: step.clause.text,
+          functionId: step.functionId,
+          origin: caller.origin,
+          status: 'executed',
+          outcome: summarise(step.functionId),
+        }
+      } catch (error) {
+        failed = true
+        receipt = {
+          clause: step.clause.text,
+          functionId: step.functionId,
+          origin: caller.origin,
+          status: 'failed',
+          outcome: refusalName(error),
+        }
+      }
+    }
+    receipts.push(receipt)
+    await append({
+      kind: 'clause_receipt',
+      turnId,
+      at: deps.now(),
+      clause: receipt.clause,
+      functionId: receipt.functionId,
+      origin: receipt.origin,
+      status: receipt.status,
+      outcome: receipt.outcome,
+    })
+  }
+
+  // The answer rides the completed turn (CHAT-01). A turn the model answered in prose reaches
+  // here with an empty plan, so the loop above ran zero times and `receipts` is empty — which
+  // is the assertion "answering executes nothing" is made of, rather than a claim about it.
+  // The directive lines lead, because they are what the person asked for FIRST in the
+  // utterance order this whole engine preserves, and because a `/model` confirmation printed
+  // after the receipts of the clauses that ran under the old model would misreport which model
+  // ran them.
+  const answer = [...directiveLines, verdict.answer].filter(
+    (line): line is string => line !== undefined && line !== '',
+  )
+  return finish(failed ? 'failed' : 'completed', {
+    receipts,
+    ...(answer.length === 0 ? {} : { answer: answer.join('\n') }),
+  })
 }
 
 /** The clause shape re-exported for composition roots that build a splitter. */
