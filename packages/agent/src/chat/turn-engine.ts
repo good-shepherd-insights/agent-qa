@@ -46,6 +46,8 @@ import type {
   ReconcileStrategy,
   ResolvedClause,
 } from './ports.js'
+import { diffChatConfig, foldChatConfigState } from './config-drift.js'
+import type { ChatConfigState } from './config-drift.js'
 import { directiveNotBoundReason, resolveClause } from './resolver-table.js'
 import { replaySession } from './session-repair.js'
 import type { ChatDirectiveName, ChatResolverTable } from './resolver-table.js'
@@ -60,6 +62,16 @@ export interface TurnEngineDeps {
   /** Absent ⇒ headless: an unresolved clause fails the turn closed BY NAME (D-08). */
   readonly planner?: PlannerStagePort
   readonly compaction?: CompactionHook
+  /**
+   * The configuration in force RIGHT NOW, re-read per turn (D-04).
+   *
+   * A THUNK rather than a value, and that is the whole of "config changes are events": a value
+   * captured at construction would be the configuration the host started with, and the drift this
+   * seam exists to detect is precisely the case where the file changed underneath a running
+   * session. Absent ⇒ this host does not re-read, and nothing is claimed about drift — which is
+   * different from claiming there was none, and is why the seam is optional rather than defaulted.
+   */
+  readonly config?: () => ChatConfigState | Promise<ChatConfigState>
   readonly now: () => string
   readonly mintTurnId: () => string
 }
@@ -143,6 +155,24 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       // degrade pass then receives that replay and has nothing else to work on, which is what
       // makes the ordering a property of the code rather than a convention.
       const replay = replaySession(opened.events)
+
+      // CONFIG DRIFT, BEFORE THE MESSAGE (D-04, CHAT-05). The re-read happens on EVERY turn, which
+      // makes the session-start case the first turn's case rather than a second code path — one
+      // fold, one diff, one place a `model_change` can be born. The events carry the id of the turn
+      // they precede (the base type's own rule for session-scoped facts) and are appended ahead of
+      // the user message, so a reader folding the log has the configuration in hand before it sees
+      // what was asked under it.
+      if (deps.config !== undefined) {
+        const current: ChatConfigState = await deps.config()
+        const previous = foldChatConfigState(opened.header, opened.events)
+        for (const event of diffChatConfig(previous, current, {
+          turnId,
+          at: deps.now(),
+          source: 'config_reread',
+        })) {
+          await append(event)
+        }
+      }
 
       await append({ kind: 'user_message', turnId, at: deps.now(), text: input.message })
       await deps.compaction?.({ turnId, replay })

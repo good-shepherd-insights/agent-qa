@@ -22,15 +22,23 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   CHAT_RESOLVER_TABLE,
   createAgentJobQueue,
+  createChatCompactionHook,
   createFunctionRegistry,
+  createPlannerStage,
   createRealJobKindRegistry,
   createTurnEngine,
   deterministicOverrideStrategy,
   invokeFunction,
+  projectPlannerTools,
   splitClauses,
 } from '@vostride/agent-qa-agent'
 import type {
   AgentJobQueue,
+  ChatConfigState,
+  ChatLanguageModel,
+  ChatTokenAccounting,
+  CompactionHook,
+  PlannerStagePort,
   ReconcileStrategy,
   AnalysisArtifactReaderPort,
   ClockPort,
@@ -1067,6 +1075,32 @@ export interface ComposeLocalAgentInput {
    * absence the safe default rather than an unconfigured state.
    */
   readonly chatReconcile?: ReconcileStrategy
+  /**
+   * The model stage 2 plans with, ALREADY BUILT by the host through `createModel` (CHAT-06).
+   *
+   * A model OBJECT and never a model id: the SDK's own type also admits an id it resolves by
+   * constructing a client, which would put a provider client behind chat without the masking
+   * middleware and the profile resolution `createModel` owns. The type closes that door here.
+   *
+   * ABSENT IS A REAL POSTURE, NOT AN UNCONFIGURED ONE. A host with no model bound is HEADLESS: any
+   * clause the deterministic table cannot resolve fails the turn closed by name (D-08), which is
+   * the correct behaviour rather than a degraded one. That is also why no planner is stubbed in —
+   * a stub answering "I could not plan that" would say the same words about an entirely different
+   * fact, that a model was asked and declined.
+   */
+  readonly chatModel?: ChatLanguageModel
+  /**
+   * The accounting instance chat's degrade pass measures against (CHAT-04, plan 06).
+   *
+   * HOST-RESOLVED and passed through untouched, on `analysisTokenBudget`'s precedent and for its
+   * reason: the ceilings must come from the SAME capability resolution as the chat model itself,
+   * or a session would compact against a window the model does not have. This composition adds no
+   * knob of its own and cannot construct one — `agent-local` reaches no provider.
+   *
+   * Absent ⇒ no degrade pass runs and the `compaction` seat stays empty, which is the posture
+   * every host had before a model was bound.
+   */
+  readonly chatAccounting?: ChatTokenAccounting
 }
 
 /**
@@ -1435,15 +1469,20 @@ const CHAT_PLANNER_CALLER: FunctionCaller = Object.freeze({
  * so a build that gains an op gains it here without anybody remembering to say so. A registry not
  * yet composed answers `'unbound'` — the same honest word the model field uses.
  */
-function chatToolsetHash(registry: FunctionRegistry | undefined): string {
-  if (registry === undefined) return 'unbound'
-  const ids = registry
+function chatToolsetIds(registry: FunctionRegistry | undefined): readonly string[] {
+  if (registry === undefined) return []
+  return registry
     .list(CHAT_RESOLVER_CALLER)
     .map((declaration) => declaration.id)
     .sort()
-    .join('\n')
+}
+
+function chatToolsetHash(registry: FunctionRegistry | undefined): string {
+  if (registry === undefined) return 'unbound'
+  // Sorted before hashing, which is what makes the hash an identity of the SET rather than of the
+  // walk: a registry that enumerated in a different order must not read as a toolset change.
   // The workspace's own digest helper, not a second hashing call site (388 C13 in miniature).
-  return sha256hex16(ids)
+  return sha256hex16(chatToolsetIds(registry).join('\n'))
 }
 
 export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost {
@@ -1478,16 +1517,61 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   // second registry, and it is safe because a turn cannot run before the registry it is bound
   // into has been built.
   let composedRegistry: FunctionRegistry | undefined
+  // `unbound` when this host binds no model — the honest word rather than a placeholder, and the
+  // same vocabulary the registry uses for a declared capability with no implementation behind it.
+  // A headless host's session header says so, and the day one is bound the drift from here is a
+  // `model_change` event rather than a header rewrite (D-04; the log is append-only).
+  const chatModelName = input.chatModel === undefined ? 'unbound' : input.chatModel.modelId
   const chatSessionLog = createJsonlSessionLog({
     root: input.agentQaRoot,
     now: () => clock.now(),
-    // `unbound` is the honest word rather than a placeholder: no `PlannerStagePort` is bound in
-    // this build, so no model is in force for a turn, and the registry already uses exactly this
-    // vocabulary for a declared capability with no implementation behind it. Plan 06 binds a
-    // planner and the drift from here is `model_change` events, never a header rewrite.
-    model: () => 'unbound',
+    model: () => chatModelName,
     toolsetHash: () => chatToolsetHash(composedRegistry),
   })
+
+  // 392 plan 04/07: stage 2, assembled LAZILY over the registry this call is about to produce.
+  //
+  // The laziness is the same cycle the dispatch binding below resolves, for the same reason: the
+  // toolset is a walk of the registry `agent.ask` is registered in, and D-07's projection law says
+  // the planner's vocabulary IS that catalogue — so an eagerly-built toolset would either need a
+  // second registry or would have to be a curated list, which is exactly what 397's conformance
+  // and 396's MCP parity are built against not being. Built once on first use and reused after,
+  // because a walk per turn would re-project ~30 JSON schemas for no new information.
+  let plannerStage: PlannerStagePort | undefined
+  const chatPlanner: PlannerStagePort | undefined =
+    input.chatModel === undefined
+      ? undefined
+      : {
+          plan: (request) => {
+            if (composedRegistry === undefined) {
+              throw new TypeError('a chat turn ran before its registry finished composing')
+            }
+            plannerStage ??= createPlannerStage({
+              model: input.chatModel as ChatLanguageModel,
+              tools: projectPlannerTools(composedRegistry, CHAT_PLANNER_CALLER),
+              // Read PER TURN, so a session-scoped `/model` override (plan 08) changes what the
+              // prompt states without the stage being rebuilt. The conversation block stays empty
+              // here: the compacted conversation is what belongs in it, and reconciling the hook's
+              // `ModelMessage[]` against the prompt's `ChatReplayMessage[]` is plan 08's ChatState
+              // work — a projection written twice is the failure that note exists to prevent.
+              context: () => ({ activeModel: chatModelName }),
+            })
+            return plannerStage.plan(request)
+          },
+        }
+
+  // CHAT-04's degrade pass, bound when the host supplied the accounting instance (plan 06).
+  // `emit` appends to the SAME log the engine appends to — the hook holds none of its own, so
+  // there is exactly one writer per session.
+  const chatCompaction: CompactionHook | undefined =
+    input.chatAccounting === undefined
+      ? undefined
+      : createChatCompactionHook({
+          accounting: input.chatAccounting,
+          emit: (event) => chatSessionLog.append(event),
+          now: () => clock.now(),
+        })
+
   const chatTurn = createTurnEngine({
     table: CHAT_RESOLVER_TABLE,
     // 392 plan 02, D-09: the real conjunction grammar, quote-aware. The tracer's
@@ -1506,6 +1590,17 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         throw new TypeError('a chat turn ran before its registry finished composing')
       }
       return invokeFunction(composedRegistry, functionId, invokeInput, caller)
+    },
+    ...(chatPlanner === undefined ? {} : { planner: chatPlanner }),
+    ...(chatCompaction === undefined ? {} : { compaction: chatCompaction }),
+    // D-04: the configuration RE-READ, per turn. A thunk rather than a captured value, because the
+    // drift worth detecting is precisely the one that happens underneath a running session — a
+    // model resolved differently by the host, or a build whose registry reaches further than the
+    // one this session opened against. The engine folds the log for what was last recorded and
+    // emits `model_change` / `active_tools_change` on the difference.
+    config: (): ChatConfigState => {
+      const ids = chatToolsetIds(composedRegistry)
+      return { model: chatModelName, toolset: { hash: chatToolsetHash(composedRegistry), ids } }
     },
     now: () => clock.now(),
     mintTurnId: () => `turn-${randomUUID()}`,

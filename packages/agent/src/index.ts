@@ -96,6 +96,11 @@ export { ANALYSIS_GET_FUNCTION_ID } from './functions/ops/analysis-get.js'
 // name on the wire, and the alternative is a string literal in each — a second declaration of a
 // capability's name, free to drift. An ID is not a dispatch handle.
 export { RUNS_DIGEST_FUNCTION_ID } from './functions/ops/runs-digest.js'
+// 392 plan 07: the run LISTING's id, on the same footing. The `status` alias resolves to it, so the
+// composed compound e2e's assertion that the second clause really dispatched there must break when
+// the op is renamed — which it cannot if the test compares against a string it spelled itself
+// (387 D-11's imported-not-literal rule). A string is not a dispatch handle.
+export { RUNS_LIST_FUNCTION_ID } from './functions/ops/runs-list.js'
 // 390 D-13: the three quarantine verb ids, on exactly the footing of the three constants above.
 // A later plan's CLI verbs and M5's quarantine management both have to put a name on the wire,
 // and the alternative is a string literal in each surface — a second declaration of a
@@ -173,6 +178,25 @@ export type {
   CompactionPassInput,
 } from './chat/compaction.js'
 export type { TurnEngine, TurnEngineDeps } from './chat/turn-engine.js'
+// 392 plan 07, D-04 / CHAT-05: what a session's configuration IS, as the drift check compares it.
+// Published as types only — the diff and the fold stay internal to the engine, because the one
+// caller that could reach them is the engine itself and a published differ would be a second place
+// a `model_change` could be born. What the composition root needs is the ability to NAME the state
+// it re-reads per turn, which is exactly these two.
+export type { ChatConfigState, ChatToolsetFingerprint } from './chat/config-drift.js'
+// 392 plan 07, CHAT-01 / CHAT-06 / D-07: stage 2, published because plan 04 built it and this is
+// the plan that BINDS it — the composition root is its only caller, exactly as that plan said.
+//
+// Neither value is a private power. `projectPlannerTools` reads the registry LISTING and emits
+// execute-less tools: what it produces cannot run anything, by the absence of a callback rather
+// than by a promise. `createPlannerStage` takes an already-built model and answers with a PLAN;
+// it names no provider, cannot construct a model, and the arch rollcall reds the build if that
+// stops being true. `ChatLanguageModel` rides along because a composition root that binds a model
+// must be able to name the one shape allowed here — an object, never a model id a global registry
+// would resolve by constructing a client (CHAT-06's second door, closed at the type).
+export { createPlannerStage } from './chat/planner-stage.js'
+export { projectPlannerTools } from './chat/planner-tools.js'
+export type { ChatLanguageModel } from './chat/planner-stage.js'
 // The repair contract's own vocabulary. A caller that could invoke `repairSession` but not NAME
 // what it hands over or gets back would spell the shapes again locally, which is the second
 // vocabulary this subtree is written to avoid (388 C13).

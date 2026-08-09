@@ -143,6 +143,9 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // this name on the wire, and the alternative is a literal in the CLI — a second declaration of
   // a capability's name. A string is not a dispatch handle.
   'RUNS_DIGEST_FUNCTION_ID',
+  // 392 plan 07: the run listing's id — what the `status` alias resolves to, published so the
+  // composed compound e2e names the op by IMPORT rather than by a literal it made up.
+  'RUNS_LIST_FUNCTION_ID',
   'RUNS_POST_PROCESSING_FUNCTION_ID',
   'RunNotFoundError',
   'RunNotRecordedError',
@@ -181,6 +184,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // validate a class name and answer a boolean, and can reach no capability. The holder's type
   // carries no unpin and no clear, which is where "a pin only ever tightens" actually lives.
   'createPinOverlay',
+  // 392 plan 07, CHAT-01 / CHAT-06: stage 2 itself. It is on this list because the composition root
+  // is the only thing that can bind it, and it opens no path this pin exists to close: the stage
+  // takes an ALREADY-BUILT model and answers with a PLAN — intentions over execute-less tools — so
+  // nothing it returns can run without crossing `invokeFunction`. In SORT position, like its
+  // siblings: this list is compared against the barrel's sorted export set positionally.
+  'createPlannerStage',
   'createRealJobKindRegistry',
   // 392 plan 01, D-16/D-24: the turn engine factory, the deterministic reconciliation strategy,
   // the clause splitter, the refusal sentence and the table lookup. Every one is a pure
@@ -195,6 +204,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // (messages, accounting, turnId, clock) returning a conversation and at most one event — no
   // storage, no dispatch, and no branch that fails to return a conversation.
   'maybeCompact',
+  // 392 plan 07: the registry walk projected to execute-less tools. Safe here for a reason the
+  // absence of a callback makes structural: what it returns cannot run anything, so a surface
+  // holding it holds a catalogue description and not a dispatch path.
+  'projectPlannerTools',
   'recordLlmAuthorship',
   // 391-06: the clustered BLOCK layout, relocated out of the CLI when `runs.digest` became its
   // second caller. Published on the sentence renderer's footing and for its reason — one layout,
@@ -345,6 +358,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // accounting instance but not NAME what one answers with would spell the union again locally,
   // which is the second vocabulary this subtree exists to avoid (388 C13).
   'ChatCompactionHookDeps',
+  // 392 plan 07, D-04: the configuration facts a session is sensitive to. A TYPE, and the shape is
+  // the feature — a REQUIRED toolset hash beside OPTIONAL ids, because the header line can carry
+  // one and not the other, and a fold that filled the ids in would be inventing a delta.
+  'ChatConfigState',
   'ChatDegradeOptions',
   'ChatDegradeOutcome',
   // 392 plan 02: the directive vocabulary and stage 1's two-variant answer. `ChatResolution` is
@@ -353,6 +370,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // of the one path in the system that OVERRIDES a model's plan (D-09/D-12).
   'ChatDirectiveName',
   'ChatInvokeBinding',
+  // 392 plan 07, CHAT-06: a model OBJECT, never a model id. The SDK's own `LanguageModel` type also
+  // admits a bare id it resolves by constructing a client, which is a second door to the thing the
+  // firewall closes — this alias is that door shut at the type, and pinning it is what makes
+  // widening it back a visible edit rather than an incidental one.
+  'ChatLanguageModel',
   // 392 plan 05, D-21: what a session holds when it holds a pin set. A TYPE, and the shape of it
   // is the feature: three members — pin, list, asGateDeny — and no fourth. A composition root
   // storing one in session state must be able to NAME it, and pinning the name here is what makes
@@ -368,6 +390,7 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // deliberately absent — a compaction pass that could re-anchor the estimator would be writing to
   // the very number it is about to read.
   'ChatTokenAccounting',
+  'ChatToolsetFingerprint',
   'ChatTurnPort',
   // 388 plan 09. The optional options argument `claimNext` now accepts — a TYPE, so it hands
   // nobody a store; the exclusion it names is honoured inside the sqlite SELECT and set once
