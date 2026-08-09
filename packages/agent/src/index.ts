@@ -147,6 +147,31 @@ export { repairSession, replaySession } from './chat/session-repair.js'
 // is validated against declarations and cannot touch a capability.
 export { ChatPinError, createPinOverlay } from './chat/pin-overlay.js'
 export type { ChatPinOverlayHolder } from './chat/pin-overlay.js'
+// 392 plan 06, CHAT-04 / D-20: the compaction trigger policy. Published because the ONLY thing
+// that can bind it is outside this package — the composition root, which is also the only place
+// holding a `TokenAccounting` instance and a session log to emit onto. An unpublished hook would
+// be a seat declared in `ports.ts` with no reachable way to fill it.
+//
+// The two constants ride along deliberately. They are the numbers D-20 pins, and a pin nobody can
+// READ is a pin a second surface re-spells with a different value; publishing them is what lets a
+// later conformance assertion name them rather than a literal. Neither is dispatch, neither is a
+// host capability, and the hook reaches a model only through the accounting instance it is HANDED
+// — it cannot construct one, cannot resolve capabilities, and cannot reach a provider.
+export {
+  CHAT_MINIMUM_CONTEXT,
+  COMPACTION_RATIO,
+  createChatCompactionHook,
+  maybeCompact,
+  replayToModelMessages,
+} from './chat/compaction.js'
+export type {
+  ChatCompactionHookDeps,
+  ChatDegradeOptions,
+  ChatDegradeOutcome,
+  ChatTokenAccounting,
+  CompactionPass,
+  CompactionPassInput,
+} from './chat/compaction.js'
 export type { TurnEngine, TurnEngineDeps } from './chat/turn-engine.js'
 // The repair contract's own vocabulary. A caller that could invoke `repairSession` but not NAME
 // what it hands over or gets back would spell the shapes again locally, which is the second

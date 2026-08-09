@@ -87,7 +87,15 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // predicate walk over it — the table's entries name op ids, and naming an op buys nothing
   // without the registry, the caller and the gate. Published because the composition root
   // assembles the engine over it and the D-05 meta-test walks it.
+  // 392 plan 06, CHAT-04 / D-20: the two pinned compaction numbers. They are on this list for a
+  // reason the other constants here do not have — they are the SUBJECT of a decision. D-20 refuses
+  // spec §4.1's configurable fraction, and a pinned value no surface can name is a value a second
+  // surface re-spells with its own number. Publishing them is what lets a later conformance
+  // assertion compare against the declaration rather than a literal. Neither is dispatch, and
+  // neither can be written: they are frozen module constants.
+  'CHAT_MINIMUM_CONTEXT',
   'CHAT_RESOLVER_TABLE',
+  'COMPACTION_RATIO',
   // 392 plan 05, D-21: the `/pin` refusal a REPL catches to say which class matched nothing. An
   // error CLASS on the footing of its siblings below — holding it runs nothing — and it is here
   // rather than local to the chat subtree because the surface that renders the refusal is in
@@ -157,6 +165,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // opens no path and no second problem-identity vocabulary.
   'clusterVerdicts',
   'createAgentJobQueue',
+  // 392 plan 06, CHAT-04: the compaction hook factory and, below, the pure pass it wraps and the
+  // replay projection it feeds on. All three are published because the ONLY thing that can bind a
+  // compaction hook is the composition root — the one place holding both a `TokenAccounting`
+  // instance and a session log. None of them can construct a model or resolve capabilities: the
+  // accounting instance is DATA a host hands over, which is why `agent` still declares no
+  // dependency on `model` and this list gains no path to a provider.
+  'createChatCompactionHook',
   'createFunctionRegistry',
   'createJobKindRegistry',
   'createMaskingContext',
@@ -176,6 +191,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'createTurnEngine',
   'deterministicOverrideStrategy',
   'invokeFunction',
+  // 392 plan 06: the pure trigger pass (see `createChatCompactionHook` above). A total function of
+  // (messages, accounting, turnId, clock) returning a conversation and at most one event — no
+  // storage, no dispatch, and no branch that fails to return a conversation.
+  'maybeCompact',
   'recordLlmAuthorship',
   // 391-06: the clustered BLOCK layout, relocated out of the CLI when `runs.digest` became its
   // second caller. Published on the sentence renderer's footing and for its reason — one layout,
@@ -194,6 +213,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // touch a filesystem, a model or the registry.
   'repairSession',
   'replaySession',
+  // 392 plan 06: the repaired replay as messages the accounting substrate can measure. A pure
+  // carry-across, and its place on this list is what lets a host feed a conversation the SAME way
+  // the hook's default does rather than deriving a second one beside it.
+  'replayToModelMessages',
   // 392 plan 01: the pure table walk stage 1 is (see `CHAT_RESOLVER_TABLE` above).
   'resolveClause',
   // 392 plan 02, D-09: THE conjunction grammar — the quote-aware tokenizer the composition root
@@ -310,6 +333,16 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'ChainJobIds',
   'ChainTerminalRecord',
   'ChatClause',
+  // 392 plan 06, CHAT-04 / D-20: the compaction vocabulary. `ChatTokenAccounting` (below) is the
+  // one that carries the design decision — it is the SHAPE of the accounting instance a host hands
+  // over, restated here rather than imported, because `agent` depends on neither `model` nor a
+  // provider and must keep it that way (`AuthorTokenBudget`'s precedent). The degrade option and
+  // outcome types ride with it for the same reason: a composition root that could supply an
+  // accounting instance but not NAME what one answers with would spell the union again locally,
+  // which is the second vocabulary this subtree exists to avoid (388 C13).
+  'ChatCompactionHookDeps',
+  'ChatDegradeOptions',
+  'ChatDegradeOutcome',
   // 392 plan 02: the directive vocabulary and stage 1's two-variant answer. `ChatResolution` is
   // what the published `resolveClause` returns, and its presence here is what makes a third
   // variant — or a confidence number — a visible edit to this pin rather than a quiet widening
@@ -327,6 +360,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'ChatResolverEntry',
   'ChatResolverRule',
   'ChatResolverTable',
+  // 392 plan 06: the three accounting methods chat needs, and not one more. `recordUsage` is
+  // deliberately absent — a compaction pass that could re-anchor the estimator would be writing to
+  // the very number it is about to read.
+  'ChatTokenAccounting',
   'ChatTurnPort',
   // 388 plan 09. The optional options argument `claimNext` now accepts — a TYPE, so it hands
   // nobody a store; the exclusion it names is honoured inside the sqlite SELECT and set once
@@ -335,6 +372,12 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'ClauseSplitter',
   'ClockPort',
   'CompactionHook',
+  // 392 plan 06: what a pass is asked and what it answers. `CompactionPass` carries `messages` on
+  // BOTH arms including the cannot-fit one, and pinning that name here is what makes an arm that
+  // stopped returning a conversation a visible edit — which is CHAT-04's cannot-wedge clause
+  // expressed as a type rather than as a promise.
+  'CompactionPass',
+  'CompactionPassInput',
   'ConfigReaderPort',
   'CreateAgentJobQueueOptions',
   'CreateFunctionRegistryOptions',
