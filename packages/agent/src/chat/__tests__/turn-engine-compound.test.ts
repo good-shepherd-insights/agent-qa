@@ -560,7 +560,6 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
           toolCalls: [
             { toolName: 'answer_only', input: { clause: 'what is a flake', text: 'a flake is…' } },
           ],
-          answer: 'a flake is…',
         },
       })
       const result = await run.runTurn({ message: 'what is a flake' })

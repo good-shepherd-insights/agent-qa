@@ -540,11 +540,12 @@ async function runTurnThrough(
       // produced survives reconciliation is the next stage's question, and answering it in
       // this field would make "the model proposed nothing" and "the reconciler refused the
       // proposal" the same bytes for every reader of the log.
+      //
+      // ONE TERM, NOT TWO: an `answer_only` call IS a tool call, so the disjunction this used to
+      // spell (`|| planned.answer !== undefined`) named the same set twice through a projection
+      // that no longer exists (392-14).
       outcome:
-        planned.failure === undefined
-        && (planned.toolCalls.length > 0 || planned.answer !== undefined)
-          ? 'resolved'
-          : 'unresolved',
+        planned.failure === undefined && planned.toolCalls.length > 0 ? 'resolved' : 'unresolved',
     })
   }
 

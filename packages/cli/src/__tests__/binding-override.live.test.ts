@@ -58,6 +58,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   AGENT_ASK_FUNCTION_ID,
+  ANSWER_ONLY_TOOL_NAME,
   RUNS_DIGEST_FUNCTION_ID,
   fromToolName,
   invokeFunction,
@@ -131,9 +132,18 @@ const modelVerbatimStrategy: ReconcileStrategy = (input: ReconcileInput): Reconc
     args: call.input,
     source: 'planner',
   }))
-  return input.planned.answer === undefined
-    ? { kind: 'execute', plan }
-    : { kind: 'execute', plan, answer: input.planned.answer }
+  // The OLD turn-level prose carry, re-derived (see the mutation proof's copy for why the
+  // instrument keeps the pre-392-14 behaviour rather than following the shipped strategy).
+  const firstAnswer = input.planned.toolCalls.find(
+    (call) => call.toolName === ANSWER_ONLY_TOOL_NAME,
+  )?.input
+  const answer =
+    typeof firstAnswer === 'object' && firstAnswer !== null
+      ? (firstAnswer as { text?: unknown }).text
+      : undefined
+  return typeof answer === 'string'
+    ? { kind: 'execute', plan, answer }
+    : { kind: 'execute', plan }
 }
 
 function seedRun(agentQaRoot: string): void {

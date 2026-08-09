@@ -56,6 +56,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   AGENT_ASK_FUNCTION_ID,
+  ANSWER_ONLY_TOOL_NAME,
   RUNS_DIGEST_FUNCTION_ID,
   SCENARIO_CORPUS,
   SCENARIO_CORPUS_VERSION,
@@ -146,9 +147,21 @@ const modelVerbatimStrategy: ReconcileStrategy = (input: ReconcileInput): Reconc
     args: call.input,
     source: 'planner',
   }))
-  return input.planned.answer === undefined
-    ? { kind: 'execute', plan }
-    : { kind: 'execute', plan, answer: input.planned.answer }
+  // The OLD turn-level prose carry, re-derived here on purpose. `PlannerStageOutcome.answer` was
+  // removed in 392-14 because it carried the first `answer_only` call's text for a whole turn; this
+  // instrument keeps that behaviour deliberately, because what it models is the reconciler as it
+  // was before the override existed — a strategy that quietly gained the new per-claim accounting
+  // would be a weaker mutation than the one this differential claims to apply.
+  const firstAnswer = input.planned.toolCalls.find(
+    (call) => call.toolName === ANSWER_ONLY_TOOL_NAME,
+  )?.input
+  const answer =
+    typeof firstAnswer === 'object' && firstAnswer !== null
+      ? (firstAnswer as { text?: unknown }).text
+      : undefined
+  return typeof answer === 'string'
+    ? { kind: 'execute', plan, answer }
+    : { kind: 'execute', plan }
 }
 
 function readSubject(): ChatScenario {

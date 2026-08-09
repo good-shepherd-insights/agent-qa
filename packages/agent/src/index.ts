@@ -142,7 +142,13 @@ export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile
 // `fromToolName` REFUSES the two orchestration names and otherwise returns a string. Nothing on
 // either side of the mapping can reach a registry, a capability or a host API, and an id that
 // nothing registered still dies at `invokeFunction`'s own named refusal.
-export { fromToolName, isChatMetaToolName } from './chat/tool-names.js'
+//
+// `ANSWER_ONLY_TOOL_NAME` joins them in 392-14 for the same reason and no other. Removing
+// `PlannerStageOutcome.answer` left those two differentials — whose whole content is the ABSENCE of
+// a read of `input.mapped` — needing to re-derive the turn-level prose carry they deliberately
+// model, and the only alternative was a literal `'answer_only'` in each of them: the second
+// catalogue this module exists to prevent, in the files least able to afford one.
+export { ANSWER_ONLY_TOOL_NAME, fromToolName, isChatMetaToolName } from './chat/tool-names.js'
 // 392 plan 02, D-09: the real conjunction grammar. Published because the composition root binds
 // it as the engine's `ClauseSplitter`, and it REPLACES the tracer's whole-utterance splitter,
 // which is deleted rather than left beside it — one bound answer, not two available ones.

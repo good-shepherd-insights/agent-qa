@@ -96,13 +96,15 @@ export interface PlannerStageFailure {
  * means and a stage that pre-digested it would be making that decision one layer early, out of
  * sight of the reconciliation the whole design exists to route through.
  *
- * `answer` is a convenience projection of the first `answer_only` call, not a substitute for it:
- * the call itself is still in `toolCalls`.
+ * THERE IS NO `answer` FIELD, and its absence is load-bearing (392-14). This outcome used to carry
+ * a convenience projection of the FIRST `answer_only` call's prose, which became a second prose
+ * path the moment the tool contract moved to one call per answered clause: reconciliation counted
+ * every claimed clause as answered and the person received the first answer only. The prose now
+ * has exactly one carrier — the verdict's `answer`, built from the claims the merge actually
+ * consumed — and a projection that could disagree with it no longer exists to be read.
  */
 export interface PlannerStageOutcome {
   readonly toolCalls: readonly PlannerToolCall[]
-  /** The prose text when the model answered rather than acted (CHAT-01). */
-  readonly answer?: string
   /** Present when the model could not be reached or refused; the turn fails, never hangs. */
   readonly failure?: PlannerStageFailure
 }

@@ -161,28 +161,39 @@ describe('readBackPlan: the shaping, in isolation', () => {
     ])
   })
 
-  it('projects answer_only text WITHOUT removing the call it came from', () => {
+  it('carries answer_only through as a call, projecting NOTHING off it (392-14)', () => {
+    // The projection this replaced lifted the first call's `text` onto the outcome as a
+    // convenience. Once the tool contract asked for one call per answered clause that convenience
+    // carried strictly less than the calls it came from, and reconciliation trusted it — so the
+    // shaping now hands the calls over whole and the reader that needs prose reads the claim.
     const outcome = readBackPlan([{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'three' } }])
-    expect(outcome.answer).toBe('three')
-    expect(outcome.toolCalls).toHaveLength(1)
+    expect(outcome.toolCalls).toEqual([{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'three' } }])
+    expect('answer' in outcome).toBe(false)
   })
 
-  it('leaves answer absent when answer_only carried no usable text', () => {
+  it('hands over a malformed answer_only input UNCHANGED, judging none of it', () => {
     // Untrusted output: the model can emit a call whose input does not match the contract it was
-    // shown. Absent is the honest answer, and it keeps "answered with nothing" from reading as
-    // "answered with the empty string" downstream.
-    expect(readBackPlan([{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 7 } }]).answer)
-      .toBeUndefined()
-    expect(readBackPlan([{ toolName: ANSWER_ONLY_TOOL_NAME, input: null }]).answer).toBeUndefined()
+    // shown. Deciding what that means is reconciliation's job — this stage is the one place whose
+    // input is the model's own bytes, and a shaping that started rejecting them would be a second
+    // validator sitting in front of the real one.
+    expect(readBackPlan([{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 7 } }]).toolCalls)
+      .toEqual([{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 7 } }])
+    expect(readBackPlan([{ toolName: ANSWER_ONLY_TOOL_NAME, input: null }]).toolCalls)
+      .toEqual([{ toolName: ANSWER_ONLY_TOOL_NAME, input: null }])
   })
 
-  it('takes the FIRST answer when a model emitted two', () => {
+  it('keeps BOTH answer_only calls when a model emitted two', () => {
+    // The case the removed projection lost. The prompt asks for one call per answered clause, and
+    // every one of them has to survive to the merge or a clause is counted as answered while its
+    // answer is thrown away (392-VERIFICATION round 2, path (4)).
     const outcome = readBackPlan([
       { toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'first' } },
       { toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'second' } },
     ])
-    expect(outcome.answer).toBe('first')
-    expect(outcome.toolCalls).toHaveLength(2)
+    expect(outcome.toolCalls.map((call) => (call.input as { text: string }).text)).toEqual([
+      'first',
+      'second',
+    ])
   })
 })
 
@@ -207,7 +218,7 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
     }
   })
 
-  it('surfaces answer_only as the turn answer (CHAT-01)', async () => {
+  it('surfaces answer_only as a tool call for reconciliation to read (CHAT-01)', async () => {
     const outcome = await stage(
       stubModel([
         {
@@ -219,8 +230,9 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
       ]),
     ).plan({ utterance: 'how many proposals are pending?', clauses: [CLAUSES[0]!], sessionId: SESSION })
 
-    expect(outcome.answer).toBe('There are three proposals pending.')
     expect(outcome.toolCalls).toHaveLength(1)
+    expect(outcome.toolCalls[0]?.toolName).toBe(ANSWER_ONLY_TOOL_NAME)
+    expect(outcome.toolCalls[0]?.input).toEqual({ text: 'There are three proposals pending.' })
   })
 
   it('carries mark_unhandled through untouched, for reconciliation to act on (D-08)', async () => {
@@ -249,7 +261,6 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
       sessionId: SESSION,
     })
     expect(outcome.toolCalls).toEqual([])
-    expect(outcome.answer).toBeUndefined()
   })
 
   it('folds a transport failure into typed data — the turn fails, it never hangs or throws', async () => {

@@ -28,7 +28,6 @@ import type { LanguageModel, ToolSet } from 'ai'
 
 import { buildChatPrompt } from './chat-prompt.js'
 import type { ChatPromptInput } from './chat-prompt.js'
-import { ANSWER_ONLY_TOOL_NAME } from './tool-names.js'
 import type {
   PlannerStageFailure,
   PlannerStageOutcome,
@@ -71,36 +70,30 @@ function toStageFailure(error: unknown): PlannerStageFailure {
   return { name: 'PlannerStageError', message: String(error) }
 }
 
-/** `answer_only`'s text, when the model answered in prose. */
-function answerTextOf(input: unknown): string | undefined {
-  if (typeof input !== 'object' || input === null) return undefined
-  const text = (input as { text?: unknown }).text
-  return typeof text === 'string' ? text : undefined
-}
-
 /**
  * Shape the SDK's tool calls into the plan stage 3 reads.
  *
- * NOTHING IS DROPPED. Every call survives into `toolCalls` in the order the model made them,
- * meta-tools included: `mark_unhandled` is a proposal about the turn that only reconciliation can
- * act on, and filtering it here would put the fail-closed decision in the component whose input is
- * the untrusted one. `answer` is read off the first `answer_only` call as a convenience for the
- * consumer, and that call stays in the list.
+ * NOTHING IS DROPPED AND NOTHING IS PROJECTED. Every call survives into `toolCalls` in the order
+ * the model made them, meta-tools included: `mark_unhandled` is a proposal about the turn that only
+ * reconciliation can act on, and filtering it here would put the fail-closed decision in the
+ * component whose input is the untrusted one.
+ *
+ * THE `answer` PROJECTION IS GONE (392-14). This function used to lift the FIRST `answer_only`
+ * call's text onto the outcome as a convenience — and once the tool contract asked for one call per
+ * answered clause, that convenience became a SECOND prose channel carrying strictly less than the
+ * calls it was derived from: reconciliation counted every claimed clause as answered while the
+ * person read the first answer only (392-VERIFICATION round 2, path (4)). The calls are the whole
+ * of what the model said; whoever needs the prose reads the claims it belongs to.
  */
 export function readBackPlan(
   toolCalls: readonly { readonly toolName: string; readonly input: unknown }[],
 ): PlannerStageOutcome {
-  const plan: PlannerToolCall[] = []
-  let answer: string | undefined
+  const plan: PlannerToolCall[] = toolCalls.map((call) => ({
+    toolName: call.toolName,
+    input: call.input,
+  }))
 
-  for (const call of toolCalls) {
-    plan.push({ toolName: call.toolName, input: call.input })
-    if (call.toolName === ANSWER_ONLY_TOOL_NAME && answer === undefined) {
-      answer = answerTextOf(call.input)
-    }
-  }
-
-  return answer === undefined ? { toolCalls: plan } : { toolCalls: plan, answer }
+  return { toolCalls: plan }
 }
 
 /**

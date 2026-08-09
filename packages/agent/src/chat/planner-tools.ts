@@ -63,7 +63,15 @@ export const ANSWER_ONLY_INPUT_SCHEMA = z.object({
       'The part of the request, quoted verbatim from the clauses you were given, that this '
       + 'answer is about.',
     ),
-  text: z.string().describe('The answer, in prose, for a turn that asks for information.'),
+  // NON-EMPTY, and that is the model-facing half of the coverage predicate (392-14). `z.string()`
+  // admitted `""`, so the one call that erases a clause — naming it, answering nothing — was
+  // inside the contract the model was shown. The reader in `reconcile.ts` moved in the SAME commit
+  // and is deliberately one notch stricter (it also rejects whitespace-only prose): the two halves
+  // of a claim's meaning cannot be allowed to disagree in the direction that completes more.
+  text: z
+    .string()
+    .min(1)
+    .describe('The answer, in prose, for a turn that asks for information.'),
 })
 
 /** `mark_unhandled`'s contract: WHICH clause, and WHY nothing here can carry it out (D-08). */

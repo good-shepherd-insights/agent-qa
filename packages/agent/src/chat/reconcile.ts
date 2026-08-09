@@ -100,8 +100,14 @@ function modelMarkedUnhandled(
   return undefined
 }
 
+/** One `answer_only` call that survived the coverage predicate: the clause it names, and its prose. */
+interface AnsweredClaim {
+  readonly clause: string
+  readonly text: string
+}
+
 /**
- * The clause texts the model's `answer_only` calls CLAIM to have answered (CR-03).
+ * The model's `answer_only` calls that actually ANSWER something (CR-03, and 392-14's tightening).
  *
  * A CLAIM COVERS THE CLAUSE IT NAMES AND NO OTHER, matched against what the splitter produced —
  * which is the same read `modelMarkedUnhandled` performs on `mark_unhandled`, with one deliberate
@@ -112,20 +118,33 @@ function modelMarkedUnhandled(
  * asymmetry is why a claim naming text no one typed covers nothing at all, and why a call with no
  * `clause` field — the shape this tool had before the field was required — covers nothing either.
  *
- * The turn-level `planned.answer` is UNCHANGED and still means what `readBackPlan` says it means:
- * the first `answer_only` call's prose, carried on the verdict for a person to read. What it is no
- * longer allowed to be is consent.
+ * AND IT MUST ALSO SAY SOMETHING. Naming a clause was made necessary and left sufficient, so
+ * `{clause: "delete the knowledge root", text: ""}` — schema-valid until this round, naming a
+ * clause the person really typed — consumed that clause and returned a `completed` turn with no
+ * receipt, no refusal and no mention of it anywhere in the result (392-VERIFICATION round 2, E1).
+ * A claim is coverage only when it names a clause AND carries prose, and the predicate here is one
+ * notch stricter than the schema's `min(1)`: whitespace-only prose fails, because a space is not
+ * an answer and the fail-safe direction is to refuse.
+ *
+ * AN ORDERED MULTISET, NOT A SET. `mapped` is keyed by clause INDEX; a set of clause TEXT let one
+ * claim speak for every occurrence of a repeated clause ("run test 42 and run test 42", answered
+ * once, both covered). The list below is consumed one entry per clause during the merge walk, so a
+ * claim covers exactly one occurrence and the two halves of the merge agree about what identifies
+ * a clause.
  */
-function answeredClauseClaims(input: ReconcileInput): ReadonlySet<string> {
-  const claimed = new Set<string>()
+function answeredClauseClaims(input: ReconcileInput): AnsweredClaim[] {
+  const claims: AnsweredClaim[] = []
   for (const call of input.planned.toolCalls) {
     if (call.toolName !== ANSWER_ONLY_TOOL_NAME) continue
     const body = (typeof call.input === 'object' && call.input !== null ? call.input : {}) as {
       clause?: unknown
+      text?: unknown
     }
-    if (typeof body.clause === 'string') claimed.add(body.clause)
+    if (typeof body.clause !== 'string' || body.clause === '') continue
+    if (typeof body.text !== 'string' || body.text.trim() === '') continue
+    claims.push({ clause: body.clause, text: body.text })
   }
-  return claimed
+  return claims
 }
 
 /**
@@ -180,9 +199,30 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
   }
 
   const proposed = actionCalls(input)
-  const answered = answeredClauseClaims(input)
+  // Consumed by `takeClaimFor` as the walk goes: what is left at the end are the claims that named
+  // nothing the person typed, and they cover nothing.
+  const claims = answeredClauseClaims(input)
+  const answers: string[] = []
   let nextProposal = 0
 
+  /** Pop the FIRST unconsumed claim naming this clause text, or nothing. One claim, one clause. */
+  const takeClaimFor = (text: string): string | undefined => {
+    const index = claims.findIndex((claim) => claim.clause === text)
+    if (index === -1) return undefined
+    return claims.splice(index, 1)[0]?.text
+  }
+
+  // THE ORDER OF THE FOUR QUESTIONS IS THE MECHANISM: mapped → answered → proposal → refuse.
+  //
+  // The coverage question used to sit BELOW the proposal consumption, and that one statement's
+  // position produced two opposite user-visible defects from the same input shape (392-VERIFICATION
+  // round 2). "What is a flake and summarise the last failure" with the plan the prompt itself asks
+  // for — one `answer_only` for clause 1, one action call for clause 2 — bound the action to the
+  // ANSWERED clause, so with two action calls a tool ran against a clause the model had marked
+  // answer-only and every receipt named the wrong clause; and with one action call the second
+  // clause found no proposal left and the WHOLE TURN was refused by name, naming the clause the
+  // model had actually bound. Asking coverage first costs nothing and removes both: a clause the
+  // model answered never reaches for a proposal, so proposals align with the clauses that need one.
   const plan: ClauseAction[] = []
   for (const clause of input.clauses) {
     const resolved = mappedByIndex.get(clause.index)
@@ -190,6 +230,16 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
       // The override, in one line: the table's binding, tagged with the stage that proved it so the
       // engine mints a human caller for it. Nothing the model proposed is consulted for this clause.
       plan.push({ ...resolved, source: 'resolver' })
+      continue
+    }
+    // An unresolved clause is answered by prose or it is not answered at all — and "answered" is a
+    // claim about THIS clause, quoted and non-empty, rather than about the turn (CHAT-01, CR-03).
+    // The line this replaced read `if (input.planned.answer !== undefined) continue`, which let one
+    // model-emitted answer consume every clause the merge had no binding for: "run test 42 and
+    // delete the knowledge root", answered once, completed with the second clause erased.
+    const answered = takeClaimFor(clause.text)
+    if (answered !== undefined) {
+      answers.push(answered)
       continue
     }
     const proposal = proposed[nextProposal]
@@ -209,12 +259,6 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
       })
       continue
     }
-    // An unresolved clause is answered by prose or it is not answered at all — and "answered" is a
-    // claim about THIS clause, quoted, rather than about the turn (CHAT-01, CR-03). The line this
-    // replaced read `if (input.planned.answer !== undefined) continue`, which let one model-emitted
-    // answer consume every clause the merge had no binding for: "run test 42 and delete the
-    // knowledge root", answered once, completed with the second clause erased.
-    if (answered.has(clause.text)) continue
     if (input.planned.failure !== undefined) {
       return { kind: 'unhandled', clause, reason: plannerFailedReason(clause.text, input.planned.failure) }
     }
@@ -223,9 +267,18 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
   // Utterance order, preserved (D-11): order is meaning, and later clauses routinely depend on
   // earlier ones. The loop above walks `clauses`, not either resolution set, precisely so a
   // planner that answered out of order cannot reorder what runs.
-  return input.planned.answer === undefined
+  //
+  // THE PROSE IS THE CONSUMED CLAIMS', AND ONLY THEIRS. It used to be `input.planned.answer` — the
+  // FIRST `answer_only` call's text, projected by `readBackPlan` — while the prompt and the tool
+  // description had already been moved to "ONE CALL PER CLAUSE you are answering". So a turn
+  // answering two questions accounted for both clauses and handed the person one answer, with the
+  // other silently dropped (392-VERIFICATION round 2, path (4)). Building it here from what the
+  // merge actually consumed is what makes the accounting checkable: the answers a person reads are
+  // exactly the claims that covered a clause, in the order they typed them. That producer-side
+  // projection is now gone entirely, so there is one prose path rather than two that can disagree.
+  return answers.length === 0
     ? { kind: 'execute', plan }
-    : { kind: 'execute', plan, answer: input.planned.answer }
+    : { kind: 'execute', plan, answer: answers.join('\n') }
 }
 
 // The tracer's whole-utterance splitter USED TO LIVE HERE and is gone as of plan 02, because the

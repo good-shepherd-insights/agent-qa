@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { deterministicOverrideStrategy } from '../reconcile.js'
+import { readBackPlan } from '../planner-stage.js'
 import { ANSWER_ONLY_INPUT_SCHEMA } from '../planner-tools.js'
 import type { ChatClause, PlannerStageOutcome, ReconcileInput, ResolvedClause } from '../ports.js'
 import {
@@ -186,7 +187,6 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
                 input: { clause: 'what can you do', text: 'quite a lot' },
               },
             ],
-            answer: 'quite a lot',
           }),
         ),
       )
@@ -280,7 +280,6 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
                 input: { clause: 'what is a flake', text: 'a test that…' },
               },
             ],
-            answer: 'a test that…',
           }),
         ),
       )
@@ -317,7 +316,6 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
                 input: { clause: 'run test 42', text: 'test 42 is the checkout smoke.' },
               },
             ],
-            answer: 'test 42 is the checkout smoke.',
           }),
         ),
       )
@@ -344,7 +342,6 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
                 input: { clause: 'a clause nobody typed', text: 'done!' },
               },
             ],
-            answer: 'done!',
           }),
         ),
       )
@@ -367,7 +364,6 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
                 input: { clause: 'what is a flake', text: 'a test that…' },
               },
             ],
-            answer: 'a test that…',
           }),
         ),
       )
@@ -392,7 +388,6 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
                 input: { clause: 'what is a flake', text: 'a test that…' },
               },
             ],
-            answer: 'a test that…',
           }),
         ),
       )
@@ -414,7 +409,6 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
           [],
           planned({
             toolCalls: [{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'done!' } }],
-            answer: 'done!',
           }),
         ),
       )
@@ -433,6 +427,169 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
           .success,
       ).toBe(true)
       expect(ANSWER_ONLY_INPUT_SCHEMA.safeParse({ text: 'a test that…' }).success).toBe(false)
+    })
+  })
+
+  // 392-14, the SECOND gap round (392-VERIFICATION round 2, paths (1)-(4)). The CR-03 block above
+  // moved WHICH CLAUSE A CLAIM NAMES and left three things unmoved, each of which reproduces the
+  // whole defect at a different seam: whether the claim SAYS anything (a schema-valid `text: ""`
+  // erased a clause exactly as the turn-level answer used to), WHERE the coverage question sits
+  // relative to the proposal consumption (an answered clause ate the next action call, so a bound
+  // clause was falsely refused and a tool ran against a clause the model marked answer-only), and
+  // whether a claim is consumed BY OCCURRENCE (one claim covered every clause with the same text).
+  //
+  // EVERY `planned` HERE IS BUILT THROUGH THE REAL `readBackPlan`. A hand-written
+  // `PlannerStageOutcome` literal can pin an input the producer cannot emit — this file's own
+  // history has fixtures carrying an `answer` field alongside the calls it was projected from —
+  // and a corpus of unproducible inputs reddens on mutation while proving nothing about the
+  // shipped path (the produced-not-literal corpus law).
+  describe('392-14 — a claim covers a clause only when it NAMES it and SAYS something', () => {
+    const fromCalls = (
+      calls: readonly { readonly toolName: string; readonly input: unknown }[],
+    ): PlannerStageOutcome => readBackPlan(calls)
+
+    it('(a) refuses when the claim naming the unbound ACTION clause carries EMPTY prose', () => {
+      // Path (1), byte for byte: `{clause: "delete the knowledge root", text: ""}` is schema-valid
+      // and names a clause the person really typed, so the coverage predicate accepted it — and
+      // the request to delete a knowledge root stopped being mentioned on a `completed` turn.
+      const first = clause('run test 42', 0)
+      const second = clause('delete the knowledge root', 1)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [first, second],
+          [mappedTo(first, RUNS_START, { testId: 'TST-42' })],
+          fromCalls([
+            {
+              toolName: ANSWER_ONLY_TOOL_NAME,
+              input: { clause: 'delete the knowledge root', text: '' },
+            },
+          ]),
+        ),
+      )
+
+      expect(verdict.kind).toBe('unhandled')
+      if (verdict.kind !== 'unhandled') return
+      expect(verdict.clause.text).toBe('delete the knowledge root')
+      expect(verdict.reason).toContain('delete the knowledge root')
+    })
+
+    it('(a2) refuses when the prose is whitespace only — the reader is stricter than the schema', () => {
+      // The reader deliberately does not agree with `min(1)` at the boundary. Both directions of
+      // the disagreement were available and only one of them is fail-safe: a reader that accepted
+      // `" "` would let one space stand in for an answer, and the person would read nothing.
+      const only = clause('delete the knowledge root', 0)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [only],
+          [],
+          fromCalls([
+            {
+              toolName: ANSWER_ONLY_TOOL_NAME,
+              input: { clause: 'delete the knowledge root', text: '   \n ' },
+            },
+          ]),
+        ),
+      )
+
+      expect(verdict.kind).toBe('unhandled')
+      if (verdict.kind !== 'unhandled') return
+      expect(verdict.clause.text).toBe('delete the knowledge root')
+    })
+
+    it('(b) asks coverage BEFORE spending a proposal, so the action binds the UNANSWERED clause', () => {
+      // Paths (2) and (3) are ONE misordering seen from two sides. With the coverage question
+      // asked after the proposal is taken, clause 1 — the one the model answered — ate the action
+      // call, and clause 2 — the one the model actually bound — was refused by name.
+      const first = clause('what is a flake', 0)
+      const second = clause('summarise the last failure', 1)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [first, second],
+          [],
+          fromCalls([
+            {
+              toolName: ANSWER_ONLY_TOOL_NAME,
+              input: { clause: 'what is a flake', text: 'PROSE-ONE' },
+            },
+            { toolName: toToolName(RUNS_DIGEST), input: { limit: 1 } },
+          ]),
+        ),
+      )
+
+      expect(verdict.kind).toBe('execute')
+      if (verdict.kind !== 'execute') return
+      expect(verdict.plan).toHaveLength(1)
+      expect(verdict.plan[0]?.clause.text).toBe('summarise the last failure')
+      expect(verdict.plan[0]?.functionId).toBe(RUNS_DIGEST)
+      // And the answered clause's prose still reaches the person on the same verdict.
+      expect(verdict.answer).toContain('PROSE-ONE')
+    })
+
+    it('(c) carries EVERY consumed claim\'s prose, in utterance order', () => {
+      // Path (4). The prompt and the tool description were moved to "ONE CALL PER CLAUSE you are
+      // answering" while the reader kept the first call's text and threw the rest away: both
+      // clauses were accounted for as answered, and the person received one answer.
+      const first = clause('what is a flake', 0)
+      const second = clause('what is a run', 1)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [first, second],
+          [],
+          fromCalls([
+            {
+              toolName: ANSWER_ONLY_TOOL_NAME,
+              input: { clause: 'what is a flake', text: 'ANSWER-ONE' },
+            },
+            {
+              toolName: ANSWER_ONLY_TOOL_NAME,
+              input: { clause: 'what is a run', text: 'ANSWER-TWO' },
+            },
+          ]),
+        ),
+      )
+
+      expect(verdict.kind).toBe('execute')
+      if (verdict.kind !== 'execute') return
+      expect(verdict.plan).toHaveLength(0)
+      const answer = verdict.answer ?? ''
+      expect(answer).toContain('ANSWER-ONE')
+      expect(answer).toContain('ANSWER-TWO')
+      // Utterance order is meaning here as much as it is in the plan (D-11): a person reading two
+      // answers to two questions needs them in the order they asked.
+      expect(answer.indexOf('ANSWER-ONE')).toBeLessThan(answer.indexOf('ANSWER-TWO'))
+    })
+
+    it('(P4) consumes ONE occurrence per claim when the same clause text repeats', () => {
+      // The ACCEPT half and the REJECT half of the same guard in one case: occurrence 0 IS covered
+      // by the single well-formed claim, and occurrence 1 is NOT. `answered` was a set of clause
+      // TEXT while `mapped` was keyed by clause INDEX, so one claim spoke for both.
+      const first = clause('run test 42', 0)
+      const second = clause('run test 42', 1)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [first, second],
+          [],
+          fromCalls([
+            {
+              toolName: ANSWER_ONLY_TOOL_NAME,
+              input: { clause: 'run test 42', text: 'test 42 is the checkout smoke.' },
+            },
+          ]),
+        ),
+      )
+
+      expect(verdict.kind).toBe('unhandled')
+      if (verdict.kind !== 'unhandled') return
+      expect(verdict.clause.index).toBe(1)
+      expect(verdict.clause.text).toBe('run test 42')
+    })
+
+    it('(S1) requires prose in the schema the MODEL sees, in the same commit as the reader', () => {
+      // The two-sided pin. A reader that required prose against a tool whose contract accepted
+      // `""` would leave the model free to emit the one call that erases a clause, and the two
+      // halves would be one edit apart forever.
+      expect(ANSWER_ONLY_INPUT_SCHEMA.safeParse({ clause: 'x', text: '' }).success).toBe(false)
+      expect(ANSWER_ONLY_INPUT_SCHEMA.safeParse({ clause: 'x', text: 'y' }).success).toBe(true)
     })
   })
 
