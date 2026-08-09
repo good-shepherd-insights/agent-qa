@@ -34,7 +34,8 @@ import type { ScenarioClass } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 
-import { CHAT_RESOLVER_TABLE } from '../resolver-table.js'
+import { CHAT_RESOLVER_TABLE, resolveClause } from '../resolver-table.js'
+import { splitClauses } from '../clause-split.js'
 import { parseScenario, scenarioRelativePath } from '../scenario-loader.js'
 import { SCENARIO_CORPUS, SCENARIO_CORPUS_VERSION } from '../scenarios/manifest.js'
 
@@ -120,6 +121,47 @@ describe('the manifest and 392-02s structural cap describe ONE corpus', () => {
     'resolver-table alias %s is in the manifest as a deterministic scenario',
     (alias) => {
       expect(manifestIds('deterministic')).toContain(alias)
+    },
+  )
+})
+
+describe('every argsPin is what stage 1 actually binds (D-12, corpus walk)', () => {
+  // WHY HERE AND NOT IN THE COMPOSED RUNNER. `ClauseReceipt` carries no arguments and must not:
+  // D-18 keeps the session log refs-and-one-liners because surfaces render it directly, and op
+  // input is exactly the field that could carry a secret. So the bound argument is not observable
+  // from a turn result, and the composed runner asserts it only where an injected port sees it
+  // (the run executor). This walk is the other half — the claim is about the TABLE's binding, and
+  // the table is where a binding is decided, so this is the mechanism rather than a proxy for it.
+  const PINNED = SCENARIO_CORPUS.filter((corpusEntry) => corpusEntry.class === 'deterministic')
+    .map((corpusEntry) => ({
+      corpusEntry,
+      scenario: parseScenario(
+        parse(readFileSync(join(SCENARIOS_ROOT, scenarioRelativePath(corpusEntry)), 'utf8')),
+        corpusEntry,
+      ),
+    }))
+    .filter(({ scenario }) => scenario.expect.argsPin !== undefined)
+
+  it('walks a non-empty set of pinned arguments', () => {
+    // Four cells pin arguments today. A filter that silently matched none would make the walk
+    // below green forever.
+    expect(PINNED.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it.each(PINNED.map((pinned) => [pinned.scenario.id, pinned] as const))(
+    '%s binds the arguments its file pins',
+    (_id, { scenario }) => {
+      const clauses = splitClauses(scenario.utterance)
+      // Every cell with an argsPin is single-clause today; a compound one would need the pin to
+      // say WHICH clause, and the vocabulary deliberately has no such field yet.
+      expect(clauses).toHaveLength(1)
+      const resolution = resolveClause(CHAT_RESOLVER_TABLE, clauses[0]!.text)
+      expect(resolution.kind).toBe('resolved')
+      const entry = resolution.kind === 'resolved' ? resolution.entry : undefined
+      expect(entry?.kind).toBe('op')
+      expect(entry?.kind === 'op' ? entry.input : undefined).toMatchObject(
+        scenario.expect.argsPin ?? {},
+      )
     },
   )
 })

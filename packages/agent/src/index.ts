@@ -176,6 +176,12 @@ export { composeBanner } from './chat/banner.js'
 // and `parseScenario` takes an already-decoded document precisely so no file reader lives in a
 // storageNeutral package.
 export { parseScenario, scenarioRelativePath } from './chat/scenario-loader.js'
+// 392 plan 09, CHAT-03 / D-15: the pinned ceiling and the ONE projection over `mark_unhandled`
+// rows. Published because the same function has to serve two readings that must never disagree —
+// the harness's rate over the frozen corpus, and a live deployment's field rate over its session
+// logs. A second counter somewhere else would be a second definition of what a refusal is.
+export { MARK_UNHANDLED_CEILING, ceilingExceeded, computeMarkUnhandledRate } from './chat/ceiling.js'
+export type { MarkUnhandledCounts } from './chat/ceiling.js'
 export { SCENARIO_CORPUS, SCENARIO_CORPUS_VERSION } from './chat/scenarios/manifest.js'
 export type { ScenarioCorpusEntry } from './chat/scenarios/manifest.js'
 // 392 plan 06, CHAT-04 / D-20: the compaction trigger policy. Published because the ONLY thing

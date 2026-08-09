@@ -126,6 +126,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // 387 plan 08: the delegate transport must name the op it hands the leaseholder (D-18). A
   // string, not a handle — see the barrel's own note beside the export.
   'KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID',
+  // 392 plan 09, CHAT-03 / D-15: the pinned rational ceiling. On this list because a SUMMARY, a
+  // gate run and a field projection all have to quote the same pin — a ceiling re-spelled at a
+  // consumer would let two readings of "within tolerance" coexist. It is a frozen pair of
+  // integers: it reaches nothing and decides nothing on its own.
+  'MARK_UNHANDLED_CEILING',
   'MissingIdempotencyKeyError',
   // 392 plan 01: the id the tracer's one table entry resolves to, published so a cross-package
   // assertion compares against the DECLARED id rather than a string it spelled itself (387 D-11).
@@ -174,6 +179,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // runId, and a second copy of that hash input would be a second chain that reviews
   // identically. It is a pure function of a string and an injected id source: it reaches no
   // storage, holds no capability, and dispatches nothing, so publishing it opens no path.
+  // 392 plan 09: the ceiling comparison itself — strict greater-than on cross-multiplied
+  // integers. Published so no consumer re-derives it as a rounded percentage, which is the exact
+  // failure the exact arithmetic exists to prevent.
+  'ceilingExceeded',
   'chainJobIdsForRun',
   // 389 plan 05: render-time pure clustering (D-14). A total deterministic function of
   // (resolved verdicts, handoff) keyed on schema's one `failureFingerprint` vocabulary — it
@@ -185,6 +194,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // no reader, reaches no store, and cannot dispatch anything the caller did not already grant.
   // The one-read law is what it exists to keep, and its suite pins the absence of a scheduler.
   'composeBanner',
+  // 392 plan 09, D-15: the ONE projection over `mark_unhandled` rows. The harness's corpus rate
+  // and a live deployment's field rate are the same function over the same event kind, and a
+  // second counter anywhere would be a second definition of what a refusal is.
+  'computeMarkUnhandledRate',
   'createAgentJobQueue',
   // 392 plan 06, CHAT-04: the compaction hook factory and, below, the pure pass it wraps and the
   // replay projection it feeds on. All three are published because the ONLY thing that can bind a
@@ -515,6 +528,9 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'KnowledgeProposeOutcome',
   'KnowledgeReaderPort',
   'KnowledgeReviewPort',
+  // 392 plan 09: the measurement pair, and its two-ness is the claim — a quotient stored beside
+  // the counts would be a third number free to disagree with them.
+  'MarkUnhandledCounts',
   'OptionalFunctionDepKey',
   'PersistencePort',
   // 392 plan 04: stage 2's contract vocabulary — the typed transport failure, the outcome the port
