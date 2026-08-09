@@ -22,6 +22,7 @@
 import { expect } from 'vitest'
 import type { z } from 'zod'
 
+import { agentAskSpec } from '../functions/ops/agent-ask.js'
 import { analysisGetSpec } from '../functions/ops/analysis-get.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
@@ -66,6 +67,12 @@ export interface DeclaredContracts {
  * projection. It reproduces the discipline `INVOCATION_SAMPLES` already applies to calling.
  */
 export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
+  // 392 D-24. Paired the day it is registered (the growth seam working as designed). Its OUTPUT
+  // is the first in this map carrying an ARRAY of per-clause receipts beside an optional refusal
+  // object, which is exactly the shape a careless projection flattens — and flattening it would
+  // leave 396's MCP catalogue unable to say that a turn refused before anything ran, the one
+  // claim D-10's atomicity rests on.
+  'agent.ask': agentAskSpec,
   // 389 D-11. Paired the day it is registered (the growth seam working as designed): its
   // output is the first here carrying two parallel per-test arrays plus a nested cluster
   // list, so an unchecked projection would be where a `sentences` member could quietly stop

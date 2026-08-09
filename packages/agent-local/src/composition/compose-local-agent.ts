@@ -13,18 +13,25 @@
 // Heavy first-party dependencies are legal in this subtree and nowhere else in this package; the
 // arch rule named composition-carveout enforces that, so the job store proper stays lean.
 
+import { randomUUID } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  CHAT_RESOLVER_TABLE,
   createAgentJobQueue,
   createFunctionRegistry,
   createRealJobKindRegistry,
+  createTurnEngine,
+  deterministicOverrideStrategy,
+  invokeFunction,
+  wholeUtteranceSplitter,
 } from '@vostride/agent-qa-agent'
 import type {
   AgentJobQueue,
+  ReconcileStrategy,
   AnalysisArtifactReaderPort,
   ClockPort,
   ConfigReaderPort,
@@ -144,6 +151,8 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
+  FunctionCaller,
+  FunctionScope,
   JobKind,
   QuarantineEntryStateName,
   QuarantineLadderState,
@@ -156,6 +165,7 @@ import { createKnowledgeReaderPort } from './knowledge-review-reader.js'
 import type { SightMemoryEntities } from './knowledge-review-reader.js'
 import { buildRunPorts } from './run-composition.js'
 import { writeAnalysisArtifact } from '../analysis/persist-analysis.js'
+import { createJsonlSessionLog } from '../session/jsonl-session-log.js'
 import { createJobCheckpointStore } from '../store/job-checkpoint-store.js'
 import { createPostProcessingReader } from '../store/post-processing-reader.js'
 import { AGENT_JOB_STORE_DB_FILE, createSqliteJobStore } from '../store/sqlite-job-store.js'
@@ -1042,6 +1052,21 @@ export interface ComposeLocalAgentInput {
    * No host binds it yet; the CLI's terminal confirmation is plan 04's.
    */
   readonly confirm?: ConfirmPort
+  /**
+   * The turn engine's reconciliation strategy (392 D-16).
+   *
+   * AN INTERNAL COMPOSITION OPTION, and every word of that is load-bearing. It is here so the
+   * mutation proof can assemble the REAL host twice — override on, override off — and read the
+   * difference off a named compound scenario, which is the only differential that measures what
+   * production actually wires (Pitfall 3, the produced-not-literal law).
+   *
+   * IT IS NOT, AND MUST NEVER BECOME, CONFIG-REACHABLE. No field of `AgentQaConfig` names it and
+   * none may: the deterministic override is the mechanism that stops a model's plan from beating
+   * a proven mapping, so a production knob that switched it off would be a supported way to
+   * disable a safety property. Absent, the shipped strategy is used — which is what makes the
+   * absence the safe default rather than an unconfigured state.
+   */
+  readonly chatReconcile?: ReconcileStrategy
 }
 
 /**
@@ -1367,6 +1392,60 @@ export function postRunCapabilities(
  * (config reads, registry listings) happen with no run in existence. This follows the v48
  * `execution_audit.jsonl` conventions — same row shape, same sink, project-level file.
  */
+/**
+ * The two callers chat mints, one per stage (392, RESEARCH Pitfall 1 / 391 D-06).
+ *
+ * IDENTICAL BUT FOR `origin`, and that is the whole design. `FunctionCaller.origin` answers "did a
+ * person decide this", and inside ONE turn both answers occur: a person typing a canonical alias
+ * decided that call, and a model planning one did not. A uniform mint would be wrong in one
+ * direction or the other — `agent` everywhere would refuse the deterministic aliases at every
+ * `requiresHumanOrigin` op, and `human` everywhere would hand the planner the self-grant power
+ * 391 D-06 deliberately withholds.
+ *
+ * `surface` is `'chat'` on both and is ATTRIBUTION ONLY. Nothing in the function layer may branch
+ * on it (`invoke.ts:28-29`), and the origin split above is exactly why nothing needs to.
+ */
+const CHAT_STAGE_SCOPES: readonly FunctionScope[] = [
+  'read',
+  'run',
+  'config-write',
+  'knowledge-write',
+  'approval-write',
+]
+
+const CHAT_RESOLVER_CALLER: FunctionCaller = Object.freeze({
+  surface: 'chat',
+  grantedScopes: CHAT_STAGE_SCOPES,
+  safeMode: false,
+  origin: 'human',
+})
+
+const CHAT_PLANNER_CALLER: FunctionCaller = Object.freeze({
+  surface: 'chat',
+  grantedScopes: CHAT_STAGE_SCOPES,
+  safeMode: false,
+  origin: 'agent',
+})
+
+/**
+ * A fingerprint of what the turn engine could reach when a session opened.
+ *
+ * Derived from the REGISTRY rather than from a hand-kept list, which is D-07's projection law
+ * applied to the log: the toolset a turn is measured against is whatever the catalogue declares,
+ * so a build that gains an op gains it here without anybody remembering to say so. A registry not
+ * yet composed answers `'unbound'` — the same honest word the model field uses.
+ */
+function chatToolsetHash(registry: FunctionRegistry | undefined): string {
+  if (registry === undefined) return 'unbound'
+  const ids = registry
+    .list(CHAT_RESOLVER_CALLER)
+    .map((declaration) => declaration.id)
+    .sort()
+    .join('\n')
+  // The workspace's own digest helper, not a second hashing call site (388 C13 in miniature).
+  return sha256hex16(ids)
+}
+
 export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost {
   const clock = input.clock ?? SYSTEM_CLOCK
 
@@ -1384,6 +1463,51 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   // through their own awaited resolutions.
   const recurrence = createProjectionRecurrenceProvider(input.knowledgeRoot, () => clock.now())
   const runsReader = createRunsReader(input.agentQaRoot)
+
+  // 392 D-02 / D-14 / D-24: the chat turn engine, assembled at THE composition root.
+  //
+  // Assembled HERE and nowhere else for 385 D-15's reason, which bites harder for chat than for
+  // anything before it: two hosts assembling a turn engine differently would be two answers to
+  // "what can a conversation do", and one of the two would be the one a user is talking to.
+  //
+  // The dispatch binding closes over `composedRegistry`, which this very call is about to
+  // produce. That is deliberate rather than awkward: the engine invokes ops through
+  // `invokeFunction` on the SAME registry `agent.ask` is registered in, so a clause a turn runs
+  // crosses the identical eight-step gate a typed CLI verb does (D-24 / 384 FUNC-03). Reading the
+  // reference at call time rather than at construction is what lets that cycle exist without a
+  // second registry, and it is safe because a turn cannot run before the registry it is bound
+  // into has been built.
+  let composedRegistry: FunctionRegistry | undefined
+  const chatSessionLog = createJsonlSessionLog({
+    root: input.agentQaRoot,
+    now: () => clock.now(),
+    // `unbound` is the honest word rather than a placeholder: no `PlannerStagePort` is bound in
+    // this build, so no model is in force for a turn, and the registry already uses exactly this
+    // vocabulary for a declared capability with no implementation behind it. Plan 06 binds a
+    // planner and the drift from here is `model_change` events, never a header rewrite.
+    model: () => 'unbound',
+    toolsetHash: () => chatToolsetHash(composedRegistry),
+  })
+  const chatTurn = createTurnEngine({
+    table: CHAT_RESOLVER_TABLE,
+    split: wholeUtteranceSplitter,
+    reconcile: input.chatReconcile ?? deterministicOverrideStrategy,
+    sessionLog: chatSessionLog,
+    // RESEARCH Pitfall 1: per-STAGE minting, because origin is a per-call fact. A deterministic
+    // table hit is a person typing and mints `human`; a planner-planned call mints `agent`, so a
+    // `requiresHumanOrigin` op refuses it without chat knowing such ops exist.
+    mint: {
+      forStage: (stage) => (stage === 'resolver' ? CHAT_RESOLVER_CALLER : CHAT_PLANNER_CALLER),
+    },
+    invoke: (functionId, invokeInput, caller) => {
+      if (composedRegistry === undefined) {
+        throw new TypeError('a chat turn ran before its registry finished composing')
+      }
+      return invokeFunction(composedRegistry, functionId, invokeInput, caller)
+    },
+    now: () => clock.now(),
+    mintTurnId: () => `turn-${randomUUID()}`,
+  })
 
   const registry = createFunctionRegistry({
     deps: {
@@ -1534,6 +1658,10 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           ? {}
           : { resolveWriterAuthority: input.resolveWriterAuthority }),
       }),
+      // 392 D-24: the turn engine assembled above. Bound HERE and therefore on BOTH hosts, so
+      // `agent.ask` is a real capability wherever the composition root runs — and unbound nowhere,
+      // which is what lets 397's parity suite read it off the registry with no chat-specific case.
+      chatTurn,
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
     // 391 PROP-01 / D-11: the real standing-approval reader, over the SAME committed knowledge root
@@ -1567,6 +1695,10 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // field, so the gate's own deny-by-default is what answers, in one place.
     ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
   })
+  // Closes the cycle the turn engine's dispatch binding was built against. It happens exactly
+  // here, on the line after the registry exists, so there is no window in which a turn could run
+  // against an unset reference — and the engine's own guard names that state if one ever appears.
+  composedRegistry = registry
 
   let opened: LocalAgentJobs | undefined
   let opening: Promise<LocalAgentJobs> | undefined

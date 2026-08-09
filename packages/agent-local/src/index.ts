@@ -211,3 +211,30 @@ export type {
   ComposeJobRecoveryInput,
   JobRecoveryHost,
 } from './composition/compose-job-recovery.js'
+
+// 392 CHAT-05 / D-14 / D-19: the session log's two adapters and its refusal vocabulary.
+//
+// Published because storage is a PORT and this package is where its local implementations live —
+// the same footing every other store here is on. The two-factory seam is published in full:
+// `createJsonlSessionLog` is the production entry whose options carry NO filesystem member, and
+// `createJsonlSessionLogOn` is the test seam a durability test names explicitly, which is what
+// makes "append without the fsync" impossible to reach by filling in one more property.
+export {
+  CHAT_SESSIONS_SUBDIR,
+  ChatSessionHeaderError,
+  InvalidChatSessionIdError,
+  REAL_CHAT_SESSION_FS,
+  UnknownChatSessionError,
+  createJsonlSessionLog,
+  createJsonlSessionLogOn,
+  mintChatSessionId,
+} from './session/jsonl-session-log.js'
+export type {
+  ChatSessionFs,
+  CreateJsonlSessionLogOptions,
+} from './session/jsonl-session-log.js'
+export { createMemorySessionLog } from './session/memory-session-log.js'
+export type {
+  CreateMemorySessionLogOptions,
+  MemorySessionLog,
+} from './session/memory-session-log.js'

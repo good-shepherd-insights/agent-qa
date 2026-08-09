@@ -14,6 +14,7 @@ import {
   createEntitiesCommand,
   createEvalCommand,
   createDigestCommand,
+  createAskCommand,
   createFnCommand,
   createProposalsCommand,
   createInitCommand,
@@ -68,6 +69,9 @@ program.addCommand(createCreateTestCommand())
 program.addCommand(createCreateSuiteCommand())
 program.addCommand(createSkillsCommand())
 program.addCommand(createFnCommand())
+// 392 D-01/D-24: the one-shot chat verb, registered beside `fn` because it is the same KIND of
+// thing — a thin client that invokes one registered op through `invokeFunction`.
+program.addCommand(createAskCommand())
 // 391 D-17: the proposals inbox + grants decision surface, and the per-run digest on demand.
 program.addCommand(createProposalsCommand())
 program.addCommand(createDigestCommand())

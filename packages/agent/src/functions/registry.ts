@@ -12,6 +12,7 @@ import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/
 
 import { toSchemaProjection } from './declaration-projection.js'
 import type { FunctionBindingStatus } from './spec.js'
+import { agentAskSpec } from './ops/agent-ask.js'
 import { analysisGetSpec } from './ops/analysis-get.js'
 import { configGetSpec } from './ops/config-get.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
@@ -165,6 +166,15 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // there is no host that lists these and cannot run them.
   entitiesResolveSpec as FunctionSpec,
   entitiesGetSpec as FunctionSpec,
+  // 392 D-24: a new `agent.` domain, and the taxonomy extension that matters most — the chat turn
+  // entry is itself a catalogued, gated capability rather than a power the REPL holds privately
+  // (§3's L10 law). It binds through the OPTIONAL `chatTurn` dep, so a host with no engine lists
+  // it `unbound` BY NAME rather than answering an empty turn about a request it understood.
+  //
+  // `agent.chat`, the session-stateful sibling the milestone also names, is deliberately absent
+  // until a consumer exists: a registered entry nothing drives would still oblige 397's parity
+  // suite to stub it on every surface.
+  agentAskSpec as FunctionSpec,
 ]
 
 export interface CreateFunctionRegistryOptions {

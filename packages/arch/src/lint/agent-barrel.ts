@@ -73,10 +73,21 @@ export const AGENT_BARREL_FILE = 'packages/agent/src/index.ts'
  * dispatch path.
  */
 export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
+  // 392 plan 01, D-24: the chat turn entry's id. It is here for the reason every op-id constant
+  // on this list is — `agent-qa ask` and the REPL must put a name on the wire — and for one more
+  // that is specific to this id: publishing it is what makes chat a CLIENT of the function layer.
+  // A surface holding the string can still run nothing without a registry, a caller and the gate,
+  // and the turn engine's own SPEC stays inside `functions/` like every other.
+  'AGENT_ASK_FUNCTION_ID',
   // 389 plan 05: the analysis read op's id, on the exact footing of the two op-id constants
   // below — a string a surface names on the wire, never a dispatch handle.
   'ANALYSIS_GET_FUNCTION_ID',
   'AmbiguousStepAddressError',
+  // 392 plan 01: the closed stage-1 resolver table and its lookup. A DECLARATION and a pure
+  // predicate walk over it — the table's entries name op ids, and naming an op buys nothing
+  // without the registry, the caller and the gate. Published because the composition root
+  // assembles the engine over it and the D-05 meta-test walks it.
+  'CHAT_RESOLVER_TABLE',
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
   'EntityNotFoundError',
@@ -97,6 +108,9 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // string, not a handle — see the barrel's own note beside the export.
   'KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID',
   'MissingIdempotencyKeyError',
+  // 392 plan 01: the id the tracer's one table entry resolves to, published so a cross-package
+  // assertion compares against the DECLARED id rather than a string it spelled itself (387 D-11).
+  'PROPOSALS_LIST_FUNCTION_ID',
   // 390 plan 04: the three quarantine verb ids, on the same footing as the op-id constants
   // above and below — strings a surface names on the wire, never dispatch handles. The three
   // SPECS are deliberately NOT here: a spec carries the implementation and the live
@@ -141,6 +155,14 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'createJobKindRegistry',
   'createMaskingContext',
   'createRealJobKindRegistry',
+  // 392 plan 01, D-16/D-24: the turn engine factory, the deterministic reconciliation strategy,
+  // the tracer's clause splitter, the refusal sentence and the table lookup. Every one is a pure
+  // assembly or a pure function over injected seams: the engine reaches capabilities ONLY through
+  // the `ChatInvokeBinding` its composition supplies, so nothing here dispatches, and the
+  // strategy's presence on this list is what lets the D-16 mutation proof compose the real host
+  // twice without a production knob existing that could do the same.
+  'createTurnEngine',
+  'deterministicOverrideStrategy',
   'invokeFunction',
   'recordLlmAuthorship',
   // 391-06: the clustered BLOCK layout, relocated out of the CLI when `runs.digest` became its
@@ -152,7 +174,14 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // plan 07's CLI print and every later surface compose sentences through ONE symbol instead of
   // spelling a second one (SC3 structural).
   'renderVerdictSentence',
+  // 392 plan 01: the pure table walk stage 1 is (see `CHAT_RESOLVER_TABLE` above).
+  'resolveClause',
+  // 392 plan 01, D-08: the ONE refusal sentence a fail-closed turn carries, and the tracer's
+  // whole-utterance splitter. Pure string functions — published so a surface (and plan 02's
+  // scenario corpus) asserts against the shipped wording rather than re-spelling it.
+  'unhandledReason',
   'unmaskForHumanOutput',
+  'wholeUtteranceSplitter',
 ]
 
 /**
@@ -241,6 +270,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AnalysisClusterMember',
   'AuthoringReadPort',
   'BoundRecordLlmAuthorship',
+  // 392 plan 01: the turn engine's injected-seam vocabulary and its dep record. Types only, so
+  // none of them carries behaviour across the barrel — what they carry is the SHAPE the expansion
+  // plans fill (planner stage, reconciliation strategy, compaction hook, per-stage caller mint),
+  // which is exactly the widening this exact-equality pin exists to make a visible edit.
+  'CallerMint',
   'CancelJobInput',
   // 388 plan 01. `ChainJobIds` is what the derivation above answers with; `ChainTerminalRecord`
   // is the optional argument the two terminal store verbs now accept, and `PostRunJobCapabilities`
@@ -250,11 +284,19 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // whole point of naming it here.
   'ChainJobIds',
   'ChainTerminalRecord',
+  'ChatClause',
+  'ChatInvokeBinding',
+  'ChatResolverEntry',
+  'ChatResolverRule',
+  'ChatResolverTable',
+  'ChatTurnPort',
   // 388 plan 09. The optional options argument `claimNext` now accepts — a TYPE, so it hands
   // nobody a store; the exclusion it names is honoured inside the sqlite SELECT and set once
   // at queue construction (`unclaimableKinds` on `CreateAgentJobQueueOptions`, already pinned).
   'ClaimNextOptions',
+  'ClauseSplitter',
   'ClockPort',
+  'CompactionHook',
   'ConfigReaderPort',
   'CreateAgentJobQueueOptions',
   'CreateFunctionRegistryOptions',
@@ -302,6 +344,7 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'KnowledgeReviewPort',
   'OptionalFunctionDepKey',
   'PersistencePort',
+  'PlannerStagePort',
   // 388 plan 03: the durable chip-truth read port and the two shapes it answers with. Types,
   // so none of them carries a database across the barrel — the only value that implements the
   // port is built by a composition in the one package sqlite is legal in. They are here for the
@@ -313,6 +356,9 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'PostProcessingReaderPort',
   'PostRunJobCapabilities',
   'RanJobOutcomeBase',
+  'ReconcileInput',
+  'ReconcileStrategy',
+  'ReconcileVerdict',
   // 389 plan 05: the D-08 recurrence seam's vocabulary — the provider port a composition root
   // implements (389 binds it to the run-outcome projection in plan 06; 390 rebinds the same
   // seam to its fingerprint window) and the query/answer shapes it speaks. Types, so nothing
@@ -324,6 +370,7 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'RecurrenceProvider',
   'RecurrenceQuery',
   'ReplayedRunEvent',
+  'ResolvedClause',
   'RunInvocationPort',
   'RunNextJobInput',
   'RunNextJobOutcome',
@@ -333,6 +380,8 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'StepEvidenceAddress',
   'StepEvidenceLookup',
   'ToolsPort',
+  'TurnEngine',
+  'TurnEngineDeps',
 ]
 
 /** Both pinned sets as one sorted list, for membership questions that ignore kind. */

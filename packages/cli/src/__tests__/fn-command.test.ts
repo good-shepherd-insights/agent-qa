@@ -528,6 +528,11 @@ describe('agent-qa fn (generic function invoker)', () => {
       resultKind: declaration.resultKind,
       bindingStatus: declaration.bindingStatus,
     }]))).toEqual({
+      // 392 D-24: the chat turn entry, BOUND on this host because `composeLocalAgent` assembles a
+      // turn engine in every local composition. Its presence in the CLI's own catalog is the L10
+      // claim made observable: `agent-qa ask` reaches the turn through the same registry listing
+      // this test reads, so the REPL holds no capability the catalogue does not declare.
+      'agent.ask': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // 389 D-11: THE analysis read — verdicts + sentences + clusters. BOUND since plan 06:
       // the composition root binds the artifact reader over `agentQaRoot` in every local
       // composition, so an artifact-less run answers the floor rather than a refusal.

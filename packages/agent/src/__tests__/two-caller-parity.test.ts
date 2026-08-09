@@ -192,6 +192,11 @@ const REGISTRY = createFunctionRegistry({
 
 /** The shipped capability set, as both callers' listings are measured against it. */
 const ALL_FUNCTION_IDS = [
+  // 392 D-24: the chat turn entry, first in SORT position (`agent.` precedes `analysis.`). It is
+  // READ-tier and therefore survives safe-mode filtering, and that is a deliberate reading of what
+  // safe mode is: the listing filter is cosmetic, so hiding the turn entry would hide the door
+  // without closing it while every clause a turn runs stays gated server-side on its own scopes.
+  'agent.ask',
   // 389 D-11: read-tier, so it survives safe-mode filtering like its analysis-domain-first
   // siblings never had to — the non-read drop-out set stays exactly `runs.start` plus the
   // four knowledge-write verbs.

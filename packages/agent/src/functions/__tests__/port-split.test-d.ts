@@ -69,6 +69,8 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // grant ledger's list/record/revoke. It fired on this one too. Note that `record` is a member of
 // the PORT and of no registered op, so this union is also the only place a reader can see that the
 // mint capability exists at all: the accept escalation is its one caller.
+// 392 D-24 extends it a seventh time, by name again: `chatTurn` — the assembled turn engine
+// `agent.ask` runs behind. It fired on this one too, and once more only under `tsc --noEmit`.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -79,6 +81,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'quarantine'
     | 'proposalsInbox'
     | 'standingGrants'
+    | 'chatTurn'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

@@ -12,6 +12,8 @@ import type { EventLogPort } from '@vostride/agent-qa-runner'
 import type { z } from 'zod'
 
 import type {
+  AgentAskInput,
+  AgentAskResult,
   CompletedRunHandoff,
   EntityDescriptor,
   EntityResolution,
@@ -103,6 +105,7 @@ export type OptionalFunctionDepKey =
   | 'quarantine'
   | 'proposalsInbox'
   | 'standingGrants'
+  | 'chatTurn'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -742,4 +745,29 @@ export interface FunctionDeps {
    * the function layer.
    */
   standingGrants?: StandingGrantsPort
+  /**
+   * 392 D-24: the assembled chat turn engine, behind which `agent.ask` runs.
+   *
+   * OPTIONAL for the reason its neighbours are, and the honest absence matters more here than
+   * anywhere else in this record: a host with no engine — a remote read surface, a daemon before
+   * a chat host exists — genuinely cannot run a turn, and the alternative to reporting that by
+   * name is answering an EMPTY turn. A person told "I understood you and did nothing" stops
+   * asking, which is the same failure the unbound proposals inbox was reasoned about avoiding.
+   *
+   * The port is a single verb by design. Anything wider — a session lister, a history reader —
+   * would be reach the turn entry does not need and would give a surface holding this dep a way
+   * into session state without a registered op declaring it.
+   */
+  chatTurn?: ChatTurnPort
+}
+
+/**
+ * The one verb `agent.ask` binds through (392 D-24).
+ *
+ * Typed against the SCHEMA contracts rather than against the engine's own types, which is what
+ * lets the composition root hand this layer an engine without the function layer depending on how
+ * a turn is assembled — and what lets 396's MCP projection describe the same shape.
+ */
+export interface ChatTurnPort {
+  runTurn(input: AgentAskInput): Promise<AgentAskResult>
 }

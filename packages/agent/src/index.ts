@@ -108,6 +108,38 @@ export { RUNS_DIGEST_FUNCTION_ID } from './functions/ops/runs-digest.js'
 export { QUARANTINE_ADD_FUNCTION_ID } from './functions/ops/quarantine-add.js'
 export { QUARANTINE_LIST_FUNCTION_ID } from './functions/ops/quarantine-list.js'
 export { QUARANTINE_RELEASE_FUNCTION_ID } from './functions/ops/quarantine-release.js'
+// 392 D-24: the chat turn entry's id, plus the id of the ONE op the tracer's deterministic table
+// resolves to. Both on exactly the footing of the constants above — a name a surface puts on the
+// wire, never a dispatch handle.
+//
+// `AGENT_ASK_FUNCTION_ID` is the one a production surface names: `agent-qa ask` and the REPL both
+// reach the turn engine through `invokeFunction` with this id, which is what makes chat a CLIENT of
+// the function layer rather than a holder of a private power (§3's L10 law).
+//
+// `PROPOSALS_LIST_FUNCTION_ID` is published for the resolver table's rule that ids are IMPORTED,
+// never literal (387 D-11): the tracer's cross-package assertion that the executed clause really
+// dispatched to the proposals listing must break when that op is renamed, and it cannot if it is
+// comparing against a string it spelled itself.
+export { AGENT_ASK_FUNCTION_ID } from './functions/ops/agent-ask.js'
+export { PROPOSALS_LIST_FUNCTION_ID } from './functions/ops/proposals-list.js'
+export { createTurnEngine } from './chat/turn-engine.js'
+export { CHAT_RESOLVER_TABLE, resolveClause } from './chat/resolver-table.js'
+export { deterministicOverrideStrategy, unhandledReason, wholeUtteranceSplitter } from './chat/reconcile.js'
+export type { TurnEngine, TurnEngineDeps } from './chat/turn-engine.js'
+export type { ChatResolverEntry, ChatResolverRule, ChatResolverTable } from './chat/resolver-table.js'
+export type {
+  CallerMint,
+  ChatClause,
+  ChatInvokeBinding,
+  ClauseSplitter,
+  CompactionHook,
+  PlannerStagePort,
+  ReconcileInput,
+  ReconcileStrategy,
+  ReconcileVerdict,
+  ResolvedClause,
+} from './chat/ports.js'
+export type { ChatTurnPort } from './functions/spec.js'
 
 // 391-06: the clustered BLOCK layout, relocated here from the CLI when it acquired its second
 // caller (`runs.digest`'s first section). Published on the same footing as the sentence renderer

@@ -73,6 +73,12 @@ const ALLOWED_ID_DOMAINS = new Set([
   // may do, not about any one decision — so filing the list/revoke pair under `proposals.` would
   // have made the two indistinguishable at exactly the moment a person needs to tell them apart.
   'grants',
+  // 2026-08-09 (392 D-24): `agent` is the sixth taxonomy EXTENSION, and the one that closes the
+  // L10 loop. A conversational turn is not a run, a memory, an analysis, a quarantine entry, a
+  // proposal or a grant — it is the ORCHESTRATOR of those, and registering it here is what makes
+  // the orchestrator itself a catalogued, gated capability rather than a power a REPL holds
+  // privately. 396's MCP projection and 397's parity suite pick it up from this same census.
+  'agent',
 ])
 
 /**
@@ -83,6 +89,12 @@ const ALLOWED_ID_DOMAINS = new Set([
  * the exact-equality assertion below is actually pinning.
  */
 const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
+  // 392 D-24: UNBOUND here because this fixture supplies no turn engine — a claim about the
+  // composition and not about the op, exactly like `analysis.get` below. `composeLocalAgent`
+  // assembles one, so both production hosts list `agent.ask` as bound. A host with no engine must
+  // refuse by NAME rather than answer an empty turn: telling a person their request was understood
+  // and produced nothing is the one wrong answer that stops them asking again.
+  'agent.ask': 'unbound',
   // 389 D-11: UNBOUND here because this fixture supplies no analysis-artifact reader — a
   // claim about the composition, not the op, exactly like `runs.postprocessing` below. The
   // optional `recurrence` dep never gates this binding; only `analysis` does.
@@ -185,6 +197,12 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // 387: `resolve` takes any reference at all, so the sample is free text that matches
   // nothing — the fixture directory is empty and the honest answer is the none arm. `get`
   // takes an exact address, and the fixture port below is what stands behind it.
+  // 392 D-24: a PARSING input for a capability this composition cannot run, on the 387-08
+  // reasoning below — validation precedes the binding check, so a sample that failed the contract
+  // would make the unbound-refusal leg report an input error and certify nothing about binding.
+  // The message is non-empty (the contract's one requirement) and resolves to nothing, which is
+  // irrelevant here: no engine exists to route it.
+  'agent.ask': { message: 'nothing in this fixture can answer this' },
   'entities.get': { ref: FIXTURE_ENTITY_SHORT_ID },
   'entities.resolve': { ref: 'nothing in this fixture is called this' },
   'knowledge.bundles.list': {},

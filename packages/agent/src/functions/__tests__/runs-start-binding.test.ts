@@ -80,6 +80,10 @@ const RUN_CALLER: FunctionCaller = {
  * binding refusal.
  */
 const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
+  // 392 D-24: a PARSING input for the same reason every row here carries one — the contract
+  // requires a non-empty message, so the `{}` default would fail validation and turn an unbound
+  // refusal into an input error, which the parity case below reads as `dispatched`.
+  'agent.ask': { message: 'proposals' },
   // 389 D-11: a PARSING input, because validation precedes the binding check — the empty
   // default fails the contract and reports an input error, certifying nothing about binding.
   'analysis.get': { runId: 'run-alpha' },
