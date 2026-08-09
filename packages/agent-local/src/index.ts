@@ -212,26 +212,34 @@ export type {
   JobRecoveryHost,
 } from './composition/compose-job-recovery.js'
 
-// 392 CHAT-05 / D-14 / D-19: the session log's two adapters and its refusal vocabulary.
+// 392 CHAT-05 / D-14 / D-17 / D-19: the session log's two adapters, its listing, and its refusal
+// vocabulary.
 //
 // Published because storage is a PORT and this package is where its local implementations live —
-// the same footing every other store here is on. The two-factory seam is published in full:
-// `createJsonlSessionLog` is the production entry whose options carry NO filesystem member, and
-// `createJsonlSessionLogOn` is the test seam a durability test names explicitly, which is what
-// makes "append without the fsync" impossible to reach by filling in one more property.
+// the same footing every other store here is on.
+//
+// 392 plan 03 REMOVES the observation seam from this list, and the removal is the point. Plan 01
+// published `createJsonlSessionLogOn` and the filesystem facade beside the production factory,
+// reasoning that publishing the pair in full made the seam legible. It makes it REACHABLE: a seam
+// every package can import is not a seam, and "append without the fsync" stops being impossible
+// the moment another surface can construct the log over a facade of its own. The mandated
+// precedent already settled this — `createJobCheckpointStore` and its `On` sibling appear nowhere
+// on this barrel — and a durability test now asserts both halves: nothing outside `__tests__`
+// calls the seam, and this file does not carry it.
 export {
   CHAT_SESSIONS_SUBDIR,
   ChatSessionHeaderError,
   InvalidChatSessionIdError,
-  REAL_CHAT_SESSION_FS,
   UnknownChatSessionError,
   createJsonlSessionLog,
-  createJsonlSessionLogOn,
+  listSessions,
   mintChatSessionId,
 } from './session/jsonl-session-log.js'
 export type {
-  ChatSessionFs,
+  ChatSessionListEntry,
+  ChatSessionListing,
   CreateJsonlSessionLogOptions,
+  RefusedChatSessionFile,
 } from './session/jsonl-session-log.js'
 export { createMemorySessionLog } from './session/memory-session-log.js'
 export type {
