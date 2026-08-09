@@ -141,8 +141,11 @@ const GRANT_NOT_APPLIED: ProposalsAcceptGrantOutcome = { kind: 'not-applied' }
  *
  * That asymmetry is a DECISION taken in gap-closure round 4, not an omission. Re-applying is
  * idempotent, so the cost is operator confusion rather than corruption. It is not an exotic edge
- * either: the ordinary version-conflict case — a teammate committed a line, you pulled — is among
- * the four, as the version error out of `readActive`.
+ * either: a version conflict out of `readActive` is among the four. Note what that case actually
+ * is — an ordinary same-version pull does NOT throw. `create-version-guard.ts:53-63` raises only
+ * when the pulled line carries `schemaVersion` GREATER than this build's current version, or when
+ * a migration step between the stored and current versions is missing. So the reachable case is a
+ * teammate on a NEWER schema committing a line that you then pull onto an older build.
  */
 const GRANT_LEDGER_DAMAGED_ERROR_NAME = 'GrantLedgerDamagedError'
 
