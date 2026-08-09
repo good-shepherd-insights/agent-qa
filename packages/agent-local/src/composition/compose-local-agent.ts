@@ -27,7 +27,7 @@ import {
   createTurnEngine,
   deterministicOverrideStrategy,
   invokeFunction,
-  wholeUtteranceSplitter,
+  splitClauses,
 } from '@vostride/agent-qa-agent'
 import type {
   AgentJobQueue,
@@ -1490,7 +1490,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   })
   const chatTurn = createTurnEngine({
     table: CHAT_RESOLVER_TABLE,
-    split: wholeUtteranceSplitter,
+    // 392 plan 02, D-09: the real conjunction grammar, quote-aware. The tracer's
+    // whole-utterance placeholder is gone; this is the seam filled, not widened.
+    split: splitClauses,
     reconcile: input.chatReconcile ?? deterministicOverrideStrategy,
     sessionLog: chatSessionLog,
     // RESEARCH Pitfall 1: per-STAGE minting, because origin is a per-call fact. A deterministic

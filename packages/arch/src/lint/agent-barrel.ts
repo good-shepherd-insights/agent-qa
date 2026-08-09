@@ -156,7 +156,7 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'createMaskingContext',
   'createRealJobKindRegistry',
   // 392 plan 01, D-16/D-24: the turn engine factory, the deterministic reconciliation strategy,
-  // the tracer's clause splitter, the refusal sentence and the table lookup. Every one is a pure
+  // the clause splitter, the refusal sentence and the table lookup. Every one is a pure
   // assembly or a pure function over injected seams: the engine reaches capabilities ONLY through
   // the `ChatInvokeBinding` its composition supplies, so nothing here dispatches, and the
   // strategy's presence on this list is what lets the D-16 mutation proof compose the real host
@@ -176,12 +176,17 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'renderVerdictSentence',
   // 392 plan 01: the pure table walk stage 1 is (see `CHAT_RESOLVER_TABLE` above).
   'resolveClause',
-  // 392 plan 01, D-08: the ONE refusal sentence a fail-closed turn carries, and the tracer's
-  // whole-utterance splitter. Pure string functions — published so a surface (and plan 02's
-  // scenario corpus) asserts against the shipped wording rather than re-spelling it.
+  // 392 plan 02, D-09: THE conjunction grammar — the quote-aware tokenizer the composition root
+  // binds as the engine's `ClauseSplitter`. It REPLACES `wholeUtteranceSplitter`, which plan 01
+  // published as the tracer's placeholder and which this plan deletes: a published splitter that
+  // nothing binds is a second answer to "how is an utterance split", and the one thing this
+  // subtree cannot afford is two of those. Pure and total — no host API, no throw, no dispatch.
+  'splitClauses',
+  // 392 plan 01, D-08: the ONE refusal sentence a fail-closed turn carries. A pure string
+  // function — published so a surface (and plan 02's scenario corpus) asserts against the
+  // shipped wording rather than re-spelling it.
   'unhandledReason',
   'unmaskForHumanOutput',
-  'wholeUtteranceSplitter',
 ]
 
 /**

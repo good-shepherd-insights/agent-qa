@@ -124,7 +124,11 @@ export { AGENT_ASK_FUNCTION_ID } from './functions/ops/agent-ask.js'
 export { PROPOSALS_LIST_FUNCTION_ID } from './functions/ops/proposals-list.js'
 export { createTurnEngine } from './chat/turn-engine.js'
 export { CHAT_RESOLVER_TABLE, resolveClause } from './chat/resolver-table.js'
-export { deterministicOverrideStrategy, unhandledReason, wholeUtteranceSplitter } from './chat/reconcile.js'
+export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile.js'
+// 392 plan 02, D-09: the real conjunction grammar. Published because the composition root binds
+// it as the engine's `ClauseSplitter`, and it REPLACES the tracer's whole-utterance splitter,
+// which is deleted rather than left beside it — one bound answer, not two available ones.
+export { splitClauses } from './chat/clause-split.js'
 export type { TurnEngine, TurnEngineDeps } from './chat/turn-engine.js'
 export type { ChatResolverEntry, ChatResolverRule, ChatResolverTable } from './chat/resolver-table.js'
 export type {

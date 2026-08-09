@@ -57,14 +57,10 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
   return { kind: 'execute', plan }
 }
 
-/**
- * The tracer's clause splitter: the whole utterance is one clause.
- *
- * Honest rather than degraded. D-09's conjunction grammar and its quote protection (RESEARCH
- * Pitfall 5 — "write a test for \"add and remove items\"" must not split) are plan 02's, and a
- * half-built splitter that handled `and` but not quotes would manufacture phantom clauses, inflate
- * the `mark_unhandled` rate CHAT-03 measures, and do it from day one.
- */
-export function wholeUtteranceSplitter(utterance: string): readonly { text: string; index: number }[] {
-  return [{ text: utterance.trim(), index: 0 }]
-}
+// The tracer's whole-utterance splitter USED TO LIVE HERE and is gone as of plan 02, because the
+// seam it was holding open is now filled: `chat/clause-split.ts` is the real conjunction grammar
+// and the composition root binds it. Keeping the one-clause version around as a published symbol
+// would leave two answers to "how is an utterance split" in the barrel, with only one of them
+// bound — which is precisely the second-vocabulary failure this subtree is written to avoid. A
+// differential that wants a null splitter can spell one inline; that is a test's need, not a
+// production surface.
