@@ -51,8 +51,15 @@ import type { ScenarioClass, ScenarioExpectationKind, ScenarioLane } from '@vost
  *      `run-42-and-delete-root-empty-answer` is the hermetic sibling of the live CR-03 cell,
  *      carrying the empty-prose `answer_only` shape through a scripted planner so the class is
  *      proved per commit rather than only behind the announced-skipped live gate (W-08).
+ * v6 — 392 plan 15, the THIRD gap round, for 392-VERIFICATION round 3's CR-01: one more `compound/`
+ *      cell, `fail_closed` and HERMETIC, so the denominators stay 11 hermetic / 3 live.
+ *      `run-42-and-summarise-extra-call` is the configuration the corpus had in NEITHER lane — a
+ *      table-mapped clause beside a planner-bound one on a turn that completed — with a scripted
+ *      planner emitting an extra action call about the MAPPED clause. Pre-fix that call shifted the
+ *      binding of every later clause and executed with the model's own arguments; the cell is what
+ *      makes the arity accounting's refusal observable per commit rather than only in a unit.
  */
-export const SCENARIO_CORPUS_VERSION = 5
+export const SCENARIO_CORPUS_VERSION = 6
 
 /**
  * One admitted scenario.
@@ -126,4 +133,14 @@ export const SCENARIO_CORPUS: readonly ScenarioCorpusEntry[] = Object.freeze([
     kind: 'fail_closed',
   }),
   entry({ id: 'pin-and-pin-nonsense', class: 'compound', lane: 'hermetic', kind: 'fail_closed' }),
+  // --- compound: the third gap round's cell (392-15) ---------------------------------------------
+  // The mixed-mapping configuration NO cell in either lane had: a table-mapped clause beside a
+  // planner-bound one on a turn that completed, with the model making an extra call about the
+  // mapped clause (CR-01). `fail_closed` and hermetic, so the denominators are unmoved again.
+  entry({
+    id: 'run-42-and-summarise-extra-call',
+    class: 'compound',
+    lane: 'hermetic',
+    kind: 'fail_closed',
+  }),
 ])

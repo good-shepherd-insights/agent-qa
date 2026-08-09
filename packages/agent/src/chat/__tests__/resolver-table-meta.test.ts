@@ -65,6 +65,9 @@ const COMPOUND_SCENARIOS = [
   // rather than behind an announced-skipped gate), and the multi-directive batch arm.
   'run-42-and-delete-root-empty-answer',
   'pin-and-pin-nonsense',
+  // 392-15's cell: a table-mapped clause beside a planner-bound one, with the model making an extra
+  // action call about the mapped one (CR-01). The mixed-mapping configuration neither lane had.
+  'run-42-and-summarise-extra-call',
 ] as const
 
 function scenarioIdsIn(directory: string): string[] {
@@ -142,6 +145,7 @@ describe('the canon compound pair exists as committed data (CHAT-02)', () => {
     'pin-and-write-test',
     'run-42-and-delete-root-empty-answer',
     'pin-and-pin-nonsense',
+    'run-42-and-summarise-extra-call',
   ])(
     'gap-round cell %s pins a refusal that NAMES its clause and leaves a countable row',
     (id) => {

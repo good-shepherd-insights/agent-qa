@@ -224,6 +224,22 @@ const SCRIPTED_PLANNERS: ReadonlyMap<
       },
     ],
   ],
+  [
+    // 392-15, CR-01 verbatim. Stage 2 is asked only about "summarise the last failure" — the table
+    // already resolved "run test 42" — and the script answers with TWO calls, the FIRST of them
+    // about the clause the table resolved. The model's patterns are deliberately unlike the
+    // table's (`tests/everything.spec.ts` vs `test 42`) so a pre-fix run shows WHOSE arguments
+    // executed: the extra call was popped by the clause that needed a proposal, `runs.start` ran a
+    // second time against a clause that asked for a digest, and `runs_digest` was discarded.
+    'run-42-and-summarise-extra-call',
+    [
+      {
+        toolName: 'runs_start',
+        input: JSON.stringify({ patterns: ['tests/everything.spec.ts'] }),
+      },
+      { toolName: 'runs_digest', input: JSON.stringify({ runId: 'RUN-1' }) },
+    ],
+  ],
 ])
 
 function seedRun(agentQaRoot: string, runId: string): void {
@@ -335,11 +351,12 @@ describe('the hermetic lane: the frozen deterministic corpus over the real compo
 
   it('walks a real corpus rather than an empty one', () => {
     // Every assertion below is `it.each` over the manifest, and an empty manifest would make the
-    // whole file green while measuring nothing. 16 as of corpus v5: the 13 deterministic cells plus
-    // the three hermetic compound cells — `pin-and-write-test` (392-11) and 392-14's
-    // `pin-and-pin-nonsense` / `run-42-and-delete-root-empty-answer`.
-    expect(HERMETIC_CORPUS.length).toBe(16)
-    // THE DENOMINATOR DID NOT MOVE. All three hermetic compound cells are `fail_closed`, so the
+    // whole file green while measuring nothing. 17 as of corpus v6: the 13 deterministic cells plus
+    // the four hermetic compound cells — `pin-and-write-test` (392-11), 392-14's
+    // `pin-and-pin-nonsense` / `run-42-and-delete-root-empty-answer`, and 392-15's
+    // `run-42-and-summarise-extra-call`.
+    expect(HERMETIC_CORPUS.length).toBe(17)
+    // THE DENOMINATOR DID NOT MOVE. All four hermetic compound cells are `fail_closed`, so the
     // rate reported after this round is a rate over the same eleven cells it was before it — a
     // round that grew its own denominator would report a better number for having done work.
     expect(HERMETIC_DENOMINATOR).toBe(11)

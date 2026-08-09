@@ -74,9 +74,10 @@ describe('the corpus manifest is versioned and internally coherent', () => {
   it('is exactly the corpus its version says it is', () => {
     // THE SIZE AND THE VERSION MOVE TOGETHER, in one commit, or the ratio reported afterwards is a
     // number about a set nobody can name. v4 was 392-11's gap round: 18 + two regression cells.
-    // v5 is 392-14's: 20 + the two the ROUND-2 verification found still invisible.
-    expect(SCENARIO_CORPUS.length).toBe(22)
-    expect(SCENARIO_CORPUS_VERSION).toBe(5)
+    // v5 is 392-14's: 20 + the two the ROUND-2 verification found still invisible. v6 is 392-15's:
+    // 22 + the mixed-mapping cell the ROUND-3 verification found neither lane had.
+    expect(SCENARIO_CORPUS.length).toBe(23)
+    expect(SCENARIO_CORPUS_VERSION).toBe(6)
     // The denominators the ceiling is computed over, pinned per lane. Both gap-round cells are
     // `fail_closed` precisely so these two numbers did NOT move — a corpus round that quietly grew
     // the denominator would report a better rate for having done work (the treadmill law).
@@ -102,6 +103,10 @@ describe('the corpus manifest is versioned and internally coherent', () => {
       // the model is the untrusted source of rather than one a live model would reliably produce.
       'pin-and-pin-nonsense',
       'run-42-and-delete-root-empty-answer',
+      // 392-15. Same reason as the empty-answer sibling: the shape under test is one the MODEL is
+      // the untrusted source of — an extra action call about a clause the table already resolved —
+      // so it is driven by a SCRIPTED planner rather than hoped for from a live one.
+      'run-42-and-summarise-extra-call',
     ])
     for (const entry of SCENARIO_CORPUS) {
       const expected =
