@@ -290,7 +290,13 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'ChainJobIds',
   'ChainTerminalRecord',
   'ChatClause',
+  // 392 plan 02: the directive vocabulary and stage 1's two-variant answer. `ChatResolution` is
+  // what the published `resolveClause` returns, and its presence here is what makes a third
+  // variant — or a confidence number — a visible edit to this pin rather than a quiet widening
+  // of the one path in the system that OVERRIDES a model's plan (D-09/D-12).
+  'ChatDirectiveName',
   'ChatInvokeBinding',
+  'ChatResolution',
   'ChatResolverEntry',
   'ChatResolverRule',
   'ChatResolverTable',

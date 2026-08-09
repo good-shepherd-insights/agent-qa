@@ -130,7 +130,17 @@ export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile
 // which is deleted rather than left beside it — one bound answer, not two available ones.
 export { splitClauses } from './chat/clause-split.js'
 export type { TurnEngine, TurnEngineDeps } from './chat/turn-engine.js'
-export type { ChatResolverEntry, ChatResolverRule, ChatResolverTable } from './chat/resolver-table.js'
+// 392 plan 02: `ChatResolution` joins the three plan-01 shapes because it is what the published
+// `resolveClause` now RETURNS — a two-variant union with no confidence member, and pinning it on
+// the barrel is what makes a third variant (or a number) a visible edit rather than an incidental
+// one. `ChatDirectiveName` rides along because the entry union names it.
+export type {
+  ChatDirectiveName,
+  ChatResolution,
+  ChatResolverEntry,
+  ChatResolverRule,
+  ChatResolverTable,
+} from './chat/resolver-table.js'
 export type {
   CallerMint,
   ChatClause,

@@ -45,8 +45,8 @@ import type {
   ReconcileStrategy,
   ResolvedClause,
 } from './ports.js'
-import { resolveClause } from './resolver-table.js'
-import type { ChatResolverTable } from './resolver-table.js'
+import { directiveNotBoundReason, resolveClause } from './resolver-table.js'
+import type { ChatDirectiveName, ChatResolverTable } from './resolver-table.js'
 
 export interface TurnEngineDeps {
   readonly table: ChatResolverTable
@@ -111,13 +111,22 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       // ---- Stage 1: the deterministic resolver over the clause split.
       const clauses = deps.split(input.message)
       const mapped: ResolvedClause[] = []
+      const directives: { clause: ChatClause; directive: ChatDirectiveName }[] = []
       for (const clause of clauses) {
-        const rule = resolveClause(deps.table, clause.text)
-        if (rule === undefined) continue
+        const resolution = resolveClause(deps.table, clause.text)
+        if (resolution.kind === 'unresolved') continue
+        if (resolution.entry.kind === 'directive') {
+          // Resolved, and NOT executable through the function layer: a directive names no
+          // capability (D-04/D-21). It is collected rather than dropped, because a clause the
+          // table understood and the engine silently ignored is the exact silent-drop shape D-08
+          // and D-10 exist to make impossible.
+          directives.push({ clause, directive: resolution.entry.directive })
+          continue
+        }
         mapped.push({
           clause,
-          functionId: rule.entry.functionId,
-          args: rule.entry.parseArgs(clause.text),
+          functionId: resolution.entry.functionId,
+          args: resolution.entry.input,
         })
       }
       await append({
@@ -125,8 +134,28 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         turnId,
         at: deps.now(),
         stage: 'resolver',
-        outcome: mapped.length === clauses.length ? 'resolved' : 'unresolved',
+        // Directives count as RESOLVED here, because they were: the table matched them. Whether
+        // anything can carry them out is the next question, and answering it in this field would
+        // make "stage 1 did not recognise this" and "this build cannot do it" the same bytes.
+        outcome:
+          mapped.length + directives.length === clauses.length ? 'resolved' : 'unresolved',
       })
+
+      // A directive with no handler bound refuses the whole turn, BEFORE stage 2, with zero
+      // executions — D-10's atomicity applied to the one clause class that never reaches stage 4.
+      // Plans 04-06 bind the handlers (`/model`'s session override and its `model_change` event,
+      // `/pin`'s deny overlay, the REPL's own chrome) and this arm stops being reachable for them
+      // one directive at a time; until then the honest answer is a named refusal, not a no-op.
+      const firstDirective = directives[0]
+      if (firstDirective !== undefined) {
+        return finish('fail_closed', {
+          receipts: [],
+          unhandled: {
+            clause: firstDirective.clause.text,
+            reason: directiveNotBoundReason(firstDirective.directive, firstDirective.clause.text),
+          },
+        })
+      }
 
       // ---- Stage 2: the planner, consulted ONLY for what stage 1 could not answer.
       const unmapped = clauses.filter(
