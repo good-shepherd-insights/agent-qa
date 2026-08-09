@@ -82,6 +82,14 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // 389 plan 05: the analysis read op's id, on the exact footing of the two op-id constants
   // below — a string a surface names on the wire, never a dispatch handle.
   'ANALYSIS_GET_FUNCTION_ID',
+  // 392 plan 14: the `answer_only` tool NAME, joining `fromToolName` / `isChatMetaToolName` below
+  // on their footing and for their reason. Removing `PlannerStageOutcome.answer` left the two live
+  // differentials — whose whole content is the ABSENCE of a read of `input.mapped` — needing to
+  // re-derive the turn-level prose carry they deliberately model, and the only alternative was a
+  // literal `'answer_only'` in each of them: the second catalogue `tool-names.ts` exists as one
+  // module to prevent, in the two files least able to afford one. A frozen string; naming a tool
+  // reaches no capability, and the tool it names carries no execute callback in any projection.
+  'ANSWER_ONLY_TOOL_NAME',
   'AmbiguousStepAddressError',
   // 392 plan 01: the closed stage-1 resolver table and its lookup. A DECLARATION and a pure
   // predicate walk over it — the table's entries name op ids, and naming an op buys nothing
