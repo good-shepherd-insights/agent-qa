@@ -252,11 +252,31 @@ describe('there is no way to loosen', () => {
     expect(clear).toBeUndefined()
   })
 
-  it('exposes exactly three members at runtime, so a fourth is a visible edit', () => {
+  it('exposes exactly four members at runtime, so a fifth is a visible edit', () => {
     // The companion to the type claim above: a widened implementation would satisfy the two
     // directives (they only require the property to be absent from the TYPE) while shipping a
     // reachable loosen path.
-    expect(Object.keys(overlay()).sort()).toEqual(['asGateDeny', 'list', 'pin'])
+    //
+    // FOUR SINCE 392-14, and the set moved by a deliberate edit here — which is what this
+    // assertion is for. `classFor` is the VALIDATION half of `pin`, split out so the engine's
+    // directive batch pre-flight can ask whether a `/pin` will be accepted without recording it.
+    // It writes nothing, so it loosens nothing; but a member arriving without this line moving
+    // would be exactly the silent widening the case exists to catch.
+    expect(Object.keys(overlay()).sort()).toEqual(['asGateDeny', 'classFor', 'list', 'pin'])
+  })
+
+  it('classFor VALIDATES without recording — asking is not pinning (392-14)', () => {
+    // The property the batch pre-flight rests on. If `classFor` recorded, a turn refused by a
+    // LATER directive would still have carried out the earlier one, which is the whole defect it
+    // was split out to remove.
+    const held = overlay()
+
+    expect(held.classFor(SAMPLE_BARE)).toBe(SAMPLE_CLASS)
+    expect(held.list().deniedActionClasses).toEqual([])
+    expect(held.asGateDeny()(actionNamed(SAMPLE_CLASS))).toBe(false)
+
+    // And it refuses exactly what `pin` refuses, by the same named error.
+    expect(() => held.classFor('nonsense.notacapability')).toThrow(ChatPinError)
   })
 
   it('a returned snapshot cannot be written back through', () => {
