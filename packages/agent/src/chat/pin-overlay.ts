@@ -18,9 +18,12 @@
 //    — never an accepted pin, never a normalisation that guesses.
 //
 // 3. THE PREDICATE IS A LIVE VIEW, NOT A SNAPSHOT. `asGateDeny()` reads the set at call time. The
-//    composition root binds the hook ONCE for the session (plan 08), and a person types `/pin`
-//    somewhere in the middle of it; a snapshot taken at bind time would be empty forever, which is
-//    property 2's failure mode arriving by a different road.
+//    composition root binds the gate hook ONCE, before the first turn of any conversation it will
+//    serve (plan 08), and a person types `/pin` somewhere in the middle of one; a snapshot taken at
+//    bind time would be empty forever, which is property 2's failure mode arriving by a different
+//    road. WHICH holder that hook reads is a fact about the CALLER — one holder per session, chosen
+//    by `caller.sessionId` (plan 13, W-03) — which is what makes property 1's "a pin dies when the
+//    session does" literally true rather than true of the process.
 //
 // WHAT THIS MODULE IS NOT: a gate. It holds no verdict logic and reaches no capability. It walks
 // DECLARATIONS — the capability-free view — so it cannot dispatch anything, and the only thing it
