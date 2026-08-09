@@ -234,7 +234,16 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // twice without a production knob existing that could do the same.
   'createTurnEngine',
   'deterministicOverrideStrategy',
+  // 392 plan 10, D-16: the model-plan reader's half of the tool-name mapping, in ASCII sort
+  // position around `invokeFunction` because this list is compared positionally. Published so the
+  // mutation proof's override-OFF strategy reverses a tool name through the ONE module that owns
+  // the rename instead of spelling a second one — a differential whose test double re-derived the
+  // grammar could red for a reason unrelated to the mechanism it is measuring. Neither symbol is
+  // dispatch: one answers a boolean about a string, the other refuses the two orchestration names
+  // and otherwise returns a string, and an unregistered id still dies at `invokeFunction`.
+  'fromToolName',
   'invokeFunction',
+  'isChatMetaToolName',
   // 392 plan 06: the pure trigger pass (see `createChatCompactionHook` above). A total function of
   // (messages, accounting, turnId, clock) returning a conversation and at most one event — no
   // storage, no dispatch, and no branch that fails to return a conversation.

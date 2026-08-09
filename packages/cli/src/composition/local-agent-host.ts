@@ -359,6 +359,24 @@ export interface ComposeCliLocalAgentInput {
   chatModel?: ComposeLocalAgentInput['chatModel']
   chatModelFor?: ComposeLocalAgentInput['chatModelFor']
   chatAccounting?: ComposeLocalAgentInput['chatAccounting']
+  /**
+   * The turn engine's reconciliation strategy (392 plan 10, D-16), passed through untouched.
+   *
+   * A PASSTHROUGH OF A COMPOSITION-ONLY SEAM, and both halves of that matter. `composeLocalAgent`
+   * declares this option so the mutation proof can assemble the REAL engine twice — deterministic
+   * override on, override off — and read the difference off a named compound scenario. The live
+   * arm of that proof needs a real model, and the only resolution that produces one is this
+   * host's; without this line the differential would have to re-derive a host beside the one
+   * production uses, which is exactly the lookalike-assembly failure the proof exists to exclude.
+   *
+   * IT IS NOT, AND MUST NEVER BECOME, CONFIG-REACHABLE. No key of the project configuration names
+   * it, no environment variable selects it, and `strategy-config-unreachable.test.ts` asserts both.
+   * This interface is a CALL SIGNATURE — a caller already holding the code that composes the host
+   * — and widening it grants nothing a caller could not do by calling `composeLocalAgent` itself.
+   * Absent leaves the shipped deterministic override in place, which is what makes the absence the
+   * safe default rather than an unconfigured state.
+   */
+  chatReconcile?: ComposeLocalAgentInput['chatReconcile']
   /** The configuration file this invocation resolves against. */
   configPath: string
   /**
@@ -732,6 +750,11 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     ...(input.chatModel === undefined ? {} : { chatModel: input.chatModel }),
     ...(input.chatModelFor === undefined ? {} : { chatModelFor: input.chatModelFor }),
     ...(input.chatAccounting === undefined ? {} : { chatAccounting: input.chatAccounting }),
+    // 392 plan 10, D-16: the reconciliation strategy, conditionally spread on the exact idiom of
+    // the three chat options above. ABSENT must stay absent, because the composition's own
+    // `?? deterministicOverrideStrategy` is where the safe default lives and a present-undefined
+    // field would be a second place it could be decided.
+    ...(input.chatReconcile === undefined ? {} : { chatReconcile: input.chatReconcile }),
     // 391 PROP-01: conditionally spread, so a host with no terminal leaves the field ABSENT and the
     // gate's own deny-by-default is what answers — in exactly one place.
     ...(() => {

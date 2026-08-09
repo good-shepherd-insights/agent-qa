@@ -21,6 +21,16 @@
 // looking like a planning failure. Loosening any of the three moves the measured unhandled rate
 // without moving any mechanism, which is the one way that number can lie.
 //
+// `answer_only` IS LAST-RESORT, AND 392 PLAN 10's LIVE RUN IS WHY. As first written, the
+// instruction said to use it "when the turn asks for information rather than for something to
+// happen" — and a real model, asked to route `show me the digest for RUN-1`, read that as its case
+// and answered in prose while `runs.digest` sat unused in its tool set. Until 398 grounds this tool
+// in the capability catalogue, its text is ungrounded model memory: the person asked for a run's
+// digest and would have been handed an invention that looks exactly like the real one. So the
+// instruction now names the precondition it always meant — no offered tool can produce what was
+// asked — and says plainly that the model knows nothing about this project the tools did not tell
+// it. This is a correctness fix about fabrication, not a routing preference.
+//
 // NO PAYLOAD BODIES. Session facts are one-liners and the replayed conversation is refs plus
 // outcomes (D-18) — the same map-not-territory rule the session log follows, applied to the one
 // place where the whole conversation is about to cross a network boundary (T-392-14).
@@ -54,8 +64,11 @@ const PLANNING_BLOCK: PromptTierBlock = {
     + 'clauses routinely depend on earlier ones, so the sequence you emit is the sequence that '
     + 'will be considered.\n'
     + '\n'
-    + 'Use `answer_only` when the turn asks for information rather than for something to happen. '
-    + 'A turn answered this way performs zero actions and returns your text.\n'
+    + 'Use `answer_only` ONLY when no tool you were offered can produce what was asked for. You '
+    + 'have no knowledge of this project beyond what the tools return, so a question a tool can '
+    + 'answer must be routed to that tool: answering it yourself would put a plausible-looking '
+    + 'invention where the project data belongs. A turn answered this way performs zero actions '
+    + 'and returns your text.\n'
     + '\n'
     + 'Use `mark_unhandled` when no available tool can carry out a clause, naming that clause and '
     + 'saying which capability would be needed. This refuses the whole turn without performing any '

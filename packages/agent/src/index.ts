@@ -130,6 +130,19 @@ export { PROPOSALS_LIST_FUNCTION_ID } from './functions/ops/proposals-list.js'
 export { createTurnEngine } from './chat/turn-engine.js'
 export { CHAT_HELP_TEXT, CHAT_RESOLVER_TABLE, resolveClause } from './chat/resolver-table.js'
 export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile.js'
+// 392 plan 10, D-16: the two halves of the dotted-id ↔ provider-safe tool-name mapping that a
+// reader of a MODEL PLAN needs. Published because plan 10's mutation proof composes the real host
+// with a reconciliation strategy that trusts the model's plan verbatim — the override-OFF arm —
+// and such a strategy has to turn a tool name back into the id the function layer answers to. A
+// differential that spelled its own `.` ↔ `_` rename would be a second catalogue, which is the
+// exact drift `tool-names.ts` exists as one module to prevent, and it would let the off-arm fail
+// for a reason that has nothing to do with the override being off.
+//
+// Neither is a dispatch path. `isChatMetaToolName` answers a boolean about a string;
+// `fromToolName` REFUSES the two orchestration names and otherwise returns a string. Nothing on
+// either side of the mapping can reach a registry, a capability or a host API, and an id that
+// nothing registered still dies at `invokeFunction`'s own named refusal.
+export { fromToolName, isChatMetaToolName } from './chat/tool-names.js'
 // 392 plan 02, D-09: the real conjunction grammar. Published because the composition root binds
 // it as the engine's `ClauseSplitter`, and it REPLACES the tracer's whole-utterance splitter,
 // which is deleted rather than left beside it — one bound answer, not two available ones.
