@@ -1,0 +1,229 @@
+// The chat vocabulary's own corpus (Phase 392 plan 01, task 2 — D-14 / D-18 / 388 C13).
+//
+// Three claims, and each one exists because a different kind of drift would otherwise be silent:
+//
+//   1. EXHAUSTIVENESS. A total `Record<ChatSessionEventKind, …>` stops compiling the day an
+//      eleventh kind is declared without somebody saying what it means. This is the `kinds.ts`
+//      double-lock idiom — the compile-time half here, the runtime half in the guard below,
+//      because the two catch different drifts.
+//   2. THE GUARD REFUSES, BY NAME AND IN ORDER. Reopen reads untrusted bytes: a file another
+//      build wrote, a line a crash tore, a hand-edited session. Every refusal is the one named
+//      error class, and the VERSION question is answered before the shape question — a version
+//      mismatch has a remedy an operator can act on, and reporting it as a missing field names
+//      the wrong problem (the `job-checkpoint-store.ts:231-237` decision).
+//   3. THE ENUMS ARE CLOSED. Receipt statuses and scenario expectations are compared as exact
+//      sets, so a fourth member cannot arrive without the corpus that gives it meaning.
+
+import { describe, expect, it } from 'vitest'
+
+import {
+  CHAT_SESSION_EVENT_KINDS,
+  CLAUSE_RECEIPT_STATUSES,
+  CURRENT_CHAT_SESSION_SCHEMA_VERSION,
+  ChatSessionEventSchemaError,
+  ChatScenarioSchema,
+  SCENARIO_EXPECTATIONS,
+  guardChatSessionEvent,
+  pinDenies,
+} from '../index'
+import type { ChatPinOverlay, ChatSessionEvent, ChatSessionEventKind } from '../index'
+
+/**
+ * The total map: one sentence per kind, and the day an eleventh kind is declared this stops
+ * compiling until it has one too. It is `satisfies` rather than an annotation so the literal keeps
+ * its own literal type while still being checked for totality.
+ */
+const KIND_MEANING = {
+  user_message: 'what the person typed',
+  stage_outcome: 'which stage answered, and how',
+  clause_receipt: 'one clause through the function layer',
+  approval_decision: 'what a person answered at an ask-tier gate',
+  mark_unhandled: 'a clause nothing in this build handles',
+  model_change: 'the session model changed',
+  active_tools_change: 'the reachable toolset changed',
+  compaction: 'the degrade pass ran',
+  aborted: 'a turn ended without completing',
+  turn_complete: 'the fsync boundary marker',
+} satisfies Record<ChatSessionEventKind, string>
+
+const AT = '2026-08-09T00:00:00.000Z'
+
+function userMessage(): ChatSessionEvent {
+  return { kind: 'user_message', turnId: 'turn-1', at: AT, text: 'proposals' }
+}
+
+describe('the chat session event vocabulary is closed and total', () => {
+  it('D-14: every declared kind has a meaning, and the union is exactly the declared list', () => {
+    expect(Object.keys(KIND_MEANING).sort()).toEqual([...CHAT_SESSION_EVENT_KINDS].sort())
+    // Ten from day one, including the kinds nothing emits yet (CHAT-05 names four of them). A
+    // kind declared late would make "this build does not know that kind" and "that kind did not
+    // occur" the same bytes for every reader written in between.
+    expect(CHAT_SESSION_EVENT_KINDS).toHaveLength(10)
+  })
+
+  it('D-11: the receipt statuses are exactly three, closed', () => {
+    expect([...CLAUSE_RECEIPT_STATUSES]).toEqual(['executed', 'failed', 'not-run'])
+  })
+
+  it('CHAT-02: a scenario expects one of exactly two things', () => {
+    expect([...SCENARIO_EXPECTATIONS]).toEqual(['should_execute', 'fail_closed'])
+  })
+
+  it('CHAT-01/precision: no member of the vocabulary carries a fractional confidence', () => {
+    // Stage-1 resolution is BINARY by construction (D-09): an exact predicate hit or nothing. A
+    // confidence field anywhere in this vocabulary would be the first half of a threshold, and a
+    // threshold is how an overriding path acquires a false-positive rate.
+    const spelled = JSON.stringify({
+      kinds: CHAT_SESSION_EVENT_KINDS,
+      statuses: CLAUSE_RECEIPT_STATUSES,
+      expectations: SCENARIO_EXPECTATIONS,
+      scenario: Object.keys(ChatScenarioSchema.shape),
+    })
+    expect(spelled).not.toMatch(/confidence|score|threshold/i)
+  })
+})
+
+describe('guardChatSessionEvent refuses untrusted bytes by name', () => {
+  it('accepts an event this build wrote', () => {
+    expect(guardChatSessionEvent(userMessage(), CURRENT_CHAT_SESSION_SCHEMA_VERSION))
+      .toEqual(userMessage())
+  })
+
+  it('checks the VERSION before the shape — the order is the remedy', () => {
+    const wrongVersion = CURRENT_CHAT_SESSION_SCHEMA_VERSION + 1
+    // Well-formed bytes, wrong version: refused.
+    expect(() => guardChatSessionEvent(userMessage(), wrongVersion))
+      .toThrow(ChatSessionEventSchemaError)
+    // MALFORMED bytes AND the wrong version: the message names the VERSION, not the field. If
+    // shape were checked first this would complain about `kind` and send an operator to repair a
+    // line whose real problem is that another build wrote it.
+    const thrown = (() => {
+      try {
+        guardChatSessionEvent({ nonsense: true }, wrongVersion)
+        return undefined
+      } catch (error) {
+        return error as Error
+      }
+    })()
+    expect(thrown).toBeInstanceOf(ChatSessionEventSchemaError)
+    expect(thrown?.message).toContain(String(wrongVersion))
+  })
+
+  it('refuses an EXTRA key — presence checks admit the field nobody declared', () => {
+    expect(() =>
+      guardChatSessionEvent(
+        { ...userMessage(), smuggled: 'a payload body' },
+        CURRENT_CHAT_SESSION_SCHEMA_VERSION,
+      ),
+    ).toThrow(ChatSessionEventSchemaError)
+  })
+
+  it('refuses a MISSING key', () => {
+    const { text: _dropped, ...missing } = userMessage() as { text: string }
+    expect(() => guardChatSessionEvent(missing, CURRENT_CHAT_SESSION_SCHEMA_VERSION))
+      .toThrow(ChatSessionEventSchemaError)
+  })
+
+  it('refuses an unknown kind, and a line that is not an object at all', () => {
+    expect(() =>
+      guardChatSessionEvent(
+        { kind: 'telepathy', turnId: 't', at: AT },
+        CURRENT_CHAT_SESSION_SCHEMA_VERSION,
+      ),
+    ).toThrow(ChatSessionEventSchemaError)
+    expect(() => guardChatSessionEvent('not an object', CURRENT_CHAT_SESSION_SCHEMA_VERSION))
+      .toThrow(ChatSessionEventSchemaError)
+  })
+
+  it('D-18: accepts every kind this vocabulary declares, so the guard is not a four-kind guard', () => {
+    const samples: Record<ChatSessionEventKind, ChatSessionEvent> = {
+      user_message: userMessage(),
+      stage_outcome: { kind: 'stage_outcome', turnId: 't', at: AT, stage: 'resolver', outcome: 'resolved' },
+      clause_receipt: {
+        kind: 'clause_receipt',
+        turnId: 't',
+        at: AT,
+        clause: 'proposals',
+        functionId: 'proposals.list',
+        origin: 'human',
+        status: 'executed',
+        outcome: 'proposals.list completed',
+      },
+      approval_decision: {
+        kind: 'approval_decision',
+        turnId: 't',
+        at: AT,
+        actionClass: 'fn:proposals.accept',
+        decision: 'accept',
+      },
+      mark_unhandled: { kind: 'mark_unhandled', turnId: 't', at: AT, clause: 'write a test', reason: 'absent' },
+      model_change: { kind: 'model_change', turnId: 't', at: AT, from: 'a', to: 'b', source: 'verb' },
+      active_tools_change: {
+        kind: 'active_tools_change',
+        turnId: 't',
+        at: AT,
+        addedIds: ['runs.start'],
+        removedIds: [],
+        toolsetHash: 'deadbeefdeadbeef',
+      },
+      compaction: { kind: 'compaction', turnId: 't', at: AT, beforeTokens: 100, afterTokens: 50, outcome: 'degraded' },
+      aborted: { kind: 'aborted', turnId: 't', at: AT, source: 'explicit' },
+      turn_complete: { kind: 'turn_complete', turnId: 't', at: AT, status: 'completed' },
+    }
+    for (const kind of CHAT_SESSION_EVENT_KINDS) {
+      expect(
+        guardChatSessionEvent(samples[kind], CURRENT_CHAT_SESSION_SCHEMA_VERSION),
+        kind,
+      ).toEqual(samples[kind])
+    }
+  })
+})
+
+describe('the pin overlay denies, and only denies (D-21)', () => {
+  const overlay: ChatPinOverlay = { deniedActionClasses: ['fn:runs.start'] }
+
+  it('matches the fn:-prefixed risk-name spelling the gate actually sees', () => {
+    expect(pinDenies(overlay, 'fn:runs.start')).toBe(true)
+    // 391-05's measured trap: the BARE spelling matches nothing, because every registered op's
+    // risk name carries the prefix. A pin recorded without it would silently deny nothing.
+    expect(pinDenies(overlay, 'runs.start')).toBe(false)
+    expect(pinDenies(overlay, 'fn:runs.list')).toBe(false)
+  })
+
+  it('an empty overlay denies nothing', () => {
+    expect(pinDenies({ deniedActionClasses: [] }, 'fn:runs.start')).toBe(false)
+  })
+})
+
+describe('the scenario contract (CHAT-02)', () => {
+  it('validates a YAML-shaped scenario and rejects an unknown expectation', () => {
+    const parsed = ChatScenarioSchema.parse({
+      id: 'proposals-alias',
+      class: 'deterministic',
+      lane: 'hermetic',
+      utterance: 'proposals',
+      expect: { kind: 'should_execute', planned: 1, executed: 1, ops: ['proposals.list'] },
+    })
+    expect(parsed.expect.executed).toBe(1)
+    expect(() =>
+      ChatScenarioSchema.parse({
+        id: 'bad',
+        class: 'deterministic',
+        lane: 'hermetic',
+        utterance: 'x',
+        expect: { kind: 'probably_works', executed: 0 },
+      }),
+    ).toThrow()
+  })
+
+  it('D-10: a fail_closed scenario can pin executed == 0 and name the clause', () => {
+    const parsed = ChatScenarioSchema.parse({
+      id: 'write-test-absent',
+      class: 'compound',
+      lane: 'hermetic',
+      utterance: 'write a test for 2FA and run it',
+      expect: { kind: 'fail_closed', executed: 0, namesClause: 'write a test for 2FA' },
+    })
+    expect(parsed.expect).toMatchObject({ kind: 'fail_closed', executed: 0 })
+  })
+})

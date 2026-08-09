@@ -4,9 +4,17 @@ export {
   CHAT_TURN_STAGES,
   CHAT_TURN_STATUSES,
   CURRENT_CHAT_SESSION_SCHEMA_VERSION,
+  ChatSessionEventSchemaError,
+  guardChatSessionEvent,
 } from './session-events'
 export type {
+  ChatAbortedEvent,
+  ChatActiveToolsChangeEvent,
+  ChatApprovalDecisionEvent,
   ChatClauseReceiptEvent,
+  ChatCompactionEvent,
+  ChatMarkUnhandledEvent,
+  ChatModelChangeEvent,
   ChatSessionEvent,
   ChatSessionEventBase,
   ChatSessionEventKind,
@@ -23,3 +31,19 @@ export type { ClauseReceipt, ClauseReceiptStatus } from './turn-receipts'
 export { AgentAskInputSchema, AgentAskResultSchema, ClauseReceiptSchema } from './agent-ask'
 export type { AgentAskInput, AgentAskResult } from './agent-ask'
 export type { OpenedChatSession, SessionLogPort } from './session-log-port'
+export {
+  ChatScenarioSchema,
+  SCENARIO_CLASSES,
+  SCENARIO_EXPECTATIONS,
+  SCENARIO_LANES,
+  ScenarioExpectationSchema,
+} from './scenario-expectation'
+export type {
+  ChatScenario,
+  ScenarioClass,
+  ScenarioExpectation,
+  ScenarioExpectationKind,
+  ScenarioLane,
+} from './scenario-expectation'
+export { pinDenies } from './pin-overlay'
+export type { ChatPinOverlay } from './pin-overlay'

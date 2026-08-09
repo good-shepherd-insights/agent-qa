@@ -146,15 +146,190 @@ export interface ChatTurnCompleteEvent extends ChatSessionEventBase<'turn_comple
 }
 
 /**
- * The events this build emits today.
+ * A person's answer at an ask-tier gate (D-03).
  *
- * The KIND union above is complete; this payload union is not, and the gap is deliberate rather
- * than an oversight — plan 02 of this phase adds the payload DTOs for the six remaining kinds and
- * the reopen guard that ranges over all ten. Declaring the kinds first is what lets the sibling
- * plans compose against one closed vocabulary instead of widening it each time.
+ * Recorded by the chat WRAPPER around the shipped `ConfirmPort`, never from inside safety — the
+ * port's type is `(action) => boolean | Promise<boolean>` and it stays untouched (RESEARCH
+ * Pitfall 7). `accept-always` is the two-form surface 391 shipped, and it appears here because a
+ * standing approval granted mid-conversation is exactly the event a reviewer needs to find.
  */
+export interface ChatApprovalDecisionEvent extends ChatSessionEventBase<'approval_decision'> {
+  /** The `fn:`-prefixed risk name the gate classified, not the bare op id (391-05). */
+  actionClass: string
+  decision: 'accept' | 'accept-always' | 'deny'
+}
+
+/**
+ * A clause nothing in this build handles (D-08 / D-15).
+ *
+ * Logged on EVERY occurrence, in live sessions as well as scenario runs, which is what makes
+ * CHAT-03's field rate a projection over logs rather than a new metric store. The gated ceiling
+ * is computed over the frozen corpus; this event is what makes the ungated field number
+ * observable at all.
+ */
+export interface ChatMarkUnhandledEvent extends ChatSessionEventBase<'mark_unhandled'> {
+  clause: string
+  reason: string
+}
+
+/**
+ * The session model changed (D-04, CHAT-05's named config event).
+ *
+ * `source` distinguishes the two ways it happens, and they are genuinely different facts: a person
+ * typed `/model`, or the configuration on disk drifted and the session re-read it (391's
+ * human-edits-always-win echo). Collapsing them would leave a reader unable to tell a deliberate
+ * switch from one that happened to them.
+ */
+export interface ChatModelChangeEvent extends ChatSessionEventBase<'model_change'> {
+  from: string
+  to: string
+  source: 'verb' | 'config_reread'
+}
+
+/**
+ * The reachable toolset changed (D-04, CHAT-05's second named config event).
+ *
+ * Deltas plus the new fingerprint, not the whole set: the header already carries the opening hash,
+ * so a reader folds these to reconstruct what was reachable at turn N. Logging the full set each
+ * time would put a copy of the catalogue in the log on every drift.
+ *
+ * There is no `/tools` toggle producing these (D-04) — the always-send-all law forbids one. What
+ * produces them is a build or configuration that genuinely changed what exists.
+ */
+export interface ChatActiveToolsChangeEvent extends ChatSessionEventBase<'active_tools_change'> {
+  addedIds: readonly string[]
+  removedIds: readonly string[]
+  toolsetHash: string
+}
+
+/**
+ * ONE event for the whole degrade pass (CHAT-04).
+ *
+ * The stages of a degrade — hygiene, screenshot stripping, dedup, truncation — are FIELDS of one
+ * pass and not sibling kinds, and that is a decision rather than a shorthand: they always run
+ * together under one budget for one turn, so a reader asking "what did compaction cost here"
+ * wants one row. Sibling kinds would make that question a join.
+ *
+ * `outcome` carries the substrate's own two answers verbatim (`degrade()`'s `DegradeOutcome`), so
+ * the cannot-fit case is reported rather than folded into a success with smaller numbers.
+ */
+export interface ChatCompactionEvent extends ChatSessionEventBase<'compaction'> {
+  beforeTokens: number
+  afterTokens: number
+  outcome: 'degraded' | 'pinned-content-exceeds-budget'
+}
+
+/**
+ * A turn that ended without completing (D-19's two arms).
+ *
+ * `explicit` is a graceful Ctrl+C: the process was alive and wrote this itself. `synthesized` is
+ * what the next-turn repair writes after a hard kill, where the dangling turn is inferred from a
+ * tail that is not a boundary marker. Both are real and they are different — one says a person
+ * stopped, the other says a machine died — and a single spelling would lose that.
+ */
+export interface ChatAbortedEvent extends ChatSessionEventBase<'aborted'> {
+  source: 'explicit' | 'synthesized'
+}
+
+/** The complete event union: one member per declared kind. */
 export type ChatSessionEvent =
   | ChatUserMessageEvent
   | ChatStageOutcomeEvent
   | ChatClauseReceiptEvent
+  | ChatApprovalDecisionEvent
+  | ChatMarkUnhandledEvent
+  | ChatModelChangeEvent
+  | ChatActiveToolsChangeEvent
+  | ChatCompactionEvent
+  | ChatAbortedEvent
   | ChatTurnCompleteEvent
+
+/** Bytes on a session line that do not describe an event this build can read. */
+export class ChatSessionEventSchemaError extends Error {
+  override readonly name = 'ChatSessionEventSchemaError'
+
+  constructor(readonly detail: string) {
+    super(
+      `a stored chat session event cannot be read: ${detail}. Lines are written from typed `
+      + 'records inside one process, so bytes that fail this guard were written by another '
+      + 'build or damaged in place.',
+    )
+  }
+}
+
+/**
+ * The EXACT key set each kind carries, spelled once and read by the guard below.
+ *
+ * A total `Record` over the kind union, which is the compile-time half of the double lock: an
+ * eleventh kind cannot be declared without saying what its line looks like. The guard is the
+ * runtime half, and the two catch different drifts (`jobs/kinds.ts:619-627`).
+ *
+ * Exact key sets rather than presence checks, for `run-notification.ts`'s stated reason: a
+ * presence check admits a record carrying an EXTRA field, and an extra field on a line several
+ * surfaces render is exactly how a payload body arrives in a log that promised refs (D-18).
+ */
+const EVENT_KEYS: Record<ChatSessionEventKind, readonly string[]> = {
+  user_message: ['at', 'kind', 'text', 'turnId'],
+  stage_outcome: ['at', 'kind', 'outcome', 'stage', 'turnId'],
+  clause_receipt: ['at', 'clause', 'functionId', 'kind', 'origin', 'outcome', 'status', 'turnId'],
+  approval_decision: ['actionClass', 'at', 'decision', 'kind', 'turnId'],
+  mark_unhandled: ['at', 'clause', 'kind', 'reason', 'turnId'],
+  model_change: ['at', 'from', 'kind', 'source', 'to', 'turnId'],
+  active_tools_change: ['addedIds', 'at', 'kind', 'removedIds', 'toolsetHash', 'turnId'],
+  compaction: ['afterTokens', 'at', 'beforeTokens', 'kind', 'outcome', 'turnId'],
+  aborted: ['at', 'kind', 'source', 'turnId'],
+  turn_complete: ['at', 'kind', 'status', 'turnId'],
+}
+
+function isChatSessionEventKind(value: unknown): value is ChatSessionEventKind {
+  return CHAT_SESSION_EVENT_KINDS.some((kind) => kind === value)
+}
+
+/**
+ * Guard one line off a session file.
+ *
+ * THE VERSION IS AN ARGUMENT, NOT A FIELD ON THE LINE, and that is a decision worth stating
+ * because the obvious alternative looks safer. The file's version is declared ONCE, on the header
+ * line, and the adapter refuses to open a session whose header this build does not read — so a
+ * mixed-version file cannot come into existence by appending. Stamping every line as well would
+ * be a second answer to the same question, free to disagree with the first, and would put a
+ * constant in every line of an append-only file for a hazard the open path already closes.
+ *
+ * The version is nonetheless checked FIRST, before any shape question, for
+ * `job-checkpoint-store.ts:231-237`'s reason: a version mismatch has a remedy an operator can act
+ * on, and reporting it as a missing field sends them to repair a line whose real problem is that
+ * another build wrote it.
+ */
+export function guardChatSessionEvent(
+  value: unknown,
+  declaredVersion: number,
+): ChatSessionEvent {
+  if (declaredVersion !== CURRENT_CHAT_SESSION_SCHEMA_VERSION) {
+    throw new ChatSessionEventSchemaError(
+      `its session declares schemaVersion ${String(declaredVersion)}, and this build reads `
+      + String(CURRENT_CHAT_SESSION_SCHEMA_VERSION),
+    )
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ChatSessionEventSchemaError('it is not an object')
+  }
+  const record = value as Record<string, unknown>
+  if (!isChatSessionEventKind(record.kind)) {
+    throw new ChatSessionEventSchemaError(`${String(record.kind)} is not a session event kind`)
+  }
+  const expected = EVENT_KEYS[record.kind].join(',')
+  const actual = Object.keys(record).sort().join(',')
+  if (actual !== expected) {
+    throw new ChatSessionEventSchemaError(
+      `a ${record.kind} line carries ${JSON.stringify(Object.keys(record).sort())} and this `
+      + `build writes ${JSON.stringify(EVENT_KEYS[record.kind])}`,
+    )
+  }
+  if (typeof record.turnId !== 'string' || record.turnId === '') {
+    throw new ChatSessionEventSchemaError('it names no turn')
+  }
+  if (typeof record.at !== 'string' || record.at === '') {
+    throw new ChatSessionEventSchemaError('it carries no instant')
+  }
+  return record as unknown as ChatSessionEvent
+}
