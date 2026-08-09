@@ -22,7 +22,13 @@ import { describe, expect, it } from 'vitest'
 import { deterministicOverrideStrategy } from '../reconcile.js'
 import { readBackPlan } from '../planner-stage.js'
 import { ANSWER_ONLY_INPUT_SCHEMA } from '../planner-tools.js'
-import type { ChatClause, PlannerStageOutcome, ReconcileInput, ResolvedClause } from '../ports.js'
+import type {
+  ChatClause,
+  PlannerStageOutcome,
+  ReconcileInput,
+  ReconcileVerdict,
+  ResolvedClause,
+} from '../ports.js'
 import {
   ANSWER_ONLY_TOOL_NAME,
   MARK_UNHANDLED_TOOL_NAME,
@@ -590,6 +596,312 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
       // halves would be one edit apart forever.
       expect(ANSWER_ONLY_INPUT_SCHEMA.safeParse({ clause: 'x', text: '' }).success).toBe(false)
       expect(ANSWER_ONLY_INPUT_SCHEMA.safeParse({ clause: 'x', text: 'y' }).success).toBe(true)
+    })
+
+    it('(S1b) requires a NAMED clause in the schema too, the last one-sided field pinned (392-15)', () => {
+      // WR-01. `clause` was left bare `z.string()` in the commit that pinned `text` to `.min(1)`,
+      // so the model was shown a contract admitting `clause: ""` against a reader that has always
+      // refused it — the same one-sided shape three rounds were spent closing, one field over.
+      expect(ANSWER_ONLY_INPUT_SCHEMA.safeParse({ clause: '', text: 'y' }).success).toBe(false)
+    })
+  })
+
+  // 392-15, the THIRD gap round (392-VERIFICATION round 3, CR-01/CR-01b). The two rounds above each
+  // closed exactly the shapes the previous report measured, and the class survived one seam over
+  // each time. THIS BLOCK IS AN ENUMERATION RATHER THAN A LIST OF MEASURED SHAPES: the class is "a
+  // clause leaves this file bound to something other than what was asked for it", a clause's
+  // disposition is exactly one of mapped / answered / needs-a-proposal, and a binding can only go
+  // wrong when the model's ACTION-CALL COUNT disagrees with the needs-a-proposal count while at
+  // least one clause needs one. So the arrangements are enumerated by that count — surplus (AR-1
+  // through AR-4, one row per way a surplus can arise), zero-needy (AR-5), deficit (AR-6) and
+  // equality (AR-7) — and three of the seven were arrangements nobody had ever measured.
+  //
+  // AN ACTION CALL CARRIES NO CLAUSE. That is the whole reason the answer here is a refusal rather
+  // than a repair: with two calls for one needy clause, NO observable distinguishes the arrangement
+  // where the surplus call was about the mapped clause from the one where it was about the needy
+  // one. Attribution is a guess either way, and refusal is the only verdict that is never a guess.
+  // The file's asymmetry survives intact — the model may lose a proposal (AR-5), the person may
+  // never lose a request (AR-6).
+  //
+  // EVERY `planned` IS BUILT THROUGH THE REAL `readBackPlan`, for the reason the 392-14 block above
+  // states: a hand-written outcome literal can pin an input the producer cannot emit.
+  describe('392-15 — arity accounting: an unattributable plan is a NAMED refusal, never a positional guess', () => {
+    const fromCalls = (
+      calls: readonly { readonly toolName: string; readonly input: unknown }[],
+    ): PlannerStageOutcome => readBackPlan(calls)
+
+    /**
+     * The verdict as one comparable shape.
+     *
+     * Asserted this way rather than as `verdict.kind` alone so a failure SHOWS the mis-binding —
+     * which clause was bound to which call, carrying whose arguments — instead of reporting that
+     * one string is not another. The pre-fix RED of these cases is the evidence this round is
+     * scoped from, so the diff has to be the evidence.
+     */
+    const shapeOf = (verdict: ReconcileVerdict): unknown =>
+      verdict.kind === 'unhandled'
+        ? { kind: 'unhandled', clause: verdict.clause.text }
+        : {
+            kind: 'execute',
+            plan: verdict.plan.map((action) => ({
+              clause: action.clause.text,
+              functionId: action.functionId,
+              args: action.args,
+              source: action.source,
+            })),
+            answer: verdict.answer,
+          }
+
+    describe('(AR-1) surplus from a MAPPED clause — the verifier\'s CR-01, verbatim', () => {
+      // The model made a call about "run test 42", which the TABLE had already resolved. That call
+      // is never removed from `proposed` and the mapped clause never advances the cursor, so the
+      // next clause needing a proposal pops it: "summarise the last failure" was executed as
+      // `runs.start` with the model's own patterns, on a turn reported `completed`.
+      const first = clause('run test 42', 0)
+      const second = clause('summarise the last failure', 1)
+      const contested = inputOf(
+        [first, second],
+        [mappedTo(first, RUNS_START, { patterns: ['test 42'] })],
+        fromCalls([
+          { toolName: toToolName(RUNS_START), input: { patterns: ['tests/everything.spec.ts'] } },
+          { toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } },
+        ]),
+      )
+
+      it('(arity) refuses the turn by NAME instead of binding the clause to a call about another', () => {
+        expect(shapeOf(deterministicOverrideStrategy(contested))).toEqual({
+          kind: 'unhandled',
+          clause: 'summarise the last failure',
+        })
+      })
+
+      it('(sentence) states the count disagreement in the words the person reads', () => {
+        // The guard's proof is the sentence, not the comparison existing. A refusal that said only
+        // "I could not do that" would make a mis-binding and a fail-closed turn read identically.
+        const verdict = deterministicOverrideStrategy(contested)
+
+        expect(verdict.kind).toBe('unhandled')
+        if (verdict.kind !== 'unhandled') return
+        expect(verdict.reason).toBe(
+          'The plan proposed 2 actions for 1 clauses that needed one, so no call could be '
+          + 'attributed to "summarise the last failure". The turn was refused before anything ran, '
+          + 'so nothing in the request was carried out.',
+        )
+      })
+    })
+
+    describe('(AR-2) surplus with the MIDDLE clause mapped — CR-01b, two clauses mis-bound', () => {
+      // Worse than AR-1 and for the same reason: the defect is not confined to clauses AFTER the
+      // mapped one. Pre-fix, clause 0 took the model's `runs_start` args and clause 2 was bound to
+      // `runs.digest` — a request to list proposals executing a digest of a run nobody named.
+      const zeroth = clause('run test 42', 0)
+      const first = clause('show me the digest', 1)
+      const secondClause = clause('list proposals', 2)
+      const contested = inputOf(
+        [zeroth, first, secondClause],
+        [mappedTo(first, RUNS_DIGEST, { runId: 'TABLE' })],
+        fromCalls([
+          { toolName: toToolName(RUNS_START), input: { testId: 'MODEL-A' } },
+          { toolName: toToolName(RUNS_DIGEST), input: { runId: 'MODEL-B' } },
+          { toolName: toToolName(PROPOSALS_LIST), input: { from: 'MODEL-C' } },
+        ]),
+      )
+
+      it('(arity) refuses naming the FIRST clause that needed a proposal', () => {
+        expect(shapeOf(deterministicOverrideStrategy(contested))).toEqual({
+          kind: 'unhandled',
+          clause: 'run test 42',
+        })
+      })
+
+      it('(binding) carries none of the model\'s arguments into a verdict', () => {
+        // The count claim and the binding claim fail independently, so they are asserted apart over
+        // the same fixture — the D-12 pair's discipline, applied to the alignment seam.
+        const verdict = deterministicOverrideStrategy(contested)
+
+        expect(JSON.stringify(verdict)).not.toContain('MODEL-A')
+        expect(JSON.stringify(verdict)).not.toContain('MODEL-B')
+        expect(JSON.stringify(verdict)).not.toContain('MODEL-C')
+      })
+    })
+
+    it('(AR-3) refuses a surplus that arises beside an ANSWERED clause', () => {
+      // AN ARRANGEMENT NOBODY MEASURED, and it deliberately FLIPS the round-3 report's E2b probe,
+      // which measured `execute` with one step on the unanswered clause. The flip is the rule, not
+      // an oversight: with two action calls for one clause that needs a proposal, no observable
+      // distinguishes "the first call was about the answered clause" from "the first call was about
+      // this one". E2b was passing because the guess happened to be the charitable one.
+      const first = clause('what is a flake', 0)
+      const second = clause('summarise the last failure', 1)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [first, second],
+          [],
+          fromCalls([
+            {
+              toolName: ANSWER_ONLY_TOOL_NAME,
+              input: { clause: 'what is a flake', text: 'PROSE' },
+            },
+            { toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } },
+            { toolName: toToolName(PROPOSALS_LIST), input: {} },
+          ]),
+        ),
+      )
+
+      expect(shapeOf(verdict)).toEqual({
+        kind: 'unhandled',
+        clause: 'summarise the last failure',
+      })
+    })
+
+    it('(AR-4) refuses a DUPLICATE-call surplus aimed at one clause', () => {
+      // Also unmeasured. Two calls, one clause: pre-fix the first was bound and the second silently
+      // vanished, so a model that changed its mind mid-plan had its first attempt executed.
+      const only = clause('summarise the last failure', 0)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [only],
+          [],
+          fromCalls([
+            { toolName: toToolName(RUNS_DIGEST), input: { runId: 'A' } },
+            { toolName: toToolName(RUNS_DIGEST), input: { runId: 'B' } },
+          ]),
+        ),
+      )
+
+      expect(shapeOf(verdict)).toEqual({
+        kind: 'unhandled',
+        clause: 'summarise the last failure',
+      })
+    })
+
+    it('(AR-5) discards a leftover WHOLE when no clause needs a proposal (probe X3)', () => {
+      // THE ASYMMETRY'S MODEL-FACING HALF, and the reason the accounting is not simply
+      // `proposed.length === 0 || refuse`. With zero needy clauses no call can be popped by
+      // anybody, so a surplus mis-binds nothing and there is no subject to name a refusal about.
+      // The model loses a proposal; nobody loses a request.
+      const first = clause('run test 42', 0)
+      const second = clause('what is a flake', 1)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [first, second],
+          [mappedTo(first, RUNS_START, { patterns: ['test 42'] })],
+          fromCalls([
+            { toolName: ANSWER_ONLY_TOOL_NAME, input: { clause: 'what is a flake', text: 'PROSE' } },
+            { toolName: toToolName(RUNS_DIGEST), input: { runId: 'SPURIOUS' } },
+          ]),
+        ),
+      )
+
+      expect(shapeOf(verdict)).toEqual({
+        kind: 'execute',
+        plan: [
+          {
+            clause: 'run test 42',
+            functionId: RUNS_START,
+            args: { patterns: ['test 42'] },
+            source: 'resolver',
+          },
+        ],
+        answer: 'PROSE',
+      })
+    })
+
+    it('(AR-6) refuses a DEFICIT at the clause the supply exhausts at, sentence unchanged', () => {
+      // The mid-mapped deficit — also unmeasured, and here to pin what the accounting must NOT
+      // change. The person's half of the asymmetry: a request may never be lost, so every deficit
+      // keeps naming the same clause with the same words it has always used.
+      const zeroth = clause('summarise the last failure', 0)
+      const first = clause('run test 42', 1)
+      const secondClause = clause('list proposals', 2)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [zeroth, first, secondClause],
+          [mappedTo(first, RUNS_START, { patterns: ['test 42'] })],
+          fromCalls([{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'X' } }]),
+        ),
+      )
+
+      expect(shapeOf(verdict)).toEqual({ kind: 'unhandled', clause: 'list proposals' })
+      if (verdict.kind !== 'unhandled') return
+      expect(verdict.reason).toBe(
+        'No capability in this build handles: "list proposals". The turn was refused before '
+        + 'anything ran, so nothing in the request was carried out.',
+      )
+    })
+
+    describe('(AR-7) equality beside a mapped clause BINDS (probe X1\'s action half)', () => {
+      const first = clause('run test 42', 0)
+      const second = clause('summarise the last failure', 1)
+      const digestCall = {
+        toolName: toToolName(RUNS_DIGEST),
+        input: { runId: 'RUN-1' },
+      }
+
+      it('binds the table\'s clause from the table and the needy clause from the model', () => {
+        const verdict = deterministicOverrideStrategy(
+          inputOf(
+            [first, second],
+            [mappedTo(first, RUNS_START, { patterns: ['test 42'] })],
+            fromCalls([digestCall]),
+          ),
+        )
+
+        expect(shapeOf(verdict)).toEqual({
+          kind: 'execute',
+          plan: [
+            {
+              clause: 'run test 42',
+              functionId: RUNS_START,
+              args: { patterns: ['test 42'] },
+              source: 'resolver',
+            },
+            {
+              clause: 'summarise the last failure',
+              functionId: RUNS_DIGEST,
+              args: { runId: 'RUN-1' },
+              source: 'planner',
+            },
+          ],
+          answer: undefined,
+        })
+      })
+
+      it('does not let a claim naming the MAPPED clause reduce the count that needs a proposal', () => {
+        // The disposition pass may consume a claim only for a clause the TABLE did not bind, and
+        // this is where that ordering is observable as arithmetic rather than as a plan shape: if
+        // the claim were consumed, the needy count would fall to zero, the equality arm would
+        // become the whole-discard arm, and the clause the model DID plan for would stop running.
+        const verdict = deterministicOverrideStrategy(
+          inputOf(
+            [first, second],
+            [mappedTo(first, RUNS_START, { patterns: ['test 42'] })],
+            fromCalls([
+              digestCall,
+              { toolName: ANSWER_ONLY_TOOL_NAME, input: { clause: 'run test 42', text: 'PROSE' } },
+            ]),
+          ),
+        )
+
+        expect(shapeOf(verdict)).toEqual({
+          kind: 'execute',
+          plan: [
+            {
+              clause: 'run test 42',
+              functionId: RUNS_START,
+              args: { patterns: ['test 42'] },
+              source: 'resolver',
+            },
+            {
+              clause: 'summarise the last failure',
+              functionId: RUNS_DIGEST,
+              args: { runId: 'RUN-1' },
+              source: 'planner',
+            },
+          ],
+          answer: undefined,
+        })
+      })
     })
   })
 

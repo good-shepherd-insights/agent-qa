@@ -82,6 +82,27 @@ describe('buildChatPrompt: one builder, chat blocks (392-EXTENDS)', () => {
     expect(system.toLowerCase()).toContain('utterance order')
   })
 
+  it('numbers the clause list by POSITION, so a hole-punched subset never starts at "2."', () => {
+    // THE SHAPE THE ENGINE ACTUALLY PASSES (392-15, WR-02 / CR-01's reachability half). Stage 2 is
+    // asked only about the clauses stage 1 could not bind, so `clauses` here is a SUBSET carrying
+    // its original indices — and numbering by `clause.index + 1` rendered it with a hole, under an
+    // instruction to make one call per clause. A model planning for the item it was never shown is
+    // the surplus call the reconciler cannot attribute to anything.
+    const { prompt, system } = buildChatPrompt(
+      input({
+        utterance: 'run test 42 and summarise the last failure',
+        clauses: [{ text: 'summarise the last failure', index: 1 }],
+      }),
+    )
+
+    expect(prompt).toContain('1. summarise the last failure')
+    expect(prompt).not.toContain('2. summarise the last failure')
+    // And the instruction counts THAT list rather than the whole request, while keeping the
+    // ordering fragment the discipline case above pins.
+    expect(system ?? '').toContain('per clause of the list below')
+    expect((system ?? '').toLowerCase()).toContain('utterance order')
+  })
+
   it('carries the clauses verbatim, so the model answers about what the splitter produced', () => {
     const { prompt } = buildChatPrompt(input())
     expect(prompt).toContain('run test 42')

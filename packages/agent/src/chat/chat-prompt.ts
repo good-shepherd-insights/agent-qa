@@ -60,7 +60,11 @@ const ROLE_BLOCK: PromptTierBlock = {
 const PLANNING_BLOCK: PromptTierBlock = {
   title: 'How to answer',
   body:
-    'Call one action tool per clause of the request, in utterance order. Order is meaning: later '
+    // "OF THE LIST BELOW", not "of the request". The `Request` block carries the WHOLE utterance
+    // while `Clauses to answer` carries only what stage 1 could not bind, so a count scoped to the
+    // request asks for calls about clauses that are already resolved — and every one of those is a
+    // call reconciliation cannot attribute to anything (392-VERIFICATION round 3).
+    'Call one action tool per clause of the list below, in utterance order. Order is meaning: later '
     + 'clauses routinely depend on earlier ones, so the sequence you emit is the sequence that '
     + 'will be considered.\n'
     + '\n'
@@ -103,8 +107,19 @@ export interface ChatPromptInput {
   readonly conversation?: readonly ModelMessage[]
 }
 
+/**
+ * The clauses stage 2 is asked about, numbered BY LIST POSITION rather than by clause index.
+ *
+ * The engine asks the planner only about the clauses stage 1 could not bind, so this list is a
+ * SUBSET of the utterance's clauses — and numbering it by `clause.index + 1` rendered that subset
+ * with holes: a two-clause request whose first clause the table resolved arrived as a list starting
+ * at "2.", under an instruction to make one call per clause of the request. A model reading that
+ * plans for the item it cannot see, which is the surplus call the reconciler then cannot attribute
+ * (392-VERIFICATION round 3, CR-01's reachability half, WR-02). Contiguous numbering costs nothing
+ * and makes the set the model is asked to count the same set the accounting counts.
+ */
 function renderClauses(clauses: readonly ChatClause[]): string {
-  return clauses.map((clause) => `${clause.index + 1}. ${clause.text}`).join('\n')
+  return clauses.map((clause, position) => `${String(position + 1)}. ${clause.text}`).join('\n')
 }
 
 function renderConversation(messages: readonly ModelMessage[]): string {

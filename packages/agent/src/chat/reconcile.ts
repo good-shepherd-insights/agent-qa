@@ -31,11 +31,13 @@
 // because swapping this function changes nothing else about the assembled system.
 
 import type {
+  ChatClause,
   ClauseAction,
   PlannerToolCall,
   ReconcileInput,
   ReconcileStrategy,
   ReconcileVerdict,
+  ResolvedClause,
 } from './ports.js'
 import {
   ANSWER_ONLY_TOOL_NAME,
@@ -63,6 +65,34 @@ export function modelUnhandledReason(clause: string, reason: string): string {
   return (
     `No capability in this build handles: "${clause}" — ${reason} The turn was refused before `
     + 'anything ran, so nothing in the request was carried out.'
+  )
+}
+
+/**
+ * The refusal sentence a turn carries when the model's plan cannot be attributed to its clauses.
+ *
+ * AN ACTION CALL CARRIES NO CLAUSE. The model emits `runs_start {…}`, not "runs_start, for the
+ * second half of what you asked" — so when it makes more action calls than there are clauses
+ * needing one, NOTHING in the output says which clause each call was about. Binding them by
+ * position is a guess, and the guess is wrong exactly when the model made a call about a clause the
+ * TABLE already resolved (392-VERIFICATION round 3, CR-01): the surplus call shifted every later
+ * binding, so a clause that asked for a digest ran a test with the model's own arguments and its
+ * real intent left no row at all, on a turn the person was told completed.
+ *
+ * So the sentence states the DISAGREEMENT rather than inventing a cause. It names a clause (D-08)
+ * and it says what could not be done with the plan, because "no capability handles this" would be
+ * false here — a capability does handle it, and the reason nothing ran is that nobody can tell
+ * which call was for it.
+ */
+export function unattributablePlanReason(
+  clause: string,
+  proposed: number,
+  needed: number,
+): string {
+  return (
+    `The plan proposed ${String(proposed)} actions for ${String(needed)} clauses that needed one, `
+    + `so no call could be attributed to "${clause}". The turn was refused before anything ran, `
+    + 'so nothing in the request was carried out.'
   )
 }
 
@@ -160,19 +190,33 @@ function actionCalls(input: ReconcileInput): readonly PlannerToolCall[] {
   return input.planned.toolCalls.filter((call) => !isChatMetaToolName(call.toolName))
 }
 
+/** What one clause turned out to be, decided once and read by everything below. */
+type ClauseDisposition =
+  | { readonly kind: 'mapped'; readonly clause: ChatClause; readonly resolved: ResolvedClause }
+  | { readonly kind: 'answered'; readonly clause: ChatClause; readonly text: string }
+  | { readonly kind: 'needs'; readonly clause: ChatClause }
+
 /**
  * The deterministic override: what the table proved beats what anything else proposed.
  *
  * The mapped set is indexed by CLAUSE INDEX rather than by matching text, and that is the D-12
  * mechanism in miniature: the clause's position is its identity, so a planner entry for a clause
  * the table already resolved cannot displace the mapper's binding no matter how the model spelled
- * it — nor can an EXTRA call inflate the plan, because the merge takes its length from the clauses.
+ * it.
  *
- * THE ALIGNMENT RULE FOR EVERYTHING ELSE is the prompt's own contract, read back: one action call
- * per clause, in utterance order. So the model's action calls are consumed in order by the clauses
- * the table could not bind, and a leftover call is discarded rather than executed. Discarding a
- * CALL is not dropping a CLAUSE — every clause is still accounted for below — and the asymmetry is
- * the point: the model may lose a proposal, and the person may never lose a request.
+ * THE COUNTS MUST AGREE BEFORE ANYTHING BINDS. Every clause gets exactly one disposition —
+ * mapped, answered, or needing a proposal — and the number of action calls the model made is
+ * compared against the number of clauses in that third group. That comparison is the ONE place a
+ * count disagreement is decided, and it happens between the passes, before a single binding exists:
+ * a disagreement refuses the turn BY NAME (D-08) rather than shifting the alignment by one, so the
+ * materialize walk below has no refusal arm at all. The count and the set it is compared against
+ * come from the same pass, because a second predicate computing "which clauses need a proposal"
+ * would be free to drift from the one the binder walks.
+ *
+ * WHEN NO CLAUSE NEEDS A PROPOSAL there is no subject a refusal could name, nothing can be
+ * mis-bound, and the calls are discarded whole. That is the asymmetry this file has always had,
+ * now stated as the only case in which it applies: the model may lose a proposal, and the person
+ * may never lose a request.
  */
 export const deterministicOverrideStrategy: ReconcileStrategy = (
   input: ReconcileInput,
@@ -199,11 +243,9 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
   }
 
   const proposed = actionCalls(input)
-  // Consumed by `takeClaimFor` as the walk goes: what is left at the end are the claims that named
-  // nothing the person typed, and they cover nothing.
+  // Consumed by `takeClaimFor` as the disposition pass goes: what is left at the end are the claims
+  // that named nothing the person typed, and they cover nothing.
   const claims = answeredClauseClaims(input)
-  const answers: string[] = []
-  let nextProposal = 0
 
   /** Pop the FIRST unconsumed claim naming this clause text, or nothing. One claim, one clause. */
   const takeClaimFor = (text: string): string | undefined => {
@@ -212,7 +254,10 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
     return claims.splice(index, 1)[0]?.text
   }
 
-  // THE ORDER OF THE FOUR QUESTIONS IS THE MECHANISM: mapped → answered → proposal → refuse.
+  // ---- PASS 1: DISPOSITION. Every clause becomes exactly one of three things, and no proposal is
+  // spent and no refusal is issued here.
+  //
+  // THE ORDER OF THE THREE QUESTIONS IS THE MECHANISM: mapped → answered → needs a proposal.
   //
   // The coverage question used to sit BELOW the proposal consumption, and that one statement's
   // position produced two opposite user-visible defects from the same input shape (392-VERIFICATION
@@ -221,15 +266,18 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
   // ANSWERED clause, so with two action calls a tool ran against a clause the model had marked
   // answer-only and every receipt named the wrong clause; and with one action call the second
   // clause found no proposal left and the WHOLE TURN was refused by name, naming the clause the
-  // model had actually bound. Asking coverage first costs nothing and removes both: a clause the
-  // model answered never reaches for a proposal, so proposals align with the clauses that need one.
-  const plan: ClauseAction[] = []
+  // model had actually bound. Asking coverage first costs nothing and removes both.
+  //
+  // MAPPED STILL TAKES PRECEDENCE OVER A CLAIM, so a claim naming a clause the table bound is not
+  // consumed and does not reduce the count below. A claim that could shrink the needy set for a
+  // clause it was never going to answer would let the model turn an equality into a whole-discard
+  // and silently unbook the clause it did plan for.
+  const dispositions: ClauseDisposition[] = []
+  const needy: ChatClause[] = []
   for (const clause of input.clauses) {
     const resolved = mappedByIndex.get(clause.index)
     if (resolved !== undefined) {
-      // The override, in one line: the table's binding, tagged with the stage that proved it so the
-      // engine mints a human caller for it. Nothing the model proposed is consulted for this clause.
-      plan.push({ ...resolved, source: 'resolver' })
+      dispositions.push({ kind: 'mapped', clause, resolved })
       continue
     }
     // An unresolved clause is answered by prose or it is not answered at all — and "answered" is a
@@ -239,34 +287,82 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
     // delete the knowledge root", answered once, completed with the second clause erased.
     const answered = takeClaimFor(clause.text)
     if (answered !== undefined) {
-      answers.push(answered)
+      dispositions.push({ kind: 'answered', clause, text: answered })
       continue
     }
-    const proposal = proposed[nextProposal]
-    if (proposal !== undefined) {
-      nextProposal += 1
-      plan.push({
-        clause,
-        // The id the function layer answers to. An id nothing registered is NOT checked here —
-        // `invokeFunction` raises `UnknownFunctionError` naming it, from the one place that knows
-        // what is registered, and a check here would be a second catalogue free to disagree.
-        functionId: fromToolName(proposal.toolName),
-        // Carried across UNVALIDATED and unshaped. What validates a tool call's arguments is the
-        // op's own live schema inside `invokeFunction`; a shape enforced here would be a second
-        // validator standing in front of the real one.
-        args: proposal.input,
-        source: 'planner',
-      })
-      continue
-    }
-    if (input.planned.failure !== undefined) {
-      return { kind: 'unhandled', clause, reason: plannerFailedReason(clause.text, input.planned.failure) }
-    }
-    return { kind: 'unhandled', clause, reason: unhandledReason(clause.text) }
+    dispositions.push({ kind: 'needs', clause })
+    needy.push(clause)
   }
+
+  // ---- THE ACCOUNTING: the ONE site where a count disagreement is decided, between the passes and
+  // before any binding exists. Both numbers come from the same pass above (D-10, CR-01).
+  //
+  // DEFICIT — fewer calls than clauses needing one. Byte-for-byte what it always did: it names the
+  // clause the supply exhausts at, with the sentence the posture chooses (an unreachable planner
+  // says so; anything else says no capability handles it). A person may never lose a request.
+  const exhaustedAt = proposed.length < needy.length ? needy[proposed.length] : undefined
+  if (exhaustedAt !== undefined) {
+    return input.planned.failure !== undefined
+      ? {
+          kind: 'unhandled',
+          clause: exhaustedAt,
+          reason: plannerFailedReason(exhaustedAt.text, input.planned.failure),
+        }
+      : { kind: 'unhandled', clause: exhaustedAt, reason: unhandledReason(exhaustedAt.text) }
+  }
+  // SURPLUS — more calls than clauses needing one, with at least one clause needing one. `needy[0]`
+  // is undefined exactly when nothing needs a proposal, which is the whole-discard case: no call
+  // can be popped by anybody, so nothing is mis-bound and there is no subject to refuse about.
+  const unattributable = proposed.length > needy.length ? needy[0] : undefined
+  if (unattributable !== undefined) {
+    return {
+      kind: 'unhandled',
+      clause: unattributable,
+      reason: unattributablePlanReason(unattributable.text, proposed.length, needy.length),
+    }
+  }
+
+  // ---- PASS 2: MATERIALIZE. The counts agree by construction now — either they were equal or
+  // nothing needs a proposal — so this contains NO refusal arm and cannot.
+  //
+  // The pairing is by position and it is spelled once: the i-th proposal belongs to the i-th clause
+  // that needs one. A proposal past the end of `needy` has no clause to belong to and is discarded
+  // here, which is the only place in this file a call is ever dropped.
+  const plannerBound = new Map<number, ClauseAction>()
+  proposed.forEach((proposal, position) => {
+    const clause = needy[position]
+    if (clause === undefined) return
+    plannerBound.set(clause.index, {
+      clause,
+      // The id the function layer answers to. An id nothing registered is NOT checked here —
+      // `invokeFunction` raises `UnknownFunctionError` naming it, from the one place that knows
+      // what is registered, and a check here would be a second catalogue free to disagree.
+      functionId: fromToolName(proposal.toolName),
+      // Carried across UNVALIDATED and unshaped. What validates a tool call's arguments is the
+      // op's own live schema inside `invokeFunction`; a shape enforced here would be a second
+      // validator standing in front of the real one.
+      args: proposal.input,
+      source: 'planner',
+    })
+  })
+
+  const plan: ClauseAction[] = dispositions.flatMap((disposition) =>
+    disposition.kind === 'mapped'
+      // The override, in one line: the table's binding, tagged with the stage that proved it so the
+      // engine mints a human caller for it. Nothing the model proposed is consulted for this clause.
+      ? [{ ...disposition.resolved, source: 'resolver' as const }]
+      : disposition.kind === 'needs'
+        ? (plannerBound.get(disposition.clause.index) ?? [])
+        // An answered clause contributes prose rather than an action; it is accounted for below.
+        : [],
+  )
+  const answers: string[] = dispositions.flatMap((disposition) =>
+    disposition.kind === 'answered' ? [disposition.text] : [],
+  )
   // Utterance order, preserved (D-11): order is meaning, and later clauses routinely depend on
-  // earlier ones. The loop above walks `clauses`, not either resolution set, precisely so a
-  // planner that answered out of order cannot reorder what runs.
+  // earlier ones. Both walks above go over `dispositions`, which pass 1 built by walking `clauses`
+  // rather than either resolution set, precisely so a planner that answered out of order cannot
+  // reorder what runs.
   //
   // THE PROSE IS THE CONSUMED CLAIMS', AND ONLY THEIRS. It used to be `input.planned.answer` — the
   // FIRST `answer_only` call's text, projected by `readBackPlan` — while the prompt and the tool

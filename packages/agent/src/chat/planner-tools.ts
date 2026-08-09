@@ -57,8 +57,13 @@ export interface PlannerToolSource {
  * an unroutable action erased with no receipt and no refusal (392-VERIFICATION CR-03).
  */
 export const ANSWER_ONLY_INPUT_SCHEMA = z.object({
+  // NON-EMPTY for the same reason `text` is, one field over (392-15, WR-01). `reconcile.ts` has
+  // rejected `clause: ""` since the field was required — a claim that names nothing covers nothing
+  // — while the contract the model was SHOWN still admitted it. The two halves of one field cannot
+  // be allowed to disagree in the direction that lets the model emit a call the reader will refuse.
   clause: z
     .string()
+    .min(1)
     .describe(
       'The part of the request, quoted verbatim from the clauses you were given, that this '
       + 'answer is about.',
