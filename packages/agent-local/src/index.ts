@@ -228,6 +228,10 @@ export type {
 // calls the seam, and this file does not carry it.
 export {
   CHAT_SESSIONS_SUBDIR,
+  // 392-12: published beside its siblings because a caller that must WAIT for the holder of a
+  // session has to be able to name what it is waiting on — a refusal only recognisable by its
+  // message is one every surface re-parses differently.
+  ChatSessionBusyError,
   ChatSessionHeaderError,
   InvalidChatSessionIdError,
   UnknownChatSessionError,

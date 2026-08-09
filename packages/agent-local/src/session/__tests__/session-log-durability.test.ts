@@ -29,6 +29,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vites
 import {
   CHAT_SESSIONS_SUBDIR,
   CHAT_SESSION_READ_CHUNK_BYTES,
+  ChatSessionBusyError,
   ChatSessionHeaderError,
   REAL_CHAT_SESSION_FS,
   UnknownChatSessionError,
@@ -49,6 +50,25 @@ function options(root: string, now: string = NOW): CreateJsonlSessionLogOptions 
   return {
     root,
     now: () => now,
+    model: () => 'unbound',
+    toolsetHash: () => 'toolset-0001',
+    random: () => 0.5,
+  }
+}
+
+/**
+ * The same options with a clock that MOVES, so two `open()` calls mint two ids (392-12).
+ *
+ * The pinned clock above is what makes the single-session assertions exact, and it is also why a
+ * concurrency case cannot use it: both mints would produce one id and the second exclusive-create
+ * would collide. One tick apart is the smallest change that makes two sessions expressible, and it
+ * leaves every other pinned input alone.
+ */
+function concurrentOptions(root: string): CreateJsonlSessionLogOptions {
+  let tick = 0
+  return {
+    root,
+    now: () => (tick++ === 0 ? NOW : LATER),
     model: () => 'unbound',
     toolsetHash: () => 'toolset-0001',
     random: () => 0.5,
@@ -172,6 +192,78 @@ function describeSequence(calls: readonly RecordedCall[], root: string, sessionI
 }
 
 /**
+ * The same sequence, labelled across SEVERAL sessions (392-12, CR-01).
+ *
+ * `file:A` / `file:B` rather than one `file`, so a syscall's session is derived from the path it
+ * was made on — the adapter cannot name its own calls into the right shape any more here than it
+ * can above. Filtering this list by label is the per-session projection of the ordered assertions:
+ * each session's write→write→fsync boundary has to hold on its OWN file, independently, while the
+ * other session is open.
+ */
+function describeSequenceAcross(
+  calls: readonly RecordedCall[],
+  root: string,
+  sessionIds: readonly string[],
+): string[] {
+  const dir = join(root, CHAT_SESSIONS_SUBDIR)
+  const files = new Map(
+    sessionIds.map((sessionId, index) => [
+      join(dir, `${sessionId}.jsonl`),
+      `file:${String.fromCharCode(65 + index)}`,
+    ]),
+  )
+  const fdPath = new Map<number, string>()
+
+  function label(value: unknown): string {
+    const path = String(value)
+    return files.get(path) ?? (path === dir ? 'dir' : path)
+  }
+
+  function labelFd(fd: unknown): string {
+    const path = fdPath.get(Number(fd))
+    return path === undefined ? `fd:${String(fd)}` : label(path)
+  }
+
+  return calls.map((entry) => {
+    switch (entry.call) {
+      case 'mkdirSync':
+        return `mkdir ${label(entry.args[0])}`
+      case 'openSync': {
+        fdPath.set(Number(entry.result), String(entry.args[0]))
+        return `open ${label(entry.args[0])} ${String(entry.args[1])}`
+      }
+      case 'writeFileSync':
+        return `write ${labelFd(entry.args[0])}`
+      case 'fsyncSync':
+        return `fsync ${labelFd(entry.args[0])}`
+      case 'closeSync':
+        return `close ${labelFd(entry.args[0])}`
+      default:
+        return `other:${entry.call}`
+    }
+  })
+}
+
+/**
+ * One session's whole life, as seen on its OWN file: create, land the header, reopen to append,
+ * two event writes, one boundary fsync. It is `EXPECTED_NEW_SESSION_TURN` with the directory
+ * entries taken out, which is the point — a second session open at the same time changes nothing
+ * about this one's syscalls, and the re-keying added none.
+ */
+function expectedPerSessionTurn(label: string): string[] {
+  return [
+    `open ${label} wx`,
+    `write ${label}`,
+    `fsync ${label}`,
+    `close ${label}`,
+    `open ${label} a`,
+    `write ${label}`,
+    `write ${label}`,
+    `fsync ${label}`,
+  ]
+}
+
+/**
  * The whole life of a new session carrying ONE two-event turn.
  *
  * Read it top to bottom as the durability argument: the header is on the device before the file is
@@ -278,6 +370,78 @@ describe('the session log appends as it goes and fsyncs at the turn boundary', (
     expect(sequence).toContain('open file a')
     expect(reopened.header.createdAt).toBe(NOW)
     expect(reopened.events).toHaveLength(2)
+  })
+
+  // ------------------------------------------------------------------------------------------
+  // TWO SESSIONS AT ONCE, ON ONE ADAPTER (392-12, CR-01).
+  //
+  // This is the case the whole suite could not previously express: while the adapter owned one
+  // mutable descriptor, a second `open()` repointed it, so the interleaved appends below would all
+  // have landed on the file that opened last and one session would have been left without its
+  // closing event. The assertions are the single-session ones PER SESSION — the same ordered lists,
+  // asked of each file independently — which is what makes "the re-keying added no syscalls" a
+  // measurement rather than a claim.
+  // ------------------------------------------------------------------------------------------
+  it('interleaves two sessions without a byte crossing, each on its own descriptor', async () => {
+    const log = createJsonlSessionLog(concurrentOptions(root))
+
+    const a = await log.open()
+    const b = await log.open()
+    expect(a.header.sessionId).not.toBe(b.header.sessionId)
+
+    // Deliberately alternating, so a shared descriptor would split both turns across both files.
+    await a.append(userMessage('turn-a', 'proposals'))
+    await b.append(userMessage('turn-b', 'status'))
+    await a.append(turnComplete('turn-a'))
+    await b.append(turnComplete('turn-b'))
+    await a.turnBoundary()
+    await b.turnBoundary()
+    await a.close()
+    await b.close()
+
+    for (const [sessionId, turnId, text] of [
+      [a.header.sessionId, 'turn-a', 'proposals'],
+      [b.header.sessionId, 'turn-b', 'status'],
+    ] as const) {
+      const file = join(root, CHAT_SESSIONS_SUBDIR, `${sessionId}.jsonl`)
+      const lines = readFileSync(file, 'utf8').split('\n').filter((line) => line !== '')
+      expect(lines.slice(1).map((line) => JSON.parse(line) as ChatSessionEvent)).toEqual([
+        userMessage(turnId, text),
+        turnComplete(turnId),
+      ])
+    }
+  })
+
+  it('gives each concurrent session its own write -> write -> fsync boundary, in order', async () => {
+    const { fs, calls } = createRecordingFs()
+    const log = createJsonlSessionLogOn(fs, concurrentOptions(root))
+
+    const a = await log.open()
+    const b = await log.open()
+    await a.append(userMessage('turn-a', 'proposals'))
+    await b.append(userMessage('turn-b', 'status'))
+    await a.append(turnComplete('turn-a'))
+    await b.append(turnComplete('turn-b'))
+    await a.turnBoundary()
+    await b.turnBoundary()
+
+    const sequence = describeSequenceAcross(calls, root, [
+      a.header.sessionId,
+      b.header.sessionId,
+    ])
+    expect(sequence.filter((entry) => entry.includes('file:A'))).toEqual(
+      expectedPerSessionTurn('file:A'),
+    )
+    expect(sequence.filter((entry) => entry.includes('file:B'))).toEqual(
+      expectedPerSessionTurn('file:B'),
+    )
+    // Two per session and no more: the header's own, and the turn boundary's. A third would be an
+    // event-level sync; a shared one would be one session paying for the other's durability.
+    expect(sequence.filter((entry) => entry === 'fsync file:A')).toHaveLength(2)
+    expect(sequence.filter((entry) => entry === 'fsync file:B')).toHaveLength(2)
+
+    await a.close()
+    await b.close()
   })
 
   it('fsyncs the sessions directory after creating the file, so the entry itself is durable', async () => {
@@ -507,6 +671,12 @@ const FACTORIES: readonly [string, (root: string) => SessionLogPort][] = [
   ['memory (twin)', () => createMemorySessionLog(options('/unused'))],
 ]
 
+/** The same two implementations over a moving clock, so two sessions can exist at once. */
+const CONCURRENT_FACTORIES: readonly [string, (root: string) => SessionLogPort][] = [
+  ['jsonl (disk)', (root) => createJsonlSessionLog(concurrentOptions(root))],
+  ['memory (twin)', () => createMemorySessionLog(concurrentOptions('/unused'))],
+]
+
 async function refusalOf(body: () => Promise<unknown>): Promise<unknown> {
   try {
     await body()
@@ -571,6 +741,62 @@ describe.each(FACTORIES)('SessionLogPort contract: %s', (_name, factory) => {
 
     const reopened = await log.open(opened.header.sessionId)
     expect(reopened.events).toEqual([userMessage('t1', 'proposals'), turnComplete('t1')])
+  })
+})
+
+// BOTH ADAPTERS, OR NEITHER (the sibling-input corpus law, 390's one-sided-hardening lesson). The
+// concurrency contract is stated once on the port, so it is asserted once here and answered twice:
+// a twin that kept a single-session shape would let every hermetic test in this repo pass against
+// a contract production no longer signs.
+describe.each(CONCURRENT_FACTORIES)('the concurrency contract: %s', (_name, factory) => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-session-concurrent-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('serves two sessions at once, each append landing in the session it was made through', async () => {
+    const log = factory(root)
+    const a = await log.open()
+    const b = await log.open()
+    expect(a.header.sessionId).not.toBe(b.header.sessionId)
+
+    await a.append(userMessage('turn-a', 'proposals'))
+    await b.append(userMessage('turn-b', 'status'))
+    await a.append(turnComplete('turn-a'))
+    await b.append(turnComplete('turn-b'))
+    await a.turnBoundary()
+    await b.turnBoundary()
+    await a.close()
+    await b.close()
+
+    // Read back through the port itself, which is what a resumed conversation actually sees.
+    const reopenedA = await log.open(a.header.sessionId)
+    const reopenedB = await log.open(b.header.sessionId)
+    expect(reopenedA.events).toEqual([userMessage('turn-a', 'proposals'), turnComplete('turn-a')])
+    expect(reopenedB.events).toEqual([userMessage('turn-b', 'status'), turnComplete('turn-b')])
+    await reopenedA.close()
+    await reopenedB.close()
+  })
+
+  it('refuses a SECOND live handle on one session by name, and admits one after the first closes', async () => {
+    const log = factory(root)
+    const opened = await log.open()
+
+    const busy = await refusalOf(() => log.open(opened.header.sessionId))
+    expect(busy).toBeInstanceOf(ChatSessionBusyError)
+    // The id is ON the error rather than only in its text: the caller's remedy is to wait for the
+    // holder of THAT session, which it has to be able to name.
+    expect((busy as ChatSessionBusyError).sessionId).toBe(opened.header.sessionId)
+
+    await opened.close()
+    const reopened = await log.open(opened.header.sessionId)
+    expect(reopened.header.sessionId).toBe(opened.header.sessionId)
+    await reopened.close()
   })
 })
 
