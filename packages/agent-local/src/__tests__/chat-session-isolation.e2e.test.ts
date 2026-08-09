@@ -29,8 +29,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { AGENT_ASK_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
-import type { JobModelCapability } from '@vostride/agent-qa-agent'
+import {
+  AGENT_ASK_FUNCTION_ID,
+  PROPOSALS_LIST_FUNCTION_ID,
+  invokeFunction,
+} from '@vostride/agent-qa-agent'
+import type { ChatLanguageModel, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -218,12 +222,12 @@ describe('two sessions, overlapping turns, two intact files (CHAT-05 / CR-01)', 
     const [secondA, secondB] = overlapped
 
     // A third turn each, sequential — the moment the repair would fire if either session had been
-    // left dangling by the overlap. The conversation is read straight after its own turn, because
-    // the live state container is per-composition (CR-02, plan 13's) and names one conversation.
+    // left dangling by the overlap. Each conversation is read through ITS OWN session (plan 13's
+    // per-session state), so the two reads can no longer be one container answering twice.
     const thirdA = await ask(host, UTTERANCE_A, firstA.sessionId)
-    const conversationA = JSON.stringify(host.chat.state.read().conversation)
     const thirdB = await ask(host, UTTERANCE_B, firstB.sessionId)
-    const conversationB = JSON.stringify(host.chat.state.read().conversation)
+    const conversationA = JSON.stringify(host.chat.stateFor(firstA.sessionId)?.conversation ?? [])
+    const conversationB = JSON.stringify(host.chat.stateFor(firstB.sessionId)?.conversation ?? [])
 
     expect(thirdA.status).toBe('completed')
     expect(thirdB.status).toBe('completed')
@@ -246,5 +250,254 @@ describe('two sessions, overlapping turns, two intact files (CHAT-05 / CR-01)', 
     }
     expect(conversationA).toContain(UTTERANCE_A)
     expect(conversationB).toContain(UTTERANCE_B)
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// THE STATE HALF OF THE SAME DEFECT (Phase 392 plan 13, CR-02 / W-03).
+//
+// Plan 12 keyed the LOG by session. What stayed keyed by COMPOSITION is everything the engine
+// publishes beside it: `chat-state.ts`'s `activeTurnId` / `conversation` / `activeModel` are one
+// closure per host, and `chatPins` is one holder per host with its deny predicate bound
+// unconditionally into the registry. Two facts follow, and both are measured below rather than
+// argued: a `/pin` typed in one conversation denies that action class for EVERY later caller until
+// the process restarts (W-03), and an interleaved turn puts one session's conversation into
+// another session's outbound provider request (CR-02).
+//
+// BOTH CASES ARE WRITTEN AGAINST PUBLIC SEAMS ONLY — `composeLocalAgent`'s `chatModel` option,
+// `invokeFunction`, and the recorded provider call — so each file is byte-identical either side of
+// the fix and its failure is a true differential rather than a restatement of it.
+// ---------------------------------------------------------------------------------------
+
+/** The class a person pins, in the NORMALISED spelling the holder records and the gate compares. */
+const PINNED_CLASS = `fn:${PROPOSALS_LIST_FUNCTION_ID}`
+
+describe('a pin belongs to the conversation that typed it (W-03)', () => {
+  let root: string
+  let agentQaRoot: string
+  const hosts: LocalAgentHost[] = []
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'chat-pin-session-'))
+    agentQaRoot = join(root, '.agent-qa')
+    mkdirSync(agentQaRoot, { recursive: true })
+  })
+
+  afterEach(() => {
+    for (const composed of hosts.splice(0)) void composed.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function compose(): LocalAgentHost {
+    const composed = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
+      agentQaRoot,
+      config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
+      knowledgeRoot: () => join(root, 'agent-qa-knowledge'),
+      model: () => JOB_MODEL,
+    })
+    hosts.push(composed)
+    return composed
+  }
+
+  function ask(host: LocalAgentHost, message: string, sessionId?: string): Promise<AgentAskResult> {
+    return invokeFunction(
+      host.registry,
+      AGENT_ASK_FUNCTION_ID,
+      sessionId === undefined ? { message } : { message, sessionId },
+      HUMAN,
+    ) as Promise<AgentAskResult>
+  }
+
+  /**
+   * NO OVERLAP IS NEEDED, and that is the sharpest thing about this case: the leak is not a race.
+   * The pin holder is one object for the whole composition, so a pin typed in session A is in force
+   * for session B on a turn that starts minutes later — and, on a daemon, for every conversation
+   * that host ever serves again. `proposals` is the canon alias whose op answers honestly in a bare
+   * temp project (392-07's adjudication), and it is the same class `pin-composed-differential`
+   * proves the single-session direction on, so this case extends that proof rather than starting a
+   * second one.
+   */
+  it('denies the session that pinned it and NOT a second session on the same host', async () => {
+    const host = compose()
+    const a = await ask(host, 'proposals')
+    const b = await ask(host, 'proposals')
+    expect(a.sessionId).not.toBe(b.sessionId)
+    // Both sessions could run the op before the pin, so a refusal below is the pin and nothing else.
+    expect(a.receipts[0]?.status).toBe('executed')
+    expect(b.receipts[0]?.status).toBe('executed')
+
+    const pinned = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`, a.sessionId)
+    expect(pinned.answer ?? '').toContain(PINNED_CLASS)
+
+    // The companion direction, asserted FIRST so a fix that simply stopped pinning anything cannot
+    // pass this case: the pin still bites the conversation that typed it.
+    const afterA = await ask(host, 'proposals', a.sessionId)
+    expect(afterA.receipts[0]?.status).toBe('failed')
+    expect(afterA.receipts[0]?.outcome).toContain('FunctionDenied')
+
+    // The claim. Session B never pinned anything, and nothing it asks for should be refused because
+    // somebody else's conversation did.
+    const afterB = await ask(host, 'proposals', b.sessionId)
+    expect(afterB.receipts.map((receipt) => receipt.status)).toEqual(['executed'])
+  })
+
+  it('does not deny a caller carrying no session at all', async () => {
+    // Every non-chat invocation in the system — a typed CLI verb, an MCP call, a background job —
+    // reaches the same registry through the same gate with a caller that names no chat session. A
+    // chat pin that could refuse those would be a conversation reconfiguring the host.
+    const host = compose()
+    const opened = await ask(host, 'proposals')
+    await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`, opened.sessionId)
+
+    await expect(
+      invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, HUMAN),
+    ).resolves.toBeDefined()
+  })
+})
+
+/** What one provider call was handed, flattened — the outbound request as the SDK delivered it. */
+interface RecordedCall {
+  readonly body: string
+}
+
+interface RecordingModel {
+  readonly model: ChatLanguageModel
+  readonly calls: readonly RecordedCall[]
+  /** Hold the next `n` calls at the provider boundary until all `n` have arrived. */
+  armRendezvous(n: number): void
+}
+
+/**
+ * A model that RECORDS what it was asked and answers nothing (the tripwire idiom, inverted).
+ *
+ * The tripwire elsewhere in this package proves a model was never reached; this one proves WHAT
+ * reached it. It returns no tool calls, so every turn it plans ends `fail_closed` through the
+ * ordinary reconciliation path — which is irrelevant to the claim, because the claim is about the
+ * request that crossed the boundary and not about what came back.
+ *
+ * The rendezvous is the test's own barrier and uses no timer: two calls arriving is the release
+ * condition, so "the two turns were genuinely in flight together at plan time" is asserted by
+ * construction rather than hoped for.
+ */
+function recordingModel(): RecordingModel {
+  const calls: RecordedCall[] = []
+  let gate: { pending: number; release: () => void; wait: Promise<void> } | undefined
+
+  const model = {
+    specificationVersion: 'v3',
+    provider: 'fixture',
+    modelId: 'fixture:recording-model',
+    supportedUrls: {},
+    async doGenerate(options: unknown): Promise<unknown> {
+      calls.push({ body: JSON.stringify(options) })
+      if (gate !== undefined) {
+        gate.pending -= 1
+        if (gate.pending === 0) gate.release()
+        await gate.wait
+      }
+      return {
+        content: [],
+        finishReason: { unified: 'stop', raw: 'stop' },
+        usage: {
+          inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 0, text: 0, reasoning: 0 },
+        },
+        warnings: [],
+      }
+    },
+    doStream(): never {
+      throw new Error('the planner stage never streams')
+    },
+  } as unknown as ChatLanguageModel
+
+  return {
+    model,
+    calls,
+    armRendezvous(n: number): void {
+      let release!: () => void
+      const wait = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      gate = { pending: n, release, wait }
+    },
+  }
+}
+
+describe('the planner reads the conversation of the session it is planning FOR (CR-02)', () => {
+  let root: string
+  let agentQaRoot: string
+  const hosts: LocalAgentHost[] = []
+
+  /** Distinctive enough that no tool description, op id or prompt tier can supply them. */
+  const MARKER_A = 'zqmarkeralphaseven'
+  const MARKER_B = 'zqmarkerbetathree'
+  const QUESTION_A = 'zqaskalpha'
+  const QUESTION_B = 'zqaskbeta'
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'chat-conversation-bleed-'))
+    agentQaRoot = join(root, '.agent-qa')
+    mkdirSync(agentQaRoot, { recursive: true })
+  })
+
+  afterEach(() => {
+    for (const composed of hosts.splice(0)) void composed.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  function compose(chatModel: ChatLanguageModel): LocalAgentHost {
+    const composed = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
+      agentQaRoot,
+      config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
+      knowledgeRoot: () => join(root, 'agent-qa-knowledge'),
+      model: () => JOB_MODEL,
+      chatModel,
+    })
+    hosts.push(composed)
+    return composed
+  }
+
+  function ask(host: LocalAgentHost, message: string, sessionId?: string): Promise<AgentAskResult> {
+    return invokeFunction(
+      host.registry,
+      AGENT_ASK_FUNCTION_ID,
+      sessionId === undefined ? { message } : { message, sessionId },
+      HUMAN,
+    ) as Promise<AgentAskResult>
+  }
+
+  it('never puts one session history into another session outbound request', async () => {
+    const recorder = recordingModel()
+    const host = compose(recorder.model)
+
+    // Two histories, seeded SEQUENTIALLY so the state the measurement starts from is two conversations
+    // that differ by exactly one word. The marker rides the user message, which `replaySession`
+    // replays verbatim and `buildChatPrompt` renders in its "Conversation so far" block.
+    const a = await ask(host, MARKER_A)
+    const b = await ask(host, MARKER_B)
+    expect(a.sessionId).not.toBe(b.sessionId)
+
+    // The overlap, on this file's own idiom: both promises exist before either is awaited, so the
+    // two turns' await points interleave exactly as the daemon's concurrent `handleInvoke` delivers
+    // them. The rendezvous holds both at the provider boundary until both have arrived, so the
+    // overlap is a fact of the run rather than of its timing.
+    recorder.armRendezvous(2)
+    const pendingA = ask(host, QUESTION_A, a.sessionId)
+    const pendingB = ask(host, QUESTION_B, b.sessionId)
+    await Promise.all([pendingA, pendingB])
+
+    const overlappedA = recorder.calls.find((call) => call.body.includes(QUESTION_A))
+    const overlappedB = recorder.calls.find((call) => call.body.includes(QUESTION_B))
+    expect(overlappedA).toBeDefined()
+    expect(overlappedB).toBeDefined()
+
+    // THE CLAIM, both directions. A request that carries the other session's history has published
+    // one person's conversation to a provider under another person's turn.
+    expect(overlappedA?.body.includes(MARKER_B)).toBe(false)
+    expect(overlappedA?.body.includes(MARKER_A)).toBe(true)
+    expect(overlappedB?.body.includes(MARKER_A)).toBe(false)
+    expect(overlappedB?.body.includes(MARKER_B)).toBe(true)
   })
 })

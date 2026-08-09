@@ -365,7 +365,13 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
 
           // `/quit` is read off the live state the engine mutates, never matched here — one
           // vocabulary for what a person can type, consulted where it routes.
-          if (chat.state.read().closing) break
+          //
+          // READ THROUGH THIS LOOP'S OWN SESSION (392 plan 13). The state is one container per
+          // conversation now, so a surface asks about the conversation it is running: this REPL
+          // holds exactly one, learned from `--session`/`--continue` up front or from the first
+          // turn's result. `undefined` is the honest answer before a turn has opened anything, and
+          // a session that has opened nothing has not asked to close.
+          if (activeSessionId !== undefined && chat.stateFor(activeSessionId)?.closing === true) break
           if (!promptClosed) prompt.prompt()
         }
         prompt.close()

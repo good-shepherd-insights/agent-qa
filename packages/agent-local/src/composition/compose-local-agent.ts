@@ -43,6 +43,7 @@ import type {
   ChatLanguageModel,
   ChatPinOverlayHolder,
   ChatStateContainer,
+  ChatStateSnapshot,
   ChatTokenAccounting,
   CompactionHook,
   PlannerStagePort,
@@ -1166,7 +1167,20 @@ export interface ChatConfirmBindings {
  * goes through `agent.ask` like every other capability (D-24).
  */
 export interface LocalAgentChatSession {
-  readonly state: ChatStateContainer
+  /**
+   * The live state of ONE conversation, or `undefined` for a session this host has not opened
+   * (392 plan 13, CR-02).
+   *
+   * A LOOKUP RATHER THAN A CONTAINER, because the facts inside it — the turn in flight, the
+   * conversation, the model in force, what `/pin` denies, whether `/quit` was typed — are facts
+   * about a session and never about a host. A composition serving two conversations that handed
+   * out one container was answering both of them with whichever turn wrote last, which is what
+   * let a planner read the wrong history (CR-02) and a pin outlive its session (W-03).
+   *
+   * `undefined` is the honest answer for an id nobody here is holding, and reading NEVER creates
+   * a scope: a surface asking about a session cannot bring one into being by asking.
+   */
+  stateFor(sessionId: string): ChatStateSnapshot | undefined
   /**
    * Write the explicit `aborted` event for the turn in flight, and fsync (D-19's graceful arm).
    *
@@ -1596,27 +1610,70 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   // `model_change` event rather than a header rewrite (D-04; the log is append-only).
   const composedChatModelName = input.chatModel === undefined ? 'unbound' : input.chatModel.modelId
 
-  // 392 plan 08 (RESEARCH Open Q2): the live turn state, created here because the engine mutates it
-  // and the surface reads it, and neither of them owns the session. See `chat-state.ts` for the
-  // ratified decision that this is a plain container rather than the SDK's `AbstractChat`.
-  const chatState: ChatStateContainer = createChatState({ activeModel: composedChatModelName })
+  // 392 plan 08/13 (RESEARCH Open Q2, CR-02 / W-03): the live turn state and the pin set, KEYED BY
+  // SESSION.
+  //
+  // Both used to be one object per composition, and the verifier's finding is what that costs on a
+  // host serving more than one conversation: `activeTurnId` / `conversation` / `activeModel` are
+  // facts about ONE session, so a single container published whichever turn wrote last — and the
+  // planner, which reads the conversation at plan time across an `await`, could therefore put one
+  // person's history into another person's outbound provider request. The pin holder is the same
+  // shape with a sharper edge: a `/pin` typed in one conversation denied that action class for
+  // every later caller until the process restarted, while `pin-overlay.ts`'s own header said the
+  // pin dies with the session. It now does.
+  //
+  // CREATED ON FIRST RESOLUTION and held for the composition's life. That is bounded by the number
+  // of sessions this host serves and reaped with the composition, which is the same lifetime the
+  // single container had; what changed is that it is one per conversation instead of one per host.
+  interface ChatSessionScope {
+    readonly state: ChatStateContainer
+    readonly pins: ChatPinOverlayHolder
+  }
+  const chatScopes = new Map<string, ChatSessionScope>()
+  const chatScopeFor = (sessionId: string): ChatSessionScope => {
+    const existing = chatScopes.get(sessionId)
+    if (existing !== undefined) return existing
+    if (composedRegistry === undefined) {
+      throw new TypeError('a chat session opened before its registry finished composing')
+    }
+    const scope: ChatSessionScope = {
+      // An UNBORN session has run no `/model`, so it opens under the model this host composed —
+      // which is also what its header will say. A container seeded from another session's override
+      // would make one conversation's verb the next conversation's opening posture.
+      state: createChatState({ activeModel: composedChatModelName }),
+      // The holder validates a typed class against the registry's OWN declared risk names, so it
+      // cannot exist before the registry does (392-05, property 2). One per session is what makes
+      // the deny set die with the conversation rather than with the process.
+      pins: createPinOverlay(composedRegistry, CHAT_RESOLVER_CALLER),
+    }
+    chatScopes.set(sessionId, scope)
+    return scope
+  }
 
   // THE MODEL IN FORCE IS READ, NEVER CAPTURED, and this one line is the whole of 392-07's warning.
-  // `/model` writes the override into the state above; every consumer below — the session header,
-  // the planner's prompt, and the per-turn config re-read — reads it through here. A thunk that
-  // kept answering the COMPOSED model would emit a `model_change` straight back on the next turn,
-  // silently undoing the verb that had just been recorded.
-  const chatModelName = (): string => chatState.read().activeModel
+  // `/model` writes the override into the session's own state; every consumer below — the planner's
+  // prompt and the per-turn config re-read — reads it through here. A thunk that kept answering the
+  // COMPOSED model would emit a `model_change` straight back on the next turn, silently undoing the
+  // verb that had just been recorded.
+  const chatModelNameFor = (sessionId: string): string =>
+    chatScopeFor(sessionId).state.read().activeModel
 
-  // A live model object for the name in force. `chatModelFor` is the host's resolution; absent, the
-  // composed model stands whatever the session declares — an honest headless-ish posture rather
-  // than a chat module reaching for `createModel`, which CHAT-06 forbids outright.
-  let chatActiveModel: ChatLanguageModel | undefined = input.chatModel
+  // The live model OBJECT for a model name. Keyed by name rather than by session, because
+  // `chatModelFor` is a resolution of a name and two sessions naming the same model mean the same
+  // model — the same reason the planner stage cache below is keyed that way. Which name a session
+  // is under is the per-session fact, and it lives in that session's state.
+  const chatModelsByName = new Map<string, ChatLanguageModel>()
+  if (input.chatModel !== undefined) chatModelsByName.set(composedChatModelName, input.chatModel)
 
   const chatSessionLog = createJsonlSessionLog({
     root: input.agentQaRoot,
     now: () => clock.now(),
-    model: chatModelName,
+    // THE COMPOSED MODEL, not a session's override, and the difference is a leak this keying closes.
+    // This thunk is read when a header is WRITTEN, which happens exactly once per session and only
+    // for a session that has not existed until now — so no `/model` can have run in it. Answering
+    // with a live override would stamp one conversation's switch onto the opening header of every
+    // conversation opened after it.
+    model: () => composedChatModelName,
     toolsetHash: () => chatToolsetHash(composedRegistry),
   })
 
@@ -1667,15 +1724,29 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     return undefined
   }
 
-  // 392 D-21 / plan 05: the session pin holder, created once per composition and read LIVE by the
-  // gate hook. It cannot be built until the registry exists — the classes it validates against are
-  // the registry's own declared risk names — so the hook below closes over the holder rather than
-  // over a predicate, which is the same cycle the dispatch binding resolves and is resolved the
-  // same way. A snapshot taken at bind time would be empty for the life of the session, which is
-  // exactly the silent no-op 391-05 measured.
-  let chatPins: ChatPinOverlayHolder | undefined
-  const chatDeny = (action: Parameters<SessionDenyOverlay>[0]): boolean =>
-    chatPins?.asGateDeny()(action) ?? false
+  // 392 D-21 / plan 05 / plan 13: the gate hook, answering from the PINNING SESSION's holder.
+  //
+  // The hook is still bound once, unconditionally, into the registry — a person types `/pin` in the
+  // middle of a conversation and there is no second binding moment — and it still reads the set
+  // LIVE rather than a snapshot (391-05's silent no-op). What plan 13 adds is the only question it
+  // was missing: WHOSE pin. `caller.sessionId` is composition-minted, and the two absent cases both
+  // answer `false`, which is "no opinion" and never "allow":
+  //
+  //   - a caller carrying NO session — every typed CLI verb, MCP call and background job — is not
+  //     in a conversation, and a chat pin that refused those would be one person's `/pin` quietly
+  //     reconfiguring the host.
+  //   - a caller naming a session this composition never opened has an empty deny set, because that
+  //     is what a session nobody here is holding actually has.
+  //
+  // The direction is unchanged and unchangeable: this hook can only ever return `true` for a class
+  // the naming session pinned, so scoping it can subtract denials and never add a grant.
+  const chatDeny = (action: Parameters<SessionDenyOverlay>[0], caller: FunctionCaller): boolean => {
+    if (caller.sessionId === undefined) return false
+    // `get`, never `chatScopeFor`: asking whether a session has pinned something must not CREATE
+    // that session. A read that minted a scope would let any caller name any string into existence.
+    const scope = chatScopes.get(caller.sessionId)
+    return scope?.pins.asGateDeny()(action) ?? false
+  }
 
   // 392 plan 04/07: stage 2, assembled LAZILY over the registry this call is about to produce.
   //
@@ -1699,19 +1770,24 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             if (composedRegistry === undefined) {
               throw new TypeError('a chat turn ran before its registry finished composing')
             }
-            const activeName = chatModelName()
+            const activeName = chatModelNameFor(request.sessionId)
             let stage = plannerStages.get(activeName)
             if (stage === undefined) {
               stage = createPlannerStage({
-                model: (chatActiveModel ?? input.chatModel) as ChatLanguageModel,
+                model: (chatModelsByName.get(activeName) ?? input.chatModel) as ChatLanguageModel,
                 tools: projectPlannerTools(composedRegistry, CHAT_PLANNER_CALLER),
-                // Read PER TURN, so a session-scoped `/model` override changes what the prompt
-                // states without the stage being rebuilt, and so the conversation block carries
-                // what compaction left rather than a second replay of the log.
-                context: () => ({
-                  activeModel: chatModelName(),
-                  conversation: chatState.read().conversation,
-                }),
+                // Read PER REQUEST — not per turn and not per stage (392 plan 13, CR-02). A stage
+                // is shared by every session planning under the same model name, so a context
+                // thunk taking no argument had exactly one conversation to answer with, and on
+                // two interleaved turns it answered with whichever one published last. Taking the
+                // requesting session's id makes "the conversation this request replays" a fact
+                // about the call. The read is still LIVE, so a `/model` override still moves what
+                // the prompt states without the stage being rebuilt, and the conversation block
+                // still carries what compaction left rather than a second replay of the log.
+                context: (contextRequest) => {
+                  const scope = chatScopeFor(contextRequest.sessionId).state.read()
+                  return { activeModel: scope.activeModel, conversation: scope.conversation }
+                },
               })
               plannerStages.set(activeName, stage)
             }
@@ -1732,9 +1808,11 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           // 392-06's flagged consumer, wired: what compaction leaves IS the conversation the
           // prompt renders, and it lands in the live state on EVERY turn rather than only on a
           // triggered pass — a sink that fired only when a pass ran would leave the prompt holding
-          // a stale conversation on every quiet turn.
-          onConversation: (messages) => {
-            chatState.setConversation(messages)
+          // a stale conversation on every quiet turn. Into the SESSION'S OWN container (plan 13):
+          // the id is the compacted turn's, so a pruned history cannot land in another
+          // conversation however many turns are in flight.
+          onConversation: (messages, sessionId) => {
+            chatScopeFor(sessionId).state.setConversation(messages)
           },
         })
 
@@ -1748,8 +1826,16 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // RESEARCH Pitfall 1: per-STAGE minting, because origin is a per-call fact. A deterministic
     // table hit is a person typing and mints `human`; a planner-planned call mints `agent`, so a
     // `requiresHumanOrigin` op refuses it without chat knowing such ops exist.
+    // STAMPED WITH THE SESSION AS WELL AS THE ORIGIN (plan 13, W-03). The two are different facts
+    // about one call — who is acting, and which conversation they are acting in — and the gate's
+    // deny overlay needs the second to answer "is this class pinned for THIS session". Minted here
+    // rather than accepted from anywhere, on the same rule `origin` is under: a caller that could
+    // name its own session would be choosing which deny set it is evaluated against.
     mint: {
-      forStage: (stage) => (stage === 'resolver' ? CHAT_RESOLVER_CALLER : CHAT_PLANNER_CALLER),
+      forStage: (stage, sessionId) => ({
+        ...(stage === 'resolver' ? CHAT_RESOLVER_CALLER : CHAT_PLANNER_CALLER),
+        sessionId,
+      }),
     },
     invoke: (functionId, invokeInput, caller) => {
       if (composedRegistry === undefined) {
@@ -1763,46 +1849,61 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // `directive recognised but no handler` refusal from the shipped behaviour into an
     // unreachable arm on this host. `/help` and `/quit` are REPL chrome and answer in prose;
     // `/model` and `/pin` change what the session is, and each returns the EFFECT it had.
-    directives: {
+    //
+    // RESOLVED PER SESSION (plan 13, CR-02 / W-03). Every one of the four mutates a conversation
+    // rather than the project, so the handler set is built over the scope of the session running
+    // the turn: `/model` moves that conversation's model, `/pin` writes into that conversation's
+    // deny set, `/quit` asks that loop to end.
+    directives: (sessionId) => ({
       model: async (name) => {
-        const from = chatState.read().activeModel
+        const scope = chatScopeFor(sessionId)
+        const from = scope.state.read().activeModel
         if (input.chatModelFor !== undefined) {
           // Resolved by the HOST (CHAT-06): the chat subtree may not construct a model, so a
           // session-scoped switch is a capability this composition was handed. A resolution
           // failure throws, and the engine turns it into the same named refusal every other
           // unroutable clause gets — a `/model` that silently kept the old model would be the
           // worst answer available, since every later turn would report the new name.
-          chatActiveModel = await input.chatModelFor(name)
+          //
+          // Recorded under the NAME, which is the key the planner cache and every other session
+          // naming that model read it back by. The resolution is a fact about the name; which
+          // session is under it is the fact that stays in the session's own state.
+          chatModelsByName.set(name, await input.chatModelFor(name))
         }
-        chatState.setActiveModel(name)
+        scope.state.setActiveModel(name)
         return { from, to: name, line: `model: ${from} → ${name}` }
       },
       // RETURNS the normalised class, which is what the engine logs (392-05's law): a person types
       // `proposals.accept`, what denies is `fn:proposals.accept`, and a record of the request
       // rather than the effect is how the silent no-op reappears in the log.
       pin: (actionClass) => {
-        if (chatPins === undefined) {
-          throw new TypeError('a chat pin ran before its registry finished composing')
-        }
-        const normalised = chatPins.pin(actionClass)
-        chatState.setPinnedActionClasses(chatPins.list().deniedActionClasses)
+        const scope = chatScopeFor(sessionId)
+        const normalised = scope.pins.pin(actionClass)
+        scope.state.setPinnedActionClasses(scope.pins.list().deniedActionClasses)
         return normalised
       },
       help: () => CHAT_HELP_TEXT,
       quit: () => {
-        chatState.requestClose()
+        chatScopeFor(sessionId).state.requestClose()
         return 'closing this session'
       },
-    },
-    state: chatState,
-    // D-04: the configuration RE-READ, per turn. A thunk rather than a captured value, because the
-    // drift worth detecting is precisely the one that happens underneath a running session — a
-    // model resolved differently by the host, or a build whose registry reaches further than the
-    // one this session opened against. The engine folds the log for what was last recorded and
-    // emits `model_change` / `active_tools_change` on the difference.
-    config: (): ChatConfigState => {
+    }),
+    state: (sessionId) => chatScopeFor(sessionId).state,
+    // D-04: the configuration RE-READ, per turn and PER SESSION. A thunk rather than a captured
+    // value, because the drift worth detecting is precisely the one that happens underneath a
+    // running session — a model resolved differently by the host, or a build whose registry
+    // reaches further than the one this session opened against. The engine folds the log for what
+    // was last recorded and emits `model_change` / `active_tools_change` on the difference.
+    //
+    // THE MODEL IT REPORTS IS THE ASKING SESSION'S (plan 13). A composition-wide read would answer
+    // one conversation's `/model` override for every conversation, and the per-turn diff would
+    // then write a `model_change` into sessions nobody had switched.
+    config: (sessionId): ChatConfigState => {
       const ids = chatToolsetIds(composedRegistry)
-      return { model: chatModelName(), toolset: { hash: chatToolsetHash(composedRegistry), ids } }
+      return {
+        model: chatModelNameFor(sessionId),
+        toolset: { hash: chatToolsetHash(composedRegistry), ids },
+      }
     },
     now: () => clock.now(),
     mintTurnId: () => `turn-${randomUUID()}`,
@@ -1837,11 +1938,22 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // an ask-tier gate is only ever reached from inside a turn, so a decision with no turn id
       // would be a row no reader could place. `source: 'gate'` is what keeps it distinguishable
       // from the `/pin` verb's own decision row.
-      const turnId = chatState.read().activeTurnId
-      if (turnId === undefined) return
+      //
+      // WHICH TURN, ASKED OF THE SESSIONS THEMSELVES (392-12's attribution, re-keyed by plan 13).
+      // `chatState` used to hold one `activeTurnId` per composition, so on two live turns it named
+      // one of them arbitrarily. Each session now holds its own, so the honest question is how many
+      // turns are in flight at all: exactly one, and this decision belongs to it; more than one,
+      // and this port — which is handed a decision and no caller — cannot tell which, so it writes
+      // NO ROW. That is the same fail-safe direction plan 12 took, for the same reason: a row in
+      // the wrong conversation IS the defect, and an absent row is not.
+      const inFlight = [...chatScopes]
+        .map(([sessionId, scope]) => ({ sessionId, turnId: scope.state.read().activeTurnId }))
+        .filter((entry): entry is { sessionId: string; turnId: string } => entry.turnId !== undefined)
+      if (inFlight.length !== 1) return
+      const turnId = inFlight[0]!.turnId
       // The session whose file already carries this turn (392-12). Absent means no open session
       // here recorded it — a row would have to be guessed into somebody's conversation, and a
-      // guess is the defect this refactor removed.
+      // guess is the defect that refactor removed.
       const session = chatSessionHoldingTurn(turnId)
       if (session === undefined) return
       await session.append({
@@ -2052,10 +2164,6 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   // here, on the line after the registry exists, so there is no window in which a turn could run
   // against an unset reference — and the engine's own guard names that state if one ever appears.
   composedRegistry = registry
-  // The pin holder, on the line after the registry exists and for the dispatch binding's reason:
-  // it validates a typed class against the registry's OWN declared risk names, so a host cannot
-  // record a pin against a name nothing answers to (392-05, property 2).
-  chatPins = createPinOverlay(registry, CHAT_RESOLVER_CALLER)
 
   let opened: LocalAgentJobs | undefined
   let opening: Promise<LocalAgentJobs> | undefined
@@ -2127,21 +2235,23 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   return {
     registry,
     chat: {
-      state: chatState,
+      stateFor: (sessionId) => chatScopes.get(sessionId)?.state.read(),
       async abortActiveTurn(): Promise<void> {
         // D-19's GRACEFUL arm. The hard-kill arm needs nothing here — a torn tail is detected and
         // an `aborted` synthesized on the next open — but a Ctrl+C that got as far as running this
         // handler can say so explicitly, which is a better record than one reconstructed later.
-        const turnId = chatState.read().activeTurnId
-        // Between turns there is nothing to abort, and writing one anyway would put an `aborted`
-        // row on a turn that already carries its `turn_complete` — which the next open's repair
-        // would then read as an interrupted turn and prune from the conversation.
-        if (turnId === undefined) return
-        // EVERY LIVE SESSION IS ASKED, and the one holding this turn answers (392-12). Iterating
-        // rather than reaching for "the" session is the shape graceful shutdown needs on a host
-        // serving several conversations; that only ONE turn id is knowable here is `chatState`
-        // being per-composition, which plan 13 keys by session.
-        for (const entry of liveChatSessions.values()) {
+        //
+        // EVERY LIVE SESSION IS ASKED, AND EACH ANSWERS WITH ITS OWN TURN (392-12 shape, plan 13
+        // state). Plan 12 could iterate the handles but had only ONE turn id to look for, because
+        // `chatState` was per-composition — so on a host with two turns genuinely in flight, one
+        // was nameable and the other was not. Each session now holds the id of the turn IT is
+        // running, so graceful shutdown closes every conversation rather than the last one to
+        // start. Between turns a session names nothing, and writing an `aborted` anyway would put
+        // a row on a turn that already carries its `turn_complete` — which the next open's repair
+        // would read as an interrupted turn and prune from the conversation.
+        for (const [sessionId, entry] of liveChatSessions) {
+          const turnId = chatScopes.get(sessionId)?.state.read().activeTurnId
+          if (turnId === undefined) continue
           if (!entry.turnIds.has(turnId)) continue
           await entry.handle.append({
             kind: 'aborted',

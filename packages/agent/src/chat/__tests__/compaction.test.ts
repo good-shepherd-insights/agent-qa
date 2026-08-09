@@ -296,6 +296,9 @@ describe('CHAT-04 / the assumption-delta invariant: ONE event per pass', () => {
     // is being compacted — a hook bound to one log at construction could not know which that is.
     await hook({
       turnId: 'turn-7',
+      // The session arrives per CALL too (392 plan 13): what a pass publishes is one conversation's
+      // pruned history, and the sink it goes to is one container per session.
+      sessionId: 'session-compaction',
       replay: { messages: [], abortedTurnIds: [] },
       append: (event) => {
         emitted.push(event)
@@ -353,6 +356,7 @@ describe('CHAT-04 / the assumption-delta invariant: ONE event per pass', () => {
     }
     await hook({
       turnId: 't2',
+      sessionId: 'session-compaction',
       replay,
       append: (event) => {
         emitted.push(event)

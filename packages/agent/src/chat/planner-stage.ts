@@ -33,6 +33,7 @@ import type {
   PlannerStageFailure,
   PlannerStageOutcome,
   PlannerStagePort,
+  PlannerStageRequest,
   PlannerToolCall,
 } from './ports.js'
 
@@ -48,12 +49,18 @@ export interface PlannerStageDeps {
   /** The registry projection from `planner-tools.ts`. Execute-less, by that module's contract. */
   readonly tools: ToolSet
   /**
-   * Read once per turn rather than captured at construction, because the model in force, the
+   * Read once per REQUEST rather than captured at construction, because the model in force, the
    * pending-count facts and the conversation all change WITHIN a session — a `/model` directive
    * mid-session is the obvious case (D-04), and a stage holding a snapshot would prompt against a
    * session that no longer exists.
+   *
+   * IT IS TOLD WHICH SESSION IS ASKING (392 plan 13, CR-02). A composition caches one stage per
+   * model NAME, so the same stage serves every session planning under that model; a thunk taking
+   * no argument therefore had exactly one conversation available to answer with, and on two
+   * interleaved turns that was whichever session published last. The request is the only thing
+   * here that knows whose turn this is.
    */
-  readonly context: () => ChatSessionPromptContext
+  readonly context: (request: PlannerStageRequest) => ChatSessionPromptContext
 }
 
 /** The refusal NAME a provider published, or the closest honest thing to it. */
@@ -108,7 +115,7 @@ export function createPlannerStage(deps: PlannerStageDeps): PlannerStagePort {
       const { system, prompt } = buildChatPrompt({
         utterance: request.utterance,
         clauses: request.clauses,
-        ...deps.context(),
+        ...deps.context(request),
       })
 
       try {

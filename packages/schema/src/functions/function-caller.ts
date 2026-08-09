@@ -24,9 +24,10 @@ export type FunctionCallerOrigin = (typeof FUNCTION_CALLER_ORIGINS)[number]
  *
  * Caller differences are DATA, never control flow: the only legitimate reads of this
  * record are the scope subset check in `invokeFunction`, the origin check beside it,
- * the safe-mode listing filter in the registry, and audit attribution. A branch on
- * `surface` is an anti-pattern — it re-creates the per-surface private powers the
- * function layer exists to abolish.
+ * the safe-mode listing filter in the registry, audit attribution, and the
+ * session-overlay scoping at the gate (392 plan 13 — see {@link FunctionCaller.sessionId}).
+ * A branch on `surface` is an anti-pattern — it re-creates the per-surface private
+ * powers the function layer exists to abolish.
  */
 export interface FunctionCaller {
   /**
@@ -72,4 +73,23 @@ export interface FunctionCaller {
    * resolution against it.
    */
   credential?: TrustCredential
+  /**
+   * The chat session this call belongs to, MINTED by the composition root (392 plan 13, W-03).
+   *
+   * ONE LEGITIMATE READ, and the doc above names it: scoping the session DENY overlay at the
+   * gate, so a `/pin` typed in one conversation denies that action class for that conversation
+   * and for no other. Without it the overlay is one set per composition and a pin outlives the
+   * session that typed it — on a daemon, for every caller until the process restarts.
+   *
+   * TIGHTEN-ONLY, WHICH IS WHY IT MAY BE OPTIONAL WHERE `origin` MAY NOT. The overlay this
+   * scopes is deny-only by three independent constructions (no unpin, a DTO with no allow list,
+   * a hook whose only true branch writes a deny), so an ABSENT or FOREIGN id can produce fewer
+   * chat-pin denials and never a grant. It satisfies no scope check, no origin check and no
+   * standing approval, and nothing below the overlay reads it. That asymmetry is the whole
+   * reason a defaulted value is safe here and would be a self-grant on `origin`.
+   *
+   * Attribution and scoping only; never an identity claim. A caller naming a session it does
+   * not own gains nothing it did not already have — at most it inherits that session's denials.
+   */
+  sessionId?: string
 }

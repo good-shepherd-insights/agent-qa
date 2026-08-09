@@ -182,6 +182,23 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   agentAskSpec as FunctionSpec,
 ]
 
+/**
+ * A session deny overlay asked about the CALLER as well as the action (392 plan 13, W-03).
+ *
+ * The action half is safety's own {@link SessionDenyOverlay} parameter, read off that type rather
+ * than re-spelled, so the adaptation at `invoke.ts`'s single `evaluate()` call-site cannot drift
+ * from the descriptor the gate actually compares. `packages/safety` is untouched: this is a
+ * function layer contract that NARROWS to safety's on its way to the one gate call (384 FUNC-03).
+ *
+ * Deny-only in both arguments. The return is a boolean whose only true branch writes a deny, and
+ * the caller's session id can select WHICH deny set is consulted and nothing else — so a caller
+ * carrying no session, or one naming a session this host never opened, gets the empty set.
+ */
+export type CallerScopedDenyOverlay = (
+  action: Parameters<SessionDenyOverlay>[0],
+  caller: FunctionCaller,
+) => boolean
+
 export interface CreateFunctionRegistryOptions {
   /** Host-backed implementations the ops read through; built at the composition root. */
   deps: FunctionDeps
@@ -224,18 +241,24 @@ export interface CreateFunctionRegistryOptions {
    */
   confirm?: ConfirmPort
   /**
-   * The session-scoped DENY overlay the gate consults before its ladder (392 D-21, plan 08).
+   * The session-scoped DENY overlay the gate consults before its ladder (392 D-21, plan 08/13).
    *
    * TIGHTEN-ONLY BY TYPE: the hook answers a boolean whose only true branch writes a deny, so
-   * "a session loosened something" is not a state this seam can represent. It joins here rather
-   * than travelling per call because the overlay is a property of the SESSION a composition is
-   * serving, and a per-call parameter would be a value a caller could choose.
+   * "a session loosened something" is not a state this seam can represent.
+   *
+   * IT IS ASKED WHICH SESSION IS CALLING (392 plan 13, W-03). The overlay used to be a property
+   * of "the composition's session", which is a fact no composition serving more than one
+   * conversation actually has — so a `/pin` typed in one conversation denied that action class
+   * for every later caller until the process restarted. The caller travels with the question
+   * rather than the ANSWER travelling with the caller: `caller.sessionId` is composition-minted,
+   * the overlay is deny-only, and an absent or foreign id can therefore only ever produce FEWER
+   * denials. Nothing here is a permission a caller could claim.
    *
    * OPTIONAL, and its absence is the shipped default: `evaluate()` runs its ladder untouched. It
    * follows `confirm`'s precedent exactly — conditionally spread below, so an absent dependency is
    * an ABSENT field rather than a present `undefined` one.
    */
-  deny?: SessionDenyOverlay
+  deny?: CallerScopedDenyOverlay
   /** Defaults to safety's ambient resolver; injected in tests for determinism. */
   resolveExecutionContext?: () => ExecutionContext
 }
@@ -255,7 +278,7 @@ interface RegistryInternals {
   auditSink: AuditSink
   standingApprovalReader?: () => StandingApprovalReader | Promise<StandingApprovalReader>
   confirm?: ConfirmPort
-  deny?: SessionDenyOverlay
+  deny?: CallerScopedDenyOverlay
   resolveExecutionContext: () => ExecutionContext
 }
 

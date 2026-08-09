@@ -142,22 +142,36 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
   }
 
   describe('/pin reaches the gate — the two-sided differential (D-21 / T-392-28)', () => {
-    it('ALLOWS the op before the pin and REFUSES the same op after it, on one host', async () => {
-      const host = compose()
+    it('ALLOWS the op before the pin and REFUSES the same op after it, in the pinning session',
+      async () => {
+        const host = compose()
+        const opened = await ask(host, 'proposals')
+        // THE CALLER IS IN THE CONVERSATION (392 plan 13, W-03). The overlay is asked whose pin,
+        // so the differential's two arms are the same caller before and after — a session-less
+        // caller either side would be measuring a different question. This case used to ask with
+        // one, and its red arm passing was the leak: a `/pin` typed in a conversation denied the
+        // class for every caller on the host, which is what the last assertion now forbids.
+        const inSession: FunctionCaller = { ...HUMAN, sessionId: opened.sessionId }
 
-      // The GREEN side. Without it the red side proves nothing: an op refused on a host where it
-      // was never reachable is a fact about the host, not about the pin.
-      await expect(
-        invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, HUMAN),
-      ).resolves.toBeDefined()
+        // The GREEN side. Without it the red side proves nothing: an op refused on a host where it
+        // was never reachable is a fact about the host, not about the pin.
+        await expect(
+          invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, inSession),
+        ).resolves.toBeDefined()
 
-      const pinned = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`)
-      expect(pinned.status).toBe('completed')
+        const pinned = await ask(host, `/pin ${PROPOSALS_LIST_FUNCTION_ID}`, opened.sessionId)
+        expect(pinned.status).toBe('completed')
 
-      await expect(
-        invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, HUMAN),
-      ).rejects.toThrow(/session-pin-denied/)
-    })
+        await expect(
+          invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, inSession),
+        ).rejects.toThrow(/session-pin-denied/)
+
+        // The scope control the pin needs as much as the deny: a caller in NO conversation — every
+        // typed CLI verb, MCP call and background job on this host — is untouched by it.
+        await expect(
+          invokeFunction(host.registry, PROPOSALS_LIST_FUNCTION_ID, {}, HUMAN),
+        ).resolves.toBeDefined()
+      })
 
     it('logs the NORMALISED class, as a verb-sourced approval decision (392-05)', async () => {
       const host = compose()
@@ -184,7 +198,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
 
       // A directive names no capability: zero receipts is the shape, not an accident of the fixture.
       expect(result.receipts).toEqual([])
-      expect(host.chat.state.read().pinnedActionClasses).toEqual([
+      expect(host.chat.stateFor(result.sessionId)?.pinnedActionClasses).toEqual([
         `fn:${PROPOSALS_LIST_FUNCTION_ID}`,
       ])
     })
@@ -234,7 +248,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
         (event) => event.kind === 'model_change',
       )
       expect(changes).toHaveLength(1)
-      expect(host.chat.state.read().activeModel).toBe('fixture:second-model')
+      expect(host.chat.stateFor(first.sessionId)?.activeModel).toBe('fixture:second-model')
     })
 
     it('resolves the named model through the HOST, never by constructing one', async () => {
@@ -269,7 +283,7 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       // later turn would report a model that never answered anything.
       expect(result.status).toBe('fail_closed')
       expect(result.unhandled?.reason).toContain('fixture:nonsense')
-      expect(host.chat.state.read().activeModel).toBe('fixture:opening-model')
+      expect(host.chat.stateFor(result.sessionId)?.activeModel).toBe('fixture:opening-model')
     })
   })
 
@@ -287,14 +301,21 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
 
     it('/quit sets the live state a REPL reads, rather than being matched by the surface', async () => {
       const host = compose()
-      expect(host.chat.state.read().closing).toBe(false)
+      // An ordinary turn FIRST, so the before-state is read off the same session the `/quit` turn
+      // will move (392 plan 13: the state is per session, and an unopened session has none).
+      const opened = await ask(host, 'proposals')
+      expect(host.chat.stateFor(opened.sessionId)?.closing).toBe(false)
 
-      const result = await ask(host, '/quit')
+      const result = await ask(host, '/quit', opened.sessionId)
 
       expect(result.status).toBe('completed')
       // ONE vocabulary for what a person can type. A REPL matching `/quit` itself would be a
       // second list of the canon, free to disagree with the table that routes everything else.
-      expect(host.chat.state.read().closing).toBe(true)
+      expect(host.chat.stateFor(opened.sessionId)?.closing).toBe(true)
+      // And it moved THAT conversation only: a second session on the same host is not closing
+      // because somebody else typed `/quit`.
+      const other = await ask(host, 'proposals')
+      expect(host.chat.stateFor(other.sessionId)?.closing).toBe(false)
     })
   })
 
@@ -305,11 +326,11 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
 
       // Between turns there is nothing in flight, which is what makes an abort a no-op rather
       // than a row on a turn that already completed.
-      expect(host.chat.state.read().activeTurnId).toBeUndefined()
-      expect(host.chat.state.read().lastTurn?.turnId).toBe(first.turnId)
+      expect(host.chat.stateFor(first.sessionId)?.activeTurnId).toBeUndefined()
+      expect(host.chat.stateFor(first.sessionId)?.lastTurn?.turnId).toBe(first.turnId)
 
       await ask(host, 'status', first.sessionId)
-      const conversation = host.chat.state.read().conversation
+      const conversation = host.chat.stateFor(first.sessionId)?.conversation ?? []
       // The repaired replay, projected once. The first turn's utterance and its receipt line are
       // both in it by the second turn, oldest first.
       expect(conversation.length).toBeGreaterThan(0)
@@ -331,16 +352,22 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       // SIGINT handler fires in — so the state it observes is the state that handler would see, and
       // there is no sleep or microtask ordering holding the assertion up.
       let observedTurnId: string | undefined
+      // The session the observation reads through, learned from an ordinary opening turn — the
+      // state is per session now (392 plan 13), so naming one is how a handler asks about one.
+      let sessionId: string | undefined
       const host: LocalAgentHost = compose({
         chatModel: namedModel('fixture:opening-model'),
         chatModelFor: async (name) => {
-          observedTurnId = host.chat.state.read().activeTurnId
+          observedTurnId =
+            sessionId === undefined ? undefined : host.chat.stateFor(sessionId)?.activeTurnId
           await host.chat.abortActiveTurn()
           return namedModel(name)
         },
       })
 
-      const result = await ask(host, '/model fixture:second-model')
+      const opened = await ask(host, 'proposals')
+      sessionId = opened.sessionId
+      const result = await ask(host, '/model fixture:second-model', sessionId)
 
       // The id was published at the TOP of the turn, before anything could fail. That ordering is
       // the whole reason the state sink exists: an interrupted turn never produces a result, so a

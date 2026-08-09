@@ -74,31 +74,46 @@ export interface TurnEngineDeps {
   readonly planner?: PlannerStagePort
   readonly compaction?: CompactionHook
   /**
-   * The configuration in force RIGHT NOW, re-read per turn (D-04).
+   * The configuration in force RIGHT NOW for THIS SESSION, re-read per turn (D-04, CR-02).
    *
    * A THUNK rather than a value, and that is the whole of "config changes are events": a value
    * captured at construction would be the configuration the host started with, and the drift this
    * seam exists to detect is precisely the case where the file changed underneath a running
    * session. Absent ⇒ this host does not re-read, and nothing is claimed about drift — which is
    * different from claiming there was none, and is why the seam is optional rather than defaulted.
+   *
+   * IT IS HANDED THE SESSION for the reason `state` below is: the answer includes the model in
+   * force, a `/model` override is session-scoped by D-04, and a composition-wide re-read would
+   * report one session's override as every session's drift.
    */
-  readonly config?: () => ChatConfigState | Promise<ChatConfigState>
+  readonly config?: (sessionId: string) => ChatConfigState | Promise<ChatConfigState>
   /**
-   * The session directives, where a host binds any (D-04 / D-21).
+   * The session directives, where a host binds any, RESOLVED PER SESSION (D-04 / D-21 / CR-02).
    *
    * Absent, or absent for one directive, means the refusal arm below names it. That is not a
    * degraded mode: a build that recognises `/pin` and cannot carry it out should say so, and the
    * `mark_unhandled` row it leaves is what makes the gap countable.
+   *
+   * A FACTORY, because every one of these mutates a session: `/model` moves the model this
+   * conversation plans under, `/pin` writes into this conversation's deny set, `/quit` asks THIS
+   * loop to end. Handlers bound once per composition would carry those effects to whoever asked
+   * next, which is W-03 for `/pin` and the same shape for the other three.
    */
-  readonly directives?: ChatDirectiveHandlers
+  readonly directives?: (sessionId: string) => ChatDirectiveHandlers
   /**
-   * Where the live turn state a surface renders from is published (RESEARCH Open Q2).
+   * Where the live turn state a surface renders from is published, PER SESSION (Open Q2, CR-02).
    *
    * The turn id goes out at the START of the turn rather than with the result, and that ordering is
    * the whole reason the seam exists — an interrupted turn never produces a result, so a Ctrl+C
    * handler that waited for one could never name the turn it was interrupting (D-19's graceful arm).
+   *
+   * A FACTORY OVER THE SESSION ID, resolved once per turn from the header `open()` returned. What
+   * this sink carries — the turn in flight, the conversation, the model — are facts about ONE
+   * conversation, and a sink held per composition made them facts about whichever turn wrote last.
+   * The engine cannot resolve it any earlier than the open, because a turn that names no session is
+   * given one BY the adapter and the id is the adapter's answer rather than the caller's input.
    */
-  readonly state?: ChatTurnStateSink
+  readonly state?: (sessionId: string) => ChatTurnStateSink
   readonly now: () => string
   readonly mintTurnId: () => string
 }
@@ -160,10 +175,9 @@ interface DirectiveEntry {
  * arm reaches for the same function, so the two cannot drift into two answers to one question.
  */
 function directiveBindingRefusal(
-  deps: TurnEngineDeps,
+  handlers: ChatDirectiveHandlers | undefined,
   entry: DirectiveEntry,
 ): string | undefined {
-  const handlers = deps.directives
   const bound = ((): boolean => {
     switch (entry.directive) {
       case 'model':
@@ -198,14 +212,15 @@ function directiveBindingRefusal(
  */
 async function runDirective(
   deps: TurnEngineDeps,
+  handlers: ChatDirectiveHandlers | undefined,
   entry: DirectiveEntry,
   context: {
     readonly turnId: string
+    readonly sessionId: string
     readonly append: (event: ChatSessionEvent) => Promise<void>
     readonly now: () => string
   },
 ): Promise<DirectiveResult> {
-  const handlers = deps.directives
   const notBound = (): DirectiveResult => ({
     kind: 'refused',
     reason: directiveNotBoundReason(entry.directive, entry.clause.text),
@@ -222,7 +237,7 @@ async function runDirective(
           // not cause. The handler has already applied the override, which is what makes the
           // current read the `to` side and what stops the next turn's re-read from emitting a
           // `model_change` straight back to the composed model (392-07's trap).
-          const current = await deps.config()
+          const current = await deps.config(context.sessionId)
           for (const event of diffChatConfig(
             { ...current, model: outcome.from },
             current,
@@ -299,11 +314,19 @@ async function runTurnThrough(
   input: AgentAskInput,
 ): Promise<AgentAskResult> {
   const sessionId = opened.header.sessionId
+  // THE PER-SESSION SEAMS, RESOLVED HERE AND NOWHERE EARLIER (392 plan 13, CR-02). The header the
+  // adapter just returned is the FIRST moment this session's id is known: `AgentAskInput.sessionId`
+  // is optional, and a turn that names none is given one by the adapter rather than by its caller.
+  // Resolving above the open would therefore have to guess, and every guess is the aliasing this
+  // keying removes. Resolved ONCE per turn rather than per use, so `beginTurn`, `setConversation`
+  // and `endTurn` cannot end up addressing two different containers within one turn.
+  const state = deps.state?.(sessionId)
+  const directiveHandlers = deps.directives?.(sessionId)
   const turnId = deps.mintTurnId()
   // Published BEFORE anything can fail, because the state this names is "a turn is in flight"
   // and that becomes true here. A surface interrupted between this line and the boundary below
   // has the id it needs to write the explicit `aborted` event.
-  deps.state?.beginTurn(turnId)
+  state?.beginTurn(turnId)
 
   // THROUGH THE HANDLE, NEVER THROUGH THE ADAPTER (392-12). There is no adapter-level write verb
   // left to reach for, which is what makes "this turn's events go to this turn's session" a
@@ -327,7 +350,7 @@ async function runTurnThrough(
     // The fsync point (D-19). Per TURN, so the loss bound is exactly the in-flight turn —
     // the case the next-turn repair already knows how to handle.
     await opened.turnBoundary()
-    deps.state?.endTurn({ turnId, status, receipts: result.receipts, ...(result.answer === undefined ? {} : { answer: result.answer }) })
+    state?.endTurn({ turnId, status, receipts: result.receipts, ...(result.answer === undefined ? {} : { answer: result.answer }) })
     return { sessionId, turnId, status, ...refusedLineCount, ...result }
   }
   /**
@@ -360,7 +383,7 @@ async function runTurnThrough(
   // The ONE projection, applied once (392-06's mismatch, resolved in `chat-state.ts`): the
   // repaired replay becomes the conversation a surface and a prompt read. A bound degrade pass
   // publishes again over the top with the pruned form.
-  deps.state?.setConversation(replayToModelMessages(replay))
+  state?.setConversation(replayToModelMessages(replay))
 
   // CONFIG DRIFT, BEFORE THE MESSAGE (D-04, CHAT-05). The re-read happens on EVERY turn, which
   // makes the session-start case the first turn's case rather than a second code path — one
@@ -369,7 +392,7 @@ async function runTurnThrough(
   // the user message, so a reader folding the log has the configuration in hand before it sees
   // what was asked under it.
   if (deps.config !== undefined) {
-    const current: ChatConfigState = await deps.config()
+    const current: ChatConfigState = await deps.config(sessionId)
     const previous = foldChatConfigState(opened.header, opened.events)
     for (const event of diffChatConfig(previous, current, {
       turnId,
@@ -381,7 +404,7 @@ async function runTurnThrough(
   }
 
   await append({ kind: 'user_message', turnId, at: deps.now(), text: input.message })
-  await deps.compaction?.({ turnId, replay, append })
+  await deps.compaction?.({ turnId, sessionId, replay, append })
 
   // ---- Stage 1: the deterministic resolver over the clause split.
   const clauses = deps.split(input.message)
@@ -438,7 +461,7 @@ async function runTurnThrough(
   // dispatches; it is now applied to every effect a turn can have. What stays here is the
   // BINDING question, which mutates nothing.
   for (const entry of directives) {
-    const notBound = directiveBindingRefusal(deps, entry)
+    const notBound = directiveBindingRefusal(directiveHandlers, entry)
     if (notBound !== undefined) return refuse(entry.clause.text, notBound)
   }
 
@@ -474,7 +497,7 @@ async function runTurnThrough(
       outcome: 'unresolved',
     })
   } else {
-    planned = await deps.planner.plan({ utterance: input.message, clauses: unmapped })
+    planned = await deps.planner.plan({ utterance: input.message, clauses: unmapped, sessionId })
     await append({
       kind: 'stage_outcome',
       turnId,
@@ -522,8 +545,9 @@ async function runTurnThrough(
   // `turnId` and `at`, so no reader's ordering claim rests on which came first within a turn.
   const directiveLines: string[] = []
   for (const entry of directives) {
-    const line = await runDirective(deps, entry, {
+    const line = await runDirective(deps, directiveHandlers, entry, {
       turnId,
+      sessionId,
       append,
       now: deps.now,
     })
@@ -546,7 +570,7 @@ async function runTurnThrough(
     // Re-deriving it by matching the action back against the mapper set would answer `human`
     // for any planner-produced call to an op the table also knows — handing a model-originated
     // invocation the self-grant power `requiresHumanOrigin` ops withhold (391 D-06, T-392-23).
-    const caller = deps.mint.forStage(step.source)
+    const caller = deps.mint.forStage(step.source, sessionId)
     let receipt: ClauseReceipt
     if (failed) {
       // `not-run` is a fact, not an absence: a person reading the receipt must be able to tell

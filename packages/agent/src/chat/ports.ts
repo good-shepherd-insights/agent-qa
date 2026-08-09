@@ -116,10 +116,22 @@ export interface PlannerStageOutcome {
  * and declined — and the two need to stay distinguishable in the log.
  */
 export interface PlannerStagePort {
-  plan(request: {
-    readonly utterance: string
-    readonly clauses: readonly ChatClause[]
-  }): Promise<PlannerStageOutcome>
+  plan(request: PlannerStageRequest): Promise<PlannerStageOutcome>
+}
+
+/**
+ * What stage 2 is asked, INCLUDING WHOSE TURN IS ASKING (392 plan 13, CR-02).
+ *
+ * `sessionId` is not decoration on a prompt. The context a composition builds for this call — the
+ * conversation replayed into the request, the model in force — are facts about ONE session, and a
+ * composition serving two conversations at once has no other way to know which of them it is
+ * assembling a request for. Without it the planner reads whichever conversation was published
+ * most recently, which on an interleaved pair is the OTHER person's.
+ */
+export interface PlannerStageRequest {
+  readonly utterance: string
+  readonly clauses: readonly ChatClause[]
+  readonly sessionId: string
 }
 
 /**
@@ -187,7 +199,16 @@ export type ClauseSplitter = (utterance: string) => readonly ChatClause[]
  * the planner the self-grant power 391 D-06 deliberately withholds.
  */
 export interface CallerMint {
-  forStage(stage: ChatBindingStage): FunctionCaller
+  /**
+   * The session is minted ONTO the caller (392 plan 13, W-03).
+   *
+   * Origin says WHO is acting; the session says WHICH CONVERSATION they are acting in, and the
+   * gate's deny overlay needs the second to answer "is this class pinned for this session". Both
+   * are composition-minted for the same reason: a caller that could name its own session could
+   * shed a pin by naming a different one — which the deny-only overlay makes harmless, and which
+   * is still not a power a caller should be handed.
+   */
+  forStage(stage: ChatBindingStage, sessionId: string): FunctionCaller
 }
 
 /**
@@ -220,6 +241,15 @@ export type ChatInvokeBinding = (
  */
 export type CompactionHook = (context: {
   readonly turnId: string
+  /**
+   * The session this turn belongs to (392 plan 13, CR-02).
+   *
+   * Beside `append` for the same reason `append` is here: what a pass produces — the pruned
+   * conversation — belongs to ONE conversation, and the sink a host publishes it into is one
+   * container per session. A hook that knew the turn but not the session could write a pruned
+   * history into whichever conversation asked most recently.
+   */
+  readonly sessionId: string
   /** The conversation as of this turn's start: repaired, aborted turns already excluded. */
   readonly replay: SessionReplay
   /**

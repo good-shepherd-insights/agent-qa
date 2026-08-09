@@ -200,10 +200,24 @@ export async function invokeFunction(
       auditSink: internals.auditSink,
       ...(reader === undefined ? {} : { reader }),
       ...(internals.confirm === undefined ? {} : { confirm: internals.confirm }),
-      // 392 D-21: the session's deny overlay, threaded at the ONE `evaluate()` call-site there is.
-      // Conditionally spread like its neighbours — an absent overlay must leave the gate's ladder
-      // untouched, and a present-but-undefined field would be a second place the default lives.
-      ...(internals.deny === undefined ? {} : { deny: internals.deny }),
+      // 392 D-21 / plan 13: the session's deny overlay, threaded at the ONE `evaluate()` call-site
+      // there is. Conditionally spread like its neighbours — an absent overlay must leave the
+      // gate's ladder untouched, and a present-but-undefined field would be a second place the
+      // default lives.
+      //
+      // THE ADAPTATION IS THE WHOLE OF W-03'S FIX AT THIS LAYER, and it is three tokens wide on
+      // purpose. The composition's overlay wants to know WHICH SESSION is asking, so that a pin
+      // belongs to the conversation that typed it; `evaluate()`'s hook takes an action and nothing
+      // else. Closing over the caller here narrows the wider contract to the narrower one at the
+      // boundary, which is why `gate.ts` and `SessionDenyOverlay` are byte-identical after this
+      // change. A `sessionId` on the descriptor, or a gate that read callers, would have made the
+      // policy engine depend on the function layer's vocabulary in order to answer one question.
+      ...(() => {
+        const overlay = internals.deny
+        return overlay === undefined
+          ? {}
+          : { deny: (action: Parameters<typeof overlay>[0]) => overlay(action, caller) }
+      })(),
     },
   )
   if (policy.verdict === 'deny') {

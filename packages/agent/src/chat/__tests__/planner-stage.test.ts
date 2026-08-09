@@ -45,6 +45,9 @@ const CALLER: FunctionCaller = {
   origin: 'agent',
 }
 
+/** Every request now names its session (392 plan 13): the context a stage builds is per-session. */
+const SESSION = 'session-planner-stage'
+
 const CLAUSES: readonly ChatClause[] = [
   { text: 'run test 42', index: 0 },
   { text: 'write a test for 2FA', index: 1 },
@@ -190,7 +193,7 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
         { type: 'tool-call', toolCallId: 'c1', toolName: 'runs_start', input: '{"testRef":"TST-42"}' },
         { type: 'tool-call', toolCallId: 'c2', toolName: 'runs_digest', input: '{"runId":"RUN-1"}' },
       ]),
-    ).plan({ utterance: 'run test 42 and show me the digest', clauses: CLAUSES })
+    ).plan({ utterance: 'run test 42 and show me the digest', clauses: CLAUSES, sessionId: SESSION })
 
     expect(outcome.toolCalls.map((call) => call.toolName)).toEqual(['runs_start', 'runs_digest'])
     expect(outcome.toolCalls[0]?.input).toEqual({ testRef: 'TST-42' })
@@ -214,7 +217,7 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
           input: '{"text":"There are three proposals pending."}',
         },
       ]),
-    ).plan({ utterance: 'how many proposals are pending?', clauses: [CLAUSES[0]!] })
+    ).plan({ utterance: 'how many proposals are pending?', clauses: [CLAUSES[0]!], sessionId: SESSION })
 
     expect(outcome.answer).toBe('There are three proposals pending.')
     expect(outcome.toolCalls).toHaveLength(1)
@@ -230,7 +233,7 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
           input: '{"clause":"write a test for 2FA","reason":"test authoring has not shipped."}',
         },
       ]),
-    ).plan({ utterance: 'write a test for 2FA', clauses: [CLAUSES[1]!] })
+    ).plan({ utterance: 'write a test for 2FA', clauses: [CLAUSES[1]!], sessionId: SESSION })
 
     expect(outcome.toolCalls[0]?.toolName).toBe(MARK_UNHANDLED_TOOL_NAME)
     expect(outcome.toolCalls[0]?.input).toEqual({
@@ -243,6 +246,7 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
     const outcome = await stage(stubModel([{ type: 'text', text: 'hmm' }])).plan({
       utterance: 'hmm',
       clauses: [CLAUSES[0]!],
+      sessionId: SESSION,
     })
     expect(outcome.toolCalls).toEqual([])
     expect(outcome.answer).toBeUndefined()
@@ -254,6 +258,7 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
     const outcome = await stage(failingModel(refusal)).plan({
       utterance: 'run test 42',
       clauses: [CLAUSES[0]!],
+      sessionId: SESSION,
     })
     expect(outcome.failure).toEqual({ name: 'AuthenticationError', message: '401 Unauthorized' })
     expect(outcome.toolCalls).toEqual([])
@@ -264,6 +269,7 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
     await stage(stubModel([], recorder)).plan({
       utterance: 'run test 42 and write a test for 2FA',
       clauses: CLAUSES,
+      sessionId: SESSION,
     })
 
     const call = recorder.calls[0]
@@ -286,9 +292,9 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
       context: () => ({ activeModel }),
     })
 
-    await planner.plan({ utterance: 'one', clauses: [CLAUSES[0]!] })
+    await planner.plan({ utterance: 'one', clauses: [CLAUSES[0]!], sessionId: SESSION })
     activeModel = 'second-model'
-    await planner.plan({ utterance: 'two', clauses: [CLAUSES[0]!] })
+    await planner.plan({ utterance: 'two', clauses: [CLAUSES[0]!], sessionId: SESSION })
 
     expect(JSON.stringify(recorder.calls[0]?.prompt)).toContain('first-model')
     expect(JSON.stringify(recorder.calls[1]?.prompt)).toContain('second-model')

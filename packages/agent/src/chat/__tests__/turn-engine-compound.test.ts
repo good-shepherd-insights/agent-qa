@@ -34,6 +34,7 @@ import type { TurnEngineDeps } from '../turn-engine.js'
 import { toToolName } from '../tool-names.js'
 import type {
   ChatBindingStage,
+  ChatDirectiveHandlers,
   ChatModelDirectiveOutcome,
   PlannerStageOutcome,
   PlannerStagePort,
@@ -177,8 +178,13 @@ function harness(options: HarnessOptions = {}): Harness {
     reconcile: options.reconcile ?? deterministicOverrideStrategy,
     sessionLog: log,
     mint: {
-      forStage: (stage: ChatBindingStage): FunctionCaller =>
-        stage === 'resolver' ? RESOLVER_CALLER : PLANNER_CALLER,
+      // Session-stamped like production (392 plan 13): the gate's deny overlay is asked WHOSE pin,
+      // and a fixture minting a caller with no session would exercise a caller shape the composed
+      // engine never produces.
+      forStage: (stage: ChatBindingStage, sessionId: string): FunctionCaller => ({
+        ...(stage === 'resolver' ? RESOLVER_CALLER : PLANNER_CALLER),
+        sessionId,
+      }),
     },
     invoke: (functionId, input, caller) => {
       ordering.push(`invoke:${functionId}`)
@@ -190,7 +196,11 @@ function harness(options: HarnessOptions = {}): Harness {
     ...(options.directives === true
       ? {
           config: (): ChatConfigState => ({ model: activeModel, toolset: { hash: 'hash-0' } }),
-          directives: {
+          // A FACTORY, as the engine now asks for (392 plan 13): the handlers a turn runs belong to
+          // the session running it. This harness drives one session at a time, so the factory
+          // ignores the id and the spies stay the same objects — what is under test here is the
+          // ORDER effects happen in, and the per-session keying has its own composed differential.
+          directives: (): ChatDirectiveHandlers => ({
             pin: (actionClass: string): string => {
               ordering.push('directive:pin')
               pinCalls.push(actionClass)
@@ -203,7 +213,7 @@ function harness(options: HarnessOptions = {}): Harness {
               activeModel = name
               return { from, to: name, line: `model: ${name}` }
             },
-          },
+          }),
         }
       : {}),
     ...(options.compaction === true
