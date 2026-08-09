@@ -34,10 +34,12 @@ import type { TurnEngineDeps } from '../turn-engine.js'
 import { toToolName } from '../tool-names.js'
 import type {
   ChatBindingStage,
+  ChatModelDirectiveOutcome,
   PlannerStageOutcome,
   PlannerStagePort,
   ReconcileStrategy,
 } from '../ports.js'
+import type { ChatConfigState } from '../config-drift.js'
 
 const PROPOSALS_LIST = 'proposals.list'
 const RUNS_LIST = 'runs.list'
@@ -107,6 +109,10 @@ interface Harness {
   readonly invocations: Invocation[]
   readonly ordering: string[]
   readonly plannerCalls: number
+  /** What `/pin` was actually asked to record. EMPTY is the CR-04 assertion (392-11). */
+  readonly pinCalls: string[]
+  /** What `/model` was actually asked to switch to. */
+  readonly modelCalls: string[]
   runTurn(input: AgentAskInput): Promise<AgentAskResult>
 }
 
@@ -115,13 +121,29 @@ interface HarnessOptions {
   readonly failOn?: string
   readonly reconcile?: ReconcileStrategy
   readonly compaction?: boolean
+  /**
+   * Bind SPY directive handlers, plus the config thunk the `/model` event path needs.
+   *
+   * A directive's side effects are the pin overlay mutation, the model override and the two events
+   * they produce — none of which is observable through the invoke spy, because a directive never
+   * travels the function layer. So CR-04's claim ("nothing happened on a refused turn") needs its
+   * own seat, and this is it.
+   */
+  readonly directives?: boolean
 }
 
 function harness(options: HarnessOptions = {}): Harness {
   const log = memoryLog()
   const invocations: Invocation[] = []
   const ordering: string[] = []
+  const pinCalls: string[] = []
+  const modelCalls: string[] = []
   let plannerCalls = 0
+  // The model the session is under RIGHT NOW. The `/model` handler moves it and the config thunk
+  // reads it back, which is the shape production has: the handler applies the override and the
+  // re-read is what the diff calls `to`. A fixed value here would emit no `model_change` at all and
+  // the zero-event assertions below would be vacuous.
+  let activeModel = 'unbound'
 
   const planner: PlannerStagePort | undefined =
     options.planned === undefined
@@ -151,6 +173,25 @@ function harness(options: HarnessOptions = {}): Harness {
       return Promise.resolve({ ok: true })
     },
     ...(planner === undefined ? {} : { planner }),
+    ...(options.directives === true
+      ? {
+          config: (): ChatConfigState => ({ model: activeModel, toolset: { hash: 'hash-0' } }),
+          directives: {
+            pin: (actionClass: string): string => {
+              ordering.push('directive:pin')
+              pinCalls.push(actionClass)
+              return actionClass
+            },
+            model: (name: string): ChatModelDirectiveOutcome => {
+              ordering.push('directive:model')
+              modelCalls.push(name)
+              const from = activeModel
+              activeModel = name
+              return { from, to: name, line: `model: ${name}` }
+            },
+          },
+        }
+      : {}),
     ...(options.compaction === true
       ? {
           compaction: (): void => {
@@ -170,6 +211,8 @@ function harness(options: HarnessOptions = {}): Harness {
     log,
     invocations,
     ordering,
+    pinCalls,
+    modelCalls,
     get plannerCalls() {
       return plannerCalls
     },
@@ -239,6 +282,90 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       expect(result.status).toBe('fail_closed')
       expect(run.invocations).toHaveLength(0)
       expect(run.log.events.filter((event) => event.kind === 'mark_unhandled')).toHaveLength(1)
+    })
+  })
+
+  // CR-04, the gap round (392-11). THE DIRECTIVE LOOP USED TO RUN BEFORE THE VERDICT, so a turn
+  // whose second clause was unroutable returned `fail_closed` — with the message "nothing in the
+  // request was carried out" — while the pin it named was already recorded, irrevocably, and an
+  // `approval_decision` row was already on the append-only log. Every existing case in this file
+  // measured effects through the INVOKE spy, and a directive never travels the function layer, so
+  // `executed == 0` stayed true through the defect. These cases measure the other seat.
+  describe('CR-04 — no directive side effect precedes the reconciliation verdict (D-10)', () => {
+    it('records NO pin when the turn is refused, though it names one', async () => {
+      const run = harness({ directives: true })
+      const result = await run.runTurn({
+        message: '/pin fn:runs.start and write a test for 2FA',
+      })
+
+      // ONE assertion over three facts, deliberately: the STATUS was already right before this fix
+      // and the two effects were already wrong, so a suite that asserted them in sequence would
+      // report the defect one line at a time and hide how the three read together.
+      expect({
+        status: result.status,
+        pinned: run.pinCalls,
+        approvalDecisions: run.log.events.filter((event) => event.kind === 'approval_decision')
+          .length,
+      }).toEqual({ status: 'fail_closed', pinned: [], approvalDecisions: 0 })
+      expect(result.unhandled?.clause).toBe('write a test for 2FA')
+    })
+
+    it('applies NO model override when the turn is refused', async () => {
+      const run = harness({ directives: true })
+      const result = await run.runTurn({
+        message: '/model claude-fast and write a test for 2FA',
+      })
+
+      expect({
+        status: result.status,
+        switched: run.modelCalls,
+        verbModelChanges: run.log.events.filter(
+          (event) => event.kind === 'model_change' && event.source === 'verb',
+        ).length,
+      }).toEqual({ status: 'fail_closed', switched: [], verbModelChanges: 0 })
+    })
+
+    it('still carries the directive out on the execute arm, and its line still leads', async () => {
+      const run = harness({ directives: true })
+      const result = await run.runTurn({ message: '/pin fn:runs.start and proposals' })
+
+      expect(result.status).toBe('completed')
+      expect(run.pinCalls).toEqual(['fn:runs.start'])
+      expect(run.log.events.filter((event) => event.kind === 'approval_decision')).toHaveLength(1)
+      expect(run.invocations.map((call) => call.functionId)).toEqual([PROPOSALS_LIST])
+      // Directive lines lead the answer — the person asked for the pin FIRST (D-11's order).
+      expect(result.answer?.split('\n')[0]).toContain('fn:runs.start')
+    })
+
+    it('completes a turn that is ENTIRELY directives, emitting the verb-sourced event', async () => {
+      const run = harness({ directives: true })
+      const result = await run.runTurn({ message: '/model claude-fast' })
+
+      expect(result.status).toBe('completed')
+      expect(run.modelCalls).toEqual(['claude-fast'])
+      // The control for the zero-event assertion above: this path DOES write the row, so the
+      // refused turn's zero is a fact about the refusal rather than about an unbound seam.
+      expect(
+        run.log.events.filter(
+          (event) => event.kind === 'model_change' && event.source === 'verb',
+        ),
+      ).toHaveLength(1)
+      expect(result.answer).toContain('model: claude-fast')
+    })
+
+    it('refuses an UNBOUND directive by name before the planner is ever consulted', async () => {
+      // The hoisted half. The binding check reads `deps.directives` and mutates nothing, so it can
+      // stay where the execution loop used to be: a build that recognises `/model` and binds no
+      // handler still says so early, and stage 2 is never reached on that arm.
+      const run = harness({ planned: { toolCalls: [] } })
+      const result = await run.runTurn({
+        message: '/model claude-fixture and write a test for 2FA',
+      })
+
+      expect(result.status).toBe('fail_closed')
+      expect(run.plannerCalls).toBe(0)
+      expect(result.unhandled?.reason).toContain('no handler')
+      expect(result.unhandled?.clause).toBe('/model claude-fixture')
     })
   })
 

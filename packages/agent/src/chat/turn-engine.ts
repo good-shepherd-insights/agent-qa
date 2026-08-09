@@ -22,6 +22,13 @@
 // message naming it. There is no arrangement of these four stages in which a side effect precedes
 // the verdict, and that is the property `compound/` scenarios pin as `executed == 0`.
 //
+// EVERY EFFECT, NOT ONLY THE DISPATCHED ONES (392-11, CR-04). A session DIRECTIVE mutates the
+// session rather than the project — `/pin` writes an irrevocable overlay entry and an
+// `approval_decision` row, `/model` overrides the model — and those effects used to happen above
+// stage 2, so a refused turn could tell a person "nothing in the request was carried out" while
+// its pin was already in force. The binding question ("can this build carry this out at all") is
+// pure and stays early; the carrying-out sits below the verdict with everything else.
+//
 // THIS ENGINE NEVER BRANCHES ON `caller.surface`. The anti-pattern is named in `invoke.ts:28-29`
 // and it is the thing the function layer exists to abolish; what varies per stage here is the
 // ORIGIN the composition minted, which is a fact about who is acting, not about where from.
@@ -132,6 +139,45 @@ type DirectiveResult =
   | { readonly kind: 'handled'; readonly text: string }
   | { readonly kind: 'refused'; readonly reason: string }
 
+/** One collected directive: the clause the table matched, and what it matched it as. */
+interface DirectiveEntry {
+  readonly clause: ChatClause
+  readonly directive: ChatDirectiveName
+  readonly argument?: string
+}
+
+/**
+ * Is this directive CARRYABLE by this build — asked without carrying anything out (CR-04).
+ *
+ * A PURE READ OF `deps.directives`, and that purity is the whole reason this check may sit where
+ * the execution loop used to. A build that recognises `/pin` and binds no handler should say so
+ * early, by name, before a model is ever consulted; but "say so early" is a statement about the
+ * REFUSAL, not a licence to mutate a session before the verdict that authorises it. Splitting the
+ * question from the act is what lets both properties hold at once.
+ *
+ * The refusal wording is `directiveNotBoundReason`'s, unchanged — `runDirective`'s own not-bound
+ * arm reaches for the same function, so the two cannot drift into two answers to one question.
+ */
+function directiveBindingRefusal(
+  deps: TurnEngineDeps,
+  entry: DirectiveEntry,
+): string | undefined {
+  const handlers = deps.directives
+  const bound = ((): boolean => {
+    switch (entry.directive) {
+      case 'model':
+        return handlers?.model !== undefined && entry.argument !== undefined
+      case 'pin':
+        return handlers?.pin !== undefined && entry.argument !== undefined
+      case 'help':
+        return handlers?.help !== undefined
+      case 'quit':
+        return handlers?.quit !== undefined
+    }
+  })()
+  return bound ? undefined : directiveNotBoundReason(entry.directive, entry.clause.text)
+}
+
 /**
  * Carry out one session directive.
  *
@@ -151,7 +197,7 @@ type DirectiveResult =
  */
 async function runDirective(
   deps: TurnEngineDeps,
-  entry: { clause: ChatClause; directive: ChatDirectiveName; argument?: string },
+  entry: DirectiveEntry,
   context: {
     readonly turnId: string
     readonly append: (event: ChatSessionEvent) => Promise<void>
@@ -309,11 +355,7 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       // ---- Stage 1: the deterministic resolver over the clause split.
       const clauses = deps.split(input.message)
       const mapped: ResolvedClause[] = []
-      const directives: {
-        clause: ChatClause
-        directive: ChatDirectiveName
-        argument?: string
-      }[] = []
+      const directives: DirectiveEntry[] = []
       for (const clause of clauses) {
         const resolution = resolveClause(deps.table, clause.text)
         if (resolution.kind === 'unresolved') continue
@@ -349,7 +391,7 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
           mapped.length + directives.length === clauses.length ? 'resolved' : 'unresolved',
       })
 
-      // ---- Directives, carried out BEFORE stage 2 and never through the function layer.
+      // ---- Directives, ASKED ABOUT here and carried out below the verdict (D-10, CR-04).
       //
       // A directive names no capability — it changes what this SESSION is, and that is why it does
       // not travel `invokeFunction` and why a model may never reach one (391 D-07: the mechanism
@@ -357,15 +399,16 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       // tightening direction). A directive with no handler still refuses the whole turn by name,
       // through the same `refuse()` every other refusal takes, so a build that recognises `/pin`
       // and cannot carry it out leaves a countable row rather than a silent no-op (D-08 / D-15).
-      const directiveLines: string[] = []
+      //
+      // WHAT MOVED, AND WHY. This loop USED TO CARRY THE DIRECTIVES OUT here, above stage 2 —
+      // which put an irrevocable pin and an `approval_decision` row on the log of a turn that then
+      // got refused, under a message reading "nothing in the request was carried out"
+      // (392-VERIFICATION CR-04). D-10's pre-flight atomicity was applied only to `invokeFunction`
+      // dispatches; it is now applied to every effect a turn can have. What stays here is the
+      // BINDING question, which mutates nothing.
       for (const entry of directives) {
-        const line = await runDirective(deps, entry, {
-          turnId,
-          append,
-          now: deps.now,
-        })
-        if (line.kind === 'refused') return refuse(entry.clause.text, line.reason)
-        directiveLines.push(line.text)
+        const notBound = directiveBindingRefusal(deps, entry)
+        if (notBound !== undefined) return refuse(entry.clause.text, notBound)
       }
 
       // Everything the directives did not claim. Computed rather than reusing `clauses`, so a turn
@@ -430,6 +473,31 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       })
       if (verdict.kind === 'unhandled') {
         return refuse(verdict.clause.text, verdict.reason)
+      }
+
+      // ---- The directives' side effects, on the execute arm and NOWHERE ELSE (D-10, CR-04).
+      //
+      // Reachable only from here, by the same control-flow discrimination stage 4 uses: the verdict
+      // is a discriminated union, the `unhandled` arm returned above, and this loop lives on the
+      // other side of that return. There is no arrangement of these statements in which a pin is
+      // recorded, a model is overridden or an `approval_decision` row is written on a turn that got
+      // refused. A handler that THROWS here — `/pin` against a class this host does not declare —
+      // still routes through `refuse()`, so a refusal at this depth stays as countable as any other.
+      //
+      // TWO CONSEQUENCES, ACCEPTED. A same-turn `/model` now applies AFTER the verdict, so this
+      // turn's planner call ran under the previous model; that is the fail-safe direction, and the
+      // alternative is an effect preceding the verdict. And the verb-sourced `model_change` /
+      // `approval_decision` rows now follow this turn's `stage_outcome` rows — every event carries
+      // `turnId` and `at`, so no reader's ordering claim rests on which came first within a turn.
+      const directiveLines: string[] = []
+      for (const entry of directives) {
+        const line = await runDirective(deps, entry, {
+          turnId,
+          append,
+          now: deps.now,
+        })
+        if (line.kind === 'refused') return refuse(entry.clause.text, line.reason)
+        directiveLines.push(line.text)
       }
 
       // ---- Stage 4: sequential execution in utterance order, stopping on failure (D-11).
