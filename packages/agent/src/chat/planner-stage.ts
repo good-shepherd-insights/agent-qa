@@ -1,0 +1,127 @@
+// Stage 2 — the tool-bound planner (Phase 392 plan 04, CHAT-01 / CHAT-06 / D-10).
+//
+// THE MODEL ARRIVES BUILT. This module takes a `LanguageModel` as a constructor argument and does
+// not construct one: it names no provider package, and it does not name `createModel` either. That
+// is CHAT-06 stated structurally rather than as a convention — every chat model call rides the one
+// entry the host composes, which is where the masking middleware and the profile resolution live,
+// so there is no arrangement of this file in which a chat turn reaches a provider that skipped
+// them. The `packages/arch` chat-model rollcall reds the build if that ever stops being true.
+//
+// THE STAGE PRODUCES A PLAN AND NOTHING ELSE. `generateText` executes a tool exactly when the tool
+// carries a function to run, and `projectPlannerTools` gives none of them one — so what comes back
+// is the model's proposal, in `result.toolCalls`, with zero side effects behind it. Reconciliation
+// then decides what that proposal means (D-10). This is the strongest available form of "nothing
+// runs before the verdict": not an ordering somebody maintains, but an absent callback.
+//
+// A TRANSPORT FAILURE IS DATA, NOT A CRASH. An auth refusal, a rate limit or an outage is a fact
+// about this turn. It comes back as `failure` on the outcome, the engine folds it into a failed
+// turn with a named receipt, and the session survives. A thrown error here would surface as a stack
+// trace over a REPL and leave the session log with a turn that neither completed nor failed.
+//
+// A NOTE ON THE STRING FORM OF `LanguageModel`. The SDK's own type also admits a bare model id,
+// which it resolves through a global provider registry — i.e. it constructs a client. That variant
+// is excluded from {@link ChatLanguageModel} on purpose: it is a second door to the thing CHAT-06
+// closes, and it is closed here at the type rather than by asking hosts not to walk through it.
+
+import { generateText } from 'ai'
+import type { LanguageModel, ToolSet } from 'ai'
+
+import { buildChatPrompt } from './chat-prompt.js'
+import type { ChatPromptInput } from './chat-prompt.js'
+import { ANSWER_ONLY_TOOL_NAME } from './tool-names.js'
+import type {
+  PlannerStageFailure,
+  PlannerStageOutcome,
+  PlannerStagePort,
+  PlannerToolCall,
+} from './ports.js'
+
+/** A model OBJECT, never a model id: an id would be resolved by constructing a client. */
+export type ChatLanguageModel = Exclude<LanguageModel, string>
+
+/** What the prompt's context and volatile tiers state about the session, read per turn. */
+export type ChatSessionPromptContext = Omit<ChatPromptInput, 'utterance' | 'clauses'>
+
+export interface PlannerStageDeps {
+  /** Built by the host through `createModel` and handed over — CHAT-06. */
+  readonly model: ChatLanguageModel
+  /** The registry projection from `planner-tools.ts`. Execute-less, by that module's contract. */
+  readonly tools: ToolSet
+  /**
+   * Read once per turn rather than captured at construction, because the model in force, the
+   * pending-count facts and the conversation all change WITHIN a session — a `/model` directive
+   * mid-session is the obvious case (D-04), and a stage holding a snapshot would prompt against a
+   * session that no longer exists.
+   */
+  readonly context: () => ChatSessionPromptContext
+}
+
+/** The refusal NAME a provider published, or the closest honest thing to it. */
+function toStageFailure(error: unknown): PlannerStageFailure {
+  if (error instanceof Error) {
+    return { name: error.name === '' ? 'PlannerStageError' : error.name, message: error.message }
+  }
+  return { name: 'PlannerStageError', message: String(error) }
+}
+
+/** `answer_only`'s text, when the model answered in prose. */
+function answerTextOf(input: unknown): string | undefined {
+  if (typeof input !== 'object' || input === null) return undefined
+  const text = (input as { text?: unknown }).text
+  return typeof text === 'string' ? text : undefined
+}
+
+/**
+ * Shape the SDK's tool calls into the plan stage 3 reads.
+ *
+ * NOTHING IS DROPPED. Every call survives into `toolCalls` in the order the model made them,
+ * meta-tools included: `mark_unhandled` is a proposal about the turn that only reconciliation can
+ * act on, and filtering it here would put the fail-closed decision in the component whose input is
+ * the untrusted one. `answer` is read off the first `answer_only` call as a convenience for the
+ * consumer, and that call stays in the list.
+ */
+export function readBackPlan(
+  toolCalls: readonly { readonly toolName: string; readonly input: unknown }[],
+): PlannerStageOutcome {
+  const plan: PlannerToolCall[] = []
+  let answer: string | undefined
+
+  for (const call of toolCalls) {
+    plan.push({ toolName: call.toolName, input: call.input })
+    if (call.toolName === ANSWER_ONLY_TOOL_NAME && answer === undefined) {
+      answer = answerTextOf(call.input)
+    }
+  }
+
+  return answer === undefined ? { toolCalls: plan } : { toolCalls: plan, answer }
+}
+
+/**
+ * Build stage 2 over an already-constructed model and an already-projected toolset.
+ *
+ * Both arrive from the composition root, and neither is reachable from here: this module cannot
+ * build a model and cannot widen a toolset. What it can do is ask, and read the answer back.
+ */
+export function createPlannerStage(deps: PlannerStageDeps): PlannerStagePort {
+  return {
+    async plan(request): Promise<PlannerStageOutcome> {
+      const { system, prompt } = buildChatPrompt({
+        utterance: request.utterance,
+        clauses: request.clauses,
+        ...deps.context(),
+      })
+
+      try {
+        const result = await generateText({
+          model: deps.model,
+          tools: deps.tools,
+          system,
+          prompt,
+        })
+        return readBackPlan(result.toolCalls)
+      } catch (error) {
+        return { toolCalls: [], failure: toStageFailure(error) }
+      }
+    },
+  }
+}

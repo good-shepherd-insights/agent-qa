@@ -41,8 +41,13 @@ export class ChatToolNameError extends Error {
  * The model's answer for a turn it answers in prose (CHAT-01).
  *
  * A first-class action rather than the absence of one: a turn where the person asked a question
- * executes zero ops and returns text, and "the model planned nothing" has to stay distinguishable
- * from "the model answered".
+ * executes zero ops and returns text, so `the model planned nothing` has to stay distinguishable
+ * against `the model answered` — two facts a reader of the log must be able to tell apart.
+ *
+ * (The backticks are not stylistic. `packages/arch`'s dependency lint reads every source line
+ * looking for a specifier, and its pattern is one particular English word ahead of a quoted
+ * phrase — so ordinary prose in that shape is reported as an undeclared package import. Two
+ * sibling plans have already reddened `validate:arch` this way.)
  */
 export const ANSWER_ONLY_TOOL_NAME = 'answer_only'
 

@@ -160,13 +160,22 @@ export type {
   ChatResolverRule,
   ChatResolverTable,
 } from './chat/resolver-table.js'
+// 392 plan 04: stage 2's contract vocabulary. `PlannerStagePort` already named an outcome shape;
+// now that shape is the model's RAW plan — unexecuted tool calls plus the optional prose answer and
+// the optional typed transport failure — and the three pieces are published for the reason the
+// repair contract's were: a composition root that can supply a planner but cannot NAME what one
+// answers with would spell the shapes again locally (388 C13). None of them is dispatch: a tool
+// call is a description of an intention, and the only thing that can act on one is the reconciler.
 export type {
   CallerMint,
   ChatClause,
   ChatInvokeBinding,
   ClauseSplitter,
   CompactionHook,
+  PlannerStageFailure,
+  PlannerStageOutcome,
   PlannerStagePort,
+  PlannerToolCall,
   ReconcileInput,
   ReconcileStrategy,
   ReconcileVerdict,

@@ -365,7 +365,16 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'KnowledgeReviewPort',
   'OptionalFunctionDepKey',
   'PersistencePort',
+  // 392 plan 04: stage 2's contract vocabulary — the typed transport failure, the outcome the port
+  // now answers with, and the unexecuted tool call it is made of. All three are TYPES describing
+  // untrusted model output; a tool call is a description of an intention, and the only component
+  // that can act on one is the reconciliation strategy the composition supplies. They are pinned
+  // here so widening what a planner may hand back — a fourth member, an executable field — is a
+  // visible edit to this list rather than a quiet change to what crosses the model boundary.
+  'PlannerStageFailure',
+  'PlannerStageOutcome',
   'PlannerStagePort',
+  'PlannerToolCall',
   // 388 plan 03: the durable chip-truth read port and the two shapes it answers with. Types,
   // so none of them carries a database across the barrel — the only value that implements the
   // port is built by a composition in the one package sqlite is legal in. They are here for the

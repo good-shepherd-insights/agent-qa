@@ -31,6 +31,52 @@ export interface ResolvedClause {
 }
 
 /**
+ * One tool call the model proposed. UNEXECUTED, and unexecutable — the tools it was offered carry
+ * no execute callback, so the SDK returned a description of an intention and nothing more.
+ *
+ * `input` is `unknown` on purpose. It has crossed no contract yet: what validates it is the op's
+ * own live schema inside `invokeFunction`, and a shape asserted here would be a second validator
+ * standing in front of the real one, free to disagree with it.
+ */
+export interface PlannerToolCall {
+  /** The provider-facing tool name. `tool-names.ts` maps it back to a function id. */
+  readonly toolName: string
+  readonly input: unknown
+}
+
+/**
+ * A stage-2 failure the engine folds into a failed turn (CHAT-01).
+ *
+ * A transport error, an auth refusal or a provider outage is a fact about this turn, not a crash of
+ * the session — so it is DATA rather than a thrown error, and the turn ends with a receipt instead
+ * of a hang or a stack trace. The name is the provider's own refusal name where there is one, which
+ * keeps it on the same footing as every other refusal a receipt carries.
+ */
+export interface PlannerStageFailure {
+  readonly name: string
+  readonly message: string
+}
+
+/**
+ * What stage 2 produces: a PLAN, and never an effect.
+ *
+ * `toolCalls` carries EVERY call the model made, meta-tools included and in the order it proposed
+ * them. Nothing is filtered out here, because stage 3 is the component that decides what a plan
+ * means and a stage that pre-digested it would be making that decision one layer early, out of
+ * sight of the reconciliation the whole design exists to route through.
+ *
+ * `answer` is a convenience projection of the first `answer_only` call, not a substitute for it:
+ * the call itself is still in `toolCalls`.
+ */
+export interface PlannerStageOutcome {
+  readonly toolCalls: readonly PlannerToolCall[]
+  /** The prose text when the model answered rather than acted (CHAT-01). */
+  readonly answer?: string
+  /** Present when the model could not be reached or refused; the turn fails, never hangs. */
+  readonly failure?: PlannerStageFailure
+}
+
+/**
  * Stage 2 — the tool-bound planner (CHAT-01).
  *
  * OPTIONAL AT THE COMPOSITION, and its absence is a real production posture rather than a stub:
@@ -43,14 +89,22 @@ export interface PlannerStagePort {
   plan(request: {
     readonly utterance: string
     readonly clauses: readonly ChatClause[]
-  }): Promise<readonly ResolvedClause[]>
+  }): Promise<PlannerStageOutcome>
 }
 
-/** What stage 3 is given: what the table proved, and what the model proposed. */
+/**
+ * What stage 3 is given: what the table proved, and what the model proposed.
+ *
+ * `planned` is the model's RAW outcome rather than a set of resolved clauses, and the difference is
+ * where the safety property lives. Aligning tool calls to clauses IS reconciliation — deciding
+ * which proposal answers which part of the request, and whose binding wins where the table already
+ * has one (D-12). A stage 2 that handed over pre-aligned clauses would have made that decision
+ * already, in the one component whose input is untrusted model output.
+ */
 export interface ReconcileInput {
   readonly clauses: readonly ChatClause[]
   readonly mapped: readonly ResolvedClause[]
-  readonly planned: readonly ResolvedClause[]
+  readonly planned: PlannerStageOutcome
 }
 
 /**
@@ -61,7 +115,19 @@ export interface ReconcileInput {
  * unhandled clause carries an empty execution plan and the turn ends with `executed == 0`.
  */
 export type ReconcileVerdict =
-  | { readonly kind: 'execute'; readonly plan: readonly ResolvedClause[] }
+  | {
+      readonly kind: 'execute'
+      readonly plan: readonly ResolvedClause[]
+      /**
+       * The prose a turn answers with when the model answered rather than acted (CHAT-01).
+       *
+       * It rides the EXECUTE verdict, with an empty plan in the pure case, because an answered turn
+       * completed — it did what was asked. Giving it a third verdict variant would have made
+       * "answered" a sibling of "refused", and every consumer would then have to remember that one
+       * of the two non-execute outcomes is a success.
+       */
+      readonly answer?: string
+    }
   | { readonly kind: 'unhandled'; readonly clause: ChatClause; readonly reason: string }
 
 /**

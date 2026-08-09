@@ -41,6 +41,7 @@ import type {
   ChatInvokeBinding,
   ClauseSplitter,
   CompactionHook,
+  PlannerStageOutcome,
   PlannerStagePort,
   ReconcileStrategy,
   ResolvedClause,
@@ -78,6 +79,16 @@ export interface TurnEngine {
 function summarise(functionId: string): string {
   return `${functionId} completed`
 }
+
+/**
+ * What stage 2 produced when it was skipped or when no planner is bound.
+ *
+ * The EMPTY plan rather than an absent one, so stage 3 reads one shape whatever happened upstream:
+ * a reconciliation strategy that had to ask "was there a planner" before asking "what did it say"
+ * would have two paths through the decision that refuses a turn, and only one of them would be
+ * exercised by a host that binds a model.
+ */
+const NO_PLAN: PlannerStageOutcome = { toolCalls: [] }
 
 /** The refusal NAME the function layer publishes, which is what a failed receipt carries. */
 function refusalName(error: unknown): string {
@@ -169,7 +180,7 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       const unmapped = clauses.filter(
         (clause) => !mapped.some((resolved) => resolved.clause.index === clause.index),
       )
-      let planned: readonly ResolvedClause[] = []
+      let planned: PlannerStageOutcome = NO_PLAN
       if (unmapped.length === 0) {
         // The tracer's path, and a permanent one: a fully canonical utterance is model-independent.
         await append({
@@ -196,7 +207,16 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
           turnId,
           at: deps.now(),
           stage: 'planner',
-          outcome: planned.length === unmapped.length ? 'resolved' : 'unresolved',
+          // The stage RESOLVED when the model produced something to reconcile — a plan, or an
+          // answer. It did not when the model was unreachable or said nothing. Whether what it
+          // produced survives reconciliation is the next stage's question, and answering it in
+          // this field would make "the model proposed nothing" and "the reconciler refused the
+          // proposal" the same bytes for every reader of the log.
+          outcome:
+            planned.failure === undefined
+            && (planned.toolCalls.length > 0 || planned.answer !== undefined)
+              ? 'resolved'
+              : 'unresolved',
         })
       }
 
@@ -272,7 +292,13 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         })
       }
 
-      return finish(failed ? 'failed' : 'completed', { receipts })
+      // The answer rides the completed turn (CHAT-01). A turn the model answered in prose reaches
+      // here with an empty plan, so the loop above ran zero times and `receipts` is empty — which
+      // is the assertion "answering executes nothing" is made of, rather than a claim about it.
+      return finish(failed ? 'failed' : 'completed', {
+        receipts,
+        ...(verdict.answer === undefined ? {} : { answer: verdict.answer }),
+      })
     },
   }
 }
