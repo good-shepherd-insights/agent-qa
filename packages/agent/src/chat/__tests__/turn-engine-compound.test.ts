@@ -335,7 +335,9 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
     it('performs zero invocations and returns the prose', async () => {
       const run = harness({
         planned: {
-          toolCalls: [{ toolName: 'answer_only', input: { text: 'a flake is…' } }],
+          toolCalls: [
+            { toolName: 'answer_only', input: { clause: 'what is a flake', text: 'a flake is…' } },
+          ],
           answer: 'a flake is…',
         },
       })

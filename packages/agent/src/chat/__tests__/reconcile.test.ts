@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { deterministicOverrideStrategy } from '../reconcile.js'
+import { ANSWER_ONLY_INPUT_SCHEMA } from '../planner-tools.js'
 import type { ChatClause, PlannerStageOutcome, ReconcileInput, ResolvedClause } from '../ports.js'
 import {
   ANSWER_ONLY_TOOL_NAME,
@@ -179,7 +180,12 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
           [only],
           [],
           planned({
-            toolCalls: [{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'quite a lot' } }],
+            toolCalls: [
+              {
+                toolName: ANSWER_ONLY_TOOL_NAME,
+                input: { clause: 'what can you do', text: 'quite a lot' },
+              },
+            ],
             answer: 'quite a lot',
           }),
         ),
@@ -268,7 +274,12 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
           [first, second],
           [mappedTo(first, PROPOSALS_LIST, {})],
           planned({
-            toolCalls: [{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'a test that…' } }],
+            toolCalls: [
+              {
+                toolName: ANSWER_ONLY_TOOL_NAME,
+                input: { clause: 'what is a flake', text: 'a test that…' },
+              },
+            ],
             answer: 'a test that…',
           }),
         ),
@@ -278,6 +289,150 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
       if (verdict.kind !== 'execute') return
       expect(verdict.plan).toHaveLength(1)
       expect(verdict.answer).toBe('a test that…')
+    })
+  })
+
+  // CR-03, the gap round (392-11). An `answer_only` USED TO COVER EVERY UNBOUND CLAUSE, because the
+  // merge read `planned.answer` — one model-controlled fact about the WHOLE turn — as consent for
+  // each clause it had no binding for. The tests below are written from the dangerous direction: the
+  // unbound clause is an ACTION, and the observable that separates a silent drop from an answered
+  // question is the VERDICT KIND rather than the plan length. The old suite asserted `plan.length`
+  // on a benign informational clause, which is the same number a silent drop produces — which is
+  // exactly why the defect survived 284 green tests.
+  describe('CR-03 — answer_only consumes the clause it NAMES, and no other', () => {
+    it('refuses when an unbound ACTION clause was never named, however well the other was answered', () => {
+      // THE VERIFICATION-REQUIRED CASE. Clause 1 is table-bound, clause 2 is an unroutable action,
+      // and the model answered clause 1 in prose. Pre-fix this returned `execute` with clause 2
+      // erased — no receipt, no `mark_unhandled` row, status `completed`.
+      const first = clause('run test 42', 0)
+      const second = clause('delete the knowledge root', 1)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [first, second],
+          [mappedTo(first, RUNS_START, { testId: 'TST-42' })],
+          planned({
+            toolCalls: [
+              {
+                toolName: ANSWER_ONLY_TOOL_NAME,
+                input: { clause: 'run test 42', text: 'test 42 is the checkout smoke.' },
+              },
+            ],
+            answer: 'test 42 is the checkout smoke.',
+          }),
+        ),
+      )
+
+      expect(verdict.kind).toBe('unhandled')
+      if (verdict.kind !== 'unhandled') return
+      expect(verdict.clause.text).toBe('delete the knowledge root')
+      expect(verdict.reason).toContain('delete the knowledge root')
+    })
+
+    it('covers nothing when the clause claim matches no splitter output (guard rejection)', () => {
+      // The asymmetry this file's helper records, asserted: `modelMarkedUnhandled` may fall back to
+      // "the first unmapped clause" because refusing MORE is fail-safe, and an answer claim may not,
+      // because completing more is fail-dangerous. A claim nobody typed covers nothing at all.
+      const only = clause('delete the knowledge root', 0)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [only],
+          [],
+          planned({
+            toolCalls: [
+              {
+                toolName: ANSWER_ONLY_TOOL_NAME,
+                input: { clause: 'a clause nobody typed', text: 'done!' },
+              },
+            ],
+            answer: 'done!',
+          }),
+        ),
+      )
+
+      expect(verdict.kind).toBe('unhandled')
+      if (verdict.kind !== 'unhandled') return
+      expect(verdict.clause.text).toBe('delete the knowledge root')
+    })
+
+    it('covers the clause whose text it quotes verbatim, executing nothing for it', () => {
+      const only = clause('what is a flake', 0)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [only],
+          [],
+          planned({
+            toolCalls: [
+              {
+                toolName: ANSWER_ONLY_TOOL_NAME,
+                input: { clause: 'what is a flake', text: 'a test that…' },
+              },
+            ],
+            answer: 'a test that…',
+          }),
+        ),
+      )
+
+      expect(verdict.kind).toBe('execute')
+      if (verdict.kind !== 'execute') return
+      expect(verdict.plan).toHaveLength(0)
+      expect(verdict.answer).toBe('a test that…')
+    })
+
+    it('mixes a table-bound clause with an explicitly answered one', () => {
+      const first = clause('proposals', 0)
+      const second = clause('what is a flake', 1)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [first, second],
+          [mappedTo(first, PROPOSALS_LIST, {})],
+          planned({
+            toolCalls: [
+              {
+                toolName: ANSWER_ONLY_TOOL_NAME,
+                input: { clause: 'what is a flake', text: 'a test that…' },
+              },
+            ],
+            answer: 'a test that…',
+          }),
+        ),
+      )
+
+      expect(verdict.kind).toBe('execute')
+      if (verdict.kind !== 'execute') return
+      expect(verdict.plan).toHaveLength(1)
+      expect(verdict.plan[0]?.functionId).toBe(PROPOSALS_LIST)
+      expect(verdict.answer).toBe('a test that…')
+    })
+
+    it('treats an answer_only with no clause field as covering nothing (old-shape call)', () => {
+      // The shape a model that has not read the new contract emits. It is not charitably widened to
+      // "the turn" — the whole defect was a turn-level fact standing in for a per-clause one.
+      const only = clause('delete the knowledge root', 0)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [only],
+          [],
+          planned({
+            toolCalls: [{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'done!' } }],
+            answer: 'done!',
+          }),
+        ),
+      )
+
+      expect(verdict.kind).toBe('unhandled')
+      if (verdict.kind !== 'unhandled') return
+      expect(verdict.clause.text).toBe('delete the knowledge root')
+    })
+
+    it('states the contract in the schema: {clause, text} parses, {text} alone is refused', () => {
+      // The schema is the half of the fix the MODEL sees. A reconciler that required a clause
+      // against a tool whose contract never asked for one would fail closed on every informational
+      // turn, so the two halves are asserted together rather than in two files.
+      expect(
+        ANSWER_ONLY_INPUT_SCHEMA.safeParse({ clause: 'what is a flake', text: 'a test that…' })
+          .success,
+      ).toBe(true)
+      expect(ANSWER_ONLY_INPUT_SCHEMA.safeParse({ text: 'a test that…' }).success).toBe(false)
     })
   })
 

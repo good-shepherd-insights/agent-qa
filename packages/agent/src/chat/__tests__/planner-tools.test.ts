@@ -196,7 +196,7 @@ describe('projectPlannerTools: the registry walk IS the toolset (D-07)', () => {
     }
   })
 
-  it('shapes mark_unhandled as { clause, reason } and answer_only as { text } (CHAT-01/D-08)', async () => {
+  it('shapes both meta-tools around the CLAUSE they are about (CHAT-01/D-08/CR-03)', async () => {
     const tools = projectPlannerTools(registry(), PLANNER_CALLER)
     const unhandled = tools[MARK_UNHANDLED_TOOL_NAME]
     const answer = tools[ANSWER_ONLY_TOOL_NAME]
@@ -206,7 +206,11 @@ describe('projectPlannerTools: the registry walk IS the toolset (D-07)', () => {
     const unhandledSchema = await schemaDocumentOf(unhandled?.inputSchema)
     const answerSchema = await schemaDocumentOf(answer?.inputSchema)
     expect(Object.keys(unhandledSchema.properties ?? {}).sort()).toEqual(['clause', 'reason'])
-    expect(Object.keys(answerSchema.properties ?? {}).sort()).toEqual(['text'])
+    // `answer_only` names its clause too, and that field is what makes the coverage claim
+    // per-clause rather than per-turn: without it one answer consumed every unbound clause of a
+    // compound request (392-11, CR-03). The two meta-tools now agree on the vocabulary.
+    expect(Object.keys(answerSchema.properties ?? {}).sort()).toEqual(['clause', 'text'])
+    expect((answerSchema.required ?? []).slice().sort()).toEqual(['clause', 'text'])
   })
 
   it('walks the registry it was handed, so a host with fewer ops gets fewer tools', () => {
@@ -230,7 +234,10 @@ describe('projectPlannerTools: the registry walk IS the toolset (D-07)', () => {
  */
 async function schemaDocumentOf(
   flexible: unknown,
-): Promise<{ properties?: Record<string, unknown> }> {
+): Promise<{ properties?: Record<string, unknown>; required?: readonly string[] }> {
   const normalised = asSchema(flexible as Parameters<typeof asSchema>[0])
-  return (await normalised.jsonSchema) as { properties?: Record<string, unknown> }
+  return (await normalised.jsonSchema) as {
+    properties?: Record<string, unknown>
+    required?: readonly string[]
+  }
 }

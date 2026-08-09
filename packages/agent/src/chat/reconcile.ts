@@ -37,7 +37,12 @@ import type {
   ReconcileStrategy,
   ReconcileVerdict,
 } from './ports.js'
-import { MARK_UNHANDLED_TOOL_NAME, fromToolName, isChatMetaToolName } from './tool-names.js'
+import {
+  ANSWER_ONLY_TOOL_NAME,
+  MARK_UNHANDLED_TOOL_NAME,
+  fromToolName,
+  isChatMetaToolName,
+} from './tool-names.js'
 
 /**
  * The refusal sentence a fail-closed turn carries.
@@ -96,6 +101,34 @@ function modelMarkedUnhandled(
 }
 
 /**
+ * The clause texts the model's `answer_only` calls CLAIM to have answered (CR-03).
+ *
+ * A CLAIM COVERS THE CLAUSE IT NAMES AND NO OTHER, matched against what the splitter produced —
+ * which is the same read `modelMarkedUnhandled` performs on `mark_unhandled`, with one deliberate
+ * difference: THERE IS NO FALLBACK HERE. `mark_unhandled`'s fallback to "the first unmapped clause"
+ * is fail-SAFE, because a model whose claim matches nothing still refuses more than it otherwise
+ * would. An answer-coverage fallback would be fail-DANGEROUS in exactly the mirror direction: it
+ * completes more, and what it completes is a clause nobody bound and nobody answered. That
+ * asymmetry is why a claim naming text no one typed covers nothing at all, and why a call with no
+ * `clause` field — the shape this tool had before the field was required — covers nothing either.
+ *
+ * The turn-level `planned.answer` is UNCHANGED and still means what `readBackPlan` says it means:
+ * the first `answer_only` call's prose, carried on the verdict for a person to read. What it is no
+ * longer allowed to be is consent.
+ */
+function answeredClauseClaims(input: ReconcileInput): ReadonlySet<string> {
+  const claimed = new Set<string>()
+  for (const call of input.planned.toolCalls) {
+    if (call.toolName !== ANSWER_ONLY_TOOL_NAME) continue
+    const body = (typeof call.input === 'object' && call.input !== null ? call.input : {}) as {
+      clause?: unknown
+    }
+    if (typeof body.clause === 'string') claimed.add(body.clause)
+  }
+  return claimed
+}
+
+/**
  * The model's ACTION proposals, in the order it made them.
  *
  * The two orchestration calls are removed here and nowhere else. They are not proposals about what
@@ -147,6 +180,7 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
   }
 
   const proposed = actionCalls(input)
+  const answered = answeredClauseClaims(input)
   let nextProposal = 0
 
   const plan: ClauseAction[] = []
@@ -175,10 +209,12 @@ export const deterministicOverrideStrategy: ReconcileStrategy = (
       })
       continue
     }
-    // An unresolved clause is answered by prose or it is not answered at all. `answer_only` covers
-    // the turn's informational content, so a clause with no binding and an answer in hand is a
-    // question that got an answer rather than an action that got dropped (CHAT-01).
-    if (input.planned.answer !== undefined) continue
+    // An unresolved clause is answered by prose or it is not answered at all — and "answered" is a
+    // claim about THIS clause, quoted, rather than about the turn (CHAT-01, CR-03). The line this
+    // replaced read `if (input.planned.answer !== undefined) continue`, which let one model-emitted
+    // answer consume every clause the merge had no binding for: "run test 42 and delete the
+    // knowledge root", answered once, completed with the second clause erased.
+    if (answered.has(clause.text)) continue
     if (input.planned.failure !== undefined) {
       return { kind: 'unhandled', clause, reason: plannerFailedReason(clause.text, input.planned.failure) }
     }

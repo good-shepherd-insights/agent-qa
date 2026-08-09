@@ -48,8 +48,21 @@ export interface PlannerToolSource {
   list(caller: FunctionCaller): readonly FunctionDeclaration[]
 }
 
-/** `answer_only`'s contract: the prose a turn answers with (CHAT-01). */
+/**
+ * `answer_only`'s contract: WHICH clause is being answered, and the prose (CHAT-01, CR-03).
+ *
+ * THE `clause` FIELD IS REQUIRED, and it mirrors `mark_unhandled`'s for the same reason: a turn is
+ * made of clauses, so a claim about a turn cannot stand in for a claim about one of them. Without
+ * it, one call answering one question consumed every OTHER clause the merge had no binding for —
+ * an unroutable action erased with no receipt and no refusal (392-VERIFICATION CR-03).
+ */
 export const ANSWER_ONLY_INPUT_SCHEMA = z.object({
+  clause: z
+    .string()
+    .describe(
+      'The part of the request, quoted verbatim from the clauses you were given, that this '
+      + 'answer is about.',
+    ),
   text: z.string().describe('The answer, in prose, for a turn that asks for information.'),
 })
 
@@ -63,7 +76,10 @@ export const MARK_UNHANDLED_INPUT_SCHEMA = z.object({
 
 const ANSWER_ONLY_DESCRIPTION =
   'Answer the person in prose and perform no action. Use this when the request asks for '
-  + 'information rather than for something to happen.'
+  + 'information rather than for something to happen. ONE CALL PER CLAUSE you are answering, '
+  + 'naming that clause in `clause` copied verbatim from the list you were given: this call '
+  + 'covers the clause it names and no other, and any clause left neither named here nor bound '
+  + 'to a tool refuses the whole turn.'
 
 const MARK_UNHANDLED_DESCRIPTION =
   'Declare that a part of the request cannot be carried out with the tools available. Naming it '
