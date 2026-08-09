@@ -39,7 +39,13 @@ import {
 } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
 import { KnowledgeApplyOutcomeSchema } from '@vostride/agent-qa-schema'
-import type { FunctionCaller, RunId, RunsStartInput } from '@vostride/agent-qa-schema'
+import type {
+  FunctionCaller,
+  GrantRecordOutcome,
+  RiskActionDescriptor,
+  RunId,
+  RunsStartInput,
+} from '@vostride/agent-qa-schema'
 
 import { loadConfigFile, loadEnvOverrides, resolveConfig } from '../config.js'
 import { invokeViaDaemon } from '../daemon/client.js'
@@ -484,6 +490,174 @@ export function createTtyConfirmPort(
       (typed: string) => {
         const normalized = typed.trim().toLowerCase()
         settle(normalized === 'y' || normalized === 'yes')
+      },
+    )
+  })
+}
+
+// ---- chat's three-way inline confirm (Phase 392 plan 08, D-03 / D-22 / T-392-26) -------------
+//
+// AN EXTENSION, NOT A FORK. `createTtyConfirmPort` above keeps its one-form prompt and every
+// non-chat CLI decision keeps answering through it; this wrapper adds the second of 391's two
+// decision forms for the surface that has a conversation to record it in. Reshaping the shipped
+// port instead would have given every `agent-qa` command an `always` answer nobody reviewed for it.
+//
+// `ConfirmPort` IS UNTOUCHED, and that is the whole shape of the design (RESEARCH Pitfall 7). The
+// port's type stays `(action) => boolean | Promise<boolean>`; the standing approval and the session
+// event are things this wrapper does BESIDE answering, in the surface that knows a person is there.
+// Nothing in `packages/safety` learns that chat exists.
+//
+// EXACTLY TWO FORMS, AND NO THIRD (D-22). `y` accepts this call; `a` accepts it and records a
+// standing approval for its class; everything else refuses. The progressive "you have accepted
+// this three times, always allow it?" offer is deferred, so it is not here and there is no
+// almost-it to grow into one.
+//
+// THE MINT IS NOT THIS FILE'S. A standing approval widens autonomy permanently, and the machinery
+// that gets that right — the protected-class refusal, the already-granted fold, the writer lease,
+// the committed ledger — lives behind the `StandingGrantsPort` the composition binds and
+// `proposals.accept --always` mints through. This wrapper is handed a closure over that same port
+// and calls it; it writes no ledger of its own, and there is no second mint to review.
+
+/** What the session log records about one decision. The wrapper produces it; composition appends it. */
+export interface ChatApprovalDecisionRecord {
+  /** The `fn:`-prefixed class the GATE produced, never one this file spelled (D-04 / 391-05). */
+  readonly actionClass: string
+  readonly decision: 'accept' | 'accept-always' | 'deny'
+}
+
+/**
+ * The two things the wrapper does beside answering, both supplied by whoever composed the session.
+ *
+ * Supplied rather than reached for, because both are composition facts: which grants port is in
+ * force and which session log is open are decided where the host is assembled, and a surface that
+ * resolved either itself would be a second answer to a question the composition root already
+ * closes (385 D-15).
+ */
+export interface ChatConfirmBindings {
+  /**
+   * Record the standing approval, through the SAME port `proposals.accept --always` mints on.
+   *
+   * Takes the action class and nothing else: the scope is the one pinned constant both the mint
+   * and the gate read, and a caller that could name it could widen any grant into a match.
+   */
+  readonly recordStandingApproval: (actionClass: string) => Promise<GrantRecordOutcome>
+  /** Append the `approval_decision` session event. Failures here never change the answer. */
+  readonly onDecision: (decision: ChatApprovalDecisionRecord) => void | Promise<void>
+}
+
+export interface CreateChatConfirmPortOptions extends ChatConfirmBindings {
+  readonly isTty?: boolean
+  readonly input?: NodeJS.ReadableStream
+  readonly output?: NodeJS.WritableStream
+}
+
+/**
+ * Build the chat REPL's confirmation, or nothing when there is no terminal.
+ *
+ * The binding rule is the one-form port's, verbatim and for its reason: BOTH streams are checked,
+ * and an absent port leaves `evaluate()`'s deny-by-default in place — which is what keeps a
+ * scripted `ask`, a CI job and the daemon on the fail-closed arm D-03 says they stay on.
+ *
+ * DEFAULT NO, and the close handler is mandatory rather than defensive. `question` never settles
+ * when a stream simply ends, so an EOF that slipped past the tty check would leave a capability
+ * call hanging forever instead of denying — measured at 30s in the analog's own suite, not feared.
+ *
+ * NO TIMEOUT, for the same reason the analog has none: a prompt that gave up after N seconds would
+ * turn "the person went to get coffee" into a policy decision nobody asked it to make.
+ */
+export function createChatConfirmPort(
+  options: CreateChatConfirmPortOptions,
+): ComposeLocalAgentInput['confirm'] {
+  const isTty = options.isTty ?? (process.stdin.isTTY === true && process.stdout.isTTY === true)
+  if (!isTty) return undefined
+
+  const input = options.input ?? process.stdin
+  const output = options.output ?? process.stdout
+
+  /** The ledger append is a RECORD of the decision, never a veto over it. */
+  const ledger = async (decision: ChatApprovalDecisionRecord): Promise<void> => {
+    try {
+      await options.onDecision(decision)
+    } catch {
+      // Swallowed HERE and nowhere else. A session log that cannot be written is a real problem
+      // and it is the REPL's to report; letting it propagate through a `ConfirmPort` would turn a
+      // logging failure into an exception where the gate expects a boolean, and the person who
+      // just said yes would be told their action failed.
+    }
+  }
+
+  /**
+   * The `a` arm: mint first, then answer.
+   *
+   * The ORDER is deliberate and it is the opposite of `proposals.accept`'s, because the situations
+   * are mirror images. There, the apply has already committed when the mint runs, so a mint
+   * refusal must not discard the receipt. Here nothing has happened yet, so the standing half is
+   * settled while it can still be reported cleanly — and the ONE-TIME approval survives either way,
+   * because the person said yes to this call and a refusal of the standing half is not a
+   * retraction of that.
+   */
+  const acceptAlways = async (action: RiskActionDescriptor): Promise<void> => {
+    let outcome: GrantRecordOutcome | undefined
+    try {
+      outcome = await options.recordStandingApproval(action.name)
+    } catch (error) {
+      // The port RAISES rather than answers when the committed ledger carries a line it cannot
+      // read — a refusal to DECIDE, which is not a decision and therefore not an arm it may have.
+      // Folded here for the reason `proposals-accept.ts` folds it: something the person approved is
+      // about to proceed, and an uncaught throw would report that as a failure of the whole call.
+      output.write(
+        `agent-qa: the standing approval could not be recorded `
+        + `(${error instanceof Error ? error.name : String(error)}); this call still proceeds.\n`,
+      )
+    }
+
+    if (outcome?.kind === 'protected-class') {
+      // D-05's mint half: a protected class never acquires a standing approval, however it is
+      // asked for. Reported rather than swallowed, because a person who typed `a` and got a plain
+      // accept must be told which half of their answer did not happen.
+      output.write(
+        `agent-qa: ${outcome.actionClass} is a protected class and never takes a standing `
+        + 'approval; this call is approved once.\n',
+      )
+    }
+
+    const recorded = outcome?.kind === 'recorded' || outcome?.kind === 'already-granted'
+    // The log records the EFFECT, not the request (392-05's law): `accept-always` claims a standing
+    // approval exists, so it is written only where one does.
+    await ledger({ actionClass: action.name, decision: recorded ? 'accept-always' : 'accept' })
+  }
+
+  return (action) => new Promise<boolean>((answer) => {
+    const prompt = createInterface({ input, output })
+    let settled = false
+    const settle = (approved: boolean, record: () => Promise<void>): void => {
+      if (settled) return
+      settled = true
+      prompt.close()
+      void record().then(() => {
+        answer(approved)
+      })
+    }
+
+    prompt.on('close', () => {
+      // EOF IS A REFUSAL. See the one-form port's own comment for the measurement behind this.
+      settle(false, () => ledger({ actionClass: action.name, decision: 'deny' }))
+    })
+
+    prompt.question(
+      `agent-qa: ${action.name} needs your approval. Proceed? [y/a/N] `
+      + '(y = once, a = always allow this action class) ',
+      (typed: string) => {
+        const normalized = typed.trim().toLowerCase()
+        if (normalized === 'a' || normalized === 'always') {
+          settle(true, () => acceptAlways(action))
+          return
+        }
+        if (normalized === 'y' || normalized === 'yes') {
+          settle(true, () => ledger({ actionClass: action.name, decision: 'accept' }))
+          return
+        }
+        settle(false, () => ledger({ actionClass: action.name, decision: 'deny' }))
       },
     )
   })
