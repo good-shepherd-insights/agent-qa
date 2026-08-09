@@ -138,6 +138,15 @@ export { splitClauses } from './chat/clause-split.js'
 // Neither is dispatch and neither can reach a host capability: both are pure functions over
 // records, with no filesystem, no model and no registry anywhere in their reach.
 export { repairSession, replaySession } from './chat/session-repair.js'
+// 392 plan 05, D-21: the session pin holder and its refusal. Published because the two things
+// that consume it are BOTH outside this package — the composition root that binds
+// `asGateDeny()` as the gate's session overlay, and the REPL that catches `ChatPinError` to tell
+// a person their class matched nothing. Neither is dispatch and neither can loosen anything: the
+// holder has no unpin, the DTO has no allow list, and the predicate answers a boolean whose only
+// true branch makes the gate refuse. What the factory reaches is the registry LISTING, so a pin
+// is validated against declarations and cannot touch a capability.
+export { ChatPinError, createPinOverlay } from './chat/pin-overlay.js'
+export type { ChatPinOverlayHolder } from './chat/pin-overlay.js'
 export type { TurnEngine, TurnEngineDeps } from './chat/turn-engine.js'
 // The repair contract's own vocabulary. A caller that could invoke `repairSession` but not NAME
 // what it hands over or gets back would spell the shapes again locally, which is the second

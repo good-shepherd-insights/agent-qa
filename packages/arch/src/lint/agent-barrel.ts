@@ -88,6 +88,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // without the registry, the caller and the gate. Published because the composition root
   // assembles the engine over it and the D-05 meta-test walks it.
   'CHAT_RESOLVER_TABLE',
+  // 392 plan 05, D-21: the `/pin` refusal a REPL catches to say which class matched nothing. An
+  // error CLASS on the footing of its siblings below — holding it runs nothing — and it is here
+  // rather than local to the chat subtree because the surface that renders the refusal is in
+  // another package. In SORT position, like `FunctionOriginError` below: this list is compared
+  // against the barrel's sorted export set by exact positional equality.
+  'ChatPinError',
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
   'EntityNotFoundError',
@@ -154,6 +160,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'createFunctionRegistry',
   'createJobKindRegistry',
   'createMaskingContext',
+  // 392 plan 05, D-21: the session pin holder's factory. Published because the composition root
+  // that binds the session's deny overlay onto the gate lives outside this package. It is a pure
+  // assembly over the registry LISTING — declarations, not specs — so what it hands back can
+  // validate a class name and answer a boolean, and can reach no capability. The holder's type
+  // carries no unpin and no clear, which is where "a pin only ever tightens" actually lives.
+  'createPinOverlay',
   'createRealJobKindRegistry',
   // 392 plan 01, D-16/D-24: the turn engine factory, the deterministic reconciliation strategy,
   // the clause splitter, the refusal sentence and the table lookup. Every one is a pure
@@ -304,6 +316,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // of the one path in the system that OVERRIDES a model's plan (D-09/D-12).
   'ChatDirectiveName',
   'ChatInvokeBinding',
+  // 392 plan 05, D-21: what a session holds when it holds a pin set. A TYPE, and the shape of it
+  // is the feature: three members — pin, list, asGateDeny — and no fourth. A composition root
+  // storing one in session state must be able to NAME it, and pinning the name here is what makes
+  // an added `unpin` a visible edit to this list rather than a quiet acquisition of a loosen path.
+  'ChatPinOverlayHolder',
   // 392 plan 03: one rebuilt line of conversation — refs and one-liners, never a payload body.
   'ChatReplayMessage',
   'ChatResolution',
