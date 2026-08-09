@@ -15,6 +15,7 @@ import {
   createEvalCommand,
   createDigestCommand,
   createAskCommand,
+  createChatCommand,
   createFnCommand,
   createProposalsCommand,
   createInitCommand,
@@ -72,6 +73,10 @@ program.addCommand(createFnCommand())
 // 392 D-01/D-24: the one-shot chat verb, registered beside `fn` because it is the same KIND of
 // thing — a thin client that invokes one registered op through `invokeFunction`.
 program.addCommand(createAskCommand())
+// D-01's other surface. Two commands, ONE turn engine: the REPL and the one-shot verb differ in
+// the session and the loop and in nothing else, which is why a routing change cannot be right in
+// one of them and wrong in the other.
+program.addCommand(createChatCommand())
 // 391 D-17: the proposals inbox + grants decision surface, and the per-run digest on demand.
 program.addCommand(createProposalsCommand())
 program.addCommand(createDigestCommand())

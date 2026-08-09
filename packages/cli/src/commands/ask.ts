@@ -64,6 +64,13 @@ function receiptLine(receipt: ClauseReceipt): string {
 
 function renderTurn(result: AgentAskResult): string {
   const lines = [pc.dim(`session ${result.sessionId} · turn ${result.turnId}`)]
+  // A `--session` resume can land on a damaged log, and a scripted caller that heard nothing about
+  // it would carry on against a conversation quietly missing part of itself (392-03).
+  if (result.refusedLineCount !== undefined) {
+    lines.push(
+      pc.yellow(`${result.refusedLineCount} line(s) of this session could not be read.`),
+    )
+  }
   if (result.receipts.length > 0) {
     lines.push(...result.receipts.map(receiptLine))
   }

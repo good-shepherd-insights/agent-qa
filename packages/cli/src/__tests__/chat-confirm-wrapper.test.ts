@@ -42,7 +42,6 @@ const RECORDED: GrantRecordOutcome = {
     actionClass: ACTION.name,
     scope: STANDING_APPROVAL_SCOPE,
     grantedAt: '2026-08-09T00:00:00.000Z',
-    status: 'active',
   },
 }
 

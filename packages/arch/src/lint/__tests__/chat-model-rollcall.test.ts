@@ -61,16 +61,20 @@ const CHAT_ORCHESTRATION_DIR = 'packages/agent/src/chat'
 /**
  * The chat SURFACES in the CLI, by exact repo-relative path, each with the reason it is listed.
  *
- * `chat.ts` is deliberately absent: plan 08 creates it, and pinning a file that does not exist yet
- * would red this suite today for a reason that has nothing to do with CHAT-06. It joins this list
- * in the same commit that creates the file — which is exactly the discipline the missing-entry
- * offender below enforces in the other direction.
+ * `chat.ts` joined in the SAME COMMIT that created it (plan 08), which is the discipline this
+ * asymmetry demands: a missing pin here is SILENT — the file is simply not scanned — while the
+ * reverse direction is an offender the case below reports. Nothing would have told anyone.
  */
 const CHAT_SURFACE_FILES: Readonly<Record<string, string>> = {
   'packages/cli/src/commands/ask.ts':
     '2026-08-09 (392 plan 01, D-01/D-24): the one-shot chat verb. It composes a local agent and '
     + 'drives the turn through invokeFunction; whatever model a turn uses is resolved by that '
     + 'composition, never here.',
+  'packages/cli/src/commands/chat.ts':
+    '2026-08-09 (392 plan 08, D-01/D-24): the interactive REPL. Every line is one '
+    + 'invokeFunction(agent.ask); the model in force for a session is decided by the composition '
+    + 'and moved only by the /model directive the engine handles, so a constructor here would be '
+    + 'a second place that decision lived.',
 }
 
 interface ScannedFile {

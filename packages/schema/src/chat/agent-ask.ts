@@ -54,6 +54,19 @@ export const AgentAskResultSchema = z.object({
   answer: z.string().optional(),
   receipts: z.array(ClauseReceiptSchema),
   unhandled: z.object({ clause: z.string(), reason: z.string() }).optional(),
+  /**
+   * Lines of this session's log the open path could not read (392 plan 08, discharging 392-03).
+   *
+   * SURFACED RATHER THAN SWALLOWED. A resumed session with permanent mid-file damage comes back
+   * with a non-empty list, and a surface that ignored it would re-create exactly the swallow plan
+   * 03 removed — a person continuing a conversation that is quietly missing part of itself. One
+   * line of output is enough, which is why this is a COUNT of what could not be read rather than
+   * the damage report: the report is the file, and `chat --list` is what names the file.
+   *
+   * OPTIONAL, and absent means the log had nothing to refuse — which every healthy session is, so
+   * a required field would put a zero on every turn of every conversation forever.
+   */
+  refusedLineCount: z.number().int().positive().optional(),
 })
 
 export type AgentAskResult = z.infer<typeof AgentAskResultSchema>

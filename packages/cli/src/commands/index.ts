@@ -19,6 +19,8 @@ export { createCreateTestCommand } from './create-test.js'
 export { createCreateSuiteCommand } from './create-suite.js'
 export { createSkillsCommand } from './skills.js'
 export { createAskCommand } from './ask.js'
+// 392 D-01: the REPL, beside the one-shot verb it shares a turn engine with.
+export { createChatCommand } from './chat.js'
 export { createFnCommand } from './fn.js'
 // 391 D-17: the inbox/grants decision surface and the on-demand per-run digest.
 export { createProposalsCommand } from './proposals.js'

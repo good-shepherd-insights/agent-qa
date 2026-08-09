@@ -334,6 +334,15 @@ export interface ComposeCliLocalAgentInput {
    * prompt's behaviour can be driven without a real tty behind it.
    */
   confirm?: ComposeLocalAgentInput['confirm']
+  /**
+   * How a chat SESSION asks (392 plan 08, D-03).
+   *
+   * A factory handed the composition's own grant mint and session-log sink, passed through
+   * untouched: this host decides whether there is a person to ask, and the shared composition
+   * decides what an approval and a session event ARE. Absent leaves the plain one-form confirm
+   * above in place, which is every non-chat CLI invocation.
+   */
+  chatConfirm?: ComposeLocalAgentInput['chatConfirm']
   /** The configuration file this invocation resolves against. */
   configPath: string
   /**
@@ -700,6 +709,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     analysisTokenBudget:
       input.analysisTokenBudget ?? (() => resolveCliAnalysisTokenBudget(input.configPath)),
     ...(input.postRun === undefined ? {} : { postRun: input.postRun }),
+    ...(input.chatConfirm === undefined ? {} : { chatConfirm: input.chatConfirm }),
     // 391 PROP-01: conditionally spread, so a host with no terminal leaves the field ABSENT and the
     // gate's own deny-by-default is what answers — in exactly one place.
     ...(() => {

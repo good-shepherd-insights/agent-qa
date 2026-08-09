@@ -234,6 +234,14 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       const append = async (event: ChatSessionEvent): Promise<void> => {
         await deps.sessionLog.append(event)
       }
+      // Carried onto EVERY result of this turn, refusal arms included: a person whose session is
+      // damaged needs to hear about it on the turn that reopened it, and the refusal arms are the
+      // ones a damaged log makes more likely rather than less (392-03's note to this plan).
+      const refusedLineCount =
+        opened.refusedLines.length === 0
+          ? {}
+          : { refusedLineCount: opened.refusedLines.length }
+
       const finish = async (
         status: ChatTurnStatus,
         result: Omit<AgentAskResult, 'sessionId' | 'turnId' | 'status'>,
@@ -243,7 +251,7 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         // the case the next-turn repair already knows how to handle.
         await deps.sessionLog.turnBoundary()
         deps.state?.endTurn({ turnId, status, receipts: result.receipts, ...(result.answer === undefined ? {} : { answer: result.answer }) })
-        return { sessionId, turnId, status, ...result }
+        return { sessionId, turnId, status, ...refusedLineCount, ...result }
       }
       /**
        * The ONE way this engine refuses a turn (D-08 / D-10 / D-15).
