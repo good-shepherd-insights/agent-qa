@@ -46,6 +46,8 @@ import {
   composeCliLocalAgent,
   createChatConfirmPort,
 } from '../composition/local-agent-host.js'
+import { resolveCliChatCapabilities } from '../llm-utils.js'
+import type { CliChatCapabilities } from '../llm-utils.js'
 
 type ChatErrorCode = 'unknown-session' | 'no-session-to-continue'
 
@@ -79,6 +81,14 @@ export interface ChatCommandDeps {
   output?: NodeJS.WritableStream
   isTty?: boolean
   onInterruptHandler?: (handler: () => Promise<void>) => void
+  /**
+   * How this invocation resolves what a chat session plans with (392 plan 09).
+   *
+   * On the list for the same reason the streams are: the default reaches a provider, and a suite
+   * that had to would be a suite that never runs offline. The DEFAULT is the production path and
+   * every tested invocation that does not substitute it takes that path.
+   */
+  chatCapabilities?: (configPath: string) => Promise<CliChatCapabilities | undefined>
 }
 
 function globalOptions(command: Command): { config?: string } {
@@ -244,8 +254,25 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
 
         const sessionId = resolveSessionId(composition.agentQaRoot, options)
 
+        // CHAT-06, and the one place in this file that reaches a provider resolution — once, when
+        // a conversation opens, after `--list` has already returned. It answers `undefined` on a
+        // project with no usable LLM configuration, which composes a headless host rather than
+        // refusing to open: every canonical utterance still routes, and anything else fails the
+        // turn closed by name (392 plan 09, discharging 392-08's unbound `chatModelFor`).
+        const chatCapabilities = (deps.chatCapabilities ?? resolveCliChatCapabilities)(
+          composition.configPath,
+        )
+        const chatModel = await chatCapabilities
+
         host = composeCliLocalAgent({
           ...composition,
+          ...(chatModel === undefined
+            ? {}
+            : {
+              chatModel: chatModel.model,
+              chatModelFor: chatModel.modelFor,
+              chatAccounting: chatModel.accounting,
+            }),
           // D-03: the three-way inline confirm, built over the composition's OWN grants mint and
           // this session's log. It answers `undefined` where there is nobody to ask, which leaves
           // `confirm` absent and the gate's deny-by-default in place — v48 unchanged.

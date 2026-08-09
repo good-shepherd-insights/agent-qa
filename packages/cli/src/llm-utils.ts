@@ -4,8 +4,8 @@ import { generateText } from 'ai'
 import { DEFAULT_ANTHROPIC_MODEL } from './model-defaults.js'
 import { loadProviderPluginsForRawConfig } from './provider-plugins.js'
 
-import type { JobModelCapability } from '@vostride/agent-qa-agent'
-import type { ModelAuthDeclaration, ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
+import type { ChatLanguageModel, JobModelCapability } from '@vostride/agent-qa-agent'
+import type { ModelAuthDeclaration, ModelProfile, ResolvedModelAuth, TokenAccounting } from '@vostride/agent-qa-model'
 
 export { loadProviderPluginsForRawConfig }
 
@@ -356,6 +356,72 @@ export async function resolveCliJobModel(
   const resolved = await resolveModelAuth(config.name, config)
   const { profile, auth } = toModelProfileAndAuth(config, resolved)
   return buildJobModelCapability(profile, auth, deps)
+}
+
+/**
+ * What a chat session needs from this host in order to plan (392 plan 09, CHAT-06 / D-04).
+ *
+ * THREE CAPABILITIES FROM ONE RESOLUTION, and the one-ness is the point (386 D-15). The model
+ * stage 2 plans with, the accounting its degrade pass measures against, and the resolver `/model`
+ * uses all come from the same named-config path `resolveCliJobModel` rides. A session that
+ * compacted against a window its model does not have would be a second source of truth wearing
+ * the same name.
+ */
+export interface CliChatCapabilities {
+  readonly model: ChatLanguageModel
+  readonly accounting: TokenAccounting
+  /**
+   * `/model <name>` resolves a NAMED config from `registry.llms`, not a bare provider model id.
+   * The named config is the vocabulary a person already has in their config file, and it is the
+   * only one carrying the auth this host can resolve.
+   */
+  readonly modelFor: (name: string) => Promise<ChatLanguageModel>
+}
+
+/**
+ * The chat session's model, resolved from the project's configured default LLM.
+ *
+ * DEGRADES TO `undefined` RATHER THAN THROWING, on `resolveCliAnalysisTokenBudget`'s precedent and
+ * for a reason specific to chat: a project with no usable LLM configuration must still be able to
+ * open a conversation. Absent, the composition is HEADLESS — every canonical utterance still
+ * routes deterministically, and anything the table cannot resolve fails the turn closed by name,
+ * which is the correct behaviour rather than a degraded one (D-08).
+ *
+ * `agent-local` never constructs a model, so this is where `createModel` is reached; the
+ * composition takes an already-built handle (CHAT-06's firewall, stated on the option itself).
+ */
+export async function resolveCliChatCapabilities(
+  configPath: string,
+  deps: JobModelCapabilityDeps = {},
+): Promise<CliChatCapabilities | undefined> {
+  const build = async (configName?: string): Promise<{
+    model: ChatLanguageModel
+    accounting: TokenAccounting
+  }> => {
+    const { config } = await resolveNamedConfig(configName, configPath)
+    const resolved = await resolveModelAuth(config.name, config)
+    const { profile, auth } = toModelProfileAndAuth(config, resolved)
+    return {
+      model: (deps.createModelImpl ?? createModel)(profile, auth),
+      accounting: (deps.createTokenAccountingImpl ?? createTokenAccounting)({
+        getCapabilities: () => (deps.resolveCapabilitiesImpl ?? resolveCapabilities)(profile),
+      }),
+    }
+  }
+
+  try {
+    const opened = await build()
+    return {
+      model: opened.model,
+      accounting: opened.accounting,
+      // A THROW rather than a degrade on this arm: `/model nonsense` is a person naming something,
+      // and the honest answer is the refusal that says which name failed. The turn engine's one
+      // refusal path carries it, leaving the same countable row any other refusal leaves.
+      modelFor: async (name: string) => (await build(name)).model,
+    }
+  } catch {
+    return undefined
+  }
 }
 
 export async function resolveCredentials(

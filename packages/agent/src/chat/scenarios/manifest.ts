@@ -24,15 +24,20 @@ import type { ScenarioClass, ScenarioExpectationKind, ScenarioLane } from '@vost
 /**
  * The corpus this build measures against.
  *
- * BUMPED WHENEVER MEMBERSHIP OR AN EXPECTATION KIND CHANGES, so a recorded rate can always be
- * attributed to a known set. A rate quoted without one is a number whose meaning cannot be
+ * BUMPED WHENEVER THE CORPUS STOPS BEING THE SAME CORPUS — a member added or removed, an
+ * expectation kind flipped, or an utterance re-authored. A recorded rate can then always be
+ * attributed to a known set, and a rate quoted without one is a number whose meaning cannot be
  * reconstructed after the next scenario lands.
  *
  * v1 — 392 plan 02 seeded 13 deterministic + the canon compound pair; 392 plan 08 flipped the four
  *      directive scenarios to `should_execute` before this manifest existed.
  * v2 — 392 plan 09 admits the `planner/` seeds (the live lane's natural-language arm).
+ * v3 — 392 plan 09, after the FIRST live execution: `run-42-and-digest`'s digest clause names its
+ *      run (the original was unsatisfiable under D-10's pre-flight atomicity — see that file), and
+ *      `list-recent-runs` is re-authored as a request to DO something rather than a question about
+ *      the project.
  */
-export const SCENARIO_CORPUS_VERSION = 2
+export const SCENARIO_CORPUS_VERSION = 3
 
 /**
  * One admitted scenario.

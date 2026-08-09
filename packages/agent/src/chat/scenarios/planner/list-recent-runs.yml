@@ -6,13 +6,20 @@
 # of the cell: it measures the projection D-07 makes — every registry op bound 1:1 as an action tool
 # — rather than the table, which the hermetic lane already covers.
 #
+# THE PHRASING IS AN ACTION, not a question about the project, and the distinction is one this cell
+# was re-authored to respect (392-09, first live execution). Asked as `which test runs have happened
+# here lately?` the model read it as a request for information and answered in prose — which is
+# `answer_only` behaving correctly on an ambiguous utterance, and leaves this cell measuring the
+# wrong thing. What it is FOR is the registry projection: a request to DO one thing, phrased in
+# prose the table cannot match.
+#
 # A READ, deliberately. `runs.list` takes `{}` and answers honestly on a project with no runs, so
 # the scenario needs no fixture between the utterance and the assertion, and a live gate run cannot
 # start a browser by being run.
 id: list-recent-runs
 class: planner
 lane: live
-utterance: which test runs have happened in this project lately?
+utterance: list the test runs recorded in this project
 expect:
   kind: should_execute
   planned: 1

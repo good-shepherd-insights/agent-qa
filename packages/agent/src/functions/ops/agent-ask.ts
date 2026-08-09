@@ -40,7 +40,21 @@ export const AGENT_ASK_FUNCTION_ID = 'agent.ask'
 
 export const agentAskSpec: FunctionSpec<AgentAskInput, AgentAskResult> = {
   id: AGENT_ASK_FUNCTION_ID,
-  summary: 'Run one conversational turn: route the utterance, execute what it resolves to, and answer with per-clause receipts.',
+  // THE SUMMARY SAYS "ENTRY POINT", and that wording is a fix rather than a flourish (392-09, from
+  // the first live gate run). D-07 projects every registry op 1:1 into the planner's tool set, so
+  // this op is a tool the planner is offered WHILE IT IS INSIDE ONE OF ITS OWN TURNS. Described as
+  // "run one conversational turn", it read to the model as the natural home for any conversational
+  // request: a plain request to list runs was planned as `agent.ask` twice out of two live runs,
+  // and the recursive turn then failed — so a person asking for a capability in prose got a failed
+  // turn instead of the capability. The repair is DESCRIPTION, not exclusion. Hiding a tool would
+  // break the always-send-all law and D-07's registry projection, and it would be the wrong
+  // diagnosis anyway: the tool was not misclassified, it was misdescribed. Every consumer of this
+  // string — the catalogue, `fn --list`, 396's MCP listing, the planner — is better served by the
+  // sentence that says what the op is FOR.
+  summary: 'The chat entry point: begin ONE new conversational turn from outside a conversation. '
+    + 'Surfaces (a REPL, the ask verb, an MCP client) call this to START a turn — it is not a way '
+    + 'to carry out a request while a turn is already running. It routes the utterance, executes '
+    + 'what it resolves to, and answers with per-clause receipts.',
   requiredScopes: ['read'],
   resultKind: 'unary',
   // Bound where a composition assembles a turn engine. A host with no engine lists this

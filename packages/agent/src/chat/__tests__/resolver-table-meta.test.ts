@@ -135,7 +135,12 @@ describe('the canon compound pair exists as committed data (CHAT-02)', () => {
   it('pins the happy path at planned == executed == 2 in utterance order (D-11/D-12)', () => {
     const scenario = readScenario(COMPOUND_ROOT, 'run-42-and-digest')
     expect(scenario.class).toBe('compound')
-    expect(scenario.utterance).toBe('run test 42 and show me the digest')
+    // The digest clause NAMES its run (392-09, after the first live execution of this file). The
+    // original `show me the digest` was unsatisfiable by construction rather than by model quality:
+    // D-10 decides the whole plan before the first side effect, so clause two cannot be handed the
+    // run clause one is about to start, and `runId` is required. The file's own head carries the
+    // finding; this pin moves with it so the change stays a deliberate two-file edit.
+    expect(scenario.utterance).toBe('run test 42 and show me the digest for RUN-1')
     expect(scenario.expect.kind).toBe('should_execute')
     expect(scenario.expect.planned).toBe(2)
     expect(scenario.expect.executed).toBe(2)

@@ -343,6 +343,22 @@ export interface ComposeCliLocalAgentInput {
    * above in place, which is every non-chat CLI invocation.
    */
   chatConfirm?: ComposeLocalAgentInput['chatConfirm']
+  /**
+   * What a chat session plans with (392 plan 09, CHAT-06 / D-04), passed through untouched.
+   *
+   * RESOLVED BY THE CALLER, NOT HERE, and the reason is mechanical rather than stylistic: this
+   * function is synchronous, and reaching a provider costs a configuration read and an auth
+   * resolution. `resolveCliChatCapabilities` is that resolution, and it is paid once when a
+   * conversation opens — never by `agent-qa fn --list`, and never by a host that only lists the
+   * registry (the `model` factory's own laziness rule, applied to a surface that cannot defer).
+   *
+   * All three are conditionally spread, so a project with no usable LLM configuration composes a
+   * HEADLESS host: canonical utterances still route deterministically and anything else fails the
+   * turn closed by name (D-08). Absence is a posture, not an unconfigured state.
+   */
+  chatModel?: ComposeLocalAgentInput['chatModel']
+  chatModelFor?: ComposeLocalAgentInput['chatModelFor']
+  chatAccounting?: ComposeLocalAgentInput['chatAccounting']
   /** The configuration file this invocation resolves against. */
   configPath: string
   /**
@@ -710,6 +726,12 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       input.analysisTokenBudget ?? (() => resolveCliAnalysisTokenBudget(input.configPath)),
     ...(input.postRun === undefined ? {} : { postRun: input.postRun }),
     ...(input.chatConfirm === undefined ? {} : { chatConfirm: input.chatConfirm }),
+    // 392 plan 09, CHAT-06: the chat model arrives ALREADY BUILT, through `createModel` at the
+    // resolution one layer up. Conditionally spread on the `confirm` precedent, so a host without
+    // one leaves the field ABSENT and the composition's own headless posture is what answers.
+    ...(input.chatModel === undefined ? {} : { chatModel: input.chatModel }),
+    ...(input.chatModelFor === undefined ? {} : { chatModelFor: input.chatModelFor }),
+    ...(input.chatAccounting === undefined ? {} : { chatAccounting: input.chatAccounting }),
     // 391 PROP-01: conditionally spread, so a host with no terminal leaves the field ABSENT and the
     // gate's own deny-by-default is what answers — in exactly one place.
     ...(() => {
