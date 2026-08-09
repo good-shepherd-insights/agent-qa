@@ -116,6 +116,26 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         await deps.sessionLog.turnBoundary()
         return { sessionId, turnId, status, ...result }
       }
+      /**
+       * The ONE way this engine refuses a turn (D-08 / D-10 / D-15).
+       *
+       * Every fail-closed arm goes through here, and that is what makes the `mark_unhandled` event
+       * a property of refusing rather than a line somebody remembered to add at three call sites.
+       * The event is what CHAT-03's FIELD rate is a projection over — the gated ceiling is computed
+       * across the frozen corpus, but the ungated number a live deployment produces is only
+       * observable if every refusal in every session left a row. A refusal that returned the right
+       * message and logged nothing would be invisible to exactly the measurement D-15 asks for.
+       *
+       * A DIRECTIVE WITH NO HANDLER GOES THROUGH HERE TOO, and that is a deliberate reading rather
+       * than a shortcut: `/model` in a build that binds nothing for it IS a clause this build
+       * cannot carry out, so it belongs in the same count as any other. The two facts stay
+       * distinguishable in the log through the REASON, which says `recognised but no handler`
+       * rather than `no capability handles`, and plan 08 removes the arm entirely by binding them.
+       */
+      const refuse = async (clause: string, reason: string): Promise<AgentAskResult> => {
+        await append({ kind: 'mark_unhandled', turnId, at: deps.now(), clause, reason })
+        return finish('fail_closed', { receipts: [], unhandled: { clause, reason } })
+      }
 
       // REPAIR, THEN REPLAY, THEN PRUNE (CHAT-05). `open()` has already run the replay-safety
       // repair — that is the adapter's contract, not this engine's option — so the events in hand
@@ -167,13 +187,10 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       // one directive at a time; until then the honest answer is a named refusal, not a no-op.
       const firstDirective = directives[0]
       if (firstDirective !== undefined) {
-        return finish('fail_closed', {
-          receipts: [],
-          unhandled: {
-            clause: firstDirective.clause.text,
-            reason: directiveNotBoundReason(firstDirective.directive, firstDirective.clause.text),
-          },
-        })
+        return refuse(
+          firstDirective.clause.text,
+          directiveNotBoundReason(firstDirective.directive, firstDirective.clause.text),
+        )
       }
 
       // ---- Stage 2: the planner, consulted ONLY for what stage 1 could not answer.
@@ -230,21 +247,25 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         outcome: verdict.kind === 'execute' ? 'resolved' : 'unresolved',
       })
       if (verdict.kind === 'unhandled') {
-        return finish('fail_closed', {
-          receipts: [],
-          unhandled: { clause: verdict.clause.text, reason: verdict.reason },
-        })
+        return refuse(verdict.clause.text, verdict.reason)
       }
 
       // ---- Stage 4: sequential execution in utterance order, stopping on failure (D-11).
-      const resolverCaller = deps.mint.forStage('resolver')
-      const plannerCaller = deps.mint.forStage('planner')
+      //
+      // THE LOOP IS UNREACHABLE FROM A REFUSAL BY CONSTRUCTION, which is D-10 expressed as control
+      // flow rather than as a check: the verdict is a discriminated union, the `unhandled` arm
+      // returns above, and the plan this loop walks exists only on the other arm. There is no
+      // ordering of these statements in which a side effect happens before the verdict, because
+      // there is no plan to walk until the verdict has produced one.
       const receipts: ClauseReceipt[] = []
       let failed = false
 
       for (const step of verdict.plan) {
-        const fromTable = mapped.some((resolved) => resolved.clause.index === step.clause.index)
-        const caller = fromTable ? resolverCaller : plannerCaller
+        // The mint follows the stage that PROVED the binding, which the verdict states (Pitfall 1).
+        // Re-deriving it by matching the action back against the mapper set would answer `human`
+        // for any planner-produced call to an op the table also knows — handing a model-originated
+        // invocation the self-grant power `requiresHumanOrigin` ops withhold (391 D-06, T-392-23).
+        const caller = deps.mint.forStage(step.source)
         let receipt: ClauseReceipt
         if (failed) {
           // `not-run` is a fact, not an absence: a person reading the receipt must be able to tell
