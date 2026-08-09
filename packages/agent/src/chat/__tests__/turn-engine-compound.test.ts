@@ -571,6 +571,53 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
     })
   })
 
+  /**
+   * 392-16 — a style modifier is not a clause the model has to claim (G-392-1).
+   *
+   * THE CLOSURE IS ANCHORED ON WHAT A PERSON READS, NOT ON THE SPLITTER'S RETURN VALUE. The gap
+   * was measured in the live lane as a refusal — a sentence asserting no capability handles
+   * `in one sentence`, on a turn whose question the model had in fact answered — and a case that
+   * asserted only `splitClauses(...)` has one element would be phrased in the fixed module's own
+   * vocabulary, which is the shape this phase has watched close a round and leave the class alive.
+   * This case drives the REAL splitter, the REAL resolver table and the REAL reconciliation
+   * strategy, so what it measures is the refusal ceasing to be emitted.
+   *
+   * WHY NOT A CORPUS CELL. The composed shape is a `should_execute` turn: a hermetic cell of that
+   * kind would need a scripted model standing in for the real one, which D-13 forbids for exactly
+   * those cells; a `fail_closed` cell would pin the PRE-fix behaviour, which the fix removes; and
+   * either admission would move a denominator D-15 froze at 11 hermetic / 3 live. The live lane at
+   * k≥5 is the third seam, and it is the one that gates.
+   */
+  describe('392-16 — a style modifier is not a clause the model has to claim (G-392-1)', () => {
+    it('completes the turn the live lane saw refused, with no mark_unhandled row', async () => {
+      const run = harness({
+        planned: {
+          toolCalls: [
+            {
+              toolName: 'answer_only',
+              input: {
+                clause: 'what does it mean to call a test flaky?',
+                text: 'a flaky test is…',
+              },
+            },
+          ],
+        },
+      })
+      const result = await run.runTurn({
+        message: 'in one sentence, what does it mean to call a test flaky?',
+      })
+
+      // The four facts read together: a refusal shows up in whichever of them the defect moved.
+      expect({
+        status: result.status,
+        invocations: run.invocations.length,
+        receipts: result.receipts.length,
+        markUnhandled: run.log.events.filter((event) => event.kind === 'mark_unhandled').length,
+      }).toEqual({ status: 'completed', invocations: 0, receipts: 0, markUnhandled: 0 })
+      expect(result.answer).toBe('a flaky test is…')
+    })
+  })
+
   describe('CHAT-04/CHAT-05 wiring — the hook and the ledger', () => {
     it('runs the compaction pass BEFORE the planner is consulted', async () => {
       const run = harness({

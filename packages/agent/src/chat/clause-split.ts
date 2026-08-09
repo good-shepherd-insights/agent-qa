@@ -16,6 +16,18 @@
 // RECONCILIATION RUNS UNIFORMLY ON SINGLE-CLAUSE TURNS. A one-clause utterance is a compound of
 // one, and it takes the identical path through stages 2-4. There is no fast lane, because a fast
 // lane is a second implementation of the turn contract that nothing keeps in step with the first.
+//
+// A STYLE MODIFIER IS NOT A REQUEST, AND SPLITTING ONE OFF MANUFACTURES A PHANTOM CLAUSE (392-16,
+// G-392-1). `in one sentence, what does it mean to call a test flaky?` is one question with an
+// instruction about the FORM of the answer, and the separator between them is a real one. Split
+// into two clauses, `in one sentence` is a clause no capability handles and the model has to claim
+// back byte-for-byte through `answer_only`; miss that claim and, with zero action calls, the
+// deficit arm refuses the WHOLE turn with a sentence asserting nothing handles a clause the model
+// in fact addressed. It is the same failure Pitfall 5 above names, arriving through the separator
+// set instead of through a regex: a phantom clause inflates the very CHAT-03 `mark_unhandled`
+// number the ceiling exists to hold down (measured: 2 of 5 live runs at 1/3 against a 1/5 ceiling).
+// So a piece that is EXACTLY one of the pinned {@link STYLE_MODIFIER_PHRASES} is elided, on the
+// same terms as an empty piece — and never to zero clauses.
 
 import type { ChatClause } from './ports.js'
 
@@ -38,6 +50,47 @@ import type { ChatClause } from './ports.js'
  * of another — and it is written longest-first anyway so that it stays not load-bearing.
  */
 export const CONJUNCTION_TOKENS = [' and ', ' then ', ';', ','] as const
+
+/**
+ * The closed style-modifier set (392-16, G-392-1).
+ *
+ * THE INCLUSION CRITERION: a phrase that, STANDING ALONE AS A WHOLE PIECE, instructs the FORM of
+ * the answer and names no capability, no entity and no action this build has or could ever have.
+ * `in one sentence` qualifies; `summarise the last failure` does not, and neither does anything
+ * that could one day become an op.
+ *
+ * A PINNED CONSTANT, never config (386 D-15). RETUNE COMMENT: every phrase added here is a phrase
+ * that can now be DROPPED from a request, and a dropped request is the silent failure this file's
+ * header decides against everywhere else. So add one only with a case that shows the utterance it
+ * rescues, re-run the ceiling measurement afterwards, and never write a pattern or a regex in place
+ * of a member — a pattern would reach into `briefly explain the flake`, which is a real request
+ * that merely begins with a member.
+ *
+ * Order is alphabetical and is NOT load-bearing: the set is read by exact membership, never
+ * scanned in sequence.
+ */
+export const STYLE_MODIFIER_PHRASES = [
+  'briefly',
+  'concisely',
+  'in a sentence',
+  'in brief',
+  'in one sentence',
+  'in short',
+  'in two sentences',
+] as const
+
+/**
+ * Whether a surviving piece is a style modifier and nothing else.
+ *
+ * EXACT on the whole trimmed piece, case-insensitively — the same case discipline `separatorAt`
+ * applies, for the same reason. Not a prefix test and not a substring test: `briefly explain the
+ * flake` begins with a member and is a request. Quote characters are part of a piece's text, so a
+ * quoted `"briefly"` is not a member either, which is the behaviour the quote-protection rule
+ * above already promises.
+ */
+function isStyleModifier(text: string): boolean {
+  return (STYLE_MODIFIER_PHRASES as readonly string[]).includes(text.toLowerCase())
+}
 
 /** The quote characters that protect a span. Both, because people type both. */
 const QUOTE_CHARACTERS = ['"', "'"] as const
@@ -112,10 +165,25 @@ export function splitClauses(utterance: string): readonly ChatClause[] {
   }
   pieces.push(current)
 
-  const clauses: ChatClause[] = []
+  const survivors: string[] = []
   for (const piece of pieces) {
     const text = piece.trim()
     if (text === '') continue
+    survivors.push(text)
+  }
+
+  // THE STYLE-MODIFIER ELISION, and the reason it is its own pass rather than another `continue`
+  // above: "is there a real request beside this one" is not a question a piece can answer about
+  // itself. The whole survivor set has to exist first. Modifiers go only when a non-member
+  // survives; an utterance made ONLY of modifiers keeps them all, because refusing something a
+  // person typed is recoverable and dropping it silently is not — the same asymmetry Pitfall 5
+  // already decides in this file, and the reason zero clauses is not an outcome this can produce.
+  const kept = survivors.some((text) => !isStyleModifier(text))
+    ? survivors.filter((text) => !isStyleModifier(text))
+    : survivors
+
+  const clauses: ChatClause[] = []
+  for (const text of kept) {
     // The index is the clause's position among the clauses that SURVIVED elision, which is what
     // the engine and the reconciler key on. It is a clause's identity within one turn, not an
     // offset into the utterance, and D-12's override depends on exactly that: a planner entry for
