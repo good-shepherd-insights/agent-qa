@@ -1,0 +1,144 @@
+// THE STRUCTURAL CAP (Phase 392, D-05 / CHAT-02).
+//
+// "No new top-level branches without a test" is not reviewer discipline here — it is
+// BUILD-IMPOSSIBLE. This file walks the resolver table and demands a scenario file for every row,
+// so an eleventh alias added to the canon fails the suite until somebody says, in committed data,
+// what typing it is supposed to do. That is the whole mechanism, and it is why plan 01 shipped
+// the table with ONE entry: adding six aliases before the thing that makes untested branches
+// impossible would have been six untested branches.
+//
+// IT WALKS BOTH DIRECTIONS. Table → file catches a branch nobody characterised. File → table
+// catches the opposite drift, a scenario claiming canon status for an alias that no longer
+// exists, which would otherwise sit in the corpus asserting something about a code path that was
+// deleted. The second direction is an EXACT set comparison against the table's aliases plus a
+// pinned list of the edge scenarios that deliberately belong to no single row — a frozen
+// denominator by construction (D-15 / RESEARCH Pitfall 2), never a `glob` whose contents are
+// whatever happens to be on disk.
+
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { ChatScenarioSchema } from '@vostride/agent-qa-schema'
+import type { ChatScenario } from '@vostride/agent-qa-schema'
+import { describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
+
+import { CHAT_RESOLVER_TABLE } from '../resolver-table.js'
+
+const SCENARIOS_ROOT = fileURLToPath(new URL('../scenarios', import.meta.url))
+const DETERMINISTIC_ROOT = join(SCENARIOS_ROOT, 'deterministic')
+const COMPOUND_ROOT = join(SCENARIOS_ROOT, 'compound')
+
+/**
+ * Deterministic scenarios that belong to NO single table row.
+ *
+ * Each one characterises a property of stage 1 as a whole rather than of one alias, and each is
+ * listed here by hand so that the both-directions walk stays exact. A new file appearing on disk
+ * without a line added here fails the suite — which is the point: the corpus is a manifest, not
+ * a directory listing.
+ */
+const EDGE_SCENARIOS = [
+  // Pitfall 5: a quoted conjunction must not manufacture a second clause.
+  'quoted-conjunction',
+  // CHAT-01 boundary: a misspelled alias does not resolve at stage 1, and there is no partial arm.
+  'near-miss-alias',
+  // D-08: an op id no registry knows comes back named, from `invokeFunction` rather than a check
+  // inside the table.
+  'fn-unknown-op',
+] as const
+
+/** The canon compound pair, as committed data (CONTEXT specifics). */
+const COMPOUND_SCENARIOS = ['write-test-2fa-and-run', 'run-42-and-digest'] as const
+
+function scenarioIdsIn(directory: string): string[] {
+  return readdirSync(directory)
+    .filter((file) => file.endsWith('.yml'))
+    .map((file) => file.slice(0, -'.yml'.length))
+    .sort()
+}
+
+/** Read one scenario THROUGH the zod schema — a file that parses as YAML is not yet a scenario. */
+function readScenario(directory: string, id: string): ChatScenario {
+  return ChatScenarioSchema.parse(parse(readFileSync(join(directory, `${id}.yml`), 'utf8')))
+}
+
+const TABLE_ALIASES = CHAT_RESOLVER_TABLE.map((rule) => rule.alias)
+
+describe('every resolver-table entry has a scenario (D-05, table → file)', () => {
+  it.each(TABLE_ALIASES)('alias %s has scenarios/deterministic/<alias>.yml', (alias) => {
+    expect(
+      existsSync(join(DETERMINISTIC_ROOT, `${alias}.yml`)),
+      `no scenario file characterises the "${alias}" alias — add `
+        + `src/chat/scenarios/deterministic/${alias}.yml saying what typing it does`,
+    ).toBe(true)
+  })
+
+  it.each(TABLE_ALIASES)('alias %s validates against the ChatScenario schema', (alias) => {
+    const scenario = readScenario(DETERMINISTIC_ROOT, alias)
+    // The filename IS the key the walk uses, so a file whose `id` disagrees with its name would
+    // be found by one direction of the walk and missed by the other.
+    expect(scenario.id).toBe(alias)
+    expect(scenario.class).toBe('deterministic')
+    // Deterministic scenarios never touch the LLM BY CONTRACT, which is why they need no mock
+    // and why "no mocks in either lane" is a true statement rather than an aspiration (D-13).
+    expect(scenario.lane).toBe('hermetic')
+  })
+})
+
+describe('every deterministic scenario names a table entry (D-05, file → table)', () => {
+  it('is an EXACT set: the canon plus the pinned edge cases, nothing else', () => {
+    expect(scenarioIdsIn(DETERMINISTIC_ROOT)).toEqual(
+      [...TABLE_ALIASES, ...EDGE_SCENARIOS].sort(),
+    )
+  })
+
+  it.each(EDGE_SCENARIOS)('edge scenario %s is a well-formed deterministic scenario', (id) => {
+    const scenario = readScenario(DETERMINISTIC_ROOT, id)
+    expect(scenario.id).toBe(id)
+    expect(scenario.class).toBe('deterministic')
+    expect(scenario.lane).toBe('hermetic')
+  })
+})
+
+describe('the fail-closed arm names what it refused (D-08)', () => {
+  it.each([...TABLE_ALIASES, ...EDGE_SCENARIOS])(
+    'scenario %s that expects fail_closed pins zero executions and names the clause',
+    (id) => {
+      const scenario = readScenario(DETERMINISTIC_ROOT, id)
+      if (scenario.expect.kind !== 'fail_closed') return
+      // D-10's atomicity is not a property of the failure path — it is the whole claim. A
+      // fail-closed scenario that stayed silent about the count would pass against a turn that
+      // ran half the request and then refused.
+      expect(scenario.expect.executed).toBe(0)
+      expect(scenario.expect.namesClause).toBeTruthy()
+    },
+  )
+})
+
+describe('the canon compound pair exists as committed data (CHAT-02)', () => {
+  it('is an EXACT set — the frozen denominator, never a directory listing', () => {
+    expect(scenarioIdsIn(COMPOUND_ROOT)).toEqual([...COMPOUND_SCENARIOS].sort())
+  })
+
+  it('pins the spec example on the fail-closed arm with ZERO executions (D-08/D-10)', () => {
+    const scenario = readScenario(COMPOUND_ROOT, 'write-test-2fa-and-run')
+    expect(scenario.class).toBe('compound')
+    expect(scenario.utterance).toBe('write a test for 2FA and run it')
+    expect(scenario.expect.kind).toBe('fail_closed')
+    expect(scenario.expect.executed).toBe(0)
+    // The unroutable clause is NAMED. A refusal that said only "I could not do that" would leave
+    // a person unable to tell which half of a compound request was refused.
+    expect(scenario.expect.namesClause).toBe('write a test for 2FA')
+  })
+
+  it('pins the happy path at planned == executed == 2 in utterance order (D-11/D-12)', () => {
+    const scenario = readScenario(COMPOUND_ROOT, 'run-42-and-digest')
+    expect(scenario.class).toBe('compound')
+    expect(scenario.utterance).toBe('run test 42 and show me the digest')
+    expect(scenario.expect.kind).toBe('should_execute')
+    expect(scenario.expect.planned).toBe(2)
+    expect(scenario.expect.executed).toBe(2)
+    expect(scenario.expect.ops).toEqual(['runs.start', 'runs.digest'])
+  })
+})

@@ -1,0 +1,15 @@
+# D-08's FREE BACKSTOP. `/fn` validates no op id — deliberately. The id travels to
+# `invokeFunction`, whose step 1 raises `UnknownFunctionError` naming it before any dependency is
+# touched, so a typo and a capability that has not shipped yet come back named from the one place
+# that knows what is registered. A check inside the table would be a second catalogue.
+#
+# FLIPS TO should_execute for `write_test` when the authoring loop registers that op — the flip is
+# that phase's arrival proof.
+id: fn-unknown-op
+class: deterministic
+lane: hermetic
+utterance: '/fn write_test {"name":"2fa"}'
+expect:
+  kind: fail_closed
+  executed: 0
+  namesClause: '/fn write_test {"name":"2fa"}'

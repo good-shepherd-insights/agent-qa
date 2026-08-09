@@ -1,0 +1,18 @@
+# THE SPEC'S OWN EXAMPLE, pinning the fail-closed arm (D-08 / D-10).
+#
+# `write_test` is not in the registry, so the planner cannot plan it and no stub pretends
+# otherwise — a stub would be a fake capability in the catalogue that the parity and capability
+# suites would then have to special-case forever. The first clause is unroutable, and D-10's
+# strict pre-flight atomicity means the WHOLE turn is refused with ZERO executions: the runnable
+# second clause does not get to run just because it happened to come second.
+#
+# FLIPS TO should_execute when the authoring loop lands. That flip IS that phase's arrival proof,
+# and it is why this file is committed data now rather than written then.
+id: write-test-2fa-and-run
+class: compound
+lane: live
+utterance: write a test for 2FA and run it
+expect:
+  kind: fail_closed
+  executed: 0
+  namesClause: write a test for 2FA

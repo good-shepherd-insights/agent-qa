@@ -1,0 +1,11 @@
+# REPL chrome. It is in the table because the table is the vocabulary a person types, and the
+# REPL that consumes it should recognise `/help` from the same one list as everything else.
+# Unbound in this build; FLIPS when the REPL surface lands.
+id: help
+class: deterministic
+lane: hermetic
+utterance: /help
+expect:
+  kind: fail_closed
+  executed: 0
+  namesClause: /help

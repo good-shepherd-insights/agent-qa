@@ -1,0 +1,11 @@
+# The passthrough (D-06): ONE tested branch giving deterministic access to every registry op
+# without the table growing a row per op. No body means `{}`, exactly as `agent-qa fn` defaults.
+id: fn
+class: deterministic
+lane: hermetic
+utterance: /fn proposals.list
+expect:
+  kind: should_execute
+  executed: 1
+  ops:
+    - proposals.list

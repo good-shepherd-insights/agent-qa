@@ -1,0 +1,9 @@
+# REPL chrome, as `/help`. Unbound in this build; FLIPS when the REPL surface lands.
+id: quit
+class: deterministic
+lane: hermetic
+utterance: /quit
+expect:
+  kind: fail_closed
+  executed: 0
+  namesClause: /quit

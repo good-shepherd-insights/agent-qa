@@ -1,0 +1,13 @@
+# `digest <run>` names its run. Bare `digest` is deliberately a near-miss rather than "the
+# latest" — which run a person meant is not a question this table answers by guessing.
+id: digest
+class: deterministic
+lane: hermetic
+utterance: digest RUN-1
+expect:
+  kind: should_execute
+  executed: 1
+  ops:
+    - runs.digest
+  argsPin:
+    runId: RUN-1

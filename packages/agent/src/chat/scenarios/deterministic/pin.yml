@@ -1,0 +1,12 @@
+# `/pin <action-class>` is deterministic-resolver-only and never LLM-mediated (391 D-07): the one
+# mechanism a model must not reach is the one deciding what it may reach, even in the tightening
+# direction. Recognised now, unbound now. FLIPS TO should_execute when the deny overlay is
+# threaded to the gate (D-21).
+id: pin
+class: deterministic
+lane: hermetic
+utterance: /pin config-write
+expect:
+  kind: fail_closed
+  executed: 0
+  namesClause: /pin config-write

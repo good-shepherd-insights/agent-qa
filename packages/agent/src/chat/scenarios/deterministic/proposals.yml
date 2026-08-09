@@ -1,0 +1,12 @@
+# The tracer's alias, and still the whole inbox: `proposals` with nothing after it is the
+# question the word asks. The op's status/kind filters stay reachable through `/fn`, which is
+# the entire argument for `/fn` existing.
+id: proposals
+class: deterministic
+lane: hermetic
+utterance: proposals
+expect:
+  kind: should_execute
+  executed: 1
+  ops:
+    - proposals.list

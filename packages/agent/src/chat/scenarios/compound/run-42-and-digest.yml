@@ -1,0 +1,21 @@
+# THE CANON HAPPY PATH, and the named target of the reconciliation mutation proof (D-16).
+#
+# Two clauses, both routable by different stages: `run test 42` is table-resolvable and therefore
+# model-independent, `show me the digest` is prose the planner routes. Planned equals executed
+# equals two, in UTTERANCE ORDER (D-11) — order is meaning, and the digest clause is asking about
+# the run the first clause started.
+#
+# The deterministic mapper's verdict beats the model's on both the action set and the bound
+# arguments (D-12): a model that planned a different test id for clause one still executes 42.
+# Switch the override off and this scenario reds — which is the whole differential.
+id: run-42-and-digest
+class: compound
+lane: live
+utterance: run test 42 and show me the digest
+expect:
+  kind: should_execute
+  planned: 2
+  executed: 2
+  ops:
+    - runs.start
+    - runs.digest
