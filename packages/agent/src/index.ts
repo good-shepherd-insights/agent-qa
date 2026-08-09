@@ -128,7 +128,7 @@ export { QUARANTINE_RELEASE_FUNCTION_ID } from './functions/ops/quarantine-relea
 export { AGENT_ASK_FUNCTION_ID } from './functions/ops/agent-ask.js'
 export { PROPOSALS_LIST_FUNCTION_ID } from './functions/ops/proposals-list.js'
 export { createTurnEngine } from './chat/turn-engine.js'
-export { CHAT_RESOLVER_TABLE, resolveClause } from './chat/resolver-table.js'
+export { CHAT_HELP_TEXT, CHAT_RESOLVER_TABLE, resolveClause } from './chat/resolver-table.js'
 export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile.js'
 // 392 plan 02, D-09: the real conjunction grammar. Published because the composition root binds
 // it as the engine's `ClauseSplitter`, and it REPLACES the tracer's whole-utterance splitter,
@@ -152,6 +152,22 @@ export { repairSession, replaySession } from './chat/session-repair.js'
 // is validated against declarations and cannot touch a capability.
 export { ChatPinError, createPinOverlay } from './chat/pin-overlay.js'
 export type { ChatPinOverlayHolder } from './chat/pin-overlay.js'
+// 392 plan 08, RESEARCH Open Q2: the live turn state. Published because its two consumers are the
+// composition root that creates it and the REPL that renders from it, and neither is in this
+// package. It is a plain in-memory container — no fs, no model, no dispatch, and no subscription
+// — and the module head carries the ratified reason it is not the SDK's `AbstractChat` yet.
+export { createChatState } from './chat/chat-state.js'
+export type {
+  ChatLastTurn,
+  ChatStateContainer,
+  ChatStateSnapshot,
+  CreateChatStateInput,
+} from './chat/chat-state.js'
+// 392 plan 08, D-23: the chat-open banner. Published because the only surface that opens a chat is
+// the REPL, in `cli`. It composes REGISTERED reads through the invoke binding it is handed, holds
+// no reader of its own, and has no timer — the suite pins the last of those as source text,
+// because a scheduler would pass every behavioural case.
+export { composeBanner } from './chat/banner.js'
 // 392 plan 06, CHAT-04 / D-20: the compaction trigger policy. Published because the ONLY thing
 // that can bind it is outside this package — the composition root, which is also the only place
 // holding a `TokenAccounting` instance and a session log to emit onto. An unpublished hook would
@@ -229,11 +245,17 @@ export type {
 // WHICH stage proved each binding, because the caller a clause runs under is decided by that fact
 // and by nothing else (Pitfall 1) — and a consumer holding a verdict it cannot fully NAME would
 // spell the shape again locally, which is the second vocabulary this subtree avoids (388 C13).
+// 392 plan 08: the directive handlers and the live-state sink. Both are seats a COMPOSITION fills
+// — the handlers are how `/model` and `/pin` stop being refusals, and the sink is how a surface
+// learns the turn id it would otherwise never see. Types only; nothing here dispatches.
 export type {
   CallerMint,
   ChatBindingStage,
   ChatClause,
+  ChatDirectiveHandlers,
   ChatInvokeBinding,
+  ChatModelDirectiveOutcome,
+  ChatTurnStateSink,
   ClauseAction,
   ClauseSplitter,
   CompactionHook,

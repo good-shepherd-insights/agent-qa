@@ -20,22 +20,29 @@ import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  CHAT_HELP_TEXT,
   CHAT_RESOLVER_TABLE,
   createAgentJobQueue,
   createChatCompactionHook,
+  createChatState,
   createFunctionRegistry,
+  createPinOverlay,
   createPlannerStage,
   createRealJobKindRegistry,
   createTurnEngine,
   deterministicOverrideStrategy,
   invokeFunction,
   projectPlannerTools,
+  replayToModelMessages,
   splitClauses,
 } from '@vostride/agent-qa-agent'
 import type {
   AgentJobQueue,
   ChatConfigState,
+  ChatDirectiveHandlers,
   ChatLanguageModel,
+  ChatPinOverlayHolder,
+  ChatStateContainer,
   ChatTokenAccounting,
   CompactionHook,
   PlannerStagePort,
@@ -139,7 +146,7 @@ import {
   loadGuardrailPolicy,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import type { ConfirmPort } from '@vostride/agent-qa-safety'
+import type { ConfirmPort, SessionDenyOverlay } from '@vostride/agent-qa-safety'
 import {
   FsEventLog,
   FsEvidenceArtifactStore,
@@ -156,11 +163,13 @@ import {
   DEFAULT_EMBEDDING_PROFILE,
   guardRunAnalysisArtifact,
   sha256hex16,
+  STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
   FunctionScope,
+  GrantRecordOutcome,
   JobKind,
   QuarantineEntryStateName,
   QuarantineLadderState,
@@ -890,6 +899,14 @@ export class LocalAgentClosedError extends Error {
 export interface LocalAgentHost {
   /** The 384 function registry with every seed capability bound over local storage. */
   readonly registry: FunctionRegistry
+  /**
+   * The live chat session composed beside the registry (392 plan 08).
+   *
+   * Present on EVERY host, because the turn engine is (D-24) — a host whose chat session were
+   * optional would make `agent.ask` bound and its state absent, which is two answers to whether
+   * this host can hold a conversation.
+   */
+  readonly chat: LocalAgentChatSession
   /** The knowledge-writer powers this host grants — the same frozen object for every host. */
   readonly curation: LocalCurationCapabilities
   /** The clock every store column, dump row and audit stamp in this host is written against. */
@@ -1101,6 +1118,60 @@ export interface ComposeLocalAgentInput {
    * every host had before a model was bound.
    */
   readonly chatAccounting?: ChatTokenAccounting
+  /**
+   * How this host resolves a model NAMED by `/model <name>` (D-04, plan 08).
+   *
+   * Supplied by the host for the same reason `chatModel` is, and enforced by the same rule: the
+   * chat subtree may not construct a model, so a session-scoped switch has to arrive as a
+   * capability the composition was handed. Absent ⇒ `/model` still records the session's declared
+   * model and emits its `model_change` (the header, the prompt and the drift check all follow it),
+   * and no new client is resolved — the honest behaviour for a host that composed one model.
+   */
+  readonly chatModelFor?: (name: string) => ChatLanguageModel | Promise<ChatLanguageModel>
+  /**
+   * The interactive confirmation for a chat session, built over the composition's own mint (D-03).
+   *
+   * A FACTORY rather than a port, because the two halves of an inline confirm belong to different
+   * layers: whether a person is on the other end of this process is a fact only a SURFACE knows,
+   * and what a standing approval and a session event ARE is a fact only this composition knows.
+   * The factory is handed the second and returns the first, or `undefined` where there is nobody
+   * to ask — which leaves `confirm` absent and the gate's deny-by-default in place, unchanged.
+   */
+  readonly chatConfirm?: (bindings: ChatConfirmBindings) => ConfirmPort | undefined
+}
+
+/**
+ * What a chat confirm wrapper is handed (plan 08, T-392-26).
+ *
+ * The mint is a CLOSURE OVER THIS COMPOSITION'S OWN `StandingGrantsPort` — the same instance
+ * `proposals.accept --always` records through, with its protected-class refusal, its
+ * already-granted fold, its writer lease and its committed ledger. A surface that wrote a grant
+ * itself would be a second mint with none of those, and the file it produced would look right.
+ */
+export interface ChatConfirmBindings {
+  recordStandingApproval: (actionClass: string) => Promise<GrantRecordOutcome>
+  onDecision: (decision: {
+    readonly actionClass: string
+    readonly decision: 'accept' | 'accept-always' | 'deny'
+  }) => void | Promise<void>
+}
+
+/**
+ * The live chat session a host holds beside the registry (plan 08, RESEARCH Open Q2).
+ *
+ * Exposed because two of its facts have no other route to a surface: the state a REPL renders
+ * from, and the ability to close an interrupted turn honestly. Everything else a conversation does
+ * goes through `agent.ask` like every other capability (D-24).
+ */
+export interface LocalAgentChatSession {
+  readonly state: ChatStateContainer
+  /**
+   * Write the explicit `aborted` event for the turn in flight, and fsync (D-19's graceful arm).
+   *
+   * A no-op between turns, deliberately: an `aborted` row for a turn that already carries its
+   * `turn_complete` would make the repair on the next open trim a turn that finished.
+   */
+  abortActiveTurn(): Promise<void>
 }
 
 /**
@@ -1521,13 +1592,41 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   // same vocabulary the registry uses for a declared capability with no implementation behind it.
   // A headless host's session header says so, and the day one is bound the drift from here is a
   // `model_change` event rather than a header rewrite (D-04; the log is append-only).
-  const chatModelName = input.chatModel === undefined ? 'unbound' : input.chatModel.modelId
+  const composedChatModelName = input.chatModel === undefined ? 'unbound' : input.chatModel.modelId
+
+  // 392 plan 08 (RESEARCH Open Q2): the live turn state, created here because the engine mutates it
+  // and the surface reads it, and neither of them owns the session. See `chat-state.ts` for the
+  // ratified decision that this is a plain container rather than the SDK's `AbstractChat`.
+  const chatState: ChatStateContainer = createChatState({ activeModel: composedChatModelName })
+
+  // THE MODEL IN FORCE IS READ, NEVER CAPTURED, and this one line is the whole of 392-07's warning.
+  // `/model` writes the override into the state above; every consumer below — the session header,
+  // the planner's prompt, and the per-turn config re-read — reads it through here. A thunk that
+  // kept answering the COMPOSED model would emit a `model_change` straight back on the next turn,
+  // silently undoing the verb that had just been recorded.
+  const chatModelName = (): string => chatState.read().activeModel
+
+  // A live model object for the name in force. `chatModelFor` is the host's resolution; absent, the
+  // composed model stands whatever the session declares — an honest headless-ish posture rather
+  // than a chat module reaching for `createModel`, which CHAT-06 forbids outright.
+  let chatActiveModel: ChatLanguageModel | undefined = input.chatModel
+
   const chatSessionLog = createJsonlSessionLog({
     root: input.agentQaRoot,
     now: () => clock.now(),
-    model: () => chatModelName,
+    model: chatModelName,
     toolsetHash: () => chatToolsetHash(composedRegistry),
   })
+
+  // 392 D-21 / plan 05: the session pin holder, created once per composition and read LIVE by the
+  // gate hook. It cannot be built until the registry exists — the classes it validates against are
+  // the registry's own declared risk names — so the hook below closes over the holder rather than
+  // over a predicate, which is the same cycle the dispatch binding resolves and is resolved the
+  // same way. A snapshot taken at bind time would be empty for the life of the session, which is
+  // exactly the silent no-op 391-05 measured.
+  let chatPins: ChatPinOverlayHolder | undefined
+  const chatDeny = (action: Parameters<SessionDenyOverlay>[0]): boolean =>
+    chatPins?.asGateDeny()(action) ?? false
 
   // 392 plan 04/07: stage 2, assembled LAZILY over the registry this call is about to produce.
   //
@@ -1537,7 +1636,12 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
   // second registry or would have to be a curated list, which is exactly what 397's conformance
   // and 396's MCP parity are built against not being. Built once on first use and reused after,
   // because a walk per turn would re-project ~30 JSON schemas for no new information.
-  let plannerStage: PlannerStagePort | undefined
+  //
+  // KEYED BY THE MODEL IN FORCE (plan 08). `createPlannerStage` binds its model at construction, so
+  // a single cached stage would keep planning through the model a `/model` verb had just replaced —
+  // the override would move the prompt's `activeModel` line and change nothing about who answered.
+  // One stage per model, built on first use of each.
+  const plannerStages = new Map<string, PlannerStagePort>()
   const chatPlanner: PlannerStagePort | undefined =
     input.chatModel === undefined
       ? undefined
@@ -1546,17 +1650,23 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             if (composedRegistry === undefined) {
               throw new TypeError('a chat turn ran before its registry finished composing')
             }
-            plannerStage ??= createPlannerStage({
-              model: input.chatModel as ChatLanguageModel,
-              tools: projectPlannerTools(composedRegistry, CHAT_PLANNER_CALLER),
-              // Read PER TURN, so a session-scoped `/model` override (plan 08) changes what the
-              // prompt states without the stage being rebuilt. The conversation block stays empty
-              // here: the compacted conversation is what belongs in it, and reconciling the hook's
-              // `ModelMessage[]` against the prompt's `ChatReplayMessage[]` is plan 08's ChatState
-              // work — a projection written twice is the failure that note exists to prevent.
-              context: () => ({ activeModel: chatModelName }),
-            })
-            return plannerStage.plan(request)
+            const activeName = chatModelName()
+            let stage = plannerStages.get(activeName)
+            if (stage === undefined) {
+              stage = createPlannerStage({
+                model: (chatActiveModel ?? input.chatModel) as ChatLanguageModel,
+                tools: projectPlannerTools(composedRegistry, CHAT_PLANNER_CALLER),
+                // Read PER TURN, so a session-scoped `/model` override changes what the prompt
+                // states without the stage being rebuilt, and so the conversation block carries
+                // what compaction left rather than a second replay of the log.
+                context: () => ({
+                  activeModel: chatModelName(),
+                  conversation: chatState.read().conversation,
+                }),
+              })
+              plannerStages.set(activeName, stage)
+            }
+            return stage.plan(request)
           },
         }
 
@@ -1570,6 +1680,13 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           accounting: input.chatAccounting,
           emit: (event) => chatSessionLog.append(event),
           now: () => clock.now(),
+          // 392-06's flagged consumer, wired: what compaction leaves IS the conversation the
+          // prompt renders, and it lands in the live state on EVERY turn rather than only on a
+          // triggered pass — a sink that fired only when a pass ran would leave the prompt holding
+          // a stale conversation on every quiet turn.
+          onConversation: (messages) => {
+            chatState.setConversation(messages)
+          },
         })
 
   const chatTurn = createTurnEngine({
@@ -1593,6 +1710,42 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     },
     ...(chatPlanner === undefined ? {} : { planner: chatPlanner }),
     ...(chatCompaction === undefined ? {} : { compaction: chatCompaction }),
+    // 392 plan 08: the four directive handlers, which is what turns the engine's
+    // `directive recognised but no handler` refusal from the shipped behaviour into an
+    // unreachable arm on this host. `/help` and `/quit` are REPL chrome and answer in prose;
+    // `/model` and `/pin` change what the session is, and each returns the EFFECT it had.
+    directives: {
+      model: async (name) => {
+        const from = chatState.read().activeModel
+        if (input.chatModelFor !== undefined) {
+          // Resolved by the HOST (CHAT-06): the chat subtree may not construct a model, so a
+          // session-scoped switch is a capability this composition was handed. A resolution
+          // failure throws, and the engine turns it into the same named refusal every other
+          // unroutable clause gets — a `/model` that silently kept the old model would be the
+          // worst answer available, since every later turn would report the new name.
+          chatActiveModel = await input.chatModelFor(name)
+        }
+        chatState.setActiveModel(name)
+        return { from, to: name, line: `model: ${from} → ${name}` }
+      },
+      // RETURNS the normalised class, which is what the engine logs (392-05's law): a person types
+      // `proposals.accept`, what denies is `fn:proposals.accept`, and a record of the request
+      // rather than the effect is how the silent no-op reappears in the log.
+      pin: (actionClass) => {
+        if (chatPins === undefined) {
+          throw new TypeError('a chat pin ran before its registry finished composing')
+        }
+        const normalised = chatPins.pin(actionClass)
+        chatState.setPinnedActionClasses(chatPins.list().deniedActionClasses)
+        return normalised
+      },
+      help: () => CHAT_HELP_TEXT,
+      quit: () => {
+        chatState.requestClose()
+        return 'closing this session'
+      },
+    },
+    state: chatState,
     // D-04: the configuration RE-READ, per turn. A thunk rather than a captured value, because the
     // drift worth detecting is precisely the one that happens underneath a running session — a
     // model resolved differently by the host, or a build whose registry reaches further than the
@@ -1600,10 +1753,52 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // emits `model_change` / `active_tools_change` on the difference.
     config: (): ChatConfigState => {
       const ids = chatToolsetIds(composedRegistry)
-      return { model: chatModelName, toolset: { hash: chatToolsetHash(composedRegistry), ids } }
+      return { model: chatModelName(), toolset: { hash: chatToolsetHash(composedRegistry), ids } }
     },
     now: () => clock.now(),
     mintTurnId: () => `turn-${randomUUID()}`,
+  })
+
+  // Hoisted out of the deps literal so the chat confirm's `always` arm can mint through the SAME
+  // instance (plan 08, T-392-26). ONE grants port per composition: a wrapper that built a second
+  // one would have a second answer to which approvals are in force, and it would be the answer a
+  // person's `a` keystroke went into.
+  const standingGrants = createGrantOperations({
+    resolveKnowledgeRoot: input.knowledgeRoot,
+    auditBaseDir: input.agentQaRoot,
+    now: () => clock.now(),
+    ...(input.resolveWriterAuthority === undefined
+      ? {}
+      : { resolveWriterAuthority: input.resolveWriterAuthority }),
+  })
+
+  // 392 D-03: the chat surface's inline confirm, built by the host over this composition's mint and
+  // this session's log. `undefined` where there is nobody to ask, which leaves `confirm` absent and
+  // the gate's deny-by-default in place — the v48 posture D-03 says is unchanged for non-TTY.
+  const chatConfirmPort = input.chatConfirm?.({
+    recordStandingApproval: (actionClass) => standingGrants.record({
+      actionClass,
+      // The ONE pinned constant both the mint and the gate's own ask arm read. Composition-supplied
+      // and never caller input: a caller that could name the scope its action is evaluated under
+      // could widen any grant into a match by claiming the grant's scope.
+      scope: STANDING_APPROVAL_SCOPE,
+    }),
+    onDecision: async (decision) => {
+      // Appended to the SAME session log the engine writes, and stamped with the turn in flight —
+      // an ask-tier gate is only ever reached from inside a turn, so a decision with no turn id
+      // would be a row no reader could place. `source: 'gate'` is what keeps it distinguishable
+      // from the `/pin` verb's own decision row.
+      const turnId = chatState.read().activeTurnId
+      if (turnId === undefined) return
+      await chatSessionLog.append({
+        kind: 'approval_decision',
+        turnId,
+        at: clock.now(),
+        actionClass: decision.actionClass,
+        decision: decision.decision,
+        source: 'gate',
+      })
+    },
   })
 
   const registry = createFunctionRegistry({
@@ -1747,14 +1942,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // spread for the same reason: an absent authority must be an ABSENT field, so the
       // implementation's `?.()` arm distinguishes the leaseholding daemon from the CLI that
       // acquires per call. Nothing opens here; the first byte is read when a verb is invoked.
-      standingGrants: createGrantOperations({
-        resolveKnowledgeRoot: input.knowledgeRoot,
-        auditBaseDir: input.agentQaRoot,
-        now: () => clock.now(),
-        ...(input.resolveWriterAuthority === undefined
-          ? {}
-          : { resolveWriterAuthority: input.resolveWriterAuthority }),
-      }),
+      standingGrants,
       // 392 D-24: the turn engine assembled above. Bound HERE and therefore on BOTH hosts, so
       // `agent.ask` is a real capability wherever the composition root runs — and unbound nowhere,
       // which is what lets 397's parity suite read it off the registry with no chat-specific case.
@@ -1790,12 +1978,30 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     },
     // Conditionally spread like its neighbours: an absent confirmation authority must be an ABSENT
     // field, so the gate's own deny-by-default is what answers, in one place.
-    ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
+    //
+    // A chat confirm WINS over a plain one where a host supplied both, because it is the same
+    // decision with one more form on it — never a second prompt, and never both.
+    ...(() => {
+      const confirm = chatConfirmPort ?? input.confirm
+      return confirm === undefined ? {} : { confirm }
+    })(),
+    // 392 D-21 / T-392-28: the session pin overlay, threaded to the ONE `evaluate()` call-site
+    // there is. Bound unconditionally rather than conditionally spread, and the difference from
+    // its neighbours is real: `confirm` and the approvals reader are absent when a host has no
+    // such AUTHORITY, whereas the overlay is a composition-owned object that always exists and
+    // whose emptiness is DATA. An empty overlay denies nothing by its own contract, which is the
+    // gate's ladder untouched — and the hook has to be in place before the first turn, because a
+    // person types `/pin` in the middle of a session and there is no second binding moment.
+    deny: chatDeny,
   })
   // Closes the cycle the turn engine's dispatch binding was built against. It happens exactly
   // here, on the line after the registry exists, so there is no window in which a turn could run
   // against an unset reference — and the engine's own guard names that state if one ever appears.
   composedRegistry = registry
+  // The pin holder, on the line after the registry exists and for the dispatch binding's reason:
+  // it validates a typed class against the registry's OWN declared risk names, so a host cannot
+  // record a pin against a name nothing answers to (392-05, property 2).
+  chatPins = createPinOverlay(registry, CHAT_RESOLVER_CALLER)
 
   let opened: LocalAgentJobs | undefined
   let opening: Promise<LocalAgentJobs> | undefined
@@ -1866,6 +2072,29 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
 
   return {
     registry,
+    chat: {
+      state: chatState,
+      async abortActiveTurn(): Promise<void> {
+        // D-19's GRACEFUL arm. The hard-kill arm needs nothing here — a torn tail is detected and
+        // an `aborted` synthesized on the next open — but a Ctrl+C that got as far as running this
+        // handler can say so explicitly, which is a better record than one reconstructed later.
+        const turnId = chatState.read().activeTurnId
+        // Between turns there is nothing to abort, and writing one anyway would put an `aborted`
+        // row on a turn that already carries its `turn_complete` — which the next open's repair
+        // would then read as an interrupted turn and prune from the conversation.
+        if (turnId === undefined) return
+        await chatSessionLog.append({
+          kind: 'aborted',
+          turnId,
+          at: clock.now(),
+          source: 'explicit',
+        })
+        // Fsynced immediately rather than at a turn boundary that is not coming: this is the last
+        // thing this process writes, and an unflushed `aborted` is exactly the event the repair it
+        // exists to make unnecessary would have to reconstruct.
+        await chatSessionLog.turnBoundary()
+      },
+    },
     curation: LOCAL_CURATION_CAPABILITIES,
     clock,
     jobs(): Promise<LocalAgentJobs> {

@@ -12,7 +12,9 @@
 // that could turn it off would be a production knob that disables a safety property, which is the
 // one thing the mutation proof exists to prove impossible.
 
-import type { FunctionCaller } from '@vostride/agent-qa-schema'
+import type { ModelMessage } from 'ai'
+
+import type { ChatTurnStatus, ClauseReceipt, FunctionCaller } from '@vostride/agent-qa-schema'
 
 import type { SessionReplay } from './session-repair.js'
 
@@ -216,3 +218,68 @@ export type CompactionHook = (context: {
   /** The conversation as of this turn's start: repaired, aborted turns already excluded. */
   readonly replay: SessionReplay
 }) => Promise<void> | void
+
+/**
+ * What a `/model` directive did (Phase 392 plan 08, D-04).
+ *
+ * The handler applies the override and REPORTS the two model names, rather than emitting anything.
+ * The engine is what turns the pair into a `model_change` event, through the same `diffChatConfig`
+ * the per-turn config re-read uses — so there is ONE construction site for that event and the
+ * `source` field is what distinguishes a person typing from a file changing underneath them.
+ */
+export interface ChatModelDirectiveOutcome {
+  readonly from: string
+  readonly to: string
+  /** The line the surface prints back. The handler renders it, because it knows what it resolved. */
+  readonly line: string
+}
+
+/**
+ * The session directives, as handlers a composition binds (D-04 / D-21).
+ *
+ * EVERY MEMBER IS OPTIONAL, and an absent one is not a gap: the engine's refusal arm names an
+ * unbound directive by name, which is the honest answer for a build that recognises `/pin` and
+ * cannot carry it out. A host that binds none behaves exactly as every host did before this seam
+ * existed.
+ *
+ * A HANDLER MAY THROW, AND THROWING IS AN ANSWER. `/pin nonsense` is a recognised directive whose
+ * ARGUMENT names nothing this host has, and the overlay refuses it by name rather than accepting a
+ * pin that would then deny nothing. That refusal travels the engine's ONE refusal path, so it
+ * leaves the same `mark_unhandled` row every other refused clause does.
+ */
+export interface ChatDirectiveHandlers {
+  readonly model?: (name: string) => ChatModelDirectiveOutcome | Promise<ChatModelDirectiveOutcome>
+  /** Records the pin and returns the NORMALISED class actually recorded (392-05's law). */
+  readonly pin?: (actionClass: string) => string | Promise<string>
+  readonly help?: () => string
+  readonly quit?: () => string
+}
+
+/**
+ * Where the engine publishes the live turn state a surface renders from (RESEARCH Open Q2).
+ *
+ * A SINK rather than the container, so the engine can write the two facts only it holds — the
+ * minted turn id and the turn's outcome — without acquiring the ability to read or reshape the
+ * rest of a surface's state. The id is the load-bearing one: it is minted inside `runTurn`, and a
+ * Ctrl+C handler that wants to write the explicit `aborted` event D-19 asks for has no other way
+ * to name the turn it is interrupting.
+ */
+export interface ChatTurnStateSink {
+  beginTurn(turnId: string): void
+  /**
+   * The repaired conversation, published every turn BEFORE the degrade pass runs.
+   *
+   * Published by the engine rather than only by the compaction hook, because a host that binds no
+   * accounting still has a conversation — and a prompt that saw one only on hosts with a token
+   * budget would be two different prompts wearing one name. Where a hook IS bound it publishes
+   * again with the pruned result, and last write wins, which is the order the engine already
+   * enforces for the same reason.
+   */
+  setConversation(messages: readonly ModelMessage[]): void
+  endTurn(turn: {
+    readonly turnId: string
+    readonly status: ChatTurnStatus
+    readonly receipts: readonly ClauseReceipt[]
+    readonly answer?: string
+  }): void
+}

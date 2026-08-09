@@ -93,6 +93,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // surface re-spells with its own number. Publishing them is what lets a later conformance
   // assertion compare against the declaration rather than a literal. Neither is dispatch, and
   // neither can be written: they are frozen module constants.
+  // 392 plan 08, D-06: what `/help` prints, spelled beside the table it describes. A frozen string
+  // constant — it dispatches nothing — and it is pinned because help text kept anywhere other than
+  // the canon it documents becomes a second list of what chat understands, free to drift from the
+  // one that actually routes.
+  'CHAT_HELP_TEXT',
   'CHAT_MINIMUM_CONTEXT',
   'CHAT_RESOLVER_TABLE',
   'COMPACTION_RATIO',
@@ -167,6 +172,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // persists nothing, reaches no storage and mints no identity (D-16), so publishing it
   // opens no path and no second problem-identity vocabulary.
   'clusterVerdicts',
+  // 392 plan 08, D-23: the chat-open banner. Published because the only surface that opens a chat
+  // lives in `cli`. It composes REGISTERED reads through the invoke binding it is HANDED — it holds
+  // no reader, reaches no store, and cannot dispatch anything the caller did not already grant.
+  // The one-read law is what it exists to keep, and its suite pins the absence of a scheduler.
+  'composeBanner',
   'createAgentJobQueue',
   // 392 plan 06, CHAT-04: the compaction hook factory and, below, the pure pass it wraps and the
   // replay projection it feeds on. All three are published because the ONLY thing that can bind a
@@ -175,6 +185,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // accounting instance is DATA a host hands over, which is why `agent` still declares no
   // dependency on `model` and this list gains no path to a provider.
   'createChatCompactionHook',
+  // 392 plan 08, RESEARCH Open Q2: the live turn state container. On this list because its two
+  // consumers — the composition root that creates it and the REPL that renders from it — are both
+  // outside this package. A plain in-memory object: no fs, no model, no dispatch, no subscription.
+  'createChatState',
   'createFunctionRegistry',
   'createJobKindRegistry',
   'createMaskingContext',
@@ -368,6 +382,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // what the published `resolveClause` returns, and its presence here is what makes a third
   // variant — or a confidence number — a visible edit to this pin rather than a quiet widening
   // of the one path in the system that OVERRIDES a model's plan (D-09/D-12).
+  // 392 plan 08, D-04 / D-21: the four session directives as handlers, and what a `/model` handler
+  // reports back. TYPES, so nothing here carries a capability — what they describe is a seat a
+  // COMPOSITION fills, and pinning them is what makes a fifth directive a visible edit rather than
+  // a quiet widening of the one clause class that never crosses the function layer.
+  'ChatDirectiveHandlers',
   'ChatDirectiveName',
   'ChatInvokeBinding',
   // 392 plan 07, CHAT-06: a model OBJECT, never a model id. The SDK's own `LanguageModel` type also
@@ -375,6 +394,15 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // firewall closes — this alias is that door shut at the type, and pinning it is what makes
   // widening it back a visible edit rather than an incidental one.
   'ChatLanguageModel',
+  // 392 plan 08: what the last turn did, as a surface renders it. A TYPE over data the turn result
+  // already carries; it exists so a REPL reading live state and a REPL reading a result are
+  // reading one vocabulary rather than two.
+  'ChatLastTurn',
+  // 392 plan 08, D-04: the two model names a `/model` moved between. Pinned beside the handler set
+  // because the engine turns this pair into the session's `model_change` through `diffChatConfig`
+  // — the ONE construction site for that event — and a handler that emitted its own would be the
+  // second one 392-07 warned against.
+  'ChatModelDirectiveOutcome',
   // 392 plan 05, D-21: what a session holds when it holds a pin set. A TYPE, and the shape of it
   // is the feature: three members — pin, list, asGateDeny — and no fourth. A composition root
   // storing one in session state must be able to NAME it, and pinning the name here is what makes
@@ -386,12 +414,23 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'ChatResolverEntry',
   'ChatResolverRule',
   'ChatResolverTable',
+  // 392 plan 08, RESEARCH Open Q2: the live turn state's three names. TYPES, and the shape is the
+  // decision — a plain container the engine mutates and a surface reads, with no subscription and
+  // no transport, because the SDK's `AbstractChat` auto-executes tool calls and D-10 says nothing
+  // runs before the reconciler has spoken. Pinning them makes adopting that machinery a visible
+  // edit here rather than a quiet swap underneath a surface.
+  'ChatStateContainer',
+  'ChatStateSnapshot',
   // 392 plan 06: the three accounting methods chat needs, and not one more. `recordUsage` is
   // deliberately absent — a compaction pass that could re-anchor the estimator would be writing to
   // the very number it is about to read.
   'ChatTokenAccounting',
   'ChatToolsetFingerprint',
   'ChatTurnPort',
+  // 392 plan 08: where the engine publishes the turn id and the turn's outcome. A TYPE and a
+  // one-way seam — the engine writes, a surface reads — and the id going out at the START of a
+  // turn is what lets a Ctrl+C handler name the turn it is interrupting (D-19's graceful arm).
+  'ChatTurnStateSink',
   // 388 plan 09. The optional options argument `claimNext` now accepts — a TYPE, so it hands
   // nobody a store; the exclusion it names is honoured inside the sqlite SELECT and set once
   // at queue construction (`unclaimableKinds` on `CreateAgentJobQueueOptions`, already pinned).
@@ -411,6 +450,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'CompactionPassInput',
   'ConfigReaderPort',
   'CreateAgentJobQueueOptions',
+  // 392 plan 08: what a chat state container opens under. A TYPE, one member, and it is the model
+  // the session DECLARES — which is the value `/model` overrides and the per-turn config re-read
+  // compares against, so naming it is what keeps those two from being two answers.
+  'CreateChatStateInput',
   'CreateFunctionRegistryOptions',
   'EntityDirectoryPort',
   'FallbackContinuationInput',

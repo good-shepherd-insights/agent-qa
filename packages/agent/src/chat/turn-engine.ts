@@ -38,7 +38,9 @@ import type {
 import type {
   CallerMint,
   ChatClause,
+  ChatDirectiveHandlers,
   ChatInvokeBinding,
+  ChatTurnStateSink,
   ClauseSplitter,
   CompactionHook,
   PlannerStageOutcome,
@@ -48,6 +50,7 @@ import type {
 } from './ports.js'
 import { diffChatConfig, foldChatConfigState } from './config-drift.js'
 import type { ChatConfigState } from './config-drift.js'
+import { replayToModelMessages } from './compaction.js'
 import { directiveNotBoundReason, resolveClause } from './resolver-table.js'
 import { replaySession } from './session-repair.js'
 import type { ChatDirectiveName, ChatResolverTable } from './resolver-table.js'
@@ -72,6 +75,22 @@ export interface TurnEngineDeps {
    * different from claiming there was none, and is why the seam is optional rather than defaulted.
    */
   readonly config?: () => ChatConfigState | Promise<ChatConfigState>
+  /**
+   * The session directives, where a host binds any (D-04 / D-21).
+   *
+   * Absent, or absent for one directive, means the refusal arm below names it. That is not a
+   * degraded mode: a build that recognises `/pin` and cannot carry it out should say so, and the
+   * `mark_unhandled` row it leaves is what makes the gap countable.
+   */
+  readonly directives?: ChatDirectiveHandlers
+  /**
+   * Where the live turn state a surface renders from is published (RESEARCH Open Q2).
+   *
+   * The turn id goes out at the START of the turn rather than with the result, and that ordering is
+   * the whole reason the seam exists — an interrupted turn never produces a result, so a Ctrl+C
+   * handler that waited for one could never name the turn it was interrupting (D-19's graceful arm).
+   */
+  readonly state?: ChatTurnStateSink
   readonly now: () => string
   readonly mintTurnId: () => string
 }
@@ -108,12 +127,109 @@ function refusalName(error: unknown): string {
   return String(error)
 }
 
+/** What one directive did: a line to print back, or the reason the turn is refused. */
+type DirectiveResult =
+  | { readonly kind: 'handled'; readonly text: string }
+  | { readonly kind: 'refused'; readonly reason: string }
+
+/**
+ * Carry out one session directive.
+ *
+ * TWO EVENTS ARE BORN HERE and both go through the vocabulary that already owns them. `/model`
+ * produces its `model_change` through `diffChatConfig` — the SAME function the per-turn config
+ * re-read calls, with `source: 'verb'` instead of `'config_reread'` — because a person switching
+ * models and a file changing underneath a session are different FACTS and not different events
+ * (392-07). `/pin` produces an `approval_decision` with `source: 'verb'`, for the mirror reason:
+ * a person pre-denying an action class for the rest of a conversation and a person refusing one
+ * question at a gate are both approval decisions about a class, and the field is what keeps them
+ * apart in a record several surfaces read.
+ *
+ * THE CLASS LOGGED IS THE ONE `pin()` RETURNED, never the one typed (392-05's law). A person types
+ * `proposals.accept` and what actually denies is `fn:proposals.accept`; logging the request rather
+ * than the effect is how the silent-no-op trap reappears in the record after the code stopped
+ * having it.
+ */
+async function runDirective(
+  deps: TurnEngineDeps,
+  entry: { clause: ChatClause; directive: ChatDirectiveName; argument?: string },
+  context: {
+    readonly turnId: string
+    readonly append: (event: ChatSessionEvent) => Promise<void>
+    readonly now: () => string
+  },
+): Promise<DirectiveResult> {
+  const handlers = deps.directives
+  const notBound = (): DirectiveResult => ({
+    kind: 'refused',
+    reason: directiveNotBoundReason(entry.directive, entry.clause.text),
+  })
+
+  try {
+    switch (entry.directive) {
+      case 'model': {
+        if (handlers?.model === undefined || entry.argument === undefined) return notBound()
+        const outcome = await handlers.model(entry.argument)
+        if (outcome.from !== outcome.to && deps.config !== undefined) {
+          // Built from the configuration AS IT NOW STANDS, with only the model wound back — so the
+          // diff produces exactly one `model_change` and cannot invent a toolset drift the verb did
+          // not cause. The handler has already applied the override, which is what makes the
+          // current read the `to` side and what stops the next turn's re-read from emitting a
+          // `model_change` straight back to the composed model (392-07's trap).
+          const current = await deps.config()
+          for (const event of diffChatConfig(
+            { ...current, model: outcome.from },
+            current,
+            { turnId: context.turnId, at: context.now(), source: 'verb' },
+          )) {
+            await context.append(event)
+          }
+        }
+        return { kind: 'handled', text: outcome.line }
+      }
+      case 'pin': {
+        if (handlers?.pin === undefined || entry.argument === undefined) return notBound()
+        const actionClass = await handlers.pin(entry.argument)
+        await context.append({
+          kind: 'approval_decision',
+          turnId: context.turnId,
+          at: context.now(),
+          actionClass,
+          decision: 'deny',
+          source: 'verb',
+        })
+        return {
+          kind: 'handled',
+          text: `pinned: ${actionClass} is denied for the rest of this session`,
+        }
+      }
+      case 'help': {
+        if (handlers?.help === undefined) return notBound()
+        return { kind: 'handled', text: handlers.help() }
+      }
+      case 'quit': {
+        if (handlers?.quit === undefined) return notBound()
+        return { kind: 'handled', text: handlers.quit() }
+      }
+    }
+  } catch (error) {
+    // A handler that REFUSED — `/pin` against a class this host does not declare is the shipped
+    // case — is a clause this build could not carry out, so it takes the engine's one refusal path
+    // and leaves the same countable row. The message is the refusal's own, because the overlay
+    // knows what is pinnable and re-deriving it here would be a second answer to that question.
+    return { kind: 'refused', reason: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
   return {
     async runTurn(input: AgentAskInput): Promise<AgentAskResult> {
       const opened = await deps.sessionLog.open(input.sessionId)
       const sessionId = opened.header.sessionId
       const turnId = deps.mintTurnId()
+      // Published BEFORE anything can fail, because the state this names is "a turn is in flight"
+      // and that becomes true here. A surface interrupted between this line and the boundary below
+      // has the id it needs to write the explicit `aborted` event.
+      deps.state?.beginTurn(turnId)
 
       const append = async (event: ChatSessionEvent): Promise<void> => {
         await deps.sessionLog.append(event)
@@ -126,6 +242,7 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
         // The fsync point (D-19). Per TURN, so the loss bound is exactly the in-flight turn —
         // the case the next-turn repair already knows how to handle.
         await deps.sessionLog.turnBoundary()
+        deps.state?.endTurn({ turnId, status, receipts: result.receipts, ...(result.answer === undefined ? {} : { answer: result.answer }) })
         return { sessionId, turnId, status, ...result }
       }
       /**
@@ -155,6 +272,10 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       // degrade pass then receives that replay and has nothing else to work on, which is what
       // makes the ordering a property of the code rather than a convention.
       const replay = replaySession(opened.events)
+      // The ONE projection, applied once (392-06's mismatch, resolved in `chat-state.ts`): the
+      // repaired replay becomes the conversation a surface and a prompt read. A bound degrade pass
+      // publishes again over the top with the pruned form.
+      deps.state?.setConversation(replayToModelMessages(replay))
 
       // CONFIG DRIFT, BEFORE THE MESSAGE (D-04, CHAT-05). The re-read happens on EVERY turn, which
       // makes the session-start case the first turn's case rather than a second code path — one
@@ -180,7 +301,11 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       // ---- Stage 1: the deterministic resolver over the clause split.
       const clauses = deps.split(input.message)
       const mapped: ResolvedClause[] = []
-      const directives: { clause: ChatClause; directive: ChatDirectiveName }[] = []
+      const directives: {
+        clause: ChatClause
+        directive: ChatDirectiveName
+        argument?: string
+      }[] = []
       for (const clause of clauses) {
         const resolution = resolveClause(deps.table, clause.text)
         if (resolution.kind === 'unresolved') continue
@@ -189,7 +314,13 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
           // capability (D-04/D-21). It is collected rather than dropped, because a clause the
           // table understood and the engine silently ignored is the exact silent-drop shape D-08
           // and D-10 exist to make impossible.
-          directives.push({ clause, directive: resolution.entry.directive })
+          directives.push({
+            clause,
+            directive: resolution.entry.directive,
+            ...(resolution.entry.argument === undefined
+              ? {}
+              : { argument: resolution.entry.argument }),
+          })
           continue
         }
         mapped.push({
@@ -210,21 +341,34 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
           mapped.length + directives.length === clauses.length ? 'resolved' : 'unresolved',
       })
 
-      // A directive with no handler bound refuses the whole turn, BEFORE stage 2, with zero
-      // executions — D-10's atomicity applied to the one clause class that never reaches stage 4.
-      // Plans 04-06 bind the handlers (`/model`'s session override and its `model_change` event,
-      // `/pin`'s deny overlay, the REPL's own chrome) and this arm stops being reachable for them
-      // one directive at a time; until then the honest answer is a named refusal, not a no-op.
-      const firstDirective = directives[0]
-      if (firstDirective !== undefined) {
-        return refuse(
-          firstDirective.clause.text,
-          directiveNotBoundReason(firstDirective.directive, firstDirective.clause.text),
-        )
+      // ---- Directives, carried out BEFORE stage 2 and never through the function layer.
+      //
+      // A directive names no capability — it changes what this SESSION is, and that is why it does
+      // not travel `invokeFunction` and why a model may never reach one (391 D-07: the mechanism
+      // deciding what a model may do is the one mechanism it must not touch, even in the
+      // tightening direction). A directive with no handler still refuses the whole turn by name,
+      // through the same `refuse()` every other refusal takes, so a build that recognises `/pin`
+      // and cannot carry it out leaves a countable row rather than a silent no-op (D-08 / D-15).
+      const directiveLines: string[] = []
+      for (const entry of directives) {
+        const line = await runDirective(deps, entry, {
+          turnId,
+          append,
+          now: deps.now,
+        })
+        if (line.kind === 'refused') return refuse(entry.clause.text, line.reason)
+        directiveLines.push(line.text)
       }
 
+      // Everything the directives did not claim. Computed rather than reusing `clauses`, so a turn
+      // that is ENTIRELY directives reaches stage 3 with nothing to reconcile and completes through
+      // the same four stages as any other — one path, rather than a fast one and a careful one.
+      const routable = clauses.filter(
+        (clause) => !directives.some((entry) => entry.clause.index === clause.index),
+      )
+
       // ---- Stage 2: the planner, consulted ONLY for what stage 1 could not answer.
-      const unmapped = clauses.filter(
+      const unmapped = routable.filter(
         (clause) => !mapped.some((resolved) => resolved.clause.index === clause.index),
       )
       let planned: PlannerStageOutcome = NO_PLAN
@@ -268,7 +412,7 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       }
 
       // ---- Stage 3: deterministic reconciliation, BEFORE any side effect (D-10).
-      const verdict = deps.reconcile({ clauses, mapped, planned })
+      const verdict = deps.reconcile({ clauses: routable, mapped, planned })
       await append({
         kind: 'stage_outcome',
         turnId,
@@ -346,9 +490,16 @@ export function createTurnEngine(deps: TurnEngineDeps): TurnEngine {
       // The answer rides the completed turn (CHAT-01). A turn the model answered in prose reaches
       // here with an empty plan, so the loop above ran zero times and `receipts` is empty — which
       // is the assertion "answering executes nothing" is made of, rather than a claim about it.
+      // The directive lines lead, because they are what the person asked for FIRST in the
+      // utterance order this whole engine preserves, and because a `/model` confirmation printed
+      // after the receipts of the clauses that ran under the old model would misreport which model
+      // ran them.
+      const answer = [...directiveLines, verdict.answer].filter(
+        (line): line is string => line !== undefined && line !== '',
+      )
       return finish(failed ? 'failed' : 'completed', {
         receipts,
-        ...(verdict.answer === undefined ? {} : { answer: verdict.answer }),
+        ...(answer.length === 0 ? {} : { answer: answer.join('\n') }),
       })
     },
   }

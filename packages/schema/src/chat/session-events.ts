@@ -157,6 +157,20 @@ export interface ChatApprovalDecisionEvent extends ChatSessionEventBase<'approva
   /** The `fn:`-prefixed risk name the gate classified, not the bare op id (391-05). */
   actionClass: string
   decision: 'accept' | 'accept-always' | 'deny'
+  /**
+   * WHICH DECISION THIS WAS, on `model_change.source`'s precedent and for its reason (plan 08).
+   *
+   * `gate` — a person answered the inline confirm when an ask-tier capability reached the gate.
+   * `verb` — a person typed `/pin <class>`, pre-denying the class for the rest of the session.
+   *
+   * Both are a human decision about one action class, and collapsing them would leave a reviewer
+   * unable to tell a refusal of a specific request from a standing rule the person set in advance.
+   * The field is REQUIRED rather than defaulted: nothing had ever emitted an `approval_decision`
+   * before this plan, so no session file on disk carries one, and an optional field would have
+   * bought back-compatibility with a population of exactly zero lines at the cost of a defaulting
+   * rule that then has to be right forever.
+   */
+  source: 'gate' | 'verb'
 }
 
 /**
@@ -272,7 +286,7 @@ const EVENT_KEYS: Record<ChatSessionEventKind, readonly string[]> = {
   user_message: ['at', 'kind', 'text', 'turnId'],
   stage_outcome: ['at', 'kind', 'outcome', 'stage', 'turnId'],
   clause_receipt: ['at', 'clause', 'functionId', 'kind', 'origin', 'outcome', 'status', 'turnId'],
-  approval_decision: ['actionClass', 'at', 'decision', 'kind', 'turnId'],
+  approval_decision: ['actionClass', 'at', 'decision', 'kind', 'source', 'turnId'],
   mark_unhandled: ['at', 'clause', 'kind', 'reason', 'turnId'],
   model_change: ['at', 'from', 'kind', 'source', 'to', 'turnId'],
   active_tools_change: ['addedIds', 'at', 'kind', 'removedIds', 'toolsetHash', 'turnId'],

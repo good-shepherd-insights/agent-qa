@@ -200,6 +200,10 @@ export async function invokeFunction(
       auditSink: internals.auditSink,
       ...(reader === undefined ? {} : { reader }),
       ...(internals.confirm === undefined ? {} : { confirm: internals.confirm }),
+      // 392 D-21: the session's deny overlay, threaded at the ONE `evaluate()` call-site there is.
+      // Conditionally spread like its neighbours — an absent overlay must leave the gate's ladder
+      // untouched, and a present-but-undefined field would be a second place the default lives.
+      ...(internals.deny === undefined ? {} : { deny: internals.deny }),
     },
   )
   if (policy.verdict === 'deny') {

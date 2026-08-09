@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { CHAT_AGENT_CONTEXT, buildChatPrompt } from '../chat-prompt.js'
+import { replayToModelMessages } from '../compaction.js'
 import type { ChatPromptInput } from '../chat-prompt.js'
 
 const moduleDir = dirname(fileURLToPath(import.meta.url))
@@ -104,10 +105,16 @@ describe('buildChatPrompt: one builder, chat blocks (392-EXTENDS)', () => {
   it('renders the prior conversation before the current utterance', () => {
     const { prompt } = buildChatPrompt(
       input({
-        conversation: [
-          { role: 'user', text: 'show me the proposals', turnId: 't1' },
-          { role: 'assistant', text: 'proposals.list completed', turnId: 't1' },
-        ],
+        // `ModelMessage`, produced the way the shipped path produces it: `replayToModelMessages`
+        // is the ONE projection from the log's replay shape, and this block renders what
+        // compaction left of its output (plan 08's chat-state decision).
+        conversation: replayToModelMessages({
+          messages: [
+            { role: 'user', text: 'show me the proposals', turnId: 't1' },
+            { role: 'assistant', text: 'proposals.list completed', turnId: 't1' },
+          ],
+          abortedTurnIds: [],
+        }),
       }),
     )
     expect(prompt.indexOf('show me the proposals')).toBeLessThan(

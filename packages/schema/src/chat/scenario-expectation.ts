@@ -20,6 +20,8 @@
 
 import { z } from 'zod'
 
+import { CHAT_SESSION_EVENT_KINDS } from './session-events'
+
 /** What a scenario asserts about its turn. Closed, spelled once (388 C13). */
 export const SCENARIO_EXPECTATIONS = ['should_execute', 'fail_closed'] as const
 
@@ -64,6 +66,27 @@ export const ScenarioExpectationSchema = z.object({
   ops: z.array(z.string()).optional(),
   argsPin: z.record(z.string(), z.unknown()).optional(),
   namesClause: z.string().optional(),
+  /**
+   * The session event this turn must leave behind (392 plan 08, widening 392-02's flagged gap).
+   *
+   * A DIRECTIVE'S PROOF IS AN EVENT, and until this field existed the vocabulary could not say so.
+   * `/model` and `/pin` change what a SESSION is: they invoke nothing, so `ops` is empty and
+   * `executed` is 0 on a turn that did exactly what was asked — the same numbers a turn that did
+   * nothing at all would show. What tells them apart is the row in the log, and 392-02 recorded
+   * that the alternative (asserting session events outside `expect`) would leave the corpus unable
+   * to state its own claim. The enum is the log's own closed kind set, so a scenario cannot pin an
+   * event kind this build does not write.
+   */
+  emitsSessionEvent: z.enum(CHAT_SESSION_EVENT_KINDS).optional(),
+  /**
+   * A fragment the turn's answer must contain (392 plan 08).
+   *
+   * The chrome directives' proof. `/help` and `/quit` produce prose and no event, so a scenario
+   * for either has nothing else to assert — and a scenario that could only check the STATUS would
+   * pass against a `/help` that printed an empty string. A fragment rather than the whole text,
+   * because pinning the full help output would make every added alias a corpus edit.
+   */
+  answerContains: z.string().optional(),
 })
 
 export const ChatScenarioSchema = z.object({

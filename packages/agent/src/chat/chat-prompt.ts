@@ -25,12 +25,13 @@
 // outcomes (D-18) — the same map-not-territory rule the session log follows, applied to the one
 // place where the whole conversation is about to cross a network boundary (T-392-14).
 
+import type { ModelMessage } from 'ai'
+
 import { buildTieredPrompt } from '../prompt/tiered-prompt-builder.js'
 import type { PromptTierBlock } from '../prompt/tiered-prompt-builder.js'
 import type { JobModelRequest } from '../jobs/record-llm-authorship.js'
 
 import type { ChatClause } from './ports.js'
-import type { ChatReplayMessage } from './session-repair.js'
 
 /** Who is asking and why — chat's stable-tier provenance (§1.4's `agent_context` parameter). */
 export const CHAT_AGENT_CONTEXT =
@@ -75,16 +76,35 @@ export interface ChatPromptInput {
   readonly activeModel: string
   /** Session facts as one-liners — refs and counts, never a serialized result (D-18). */
   readonly facts?: readonly string[]
-  /** The conversation this turn continues, oldest first, already repaired and pruned. */
-  readonly conversation?: readonly ChatReplayMessage[]
+  /**
+   * The conversation this turn continues, oldest first, already repaired and PRUNED.
+   *
+   * `ModelMessage`, and the direction is spelled once (392-06's flagged mismatch, resolved by plan
+   * 08's `chat-state.ts`). Log events become `ChatReplayMessage[]` through `replaySession`, that
+   * becomes `ModelMessage[]` through `replayToModelMessages`, compaction prunes in THAT form, and
+   * this block renders what compaction left. Taking the replay shape here would have needed an
+   * inverse projection that could only invent the turn ids pruning discarded.
+   */
+  readonly conversation?: readonly ModelMessage[]
 }
 
 function renderClauses(clauses: readonly ChatClause[]): string {
   return clauses.map((clause) => `${clause.index + 1}. ${clause.text}`).join('\n')
 }
 
-function renderConversation(messages: readonly ChatReplayMessage[]): string {
-  return messages.map((message) => `${message.role}: ${message.text}`).join('\n')
+function renderConversation(messages: readonly ModelMessage[]): string {
+  return messages
+    .map((message) => {
+      // Chat only ever produces text content — `replayToModelMessages` carries a one-liner across
+      // and compaction truncates strings — so the non-string arm is unreachable through the chat
+      // path today. It is handled rather than cast because `ModelMessage` genuinely admits parts,
+      // and a cast would put an object's default rendering into a prompt the day it stopped being
+      // unreachable.
+      const text =
+        typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
+      return `${message.role}: ${text}`
+    })
+    .join('\n')
 }
 
 /**

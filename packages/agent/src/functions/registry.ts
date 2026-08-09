@@ -7,7 +7,12 @@
 // crosses the gate.
 
 import { getActiveExecutionContext } from '@vostride/agent-qa-safety'
-import type { AuditSink, ConfirmPort, StandingApprovalReader } from '@vostride/agent-qa-safety'
+import type {
+  AuditSink,
+  ConfirmPort,
+  SessionDenyOverlay,
+  StandingApprovalReader,
+} from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
 import { toSchemaProjection } from './declaration-projection.js'
@@ -218,6 +223,19 @@ export interface CreateFunctionRegistryOptions {
    * — so a host with no terminal is right to omit it.
    */
   confirm?: ConfirmPort
+  /**
+   * The session-scoped DENY overlay the gate consults before its ladder (392 D-21, plan 08).
+   *
+   * TIGHTEN-ONLY BY TYPE: the hook answers a boolean whose only true branch writes a deny, so
+   * "a session loosened something" is not a state this seam can represent. It joins here rather
+   * than travelling per call because the overlay is a property of the SESSION a composition is
+   * serving, and a per-call parameter would be a value a caller could choose.
+   *
+   * OPTIONAL, and its absence is the shipped default: `evaluate()` runs its ladder untouched. It
+   * follows `confirm`'s precedent exactly — conditionally spread below, so an absent dependency is
+   * an ABSENT field rather than a present `undefined` one.
+   */
+  deny?: SessionDenyOverlay
   /** Defaults to safety's ambient resolver; injected in tests for determinism. */
   resolveExecutionContext?: () => ExecutionContext
 }
@@ -237,6 +255,7 @@ interface RegistryInternals {
   auditSink: AuditSink
   standingApprovalReader?: () => StandingApprovalReader | Promise<StandingApprovalReader>
   confirm?: ConfirmPort
+  deny?: SessionDenyOverlay
   resolveExecutionContext: () => ExecutionContext
 }
 
@@ -401,6 +420,7 @@ export function createRegistryFromSpecs(
       ? {}
       : { standingApprovalReader: options.standingApprovalReader }),
     ...(options.confirm === undefined ? {} : { confirm: options.confirm }),
+    ...(options.deny === undefined ? {} : { deny: options.deny }),
     resolveExecutionContext: options.resolveExecutionContext ?? getActiveExecutionContext,
   })
 

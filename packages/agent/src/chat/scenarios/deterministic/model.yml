@@ -1,13 +1,19 @@
-# `/model <name>` is CANON — stage 1 recognises it at once — and no handler for it is bound in
-# this build, so the turn is refused BY NAME with nothing executed. That is D-08's shape applied
-# to a directive: the honest answer to "this build cannot yet" is a named refusal, never a no-op
-# that looks like success. FLIPS TO should_execute when the plan that binds the session-scoped
-# model override and its `model_change` event lands (D-04) — the flip is that plan's arrival proof.
+# `/model <name>` is CANON — stage 1 recognises it at once — and plan 08 BOUND its handler, so this
+# file flipped from `fail_closed` to `should_execute` and the flip IS that plan's arrival proof
+# (392-02 wrote it as a FLIPS-TO and said not to loosen it early).
+#
+# `executed: 0` ON A TURN THAT DID WHAT WAS ASKED. A directive names no capability — it changes what
+# the SESSION is — so it crosses the function layer zero times, and the count that proves the work
+# happened is not an invocation count. That is why `emitsSessionEvent` exists: the `model_change`
+# row, with `source: verb`, is the observable difference between a `/model` that switched the
+# session and a `/model` that was quietly ignored.
 id: model
 class: deterministic
 lane: hermetic
 utterance: /model claude-opus-5
 expect:
-  kind: fail_closed
+  kind: should_execute
   executed: 0
-  namesClause: /model claude-opus-5
+  ops: []
+  emitsSessionEvent: model_change
+  answerContains: claude-opus-5

@@ -155,6 +155,10 @@ describe('guardChatSessionEvent refuses untrusted bytes by name', () => {
         at: AT,
         actionClass: 'fn:proposals.accept',
         decision: 'accept',
+        // 392 plan 08: `gate` is a person answering the inline confirm; `verb` is a person typing
+        // `/pin`. Both decide about one class, and collapsing them would leave a reviewer unable
+        // to tell a refusal of one request from a standing rule set in advance.
+        source: 'gate',
       },
       mark_unhandled: { kind: 'mark_unhandled', turnId: 't', at: AT, clause: 'write a test', reason: 'absent' },
       model_change: { kind: 'model_change', turnId: 't', at: AT, from: 'a', to: 'b', source: 'verb' },

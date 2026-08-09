@@ -296,3 +296,27 @@ export function resolveClause(table: ChatResolverTable, clause: string): ChatRes
   }
   return { kind: 'unresolved' }
 }
+
+/**
+ * What `/help` prints (Phase 392 plan 08, D-06).
+ *
+ * IT LIVES BESIDE THE TABLE, and that is the point rather than the filing: the canon a person can
+ * type is `CHAT_RESOLVER_TABLE`, and help text kept anywhere else would be a second list of what
+ * chat understands, free to drift from the one that actually routes. `/fn` is named explicitly
+ * because it is the reach lever — every registry op is one deterministic branch away, which is why
+ * the alias set stays thin (D-06).
+ */
+export const CHAT_HELP_TEXT = [
+  'What I understand deterministically:',
+  '  run <test>          start a run for a test',
+  '  status              the recent runs',
+  '  test <n>            show a test by reference',
+  '  digest              the latest run digest',
+  '  proposals           the pending-decision inbox',
+  '  /fn <op> [json]     invoke any registered function by id — every capability, one branch',
+  '  /model <name>       switch the model for this session',
+  '  /pin <class>        deny an action class for the rest of this session (never loosens)',
+  '  /help               this list',
+  '  /quit               end the session',
+  'Anything else is planned by the model and reconciled against the table before anything runs.',
+].join('\n')

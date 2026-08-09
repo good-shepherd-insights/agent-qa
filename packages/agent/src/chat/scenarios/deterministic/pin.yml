@@ -1,12 +1,19 @@
 # `/pin <action-class>` is deterministic-resolver-only and never LLM-mediated (391 D-07): the one
 # mechanism a model must not reach is the one deciding what it may reach, even in the tightening
-# direction. Recognised now, unbound now. FLIPS TO should_execute when the deny overlay is
-# threaded to the gate (D-21).
+# direction. Plan 08 threaded the overlay to the gate, so this flipped to `should_execute`.
+#
+# THE UTTERANCE CHANGED WITH THE FLIP, and the change is the point rather than an adjustment.
+# `/pin config-write` named a SCOPE, and the shipped overlay validates against the `fn:`-prefixed
+# risk names the registry declares — so that utterance is a NAMED refusal by design, not a pin
+# (392-05, property 2: a pin recorded against a name nothing answers to would be accepted and then
+# deny nothing at all). A scenario asserting the working path has to name something pinnable.
 id: pin
 class: deterministic
 lane: hermetic
-utterance: /pin config-write
+utterance: /pin proposals.accept
 expect:
-  kind: fail_closed
+  kind: should_execute
   executed: 0
-  namesClause: /pin config-write
+  ops: []
+  emitsSessionEvent: approval_decision
+  answerContains: 'fn:proposals.accept'
