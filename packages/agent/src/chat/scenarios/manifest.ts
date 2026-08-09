@@ -44,8 +44,15 @@ import type { ScenarioClass, ScenarioExpectationKind, ScenarioLane } from '@vost
  *      than derived from its class. The verifier's third probe (two overlapping sessions on one
  *      composition, CR-01/CR-02) is deliberately NOT a cell here: the scenario runner is
  *      single-turn by design, so it lands as a composition-level concurrency test in plan 392-12.
+ * v5 — 392 plan 14, the SECOND gap round for 392-VERIFICATION's round-2 gap: two more `compound/`
+ *      cells, both `fail_closed` and both HERMETIC, so the denominators stay 11 hermetic / 3 live.
+ *      `pin-and-pin-nonsense` is the multi-directive arm the runner's fail_closed side-effect
+ *      assertion could not reach while `pin-and-write-test` was the only directive cell;
+ *      `run-42-and-delete-root-empty-answer` is the hermetic sibling of the live CR-03 cell,
+ *      carrying the empty-prose `answer_only` shape through a scripted planner so the class is
+ *      proved per commit rather than only behind the announced-skipped live gate (W-08).
  */
-export const SCENARIO_CORPUS_VERSION = 4
+export const SCENARIO_CORPUS_VERSION = 5
 
 /**
  * One admitted scenario.
@@ -106,4 +113,17 @@ export const SCENARIO_CORPUS: readonly ScenarioCorpusEntry[] = Object.freeze([
   // refused turn that carried something out, which `executed == 0` alone never could.
   entry({ id: 'run-42-and-delete-root', class: 'compound', lane: 'live', kind: 'fail_closed' }),
   entry({ id: 'pin-and-write-test', class: 'compound', lane: 'hermetic', kind: 'fail_closed' }),
+  // --- compound: the second gap round's two cells (392-14) ---------------------------------------
+  // What the round-2 verification found the corpus still could not see: a directive BATCH whose
+  // later entry refuses (the earlier one's pin and its `approval_decision` row survived), and the
+  // empty-prose `answer_only` that erased a clause on a `completed` turn. Both `fail_closed`, both
+  // HERMETIC — the lanes are named exceptions in `scenario-manifest.test.ts`, and the denominators
+  // are unmoved at 11 hermetic / 3 live.
+  entry({
+    id: 'run-42-and-delete-root-empty-answer',
+    class: 'compound',
+    lane: 'hermetic',
+    kind: 'fail_closed',
+  }),
+  entry({ id: 'pin-and-pin-nonsense', class: 'compound', lane: 'hermetic', kind: 'fail_closed' }),
 ])

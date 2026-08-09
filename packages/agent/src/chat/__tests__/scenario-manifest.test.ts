@@ -73,9 +73,10 @@ describe('the corpus manifest is versioned and internally coherent', () => {
 
   it('is exactly the corpus its version says it is', () => {
     // THE SIZE AND THE VERSION MOVE TOGETHER, in one commit, or the ratio reported afterwards is a
-    // number about a set nobody can name. v4 is 392-11's gap round: 18 + the two regression cells.
-    expect(SCENARIO_CORPUS.length).toBe(20)
-    expect(SCENARIO_CORPUS_VERSION).toBe(4)
+    // number about a set nobody can name. v4 was 392-11's gap round: 18 + two regression cells.
+    // v5 is 392-14's: 20 + the two the ROUND-2 verification found still invisible.
+    expect(SCENARIO_CORPUS.length).toBe(22)
+    expect(SCENARIO_CORPUS_VERSION).toBe(5)
     // The denominators the ceiling is computed over, pinned per lane. Both gap-round cells are
     // `fail_closed` precisely so these two numbers did NOT move — a corpus round that quietly grew
     // the denominator would report a better rate for having done work (the treadmill law).
@@ -93,7 +94,15 @@ describe('the corpus manifest is versioned and internally coherent', () => {
     // compound turn whose every half is deterministic buys nothing from a live one. That exception
     // is a LIST rather than a predicate, so a cell cannot choose its own lane quietly: joining it
     // is an edit to this file as well as to the manifest.
-    const HERMETIC_COMPOUND = new Set(['pin-and-write-test'])
+    const HERMETIC_COMPOUND = new Set([
+      'pin-and-write-test',
+      // 392-14. Both halves of each are reachable without a live model: `pin-and-pin-nonsense` is
+      // two directives, so stage 1 resolves the whole utterance; and the empty-answer sibling is
+      // driven by a SCRIPTED planner in the hermetic runner, because the shape under test is one
+      // the model is the untrusted source of rather than one a live model would reliably produce.
+      'pin-and-pin-nonsense',
+      'run-42-and-delete-root-empty-answer',
+    ])
     for (const entry of SCENARIO_CORPUS) {
       const expected =
         entry.class === 'deterministic'

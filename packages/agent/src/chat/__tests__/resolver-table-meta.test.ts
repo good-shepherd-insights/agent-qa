@@ -61,6 +61,10 @@ const COMPOUND_SCENARIOS = [
   'run-42-and-digest',
   'run-42-and-delete-root',
   'pin-and-write-test',
+  // 392-14's pair: the hermetic sibling of the live CR-03 cell (so the class is proved per commit
+  // rather than behind an announced-skipped gate), and the multi-directive batch arm.
+  'run-42-and-delete-root-empty-answer',
+  'pin-and-pin-nonsense',
 ] as const
 
 function scenarioIdsIn(directory: string): string[] {
@@ -133,7 +137,12 @@ describe('the canon compound pair exists as committed data (CHAT-02)', () => {
     expect(scenarioIdsIn(COMPOUND_ROOT)).toEqual([...COMPOUND_SCENARIOS].sort())
   })
 
-  it.each(['run-42-and-delete-root', 'pin-and-write-test'])(
+  it.each([
+    'run-42-and-delete-root',
+    'pin-and-write-test',
+    'run-42-and-delete-root-empty-answer',
+    'pin-and-pin-nonsense',
+  ])(
     'gap-round cell %s pins a refusal that NAMES its clause and leaves a countable row',
     (id) => {
       // Both cells exist because a refusal that carried something out was invisible to

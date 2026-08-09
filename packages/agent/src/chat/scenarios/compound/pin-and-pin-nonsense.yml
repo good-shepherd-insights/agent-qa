@@ -1,0 +1,31 @@
+# THE E3 PROBE, ADMITTED AS A PERMANENT CELL (392-14, second gap round).
+#
+# TWO DIRECTIVES, THE SECOND OF WHICH REFUSES. This is the verifier's own probe verbatim. Run
+# through the shipped stack it returned `fail_closed` with `receipts: 0` — while the FIRST pin was
+# already recorded, irrevocably, and an `approval_decision` row was already on the append-only log
+# (392-VERIFICATION round 2, E3). The directive execution loop had genuinely moved below the
+# verdict, which closed the single-directive case; what stayed open is that the loop applies a
+# BATCH one entry at a time and returns on the first refusal, leaving every earlier entry's effect
+# standing on a turn the person is told carried nothing out.
+#
+# WHY THIS CELL AND NOT `pin-and-write-test`. That cell carries exactly ONE directive, so the
+# runner's fail_closed side-effect assertion — no `approval_decision`, no verb-sourced
+# `model_change`, no executed receipt — could never reach the batch arm however correct it was.
+# A corpus that cannot see a defect class says nothing about it when it is green, and this phase
+# has now recorded that twice. This cell is what makes that assertion bite on a multi-directive
+# turn.
+#
+# HERMETIC, DELIBERATELY, and the exception is NAMED in `scenario-manifest.test.ts` rather than
+# derived from the class (the `pin-and-write-test` precedent). Both clauses are directives, so
+# stage 1 resolves the whole utterance, the planner is skipped entirely, and no live model can
+# make this outcome different. `fail_closed`, so the ceiling's `should_execute` denominators do
+# not move (D-15, the treadmill law).
+id: pin-and-pin-nonsense
+class: compound
+lane: hermetic
+utterance: /pin fn:runs.start and /pin nonsense.notacapability
+expect:
+  kind: fail_closed
+  executed: 0
+  namesClause: nonsense.notacapability
+  emitsSessionEvent: mark_unhandled
