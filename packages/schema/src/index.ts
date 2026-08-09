@@ -931,3 +931,38 @@ export type {
   ToolResultHookResult,
   ContextHookResult,
 } from './safety/index'
+// 392 CHAT-01/CHAT-05, D-14/D-18/D-24: the conversational surface's whole vocabulary — the session
+// log's event grammar and header, the per-clause turn receipts, the `agent.ask` contracts, and the
+// session-log port. Minted here rather than beside the turn engine because every one of them has
+// several consumers that may not import each other: `agent` emits, `agent-local` persists, `cli`
+// renders, and 396's MCP projection plus M5's dashboard read the same bytes (388 C13).
+export {
+  AgentAskInputSchema,
+  AgentAskResultSchema,
+  CHAT_SESSION_EVENT_KINDS,
+  CHAT_STAGE_OUTCOMES,
+  CHAT_TURN_STAGES,
+  CHAT_TURN_STATUSES,
+  CLAUSE_RECEIPT_STATUSES,
+  CURRENT_CHAT_SESSION_SCHEMA_VERSION,
+  ClauseReceiptSchema,
+} from './chat/index'
+export type {
+  AgentAskInput,
+  AgentAskResult,
+  ChatClauseReceiptEvent,
+  ChatSessionEvent,
+  ChatSessionEventBase,
+  ChatSessionEventKind,
+  ChatSessionHeader,
+  ChatStageOutcome,
+  ChatStageOutcomeEvent,
+  ChatTurnCompleteEvent,
+  ChatTurnStage,
+  ChatTurnStatus,
+  ChatUserMessageEvent,
+  ClauseReceipt,
+  ClauseReceiptStatus,
+  OpenedChatSession,
+  SessionLogPort,
+} from './chat/index'
