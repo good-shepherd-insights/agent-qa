@@ -32,6 +32,7 @@ import {
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
+import { AnalyzeRunPayloadSchema } from '@vostride/agent-qa-schema'
 import type {
   PostProcessingChips,
   PostProcessingStatus,
@@ -431,18 +432,33 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         )
         knowledgeRoot = ops().resolveKnowledgeRoot(opts.knowledgeConfig, opts.configDir)
         const jobs = await openHost().jobs()
-        const outcome = await jobs.queue.enqueue(
-          'analyze-run',
-          {
-            runId: opts.runId,
-            // D-20/D-06: the digest is minted ONCE per run and shared with the receipt. A
-            // second mint here would be a second answer to "which bytes were analysed".
-            handoffDigest: curationTailHandoffDigest(handoff),
-            handoffSchemaVersion: handoff.schemaVersion,
-            executionContext: handoff.executionContext,
-          },
-          opts.runId,
-        )
+        // WTST-06 / 393 D-20: the analyze-run payload is MINTED here, schema-validated, and the
+        // two run markers are COPIED onto it from the loaded handoff.
+        //
+        // Copied, never re-derived and never re-digested. `gateRun` and `excludedFromOutcomes`
+        // already live inside the handoff whose bytes `handoffDigest` pins, so these fields add
+        // no integrity guarantee whatsoever — what they add is the ability to see what a QUEUED
+        // job is without loading the handoff it points at, which is WTST-06's ratified sentence
+        // taken literally. Anyone who needs the authoritative answer reads the handoff.
+        //
+        // The conditional spread is the `runs-start.ts:67` idiom, and it is load-bearing twice
+        // over: the carriers are `?: true`, so an unconditional copy would write `undefined`
+        // into the payload for every ordinary run, and `AnalyzeRunPayloadSchema` refuses a
+        // literal `false` — a producer may not half-express a marker. The two flags are DISTINCT
+        // axes (C8): a gate run still feeds curation, so each is copied on its own condition.
+        const payload = AnalyzeRunPayloadSchema.parse({
+          runId: opts.runId,
+          // D-20/D-06: the digest is minted ONCE per run and shared with the receipt. A
+          // second mint here would be a second answer to "which bytes were analysed".
+          handoffDigest: curationTailHandoffDigest(handoff),
+          handoffSchemaVersion: handoff.schemaVersion,
+          executionContext: handoff.executionContext,
+          ...(handoff.gateRun === undefined ? {} : { gateRun: handoff.gateRun }),
+          ...(handoff.excludedFromOutcomes === undefined
+            ? {}
+            : { excludedFromOutcomes: handoff.excludedFromOutcomes }),
+        })
+        const outcome = await jobs.queue.enqueue('analyze-run', payload, opts.runId)
         enqueueOutcome = outcome.deduped ? 'deduped' : 'enqueued'
       } catch (error) {
         enqueueOutcome = 'failed'

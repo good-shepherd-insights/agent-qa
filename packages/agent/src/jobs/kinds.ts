@@ -280,12 +280,28 @@ export interface TestOutcomeHistoryLike {
   readonly lastBuildOrdinal: number | undefined
 }
 
-/** The claim shape analyze-run is enqueued with (D-06). Anything else is unreadable input. */
-interface AnalyzeRunPayload {
+/**
+ * The claim shape analyze-run is enqueued with (D-06). Anything else is unreadable input.
+ *
+ * The two markers below are ADDITIVE-OPTIONAL (393 D-20, WTST-06): the enqueue site copies them
+ * from the loaded handoff, and every job already sitting in a durable queue predates them. They
+ * are queue-level VISIBILITY, never integrity — the digest field above already covers the
+ * handoff bytes these values also live inside, so a consumer that needs the authoritative
+ * answer reads the handoff, not this copy.
+ */
+export interface AnalyzeRunPayload {
   readonly runId: string
   readonly handoffDigest: string
   readonly handoffSchemaVersion: number
   readonly executionContext: ExecutionContext | undefined
+  /**
+   * D-10's verify-before-present gate-run marker, mirroring the handoff carrier's `?: true`
+   * idiom. A DISTINCT axis from `excludedFromOutcomes` — C8 ratified that gate runs DO feed
+   * curation, so neither marker may be read as implying the other.
+   */
+  readonly gateRun?: true
+  /** D-14 §6's outcome-exclusion marker, same carrier idiom, same literal-only rule. */
+  readonly excludedFromOutcomes?: true
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -294,7 +310,22 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {}
 }
 
-function readAnalyzeRunPayload(value: unknown): AnalyzeRunPayload | undefined {
+/**
+ * Deliberately NOT `AnalyzeRunPayloadSchema`, and deliberately additive-tolerant.
+ *
+ * This reader consumes payloads off a DURABLE queue, where a job may have been written by an
+ * older build (no flags at all) or a newer one (a key this build has never heard of). Refusing
+ * either would strand work rather than protect anything, so unknown keys stay ignored and only
+ * the literal marker is read — a `false` on the wire degrades to absence rather than becoming a
+ * third state a downstream `!== undefined` could misread. The strict half of the contract lives
+ * on the PRODUCER side, at the enqueue mint, where a bad shape means a bug in code that just ran
+ * and the refusal is actionable.
+ *
+ * Exported for the reader-arm suite: `analyze-run-payload-flags.test.ts` pins both generations
+ * of the payload here and then re-enters through the real handler, so the direct cases cannot
+ * quietly stop describing what the handler actually parses.
+ */
+export function readAnalyzeRunPayload(value: unknown): AnalyzeRunPayload | undefined {
   const record = asRecord(value)
   if (typeof record.runId !== 'string' || record.runId === '') return undefined
   if (typeof record.handoffDigest !== 'string' || record.handoffDigest === '') return undefined
@@ -307,6 +338,10 @@ function readAnalyzeRunPayload(value: unknown): AnalyzeRunPayload | undefined {
       typeof record.executionContext === 'string'
         ? (record.executionContext as ExecutionContext)
         : undefined,
+    ...(record.gateRun === true ? { gateRun: true as const } : {}),
+    ...(record.excludedFromOutcomes === true
+      ? { excludedFromOutcomes: true as const }
+      : {}),
   }
 }
 
