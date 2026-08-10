@@ -122,8 +122,25 @@ export type AddsValueFinding = z.infer<typeof AddsValueFindingSchema>
  * second answer to the same question, which is exactly what one-exported-vocabulary forbids.
  */
 export const DraftGateResultsSchema = z.object({
-  /** Gate 1 (D-17): a final pass or fail on every run; planning failure, infeasible
-   * termination, cycle flag and error are all fails. A healed pass IS a pass (F3). */
+  /**
+   * Gate 1 (D-17): every run reached a DEFINITIVE verdict about the draft.
+   *
+   * THE ENFORCED RULE, as `stability-gates.ts` classifies it (393-09, WR-04 doc arm). The member
+   * outcome must be `passed`, `failed` or `healed` — a healed pass IS a pass (393-01 F3) — AND no
+   * step may carry a planning failure, a cycle flag, or ANY recorded termination. That last
+   * conjunct is the one this doc used to omit: a `failed` member whose step evidence records a
+   * termination is classified indefinitive, and the phase's survey of the demo run store found
+   * 9 of 9 failed members carrying one. So on current builds a definitive verdict is effectively
+   * a passing one — healed or clean — rather than the symmetric pass-or-fail this doc promised.
+   * D-17's `error` class has no enum member here (`RunStatus` is
+   * `passed | failed | healed | timeout | cancelled`); it arrives as a structural planning
+   * failure or as a run record that cannot be read back at all.
+   *
+   * The app-broken branch — a draft that fails because the APPLICATION is wrong — is therefore
+   * not a keep on this gate; it becomes a proposal-with-receipts finding in Phase 394, which owns
+   * that behaviour (393-VERIFICATION.md defers WR-04's behavioural arm there). Read this field as
+   * "the run answered", never as "a failing draft can be kept".
+   */
   executesDefinitive: z.object({
     pass: z.boolean(),
     /** Refs into `gateRuns`. */

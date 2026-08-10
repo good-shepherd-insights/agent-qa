@@ -56,7 +56,17 @@ export const DRAFT_STABILITY_RUNS_N = 3
  * catcher, which is unprovable if evaluation stops at the first `false`.
  */
 export interface DraftGateBooleans {
-  /** Gate 1: the draft reached a definitive verdict (a final pass or fail) on every run. */
+  /**
+   * Gate 1: the draft reached a definitive verdict on every run.
+   *
+   * Definitive as `stability-gates.ts` enforces it (393-09, WR-04 doc arm): a `passed`, `failed`
+   * or `healed` member outcome — a heal counts as a pass — with no planning failure, no cycle
+   * flag and no recorded step termination on any step. A `failed` member carrying a termination
+   * is indefinitive, and 9 of 9 failed members surveyed in the demo run store carry one, so on
+   * current builds this gate effectively admits passing runs only. The app-broken branch — a
+   * draft that fails because the application is wrong — becomes a proposal-with-receipts finding
+   * in Phase 394, which owns it, rather than a keep here.
+   */
   readonly executesDefinitive: boolean
   /** Gate 2: the verdict did not flip across the stability runs. */
   readonly stableVerdict: boolean
