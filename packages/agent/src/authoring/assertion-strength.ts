@@ -112,12 +112,12 @@ export const ACTION_VERBS = [
  * sits as a conjunct in the falsifiability rule, and that conjunct decides nothing on the
  * current membership: no member contains an `EXPECTED_STATE_TERMS` token, so a remainder that
  * equals a member is already non-concrete and refused by the other arm. It is kept as a guard
- * against exactly the widening this comment invites, and 393-13 re-derived WHICH widening that is.
- * `page is visible` is not the candidate: `namesAnElement` is membership in the one positive
- * `ELEMENT_NOUNS` lexicon over normalized residue tokens, and NO token of that phrase is a member,
- * so the concreteness arm refuses it first — in every casing, and under every function-word
- * padding. The member that would hand this conjunct the whole decision is one carrying BOTH an
- * `EXPECTED_STATE_TERMS` token AND an `ELEMENT_NOUNS` member: `banner is visible` is that shape.
+ * against exactly the widening this comment invites, and 393-15 re-derived WHICH widening that is.
+ * `page is visible` is not the candidate: `namesElementInExpectedState` resolves `visible` to the
+ * nearest set-noun on its left, which is the `PAGE_WHOLE_NOUNS` member `page`, so the concreteness
+ * arm refuses it first — in every casing, and under every function-word padding. The member that
+ * would hand this conjunct the whole decision is one carrying an `EXPECTED_STATE_TERMS` token whose
+ * nearest set-noun to the LEFT is an `ELEMENT_NOUNS` member: `banner is visible` is that shape.
  * The guard still has a live trigger rather than a promise — `assertion-strength.test.ts`'s
  * cross-lexicon closure case walks every member and reds if the conjunct goes away under such a
  * widening.
@@ -141,16 +141,19 @@ export const VACUOUS_ASSERTION_PHRASES = [
  *
  * A PINNED CONSTANT, never config. RETUNE COMMENT: a member is a binary, observable state an
  * element is either in or not. It counts as concrete expected content only BESIDE a named
- * element (see `namesAnElement`), because `is visible` on its own says visible what. Widening
- * this set makes more assertions falsifiable without a quoted literal, which is the arm most
- * likely to accept a weak oracle — re-run the frozen corpus, and prefer a quoted literal.
+ * element (see `namesElementInExpectedState`), because `is visible` on its own says visible what.
+ * Widening this set makes more assertions falsifiable without a quoted literal, which is the arm
+ * most likely to accept a weak oracle — re-run the frozen corpus, and prefer a quoted literal.
  *
- * ONE RETUNE, ONE ARM AGAIN — DE-COUPLED 2026-08-10 (393-13). Between 393-12 and this plan a member
- * added here was ALSO excluded from element-name candidacy in `namesAnElement`, so a single retune
- * moved two measurements in opposite directions. The inversion ended that: `namesAnElement` now
- * consults only `ELEMENT_NOUNS` and never reads this set at all, so a member added here widens
- * state-bearing and nothing else. Recorded rather than silently dropped, because the W-10 property
- * being RESTORED is as much a fact about this lexicon as the coupling was.
+ * WHAT ONE RETUNE HERE MOVES — RE-DERIVED 2026-08-10 (393-15). This set is the relation's ANCHOR:
+ * every member is a position the leftward walk starts from. A member added here therefore widens
+ * WHICH STATES count as checkable and nothing else — the element side of the relation still answers
+ * by `ELEMENT_NOUNS` membership alone, and the refusal side by `PAGE_WHOLE_NOUNS` membership alone.
+ * (Between 393-12 and 393-13 a member added here was ALSO excluded from element-name candidacy, so
+ * one retune moved two measurements in opposite directions; that coupling is gone. What replaced it
+ * is a READ, not a coupling: the set is consumed as anchor positions, which is why the earlier
+ * "never reads this set at all" phrasing no longer holds and is corrected here rather than
+ * silently dropped — the W-10 record on this lexicon stays continuous.)
  */
 export const EXPECTED_STATE_TERMS = [
   'checked',
@@ -220,6 +223,43 @@ export const ELEMENT_NOUNS = [
   'toggle',
   'toolbar',
   'tooltip',
+] as const
+
+/**
+ * The closed page-whole noun set — the relation's SUBJECT REFUSER (393-15).
+ *
+ * A PINNED CONSTANT, never config, and it is exactly the seven nouns the `ELEMENT_NOUNS` doc above
+ * already names as deliberately absent. It is declared as its own set because the relation needs to
+ * ACT on them — a page-whole noun standing between a state term and any element noun to its left is
+ * the claim's subject, and it stops the walk — where absence from `ELEMENT_NOUNS` only makes them
+ * non-elements.
+ *
+ * READ IN EXACTLY ONE PLACE: inside `namesElementInExpectedState`'s leftward walk, as the token that
+ * resolves an occurrence FALSE. It is never scanned across a whole residue on its own. An
+ * independent whole-input scan of a third lexicon is the shape the round-5 verification named as the
+ * cause of the defect this set exists to close, and re-introducing it here would reproduce it.
+ *
+ * RETUNE COMMENT, AND ITS DIRECTION IS THE OPPOSITE OF `ELEMENT_NOUNS`'. ADDING a member moves the
+ * gate toward REJECT: every claim whose nearest set-noun before a state term is that member is
+ * refused. That is D-12's safe direction and still a real cost, so a member arrives with the vacuous
+ * draft it catches plus a frozen-corpus re-run. REMOVING a member moves the gate toward ACCEPT — the
+ * direction that costs a user a bad test — so a removal needs the draft it rescues and the same
+ * re-run.
+ *
+ * A token may not be a member of this set and of `ELEMENT_NOUNS` (or of `EXPECTED_STATE_TERMS`):
+ * the walk would have two answers for it. The disjointness is pinned in the lexicon-discipline
+ * group of `__tests__/assertion-strength.test.ts`.
+ *
+ * Order is alphabetical and NOT load-bearing: the set is read by membership.
+ */
+export const PAGE_WHOLE_NOUNS = [
+  'app',
+  'browser',
+  'content',
+  'form',
+  'page',
+  'screen',
+  'site',
 ] as const
 
 /**
@@ -323,19 +363,20 @@ function isActionVerb(token: string): boolean {
   return (ACTION_VERBS as readonly string[]).includes(token)
 }
 
+/** Every double-quoted span of a step, unfiltered — what the author actually typed. */
+function quotedSpans(text: string): string[] {
+  return [...text.matchAll(QUOTED_LITERAL_RE)].map((match) => match[1] ?? '')
+}
+
 /**
- * The double-quoted spans of a step, EMPTY AND WHITESPACE-ONLY CAPTURES DROPPED (393-13).
+ * The double-quoted spans that carry expected CONTENT — empty and whitespace-only spans dropped.
  *
  * The filter is a `trim` test rather than a falsiness test because `" "` asserts exactly as little
- * as `""` does, and it lives HERE rather than at either call site so the prior-action accumulation
- * and the concreteness path cannot disagree about what counts as a literal. Without it, bare
- * `Verify ""` satisfied `literals.length > 0` and short-circuited the concreteness arm — a quoted
- * expected value that expects nothing.
+ * as `""` does. Without it, bare `Verify ""` satisfied `literals.length > 0` and short-circuited
+ * the concreteness arm — a quoted expected value that expects nothing (393-13).
  */
 function quotedLiterals(text: string): string[] {
-  return [...text.matchAll(QUOTED_LITERAL_RE)]
-    .map((match) => match[1] ?? '')
-    .filter((literal) => literal.trim() !== '')
+  return quotedSpans(text).filter((literal) => literal.trim() !== '')
 }
 
 /** The step with every double-quoted span removed, so prose scans cannot read a literal. */
@@ -392,72 +433,34 @@ function isMixedActAndVerify(text: string): boolean {
 }
 
 /**
- * Whether the assertion names a specific element rather than the page in general.
+ * Whether the assertion names an element that is IN an expected state — D-09 clause (ii)'s second
+ * route to concreteness, as ONE relation rather than two unrelated scans.
  *
- * THE RULE ENFORCED, verbatim (393-13): the post-verb residue, with double-quoted spans already
- * removed, is split on whitespace and each piece normalized by `normalizeToken` (lowercased,
- * non-letters stripped). The answer is true iff AT LEAST ONE normalized token is a MEMBER of the
- * one positive closed set `ELEMENT_NOUNS`. Letter case is never consulted: the verdict for a step
- * and for any recasing of that step is identical, by construction.
+ * THE RULE ENFORCED, verbatim (393-15). The post-verb residue, with double-quoted spans already
+ * removed, is tokenized ONCE: split on whitespace, each piece through `normalizeToken` (lowercased,
+ * non-letters stripped). For every index whose token is an `EXPECTED_STATE_TERMS` member, walk LEFT
+ * from that index and take the FIRST token that belongs to either set — an `ELEMENT_NOUNS` member
+ * resolves that occurrence TRUE, a `PAGE_WHOLE_NOUNS` member resolves it FALSE and stops the walk,
+ * and reaching the start of the residue with neither resolves it FALSE. The answer is true iff at
+ * least one state-term occurrence resolves TRUE. Letter case is never consulted: `normalizeToken`
+ * lowercases, so a step and any recasing of it get the identical verdict by construction.
  *
- * WHY THE RULE IS SHAPED THIS WAY (three regressions, every one of them measured, 2026-08-10,
- * phase 393 verification). The FIRST rule read any post-verb word beginning with a capital letter
- * as an element name, on the house-style premise that a draft writes `the Submit button`.
- * Title-cased prose defeated it outright: `Verify The Page Is Visible` — the exact vacuous claim
- * D-12 exists to refuse — passed gate 4 while its lowercase twin was refused, and the drafts this
- * filter exists for are LLM-authored and commonly title-cased. The SECOND rule kept the capital and
- * added a neighbour condition — the residue had to carry a capital-initial word beside a
- * lowercase-initial one — which removed only the two degenerate casings and left the whole
- * mixed-case interior open: `Verify the Page is visible` PASSED, one character from the refused
- * form, while `Verify The Submit Button Is Disabled` — a real control in a binary observable state
- * — FAILED. The THIRD rule removed the casing axis entirely and asked instead whether some residue
- * token was a member of NONE of three exclusion lists. That closed the casing axis for good, and
- * the defect simply moved: every ordinary function word nobody had thought to list — a negation, a
- * modal, an adverb, a copula — was outside all three sets and therefore read as an element name, so
- * `Verify the page is not visible` PASSED while `Verify the page is visible` was refused, and seven
- * more paddings of the same vacuous claim with it.
- *
- * The common cause of that third failure is the SHAPE, not the membership: an exclusion list's
- * omissions leak toward ACCEPT, which is the unsafe direction, so completing the list is a race
- * against every word in the language. Inverting to a positive lexicon flips the rot direction — an
- * omission now leaks toward REJECT, D-12's ratified side — which is why this closure is structural
- * rather than a fourth enumeration. It is the same lesson the casing arc taught twice: a closure
- * anchored in an external vocabulary holds, and a closure phrased as a relation among the module's
- * own predicates moves.
- *
- * RESIDUAL, accepted and named. A lexicon MEMBER reads as an element name whatever the page
- * actually holds: `Verify the banner is visible` passes whether or not the page has a banner.
- * Membership can decide that a word names a KIND of element; nothing lexical can decide that this
- * page holds one. Pinned deliberately by the deliberately-passing test "leaves the documented
- * residual open on purpose: a lexicon MEMBER reads as an element name" in
- * `__tests__/assertion-strength.test.ts`. Closing it needs the resolved a11y evidence gate 3 works
- * from — it is not reachable by any `ELEMENT_NOUNS` retune.
- *
- * ACCEPTED COST — WIDENED by this inversion, knowingly — and the retune route. An UNLISTED genuine
- * element noun is now refused: `Verify the widget is visible` and `Verify the carousel is visible`
- * lose gate 4 though each names a real thing, and `Verify the Login form is empty` — which the
- * previous rule pinned as the author's recovery route — loses it too. That is a deliberate verdict
- * flip, in D-12's tune-toward-reject direction, and it is what buys the property that an omission
- * can no longer leak a vacuous claim through. All three are pinned by deliberately-failing drafts
- * in the accepted-cost test. The AUTHOR's route out is a lexicon noun — `Verify the login field is
- * empty` passes, and is pinned — or quoting the literal the page must show. The MAINTAINER's route
- * is an `ELEMENT_NOUNS` membership change plus a re-run of the frozen corpus (D-09), never a
- * character-case test and never a fourth exclusion list: those are the two shapes that shipped the
- * three regressions above. Note the direction before retuning: ADDING a member moves this gate
- * toward accept.
+ * Full disclosure — the measured regression history, the residuals and the accepted cost — is
+ * written by 393-15's second task; this block states only what the code above does today.
  */
-function namesAnElement(text: string): boolean {
-  return afterLeadingToken(unquotedResidue(text))
-    .split(/\s+/)
-    .map(normalizeToken)
-    .some((token) => (ELEMENT_NOUNS as readonly string[]).includes(token))
-}
+function namesElementInExpectedState(text: string): boolean {
+  const tokens = afterLeadingToken(unquotedResidue(text)).split(/\s+/).map(normalizeToken)
 
-function hasExpectedStateTerm(text: string): boolean {
-  return unquotedResidue(text)
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .some((token) => (EXPECTED_STATE_TERMS as readonly string[]).includes(token))
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (!(EXPECTED_STATE_TERMS as readonly string[]).includes(tokens[index] ?? '')) continue
+
+    for (let left = index - 1; left >= 0; left -= 1) {
+      const token = tokens[left] ?? ''
+      if ((ELEMENT_NOUNS as readonly string[]).includes(token)) return true
+      if ((PAGE_WHOLE_NOUNS as readonly string[]).includes(token)) break
+    }
+  }
+  return false
 }
 
 /**
@@ -493,10 +496,11 @@ export function classifyDraftSteps(steps: readonly string[]): StepClassification
   const rows: StepClassificationRow[] = []
 
   for (const stepText of steps) {
+    const spans = quotedSpans(stepText)
     const literals = quotedLiterals(stepText)
 
     if (!isAssertionVerb(leadingToken(stepText))) {
-      for (const literal of literals) priorActionLiterals.add(literal)
+      for (const span of spans) priorActionLiterals.add(span)
       rows.push({ stepText, role: 'action', falsifiable: false, captureSignatureHits: [] })
       continue
     }
@@ -504,8 +508,8 @@ export function classifyDraftSteps(steps: readonly string[]): StepClassification
     const vacuityHit = (VACUOUS_ASSERTION_PHRASES as readonly string[])
       .find((phrase) => phrase === vacuityRemainder(stepText))
     const hits = captureSignatureHits(literals)
-    const tautology = literals.some((literal) => priorActionLiterals.has(literal))
-    const concrete = literals.length > 0 || (namesAnElement(stepText) && hasExpectedStateTerm(stepText))
+    const tautology = spans.some((span) => priorActionLiterals.has(span))
+    const concrete = literals.length > 0 || namesElementInExpectedState(stepText)
 
     rows.push({
       stepText,

@@ -25,6 +25,7 @@ import {
   CAPTURE_SIGNATURE_PATTERNS,
   ELEMENT_NOUNS,
   EXPECTED_STATE_TERMS,
+  PAGE_WHOLE_NOUNS,
   VACUOUS_ASSERTION_PHRASES,
   assertionStrengthGate,
   classifyDraftSteps,
@@ -995,10 +996,21 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
       'toolbar',
       'tooltip',
     ])
-    // The page-whole nouns are absent on purpose, and the absence is what refuses the vacuous
-    // claim. A membership rule's omissions fail toward REJECT, so this is the one lexicon whose
-    // NON-members are load-bearing in the safe direction rather than the leaky one.
-    for (const nonMember of ['app', 'browser', 'content', 'form', 'page', 'screen', 'site']) {
+    expect([...PAGE_WHOLE_NOUNS]).toEqual([
+      'app',
+      'browser',
+      'content',
+      'form',
+      'page',
+      'screen',
+      'site',
+    ])
+    // The page-whole nouns are absent from ELEMENT_NOUNS on purpose, and the absence is what
+    // refuses the vacuous claim. A membership rule's omissions fail toward REJECT, so this is the
+    // one lexicon whose NON-members are load-bearing in the safe direction rather than the leaky
+    // one. Since 393-15 they are also a set in their own right — they STOP the relation's leftward
+    // walk — so the two facts are pinned side by side.
+    for (const nonMember of PAGE_WHOLE_NOUNS) {
       expect({ nonMember, member: (ELEMENT_NOUNS as readonly string[]).includes(nonMember) })
         .toEqual({ nonMember, member: false })
     }
@@ -1017,12 +1029,27 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
       EXPECTED_STATE_TERMS,
       ACTION_VERBS,
       ELEMENT_NOUNS,
+      PAGE_WHOLE_NOUNS,
       CAPTURE_SIGNATURE_PATTERNS.map((entry) => entry.name),
     ]
 
     for (const lexicon of lexicons) {
       expect([...lexicon]).toEqual([...new Set(lexicon)].sort())
     }
+  })
+
+  it('the relation\'s three input sets are pairwise disjoint, so the walk has one answer per token', () => {
+    // The guard's own inputs, pinned as COMPLETE sets rather than sampled. `namesElementInExpectedState`
+    // asks three questions of one token stream — is this an anchor, does it resolve TRUE, does it stop
+    // the walk — and a token belonging to two of the sets would answer two of them at once. Which
+    // branch won would then depend on the order the code happens to test them in, which is exactly the
+    // kind of undeclared precedence a lexical gate cannot afford.
+    const overlaps = (left: readonly string[], right: readonly string[]) =>
+      left.filter((token) => right.includes(token))
+
+    expect(overlaps(PAGE_WHOLE_NOUNS, ELEMENT_NOUNS)).toEqual([])
+    expect(overlaps(PAGE_WHOLE_NOUNS, EXPECTED_STATE_TERMS)).toEqual([])
+    expect(overlaps(ELEMENT_NOUNS, EXPECTED_STATE_TERMS)).toEqual([])
   })
 
   it('no vacuity phrase survives as a falsifiable assertion, in any casing', () => {
