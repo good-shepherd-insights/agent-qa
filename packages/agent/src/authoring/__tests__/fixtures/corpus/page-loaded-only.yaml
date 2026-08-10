@@ -1,4 +1,4 @@
-name: Submit the local account form and confirm the page loaded
+name: Fill in the local account form, return to it, and confirm the page loaded
 test-id: t_chien-cor-pump-rove-raft-rabbit-strong-press-cord-flip
 target: local-form
 use:
@@ -8,4 +8,5 @@ steps:
   - Type "alice" into the Username field
   - Type "hunter2" into the Password field
   - Click the Submit button
+  - Click the "Back to the form" link
   - Verify the page loaded

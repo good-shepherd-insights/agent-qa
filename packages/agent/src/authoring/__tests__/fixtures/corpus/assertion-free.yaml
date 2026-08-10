@@ -1,4 +1,4 @@
-name: Fill in the local account form
+name: Fill in the local account form and return to it
 test-id: t_judge-feel-kor-thane-pillar-mun-tec-future-arms-ostic
 target: local-form
 use:
@@ -8,3 +8,4 @@ steps:
   - Type "alice" into the Username field
   - Type "hunter2" into the Password field
   - Click the Submit button
+  - Click the "Back to the form" link

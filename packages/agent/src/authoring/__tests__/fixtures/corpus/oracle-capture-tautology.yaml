@@ -6,5 +6,4 @@ use:
     headless: true
 steps:
   - Type "alice" into the Username field
-  - Type "hunter2" into the Password field
   - Verify the Username field contains "alice"

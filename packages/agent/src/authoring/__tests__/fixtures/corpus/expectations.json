@@ -1,0 +1,211 @@
+{
+  "$comment": [
+    "THE FROZEN SCORING DENOMINATOR for phase 393 (D-08). One entry per corpus draft.",
+    "Gap-closure rounds MUST NOT mint new members or edit these vectors to re-score:",
+    "the whole signature proof is that this exact table is observed RED with no",
+    "evaluator in existence and green at the end of the phase, with nothing added in",
+    "between (the treadmill law).",
+    "",
+    "expectedGates is what a CORRECT evaluator must report for the draft. `measured` is",
+    "what the live lane actually observed on 2026-08-10 (plan 393-01 Task 2), read from",
+    "the durable run record .agent-qa/runs/<runId>/handoff.json — tests[].outcome and",
+    "tests[].steps[].termination.kind — never from console text.",
+    "",
+    "Per D-17: definitive = a final pass or fail; planning failure, infeasible",
+    "termination, cycle-flag, error, timeout and cancelled are gate-1 fails. A healed",
+    "pass counts as pass, and the heal is recorded."
+  ],
+
+  "schemaVersion": 1,
+  "frozenAt": "2026-08-10",
+  "target": "local-form (demo/init/agent-qa.config.yaml -> http://127.0.0.1:8931/form.html)",
+  "suiteUnderComparison": [
+    "demo/init/tests/uat-381-local-form.yaml",
+    "demo/init/tests/uat-381-ladder.yaml",
+    "demo/init/tests/uat-381-ladder-current-target.yaml"
+  ],
+  "coveredElementsInThatSuite": "Username field (type), Password field (type), Account name field (type), Submit button (click), \"Received!\" page text (assert). The only local-form surface NOT covered by it is the h1 \"Local Form\" heading and the \"Back to the form\" link on received.html — which is what the novel-element column below turns on (D-14).",
+
+  "drafts": {
+    "assertion-free.yaml": {
+      "class": "assertion-free",
+      "rejectingGate": 4,
+      "expectedGates": {
+        "executesDefinitive": true,
+        "stableVerdict": true,
+        "addsValue": true,
+        "falsifiableAssertion": false
+      },
+      "rationale": "Fails D-09 clause (i): no step classifies as an assertion at all. Gate 4 is the only catcher — the draft executes, is stable, and clicks the \"Back to the form\" link, which no seeded local-form test anchors.",
+      "measured": {
+        "runs": [
+          { "runId": "r_hotel-nice-buddy-rio-nut-adjust-logger-endere-disk-ursal", "memberOutcome": "healed", "stepTerminations": [null, null, null, null], "note": "definitive pass per D-17; heals on steps 0-2 from seeded-procedure replay" }
+        ],
+        "executionColumnsFrom": "measured (1 run); stableVerdict is design intent, not yet measured at N=3"
+      }
+    },
+
+    "page-loaded-only.yaml": {
+      "class": "page-loaded-only",
+      "rejectingGate": 4,
+      "expectedGates": {
+        "executesDefinitive": true,
+        "stableVerdict": true,
+        "addsValue": true,
+        "falsifiableAssertion": false
+      },
+      "rationale": "D-04's INDEPENDENCE EXEMPLAR: executes, stable, adds value, but its single assertion is vacuous (D-09 clause (ii) vacuity lexicon). Gate 4 must be demonstrably the only catcher, which is why this draft carries the novel \"Back to the form\" anchor — without it gate 3 would fire too and the exemplar would prove nothing.",
+      "measured": {
+        "runs": [
+          { "runId": "r_loa-junk-bib-mort-hop-think-initis-built-render-lope", "memberOutcome": "failed", "stepTerminations": [null], "note": "LANE FLAKE, not a draft property: 'LLM planning failed: Guardrail blocked outbound prompt leaf: creditCard' on step 0. A planning failure is a D-17 indefinitive class, so this run would read gate 1 false. Did not reproduce." },
+          { "runId": "r_bird-cream-ull-cot-qua-streng-bed-augh-cover-iban", "memberOutcome": "healed", "stepTerminations": [null, null, null, null, null] },
+          { "runId": "r_freeze-ama-ending-paar-flo-torch-bert-haft-hip-volt", "memberOutcome": "healed", "stepTerminations": [null, null, null, null, null] }
+        ],
+        "executionColumnsFrom": "measured (3 runs, 2/3 definitive pass). The expected vector records the draft's property; the 1/3 guardrail flake is disclosed so a later plan does not mistake it for a gate signal."
+      }
+    },
+
+    "oracle-capture-signature.yaml": {
+      "class": "oracle-capture",
+      "rejectingGate": 4,
+      "expectedGates": {
+        "executesDefinitive": false,
+        "stableVerdict": true,
+        "addsValue": true,
+        "falsifiableAssertion": false
+      },
+      "rationale": "D-10 capture signature: the expected value is a 32-char lowercase hex literal, the shape of machine-generated content. executesDefinitive is false and INTRINSICALLY so — a value that only a capture could have produced is never present on a fresh run, so this draft can never reach a definitive verdict. Gates 1 and 4 both fire; gate 4 is the class it is the exemplar for.",
+      "measured": {
+        "runs": [
+          { "runId": "r_living-room-basket-list-mes-ric-sleep-pes-laugh-agama", "memberOutcome": "failed", "stepTerminations": [null, null, null, "infeasible"], "reason": "The required submission reference is absent from the complete received page." }
+        ],
+        "executionColumnsFrom": "measured (1 run)"
+      }
+    },
+
+    "oracle-capture-tautology.yaml": {
+      "class": "oracle-capture",
+      "rejectingGate": 4,
+      "expectedGates": {
+        "executesDefinitive": false,
+        "stableVerdict": false,
+        "addsValue": true,
+        "falsifiableAssertion": false
+      },
+      "rationale": "D-10 tautology: the assertion restates the content of a prior action step rather than an independent outcome. The execution columns are FALSE BY MEASUREMENT, and the cause is an artifact rather than a semantic property — see measured.contamination. They are recorded as measured anyway, because writing the intuited vector here is exactly the Pitfall-6 failure this table exists to prevent.",
+      "measured": {
+        "runs": [
+          { "runId": "r_nat-caret-catch-mah-page-alite-apse-repair-aged-dent", "draftShape": "4-step (pre-reshape)", "memberOutcome": "failed", "stepTerminations": [null, null, "infeasible"], "reason": "The Username field visibly contains \"probe-user\", not \"alice\"." },
+          { "runId": "r_beds-col-halo-few-aval-health-olio-hala-fern-masked", "draftShape": "4-step (pre-reshape), --disable-cache", "memberOutcome": "failed", "stepTerminations": [null, null, "infeasible"], "note": "--disable-cache does NOT suppress the contamination — it is knowledge-store procedure replay, not the action cache." },
+          { "runId": "r_prob-rink-hammer-buck-pen-hex-beta-boni-meg-keet", "draftShape": "2-step (current)", "memberOutcome": "healed", "stepTerminations": [null, null] },
+          { "runId": "r_amic-wash-cap-amba-titre-baby-ultimo-aged-fed-cation", "draftShape": "2-step (current)", "memberOutcome": "failed", "stepTerminations": [null, "infeasible"] }
+        ],
+        "contamination": "The seeded local-form PROCEDURE in the demo knowledge store replays uat-381's own values: the agent fills \"probe-user\" into the Username field, self-heals to the draft's literal, and whether the correction lands before the tautology assertion reads the field is a race. Measured 1/2 healed, 1/2 infeasible on the current 2-step shape. Dropping the Password step removed one replay trigger but not the race. A later plan that wants these execution columns to read true must neutralize procedure replay for gate-runs; --disable-cache is PROVEN INEFFECTIVE for it.",
+        "executionColumnsFrom": "measured (4 runs across 2 draft shapes)"
+      }
+    },
+
+    "gate1-indefinitive.yaml": {
+      "class": "gate1-rejector",
+      "rejectingGate": 1,
+      "expectedGates": {
+        "executesDefinitive": false,
+        "stableVerdict": true,
+        "addsValue": true,
+        "falsifiableAssertion": true
+      },
+      "rationale": "References controls the target does not have (a Reports panel, an Export report button), so the run cannot reach a definitive verdict. Stable because all three runs agreed; adds value because those anchors are entirely uncovered; the assertion quotes a concrete literal, so gate 4 passes. Gate 1 is the only catcher.",
+      "measured": {
+        "runs": [
+          { "runId": "r_hear-either-logic-rial-chol-ache-lif-mund-ens-bulk", "memberOutcome": "failed", "stepTerminations": ["infeasible"], "reason": "No Reports panel or top navigation bar exists on the current Local Form page." },
+          { "runId": "r_tron-uva-screen-toggle-kob-uro-auto-afar-fault-anan", "memberOutcome": "failed", "stepTerminations": ["infeasible"], "reason": "The Local Form page has no top navigation bar or Reports control." },
+          { "runId": "r_dain-lap-aro-daily-stake-toi-amia-kua-tom-comb", "memberOutcome": "failed", "stepTerminations": ["infeasible"], "reason": "No top navigation bar or Reports control exists on the current Local Form page." }
+        ],
+        "measuredTerminalClass": "infeasible",
+        "reproducibility": "3/3 consecutive runs",
+        "criticalFinding": "The D-17 indefinitive signal is NOT readable from the member-outcome enum. MemberTestOutcome is 'failed' — a DEFINITIVE value — while StepEvidence.termination.kind is 'infeasible', an indefinitive class. A gate 1 implemented over the member outcome alone PASSES this draft and the corpus proves nothing. Gate 1 must read step-level termination.",
+        "executionColumnsFrom": "measured (3 runs)"
+      }
+    },
+
+    "gate2-unstable.yaml": {
+      "class": "gate2-rejector",
+      "rejectingGate": 2,
+      "requiresServerMode": "--mutate-per-request",
+      "expectedGates": {
+        "executesDefinitive": false,
+        "stableVerdict": false,
+        "addsValue": true,
+        "falsifiableAssertion": true
+      },
+      "rationale": "Asserts the alternating surface, so consecutive runs disagree by construction. executesDefinitive is false because the mismatch arm surfaces as an infeasible termination (see the cross-cutting finding), not because the draft is unreachable.",
+      "measured": {
+        "serverMode": "--mutate-per-request with REQUESTS_PER_VARIANT=2",
+        "runs": [
+          { "runId": "r_junto-its-hand-nonce-neath-double-inn-escape-ure-anay", "formRequestOrdinals": "1-2 (baseline)", "memberOutcome": "passed", "stepTerminations": [null] },
+          { "runId": "r_cause-roon-pulse-ostic-onium-offer-plot-angers-prof-ayin", "formRequestOrdinals": "3-4 (mutated)", "memberOutcome": "failed", "stepTerminations": ["infeasible"] },
+          { "runId": "r_cap-cony-alb-cloud-cade-axe-atta-java-hod-plash", "formRequestOrdinals": "5-6 (baseline)", "memberOutcome": "passed", "stepTerminations": [null] }
+        ],
+        "measuredVerdictSequence": ["passed", "failed", "passed"],
+        "reproducibility": "3/3 runs matched the schedule's prediction, including the return to baseline on run 3 — a schedule, not a coincidence",
+        "conditionOnTheVector": "THIS VECTOR IS CONDITIONED ON THE PER-REQUEST SERVER. Under the baseline server this draft passes every run and stableVerdict reads TRUE. Any later plan must start the server with --mutate-per-request for this cell and with no flag for every other cell.",
+        "supersededAssumption": "Research A2 assumed one /form.html fetch per run. Measured: exactly two, ~300ms apart. At REQUESTS_PER_VARIANT=1 both variants landed inside a single run, the agent's second fetch decided every verdict, and two consecutive runs failed identically — no flip at all.",
+        "executionColumnsFrom": "measured (3 runs post-retune, plus 2 pre-retune runs that established the retune)"
+      }
+    },
+
+    "gate3-near-duplicate.yaml": {
+      "class": "gate3-rejector",
+      "rejectingGate": 3,
+      "expectedGates": {
+        "executesDefinitive": true,
+        "stableVerdict": true,
+        "addsValue": false,
+        "falsifiableAssertion": true
+      },
+      "rationale": "Uses exactly uat-381's four anchors (Username field, Password field, Submit button, \"Received!\" text) with cosmetically different wording and different literal values, so after normalization it contributes ZERO novel fingerprint elements. Gate 3 is the only catcher.",
+      "measured": {
+        "runs": [
+          { "runId": "r_around-ilium-far-ilk-thane-jur-mat-orgia-going-sib", "memberOutcome": "healed", "stepTerminations": [null, null, null, null], "note": "definitive pass per D-17; heals from seeded-procedure replay on steps 0-2" }
+        ],
+        "executionColumnsFrom": "measured (1 run); stableVerdict is design intent, not yet measured at N=3"
+      }
+    },
+
+    "accept-control.yaml": {
+      "class": "accept-control",
+      "rejectingGate": null,
+      "expectedGates": {
+        "executesDefinitive": true,
+        "stableVerdict": true,
+        "addsValue": true,
+        "falsifiableAssertion": true
+      },
+      "rationale": "THE FALSIFIER OF THE WHOLE PROOF (D-07): a constant-false evaluator fails this entry. Anchors the h1 \"Local Form\" heading, which no seeded local-form test anchors, so at least one novel element exists per D-14; the assertion quotes a concrete literal.",
+      "measured": {
+        "runs": [
+          { "runId": "r_ponent-fram-south-origin-flat-cass-stract-rais-really-ales", "memberOutcome": "healed", "stepTerminations": [null, null], "note": "PITFALL 7, LIVE: the accept control's definitive pass arrives as 'healed', not 'passed'. Gate 1 must count a healed pass as a pass and record the heal, or the corpus's own accept control fails the gates it is meant to pass." }
+        ],
+        "executionColumnsFrom": "measured (1 run); stableVerdict is design intent, not yet measured at N=3"
+      }
+    }
+  },
+
+  "crossCuttingFindings": [
+    {
+      "id": "F1",
+      "title": "'infeasible' termination does not separate gate 1 from gate 2 on this build",
+      "detail": "Both 'the element does not exist' (gate1-indefinitive) and 'the assertion is false on a visible page' (gate2-unstable's mutated arm, oracle-capture-signature) surface as StepEvidence.termination.kind === 'infeasible' with verifierVerdict.pass === false and member outcome 'failed'. A survey of the demo run store found 19 of 21 failed members carry an infeasible termination and only 2 are clean definitive failures. Gate 1 therefore cannot be implemented as 'no step terminated infeasible' without also failing gate2-unstable's mutated arm, and cannot be implemented over the member-outcome enum alone without passing gate1-indefinitive. Recorded, not resolved — resolving it is the gate implementation's job."
+    },
+    {
+      "id": "F2",
+      "title": "Seeded procedure replay contaminates draft execution on this target",
+      "detail": "Because the corpus drafts are near-identical flows to the seeded uat-381 test, the agent replays that procedure and fills uat-381's own values ('probe-user') into the Username field, then self-heals to the draft's literal. Every multi-step draft measured shows heals from this. It is why 5 of 8 drafts return 'healed' rather than 'passed', and it is fatal to oracle-capture-tautology's execution columns. --disable-cache is proven ineffective."
+    },
+    {
+      "id": "F3",
+      "title": "The definitive-pass arm arrives as 'healed', not 'passed'",
+      "detail": "Measured on the accept control itself. D-17 already rules that a healed pass counts as a pass with the heal recorded (Pitfall 7); this table is the live confirmation that the rule is load-bearing rather than theoretical."
+    }
+  ]
+}
