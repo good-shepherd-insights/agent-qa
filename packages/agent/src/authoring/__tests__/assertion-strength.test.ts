@@ -12,6 +12,10 @@
 // core), and the produced path is already covered by the cli suite. If a literal here ever
 // disagrees with the frozen draft, the cli suite is the authority.
 
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { StepClassificationRowSchema } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -25,6 +29,37 @@ import {
   classifyDraftSteps,
   evaluateAssertionStrength,
 } from '../assertion-strength.js'
+
+/**
+ * The frozen expectation table — the ONLY source of expected gate-4 verdicts for the corpus
+ * walk below (D-08, the treadmill law). Read from disk rather than restated inline, because a
+ * local literal is a second copy of the denominator and is free to drift from it silently.
+ */
+const CORPUS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'fixtures/corpus')
+
+interface ExpectationsTable {
+  drafts: Record<string, { expectedGates: { falsifiableAssertion: boolean } }>
+}
+
+const EXPECTATIONS = JSON.parse(
+  readFileSync(join(CORPUS_DIR, 'expectations.json'), 'utf8'),
+) as ExpectationsTable
+
+/**
+ * Title-case every word OUTSIDE double-quoted spans.
+ *
+ * Quoted spans are left byte-identical on purpose: a quoted literal is the app's own content,
+ * and recasing it would change WHAT the draft asserts rather than how the sentence is written.
+ * The point of the walk is that the casing of the PROSE cannot move a verdict.
+ */
+function titleCaseOutsideQuotes(text: string): string {
+  return text
+    .split(/("[^"]*")/)
+    .map((segment, index) => (
+      index % 2 === 1 ? segment : segment.replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
+    ))
+    .join('')
+}
 
 function onlyRow(steps: readonly string[]) {
   const rows = classifyDraftSteps(steps)
@@ -223,6 +258,54 @@ describe('classifyDraftSteps — mixed act-and-verify steps (D-12)', () => {
     const row = onlyRow(['Verify the page says "Saved, then click Continue"'])
 
     expect(row.falsifiable).toBe(true)
+  })
+})
+
+describe('namesAnElement — capitalization is a signal only inside prose case (393-09, WR-06)', () => {
+  // THE MEASURED LEAK. Before this group existed, `namesAnElement` read ANY post-verb
+  // capitalized token as an element name, so the concreteness arm answered true for a sentence
+  // whose every word is capitalized. `Verify The Page Is Visible` — the exact vacuous claim
+  // D-12 exists to refuse — therefore PASSED gate 4 while its lowercase twin was refused, and
+  // the drafts this filter exists for (LLM-authored) are commonly title-cased. Capitalization
+  // decided the verdict; content did not.
+  //
+  // The narrowed rule: a capitalized token names an element only INSIDE ordinary prose case —
+  // the residue must carry at least one lowercase-initial word too. `the Submit button` names
+  // an element; `The Page Is Visible` is a casing style.
+
+  it('rejects the title-cased vacuous claim, exactly as it rejects the lowercase twin', () => {
+    const result = assertionStrengthGate({ steps: ['Verify The Page Is Visible'] })
+
+    expect(result.pass).toBe(false)
+    expect(result.assertionStepCount).toBe(1)
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(result.table[0]?.falsifiable).toBe(false)
+  })
+
+  it('rejects the ALL-CAPS form for the same reason', () => {
+    // Shouting is the degenerate case of the same style: no lowercase word, so no element is
+    // named. The leading verb still matches case-insensitively, so this is an assertion row.
+    const row = onlyRow(['VERIFY THE PAGE IS VISIBLE'])
+
+    expect(row.role).toBe('assertion')
+    expect(row.falsifiable).toBe(false)
+  })
+
+  it('keeps the lowercase twin rejected (the unchanged half of the pair)', () => {
+    expect(assertionStrengthGate({ steps: ['Verify the page is visible'] }).pass).toBe(false)
+    expect(assertionStrengthGate({ steps: ['Verify the content is visible'] }).pass).toBe(false)
+  })
+
+  it('a quoted literal still decides, in either casing (capitalization is not consulted)', () => {
+    expect(assertionStrengthGate({ steps: ['Verify the page says "Received!"'] }).pass).toBe(true)
+    expect(assertionStrengthGate({ steps: ['Verify The Page Says "Received!"'] }).pass).toBe(true)
+  })
+
+  it('does not overreach: a named element beside a state term stays falsifiable', () => {
+    // The narrowing must not cost the accept direction. `Submit` is capitalized INSIDE
+    // lowercase prose, which is the house style the signal was written for.
+    expect(assertionStrengthGate({ steps: ['Verify the Submit button is disabled'] }).pass).toBe(true)
+    expect(assertionStrengthGate({ steps: ['Verify the Username field is empty'] }).pass).toBe(true)
   })
 })
 
@@ -449,6 +532,45 @@ describe('the frozen corpus classes, by literal step text (4180c78b)', () => {
 
   it.each(CORPUS)('$draft → falsifiable=$expected', ({ expected, steps }) => {
     expect(evaluateAssertionStrength(steps).falsifiable).toBe(expected)
+  })
+
+  it('every inline `expected` above agrees with the frozen table, draft for draft', () => {
+    // The literals in CORPUS are a convenience copy; expectations.json is the denominator.
+    // This is the assertion that stops the copy from becoming a second answer.
+    expect(Object.fromEntries(CORPUS.map((entry) => [entry.draft, entry.expected])))
+      .toEqual(Object.fromEntries(
+        Object.entries(EXPECTATIONS.drafts)
+          .map(([draft, entry]) => [draft, entry.expectedGates.falsifiableAssertion]),
+      ))
+  })
+
+  // THE REGRESSION PIN for the WR-06 narrowing (393-09). The controls above prove the rule on
+  // constructed inputs; this proves the rule cost the frozen denominator nothing. Title-casing
+  // is applied to every corpus draft's prose and the verdict is compared against that draft's
+  // own frozen `falsifiableAssertion` column — read from expectations.json, never from an
+  // inline boolean, so a future edit to the narrowing cannot be absorbed by editing the
+  // expectation beside it.
+  it.each(CORPUS)('title-casing $draft moves no frozen verdict', ({ draft, steps }) => {
+    const frozen = EXPECTATIONS.drafts[draft]?.expectedGates.falsifiableAssertion
+
+    expect(frozen).toBeTypeOf('boolean')
+    expect(assertionStrengthGate({ steps: steps.map(titleCaseOutsideQuotes) }).pass).toBe(frozen)
+  })
+
+  it('the walk actually recased something, and kept every assertion row an assertion', () => {
+    // A no-op helper would make the walk above pass vacuously, which is the one failure mode a
+    // case-insensitivity pin cannot afford. Seven of the eight drafts carry an assertion step;
+    // `assertion-free.yaml` is the eighth and is walked too, because its frozen `false` must
+    // survive recasing as well.
+    const recased = CORPUS.filter((entry) =>
+      entry.steps.some((step) => titleCaseOutsideQuotes(step) !== step))
+
+    expect(recased).toHaveLength(CORPUS.length)
+
+    for (const entry of CORPUS) {
+      expect(classifyDraftSteps(entry.steps.map(titleCaseOutsideQuotes)).map((row) => row.role))
+        .toEqual(classifyDraftSteps(entry.steps).map((row) => row.role))
+    }
   })
 
   it('assertion-free classifies EVERY step as an action', () => {
