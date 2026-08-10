@@ -71,6 +71,11 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // mint capability exists at all: the accept escalation is its one caller.
 // 392 D-24 extends it a seventh time, by name again: `chatTurn` — the assembled turn engine
 // `agent.ask` runs behind. It fired on this one too, and once more only under `tsc --noEmit`.
+// 393 D-01 extends it an eighth time, by name again: `draftEvaluation` — the two host halves one
+// keep-gate evaluation needs. It fired on this one too, and once more only under `tsc --noEmit`
+// (vitest printed `Type Errors  no errors` for the same tree; 393-05 measured the mechanical
+// cause — `typecheck.include` never looks at a `.test.ts`, and this is a `.test-d.ts`, which is
+// exactly why the dual-witness rule keeps `tsc` as the authority).
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -82,6 +87,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'proposalsInbox'
     | 'standingGrants'
     | 'chatTurn'
+    | 'draftEvaluation'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

@@ -45,6 +45,8 @@ import type {
   StepEvidence,
 } from '@vostride/agent-qa-schema'
 
+import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
+import type { ParsedDraftLike } from '../authoring/ports.js'
 import type { RecurrenceProvider } from '../analysis/render-sentence.js'
 import type { ChainJobIds } from '../jobs/chain-identity.js'
 import type { JobIdSource } from '../jobs/engine.js'
@@ -106,6 +108,7 @@ export type OptionalFunctionDepKey =
   | 'proposalsInbox'
   | 'standingGrants'
   | 'chatTurn'
+  | 'draftEvaluation'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -759,6 +762,59 @@ export interface FunctionDeps {
    * into session state without a registered op declaring it.
    */
   chatTurn?: ChatTurnPort
+  /**
+   * 393 D-01 / D-15: the two host halves one draft evaluation needs — resolve a caller's path to a
+   * parsed draft, and assemble the ports the four gates run against.
+   *
+   * ONE BUNDLED CAPABILITY rather than five separate deps, on the `runInvocation` precedent. The
+   * receipts store, the suite fingerprint index, the text corpus and the run pair are not
+   * independently bindable: an index scoped to a different product than the runs were taken under
+   * would compare a draft against another project's suite, and a host that could supply three of
+   * the five would list this op `bound` and then fail somewhere far from the composition that
+   * forgot one. Bundling makes "can this host verify a draft" a single fact.
+   *
+   * OPTIONAL for the reason `runInvocation` is, and here it says two things at once: a host that
+   * cannot PARSE a test file and a host that cannot START a run are both hosts that cannot verify
+   * a draft, and `composeLocalAgent()` binds this only when it has both.
+   *
+   * WHY RESOLUTION IS A SEPARATE VERB FROM EVALUATION. `packages/agent` is `storageNeutral`: it
+   * cannot stat a path, read a file, or know where the workspace ends. So the three refusals that
+   * need a filesystem are ANSWERED by the host and NAMED by the op — `resolveDraft` returns a
+   * typed outcome and never throws a host error through the layer, and
+   * `functions/ops/authoring-verify-draft.ts` maps each arm onto its own caller-facing class. The
+   * alternative — a single `evaluate(draftPath)` — would have put the refusal vocabulary in
+   * whichever package happened to own the syscall, one layer below where a caller catches it.
+   */
+  draftEvaluation?: DraftEvaluationPort
+}
+
+/**
+ * What a host can tell the layer about a caller-supplied draft path (393, T-393-01).
+ *
+ * A discriminated union rather than `ParsedDraftLike | undefined`: "there is no file there", "that
+ * is a directory", "that is outside this workspace" and "that file is not a test" are four
+ * different things to tell a person, and collapsing them into an absence would make the op answer
+ * all four with one message. Every arm but `parsed` becomes a NAMED error at the invoke.
+ */
+export type DraftResolution =
+  | { readonly kind: 'parsed'; readonly draft: ParsedDraftLike }
+  | { readonly kind: 'not-found' }
+  | { readonly kind: 'not-a-file' }
+  | { readonly kind: 'outside-workspace' }
+  | { readonly kind: 'unparsable'; readonly reason: string }
+
+/**
+ * The capability `authoring.draft.verify` binds through (393 D-01).
+ *
+ * `openEvaluation` takes the resolved draft because two of the four ports depend on WHICH draft is
+ * being evaluated: the suite comparison must exclude the draft's own identity from both of gate
+ * 3's lanes, or a draft that already lives in the authored suite would be measured against itself
+ * and could never be shown to add value. It is a separate call from `resolveDraft` so a refused
+ * path costs no database handle and no suite walk.
+ */
+export interface DraftEvaluationPort {
+  resolveDraft(draftPath: string): Promise<DraftResolution>
+  openEvaluation(draft: ParsedDraftLike): Promise<EvaluateDraftPorts>
 }
 
 /**
