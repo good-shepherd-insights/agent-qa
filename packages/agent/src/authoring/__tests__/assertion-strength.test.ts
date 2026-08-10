@@ -262,33 +262,37 @@ describe('classifyDraftSteps — mixed act-and-verify steps (D-12)', () => {
   })
 })
 
-describe('namesAnElement — content decides; casing never does (393-12, 393-13, WR-06)', () => {
+describe('the concreteness relation — a page-whole SUBJECT is refused whatever else the sentence mentions (393-12, 393-13, 393-15)', () => {
   // WHY THESE CONTROLS REACH THE CONCRETENESS ARM, by construction rather than by hope.
   //
   // No unquoted step below carries a double-quoted span, so `concrete` cannot short-circuit on
-  // `literals.length > 0` and `namesAnElement` is genuinely consulted. `page is visible` is NOT a
-  // VACUOUS_ASSERTION_PHRASES member — the lexicon's own retune comment calls it the obvious
-  // candidate the set does not hold — and neither is any function-word padding of it (`page is not
-  // visible` equals no member of an EXACT-match lexicon), so the vacuity arm cannot decide either.
-  // No capture signature, no prior-action literal to restate, and no MIXED_STEP_SEPARATORS token is
-  // present, so those three arms are silent too. Every cell below is therefore a reading of the
-  // concreteness arm and nothing else, which the per-cell arm-attribution assertions re-check.
+  // `literals.length > 0` and the element/state relation is genuinely consulted. `page is visible`
+  // is NOT a VACUOUS_ASSERTION_PHRASES member — the lexicon's own retune comment calls it the
+  // obvious candidate the set does not hold — and neither is any function-word padding of it
+  // (`page is not visible` equals no member of an EXACT-match lexicon), so the vacuity arm cannot
+  // decide either. No capture signature, no prior-action literal to restate, and no
+  // MIXED_STEP_SEPARATORS token is present, so those three arms are silent too. Every cell below is
+  // therefore a reading of the concreteness arm and nothing else, which the per-cell
+  // arm-attribution assertions re-check.
   //
   // The frozen corpus cannot observe this arm at all: every expected-true draft carries a quoted
   // literal and every expected-false draft is refused by another arm, which is why THESE
   // constructed controls are the pins and the corpus walk below is not.
   //
-  // Every loop is a loop on purpose. Three prior attempts at this defect each moved one boundary
+  // Every loop is a loop on purpose. Four prior attempts at this defect each moved one boundary
   // and satisfied a handful of enumerated cells; a loop over a whole axis cannot be satisfied that
   // way — any rule that consults letter case reds at least one casing cell, and any rule that
   // decides concreteness by NON-membership in an exclusion list reds at least one padding cell.
   //
-  // AND THE AXES CROSS (393-13, the single-axis control law). Rounds 2–4 each varied ONLY the axis
-  // just fixed, so the suite structurally could not see the defect move: the casing loop below was
-  // green while every one of the eight padding sentences carried the same vacuous claim through
-  // gate 4. So this round carries cells OFF the axis it fixes — PADDED_CASINGS crosses padding with
-  // casing, and PADDED_NAMED_ELEMENTS pins the ACCEPT direction of the same padding so the fix
-  // cannot silently flip into refusing padded concrete claims.
+  // THE MEMBER-NOUN AXIS (393-15) — the axis every prior round's controls missed. Rounds 2–5 each
+  // varied only the axis just fixed, and round 5's own "crossing" cells crossed PADDING with
+  // CASING: two axes that were already closed. The defect was sitting somewhere else entirely.
+  // These loops vary WHICH NOUN sits in the sentence (all 33 lexicon members, generated from the
+  // exported constant so the loop cannot drift when the lexicon changes), WHICH GRAMMATICAL ROLE
+  // it stands in (`tab`, `label` as verbs), and AT WHAT DISTANCE it sits from the state term (60
+  // spaces). The verifier measured 33 of 33 members carrying the vacuous claim through gate 4 in
+  // the frame below while a 101/101-green suite reddened on none of it. The accept-direction loop
+  // beside them is what stops the closure from becoming "refuse anything mentioning a page".
 
   const VACUOUS_PAGE_CASINGS = [
     'Verify the page is visible',
@@ -347,6 +351,44 @@ describe('namesAnElement — content decides; casing never does (393-12, 393-13,
     'Verify ""',
     'Verify the page shows ""',
     'Verify the page shows " "',
+  ] as const
+
+  // THE MEMBER-NOUN AXIS. One frame, every member of the lexicon in turn. The claim's SUBJECT is
+  // the page in all 33 sentences and no member has a state asserted of it, so every one of them
+  // must be refused. Built from the exported constant rather than a copied list: a lexicon change
+  // moves the loop with it, and a member added tomorrow is tested the day it lands.
+  const vacuousFrameNear = (noun: string) => `Verify the page is visible near the ${noun}`
+
+  // The same axis with the member standing as a VERB rather than a noun. `tab` and `label` are
+  // lexicon members; neither sentence names a thing in a state.
+  const VERB_MEMBERS = [
+    'Verify the page is visible so the user can tab through it',
+    'Verify the page is visible when we label the release',
+  ] as const
+
+  // THE ACCEPT DIRECTION of the member-noun axis: a member that IS the subject of the state term
+  // must still carry the claim. Without these, "refuse every sentence containing `page`" — or
+  // simply "refuse everything" — would satisfy the three loops above.
+  const SUBJECT_MEMBER_ACCEPTS = [
+    'Verify the submit button is disabled',
+    'Verify the banner is visible',
+    'Verify the username field is still empty',
+    'Verify The Submit Button Is Not Visible',
+  ] as const
+
+  // WR-01 (393-13, measured by the round-5 verifier): the empty-literal filter was applied to the
+  // PRIOR-ACTION accumulation as well as to the concreteness read, so an action that typed `""`
+  // contributed nothing to restate and both pairs below moved FAIL -> PASS on an arm the 393-13
+  // SUMMARY listed as byte-unchanged. An accept-direction move in a tune-toward-reject gate.
+  const RESTATED_EMPTY_CAPTURES = [
+    {
+      action: 'Type "" into the Username field',
+      assertion: 'Verify the Username field is empty and shows ""',
+    },
+    {
+      action: 'Type " " into the Username field',
+      assertion: 'Verify the Username field is empty and shows " "',
+    },
   ] as const
 
   it.each(VACUOUS_PAGE_CASINGS)('refuses the generic-page claim in every casing: %s', (step) => {
@@ -418,6 +460,78 @@ describe('namesAnElement — content decides; casing never does (393-12, 393-13,
     expect(row?.falsifiable).toBe(false)
     expect(row?.vacuityHit).toBeUndefined()
     expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(ELEMENT_NOUNS)('refuses the page-subject claim however the sentence mentions a member: near the %s', (noun) => {
+    const step = vacuousFrameNear(noun)
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect({ step, pass: result.pass }).toEqual({ step, pass: false })
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    // Arm attribution: the CONCRETENESS arm refused this and nothing else fired. `page is visible
+    // near the header` equals no vacuity member, quotes nothing, restates nothing.
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(VERB_MEMBERS)('refuses the page-subject claim when the member is a VERB: %s', (step) => {
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect(result.pass).toBe(false)
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it('refuses the page-subject claim with a member sixty spaces away: distance is not a defence', () => {
+    // The degenerate end of the same axis. A rule that admits the claim because a member appears
+    // ANYWHERE admits it here too; a rule that reads the state term's own subject cannot.
+    const step = `Verify the page is visible${' '.repeat(60)}header`
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect(result.pass).toBe(false)
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(SUBJECT_MEMBER_ACCEPTS)('still accepts a member that IS the subject of the state term: %s', (step) => {
+    const result = assertionStrengthGate({ steps: [step] })
+
+    expect({ step, pass: result.pass }).toEqual({ step, pass: true })
+    expect(result.falsifiableAssertionCount).toBe(1)
+    expect(result.table[0]?.vacuityHit).toBeUndefined()
+    expect(result.table[0]?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(RESTATED_EMPTY_CAPTURES)('refuses an assertion restating a prior EMPTY capture (WR-01): $assertion', ({ action, assertion }) => {
+    const row = onlyRow([action, assertion])
+
+    expect(row.role).toBe('assertion')
+    expect(row.tautologyHit).toBe(true)
+    expect(row.falsifiable).toBe(false)
+    expect(assertionStrengthGate({ steps: [action, assertion] }).pass).toBe(false)
+  })
+
+  it('restoring RAW captures does not over-reject: an assertion that quotes nothing is no tautology', () => {
+    // The control half of the WR-01 pair. The action typed `""`, so the RAW accumulation holds an
+    // empty span; the assertion quotes nothing at all, so there is nothing to restate and the
+    // relation carries it (`field` is the subject of `empty`). Without this cell, "treat any prior
+    // empty capture as poisoning every later assertion" would satisfy the two cells above.
+    const steps = ['Type "" into the Username field', 'Verify the username field is empty']
+    const row = onlyRow(steps)
+
+    expect(row.tautologyHit).toBeUndefined()
+    expect(assertionStrengthGate({ steps }).pass).toBe(true)
   })
 
   it('the empty-literal filter TRIMS, it does not over-reject: a non-empty literal still decides', () => {
