@@ -103,8 +103,32 @@ function normalizeCardCandidate(candidate: string): string {
   return digits
 }
 
+/**
+ * Is this candidate the FRACTIONAL TAIL of a decimal literal rather than a number in its own right?
+ *
+ * `CREDIT_CARD_CANDIDATE_RE` cannot see across the `.` in `0.45833333333333337`, so what it offers
+ * for scoring is the 17-digit tail `45833333333333337` — which is Luhn-valid, and therefore blocked
+ * the entire outbound prompt. Measured 2026-08-10 on the demo's local-form target, where a procedure
+ * hint rendered `(confidence 0.45833333333333337, ...)`: every planning turn for that page was
+ * refused before it left the process, deterministically, with no way for an operator to tell from
+ * `Guardrail blocked outbound prompt leaf: creditCard` that the "card" was a float. About one in ten
+ * IEEE-754 decimal expansions of the right length is Luhn-valid, so this is a standing ~10% chance
+ * that any given page or brief becomes permanently unplannable.
+ *
+ * THE TEST IS `\d` THEN `.` IMMEDIATELY BEFORE THE CANDIDATE, and it is deliberately that narrow.
+ * A payment card is never the fractional part of a number, so nothing this rejects was ever a
+ * finding — while the neighbouring shapes that DO carry cards are untouched: `no.4111111111111111`
+ * keeps its match (a letter precedes the dot, not a digit), and so do `4111-1111-1111-1111`,
+ * `card: 4111 1111 1111 1111` and a bare PAN at the start of a line.
+ */
+function isFractionalTail(text: string, start: number): boolean {
+  return start >= 2 && text[start - 1] === '.' && text.charCodeAt(start - 2) >= 48
+    && text.charCodeAt(start - 2) <= 57
+}
+
 function matchCreditCards(text: string): GuardrailMatch[] {
   return matchesFromRegex('creditCard', CREDIT_CARD_CANDIDATE_RE, text).filter((match) => {
+    if (isFractionalTail(text, match.start)) return false
     const digits = normalizeCardCandidate(match.value)
     return digits.length >= 13 && digits.length <= 19 && luhnValid(digits)
   })

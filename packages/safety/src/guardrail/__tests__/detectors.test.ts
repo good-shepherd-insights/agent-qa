@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { sha256hex16, type GuardrailDetectorFamily } from '@vostride/agent-qa-schema'
+import { luhnValid } from '../luhn'
 import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '../policy-loader'
 import { scan, type FiredDetection } from '../scan'
 
@@ -42,6 +43,48 @@ describe('guardrail scan', () => {
     expect(invalidResult.result).toEqual({ action: 'pass' })
     expect(invalidResult.redactedText).toBe(`order ${invalid}`)
     expect(invalidResult.fired).toEqual([])
+  })
+
+  // ------------------------------------------------------------------------------------------
+  // A FLOAT IS NOT A CARD (measured 2026-08-10, phase 393 live lane).
+  //
+  // The candidate regex cannot see across the `.` in `0.45833333333333337`, so it offers the
+  // 17-digit tail for scoring — and that tail is Luhn-valid. A procedure hint rendering
+  // `(confidence 0.45833333333333337, ...)` therefore blocked EVERY outbound planning prompt for
+  // one page of the demo target, deterministically, reporting only `creditCard`. Roughly one in ten
+  // IEEE-754 decimal expansions of card-candidate length passes Luhn, so this is a standing chance
+  // that any given page or brief becomes permanently unplannable.
+  // ------------------------------------------------------------------------------------------
+
+  it('does not read the fractional tail of a decimal as a credit-card candidate', () => {
+    // The exact value that blocked the lane. Luhn-valid on its own, and not a card.
+    expect(luhnValid('45833333333333337')).toBe(true)
+
+    const output = scan('(confidence 0.45833333333333337, authoring tier full)', policy)
+
+    expect(output.result).toEqual({ action: 'pass' })
+    expect(output.fired).toEqual([])
+  })
+
+  it('still blocks a card that merely follows a dot after a non-digit', () => {
+    // The narrowness is the point: only `<digit>.` immediately before a candidate is a decimal
+    // tail. An abbreviation's full stop is not, and a PAN written after one is still a PAN.
+    const card = '4242424242424242'
+    const output = scan(`card no.${card}`, policy)
+
+    expect(output.result.action).toBe('block')
+    expect(output.result.detector).toBe('creditCard')
+    expect(output.result.redactedFingerprint).toBe(sha256hex16(card))
+  })
+
+  it('still blocks a bare card at the very start of the text', () => {
+    // The guard reads two characters BEFORE the match; a candidate at index 0 or 1 has no room for
+    // a decimal point and must not be excluded by an out-of-range read.
+    const card = '4242424242424242'
+    const output = scan(card, policy)
+
+    expect(output.result.action).toBe('block')
+    expect(output.result.detector).toBe('creditCard')
   })
 
   it('blocks PEM private-key markers', () => {
