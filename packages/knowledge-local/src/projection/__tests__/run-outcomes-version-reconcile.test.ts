@@ -532,6 +532,53 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
+  it('refuses to stamp when a write-layer throw aborts the rebuild, and self-heals next sweep (CR-01-WIDENED)', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project()
+
+    // The injected projection seam stands in for ANY write-layer failure inside the rebuild loop —
+    // SQLITE_BUSY past the writer timeout, ENOSPC, a constraint error. It is driven from the one
+    // seam this function already accepts, so the cell exercises the SHIPPING loop rather than a
+    // parallel copy of it. By the time it fires the family has already been DELETEd, which is the
+    // whole question: what does the module do with a family it has destroyed and cannot rebuild?
+    const throwingAnchors = (): never[] => {
+      throw new Error('write layer refused')
+    }
+
+    // (i) It PROPAGATES. A per-run catch this wide counts the throw as a skip and walks on to the
+    // stamp — which is the round-6 regression, and the assertion this cell RED-receipts.
+    expect(() => reconcileRunOutcomesProjection({
+      knowledgeRoot,
+      runsRoot,
+      extractAnchors: throwingAnchors,
+    })).toThrow('write layer refused')
+
+    // (ii) NO stamp — the prohibition. `suite_fingerprints` is the substrate gate 3's
+    // `elementUnion()` decides on, so an EMPTY family stamped CURRENT is not a degraded answer,
+    // it is a permanently wrong one: every later reconcile answers 'current' and never looks again.
+    withIndex(knowledgeRoot, (db) => {
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all()).toEqual([])
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(0)
+    })
+
+    // (iii) The absent stamp reads as a mismatch, so the next HEALTHY sweep rebuilds and the family
+    // comes back. This is the other half of the pin (the two-sided contract law): fail-closed alone
+    // would be a projection that is merely broken more loudly. Asserted on `.kind` so this cell
+    // pins the POSTURE, not the report's field names.
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+
+    withIndex(knowledgeRoot, (db) => {
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion()
+        .has(CHECKOUT_ELEMENT)).toBe(true)
+      const outcomes = db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes').get() as
+        { n: number }
+      expect(outcomes.n).toBeGreaterThan(0)
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all())
+        .toEqual([{ id: 1, version: RUN_OUTCOMES_PROJECTION_VERSION }])
+    })
+  })
+
+
   it('reads a VALID analysis.json through the reconcile-driven rebuild (WR-06, the other half)', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project({
       runs: [...HISTORICAL_RUNS, FLAKE_RUN],
