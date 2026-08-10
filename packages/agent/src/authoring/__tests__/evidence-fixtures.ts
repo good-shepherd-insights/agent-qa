@@ -196,7 +196,10 @@ export interface RecordingRunPort extends DraftRunPortLike {
 }
 
 export interface FakeRunPortOptions {
-  /** One entry per run to serve, in order. `undefined` models an unreadable run record. */
+  /**
+   * One entry per run to serve, in order. `undefined` models a run that `runs.start` acknowledged
+   * normally but whose completed record is no longer readable when `get` is called.
+   */
   readonly runs: readonly (readonly MemberFixture[] | undefined)[]
   /** Drop the markers from the acknowledgment, modelling a host that did not accept the gate-run. */
   readonly dropMarkers?: boolean
@@ -205,10 +208,14 @@ export interface FakeRunPortOptions {
 /**
  * A run port that scripts a sequence of run documents and records every start input.
  *
- * The acknowledgment copies its markers from the DOCUMENT rather than from the request, exactly as
- * `runs.start` does — a fake that echoed the request would make the evaluator's confirmation check
- * pass for a host that had silently dropped the flags, which is the one thing the check exists to
- * catch.
+ * THE ACKNOWLEDGMENT IS NOT AN ECHO OF THE REQUEST. `runs.start` reads the run's own durable
+ * record and copies both markers off it, and refuses with `RunNotRecordedError` rather than
+ * acknowledging a run it has no record for — so a real acknowledgment always carries the record's
+ * markers, and `dropMarkers` is the only way to model a host that did not accept the run as a
+ * gate-run. A fake that echoed the request instead would let the evaluator's confirmation check
+ * pass for a host that had silently dropped the flags, which is the one thing that check exists to
+ * catch. It follows that "the record is unreadable" cannot be expressed as a marker-less
+ * acknowledgment — it is a later `get` returning nothing, which is what `undefined` models here.
  */
 export function fakeRunPort(options: FakeRunPortOptions): RecordingRunPort {
   const startInputs: RunsStartInput[] = []
@@ -235,12 +242,7 @@ export function fakeRunPort(options: FakeRunPortOptions): RecordingRunPort {
         testCount: document?.tests.length ?? 0,
         ...(options.dropMarkers === true
           ? {}
-          : {
-              ...(document?.gateRun === undefined ? {} : { gateRun: document.gateRun }),
-              ...(document?.excludedFromOutcomes === undefined
-                ? {}
-                : { excludedFromOutcomes: document.excludedFromOutcomes }),
-            }),
+          : { gateRun: true, excludedFromOutcomes: true }),
       } as unknown as RunStartAcknowledgement
     },
     async get(runId: string): Promise<CompletedRunHandoff | undefined> {

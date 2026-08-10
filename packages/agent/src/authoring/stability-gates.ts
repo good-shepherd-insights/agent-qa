@@ -129,6 +129,73 @@ function recordedHeal(member: PerTestOutcome): boolean {
 }
 
 /**
+ * Whether this run reached a FINAL answer about the draft, and what was read to decide (D-17).
+ *
+ * THE ENUM IS NOT ENOUGH, AND NEITHER IS ANY SINGLE TERMINAL FIELD. 393-01 measured both halves.
+ * F1: a draft naming controls the target does not have comes back `failed` — a definitive value —
+ * while its step evidence carries an infeasible termination, and 19 of 21 failed members in the
+ * demo run store carry one, so gate 1 read off the enum alone passes the corpus's own gate-1
+ * rejector. F3: the accept control's definitive pass arrives as `healed`, so a gate 1 strict about
+ * the enum fails the draft the corpus exists to accept. The answer is therefore a COMPOSITE —
+ * the enum admits the run, the step evidence can still disqualify it — which is exactly the shape
+ * `GateRunRecordSchema` was minted for: `definitive` is a judgment, not a field copy, and `reason`
+ * is where the judgment says what it read.
+ *
+ * WHERE D-17'S "error" WENT. The decision text lists planning failure, infeasible termination,
+ * cycle, error, timeout and cancelled. There is no `'error'` member outcome on this build —
+ * `RunStatus` is `passed | failed | healed | timeout | cancelled` — and the class it names arrives
+ * in one of two shapes that ARE handled: a structural `planningFailure` block (393-01 measured one
+ * on page-loaded-only's first run, a guardrail block during planning) or a run whose record cannot
+ * be read back at all. Neither is folded into a synthetic enum member, because inventing an
+ * outcome value the vocabulary does not have would put a second spelling of `RunStatus` in this
+ * file.
+ *
+ * ORDER IS FOR THE READER, NOT THE VERDICT. Any one cause is disqualifying, so the result does not
+ * depend on which is checked first; the order decides which cause the receipt NAMES when a run has
+ * more than one, and the enum is checked first because it is the coarsest.
+ */
+function classifyGateRun(member: PerTestOutcome): { definitive: boolean; reason: string } {
+  if (!DEFINITIVE_MEMBER_OUTCOMES.has(member.outcome)) {
+    return {
+      definitive: false,
+      reason: `member outcome '${member.outcome}' is not a final pass or fail (D-17)`,
+    }
+  }
+
+  for (const step of member.steps) {
+    if (step.planningFailure !== undefined) {
+      return {
+        definitive: false,
+        reason: `planning failed structurally on step ${step.stepIndex}: the draft was never `
+          + 'executed to a verdict, so the enum below describes the attempt, not the app (D-17)',
+      }
+    }
+    if (step.cycle !== undefined) {
+      return {
+        definitive: false,
+        reason: `a cycle was flagged on step ${step.stepIndex} (${step.cycle.reason}): the run `
+          + 'stopped revisiting state rather than reaching an answer (D-17)',
+      }
+    }
+    if (step.termination !== undefined) {
+      return {
+        definitive: false,
+        reason: `step ${step.stepIndex} terminated '${step.termination.kind}' `
+          + `(${step.termination.reason}) — indefinitive despite member outcome `
+          + `'${member.outcome}', which reads definitive on its own (393-01 F1)`,
+      }
+    }
+  }
+
+  return {
+    definitive: true,
+    reason: `member outcome '${member.outcome}' with no planning failure, cycle flag or `
+      + 'termination on any step — a final answer about the draft'
+      + (member.outcome === 'healed' ? '; a healed pass IS a pass (393-01 F3)' : ''),
+  }
+}
+
+/**
  * The `runs.start` input for one gate-run.
  *
  * `patterns` names the draft file and nothing else, so the run admits exactly the member the
@@ -147,12 +214,17 @@ function gateRunStartInput(draft: ParsedDraftLike): RunsStartInput {
 /**
  * Take up to `runsRequested` gate-runs and answer gates 1 and 2 (D-17).
  *
- * The tracer depth: every run is taken, both markers are set and confirmed, and definitiveness is
- * read off the member-outcome enum. 393-01's F1 measured that the enum ALONE is not enough — a
- * draft referencing controls the target does not have reads `failed`, a definitive value, while
- * its step evidence records an infeasible termination — so the classifier grows a step-evidence
- * arm and an early-stop in this plan's Task 2. The shape it grows into is already here: `reason`
- * on every row says what was actually read.
+ * EARLY-STOP SKIPS RUNS, NEVER A GATE (D-04/D-17). Once two different verdicts have been observed
+ * the flip is proven and the remaining runs cannot un-prove it, so they are not taken. Both
+ * booleans are still computed and both are still reported — what shrinks is `runsCompleted`, which
+ * is why `computeDraftDisposition` reads a short count as `rejected` rather than as `proposal-only`
+ * when a gate is false.
+ *
+ * ONLY OBSERVED VERDICTS PARTICIPATE. A run whose record could not be read, or whose document
+ * holds no member for this draft, fails gate 1 and contributes nothing to gate 2. Missing
+ * information is not a different answer: counting it as a flip would fail gate 2 for an
+ * infrastructure hiccup — the direction that costs a user a good test — and would early-stop the
+ * evaluation, throwing away the runs that could still have said something.
  */
 export async function runStabilityGates(
   input: RunStabilityGatesInput,
@@ -160,6 +232,8 @@ export async function runStabilityGates(
   const runsRequested = input.runsRequested ?? DRAFT_STABILITY_RUNS_N
   const gateRuns: GateRunRecord[] = []
   const draftMembers: PerTestOutcome[] = []
+  const observedVerdicts: string[] = []
+  let earlyStopped = false
 
   for (let taken = 0; taken < runsRequested; taken += 1) {
     const acknowledgement = await input.runPort.start(gateRunStartInput(input.draft))
@@ -177,35 +251,42 @@ export async function runStabilityGates(
         definitive: false,
         healed: false,
         reason: document === undefined
-          ? 'no completed-run record was readable for this run: nothing is known about it'
-          : `the run document holds no member for (${input.draft.filePath}, ${input.draft.testName})`,
+          ? 'no completed-run record was readable for this run: nothing is known about it, '
+            + 'which is a gate-1 failure and not a verdict'
+          : 'the run document holds no member for '
+            + `(${input.draft.filePath}, ${input.draft.testName}) — the stable identity, `
+            + 'never testId',
       })
       continue
     }
 
     draftMembers.push(member)
-    const definitive = DEFINITIVE_MEMBER_OUTCOMES.has(member.outcome)
+    const { definitive, reason } = classifyGateRun(member)
     gateRuns.push({
       runId: acknowledgement.runId,
       memberOutcome: member.outcome,
       definitive,
       healed: recordedHeal(member),
-      reason: definitive
-        ? `member outcome '${member.outcome}' is a final answer about the draft (D-17)`
-        : `member outcome '${member.outcome}' is not a final pass or fail (D-17)`,
+      reason,
     })
+
+    observedVerdicts.push(comparisonVerdict(member.outcome))
+    if (new Set(observedVerdicts).size > 1) {
+      earlyStopped = taken + 1 < runsRequested
+      break
+    }
   }
 
-  const distinctOutcomes = [
-    ...new Set(gateRuns.map((row) => comparisonVerdict(row.memberOutcome))),
-  ]
+  const distinctOutcomes = [...new Set(observedVerdicts)]
 
   return {
     executesDefinitive: gateRuns.length > 0 && gateRuns.every((row) => row.definitive),
-    stableVerdict: distinctOutcomes.length <= 1,
+    // An evaluation that observed no verdict at all has not shown stability; it has shown nothing.
+    // D-12's tune-toward-reject applies — a gate with no evidence behind it is not a pass.
+    stableVerdict: distinctOutcomes.length === 1,
     gateRuns,
     runsCompleted: gateRuns.length,
-    earlyStopped: false,
+    earlyStopped,
     distinctOutcomes,
     draftMembers,
   }
