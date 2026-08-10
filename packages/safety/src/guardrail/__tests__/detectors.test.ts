@@ -67,8 +67,8 @@ describe('guardrail scan', () => {
   })
 
   it('still blocks a card that merely follows a dot after a non-digit', () => {
-    // The narrowness is the point: only `<digit>.` immediately before a candidate is a decimal
-    // tail. An abbreviation's full stop is not, and a PAN written after one is still a PAN.
+    // The narrowness is the point: an abbreviation's full stop does not make a decimal, and a PAN
+    // written after one is still a PAN.
     const card = '4242424242424242'
     const output = scan(`card no.${card}`, policy)
 
@@ -78,13 +78,82 @@ describe('guardrail scan', () => {
   })
 
   it('still blocks a bare card at the very start of the text', () => {
-    // The guard reads two characters BEFORE the match; a candidate at index 0 or 1 has no room for
-    // a decimal point and must not be excluded by an out-of-range read.
+    // The guard reads characters BEFORE the match; a candidate at index 0 or 1 has no room for a
+    // decimal point and must not be excluded by an out-of-range read.
     const card = '4242424242424242'
     const output = scan(card, policy)
 
     expect(output.result.action).toBe('block')
     expect(output.result.detector).toBe('creditCard')
+  })
+
+  // ------------------------------------------------------------------------------------------
+  // ...BUT A CARD BEHIND A `<digit>.` IS STILL A CARD (measured 2026-08-10, phase 393 verification,
+  // REVIEW WR-05).
+  //
+  // The first cut of the suppression above tested only the two characters preceding the candidate,
+  // so ANY `<digit>.` prefix suppressed it. Measured through this same real `scan()` + default
+  // policy: `card 1.4111111111111111 end` and `v1.4012888888881881 ok` both returned
+  // `{"action":"pass"}` while carrying Luhn-valid PANs, under a policy whose creditCard action is
+  // `block` — a false negative in an egress control, i.e. a PAN leaving the process.
+  //
+  // The rule enforced now is narrower in the safe direction: a candidate is a fractional tail ONLY
+  // when it is the fraction of a STANDALONE ZERO-INTEGER decimal — `.` immediately before it, `0`
+  // before that, and no word character and no further `.` before the `0`. That is the shape every
+  // measured false positive has (probability/confidence floats print as `0.<fraction>`); every
+  // other `<digit>.` context fails toward block.
+  //
+  // Both directions are pinned in this same group on purpose (390/392 two-sided-pin history): the
+  // reject direction below, and the accept direction in the confidence-float case above.
+  // ------------------------------------------------------------------------------------------
+
+  it('blocks a Luhn-valid PAN written behind a nonzero integer part', () => {
+    // THE headline measured false negative. `1.` is a decimal point, but not a zero-integer one.
+    const card = '4111111111111111'
+    expect(luhnValid(card)).toBe(true)
+
+    const output = scan(`card 1.${card} end`, policy)
+
+    expect(output.result).toEqual({
+      action: 'block',
+      detector: 'creditCard',
+      redactedFingerprint: sha256hex16(card),
+    })
+  })
+
+  it('blocks a Luhn-valid PAN behind a word-glued version-style prefix', () => {
+    // `v1.` — no decimal literal here at all; the digit is glued to a word character.
+    const card = '4012888888881881'
+    expect(luhnValid(card)).toBe(true)
+
+    const output = scan(`v1.${card} ok`, policy)
+
+    expect(output.result.action).toBe('block')
+    expect(output.result.detector).toBe('creditCard')
+    expect(output.result.redactedFingerprint).toBe(sha256hex16(card))
+  })
+
+  it('blocks a Luhn-valid PAN inside a dotted version-style chain', () => {
+    // `1.0.` ends in `0.`, but that `0` is itself preceded by a `.`: a dotted digit chain, not a
+    // standalone zero-integer decimal. The zero-integer test is anchored, not a suffix match.
+    const card = '4111111111111111'
+    const output = scan(`build 1.0.${card} done`, policy)
+
+    expect(output.result.action).toBe('block')
+    expect(output.result.detector).toBe('creditCard')
+    expect(output.result.redactedFingerprint).toBe(sha256hex16(card))
+  })
+
+  it('leaves the residual bypass open on purpose: a PAN as the fraction of a zero-integer decimal', () => {
+    // PINNED RESIDUAL, not an oversight. `0.4111111111111111` is lexically indistinguishable from
+    // the probability floats the suppression exists for, so the guardrail suppresses it too. It is
+    // named in the `isFractionalTail` doc block as the accepted residual, with the accepted cost.
+    // If a future change closes this, that is a deliberate retune: this test failing is the signal
+    // to update the doc alongside it, never to delete the case quietly.
+    const output = scan('ratio 0.4111111111111111 done', policy)
+
+    expect(output.result).toEqual({ action: 'pass' })
+    expect(output.fired).toEqual([])
   })
 
   it('blocks PEM private-key markers', () => {
