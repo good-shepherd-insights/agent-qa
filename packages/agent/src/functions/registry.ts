@@ -19,6 +19,7 @@ import { toSchemaProjection } from './declaration-projection.js'
 import type { FunctionBindingStatus } from './spec.js'
 import { agentAskSpec } from './ops/agent-ask.js'
 import { analysisGetSpec } from './ops/analysis-get.js'
+import { authoringVerifyDraftSpec } from './ops/authoring-verify-draft.js'
 import { configGetSpec } from './ops/config-get.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
@@ -180,6 +181,24 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // until a consumer exists: a registered entry nothing drives would still oblige 397's parity
   // suite to stub it on every surface.
   agentAskSpec as FunctionSpec,
+  // 2026-08-10 (393 D-01): a new `authoring.` domain, and the keep-filter's entry point. The four
+  // gates that decide whether a generated test is worth keeping are a CATALOGUED capability rather
+  // than a private power of whatever writes tests — so 393's corpus proof drives the real gated
+  // entry point (the produced-not-literal law), 396's MCP projection and 397's parity suite inherit
+  // it from this census with no harness change, and the standalone question ("is this existing test
+  // worth keeping?") is answerable from every surface.
+  //
+  // Bound through the OPTIONAL `draftEvaluation` bundle, whose binding site is `composeLocalAgent()`
+  // in `@vostride/agent-qa-agent-local` (385 D-15 — one composition root, therefore both the CLI and
+  // the daemon). The bundle is supplied only where the host can BOTH parse a test file and start a
+  // run, so a host missing either half lists this capability `unbound` BY NAME rather than leaving a
+  // hole in the catalogue — and rather than returning a receipt whose four booleans were computed
+  // from no runs at all, which is the one answer that could get a draft kept on the strength of
+  // nothing.
+  //
+  // Registering it does NOT flip 392's `write_test` fail-closed scenario: that tool name stays
+  // absent from the catalogue until 394 (D-01), and nothing here mints it.
+  authoringVerifyDraftSpec as FunctionSpec,
 ]
 
 /**

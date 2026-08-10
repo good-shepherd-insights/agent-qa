@@ -79,6 +79,16 @@ const ALLOWED_ID_DOMAINS = new Set([
   // the orchestrator itself a catalogued, gated capability rather than a power a REPL holds
   // privately. 396's MCP projection and 397's parity suite pick it up from this same census.
   'agent',
+  // 2026-08-10 (393 D-01): `authoring` is the SEVENTH taxonomy EXTENSION, on exactly the footing
+  // of the six above — counted from the dated notes in this literal: `knowledge` (2026-07-28),
+  // `entities`, `quarantine`, `proposals`, `grants`, `agent`. Writing a test is neither a run, a
+  // memory, an analysis, a quarantine entry, a proposal, a grant nor a conversation: it is the
+  // thing all of those are ABOUT, and filing the keep-gate evaluator under `tests.` would have
+  // conflated "verify this draft is worth keeping" with the suite-execution verbs D-15 reserved
+  // that domain for. The id itself is `authoring.draft.verify` and not `authoring.verify_draft`
+  // because the assertion below forbids an underscore, and `chat/tool-names.ts` refuses an id
+  // carrying the separator it maps onto — 397 folds this note with the six above it.
+  'authoring',
 ])
 
 /**
@@ -89,6 +99,13 @@ const ALLOWED_ID_DOMAINS = new Set([
  * the exact-equality assertion below is actually pinning.
  */
 const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
+  // 393 D-01: UNBOUND here because this fixture supplies no draft-evaluation bundle — a claim
+  // about the composition and not about the op, exactly like `agent.ask` below. `composeLocalAgent`
+  // binds it wherever the host can BOTH parse a test file and start a run, so both production hosts
+  // list it bound. A host missing either half must refuse by NAME rather than return a receipt whose
+  // four booleans were computed from no runs at all — a refusal wearing a verdict's clothes is the
+  // one answer that would let a draft be kept on the strength of nothing.
+  'authoring.draft.verify': 'unbound',
   // 392 D-24: UNBOUND here because this fixture supplies no turn engine — a claim about the
   // composition and not about the op, exactly like `analysis.get` below. `composeLocalAgent`
   // assembles one, so both production hosts list `agent.ask` as bound. A host with no engine must
@@ -193,6 +210,13 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // precedes the binding check, so a sample that failed the contract would make the
   // unbound-refusal leg report an input error and certify nothing about binding.
   'analysis.get': { runId: FIXTURE_RUN_ID },
+  // 393 D-01: a PARSING input for a capability this composition cannot run, on the reasoning every
+  // unbound row here shares — validation precedes the binding check, so a sample that failed the
+  // contract would make the unbound-refusal leg report an input error and certify nothing about
+  // binding. The path is well-formed, carries the extension the op requires, and names nothing in
+  // any fixture; `draftMode` is optional and omitted, because the unbound leg needs a parsing input
+  // and nothing more.
+  'authoring.draft.verify': { draftPath: 'tests/nothing-in-this-fixture.yaml' },
   'config.get': {},
   // 387: `resolve` takes any reference at all, so the sample is free text that matches
   // nothing — the fixture directory is empty and the honest answer is the none arm. `get`

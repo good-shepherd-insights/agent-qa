@@ -24,6 +24,7 @@ import type { z } from 'zod'
 
 import { agentAskSpec } from '../functions/ops/agent-ask.js'
 import { analysisGetSpec } from '../functions/ops/analysis-get.js'
+import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { grantsListSpec } from '../functions/ops/grants-list.js'
@@ -72,6 +73,13 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // object, which is exactly the shape a careless projection flattens — and flattening it would
   // leave 396's MCP catalogue unable to say that a turn refused before anything ran, the one
   // claim D-10's atomicity rests on.
+  // 393 D-01. Paired the day it is registered (the growth seam working as designed). Its OUTPUT is
+  // the draft receipt — four separately-named gate objects, a per-step classification table, a
+  // per-run record list and an adds-value finding — which is the deepest nesting in this map, and
+  // exactly the shape a careless projection flattens. Flattening it would leave 396's MCP catalogue
+  // unable to say that the four booleans are reported SEPARATELY, which is the literal text of
+  // WTST-02.
+  'authoring.draft.verify': authoringVerifyDraftSpec,
   'agent.ask': agentAskSpec,
   // 389 D-11. Paired the day it is registered (the growth seam working as designed): its
   // output is the first here carrying two parallel per-test arrays plus a nested cluster

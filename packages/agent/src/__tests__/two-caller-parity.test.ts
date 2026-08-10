@@ -201,6 +201,11 @@ const ALL_FUNCTION_IDS = [
   // siblings never had to — the non-read drop-out set stays exactly `runs.start` plus the
   // four knowledge-write verbs.
   'analysis.get',
+  // 393 D-01: one more id in SORT position (`authoring.` falls between `analysis.` and `config.`).
+  // It declares `run` AND `read`, so it is NON-read and drops out of safe-mode filtering with
+  // `runs.start` and the write verbs — the derived drop-out set below grows by one and the filter
+  // assertion keeps testing the RULE rather than a frozen list.
+  'authoring.draft.verify',
   'config.get',
   // 387 D-09: both read-tier, so both survive safe-mode filtering — which is what makes the
   // filter assertion below sharper rather than merely longer. `runs.start` is still the only

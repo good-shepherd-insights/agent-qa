@@ -537,6 +537,17 @@ describe('agent-qa fn (generic function invoker)', () => {
       // the composition root binds the artifact reader over `agentQaRoot` in every local
       // composition, so an artifact-less run answers the floor rather than a refusal.
       'analysis.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      // 393 D-01: the keep-gate evaluator. UNBOUND as of the registration commit and flipped to
+      // bound by this plan's Task 3 — the state is a fact about what THIS host was composed with,
+      // not a literal anyone chose, so the row moves when the composition does. It declares BOTH
+      // `run` and `read` because the evaluation starts gate-runs and reads their records back
+      // through the sibling ops (D-02, op-calls-op), which also makes it non-read and therefore
+      // filtered out of safe mode with `runs.start`.
+      'authoring.draft.verify': {
+        requiredScopes: ['run', 'read'],
+        resultKind: 'unary',
+        bindingStatus: 'unbound',
+      },
       'config.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.

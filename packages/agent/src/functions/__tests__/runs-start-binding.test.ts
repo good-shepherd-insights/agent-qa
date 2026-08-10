@@ -87,6 +87,13 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // 389 D-11: a PARSING input, because validation precedes the binding check — the empty
   // default fails the contract and reports an input error, certifying nothing about binding.
   'analysis.get': { runId: 'run-alpha' },
+  // 393 D-01: a PARSING input, and its extension is load-bearing beyond the reason its neighbours
+  // carry one. The contract requires a non-empty `draftPath`, so `{}` would report an input error;
+  // but the op ALSO refuses a path with no test-file extension before it consults the binding, so a
+  // path-shaped string with the wrong suffix would report `DraftNotAYamlFileError` and this case
+  // would read that as `dispatched` too. A parsing input is not enough here — it has to be one the
+  // op's own pure refusals let through.
+  'authoring.draft.verify': { draftPath: 'tests/nothing-in-this-fixture.yaml' },
   'runs.get': { runId: 'run-alpha' },
   'runs.events': { runId: 'run-alpha' },
   'runs.postprocessing': { runId: 'run-alpha' },
