@@ -142,10 +142,20 @@ export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
 // run-invocation work; until then, delegating to it is how the two agree by construction.
 //
 // What this file does NOT do is paper over the request fields the command cannot honour. A
-// scope override, an execution-context override and both durable markers are declared on the
-// op's input contract for later phases to wire (schema/functions/runs.ts). Accepting one and
-// dropping it would make the acknowledgment a lie in exactly the way its own contract warns
-// about, so an unhonourable field is a typed refusal instead.
+// scope override and an execution-context override are declared on the op's input contract for
+// later phases to wire (schema/functions/runs.ts). Accepting one and dropping it would make the
+// acknowledgment a lie in exactly the way its own contract warns about, so an unhonourable field
+// is a typed refusal instead.
+//
+// BOTH DURABLE MARKERS LEFT THAT LIST IN 393 (WTST-06), and the failure that took them out is worth
+// recording. `gateRun` / `excludedFromOutcomes` were carried end to end — `RunsStartInput` accepts
+// them, the runner stamps them onto the handoff, the outcome fold excludes a flagged handoff, and
+// the post-run tail copies them onto the analyze-run payload. Every piece existed EXCEPT the one in
+// the middle: this port re-enters `agent-qa run` as a child, and the command had no flag to carry a
+// marker, so the port refused the request. The consequence was not cosmetic — `authoring.draft.verify`
+// registered `bound` and could not take a single gate-run on a real CLI, which is to say the entire
+// keep-gate evaluator was unreachable at runtime. It was found by the first live invocation and by
+// nothing before it, because every earlier test of the op supplied its own run port.
 
 /** The request named a field this host cannot honour, so the request is refused rather than reshaped. */
 export class UnsupportedRunRequestError extends Error {
@@ -153,8 +163,8 @@ export class UnsupportedRunRequestError extends Error {
     super(
       `agent-qa cannot start a run with: ${unsupportedFields.join(', ')}. ` +
         'These fields are declared on the runs.start contract for the phases that wire them ' +
-        '(gateRun: 393, excludedFromOutcomes: 388, scope and executionContext: the run-invocation ' +
-        'work). Accepting one now would drop it silently and acknowledge a run of a different kind.',
+        '(scope and executionContext: the run-invocation work). Accepting one now would drop it ' +
+        'silently and acknowledge a run of a different kind.',
     )
     this.name = 'UnsupportedRunRequestError'
   }
@@ -211,9 +221,23 @@ export interface CreateCliRunExecutionInput {
 const UNSUPPORTED_REQUEST_FIELDS = [
   'scope',
   'executionContext',
-  'gateRun',
-  'excludedFromOutcomes',
 ] as const satisfies readonly (keyof RunsStartInput)[]
+
+/**
+ * The request fields this port CARRIES, as the child flags that express them (393, WTST-06).
+ *
+ * A TABLE rather than two `if`s, for the reason the refusal list above is a list: the two halves of
+ * "which fields does this port handle" then live beside each other, and a field added to
+ * `RunsStartInput` with no plan for carrying it appears in neither — which the refusal turns into a
+ * typed error rather than a silent drop.
+ *
+ * Only literal `true` sends the flag. The carriers are `?: true`, so `false` is a refusal rather
+ * than a synonym for absence, and a marker a caller did not assert must not reach the handoff.
+ */
+const MARKER_FLAGS = [
+  ['gateRun', '--gate-run'],
+  ['excludedFromOutcomes', '--excluded-from-outcomes'],
+] as const satisfies readonly (readonly [keyof RunsStartInput, string])[]
 
 function defaultLaunchChild(entry: string): RunChildLauncher {
   return ({ argv, env }) => new Promise<number>((resolve, reject) => {
@@ -316,6 +340,8 @@ export function createCliRunExecution(input: CreateCliRunExecutionInput): RunExe
           '--config',
           request.configPath ?? input.configPath,
           'run',
+          // BEFORE the operand separator, because they are options of `run` rather than patterns.
+          ...MARKER_FLAGS.flatMap(([field, flag]) => (request[field] === true ? [flag] : [])),
           // The operand separator, and it is load-bearing. `patterns` is caller-controlled and
           // unconstrained, and `run` takes its patterns in a VARIADIC OPERAND position — so
           // without this token a pattern that begins with a dash is parsed as one of `run`'s own

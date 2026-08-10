@@ -363,7 +363,7 @@ function resolveDashboardVideoDir(
   return resolvePath(configDir, RUNTIME_VIDEOS_DIR)
 }
 
-interface RunOptions {
+export interface RunOptions {
   browser?: string
   platform?: string
   buildTag?: string
@@ -387,6 +387,25 @@ interface RunOptions {
   runAttr?: string[]
   trustSession?: boolean
   detach?: boolean
+  gateRun?: boolean
+  excludedFromOutcomes?: boolean
+}
+
+/**
+ * The two durable run markers, as the conditional spread `RunConfig` expects (393, WTST-06).
+ *
+ * ONE spelling for BOTH `startRun` sites (the suite path and the single-run path). Pitfall 8's rule
+ * applied to markers: a second literal spread would be a second place for the two paths to disagree
+ * about whether a run was a gate-run, and the fold's exclusion reads the handoff either path wrote.
+ *
+ * Only literal `true` marks; a `false` or an absent flag leaves the field ABSENT, which is what the
+ * carriers' `?: true` type and `AnalyzeRunPayloadSchema`'s refusal of a literal `false` both require.
+ */
+export function runMarkers(opts: RunOptions): { gateRun?: true; excludedFromOutcomes?: true } {
+  return {
+    ...(opts.gateRun === true ? { gateRun: true as const } : {}),
+    ...(opts.excludedFromOutcomes === true ? { excludedFromOutcomes: true as const } : {}),
+  }
 }
 
 const SUPPORTED_REPORTERS = ['console', 'junit', 'stdout-live', 'dashboard'] as const
@@ -2273,6 +2292,7 @@ async function executeSuites(
         executor,
         masking: maskingContext,
         ports: { ...runPorts, confirmPausedMs },
+        ...runMarkers(opts),
         ...(baselineProbe !== undefined ? { baselineProbe } : {}),
         ...(quarantined.length > 0 ? { quarantined } : {}),
       })
@@ -2380,6 +2400,17 @@ export function createRunCommand(): Command {
     .option('--run-attr <kv...>', 'attach run attribute KEY=VALUE; repeatable')
     .option('--trust-session', 'treat every ask-tier policy decision in this session as trusted (execution-safety §2.3 session.trustMode; explicit opt-in, session-scoped)')
     .option('--detach', 'skip the post-verdict knowledge curation tail')
+    // 393 WTST-06: the two durable run markers, as flags, because a run started through
+    // `runs.start` is executed by re-entering THIS command as a child process — so a marker with no
+    // flag has no way to reach the handoff, and `authoring.draft.verify` cannot take a gate-run at
+    // all. They are DISTINCT axes and each is its own flag: C8 ratifies that a gate-run still feeds
+    // curation, so a caller that wants the verify-before-present marker without the outcome
+    // exclusion (or the reverse) must be able to say so.
+    .option('--gate-run', 'mark this run as a verify-before-present gate-run (D-10 carrier)')
+    .option(
+      '--excluded-from-outcomes',
+      'exclude this run from the outcome projection: no flake counters, no exemplar ranking, no quarantine window (D-14 §6)',
+    )
     .action(async (patterns: string[], opts: RunOptions, command: Command) => {
       let _crashDb: any
       try {
@@ -3544,6 +3575,7 @@ export function createRunCommand(): Command {
               executor,
               masking: maskingContext,
               ports: { ...singleRunPorts, confirmPausedMs },
+              ...runMarkers(opts),
               ...(singleBaselineProbe !== undefined ? { baselineProbe: singleBaselineProbe } : {}),
               ...(singleQuarantined.length > 0 ? { quarantined: singleQuarantined } : {}),
             })

@@ -60,12 +60,38 @@ function writeRunEvents(workspace: FixtureWorkspace, runId: string): void {
   for (const envelope of envelopes) log.append(envelope)
 }
 
-function writeRunHandoff(workspace: FixtureWorkspace, runId: string): CompletedRunHandoff {
+/**
+ * The markers the simulated `run` command would have stamped, DERIVED FROM THE CHILD'S ARGV.
+ *
+ * 393/WTST-06: the port carries `gateRun` / `excludedFromOutcomes` by passing flags to the child,
+ * and the real command turns those flags into `RunConfig` markers that `assembleHandoff` copies
+ * onto the handoff. Deriving them here from the argv the port actually produced is what makes the
+ * marker cases below a test of the RUNWAY rather than of a fixture: a handoff written with the
+ * markers hard-coded would echo them back no matter what the port sent.
+ */
+function markersFromArgv(argv: readonly string[]): {
+  gateRun?: true
+  excludedFromOutcomes?: true
+} {
+  const separator = argv.indexOf('--')
+  const options = separator === -1 ? argv : argv.slice(0, separator)
+  return {
+    ...(options.includes('--gate-run') ? { gateRun: true as const } : {}),
+    ...(options.includes('--excluded-from-outcomes') ? { excludedFromOutcomes: true as const } : {}),
+  }
+}
+
+function writeRunHandoff(
+  workspace: FixtureWorkspace,
+  runId: string,
+  markers: { gateRun?: true; excludedFromOutcomes?: true } = {},
+): CompletedRunHandoff {
   const document: CompletedRunHandoff = {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: runId as RunId,
     scope: { tier: 'product', key: 'shop' },
     buildOrdinal: 7,
+    ...markers,
     executionContext: 'local-headless',
     aggregateVerdict: 'passed',
     configDigests: { suiteConfigDigest: 'suite-digest', testConfigDigest: 'test-digest' },
@@ -107,7 +133,9 @@ function launcher(
       launches.push({ argv: [...argv], runIdInEnv: runId })
       if (runId !== undefined && writes !== 'nothing') {
         writeRunEvents(workspace, runId)
-        if (writes === 'events-and-handoff') writeRunHandoff(workspace, runId)
+        if (writes === 'events-and-handoff') {
+          writeRunHandoff(workspace, runId, markersFromArgv(argv))
+        }
       }
       return Promise.resolve(0)
     },
@@ -383,6 +411,72 @@ describe('agent-qa fn runs.start', () => {
     // Refused BEFORE anything ran: a dropped field would otherwise have produced a real run
     // of a different kind than the one that was asked for.
     expect(child.launches()).toEqual([])
+  })
+
+  // ---------------------------------------------------------------------------------------
+  // 393 / WTST-06 — the two durable run markers, end to end through this port.
+  //
+  // This port re-enters `agent-qa run` as a child process, so a marker that has no flag has no
+  // way to reach the handoff. Until 393 both markers were REFUSED here, which meant every piece
+  // of the flag runway existed except the one in the middle and `authoring.draft.verify` could
+  // not take a single gate-run on a real CLI. Found by the first live invocation of the op.
+  // ---------------------------------------------------------------------------------------
+
+  it('carries both durable markers to the run child as flags, and echoes them off the record', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const child = launcher(workspace, 'events-and-handoff')
+
+    const result = await invoke(
+      workspace,
+      ['runs.start', '--input', '{"gateRun":true,"excludedFromOutcomes":true}', '--json'],
+      { launch: child.launch },
+    )
+
+    expect(result.exitCode).toBeUndefined()
+    const argv = child.launches()[0]?.argv ?? []
+    expect(argv).toContain('--gate-run')
+    expect(argv).toContain('--excluded-from-outcomes')
+    // BEFORE the operand separator, or `run` would read them as patterns rather than as options.
+    expect(argv.indexOf('--gate-run')).toBeLessThan(argv.indexOf('--'))
+    expect(argv.indexOf('--excluded-from-outcomes')).toBeLessThan(argv.indexOf('--'))
+    // And the acknowledgment echoes them off the DURABLE RECORD the child wrote, not off the
+    // request — which is the property `runStabilityGates` confirms a gate-run with.
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      gateRun: true,
+      excludedFromOutcomes: true,
+    })
+  })
+
+  it('sends only the marker the request asserted — the two are distinct axes (C8)', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const child = launcher(workspace, 'events-and-handoff')
+
+    const result = await invoke(
+      workspace,
+      ['runs.start', '--input', '{"gateRun":true}', '--json'],
+      { launch: child.launch },
+    )
+
+    const argv = child.launches()[0]?.argv ?? []
+    expect(argv).toContain('--gate-run')
+    expect(argv).not.toContain('--excluded-from-outcomes')
+    const acknowledgement = JSON.parse(result.stdout) as Record<string, unknown>
+    expect(acknowledgement.gateRun).toBe(true)
+    expect(acknowledgement.excludedFromOutcomes).toBeUndefined()
+  })
+
+  it('sends neither flag for an ordinary run', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const child = launcher(workspace, 'events-and-handoff')
+
+    const result = await invoke(workspace, ['runs.start', '--json'], { launch: child.launch })
+
+    const argv = child.launches()[0]?.argv ?? []
+    expect(argv).not.toContain('--gate-run')
+    expect(argv).not.toContain('--excluded-from-outcomes')
+    const acknowledgement = JSON.parse(result.stdout) as Record<string, unknown>
+    expect(acknowledgement.gateRun).toBeUndefined()
+    expect(acknowledgement.excludedFromOutcomes).toBeUndefined()
   })
 
   it('routes the run at the config the request names, not only the one the flag named', async () => {
