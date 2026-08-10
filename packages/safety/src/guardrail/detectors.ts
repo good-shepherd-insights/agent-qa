@@ -122,8 +122,16 @@ function normalizeCardCandidate(candidate: string): string {
  * `card: 4111 1111 1111 1111` and a bare PAN at the start of a line.
  */
 function isFractionalTail(text: string, start: number): boolean {
-  return start >= 2 && text[start - 1] === '.' && text.charCodeAt(start - 2) >= 48
-    && text.charCodeAt(start - 2) <= 57
+  if (start < 2 || text[start - 1] !== '.' || text[start - 2] !== '0') {
+    return false
+  }
+
+  if (start === 2) {
+    return true
+  }
+
+  const preceding = text[start - 3] as string
+  return preceding !== '.' && !/[A-Za-z0-9_]/.test(preceding)
 }
 
 function matchCreditCards(text: string): GuardrailMatch[] {

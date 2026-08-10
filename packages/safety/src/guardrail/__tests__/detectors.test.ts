@@ -107,6 +107,10 @@ describe('guardrail scan', () => {
   // reject direction below, and the accept direction in the confidence-float case above.
   // ------------------------------------------------------------------------------------------
 
+  // The fingerprint is taken over the CANDIDATE SPAN, and `CREDIT_CARD_CANDIDATE_RE`'s trailing
+  // `[ -]?` greedily absorbs the separator after the last digit — measured, so a PAN followed by a
+  // space fingerprints as `<digits> `, not `<digits>`. That is pre-existing candidate-regex
+  // behaviour, untouched here; these controls assert the span the guardrail actually reports.
   it('blocks a Luhn-valid PAN written behind a nonzero integer part', () => {
     // THE headline measured false negative. `1.` is a decimal point, but not a zero-integer one.
     const card = '4111111111111111'
@@ -117,7 +121,7 @@ describe('guardrail scan', () => {
     expect(output.result).toEqual({
       action: 'block',
       detector: 'creditCard',
-      redactedFingerprint: sha256hex16(card),
+      redactedFingerprint: sha256hex16(`${card} `),
     })
   })
 
@@ -130,7 +134,7 @@ describe('guardrail scan', () => {
 
     expect(output.result.action).toBe('block')
     expect(output.result.detector).toBe('creditCard')
-    expect(output.result.redactedFingerprint).toBe(sha256hex16(card))
+    expect(output.result.redactedFingerprint).toBe(sha256hex16(`${card} `))
   })
 
   it('blocks a Luhn-valid PAN inside a dotted version-style chain', () => {
@@ -141,7 +145,7 @@ describe('guardrail scan', () => {
 
     expect(output.result.action).toBe('block')
     expect(output.result.detector).toBe('creditCard')
-    expect(output.result.redactedFingerprint).toBe(sha256hex16(card))
+    expect(output.result.redactedFingerprint).toBe(sha256hex16(`${card} `))
   })
 
   it('leaves the residual bypass open on purpose: a PAN as the fraction of a zero-integer decimal', () => {
