@@ -374,8 +374,13 @@ export interface LocalCurationCapabilities {
   /**
    * THE mechanism a version bump rides (393 CR-02). The per-run receipt below carries the
    * version, but invalidating receipts only re-runs folds that answer 'already-applied' on the
-   * durable marker — so the refold the bump promises happens HERE, through a rebuild of the
-   * derived family, or it does not happen at all.
+   * durable marker — so the refold a bump promises happens through THIS capability, as a rebuild
+   * of the derived family, and nowhere else.
+   *
+   * It is invoked at exactly two sites, one per supported host (393 round 6, CR-02-daemon): once
+   * per CLI curation-tail sweep, and once per daemon lease acquisition. Both, because the CLI
+   * tail is unreachable whenever a standing daemon takes the hand-off — a promise true of one
+   * host is, on the other host, a projection that never converges.
    */
   readonly reconcileRunOutcomesProjection: typeof reconcileRunOutcomesProjection
   readonly enqueueCurationCandidateProjection: typeof enqueueCurationCandidateProjection

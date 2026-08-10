@@ -43,10 +43,13 @@ import { createShutdownController } from '../commands/shutdown-controller.js'
 import {
   completedRunDir,
   completedRunHandoffPath,
+  completedRunsRoot,
   createCurationAuditSink,
   curateCompletedRun,
   defaultCurationTailOperations,
+  type CurationTailOperations,
 } from '../curation/curation-tail.js'
+import { exercisedAnchors } from '../curation/handoff-anchors.js'
 import {
   appendDrainSessionReceipt,
   type DrainSessionReceipt,
@@ -207,6 +210,14 @@ export interface DaemonHostOperations {
   acquireEmbedder: typeof LOCAL_DAEMON_CAPABILITIES.acquireEmbedder
   drainQueue: typeof LOCAL_DAEMON_CAPABILITIES.drainQueue
   runMaintenanceTail: typeof LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail
+  /**
+   * The 393 CR-02 projection-version backfill, on THIS host too (round 6, CR-02-daemon). Typed
+   * from the curation-tail operations member it mirrors and default-wired from the same
+   * `defaultCurationTailOperations()` the daemon already imports, so the two hosts invoke ONE
+   * body: the daemon reaches the projection module through the tail's composition, never by a
+   * new import edge of its own.
+   */
+  reconcileRunOutcomesProjection: CurationTailOperations['reconcileRunOutcomesProjection']
   /**
    * The D-06 entity-index sweep. Lease-free by contract: it writes only the projection's own
    * database file, so it is registered on its own cadence and never inside the lease-gated
@@ -369,6 +380,8 @@ function defaultOperations(): DaemonHostOperations {
     acquireEmbedder: LOCAL_DAEMON_CAPABILITIES.acquireEmbedder,
     drainQueue: LOCAL_DAEMON_CAPABILITIES.drainQueue,
     runMaintenanceTail: LOCAL_DAEMON_CAPABILITIES.runMaintenanceTail,
+    reconcileRunOutcomesProjection:
+      defaultCurationTailOperations().reconcileRunOutcomesProjection,
     sweepEntityIndexProjection,
     appendDrainSessionReceipt,
     resolveEmbedderWorkerEntryPath: LOCAL_DAEMON_CAPABILITIES.resolveEmbedderWorkerEntryPath,
@@ -1838,6 +1851,46 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     operations.trace?.('claims-recovered')
     recovery.close()
     recovery = undefined
+
+    // 393 round 6 / CR-02-daemon: ONCE per acquired lease, here.
+    //
+    // The CLI tail reconciles once per sweep — but `runCurationTail` is unreachable whenever the
+    // drain hands off, which is every run's posture while this daemon stands. So a daemon-hosted
+    // project's `suite_fingerprints` stayed empty forever and gate 3 silently read a degraded
+    // substrate. Once per acquired lease IS the daemon's once-per-sweep analog: it is the one
+    // moment per host lifetime at which this process has just become the writer, which is the
+    // authority a destructive rebuild needs. THIS PROCESS HOLDS THE LEASE HERE (the `acquired`
+    // above), so the rebuild runs under the same authority posture as the tail's without
+    // re-acquiring — the 387-08 D-18 shape, where a holder that re-acquires is told `held` by
+    // itself. Not inside the `curate-memory` handler below: per job it would put a destructive
+    // rebuild candidate on every fold. Keeping it here is also what keeps that handler's
+    // two-hosts-one-body invariant true one layer up, where 393-14 first broke it.
+    //
+    // ISOLATED, on the tail's reasoning: a daemon that cannot reconcile must still serve, so a
+    // throw is one logged line and startup continues. The 'rebuilt' arm logs its counts because a
+    // silent rebuild of the derived index is exactly the work an operator should see happen.
+    try {
+      // `completedRunsRoot` rather than a local join: the FUNC-02 surface firewall forbids this
+      // file from naming `@vostride/agent-qa-runner-local`, and `RUNS_SUBDIR` must stay the ONE
+      // spelling of 'runs' rather than a literal copied into a second host.
+      const reconcile = operations.reconcileRunOutcomesProjection({
+        knowledgeRoot: input.knowledgeRoot,
+        runsRoot: completedRunsRoot(input.agentQaRoot),
+        extractAnchors: exercisedAnchors,
+      })
+      if (reconcile.kind === 'rebuilt') {
+        logger.info(
+          'daemon: run-outcome projection rebuilt '
+          + `(folded ${reconcile.report.folded}, skipped ${reconcile.report.skipped})`,
+        )
+      }
+    } catch (error) {
+      logger.error(
+        'Daemon startup: the run-outcome projection rebuild failed partway; the projection family'
+        + ' is left unstamped and possibly partially rebuilt, and the next reconcile will rebuild'
+        + ` it again. Continuing to serve. (${error instanceof Error ? error.message : String(error)})`,
+      )
+    }
 
     const draftAuthoring = await resolveDraftAuthoring(input.configPath)
     localAgent = operations.composeLocalAgent({

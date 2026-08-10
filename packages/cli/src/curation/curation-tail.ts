@@ -184,6 +184,17 @@ export function completedRunHandoffPath(agentQaRoot: string, runId: string): str
 }
 
 /**
+ * The runs SCAN root — the same derivation minus the per-run leaf, published on exactly the terms
+ * above (393 round 6, CR-02-daemon). The daemon host needs it to reconcile the run-outcome
+ * projection once per acquired lease, and the surface firewall forbids that file from naming
+ * `@vostride/agent-qa-runner-local` at all; publishing here is what keeps `RUNS_SUBDIR` the single
+ * spelling of 'runs' instead of a literal copied into a second host.
+ */
+export function completedRunsRoot(agentQaRoot: string): string {
+  return join(agentQaRoot, RUNS_SUBDIR)
+}
+
+/**
  * The run's own event log, published for the same reason and on the same terms (388-04).
  *
  * `EVENTS_FILE` is the runner-local constant the writer that CREATED this file used, so the
@@ -200,7 +211,7 @@ export function createCurationAuditSink(agentQaRoot: string): AuditSink {
 }
 
 function listCompletedRunDirs(agentQaRoot: string): string[] {
-  const runsRoot = join(agentQaRoot, RUNS_SUBDIR)
+  const runsRoot = completedRunsRoot(agentQaRoot)
   if (!existsSync(runsRoot)) return []
   return readdirSync(runsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -768,7 +779,7 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
   try {
     const reconcile = operations.reconcileRunOutcomesProjection({
       knowledgeRoot,
-      runsRoot: join(opts.agentQaRoot, RUNS_SUBDIR),
+      runsRoot: completedRunsRoot(opts.agentQaRoot),
       extractAnchors: exercisedAnchors,
     })
     if (reconcile.kind === 'rebuilt') {
