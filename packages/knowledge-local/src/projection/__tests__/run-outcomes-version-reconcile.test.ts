@@ -535,16 +535,17 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
-  it('refuses to stamp when a write-layer throw aborts the rebuild, and self-heals next sweep (CR-01-WIDENED)', () => {
+  it('refuses to stamp when a PROJECTION-layer throw aborts the rebuild, and self-heals next sweep (CR-01-WIDENED, projection half)', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
 
-    // The injected projection seam stands in for ANY write-layer failure inside the rebuild loop —
-    // SQLITE_BUSY past the writer timeout, ENOSPC, a constraint error. It is driven from the one
-    // seam this function already accepts, so the cell exercises the SHIPPING loop rather than a
-    // parallel copy of it. By the time it fires the family has already been DELETEd, which is the
+    // The injected seam is consumed by `testDelta` inside `projectRunOutcomes` — a PURE computation
+    // that completes BEFORE `applyRunOutcomes` is ever called — so what this cell pins is the
+    // PROJECTION half of the boundary: a throw raised while computing, after the DELETEs. It does
+    // not stand in for a write-layer failure; the trigger cell below holds that half (393 round 7,
+    // measured by mutation). By the time it fires the family has already been DELETEd, which is the
     // whole question: what does the module do with a family it has destroyed and cannot rebuild?
     const throwingAnchors = (): never[] => {
-      throw new Error('write layer refused')
+      throw new Error('projection layer refused')
     }
 
     // (i) It PROPAGATES. A per-run catch this wide counts the throw as a skip and walks on to the
@@ -553,7 +554,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
       knowledgeRoot,
       runsRoot,
       extractAnchors: throwingAnchors,
-    })).toThrow('write layer refused')
+    })).toThrow('projection layer refused')
 
     // (ii) NO stamp — the prohibition. `suite_fingerprints` is the substrate gate 3's
     // `elementUnion()` decides on, so an EMPTY family stamped CURRENT is not a degraded answer,
@@ -581,6 +582,107 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
+  it('refuses to stamp when the WRITE itself fails: a trigger on run_outcome_applied_runs aborts applyRunOutcomes (frozen item 6c)', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project()
+
+    // Driven from OUTSIDE the module's own seams. A trigger is a persisted schema object, so the
+    // reconcile's OWN connection hits it when `applyRunOutcomes` reaches its marker INSERT, inside
+    // that function's own `BEGIN IMMEDIATE`. A pure-path throw therefore cannot satisfy this cell —
+    // which is the property the projection cell above was measured NOT to have (393 frozen item 6c).
+    withIndex(knowledgeRoot, (db) => {
+      db.exec(
+        `CREATE TRIGGER refuse_applied_runs_insert BEFORE INSERT ON run_outcome_applied_runs
+         BEGIN SELECT RAISE(ABORT, 'write path refused'); END;`,
+      )
+    })
+
+    // (i) It PROPAGATES. The matched string is the trigger's own injected text and appears nowhere
+    // in the module, so the assertion cannot pass off static wording.
+    expect(() => reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }))
+      .toThrow('write path refused')
+
+    // (ii) NO stamp, and gate 3's substrate is left empty rather than empty-AND-current.
+    withIndex(knowledgeRoot, (db) => {
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all()).toEqual([])
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(0)
+    })
+
+    // (iii) The write path recovers, and the next sweep heals the family it destroyed.
+    withIndex(knowledgeRoot, (db) => db.exec('DROP TRIGGER refuse_applied_runs_insert'))
+
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+
+    withIndex(knowledgeRoot, (db) => {
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion()
+        .has(CHECKOUT_ELEMENT)).toBe(true)
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all())
+        .toEqual([{ id: 1, version: RUN_OUTCOMES_PROJECTION_VERSION }])
+    })
+  })
+
+  it('propagates a host fault reading handoff.json: no stamp, and the healed sweep rebuilds the family (CR-01-READ)', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project()
+
+    // A DIRECTORY where the document belongs: `readFileSync` throws EISDIR, an errno-coded
+    // non-ENOENT host fault. Root-proof where `chmod 000` is inert, and it still satisfies the
+    // scan's `existsSync` filter, so the run is visited and the read genuinely attempted.
+    const handoffPath = join(runsRoot, '001-checkout', 'handoff.json')
+    rmSync(handoffPath)
+    mkdirSync(handoffPath)
+
+    expect(() => reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }))
+      .toThrow(/EISDIR/)
+
+    withIndex(knowledgeRoot, (db) => {
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all()).toEqual([])
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(0)
+    })
+
+    rmSync(handoffPath, { recursive: true })
+    writeFileSync(handoffPath, JSON.stringify(HISTORICAL_RUNS[0]))
+
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+
+    withIndex(knowledgeRoot, (db) => {
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion()
+        .has(CHECKOUT_ELEMENT)).toBe(true)
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all())
+        .toEqual([{ id: 1, version: RUN_OUTCOMES_PROJECTION_VERSION }])
+    })
+  })
+
+  it('propagates a host fault reading analysis.json: no stamp, and the healed sweep rebuilds the family (CR-01-READ)', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project()
+
+    // The sibling-input law: ONE fault primitive, BOTH documents. The run carries a directory where
+    // its artifact belongs, so `loadRunArtifact`'s `readFileSync` throws EISDIR and the loader
+    // rethrows it (non-ENOENT) into the per-run artifact catch that owns the skip decision.
+    const artifactPath = join(runsRoot, '001-checkout', ANALYSIS_FILE)
+    mkdirSync(artifactPath)
+
+    expect(() => reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }))
+      .toThrow(/EISDIR/)
+
+    withIndex(knowledgeRoot, (db) => {
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all()).toEqual([])
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size).toBe(0)
+    })
+
+    // Healed by removal: an ABSENT artifact is legitimate, so the run folds handoff-only.
+    rmSync(artifactPath, { recursive: true })
+
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+
+    withIndex(knowledgeRoot, (db) => {
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion()
+        .has(CHECKOUT_ELEMENT)).toBe(true)
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all())
+        .toEqual([{ id: 1, version: RUN_OUTCOMES_PROJECTION_VERSION }])
+    })
+  })
 
   it('reads a VALID analysis.json through the reconcile-driven rebuild (WR-06, the other half)', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project({
