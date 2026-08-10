@@ -60,6 +60,8 @@ import type {
 } from '../quarantine/ledger.js'
 import { fingerprintRecurrence, windowFloor } from './fingerprint-window-read.js'
 import { readTestOutcomeHistory } from './run-outcome-read.js'
+import { applySuiteFingerprints, suiteFingerprintDeltas } from './suite-fingerprints.js'
+import type { SuiteFingerprintTestDelta } from './suite-fingerprints.js'
 
 /**
  * Stamped into the curation-tail receipt's projection component. Bump when the fold
@@ -69,8 +71,17 @@ import { readTestOutcomeHistory } from './run-outcome-read.js'
  * RESOLVED verdicts instead of the handoff's deterministic floor, adds the fingerprint-keyed
  * recurrence window, and deletes the provisional derived `quarantined` column — the derived
  * index is gitignored and rebuildable (L12), so this bump IS the migration.
+ * Version 4 (393 D-15) makes this one fold pass ALSO populate the suite-fingerprint table gate 3
+ * compares drafts against, so an already-receipted run must refold to contribute its elements.
+ * Same argument, same L12 ground: no data script exists or is needed.
+ *
+ * NOT the case argued at `cli/src/commands/run.ts:1949` (390-08 D-01), where a bump was
+ * deliberately declined: there the rebuild would have replayed stored handoffs carrying the OLD
+ * identities, landing in the same mixed state the bump was meant to clear. Here the new table has
+ * no historical rows at all, and every row it will hold is derivable from evidence the stored
+ * handoffs already carry — so the refold produces the complete answer rather than a mixed one.
  */
-export const RUN_OUTCOMES_PROJECTION_VERSION = 3
+export const RUN_OUTCOMES_PROJECTION_VERSION = 4
 
 /**
  * PROVISIONAL last-N window for per-test outcome history (~10 pending ABRF-02 ranking
@@ -144,6 +155,13 @@ export interface RunOutcomesProjection {
   buildOrdinal: number
   excluded: boolean
   tests: RunOutcomeTestDelta[]
+  /**
+   * The suite-fingerprint deltas for the SAME members (393 D-15). They travel on this projection
+   * rather than being folded by a second pass so that one traversal of the handoff produces both
+   * tables, one transaction commits them, and one applied-runs marker covers them — which is what
+   * makes rebuild parity structural instead of asserted.
+   */
+  fingerprints: SuiteFingerprintTestDelta[]
 }
 
 export type ApplyRunOutcomesResult =
@@ -362,12 +380,16 @@ export function projectRunOutcomes(
   const partition = projectionPartition(handoff.scope)
   const excluded = handoff.excludedFromOutcomes === true
   const resolvedClasses = resolveProjectionClasses(handoff, opts.artifact)
-  const tests = excluded
-    ? []
-    : (handoff.tests ?? []).flatMap((test) => {
-        const delta = testDelta(test, opts.extractAnchors, resolvedClasses)
-        return delta === undefined ? [] : [delta]
-      })
+  // THE ONE EXCLUSION GATE, and every projection below is computed from its output (393 D-15 /
+  // WTST-06). A flagged gate-run reaches no counter, no anchor row, no fingerprint element,
+  // because after this line there are no members to reach them with. A second gate — one per
+  // table — would be the shape in which the two could eventually disagree about the same run,
+  // which is exactly Pitfall 8: a gate-run seeding the union it is later compared against.
+  const members = excluded ? [] : (handoff.tests ?? [])
+  const tests = members.flatMap((test) => {
+    const delta = testDelta(test, opts.extractAnchors, resolvedClasses)
+    return delta === undefined ? [] : [delta]
+  })
   return {
     product: partition.product,
     scope: { tier: partition.scopeTier, key: partition.scopeKey },
@@ -375,6 +397,7 @@ export function projectRunOutcomes(
     buildOrdinal: handoff.buildOrdinal,
     excluded,
     tests,
+    fingerprints: suiteFingerprintDeltas(members),
   }
 }
 
@@ -518,6 +541,16 @@ export function applyRunOutcomes(
         )
       }
     }
+    // 393 D-15: the suite-fingerprint rows commit in the SAME transaction and behind the SAME
+    // applied-runs marker as the counters, on the 390 D-07 precedent one paragraph up. The write
+    // is convergent on its own (newest `(buildOrdinal, runId)` wins), so the marker is what makes
+    // the two tables describe one history rather than what makes this idempotent.
+    applySuiteFingerprints(db, {
+      product: projection.product,
+      runId: projection.runId,
+      buildOrdinal: projection.buildOrdinal,
+      tests: projection.fingerprints,
+    })
     db.prepare('INSERT INTO run_outcome_applied_runs (product, run_id) VALUES (?, ?)')
       .run(projection.product, projection.runId)
     db.exec('COMMIT')
@@ -615,6 +648,7 @@ export function rebuildRunOutcomes(
     DELETE FROM run_test_anchors;
     DELETE FROM run_outcome_applied_runs;
     DELETE FROM run_fingerprint_windows;
+    DELETE FROM suite_fingerprints;
   `)
 
   const report: RebuildRunOutcomesReport = { folded: 0, skipped: 0 }

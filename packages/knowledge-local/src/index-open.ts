@@ -447,6 +447,7 @@ export function ensureRunOutcomeTables(db: DatabaseSync): void {
       DROP TABLE IF EXISTS run_test_anchors;
       DROP TABLE IF EXISTS run_outcome_applied_runs;
       DROP TABLE IF EXISTS run_fingerprint_windows;
+      DROP TABLE IF EXISTS suite_fingerprints;
     `)
   }
 
@@ -491,6 +492,21 @@ export function ensureRunOutcomeTables(db: DatabaseSync): void {
       build_ordinal INTEGER NOT NULL,
       run_id TEXT NOT NULL,
       UNIQUE (product, file_path, test_name, fingerprint, build_ordinal, run_id)
+    );
+
+    -- 393 D-15: gate 3's comparison substrate, folded by the same pass and cleared by the same
+    -- rebuild as the tables above. One row per fingerprint element, ordered by seq, keyed by the
+    -- stable test identity; run_id and build_ordinal are the provenance the fold's
+    -- newest-evidence-wins replacement rule compares on (see projection/suite-fingerprints.ts).
+    CREATE TABLE IF NOT EXISTS suite_fingerprints (
+      product TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      test_name TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      element TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      build_ordinal INTEGER NOT NULL,
+      PRIMARY KEY (product, file_path, test_name, seq)
     );
   `)
 }

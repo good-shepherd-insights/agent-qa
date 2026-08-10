@@ -169,6 +169,10 @@ describe('createAuthoringReader through the public barrels (375-08 idiom)', () =
         flake: false,
         anchorKeys: [canonicalJson(normalizeAnchor(LOGIN_PAGE))],
       }],
+      // 393 D-15: this fixture seeds the OUTCOME counters only. The suite-fingerprint deltas ride
+      // the same projection now, and an empty list is the honest value for a hand-built projection
+      // that carries no step evidence to derive elements from.
+      fingerprints: [],
     }
     const writer = openIndexWriter(knowledgeRoot)
     try {
