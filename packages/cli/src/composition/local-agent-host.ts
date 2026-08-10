@@ -20,6 +20,8 @@
 // can never join it. This file already carries that entry, so the placement mints none.
 
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -29,14 +31,26 @@ import type {
   StartedRun,
 } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
-import type { CandidateProsePosture, ComposeLocalAgentInput, LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-local'
+import type {
+  CandidateProsePosture,
+  ComposeLocalAgentInput,
+  DraftAuthoringPort,
+  DraftParseOutcome,
+  LocalAgentHost,
+  RunExecutionPort,
+  SuiteTextEntry,
+} from '@vostride/agent-qa-agent-local'
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import {
   AgentQaConfigSchema,
+  discoverWorkspaceFiles,
   generateRunId,
+  parseTestFile,
   resolveKnowledgeRoot,
+  resolveWorkspacePaths,
   workspaceRelativeIdentityPath,
 } from '@vostride/agent-qa-core'
+import type { TestDefinition } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
 import { KnowledgeApplyOutcomeSchema } from '@vostride/agent-qa-schema'
 import type {
@@ -477,6 +491,149 @@ export function createQuarantineIdentityMint(configPath: string): (filePath: str
 }
 
 /**
+ * A parsed test's NL step text, pre-interpolation.
+ *
+ * PRE-interpolation and never post: a resolved step can carry the value a `${VAR}` expanded to, and
+ * both the receipt's step table and gate 3's text lane are read by humans and stored on disk
+ * (D-19 / T-393-02). The parser's step is `string | { step, ... }`; the object form's own `step`
+ * field is the same sentence, so both narrow to one text.
+ */
+function draftStepTexts(test: TestDefinition): string[] {
+  return test.steps.map((step) => (typeof step === 'string' ? step : step.step))
+}
+
+/**
+ * The one test in a draft file, or the reason there is not one.
+ *
+ * A draft is ONE test. A file holding several is refused rather than silently evaluated on its
+ * first document: the receipt keys on the draft's identity and its digest covers the whole file, so
+ * a multi-test file would produce a receipt whose verdict names one test and whose bytes cover
+ * several — and the author would have no way to tell which one was kept.
+ */
+function singleDraftTest(tests: readonly TestDefinition[]): TestDefinition | string {
+  if (tests.length === 0) return 'the file parses but holds no test document'
+  if (tests.length > 1) {
+    return `the file holds ${tests.length} tests; a draft is one test, evaluated as one`
+  }
+  return tests[0] as TestDefinition
+}
+
+/**
+ * The host half of `authoring.draft.verify` (393 D-01), pre-bound to one workspace.
+ *
+ * IT LIVES IN THIS FILE ON PURPOSE, for the reason the identity mint above and the run-id minting
+ * before it already state: both verbs need `@vostride/agent-qa-core` — `parseTestFile`,
+ * `workspaceRelativeIdentityPath`, `resolveWorkspacePaths`/`discoverWorkspaceFiles` — the FUNC-02
+ * surface firewall forbids a `packages/cli` file naming core without an exact (file, specifier)
+ * ledger entry, and that ledger only ever SHRINKS: new surface code can never join it. This file
+ * already carries the entry (cleared by 395), so the placement mints no new debt. The daemon host
+ * reaches this factory through the same deferred import it already uses for the run executor and
+ * the identity mint.
+ *
+ * THE BOUNDARY CHECK IS `workspaceRelativeIdentityPath` AND NOTHING ELSE (T-393-01). It resolves
+ * the caller's path against the checkout root and THROWS when the result escapes, so the refusal
+ * and the identity are the same computation — a draft whose identity cannot be minted is exactly a
+ * draft that is not in this workspace, and there is no second rule to keep in step. That the mint
+ * is also the spelling the runner records on `PerTestOutcome.filePath` is what makes gates 1-2 able
+ * to find the draft's own member at all.
+ */
+export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort {
+  const configDir = dirname(resolve(configPath))
+
+  return {
+    parseDraft(filePath: string): Promise<DraftParseOutcome> {
+      let identityPath: string
+      let absolutePath: string
+      try {
+        identityPath = workspaceRelativeIdentityPath(configDir, filePath)
+        absolutePath = resolve(configDir, identityPath)
+      } catch {
+        return Promise.resolve({ kind: 'outside-workspace' })
+      }
+
+      let stats
+      try {
+        stats = statSync(absolutePath)
+      } catch {
+        return Promise.resolve({ kind: 'not-found' })
+      }
+      if (!stats.isFile()) return Promise.resolve({ kind: 'not-a-file' })
+
+      const content = readFileSync(absolutePath, 'utf8')
+      // Parsed under the IDENTITY path, so any position a parse error names is the path the author
+      // typed rather than an absolute one only this machine can produce.
+      const parsed = parseTestFile(content, identityPath)
+      if (parsed.errors.length > 0) {
+        return Promise.resolve({
+          kind: 'unparsable',
+          reason: parsed.errors.map((error) => error.message).join('; '),
+        })
+      }
+      const test = singleDraftTest(parsed.tests)
+      if (typeof test === 'string') {
+        return Promise.resolve({ kind: 'unparsable', reason: test })
+      }
+
+      return Promise.resolve({
+        kind: 'parsed',
+        draft: {
+          // The run path's own recipe: an authored `test-id` if there is one, the name otherwise.
+          testId: (test as { 'test-id'?: string })['test-id'] ?? test.name,
+          filePath: identityPath,
+          testName: test.name,
+          steps: draftStepTexts(test),
+          // Over the FILE'S BYTES, so a receipt cannot be inherited by an edited draft — which is
+          // the whole of what `DraftRefSchema.contentDigest` promises.
+          contentDigest: createHash('sha256').update(content).digest('hex'),
+        },
+      })
+    },
+
+    /**
+     * The authored-test universe as text — gate 3's text-lane population before the derived index
+     * subtracts the identities it has evidence for (D-16).
+     *
+     * ADVISORY BY CONSTRUCTION, exactly as `discoverAuthoringKnownTests` is: an unreadable or
+     * malformed file is omitted rather than raised, because one broken test file in a repository
+     * must not make every draft unverifiable. The direction that omission moves gate 3 is the safe
+     * one — a smaller corpus can only make a draft look MORE novel, never less, and the gate's
+     * primary lane is unaffected.
+     *
+     * Resolved per call rather than cached: an evaluation is rare and a stale suite listing would
+     * compare a draft against a repository that no longer exists.
+     */
+    async suiteTextCorpus(): Promise<readonly SuiteTextEntry[]> {
+      // The SAME resolution the `knowledgeRoot` closure below performs — one config loader per
+      // host, never a second parse with its own layering and its own env precedence.
+      const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+      const workspace = resolveWorkspacePaths({ config, configPath })
+      const files = await discoverWorkspaceFiles({ workspace, kind: 'test' })
+
+      const entries: SuiteTextEntry[] = []
+      for (const file of files) {
+        try {
+          const parsed = parseTestFile(
+            readFileSync(file.absolutePath, 'utf8'),
+            file.workspaceRelativePath,
+          )
+          if (parsed.errors.length > 0) continue
+          for (const test of parsed.tests) {
+            entries.push({
+              filePath: file.workspaceRelativePath,
+              testName: test.name,
+              stepsText: draftStepTexts(test),
+            })
+          }
+        } catch {
+          // One unreadable file cannot block a verification. See the note above.
+        }
+      }
+      return entries
+    },
+  }
+}
+
+/**
  * The terminal confirmation the gate's ask arm reaches when nothing else satisfied it (391 PROP-01).
  *
  * ANSWERS `undefined` WHEN THERE IS NO TERMINAL, and that is the whole binding rule rather than a
@@ -716,6 +873,11 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     agentQaRoot: input.agentQaRoot,
     mintQuarantineIdentityPath: createQuarantineIdentityMint(input.configPath),
     runExecution: input.runExecution ?? createCliRunExecution({ configPath: input.configPath }),
+    // 393 D-01: the keep-gate evaluator's host half, bound UNCONDITIONALLY on this host — a CLI
+    // always has a config path, therefore a checkout root, therefore both verbs. Together with the
+    // run executor one line up, this is what makes `authoring.draft.verify` read `bound` in this
+    // composition's catalog; a host missing either would list it `unbound` BY NAME instead.
+    draftAuthoring: createDraftAuthoringPort(input.configPath),
     config: createMaskedConfigReader(input.configPath),
     knowledgeRoot,
     // D-18: when a live daemon holds the writer lease, this host hands it the SAME

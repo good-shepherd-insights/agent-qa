@@ -90,6 +90,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // module to prevent, in the two files least able to afford one. A frozen string; naming a tool
   // reaches no capability, and the tool it names carries no execute callback in any projection.
   'ANSWER_ONLY_TOOL_NAME',
+  // 393 plan 07, D-01: the keep-gate evaluator's id, in ASCII sort position and on the exact
+  // footing of every op-id constant on this list. Two callers must put this name on the wire — a
+  // surface reaching the evaluator, and this phase's e2e proof driving the REGISTERED op rather
+  // than the orchestrator behind it — and the alternative is a literal in each, which 387 D-11
+  // forbids for the reason a renamed op would then leave a string nothing dispatches. The SPEC
+  // stays inside `functions/` like every other, so this opens no dispatch path.
+  'AUTHORING_DRAFT_VERIFY_FUNCTION_ID',
   'AmbiguousStepAddressError',
   // 392 plan 01: the closed stage-1 resolver table and its lookup. A DECLARATION and a pure
   // predicate walk over it — the table's entries name op ids, and naming an op buys nothing
@@ -165,6 +172,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // composed compound e2e names the op by IMPORT rather than by a literal it made up.
   'RUNS_LIST_FUNCTION_ID',
   'RUNS_POST_PROCESSING_FUNCTION_ID',
+  // 393 plan 07, D-02: the run-start op's id. It is the last of the `runs.` constants to be
+  // published and the only one published for a reason INSIDE the composition rather than at a
+  // surface: `composeLocalAgent()` dispatches every gate-run through the real `runs.start`
+  // (op-calls-op), so the markers a gate-run is confirmed by are read off the run's own record by
+  // the one function that reads them there. Naming it by import is what makes a rename break that
+  // binding's compile instead of leaving it pointing at a string nothing dispatches.
+  'RUNS_START_FUNCTION_ID',
   'RunNotFoundError',
   'RunNotRecordedError',
   // 392 plan 09, D-15 / CHAT-03: THE frozen corpus and its version. This is the ceiling's

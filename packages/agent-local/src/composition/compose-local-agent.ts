@@ -33,6 +33,7 @@ import {
   deterministicOverrideStrategy,
   invokeFunction,
   projectPlannerTools,
+  RUNS_START_FUNCTION_ID,
   replayToModelMessages,
   splitClauses,
 } from '@vostride/agent-qa-agent'
@@ -93,6 +94,8 @@ import {
   fingerprintRecurrence,
   foldQuarantineLedgerState,
   foldRunOutcomes,
+  createDraftReceiptsStore,
+  createSuiteFingerprintIndex,
   indexDbPath,
   readQuarantineLedger,
   readTestOutcomeHistory,
@@ -177,6 +180,7 @@ import type {
   QuarantineLadderState,
   RunEventEnvelope,
   RunId,
+  RunStartAcknowledgement,
   RunsStartInput,
   SessionLogPort,
 } from '@vostride/agent-qa-schema'
@@ -838,6 +842,262 @@ export function createLocalRunInvocation(input: {
   }
 }
 
+// ---- authoring.draft.verify: the keep-gate evaluator's binding (393 D-01 / D-15) --------------
+
+/** The stable test identity, spelled once for this binding. */
+interface DraftIdentity {
+  readonly filePath: string
+  readonly testName: string
+}
+
+/**
+ * A parsed draft, as the HOST hands it over.
+ *
+ * Structurally identical to `packages/agent`'s `ParsedDraftLike`, and mirrored here rather than
+ * imported for the reason every mirror in this graph exists: that type lives inside `agent`'s
+ * `authoring/` and is not on its barrel, and publishing it to give a composition a name would put
+ * a gate-orchestration type on the surface that publishes exactly one dispatch.
+ *
+ * `filePath` MUST be the workspace-relative identity the runner records on
+ * `PerTestOutcome.filePath` — `workspaceRelativeIdentityPath`, the one spelling of that recipe.
+ * Gates 1-2 find the draft's own member inside each run document by comparing against those bytes,
+ * so a path spelled any other way makes every gate-run report `absent` for its own draft and gate
+ * 1 fail for a join reason wearing a draft reason's clothes.
+ */
+export interface ParsedDraftDescriptor {
+  readonly testId: string
+  readonly filePath: string
+  readonly testName: string
+  readonly steps: readonly string[]
+  readonly contentDigest: string
+}
+
+/**
+ * What a host can say about a caller-supplied draft path.
+ *
+ * Four refusal arms and one success, because `packages/agent` is `storageNeutral` and genuinely
+ * cannot answer any of them: it can neither stat a path nor know where the workspace ends. The op
+ * turns each arm into its own NAMED error, so the refusal a caller catches is declared beside the
+ * capability while the syscall stays with the host that owns a filesystem (T-393-01).
+ */
+export type DraftParseOutcome =
+  | { readonly kind: 'parsed'; readonly draft: ParsedDraftDescriptor }
+  | { readonly kind: 'not-found' }
+  | { readonly kind: 'not-a-file' }
+  | { readonly kind: 'outside-workspace' }
+  | { readonly kind: 'unparsable'; readonly reason: string }
+
+/** One authored suite test as TEXT, for gate 3's degraded lane (D-16). */
+export interface SuiteTextEntry {
+  readonly filePath: string
+  readonly testName: string
+  readonly stepsText: readonly string[]
+}
+
+/**
+ * The host's authoring capability: parse ONE draft, and enumerate the authored-test universe.
+ *
+ * BOTH VERBS OR NEITHER, and the bundling is a report rather than a convenience. A host that
+ * supplied only the parse would bind a capability whose gate-3 text lane is permanently empty —
+ * evidence-less suite tests would silently stop joining the comparison, and a draft would look
+ * novel purely because whatever it duplicates has never been run. That is D-16's unsafe direction
+ * arrived at by omission, and the only way to make it un-omittable is to make the two arrive
+ * together.
+ *
+ * Both verbs live at the HOST because both need `parseTestFile` from `@vostride/agent-qa-core`,
+ * which neither this package nor `agent` may import (the FUNC-02 firewall) — the parse-at-host
+ * precedent `cli/src/curation/authoring-test-discovery.ts` established.
+ */
+export interface DraftAuthoringPort {
+  parseDraft(filePath: string): Promise<DraftParseOutcome>
+  suiteTextCorpus(): Promise<readonly SuiteTextEntry[]>
+}
+
+/** The suite comparison, materialized once per evaluation. */
+interface FingerprintSnapshot {
+  readonly union: ReadonlySet<string>
+  readonly covered: readonly DraftIdentity[]
+  readonly elements: ReadonlyMap<string, readonly string[]>
+}
+
+const EMPTY_FINGERPRINT_SNAPSHOT: FingerprintSnapshot = {
+  union: new Set<string>(),
+  covered: [],
+  elements: new Map<string, readonly string[]>(),
+}
+
+/**
+ * The identity as one comparable key.
+ *
+ * The separator is written as the ESCAPE `\u0000`, never as a raw control byte in this source.
+ * 393-05 and 393-06 each shipped a module carrying a literal control byte and `file(1)` classified
+ * both `data`, so every `grep` over them reported nothing — a false CLEAN verdict from the exact
+ * instrument this phase's posture checks are made of. A separator is still needed, because
+ * concatenation alone lets ("ab", "c") and ("a", "bc") collide.
+ */
+function draftIdentityKey(identity: DraftIdentity): string {
+  return `${identity.filePath}\u0000${identity.testName}`
+}
+
+/**
+ * Read the suite's fingerprints for one product, EXCLUDING the draft's own identity.
+ *
+ * THE UNION IS FOLDED FROM THE PER-TEST VERBS rather than read from `elementUnion()`, and that is
+ * the whole reason this function exists. A draft is very often an EXISTING test — "is this one
+ * still worth keeping?" is D-01's standalone value — so its own rows are in the table, and
+ * `elementUnion()` would hand back a set already containing everything the draft exercises. Gate 3
+ * would then find nothing novel and reject every test that has ever run, which is the mirror of
+ * the defect 393-06 found on the other side: a gate that cannot say yes is as useless as one that
+ * cannot say no. The exclusion is applied to `coveredTests()` and the union is folded from what
+ * survives, so both of gate 3's lanes see the same suite and neither compares the draft to itself.
+ *
+ * A missing database, a store predating the projection, and a product with no rows all answer the
+ * EMPTY snapshot, which gate 3 reads as an uncovered suite. Any other read failure propagates: a
+ * corrupt index is not an empty suite.
+ */
+function readSuiteFingerprints(
+  knowledgeRoot: string,
+  product: string,
+  draft: DraftIdentity,
+): FingerprintSnapshot {
+  const path = indexDbPath(knowledgeRoot)
+  if (!existsSync(path)) return EMPTY_FINGERPRINT_SNAPSHOT
+  const db = new DatabaseSync(path, { readOnly: true })
+  try {
+    const index = createSuiteFingerprintIndex(db, { product })
+    const draftKey = draftIdentityKey(draft)
+    const covered = index
+      .coveredTests()
+      .filter((identity) => draftIdentityKey(identity) !== draftKey)
+    const elements = new Map<string, readonly string[]>()
+    const union = new Set<string>()
+    for (const identity of covered) {
+      const own = index.elementsForTest(identity.filePath, identity.testName)
+      elements.set(draftIdentityKey(identity), own)
+      for (const element of own) union.add(element)
+    }
+    return { union, covered, elements }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('no such table')) {
+      return EMPTY_FINGERPRINT_SNAPSHOT
+    }
+    throw error
+  } finally {
+    db.close()
+  }
+}
+
+interface DraftEvaluationBindingInput {
+  readonly authoring: DraftAuthoringPort
+  readonly agentQaRoot: string
+  readonly knowledgeRoot: () => Promise<string> | string
+  /** The SAME reader `runs.get` answers from — see below. */
+  readonly readRun: (runId: string) => Promise<CompletedRunHandoff | undefined>
+  /** Dispatch one gate-run through the REAL `runs.start` op (D-02, op-calls-op). */
+  readonly startGateRun: (request: RunsStartInput) => Promise<RunStartAcknowledgement>
+}
+
+/**
+ * Bind `authoring.draft.verify` over this host's capabilities (385 D-15).
+ *
+ * WHAT IS ASSEMBLED HERE, and why each piece is where it is:
+ *
+ *   `runs.start` is reached as an OP, not as a port (D-02). The evaluator confirms a gate-run by
+ *   reading both markers off the ACKNOWLEDGMENT, and `runs.start` is the one function that copies
+ *   them from the run's own durable record instead of echoing the request. Binding the raw
+ *   invocation port instead would have meant re-deriving an acknowledgment here — a second
+ *   spelling of a contract that op already owns, free to disagree with it about exactly the fact
+ *   the confirmation turns on. It also means every gate-run crosses the policy gate and lands in
+ *   the execution audit, which is T-393-09's stated mitigation rather than a side effect.
+ *
+ *   `runs.get` is reached as the READER and not as the op, because that op projects a `RunDetail`
+ *   and gates 1-2 need the completed-run HANDOFF: the per-step sub-action evidence gate 3's
+ *   fingerprint is minted from does not survive the projection. This is `runs-start.ts`'s own
+ *   posture verbatim — its acknowledgment is built "through the SAME reader `runs.get` answers
+ *   from" — applied one layer out.
+ *
+ *   THE PRODUCT IS OBSERVED, NEVER DERIVED. `createSuiteFingerprintIndex` requires the partition
+ *   the fold wrote under, which is `slugBranch(scope.key)` of the run's own scope. Deriving it
+ *   here from configuration would be a SECOND rule for a fact the write side already decides, and
+ *   the first time the two disagreed a draft would be measured against an empty suite and pass
+ *   gate 3 for free. So it is read off the first acknowledgment this evaluation receives — and
+ *   since D-04 forbids short-circuiting, gates 1-2 have always taken at least one run by the time
+ *   gate 3 asks the index anything. The index is opened LAZILY for exactly that reason, and once:
+ *   three verbs against one snapshot, one connection, closed before gate 3 reads a byte of it.
+ */
+function createDraftEvaluation(input: DraftEvaluationBindingInput) {
+  return {
+    resolveDraft(draftPath: string): Promise<DraftParseOutcome> {
+      return input.authoring.parseDraft(draftPath)
+    },
+    async openEvaluation(draft: ParsedDraftDescriptor) {
+      const knowledgeRoot = await input.knowledgeRoot()
+      const draftIdentity: DraftIdentity = {
+        filePath: draft.filePath,
+        testName: draft.testName,
+      }
+      const draftKey = draftIdentityKey(draftIdentity)
+      // The authored universe MINUS the draft itself. Handed its own bytes to compare against,
+      // the text lane scores 1.0 and reads the draft as already covered — by itself.
+      const textCorpus = (await input.authoring.suiteTextCorpus()).filter(
+        (entry) => draftIdentityKey(entry) !== draftKey,
+      )
+
+      let observedProduct: string | undefined
+      let snapshot: FingerprintSnapshot | undefined
+      const fingerprints = (): FingerprintSnapshot => {
+        if (snapshot !== undefined) return snapshot
+        snapshot = observedProduct === undefined
+          ? EMPTY_FINGERPRINT_SNAPSHOT
+          : readSuiteFingerprints(knowledgeRoot, observedProduct, draftIdentity)
+        return snapshot
+      }
+
+      return {
+        runs: {
+          async start(request: RunsStartInput): Promise<RunStartAcknowledgement> {
+            const acknowledgement = await input.startGateRun(request)
+            observedProduct ??= slugBranch(acknowledgement.scope.key)
+            return acknowledgement
+          },
+          get: (runId: string) => input.readRun(runId),
+        },
+        fingerprints: {
+          elementUnion: () => fingerprints().union,
+          coveredTests: () => fingerprints().covered,
+          elementsForTest: (filePath: string, testName: string) =>
+            fingerprints().elements.get(draftIdentityKey({ filePath, testName })) ?? [],
+        },
+        textCorpus,
+        // D-19: the gitignored per-draft receipt store, bound over `agentQaRoot` beside the
+        // proposals inbox and for its reason — a receipt is machine-local working state under the
+        // runtime root, not a committed artifact a pull request has any business showing.
+        receipts: createDraftReceiptsStore({ resolveAgentQaRoot: () => input.agentQaRoot }),
+      }
+    },
+  }
+}
+
+/**
+ * The caller every gate-run is dispatched as (D-02, op-calls-op).
+ *
+ * MINTED HERE, on the rule every caller in this file is under: a caller that could name its own
+ * grants would be choosing what it is allowed to do. Its two scopes are EXACTLY the two
+ * `authoring.draft.verify` itself declares, which is what keeps this from being a widening — the
+ * outer invocation has already been checked for both, so nothing reachable through this caller was
+ * unreachable to the caller who asked for the evaluation.
+ *
+ * `origin: agent` because nobody typed this run: a person asked for a draft to be verified, and
+ * the runs that answer that are the system own doing. `runs.start` declares no
+ * `requiresHumanOrigin`, so this is an honest attribution rather than a permission routed around.
+ */
+const AUTHORING_GATE_RUN_CALLER: FunctionCaller = Object.freeze({
+  surface: 'authoring',
+  grantedScopes: ['run', 'read'] as readonly FunctionScope[],
+  safeMode: false,
+  origin: 'agent',
+})
+
 /** Wall-clock in the one format every store column and dump row is written in. */
 export const SYSTEM_CLOCK: ClockPort = Object.freeze({
   now: (): string => new Date().toISOString(),
@@ -1000,6 +1260,22 @@ export interface ComposeLocalAgentInput {
    * visible state rather than a call that fails somewhere far from the composition.
    */
   readonly runExecution?: RunExecutionPort
+  /**
+   * How this host parses a draft and enumerates its authored suite (393 D-01), on the exact
+   * optional-operation idiom `runExecution` above uses.
+   *
+   * OPTIONAL, and — like its neighbour — the optionality is the reporting mechanism rather than a
+   * convenience. `authoring.draft.verify` is bound only where this AND `runExecution` are both
+   * present, because a host that cannot parse a test file and a host that cannot start a run are
+   * both hosts that cannot verify a draft. Either one missing lists the capability `unbound` BY
+   * NAME, which is the honest answer; the alternative is a receipt whose four booleans were
+   * computed from no runs at all, and a refusal wearing a verdict's clothes is the one answer that
+   * could get a draft kept on the strength of nothing.
+   *
+   * Host-supplied for the reason `mintQuarantineIdentityPath` is: it needs `parseTestFile` and the
+   * CHECKOUT ROOT, and neither this package nor `agent` may name `@vostride/agent-qa-core`.
+   */
+  readonly draftAuthoring?: DraftAuthoringPort
   /**
    * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
    *
@@ -2139,6 +2415,35 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // `agent.ask` is a real capability wherever the composition root runs — and unbound nowhere,
       // which is what lets 397's parity suite read it off the registry with no chat-specific case.
       chatTurn,
+      // 393 D-01 / D-15: the keep-gate evaluator's two host halves, bound HERE and therefore on
+      // BOTH hosts — the CLI and 386's daemon compose this same root, which is the whole point of
+      // 385 D-15 (a second binding site would be a second answer to "is this draft worth keeping",
+      // and the two would disagree about a decision that gets written into a durable receipt).
+      //
+      // Conditionally spread on BOTH halves, because a capability that can parse but cannot run is
+      // not a degraded evaluator — it is a host that must say `unbound` by name. `runs.start` is
+      // dispatched through the registry this very call is about to produce, which is the same
+      // deferred reference the chat engine takes and is safe for the same reason: no op can run
+      // before the registry it is registered in has been built.
+      ...(input.draftAuthoring === undefined || input.runExecution === undefined ? {} : {
+        draftEvaluation: createDraftEvaluation({
+          authoring: input.draftAuthoring,
+          agentQaRoot: input.agentQaRoot,
+          knowledgeRoot: input.knowledgeRoot,
+          readRun: (runId) => runsReader.get(runId as RunId),
+          startGateRun: async (request) => {
+            if (composedRegistry === undefined) {
+              throw new TypeError('a gate-run started before its registry finished composing')
+            }
+            return await invokeFunction(
+              composedRegistry,
+              RUNS_START_FUNCTION_ID,
+              request,
+              AUTHORING_GATE_RUN_CALLER,
+            ) as RunStartAcknowledgement
+          },
+        }),
+      }),
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
     // 391 PROP-01 / D-11: the real standing-approval reader, over the SAME committed knowledge root

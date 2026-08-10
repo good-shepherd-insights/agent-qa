@@ -127,6 +127,22 @@ export { QUARANTINE_RELEASE_FUNCTION_ID } from './functions/ops/quarantine-relea
 // comparing against a string it spelled itself.
 export { AGENT_ASK_FUNCTION_ID } from './functions/ops/agent-ask.js'
 export { PROPOSALS_LIST_FUNCTION_ID } from './functions/ops/proposals-list.js'
+// 393 D-01/D-02: the keep-gate evaluator's id, and the id of the sibling op its gate-runs go
+// through. Both on exactly the footing of every constant above — a name a caller puts on the wire,
+// never a dispatch handle.
+//
+// `AUTHORING_DRAFT_VERIFY_FUNCTION_ID` is what a surface and this phase's e2e proof both name to
+// reach the evaluator through `invokeFunction`, which is what makes the keep-filter a catalogued
+// capability rather than a private power of whatever writes tests.
+//
+// `RUNS_START_FUNCTION_ID` is published for D-02's op-calls-op binding: `composeLocalAgent()`
+// dispatches every gate-run through the REAL `runs.start` — so the markers are confirmed off the
+// run's own durable record by the one function that reads them there, instead of a second
+// acknowledgment recipe being spelled at the composition. 387 D-11's rule then applies with full
+// force: the id is IMPORTED, so renaming the op breaks the binding's compile rather than leaving a
+// literal pointing at a string nothing dispatches.
+export { AUTHORING_DRAFT_VERIFY_FUNCTION_ID } from './functions/ops/authoring-verify-draft.js'
+export { RUNS_START_FUNCTION_ID } from './functions/ops/runs-start.js'
 export { createTurnEngine } from './chat/turn-engine.js'
 export { CHAT_HELP_TEXT, CHAT_RESOLVER_TABLE, resolveClause } from './chat/resolver-table.js'
 export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile.js'

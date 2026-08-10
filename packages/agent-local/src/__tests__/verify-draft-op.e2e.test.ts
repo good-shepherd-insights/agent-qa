@@ -151,6 +151,19 @@ function stepEvidence(index: number, subActions: readonly SubActionFixture[]): S
     stepIndex: index,
     stepText: ACCEPT_CONTROL.steps[index] ?? `step ${index}`,
     cacheStatus: 'miss',
+    // REQUIRED by the handoff's own structural guard, which is why it is here and not omitted as
+    // decoration: this fixture is read back through `loadCompletedRunHandoff`, the real version
+    // guard the composition's runs reader uses, so a shape it refuses is a run that does not exist
+    // as far as gates 1-2 are concerned.
+    servedBrief: {
+      scope: { tier: 'product', key: 'local-form' },
+      asOfBuild: 1,
+      budget: 1,
+      truncation: 'none',
+      channel1: [],
+      channel2: [],
+      channel3: [],
+    },
     subActions: subActions.map(subAction),
     verifierVerdict: { pass: true, reasoning: 'fixture' },
   } as unknown as StepEvidence

@@ -23,6 +23,7 @@ import type {
   ComposeJobRecoveryInput,
   ComposeLocalAgentInput,
   CuratorAuthor,
+  DraftAuthoringPort,
   JobRecoveryHost,
   LocalAgentHost,
   RunExecutionPort,
@@ -486,6 +487,35 @@ async function resolveQuarantineIdentityMint(
   }
   const { createQuarantineIdentityMint } = await import('../composition/local-agent-host.js')
   return createQuarantineIdentityMint(configPath)
+}
+
+/**
+ * The keep-gate evaluator's host half for this daemon (393 D-01), or nothing.
+ *
+ * REACHED THROUGH A DEFERRED IMPORT, and the mechanism is not a lint dodge — it is the rule this
+ * file's own head already follows twice. The implementation needs `parseTestFile` and
+ * `workspaceRelativeIdentityPath` from `@vostride/agent-qa-core`; the FUNC-02 surface firewall
+ * waives an exact (file, specifier) PAIR and `daemon/host.ts` holds no entry for core; and the
+ * ledger only ever SHRINKS, so a new leak in a file written after 2026-07-28 is fixed rather than
+ * waived. `composition/local-agent-host.ts` already carries the pair, so the factory is minted
+ * there and reached from here exactly as `createQuarantineIdentityMint` (390-12) and
+ * `createCliRunExecution` (385) are. The import also keeps the CLI composition graph out of a
+ * `configPath`-less legacy or test host, which is the second reason all three are deferred.
+ *
+ * ABSENT WHERE THERE IS NO CONFIG PATH, and the absence is the report. A host with no workspace
+ * cannot resolve a checkout root, so it cannot mint the identity gates 1-2 join on nor enumerate
+ * the suite gate 3 compares against — which makes it a host that cannot verify a draft. Omitting
+ * the field lists `authoring.draft.verify` as `unbound` BY NAME (D-09), where the quarantine mint
+ * one function up instead binds a THROWING closure: the difference is that the mint is REQUIRED by
+ * the composition and this is optional, so this one can express the same fact structurally rather
+ * than at the first call.
+ */
+async function resolveDraftAuthoring(
+  configPath: string | undefined,
+): Promise<DraftAuthoringPort | undefined> {
+  if (configPath === undefined) return undefined
+  const { createDraftAuthoringPort } = await import('../composition/local-agent-host.js')
+  return createDraftAuthoringPort(configPath)
 }
 
 /**
@@ -1809,6 +1839,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     recovery.close()
     recovery = undefined
 
+    const draftAuthoring = await resolveDraftAuthoring(input.configPath)
     localAgent = operations.composeLocalAgent({
       agentQaRoot: input.agentQaRoot,
       config: input.config,
@@ -1866,6 +1897,10 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         },
       },
       ...(runExecution === undefined ? {} : { runExecution }),
+      // 393 D-01 / 385 D-15: the SAME keep-gate binding the CLI composes, because both hosts
+      // compose the same root. Conditionally spread, so a daemon with no workspace lists the
+      // capability `unbound` BY NAME rather than binding one that cannot resolve a draft path.
+      ...(draftAuthoring === undefined ? {} : { draftAuthoring }),
       // 387-08 D-18 / D-5: this process IS the writer-lease holder, so an apply it performs hands
       // in the authority it already owns rather than asking for a lease it cannot be granted
       // twice — a holder that calls `acquireWriterLease` is told `held` by itself and then has

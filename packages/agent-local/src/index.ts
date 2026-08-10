@@ -150,6 +150,16 @@ export type {
   ApplyReviewResult,
   CandidateProsePosture,
   ComposeLocalAgentInput,
+  // 393 D-01: the keep-gate evaluator's HOST-side vocabulary. Three types and no value: what a
+  // host must be able to say about a draft path, what a parsed draft looks like when it hands one
+  // over, and what one authored suite test looks like as text. Published because the CLI
+  // implements all three over `parseTestFile` and the daemon reaches that implementation through
+  // the same deferred import it already uses — and neither could name the shape it is filling
+  // otherwise.
+  DraftAuthoringPort,
+  DraftParseOutcome,
+  ParsedDraftDescriptor,
+  SuiteTextEntry,
   CreateKnowledgeReviewInput,
   LocalAgentHost,
   LocalAgentJobs,
