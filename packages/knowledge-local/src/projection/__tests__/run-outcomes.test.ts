@@ -214,8 +214,11 @@ afterEach(() => {
 describe('run-outcome projection fold (ABRF-02, D-14)', () => {
   // 390 D-02/D-07/D-09 bumped 2 → 3: resolved verdicts, the fingerprint window, and the deleted
   // derived quarantined column. The bump IS the migration — receipted runs refold on the next tail.
-  it('stamps the resolved-verdict projection shape at version 3', () => {
-    expect(RUN_OUTCOMES_PROJECTION_VERSION).toBe(3)
+  // 393 D-15 bumped 3 → 4: the same fold pass now also populates the suite-fingerprint table, so
+  // an already-receipted run has to refold to contribute the fingerprint rows gate 3 compares
+  // against. Same migration argument, same reason — the derived index is gitignored (L12).
+  it('stamps the suite-fingerprint projection shape at version 4', () => {
+    expect(RUN_OUTCOMES_PROJECTION_VERSION).toBe(4)
   })
 
   it('folds pass/failure/heal/flake counters, last-N ordinals, and normalized anchor rows', () => {

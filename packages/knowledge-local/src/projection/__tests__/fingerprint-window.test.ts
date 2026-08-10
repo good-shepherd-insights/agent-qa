@@ -190,8 +190,8 @@ function windowRows(db: DatabaseSync): Record<string, unknown>[] {
 }
 
 describe('the fingerprint-keyed recurrence window (D-07)', () => {
-  it('stamps the projection at version 3 so receipted runs refold on the next tail', () => {
-    expect(RUN_OUTCOMES_PROJECTION_VERSION).toBe(3)
+  it('stamps the projection at version 4 so receipted runs refold on the next tail', () => {
+    expect(RUN_OUTCOMES_PROJECTION_VERSION).toBe(4)
   })
 
   it('writes one window row per applied failed member, keyed by THE fingerprint', () => {
