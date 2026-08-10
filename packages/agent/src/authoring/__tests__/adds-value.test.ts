@@ -214,6 +214,79 @@ describe('addsValueGate — the text fallback lane (D-16)', () => {
   })
 })
 
+describe('addsValueGate — lane precedence (D-14/D-16, CR-01)', () => {
+  /**
+   * An evidence-less sibling whose tokens are the draft's own, so `textSimilarity` returns 1.0 —
+   * the strongest possible text-lane "covered" claim. Its identity is NOT in the fingerprint
+   * index, so it stays on the degraded lane where D-16 put it.
+   */
+  const TEXT_TWIN: SuiteTextCorpusEntryLike = {
+    filePath: 'demo/init/tests/text-twin.yaml',
+    testName: NEAR_DUPLICATE_DRAFT.testName,
+    stepsText: NEAR_DUPLICATE_DRAFT.steps,
+  }
+
+  it('the fingerprint lane DECIDES a pass over a text sibling that resembles the draft', () => {
+    // The veto direction, which no case covered before this one: the primary lane has evidence and
+    // says NOVEL, and a degraded-lane resemblance is recorded beside it. D-14 gives the verdict to
+    // the lane with evidence; the text lane is a fallback for identities the index cannot speak
+    // for, not a veto over the identities it can (D-16).
+    const result = addsValueGate({
+      draft: NEAR_DUPLICATE_DRAFT,
+      draftElements: ['el-username', 'el-novel'],
+      index: fakeFingerprintIndex([{ ...UAT_381, elements: ['el-username'] }]),
+      textCorpus: [TEXT_TWIN],
+    })
+
+    expect(result.pass).toBe(true)
+    expect(result.finding.novelElements).toEqual(['el-novel'])
+
+    // Recorded, not deciding: the sibling still carries its lane and its covered flag, because
+    // D-16's value is the per-test attribution on the receipt — only the arithmetic moved.
+    const twinRow = result.finding.comparedTests.find((row) => row.filePath === TEXT_TWIN.filePath)
+    expect(twinRow?.lane).toBe('text')
+    expect(twinRow?.covered).toBe(true)
+    expect(textSimilarity(NEAR_DUPLICATE_DRAFT, TEXT_TWIN)).toBe(1)
+
+    // The reason has to name the lane that answered, or a receipt cannot be audited for which
+    // claim decided it.
+    expect(result.reason).toContain('fingerprint lane')
+    expect(result.reason).toContain('without deciding')
+  })
+
+  it('the fingerprint lane DECIDES a fail on union subsumption, never via the text sibling', () => {
+    // The two-sided pin. Same populated index, same resembling sibling, but zero novel elements —
+    // the reject direction the frozen `gate3-near-duplicate` vector rides. The verdict is the same
+    // `false` either way, so only the REASON separates a fingerprint fact from a text-lane guess;
+    // a receipt that blamed the 0.5 threshold here would be describing a comparison that did not
+    // decide anything.
+    const covering = ['el-username', 'el-password', 'el-submit', 'el-received']
+    const result = addsValueGate({
+      draft: NEAR_DUPLICATE_DRAFT,
+      draftElements: covering,
+      index: fakeFingerprintIndex([{ ...UAT_381, elements: covering }]),
+      textCorpus: [TEXT_TWIN],
+    })
+
+    expect(result.pass).toBe(false)
+    expect(result.finding.novelElements).toEqual([])
+    expect(result.reason).toContain('already in the suite union')
+    expect(result.reason).not.toContain('text fallback lane')
+  })
+
+  it('the text lane still DECIDES when the index is empty — the state D-16 wrote it for', () => {
+    const result = addsValueGate({
+      draft: NEAR_DUPLICATE_DRAFT,
+      draftElements: ['el-novel'],
+      index: EMPTY_INDEX,
+      textCorpus: [TEXT_TWIN],
+    })
+
+    expect(result.pass).toBe(false)
+    expect(result.reason).toContain('text fallback lane')
+  })
+})
+
 describe('addsValueGate — the empty suite (D-16)', () => {
   it('passes trivially when the union AND the text corpus are both empty', () => {
     const result = addsValueGate({
