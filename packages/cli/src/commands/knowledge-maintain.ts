@@ -50,6 +50,7 @@ import pc from 'picocolors'
 
 import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import {
+  completedRunsRoot,
   readCurationTailReceipt,
   type CurationTailReceipt,
 } from '../curation/curation-tail.js'
@@ -277,7 +278,7 @@ function compareText(left: string, right: string): number {
 }
 
 function readRunReceipts(runtimeRoot: string): CurationTailReceipt[] {
-  const runsRoot = join(runtimeRoot, 'runs')
+  const runsRoot = completedRunsRoot(runtimeRoot)
   let runDirs: string[]
   try {
     runDirs = readdirSync(runsRoot, { withFileTypes: true })

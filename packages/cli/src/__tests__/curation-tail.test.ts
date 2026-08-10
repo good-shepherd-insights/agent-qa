@@ -1443,18 +1443,31 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
       runCurationTail(baseOptions(operations, { log: { warn } })),
     ).resolves.toBeUndefined()
 
-    // The warn has to be true about what the throw LEFT, not just that it happened: a reconcile
-    // that throws aborted a rebuild downstream of the family's DELETE, so the family is unstamped
-    // and possibly partial — and unstamped is exactly what makes the next sweep rebuild it.
+    // The warn has to be true about what the throw LEFT, not just that it happened — and true of
+    // EVERY throw that can reach this catch (393 round 7, WARN-TEXT-CLASS). Two classes arrive
+    // here: one raised before any DELETE (`openIndexWriter`, `ensureRunOutcomeTables`,
+    // `readStoredProjectionVersion`), which leaves the family INTACT under its previous stamp and
+    // may not rebuild next sweep at all; and one raised after the DELETEs — including the
+    // projection/write throws that now propagate — which leaves it unstamped and possibly partial.
+    // An unconditional "failed partway / will rebuild again" was simply false of the first class,
+    // so the text states both outcomes hinged on whether the rebuild had begun.
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('the run-outcome projection rebuild failed partway'),
+      expect.stringContaining('the run-outcome projection reconcile did not complete'),
     )
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('unstamped and possibly partially rebuilt'),
+      expect.stringContaining(
+        'If the rebuild had already begun, the projection family is left unstamped and possibly'
+        + ' partial, and the next reconcile rebuilds it',
+      ),
     )
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('the next sweep will rebuild it again'),
+      expect.stringContaining(
+        'if it stopped before that, the family and its previous stamp are untouched',
+      ),
     )
+    // The CLI arm no longer DISCARDS the cause the daemon arm has always printed. The injected
+    // message is deliberately absent from the static text above, so this cannot pass vacuously.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('reconcile failed'))
     expect(foldRunOutcomes).toHaveBeenCalledOnce()
     expect(drainQueue).toHaveBeenCalledOnce()
     expect(writeCurationTailReceipt).toHaveBeenCalledOnce()

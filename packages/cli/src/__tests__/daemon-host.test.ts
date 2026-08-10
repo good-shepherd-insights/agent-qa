@@ -3576,6 +3576,19 @@ describe('runDaemonHost — the run-outcome projection reconcile (393 CR-02-daem
       .filter((message) => message.includes('run-outcome projection'))
     expect(reconcileErrors).toHaveLength(1)
     expect(reconcileErrors[0]).toContain('reconcile failed')
+
+    // Two-hosts-one-body (393 round 7, WARN-TEXT-CLASS): the daemon states the same two outcomes
+    // as the tail, hinged on whether the rebuild had begun, because the same two throw classes
+    // reach both catches — one before any DELETE (family intact under its previous stamp) and one
+    // after (unstamped, possibly partial).
+    expect(reconcileErrors[0]).toContain('the run-outcome projection reconcile did not complete')
+    expect(reconcileErrors[0]).toContain(
+      'If the rebuild had already begun, the projection family is left unstamped and possibly'
+      + ' partial, and the next reconcile rebuilds it',
+    )
+    expect(reconcileErrors[0]).toContain(
+      'if it stopped before that, the family and its previous stamp are untouched',
+    )
   })
 
   it('logs nothing extra when the projection is already current', async () => {

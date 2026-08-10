@@ -35,7 +35,6 @@ import type {
 } from '@vostride/agent-qa-agent-local'
 import {
   DEFAULT_EMBEDDING_PROFILE,
-  slugBranch,
   type GuardrailPolicy,
 } from '@vostride/agent-qa-schema'
 
@@ -566,7 +565,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       configPath,
       cliEntry,
       launchChild: createPipedLaunchChild(cliEntry, async (closed) => {
-        const runDir = join(input.agentQaRoot, 'runs', slugBranch(closed.runId))
+        const runDir = completedRunDir(input.agentQaRoot, closed.runId)
         await mkdir(runDir, { recursive: true })
         await Promise.all([
           writeFile(join(runDir, RUN_CHILD_STDOUT_FILE), closed.stdout, 'utf8'),
@@ -1887,10 +1886,16 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         )
       }
     } catch (error) {
+      // The tail's body verbatim (393 round 7, WARN-TEXT-CLASS): the same two throw classes reach
+      // both catches — one before any DELETE, leaving the family intact under its previous stamp,
+      // and one after, leaving it unstamped and possibly partial — so both hosts state the two
+      // outcomes as alternatives rather than promising a partway failure that may not have happened.
       logger.error(
-        'Daemon startup: the run-outcome projection rebuild failed partway; the projection family'
-        + ' is left unstamped and possibly partially rebuilt, and the next reconcile will rebuild'
-        + ` it again. Continuing to serve. (${error instanceof Error ? error.message : String(error)})`,
+        'Daemon startup: the run-outcome projection reconcile did not complete. '
+        + 'If the rebuild had already begun, the projection family is left unstamped and possibly'
+        + ' partial, and the next reconcile rebuilds it; if it stopped before that, the family and'
+        + ' its previous stamp are untouched. Continuing to serve. '
+        + `(${error instanceof Error ? error.message : String(error)})`,
       )
     }
 

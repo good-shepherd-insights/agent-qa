@@ -791,15 +791,23 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
         + `${reconcile.report.skippedArtifacts} artifact)`,
       )
     }
-  } catch {
-    // What a thrown reconcile actually leaves behind (393 round 6, CR-01): the rebuild aborted
-    // partway, so the run-outcome projection family is UNSTAMPED and possibly partially rebuilt —
-    // not merely "unreconciled". Unstamped is the recoverable state by construction: the next
-    // sweep reads the absent stamp as a mismatch and rebuilds the family again.
+  } catch (error) {
+    // What a thrown reconcile actually leaves behind — for EVERY throw that can reach here, which
+    // is the part the round-6 wording got wrong (393 round 7, WARN-TEXT-CLASS). TWO classes arrive:
+    // one raised BEFORE any DELETE (`openIndexWriter`, `ensureRunOutcomeTables`,
+    // `readStoredProjectionVersion` all run ahead of `rebuildRunOutcomes`), which leaves the family
+    // intact under whatever stamp it already had — and if that stamp is current, the next reconcile
+    // answers 'current' and does not rebuild at all; and one raised AFTER them, including the
+    // projection/write throws that now propagate, which leaves the family unstamped and possibly
+    // partial. "Failed partway, will rebuild again" was flatly false of the first class, so the
+    // text below states both outcomes as alternatives and promises neither unconditionally. The
+    // same body is printed by the daemon arm, because the same two classes reach both catches.
     opts.log.warn(
-      'Post-verdict knowledge curation: the run-outcome projection rebuild failed partway; the'
-      + ' projection family is left unstamped and possibly partially rebuilt, and the next sweep'
-      + ' will rebuild it again. Continuing this sweep.',
+      'Post-verdict knowledge curation: the run-outcome projection reconcile did not complete. '
+      + 'If the rebuild had already begun, the projection family is left unstamped and possibly'
+      + ' partial, and the next reconcile rebuilds it; if it stopped before that, the family and'
+      + ' its previous stamp are untouched. Continuing this sweep. '
+      + `(${error instanceof Error ? error.message : String(error)})`,
     )
   }
 
