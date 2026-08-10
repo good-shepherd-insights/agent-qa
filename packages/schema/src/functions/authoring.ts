@@ -1,4 +1,8 @@
-// The `authoring.verify_draft` op contract (393, D-01).
+// The `authoring.draft.verify` op contract (393, D-01).
+//
+// D-01 sketches the verb as `authoring.verify_draft`; that spelling is unrepresentable — the
+// parity taxonomy regex forbids underscores and the chat tool-name mapping refuses one (393-07).
+// The schema symbols keep the sketch's camel-case spelling; the dispatchable id does not.
 //
 // The planner binds ALL registry ops 1:1 (392 D-07), so this op is chat-reachable the moment
 // it registers — its input is crossing a trust boundary from an arbitrary caller, not being

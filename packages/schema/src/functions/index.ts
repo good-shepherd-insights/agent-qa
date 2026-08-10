@@ -72,7 +72,8 @@ export type {
   MaskedResolvedConfig,
   ConfigGetInput,
 } from './config'
-// 393 D-01: the `authoring.verify_draft` op's contracts. The output IS the durable receipt
+// 393 D-01: the `authoring.draft.verify` op's contracts (D-01 sketches the verb as
+// `verify_draft`; that spelling is unrepresentable — see ./authoring.ts). The output IS the receipt
 // (D-19) rather than a summary of it, so the schema is re-exported here under an op-shaped
 // name instead of being re-declared.
 export {

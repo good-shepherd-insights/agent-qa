@@ -724,7 +724,8 @@ export {
   MaskedConfigEntrySchema,
   MaskedResolvedConfigSchema,
   ConfigGetInputSchema,
-  // 393 D-01: the authoring.verify_draft op contracts.
+  // 393 D-01: the authoring.draft.verify op contracts (D-01 sketches the verb as
+  // `verify_draft`; that spelling is unrepresentable — see functions/authoring.ts).
   AuthoringVerifyDraftInputSchema,
   AuthoringVerifyDraftOutputSchema,
 } from './functions/index'
