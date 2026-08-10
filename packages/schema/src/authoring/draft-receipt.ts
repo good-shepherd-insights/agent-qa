@@ -1,0 +1,198 @@
+// The draft receipt: what a keep-gate evaluation durably says about one draft (393, WTST-02).
+//
+// Two shape rules govern everything below.
+//
+// MAP, NOT TERRITORY (D-19 / 391 D-18). The receipt carries REFS to the runs it judged plus
+// the findings it derived — never run payloads, never resolved secrets, never post-interpolation
+// step text. Run bytes live in the run store, which is the only place that owns them. Every
+// object here is `.strict()`, so smuggling a payload in is a typed refusal rather than a field
+// nobody notices until it shows up in a durable file.
+//
+// KEYED, NOT POSITIONAL. `DraftGateResultsSchema` names its gates. Gate 5 (bug-repro anchoring)
+// lands in the Issue milestone and must be able to join without re-minting this DTO or
+// renumbering anything a 394 consumer already reads.
+
+import { z } from 'zod'
+
+import { DRAFT_DISPOSITIONS } from './disposition'
+
+/**
+ * Bumping this is a breaking change to a durable store. The record schema pins the literal, so
+ * a receipt written by an earlier build fails loudly at read time instead of being silently
+ * reinterpreted under the new shape (the house stamp-and-hard-fail convention).
+ */
+export const CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION = 1
+
+/**
+ * Which draft this receipt is about.
+ *
+ * `filePath` + `testName` is the STABLE identity the suite comparison keys on — the ratified
+ * project-wide rule, never `testId`. `testId` is carried anyway because it is what
+ * `parseTestFile` mints for the draft and what the run's own evidence cites, so a reader
+ * tracing a receipt back to a handoff needs it; it is provenance, not identity.
+ */
+export const DraftRefSchema = z.object({
+  filePath: z.string().min(1),
+  testId: z.string().min(1),
+  testName: z.string().min(1),
+  /** Digest of the draft bytes evaluated, so a later edit cannot inherit this receipt. */
+  contentDigest: z.string().min(1),
+}).strict()
+
+export type DraftRef = z.infer<typeof DraftRefSchema>
+
+/**
+ * One parsed NL step, as gate 4's deterministic check classified it (D-11).
+ *
+ * Lands VERBATIM in the receipt: D-12 tunes ambiguity toward reject, which is only defensible
+ * if the rejected author can read exactly which step was called what and why.
+ */
+export const StepClassificationRowSchema = z.object({
+  /** Pre-interpolation step text. Post-interpolation text can carry resolved secrets. */
+  stepText: z.string(),
+  role: z.enum(['assertion', 'action']),
+  /** Clause (ii) of D-09: references concrete expected content. Always false for actions. */
+  falsifiable: z.boolean(),
+  /** The vacuity-lexicon phrase this step matched, named so the author can see the term. */
+  vacuityHit: z.string().optional(),
+  /** Capture-signature pattern names hit by this step's expected value (D-10). */
+  captureSignatureHits: z.array(z.string()),
+  /** D-10 tautology detection: the assertion restates a prior action's own content. */
+  tautologyHit: z.boolean().optional(),
+}).strict()
+
+export type StepClassificationRow = z.infer<typeof StepClassificationRowSchema>
+
+/**
+ * One stability run, as a REF plus the judgment made about it.
+ *
+ * `healed` is separable from `definitive` and from `memberOutcome` on purpose. Measured on the
+ * frozen corpus (393-01, F3): the definitive-pass arm arrives as `healed`, not `passed` — the
+ * accept control itself heals. A gate 1 that does not count a healed pass as a pass fails the
+ * one draft it exists to accept. Recording the heal separately lets gate 1 count it as a pass
+ * while 394 still reads the heal as the weak-grounding signal it is (D-17).
+ *
+ * `definitive` is a judgment, not a field copy. 393-01's F1 measured that
+ * `termination.kind === 'infeasible'` does NOT separate gate 1 from gate 2 on this build — 19
+ * of 21 failed members carry one — so no single terminal field decides definitiveness, and
+ * `reason` is where the evaluator says what it actually read.
+ */
+export const GateRunRecordSchema = z.object({
+  /** A ref into the run store. Deliberately not the run's contents. */
+  runId: z.string().min(1),
+  /** The draft's own MEMBER outcome, not the aggregate verdict (D-17). */
+  memberOutcome: z.string().min(1),
+  definitive: z.boolean(),
+  healed: z.boolean(),
+  /** Why this run was judged definitive or not — the F1 escape hatch. */
+  reason: z.string().optional(),
+}).strict()
+
+export type GateRunRecord = z.infer<typeof GateRunRecordSchema>
+
+/**
+ * Gate 3's finding: which suite tests were compared, in which lane, and what was novel.
+ *
+ * `lane` is D-16's per-test disclosure. A suite test with run evidence is compared by anchor
+ * fingerprint; an evidence-less one falls back to title/step-text similarity and over-flags
+ * toward "covered" (the safe direction). Reporting the lane per test is what stops a
+ * fingerprint-lane claim from being read into a text-lane guess.
+ */
+export const AddsValueFindingSchema = z.object({
+  /**
+   * Fingerprint elements absent from the suite union — NAMED, not counted (D-14). No
+   * similarity threshold exists to defend, so the receipt shows the elements themselves.
+   */
+  novelElements: z.array(z.string()),
+  comparedTests: z.array(z.object({
+    filePath: z.string().min(1),
+    testName: z.string().min(1),
+    lane: z.enum(['fingerprint', 'text']),
+    covered: z.boolean(),
+  }).strict()),
+}).strict()
+
+export type AddsValueFinding = z.infer<typeof AddsValueFindingSchema>
+
+/**
+ * The four gate results, keyed by name (D-04: all four always evaluated, never short-circuited).
+ *
+ * Each carries `pass` plus a lean evidence sub-shape: counts and refs, with the rich tables
+ * living once at the receipt level. Duplicating the tables inside each gate would create a
+ * second answer to the same question, which is exactly what one-exported-vocabulary forbids.
+ */
+export const DraftGateResultsSchema = z.object({
+  /** Gate 1 (D-17): a final pass or fail on every run; planning failure, infeasible
+   * termination, cycle flag and error are all fails. A healed pass IS a pass (F3). */
+  executesDefinitive: z.object({
+    pass: z.boolean(),
+    /** Refs into `gateRuns`. */
+    runRefs: z.array(z.string()),
+    /** The subset judged indefinitive, so "why did gate 1 fail" is answerable per run. */
+    indefinitiveRunRefs: z.array(z.string()),
+    reason: z.string().optional(),
+  }).strict(),
+  /** Gate 2 (D-17): the member outcome did not flip across the completed runs. */
+  stableVerdict: z.object({
+    pass: z.boolean(),
+    runRefs: z.array(z.string()),
+    /** Distinct member outcomes observed; length > 1 is the flip. */
+    distinctOutcomes: z.array(z.string()),
+    /** True when D-17's early-stop fired — the reason a completed count may be below N. */
+    earlyStopped: z.boolean(),
+    reason: z.string().optional(),
+  }).strict(),
+  /** Gate 3 (D-13/D-14/D-16): set semantics over anchor elements, no threshold. */
+  addsValue: z.object({
+    pass: z.boolean(),
+    novelElementCount: z.number().int().nonnegative(),
+    comparedTestCount: z.number().int().nonnegative(),
+    reason: z.string().optional(),
+  }).strict(),
+  /** Gate 4 (D-09/D-10/D-12): the deterministic two-clause lexical check. */
+  falsifiableAssertion: z.object({
+    pass: z.boolean(),
+    /** Clause (i): steps that classified as assertions at all. */
+    assertionStepCount: z.number().int().nonnegative(),
+    /** Clause (ii): of those, how many reference concrete expected content. */
+    falsifiableAssertionCount: z.number().int().nonnegative(),
+    reason: z.string().optional(),
+  }).strict(),
+}).strict()
+
+export type DraftGateResults = z.infer<typeof DraftGateResultsSchema>
+
+/** The gate names as a value, so a composition root can iterate them and a test can pin closure. */
+export const DRAFT_GATE_NAMES = [
+  'executesDefinitive',
+  'stableVerdict',
+  'addsValue',
+  'falsifiableAssertion',
+] as const
+
+export type DraftGateName = (typeof DRAFT_GATE_NAMES)[number]
+
+/**
+ * The durable receipt (D-19). The op returns this AND persists it; 394's proposal envelope
+ * later carries it as evidence refs.
+ *
+ * `disposition` is the value `computeDraftDisposition` produced for this receipt's own gates
+ * and counts. It is stored rather than recomputed at read time so the answer a consumer sees
+ * is the answer that was actually given — a later retune of N must not silently rewrite the
+ * history of decisions taken under the old one.
+ */
+export const DraftReceiptSchema = z.object({
+  schemaVersion: z.literal(CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION),
+  draftRef: DraftRefSchema,
+  gates: DraftGateResultsSchema,
+  stepTable: z.array(StepClassificationRowSchema),
+  gateRuns: z.array(GateRunRecordSchema),
+  addsValueFinding: AddsValueFindingSchema,
+  stabilityRunsRequested: z.number().int().nonnegative(),
+  stabilityRunsCompleted: z.number().int().nonnegative(),
+  disposition: z.enum(DRAFT_DISPOSITIONS),
+  /** Epoch milliseconds. */
+  evaluatedAt: z.number().int().nonnegative(),
+}).strict()
+
+export type DraftReceipt = z.infer<typeof DraftReceiptSchema>

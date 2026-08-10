@@ -711,6 +711,9 @@ export {
   MaskedConfigEntrySchema,
   MaskedResolvedConfigSchema,
   ConfigGetInputSchema,
+  // 393 D-01: the authoring.verify_draft op contracts.
+  AuthoringVerifyDraftInputSchema,
+  AuthoringVerifyDraftOutputSchema,
 } from './functions/index'
 export type {
   FunctionCaller,
@@ -737,7 +740,37 @@ export type {
   MaskedConfigEntry,
   MaskedResolvedConfig,
   ConfigGetInput,
+  AuthoringVerifyDraftInput,
+  AuthoringVerifyDraftOutput,
 } from './functions/index'
+
+// 393 (WTST-02, D-18/D-19): the keep-gate authoring vocabulary. `computeDraftDisposition` is
+// the ONE derivation of a draft's disposition — 394 consumes it and must not re-derive its own.
+export {
+  computeDraftDisposition,
+  DRAFT_DISPOSITIONS,
+  DRAFT_GATE_NAMES,
+  DRAFT_STABILITY_RUNS_N,
+  CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
+  AddsValueFindingSchema,
+  DraftGateResultsSchema,
+  DraftReceiptSchema,
+  DraftRefSchema,
+  GateRunRecordSchema,
+  StepClassificationRowSchema,
+} from './authoring/index'
+export type {
+  AddsValueFinding,
+  DraftDisposition,
+  DraftDispositionInput,
+  DraftGateBooleans,
+  DraftGateName,
+  DraftGateResults,
+  DraftReceipt,
+  DraftRef,
+  GateRunRecord,
+  StepClassificationRow,
+} from './authoring/index'
 
 // 387 ENTY-01/ENTY-02 — entity addressing: short-IDs, the agentqa:// URI scheme, the one
 // card shape and the two resolution unions.
