@@ -263,7 +263,7 @@ describe('classifyDraftSteps — mixed act-and-verify steps (D-12)', () => {
   })
 })
 
-describe('the concreteness relation — a page-whole SUBJECT is refused whatever else the sentence mentions (393-12, 393-13, 393-15)', () => {
+describe('the concreteness relation — a page-whole SUBJECT is refused whatever else the sentence mentions (393-12, 393-13, 393-15, 393-17)', () => {
   // WHY THESE CONTROLS REACH THE CONCRETENESS ARM, by construction rather than by hope.
   //
   // No unquoted step below carries a double-quoted span, so `concrete` cannot short-circuit on
@@ -376,6 +376,74 @@ describe('the concreteness relation — a page-whole SUBJECT is refused whatever
     'Verify the username field is still empty',
     'Verify The Submit Button Is Not Visible',
   ] as const
+
+  // THE SUBJECT-NOUN FORM AXIS (393-17) — the axis the round-6 rule actually reads, and the SIXTH
+  // the same defect has occupied (letter case -> two-sided letter case -> exclusion-list membership
+  // -> member-noun position -> subject-noun FORM). The round-6 refuser was ENUMERATED: the leftward
+  // walk resolved FALSE only on one of seven exact, lowercase, singular page-whole spellings and
+  // walked THROUGH every other token, so a subject that set does not hold — an inflected form, an
+  // unlisted synonym, a hyphenated compound — handed the verdict to an element noun in ANOTHER
+  // clause with no state asserted of it. `Verify the banner appears and the whole site is visible`
+  // was refused while `…the whole sites are visible` passed: a ONE-CHARACTER verdict flip, the exact
+  // shape this module's own doc block condemns in its second recorded regression. The cells below
+  // vary the SUBJECT NOUN'S FORM and nothing else, which is the one thing every earlier round's
+  // controls held fixed.
+  //
+  // DETECTOR cells — measured RED against the module at `60a71ca9` before the fix landed: the
+  // plural loop, the unlisted-synonym loop, the hyphenated cell, and the two unknown-token stop
+  // cells. PRESERVATION pins — green on BOTH sides of the fix and labelled so they are never
+  // counted as detectors (the 393-13 lesson): the singular loop and the member-LEFT-of-anchor loop.
+
+  // DETECTOR. Generated from the exported refuser lexicon, so a membership change moves the loop
+  // with it and every member is tested in the inflection that used to defeat it.
+  const pluralPageWholeFrame = (noun: string) =>
+    `Verify the banner appears and the ${noun}s are visible`
+
+  // PRESERVATION. The singular of the same frame, refused on BOTH sides of the fix: the enumerated
+  // refuser stopped these by name, and the total rule still stops them by name one branch ahead of
+  // the unknown-token stop. Its job is to red if the named refusal class is ever dropped.
+  const singularPageWholeFrame = (noun: string) =>
+    `Verify the banner appears and the ${noun} is visible`
+
+  // DETECTOR. Page-whole subjects the seven-member set does not hold at all. A fixed list rather
+  // than a generated one BECAUSE the point is precisely that these are non-members: no exported
+  // constant can produce them, and generating them from one would test the opposite property.
+  const UNLISTED_PAGE_WHOLE_SYNONYMS = [
+    'window',
+    'webpage',
+    'view',
+    'dashboard',
+    'viewport',
+    'document',
+    'body',
+    'application',
+    'website',
+    'ui',
+  ] as const
+
+  const unlistedSynonymFrame = (noun: string) =>
+    `Verify the banner loads and the ${noun} is visible`
+
+  // DETECTOR, and the two cells that pin the STOP itself — priced as ACCEPTED COST rather than as
+  // wins, because both are genuine-looking claims the total rule refuses. `currently` is an ordinary
+  // adverb outside the continue set; `badge` is an unknown subject head standing one clause NEARER
+  // the anchor than the member that used to rescue it. Refusing them is D-12's safe rot direction.
+  // Without these cells the stop could be narrowed back toward "unknown nouns only" and nothing
+  // in this file would red.
+  const UNKNOWN_TOKEN_STOPS = [
+    'Verify the submit button is currently visible',
+    'Verify the button badge is visible',
+  ] as const
+
+  // PRESERVATION, and WHICH FRAME PINS WHICH RULE — stated rather than implied. The existing
+  // right-of-anchor frame (`Verify the page is visible near the ${noun}`) is a regression pin
+  // against the RETIRED whole-residue scan: the walk runs LEFTWARD and never looks where that
+  // member stands, so under the shipped rule all 33 of its cells are decided by the same two tokens.
+  // This LEFT frame puts the member on the side the shipped walk actually reads, with a page-whole
+  // noun standing nearer the anchor, so it pins the rule the module HAS rather than the rule it used
+  // to have. Green on both sides of the fix; the two frames are kept side by side on purpose.
+  const memberLeftOfAnchorFrame = (noun: string) =>
+    `Verify the ${noun} loads and the page is visible`
 
   // WR-01 (393-13, measured by the round-5 verifier): the empty-literal filter was applied to the
   // PRIOR-ACTION accumulation as well as to the concreteness read, so an action that typed `""`
@@ -512,6 +580,88 @@ describe('the concreteness relation — a page-whole SUBJECT is refused whatever
     expect(result.falsifiableAssertionCount).toBe(1)
     expect(result.table[0]?.vacuityHit).toBeUndefined()
     expect(result.table[0]?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(PAGE_WHOLE_NOUNS)('DETECTOR — refuses the PLURALIZED page-whole subject: %ss are visible', (noun) => {
+    const step = pluralPageWholeFrame(noun)
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect({ step, pass: result.pass }).toEqual({ step, pass: false })
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    // Arm attribution: the CONCRETENESS arm refused this and nothing else fired. The remainder
+    // equals no vacuity member, quotes nothing, restates nothing, and `appears` is no action verb.
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(PAGE_WHOLE_NOUNS)('PRESERVATION — still refuses the SINGULAR page-whole subject by name: %s is visible', (noun) => {
+    const step = singularPageWholeFrame(noun)
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect({ step, pass: result.pass }).toEqual({ step, pass: false })
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(UNLISTED_PAGE_WHOLE_SYNONYMS)('DETECTOR — refuses an UNLISTED page-whole subject: the %s is visible', (noun) => {
+    const step = unlistedSynonymFrame(noun)
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect({ step, pass: result.pass }).toEqual({ step, pass: false })
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it('DETECTOR — refuses the HYPHENATED page-whole subject, which normalizes to one unknown token', () => {
+    // `normalizeToken` strips non-letters, so `Web-Page` folds to a single token that is a member of
+    // nothing. Under the enumerated refuser that made it invisible and the walk sailed past it; the
+    // title casing is carried through because the leaked form the verifier measured was title-cased.
+    const step = 'Verify The Banner Loads And The Web-Page Is Visible'
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect({ step, pass: result.pass }).toEqual({ step, pass: false })
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(UNKNOWN_TOKEN_STOPS)('DETECTOR — stops FALSE on the first token outside the continue set: %s', (step) => {
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect({ step, pass: result.pass }).toEqual({ step, pass: false })
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(ELEMENT_NOUNS)('PRESERVATION — refuses the page-subject claim with the member LEFT of the anchor: the %s loads', (noun) => {
+    const step = memberLeftOfAnchorFrame(noun)
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect({ step, pass: result.pass }).toEqual({ step, pass: false })
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
   })
 
   it.each(RESTATED_EMPTY_CAPTURES)('refuses an assertion restating a prior EMPTY capture (WR-01): $assertion', ({ action, assertion }) => {
