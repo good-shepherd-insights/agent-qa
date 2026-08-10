@@ -32,6 +32,7 @@ import {
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
+import { foldRunOutcomes } from '@vostride/agent-qa-knowledge-local'
 import { FsEventLog, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -39,6 +40,7 @@ import {
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   asRunId,
+  exercisedAnchors,
 } from '@vostride/agent-qa-schema'
 import type {
   Action,
@@ -197,6 +199,47 @@ function gateRunHandoff(runId: string, outcome: MemberTestOutcome): CompletedRun
         testIndex: 0,
         outcome,
         steps: ACCEPT_CONTROL_SUBACTIONS.map((subActions, index) => stepEvidence(index, subActions)),
+      },
+    ],
+  } as unknown as CompletedRunHandoff
+}
+
+/**
+ * An ORDINARY completed run — neither marker — holding the draft's own identity and one sibling.
+ *
+ * Both are needed. The sibling is what proves the fold landed and the fingerprint lane is live; the
+ * draft's own member is what makes the exclusion a filter rather than a no-op. The sibling
+ * exercises a DIFFERENT element, so a union built without the draft leaves the draft's two elements
+ * novel, and a union built with them leaves nothing novel at all — the two readings disagree, which
+ * is the only shape in which this case measures anything.
+ */
+function suiteHandoff(runId: string): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: asRunId(runId),
+    scope: { tier: 'product', key: 'local-form' },
+    buildOrdinal: 1,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'passed',
+    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+    startedAt: 1,
+    endedAt: 2,
+    tests: [
+      {
+        testId: ACCEPT_CONTROL.testId,
+        testName: ACCEPT_CONTROL.testName,
+        filePath: ACCEPT_CONTROL.filePath,
+        testIndex: 0,
+        outcome: 'passed',
+        steps: ACCEPT_CONTROL_SUBACTIONS.map((subActions, index) => stepEvidence(index, subActions)),
+      },
+      {
+        testId: 't_sibling',
+        testName: 'Submit the local account form',
+        filePath: 'tests/sibling.yaml',
+        testIndex: 1,
+        outcome: 'passed',
+        steps: [stepEvidence(0, [{ type: 'click', ref: 'e3', role: 'button', name: 'submit' }])],
       },
     ],
   } as unknown as CompletedRunHandoff
@@ -466,5 +509,46 @@ describe('authoring.draft.verify end to end through the composition root', () =>
     // The unrelated entry DID join the lane, so the exclusion above is a filter and not an
     // empty corpus.
     expect(comparedIdentities).toEqual(['tests/unrelated.yaml'])
+  })
+
+  it('never measures a draft against its OWN fingerprint rows either', async () => {
+    // The text lane's twin, on the primary lane and with real rows. A draft is very often an
+    // EXISTING test — "is this one still worth keeping?" is D-01's standalone value — so its own
+    // identity is in the derived index, and an unfiltered `elementUnion()` would already contain
+    // everything the draft exercises. Gate 3 would then find nothing novel and reject every test
+    // that has ever run.
+    //
+    // PRODUCED, NOT INSERTED. The rows arrive through `foldRunOutcomes` — knowledge-local's own
+    // fold, over a handoff carrying NEITHER marker, which is what an ordinary run writes — so this
+    // case cannot pin a row shape the projection would never mint.
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    mkdirSync(knowledgeRoot, { recursive: true })
+    foldRunOutcomes({
+      knowledgeRoot,
+      handoff: suiteHandoff('RUN-SUITE-1'),
+      extractAnchors: exercisedAnchors,
+    })
+
+    const executor = fixtureExecutor(agentQaRoot, ['passed', 'passed', 'passed'])
+    const host = compose({ executor: executor.port, authoring: draftAuthoring() })
+
+    const receipt = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
+      { draftPath: ACCEPT_CONTROL.filePath },
+      HUMAN,
+    )) as DraftReceipt
+
+    const comparedIdentities = receipt.addsValueFinding.comparedTests.map(
+      (compared) => compared.filePath,
+    )
+    // The fold really landed — the sibling identity is on the FINGERPRINT lane, which only rows in
+    // the derived index can put it on. Without this the case would pass over an empty database and
+    // certify nothing.
+    expect(comparedIdentities).toEqual(['tests/sibling.yaml'])
+    expect(receipt.addsValueFinding.comparedTests[0]?.lane).toBe('fingerprint')
+    // …and the draft's own rows, which are in that same table, did not cover it.
+    expect(receipt.gates.addsValue.pass).toBe(true)
+    expect(receipt.addsValueFinding.novelElements.length).toBeGreaterThan(0)
   })
 })
