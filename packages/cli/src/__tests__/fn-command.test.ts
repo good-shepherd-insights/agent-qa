@@ -728,19 +728,27 @@ describe('agent-qa fn (generic function invoker)', () => {
     // things it did: that the refusal is distinguishable from an unknown id, and that the
     // capability is reached rather than short-circuited.
     //
-    // `gateRun` is a field the run command has no way to carry, so the host's executor
-    // refuses it BEFORE launching anything — which makes this a zero-child-process proof
-    // that the invocation crossed the gate, cleared the binding check, and reached the port
-    // the composition bound. A composition that still refused by binding would report
-    // `FunctionNotBoundError` here instead, and it is asserted absent.
+    // `scope` is a field the run command has no way to carry, so the host's executor refuses it
+    // BEFORE launching anything — which makes this a zero-child-process proof that the invocation
+    // crossed the gate, cleared the binding check, and reached the port the composition bound. A
+    // composition that still refused by binding would report `FunctionNotBoundError` here instead,
+    // and it is asserted absent.
+    //
+    // IT USED TO BE `gateRun`, and 393 moved it. Both durable markers left the unsupported list
+    // when the run command grew `--gate-run` / `--excluded-from-outcomes`, so asking for one is now
+    // an ordinary accepted request and would have launched a child. `scope` and `executionContext`
+    // are what remain, and they belong to the run-invocation work rather than to this phase.
     const workspace = fixtureWorkspace(roots)
 
-    const result = await invoke(workspace, ['runs.start', '--input', '{"gateRun":true}', '--json'])
+    const result = await invoke(
+      workspace,
+      ['runs.start', '--input', '{"scope":{"tier":"product","key":"shop"}}', '--json'],
+    )
 
     expect(result.exitCode).toBe(1)
     expect(result.stdout).toBe('')
     expect(result.stderr).toContain('UnsupportedRunRequestError')
-    expect(result.stderr).toContain('gateRun')
+    expect(result.stderr).toContain('scope')
     expect(result.stderr).not.toContain('FunctionNotBoundError')
     expect(result.stderr).not.toContain('Unknown function')
   })
