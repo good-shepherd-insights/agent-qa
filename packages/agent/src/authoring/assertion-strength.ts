@@ -167,7 +167,7 @@ export const EXPECTED_STATE_TERMS = [
 ] as const
 
 /**
- * The closed element-noun set — the ONE positive lexicon `namesAnElement` decides by (393-13).
+ * The closed element-noun set — the positive lexicon that resolves the relation TRUE (393-13, 393-15).
  *
  * A PINNED CONSTANT, never config. RETUNE COMMENT, AND ITS DIRECTION IS THE INVERSE OF THE THREE
  * EXCLUSION SETS THIS REPLACED: a member is a common name for a CONTROL or a LANDMARK on a page —
@@ -363,7 +363,24 @@ function isActionVerb(token: string): boolean {
   return (ACTION_VERBS as readonly string[]).includes(token)
 }
 
-/** Every double-quoted span of a step, unfiltered — what the author actually typed. */
+/**
+ * Every double-quoted span of a step, unfiltered — what the author actually typed.
+ *
+ * TWO VIEWS BECAUSE THERE ARE TWO QUESTIONS (393-15). This RAW view answers the TAUTOLOGY question:
+ * an action that typed `""` really did type it, and an assertion restating that same span is still
+ * restating a prior action's own content. `quotedLiterals` below answers the CONCRETENESS question:
+ * an empty span expects nothing, so it cannot be the expected value that makes an assertion
+ * falsifiable. Each consumer reads the view that matches its own question, which is what keeps the
+ * two paths from disagreeing about the question each is actually asking.
+ *
+ * THE COST THE SINGLE FILTERED VIEW CHARGED, recorded rather than absorbed (WR-01, measured by the
+ * round-5 verifier). 393-13 introduced the trim filter at the producer, so the prior-action
+ * accumulation was starved of empty captures too. Two shapes moved FAIL -> PASS undisclosed:
+ * `Type "" into the Username field` + `Verify the Username field is empty and shows ""`, and the
+ * whitespace-literal form of the same pair. Both are tautologies and both are now refused again,
+ * pinned in both directions — the two pairs refused, and an accept control (an assertion that
+ * quotes nothing after an empty capture) held passing so the restoration cannot over-reject.
+ */
 function quotedSpans(text: string): string[] {
   return [...text.matchAll(QUOTED_LITERAL_RE)].map((match) => match[1] ?? '')
 }
@@ -373,7 +390,8 @@ function quotedSpans(text: string): string[] {
  *
  * The filter is a `trim` test rather than a falsiness test because `" "` asserts exactly as little
  * as `""` does. Without it, bare `Verify ""` satisfied `literals.length > 0` and short-circuited
- * the concreteness arm — a quoted expected value that expects nothing (393-13).
+ * the concreteness arm — a quoted expected value that expects nothing (393-13). Read by the
+ * concreteness arm and by the capture-signature scan; never by the tautology comparison.
  */
 function quotedLiterals(text: string): string[] {
   return quotedSpans(text).filter((literal) => literal.trim() !== '')
@@ -443,10 +461,86 @@ function isMixedActAndVerify(text: string): boolean {
  * resolves that occurrence TRUE, a `PAGE_WHOLE_NOUNS` member resolves it FALSE and stops the walk,
  * and reaching the start of the residue with neither resolves it FALSE. The answer is true iff at
  * least one state-term occurrence resolves TRUE. Letter case is never consulted: `normalizeToken`
- * lowercases, so a step and any recasing of it get the identical verdict by construction.
+ * lowercases, so a step and any recasing of it get the identical verdict by construction. There is
+ * no distance constant anywhere in the rule: the walk runs to the start of the residue, and what
+ * decides is WHICH set-noun it meets first, never how far away that noun sat.
  *
- * Full disclosure — the measured regression history, the residuals and the accepted cost — is
- * written by 393-15's second task; this block states only what the code above does today.
+ * One tokenization consequence, deliberate and in D-12's direction: a state term fused into a
+ * hyphenated compound normalizes into a single token that is no longer a member, so the compound
+ * anchors nothing and the claim is refused. Punctuation merely attached to a state term
+ * (`visible.`) still normalizes clean and anchors as usual.
+ *
+ * WHY THE RULE IS SHAPED THIS WAY (four regressions, every one of them measured, 2026-08-10, phase
+ * 393 verification rounds 2–5). The FIRST rule read any post-verb word beginning with a capital
+ * letter as an element name, on the house-style premise that a draft writes `the Submit button`.
+ * Title-cased prose defeated it outright: `Verify The Page Is Visible` — the exact vacuous claim
+ * D-12 exists to refuse — passed gate 4 while its lowercase twin was refused, and the drafts this
+ * filter exists for are LLM-authored and commonly title-cased. The SECOND rule kept the capital and
+ * added a neighbour condition — the residue had to carry a capital-initial word beside a
+ * lowercase-initial one — which removed only the two degenerate casings and left the whole
+ * mixed-case interior open: `Verify the Page is visible` PASSED, one character from the refused
+ * form, while `Verify The Submit Button Is Disabled` — a real control in a binary observable state
+ * — FAILED. The THIRD rule removed the casing axis entirely and asked instead whether some residue
+ * token was a member of NONE of three exclusion lists. That closed the casing axis for good, and
+ * the defect simply moved: every ordinary function word nobody had thought to list — a negation, a
+ * modal, an adverb, a copula — was outside all three sets and therefore read as an element name, so
+ * `Verify the page is not visible` PASSED while `Verify the page is visible` was refused, and seven
+ * more paddings of the same vacuous claim with it. The FOURTH rule inverted to one positive element
+ * lexicon, which fixed the MEMBERSHIP half and left the POSITIONAL half untouched: element-naming
+ * and state-bearing were still two independent membership scans over the whole residue, conjoined
+ * with no relation between them, so the gate answered "a named element in a checkable state" for any
+ * sentence that merely MENTIONED a lexicon member — as a trailing prepositional object, as a verb,
+ * or sixty spaces away. All 33 members of the element lexicon were measured carrying the vacuous
+ * generic-page claim in one frame, and the round's old-vs-new differential showed that fix had not
+ * moved the case in either direction. The common cause: an unrelated conjunction of two whole-input
+ * scans is strictly WEAKER than the rule it implements, because it can be satisfied by two facts
+ * about different parts of the sentence. Relating the arms — one tokenization, one walk, one
+ * decision per state term — is what makes the composed predicate say what D-09 clause (ii) says.
+ *
+ * The removed rules are described in words on purpose. Naming their functions or restating their
+ * character classes here would leave a durable, greppable account of a mechanism that no longer
+ * exists, which is how a comment starts teaching the shape it was written to retire.
+ *
+ * RESIDUAL, accepted and named — BOTH of them, which is exactly as wide as the code.
+ *   (a) MEMBERSHIP CANNOT KNOW THE PAGE. `Verify the banner is visible` passes whether or not the
+ *       page has a banner. Membership decides that a word names a KIND of element; nothing lexical
+ *       can decide that this page holds one. Pinned by the deliberately-passing test "leaves the
+ *       documented residual open on purpose: a lexicon MEMBER reads as an element name" in
+ *       `__tests__/assertion-strength.test.ts`. Closing it needs the resolved a11y evidence gate 3
+ *       works from — it is not reachable by any lexicon retune.
+ *   (b) NEAREST-PRECEDING IS A SUBJECT PROXY, NOT SYNTAX. The rule reads the nearest set-noun to
+ *       the left of a state term as that state's subject, which it usually is and need not be. A
+ *       member standing between a page-whole subject head and the state term reads as the subject,
+ *       so `Verify the page with the banner is visible` passes although the claim is about the
+ *       page. Pinned by the deliberately-passing test "leaves the SECOND residual open on purpose:
+ *       nearest-preceding is a subject PROXY, not syntax". Closing it needs a parse, not a lexicon:
+ *       the fix is a dependency analysis of the sentence, which is a different class of tool from
+ *       a deterministic hermetic membership check, so it is accepted here rather than approximated
+ *       with a heuristic that would ship a fifth axis.
+ *
+ * ACCEPTED COST, priced in the open, and the retune routes. Every item below is a REAL draft this
+ * gate refuses; all are pinned by deliberately-failing cells in the accepted-cost test.
+ *   - An UNLISTED genuine element noun: `Verify the widget is visible`, `Verify the carousel is
+ *     visible`, and `Verify the Login form is empty` (whose `form` is a page-whole noun and so stops
+ *     the walk as well).
+ *   - PLURALS, as a whole CLASS. Membership is exact and there is no stemming, so `Verify the Submit
+ *     buttons are disabled` is refused while the singular `Verify the Submit button is disabled`
+ *     passes. That is the single largest category of loss and it is not a per-word omission.
+ *   - Six COMMON NOUNS an author reaches for constantly and this lexicon does not hold: `message`,
+ *     `text`, `title`, `item`, `cell`, `card` — `Verify the error message is visible`, `Verify the
+ *     text is visible`, `Verify the title is visible`, `Verify the item is selected`, `Verify the
+ *     cell is empty` and `Verify the card is visible` all lose gate 4.
+ *   - The ATTACHMENT cost, new with the relation: a genuine element claim written with a page-whole
+ *     noun nearer the state term is refused, so `Verify the header on the page is visible` fails
+ *     because `page`, not `header`, is what the walk meets first. This is D-12's direction — the
+ *     sentence is ambiguous about what is being claimed visible — and it is a cost, not a bonus.
+ * The AUTHOR's route out is a singular lexicon noun standing beside its state (`Verify the login
+ * field is empty` passes, and is pinned), or quoting the literal the page must show. The
+ * MAINTAINER's routes are an `ELEMENT_NOUNS` membership change (which moves the gate toward ACCEPT)
+ * or a `PAGE_WHOLE_NOUNS` membership change (which moves it toward REJECT), each with the frozen
+ * corpus re-run that says whether the retune was a fix or a leak — never a character-case test,
+ * never a fourth exclusion list, and never a third independent whole-residue scan: those are the
+ * three shapes that shipped the four regressions above.
  */
 function namesElementInExpectedState(text: string): boolean {
   const tokens = afterLeadingToken(unquotedResidue(text)).split(/\s+/).map(normalizeToken)
@@ -486,10 +580,12 @@ function captureSignatureHits(literals: readonly string[]): string[] {
 /**
  * The per-step classification table (D-11).
  *
- * The ONE judgment in this module. Prior-action literals accumulate as the walk proceeds,
- * which is what makes the tautology rule directional: an assertion cannot restate content that
- * has not been entered yet, and an order-blind comparison would reject a legitimate
- * pre-condition check for restating something that comes later.
+ * The ONE judgment in this module. Prior-action captures accumulate as the walk proceeds, which is
+ * what makes the tautology rule directional: an assertion cannot restate content that has not been
+ * entered yet, and an order-blind comparison would reject a legitimate pre-condition check for
+ * restating something that comes later. What accumulates — and what the tautology comparison reads
+ * — is the RAW span list; the concreteness arm and the capture-signature scan read the filtered
+ * literals instead (see `quotedSpans`).
  */
 export function classifyDraftSteps(steps: readonly string[]): StepClassificationRow[] {
   const priorActionLiterals = new Set<string>()
@@ -555,7 +651,17 @@ function gateReason(rows: readonly StepClassificationRow[]): string {
       causes.add('acts and verifies in one step, so it has no single verdict to report')
     }
   }
-  if (causes.size === 0) causes.add('no quoted expected value and no named element in a checkable state')
+  // THE FALLBACK MUST BE TRUE OF EVERY STEP THAT REACHES IT (393-15). Its previous tail said the
+  // step named no element, which was false about `Verify the Submit buttons are disabled` and about
+  // every other plural or unlisted noun the lexicon does not hold — a durable receipt denying
+  // something the author plainly wrote. What is actually true of every step reaching this line is
+  // the RELATION's verdict: whatever the sentence mentions, no lexicon member stood as the nearest
+  // set-noun before an expected-state term.
+  if (causes.size === 0) {
+    causes.add(
+      'no quoted expected value, and no element noun this gate knows stands as the nearest set-noun before an expected-state term',
+    )
+  }
 
   return `${assertions.length} assertion step(s), none falsifiable: ${[...causes].sort().join('; ')} (D-09 clause (ii))`
 }

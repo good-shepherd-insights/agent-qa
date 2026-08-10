@@ -574,25 +574,47 @@ describe('the concreteness relation — a page-whole SUBJECT is refused whatever
     expect(assertionStrengthGate({ steps: ['Verify the banner is visible'] }).pass).toBe(true)
   })
 
-  it('pays the WIDENED accepted cost: an UNLISTED element noun is refused, and so is the generic-page claim', () => {
-    // THE ACCEPTED COST, WIDENED knowingly by the 393-13 inversion, in D-12's ratified direction.
+  it('leaves the SECOND residual open on purpose: nearest-preceding is a subject PROXY, not syntax', () => {
+    // THE OTHER RESIDUAL, pinned deliberately so closing it is a conscious change rather than an
+    // accident. The relation reads the nearest set-noun to the left of a state term as that state's
+    // subject, which it usually is and need not be. Here `banner` stands between the page-whole
+    // subject head and `visible`, so the claim reads as a claim about the banner and passes — though
+    // what the sentence asserts is that the PAGE is visible. Closing it needs a parse, not a lexicon,
+    // which is a different class of tool from a deterministic hermetic membership check.
+    expect(assertionStrengthGate({ steps: ['Verify the page with the banner is visible'] }).pass).toBe(true)
+  })
+
+  it('pays the WIDENED accepted cost: unlisted nouns, PLURALS as a class, six common nouns, and attachment', () => {
+    // THE ACCEPTED COST, priced in the open rather than discovered later, in D-12's ratified
+    // direction. Every cell is a REAL draft this gate refuses.
     //
-    // Under the exclusion rule, an unlisted word was ACCEPTED — which is how the same defect rotted
-    // open three times, once per class of word nobody had thought to exclude. Under membership an
-    // unlisted word is REFUSED, so `widget`, `carousel` and `Login` — each naming a real thing —
-    // now lose gate 4. The third cell is a deliberate verdict FLIP: `Verify the Login form is empty`
-    // was the recovery route the previous round pinned as PASSING. It is the price of a closure that
-    // fails toward reject, and it is paid here in the open rather than discovered later.
+    // - UNLISTED element nouns (`widget`, `carousel`) and the page-whole `form`, carried forward
+    //   from the 393-13 inversion: under an exclusion rule an unlisted word was ACCEPTED, which is
+    //   how the same defect rotted open three times; under membership it is REFUSED.
+    // - PLURALS, as a whole CLASS. Membership is exact and there is no stemming, so `buttons` is
+    //   not `button`. This is the single largest category of loss and it is not a per-word omission
+    //   — the round-5 verifier measured it as an undisclosed class, which is why it is named here.
+    // - Six COMMON NOUNS an author reaches for constantly: message, text, title, item, cell, card.
+    // - The ATTACHMENT cost, new with the relation: a genuine element claim written with a
+    //   page-whole noun NEARER the state term is refused, because the walk meets `page` first.
     //
-    // The AUTHOR's route out is a lexicon noun or a quoted literal — pinned below. The MAINTAINER's
-    // is an ELEMENT_NOUNS membership change plus a frozen-corpus re-run, and adding a member moves
-    // the gate toward ACCEPT.
+    // The AUTHOR's route out is a singular lexicon noun beside its state or a quoted literal, both
+    // pinned below. The MAINTAINER's is an ELEMENT_NOUNS change (toward ACCEPT) or a
+    // PAGE_WHOLE_NOUNS change (toward REJECT), each with a frozen-corpus re-run.
     for (const step of [
       'Verify the widget is visible',
       'Verify the carousel is visible',
       'Verify the Login form is empty',
       'Verify the Form is empty',
       'Verify the form is empty',
+      'Verify the Submit buttons are disabled',
+      'Verify the error message is visible',
+      'Verify the text is visible',
+      'Verify the title is visible',
+      'Verify the item is selected',
+      'Verify the cell is empty',
+      'Verify the card is visible',
+      'Verify the header on the page is visible',
     ]) {
       const row = onlyRow([step])
 
@@ -600,7 +622,10 @@ describe('the concreteness relation — a page-whole SUBJECT is refused whatever
       expect(row.vacuityHit).toBeUndefined()
     }
 
+    // The ACCEPT side of the same price: the author's recovery route, and the singular whose plural
+    // is refused two lines above. Without these the loop above is satisfied by refusing everything.
     expect(assertionStrengthGate({ steps: ['Verify the login field is empty'] }).pass).toBe(true)
+    expect(assertionStrengthGate({ steps: ['Verify the Submit button is disabled'] }).pass).toBe(true)
   })
 })
 
@@ -704,7 +729,21 @@ describe('assertionStrengthGate — the two clauses composed (D-09)', () => {
 
     expect(result.pass).toBe(false)
     expect(result.reason).toContain('no quoted expected value')
+    expect(result.reason).toContain('nearest set-noun before an expected-state term')
     expect(result.reason).not.toContain('acts and verifies in one step')
+  })
+
+  it('never tells an author who NAMED an element that they named none (393-15)', () => {
+    // The receipt the plural author gets. `Verify the Submit buttons are disabled` loses gate 4 for
+    // a real and disclosed reason — membership is exact, so `buttons` is not `button` — but the
+    // durable explanation may not deny that the step named an element, because it did. The old tail
+    // said exactly that; a tune-toward-reject gate cannot afford a false explanation, which is the
+    // rule this file's mixed-step case above already enforces for the other fallback path.
+    const result = assertionStrengthGate({ steps: ['Verify the Submit buttons are disabled'] })
+
+    expect(result.pass).toBe(false)
+    expect(result.reason).not.toContain('no named element in a checkable state')
+    expect(result.reason).toContain('nearest set-noun before an expected-state term')
   })
 
   it('reports the same table classifyDraftSteps does', () => {
@@ -846,15 +885,15 @@ describe('the frozen corpus classes, by literal step text (4180c78b)', () => {
   // expectations.json rather than an inline boolean so no future edit can be absorbed beside it.
   // That is a real property and worth pinning.
   //
-  // It CANNOT observe `namesAnElement`. The verifier reverted the concreteness rule to its
-  // pre-393-09 one-liner and re-ran this group alone: 8/8 green with the rule gone. Every
-  // `expected: true` draft carries a quoted literal, so `concrete` short-circuits on
-  // `literals.length > 0` and the element-name arm is never consulted; every `expected: false`
-  // draft is refused by the vacuity, capture-signature or tautology arm in any casing. Its former
-  // label ("the regression pin for the WR-06 narrowing … proves the rule cost the denominator
-  // nothing") presented it as evidence for a change it is blind to. The pins for the concreteness
-  // arm are the constructed casing-loop controls above, which measurably red without the rule.
-  it.each(CORPUS)('title-casing $draft — the frozen corpus is casing-insensitive (this walk cannot observe namesAnElement)', ({ draft, steps }) => {
+  // It CANNOT observe the element/state relation at all. The verifier reverted the concreteness
+  // rule to its pre-393-09 one-liner and re-ran this group alone: 8/8 green with the rule gone.
+  // Every `expected: true` draft carries a quoted literal, so `concrete` short-circuits on
+  // `literals.length > 0` and the relation is never consulted; every `expected: false` draft is
+  // refused by the vacuity, capture-signature or tautology arm in any casing. Its former label
+  // ("the regression pin for the WR-06 narrowing … proves the rule cost the denominator nothing")
+  // presented it as evidence for a change it is blind to. The pins for the concreteness arm are the
+  // constructed loops above, which measurably red without the rule.
+  it.each(CORPUS)('title-casing $draft — the frozen corpus is casing-insensitive (this walk cannot observe the concreteness relation)', ({ draft, steps }) => {
     const frozen = EXPECTATIONS.drafts[draft]?.expectedGates.falsifiableAssertion
 
     expect(frozen).toBeTypeOf('boolean')
@@ -1058,20 +1097,21 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
     // The falsifiability conjunction refuses a vacuous remainder twice over: once because it
     // matched the lexicon, and once because a phrase that names no element in a checkable
     // state is not concrete to begin with. Today the second refusal alone is sufficient for
-    // every member — no member contains an EXPECTED_STATE_TERMS token, so `hasExpectedStateTerm`
-    // is false for all of them — which is why deleting the vacuity conjunct changes no
-    // behaviour on the current lexicons (recorded as surviving mutant M4).
+    // every member — no member carries an EXPECTED_STATE_TERMS token at all, so the relation has
+    // no anchor to walk from and answers false for all of them — which is why deleting the vacuity
+    // conjunct changes no behaviour on the current lexicons (recorded as surviving mutant M4).
     //
-    // 393-13 re-derived which widening triggers it for the INVERTED rule. The casing arm below is
-    // not what satisfies `namesAnElement` — the rule is casing-blind, so recasing a member changes
-    // nothing — and "page is visible" is refused by the concreteness arm in every casing for a
-    // reason that no longer depends on any exclusion list: NO token of it is an ELEMENT_NOUNS
-    // member. The member shape that WOULD hand the whole decision to the vacuity conjunct carries
-    // both an EXPECTED_STATE_TERMS token AND an ELEMENT_NOUNS member — "banner is visible" remains
-    // exactly that shape, so the guard keeps a live trigger across the inversion rather than
-    // becoming a promise. Verified by measurement, not by argument: adding that member and deleting
-    // the conjunct (393-12, snapshot + `diff` proof) reds this case and this case alone. The three
-    // casings are kept because a casing-blind rule is exactly the claim they now check.
+    // 393-15 re-derived which widening triggers it for the RELATION. The casing arm below is not
+    // what decides — the relation is casing-blind, so recasing a member changes nothing — and
+    // "page is visible" is refused in every casing for a reason that depends on no exclusion list:
+    // the nearest set-noun to the left of `visible` is the page-whole noun `page`, which stops the
+    // walk. The member shape that WOULD hand the whole decision to the vacuity conjunct carries an
+    // EXPECTED_STATE_TERMS token whose nearest set-noun to the LEFT is an ELEMENT_NOUNS member —
+    // "banner is visible" remains exactly that shape, so the guard keeps a live trigger across the
+    // relation rather than becoming a promise. Verified by measurement, not by argument: adding
+    // that member and deleting the conjunct (393-12, snapshot + `diff` proof) reds this case and
+    // this case alone. The three casings are kept because a casing-blind rule is exactly the claim
+    // they now check.
     const titleCase = (phrase: string) =>
       phrase.replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
 
