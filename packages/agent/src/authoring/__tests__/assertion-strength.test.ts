@@ -23,9 +23,8 @@ import {
   ACTION_VERBS,
   ASSERTION_VERBS,
   CAPTURE_SIGNATURE_PATTERNS,
+  ELEMENT_NOUNS,
   EXPECTED_STATE_TERMS,
-  GENERIC_PAGE_NOUNS,
-  NON_ELEMENT_WORDS,
   VACUOUS_ASSERTION_PHRASES,
   assertionStrengthGate,
   classifyDraftSteps,
@@ -847,31 +846,48 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
       'upload',
       'visit',
     ])
-    expect([...GENERIC_PAGE_NOUNS]).toEqual([
-      'app',
-      'browser',
-      'content',
-      'form',
-      'page',
-      'screen',
-      'site',
+    expect([...ELEMENT_NOUNS]).toEqual([
+      'alert',
+      'banner',
+      'button',
+      'checkbox',
+      'dialog',
+      'dropdown',
+      'field',
+      'footer',
+      'header',
+      'heading',
+      'icon',
+      'image',
+      'input',
+      'label',
+      'link',
+      'list',
+      'menu',
+      'modal',
+      'option',
+      'panel',
+      'popup',
+      'radio',
+      'row',
+      'sidebar',
+      'slider',
+      'spinner',
+      'tab',
+      'table',
+      'textbox',
+      'toast',
+      'toggle',
+      'toolbar',
+      'tooltip',
     ])
-    expect([...NON_ELEMENT_WORDS]).toEqual([
-      'a',
-      'an',
-      'anything',
-      'are',
-      'everything',
-      'is',
-      'it',
-      'nothing',
-      'something',
-      'that',
-      'the',
-      'this',
-      'was',
-      'were',
-    ])
+    // The page-whole nouns are absent on purpose, and the absence is what refuses the vacuous
+    // claim. A membership rule's omissions fail toward REJECT, so this is the one lexicon whose
+    // NON-members are load-bearing in the safe direction rather than the leaky one.
+    for (const nonMember of ['app', 'browser', 'content', 'form', 'page', 'screen', 'site']) {
+      expect({ nonMember, member: (ELEMENT_NOUNS as readonly string[]).includes(nonMember) })
+        .toEqual({ nonMember, member: false })
+    }
     expect(CAPTURE_SIGNATURE_PATTERNS.map((entry) => entry.name)).toEqual([
       'iso-8601-timestamp',
       'long-hex',
@@ -886,8 +902,7 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
       VACUOUS_ASSERTION_PHRASES,
       EXPECTED_STATE_TERMS,
       ACTION_VERBS,
-      GENERIC_PAGE_NOUNS,
-      NON_ELEMENT_WORDS,
+      ELEMENT_NOUNS,
       CAPTURE_SIGNATURE_PATTERNS.map((entry) => entry.name),
     ]
 
@@ -906,16 +921,16 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
     // is false for all of them — which is why deleting the vacuity conjunct changes no
     // behaviour on the current lexicons (recorded as surviving mutant M4).
     //
-    // 393-12 corrected which widening triggers it. The casing arm below is no longer what
-    // satisfies `namesAnElement` — the rule is casing-blind, so recasing a member changes
-    // nothing, and "page is visible" is refused by the concreteness arm in every casing
-    // (`page` is a GENERIC_PAGE_NOUNS member, `is` a NON_ELEMENT_WORDS one, `visible` an
-    // EXPECTED_STATE_TERMS one). The member shape that WOULD hand the whole decision to the
-    // vacuity conjunct carries both a state term and a residue word outside all three exclusion
-    // sets — "banner is visible" is that shape. Verified by measurement, not by argument: adding
-    // that member and deleting the conjunct (393-12, snapshot + `diff` proof) reds this case and
-    // this case alone. The three casings are kept because a casing-blind rule is exactly the
-    // claim they now check.
+    // 393-13 re-derived which widening triggers it for the INVERTED rule. The casing arm below is
+    // not what satisfies `namesAnElement` — the rule is casing-blind, so recasing a member changes
+    // nothing — and "page is visible" is refused by the concreteness arm in every casing for a
+    // reason that no longer depends on any exclusion list: NO token of it is an ELEMENT_NOUNS
+    // member. The member shape that WOULD hand the whole decision to the vacuity conjunct carries
+    // both an EXPECTED_STATE_TERMS token AND an ELEMENT_NOUNS member — "banner is visible" remains
+    // exactly that shape, so the guard keeps a live trigger across the inversion rather than
+    // becoming a promise. Verified by measurement, not by argument: adding that member and deleting
+    // the conjunct (393-12, snapshot + `diff` proof) reds this case and this case alone. The three
+    // casings are kept because a casing-blind rule is exactly the claim they now check.
     const titleCase = (phrase: string) =>
       phrase.replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
 

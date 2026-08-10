@@ -165,64 +165,62 @@ export const EXPECTED_STATE_TERMS = [
 ] as const
 
 /**
- * The closed generic-page-noun set — the first exclusion of `namesAnElement` (D-09 discipline).
+ * The closed element-noun set — the ONE positive lexicon `namesAnElement` decides by (393-13).
  *
- * A PINNED CONSTANT, never config. RETUNE COMMENT: a member is a noun that names the page AS A
- * WHOLE rather than a control on it, so a claim built only out of members says nothing an author
- * could have got wrong about a particular thing. Widening this set REFUSES more drafts — D-12's
- * safe direction — but it costs real drafts, so add a member only with the vacuous claim it
- * refuses, and re-run the frozen corpus afterwards: the expectations table is the denominator that
- * says whether the widening was a fix or a leak.
+ * A PINNED CONSTANT, never config. RETUNE COMMENT, AND ITS DIRECTION IS THE INVERSE OF THE THREE
+ * EXCLUSION SETS THIS REPLACED: a member is a common name for a CONTROL or a LANDMARK on a page —
+ * a thing an author points at, that the app could be wrong about. ADDING a member moves the gate
+ * toward ACCEPT: every vacuous-shaped claim naming that noun starts passing, which is the direction
+ * that costs a user a bad test. So a member arrives only with a real draft it rescues, plus a
+ * re-run of the frozen corpus — the expectations table is the denominator that says whether the
+ * widening was a fix or a leak. REMOVING a member refuses drafts: D-12's safe direction, still a
+ * real cost.
  *
  * Read by exact membership over a NORMALIZED (lowercased, non-letters stripped) residue token —
- * membership never position, exact never substring. `the Login form is empty` still names an
- * element, because `login` is not a member.
+ * membership never position, exact never substring.
+ *
+ * WHAT IS DELIBERATELY ABSENT. The page-whole nouns — app, browser, content, form, page, screen,
+ * site — are NOT members, because a claim naming only those says nothing an author could have got
+ * wrong about a particular thing. That absence is what refuses `page is visible` and `the form is
+ * empty`, in every casing and under every function-word padding, and it is load-bearing: adding
+ * `form` here would re-open the exact claim D-12 exists to reject.
  *
  * Order is alphabetical and NOT load-bearing: the set is read by membership.
  */
-export const GENERIC_PAGE_NOUNS = [
-  'app',
-  'browser',
-  'content',
-  'form',
-  'page',
-  'screen',
-  'site',
-] as const
-
-/**
- * The closed non-element-word set — the second exclusion of `namesAnElement` (D-09 discipline).
- *
- * A PINNED CONSTANT, never config. RETUNE COMMENT: a member is a word that STRUCTURALLY cannot name
- * an element — an article or determiner, a copula, a bare pronoun. Unlike `GENERIC_PAGE_NOUNS`,
- * whose members are real nouns that merely point at the wrong thing, nothing here can ever be a
- * control's name, so widening is close to free and narrowing is what costs a verdict. Same
- * discipline either way: a member arrives with the claim it changes, and the frozen corpus is
- * re-run.
- *
- * Declared SEPARATELY from `LEADING_ARTICLES`, which overlaps it, and that duplication is
- * deliberate — the same W-10 reason as `MIXED_STEP_SEPARATORS` beside the chat separators.
- * `LEADING_ARTICLES` moves what the VACUITY remainder normalizes to; this set moves ELEMENT-NAME
- * candidacy. One shared constant would let a single retune silently move two unrelated
- * measurements.
- *
- * Order is alphabetical and NOT load-bearing: the set is read by membership.
- */
-export const NON_ELEMENT_WORDS = [
-  'a',
-  'an',
-  'anything',
-  'are',
-  'everything',
-  'is',
-  'it',
-  'nothing',
-  'something',
-  'that',
-  'the',
-  'this',
-  'was',
-  'were',
+export const ELEMENT_NOUNS = [
+  'alert',
+  'banner',
+  'button',
+  'checkbox',
+  'dialog',
+  'dropdown',
+  'field',
+  'footer',
+  'header',
+  'heading',
+  'icon',
+  'image',
+  'input',
+  'label',
+  'link',
+  'list',
+  'menu',
+  'modal',
+  'option',
+  'panel',
+  'popup',
+  'radio',
+  'row',
+  'sidebar',
+  'slider',
+  'spinner',
+  'tab',
+  'table',
+  'textbox',
+  'toast',
+  'toggle',
+  'toolbar',
+  'tooltip',
 ] as const
 
 /**
@@ -326,8 +324,19 @@ function isActionVerb(token: string): boolean {
   return (ACTION_VERBS as readonly string[]).includes(token)
 }
 
+/**
+ * The double-quoted spans of a step, EMPTY AND WHITESPACE-ONLY CAPTURES DROPPED (393-13).
+ *
+ * The filter is a `trim` test rather than a falsiness test because `" "` asserts exactly as little
+ * as `""` does, and it lives HERE rather than at either call site so the prior-action accumulation
+ * and the concreteness path cannot disagree about what counts as a literal. Without it, bare
+ * `Verify ""` satisfied `literals.length > 0` and short-circuited the concreteness arm — a quoted
+ * expected value that expects nothing.
+ */
 function quotedLiterals(text: string): string[] {
-  return [...text.matchAll(QUOTED_LITERAL_RE)].map((match) => match[1] ?? '')
+  return [...text.matchAll(QUOTED_LITERAL_RE)]
+    .map((match) => match[1] ?? '')
+    .filter((literal) => literal.trim() !== '')
 }
 
 /** The step with every double-quoted span removed, so prose scans cannot read a literal. */
@@ -386,54 +395,20 @@ function isMixedActAndVerify(text: string): boolean {
 /**
  * Whether the assertion names a specific element rather than the page in general.
  *
- * THE RULE ENFORCED, verbatim (393-12, WR-06): the post-verb residue, with double-quoted spans
- * already removed, is split on whitespace and each piece normalized by `normalizeToken`
- * (lowercased, non-letters stripped). The answer is true iff AT LEAST ONE normalized token is
- * non-empty and is a member of NONE of three closed sets — `GENERIC_PAGE_NOUNS`,
- * `NON_ELEMENT_WORDS`, `EXPECTED_STATE_TERMS`. Letter case is never consulted: the verdict for a
- * step and for any recasing of that step is identical, by construction.
+ * THE RULE ENFORCED, verbatim (393-13): the post-verb residue, with double-quoted spans already
+ * removed, is split on whitespace and each piece normalized by `normalizeToken` (lowercased,
+ * non-letters stripped). The answer is true iff AT LEAST ONE normalized token is a MEMBER of the
+ * one positive closed set `ELEMENT_NOUNS`. Letter case is never consulted: the verdict for a step
+ * and for any recasing of that step is identical, by construction.
  *
- * WHY THE RULE IS SHAPED THIS WAY (two regressions, both measured, 2026-08-10, phase 393
- * verification). The FIRST rule read any post-verb word beginning with a capital letter as an
- * element name, on the house-style premise that a draft writes `the Submit button`. Title-cased
- * prose defeated it outright: `Verify The Page Is Visible` — the exact vacuous claim D-12 exists to
- * refuse — passed gate 4 while its lowercase twin was refused, and the drafts this filter exists
- * for are LLM-authored and commonly title-cased. The SECOND rule kept the capital and added a
- * neighbour condition — the residue had to carry a capital-initial word BESIDE a lowercase-initial
- * word — which removed only the two degenerate casings and left the whole mixed-case interior open.
- * The verifier measured both halves of that: `Verify the Page is visible` PASSED (one character
- * from the refused form), and `Verify The Submit Button Is Disabled` — a real control in a binary
- * observable state — FAILED. So the axis itself was removed rather than re-bounded a third time. A
- * closure anchored in an external vocabulary (a noun lexicon) is what holds; a closure phrased as a
- * relation among the module's own casing predicates moved twice.
- *
- * RESIDUAL, accepted and named. A residue word OUTSIDE the three closed sets reads as an element
- * name whatever it actually denotes: `Verify the banner is visible` passes whether or not the page
- * has a banner. A lexical check cannot know the page, so no membership rule can separate a named
- * control from an invented one — closing that needs the resolved a11y evidence gate 3 works from.
- * Pinned deliberately by the deliberately-passing test "leaves the documented residual open on
- * purpose: an unlisted residue word reads as an element name" in
- * `__tests__/assertion-strength.test.ts`, so narrowing it is a conscious `GENERIC_PAGE_NOUNS`
- * retune rather than an accident.
- *
- * ACCEPTED COST, and the retune route. A claim naming ONLY a generic page noun is refused even
- * where a human could arguably check it: `Verify the Form is empty` loses gate 4, in every casing,
- * because every one of its residue tokens is excluded. That is D-12's safe direction and it still
- * costs a real draft. The AUTHOR's route out is naming the specific element — `Verify the Login
- * form is empty` passes — or quoting the literal the page must show. The MAINTAINER's retune route
- * is a membership change in one of the three sets plus a re-run of the frozen corpus (D-09), never
- * a character-case test: that is the shape that shipped both regressions above.
+ * The full disclosure structure — the measured history, the residual, the widened accepted cost —
+ * lands with this plan's documentation task; this block states only what the code above does.
  */
 function namesAnElement(text: string): boolean {
   return afterLeadingToken(unquotedResidue(text))
     .split(/\s+/)
     .map(normalizeToken)
-    .some((token) => (
-      token !== ''
-      && !(GENERIC_PAGE_NOUNS as readonly string[]).includes(token)
-      && !(NON_ELEMENT_WORDS as readonly string[]).includes(token)
-      && !(EXPECTED_STATE_TERMS as readonly string[]).includes(token)
-    ))
+    .some((token) => (ELEMENT_NOUNS as readonly string[]).includes(token))
 }
 
 function hasExpectedStateTerm(text: string): boolean {
