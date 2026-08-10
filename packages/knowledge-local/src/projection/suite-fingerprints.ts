@@ -166,7 +166,7 @@ export function suiteFingerprintDeltas(
     if (elements.length === 0) continue
     // Within ONE run the same identity can appear more than once (a retried member). Later
     // evidence inside a single handoff wins, matching the cross-run rule below.
-    byIdentity.set(`${member.filePath} ${member.testName}`, {
+    byIdentity.set(`${member.filePath}\u0000${member.testName}`, {
       filePath: member.filePath,
       testName: member.testName,
       elements,
