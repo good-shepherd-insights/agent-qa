@@ -1,0 +1,608 @@
+// WTST-06 / 393 D-20 — the hermetic exclusion differential: three exclusions and one inclusion,
+// off the SAME flagged handoff, each leg asserting BOTH cells.
+//
+// WHY TWINS AND NOT A SINGLE FIXTURE. "Zero rows for a flagged handoff" is satisfied just as well
+// by a fixture that could never have produced a row at all — a handoff with no members, an anchor
+// walk that extracts nothing, a run dir the fold cannot read. Every leg below therefore folds a
+// SECOND handoff that is byte-identical except for the markers, into its own knowledge root, and
+// asserts that side MOVED. A leg whose flag-off cell is dead proves nothing, and that is the
+// 388/390 two-sided law this suite is written under. `the twins differ ONLY by the markers` below
+// pins the premise itself, so a later edit cannot make the twins diverge in some other field and
+// quietly turn every differential into a comparison of two unrelated runs.
+//
+// WHAT EACH LEG OWNS, and why leg 2 is not leg 1 restated:
+//
+//   leg 1  run_test_outcomes        the flake counters — passes/failures/heals/flakeCount
+//   leg 2  suite_fingerprints       gate 3's exemplar-ranking substrate, a DIFFERENT TABLE in a
+//                                   DIFFERENT MODULE, shipped by plan 393-03
+//   leg 3  run_fingerprint_windows  390's quarantine detection window
+//   leg 4  the curation queue       the POSITIVE half — candidates ARE emitted (C8)
+//   leg 5  the analyze-run payload   the flags reach the queue record (D-20's ratified sentence)
+//
+// Leg 2 is deliberately its own named assertion even though plan 393-03 enforced the exclusion
+// with ONE gated member list in `projectRunOutcomes` that BOTH projections are computed from —
+// meaning that today leg 1 and leg 2 die to the same deleted line. That shared line is good
+// design and this leg is not an argument against it; the leg exists because the failure mode it
+// guards is a table acquiring its OWN way in. `suite_fingerprints` is written by a different
+// module with its own `applySuiteFingerprints` writer, and the cheapest imaginable "fix" for a
+// future gate-3 miss is a second fold pass over `handoff.tests` that never consults the gate.
+// That change would leave leg 1 green — the counters would still be empty — and leg 2 is the
+// only thing in the tree that would red. A leg that can only red together with its sibling today
+// but can red alone tomorrow is worth its own name; see the SUMMARY for the measurement.
+//
+// ISSUE CANDIDACY — STRUCTURAL NOTE, NOT AN ASSERTION (D-20). There is no Issue engine yet, so
+// there is nothing here to exclude and nothing to test. The consumer contract is RESERVED: when
+// the engine lands it must read `excludedFromOutcomes` at candidacy time, from the handoff or
+// from the payload field leg 5 pins, and a gate-run must produce zero issue candidates. This
+// comment is the placeholder for that fifth exclusion leg; it is written as prose rather than a
+// skipped test because a `it.skip` would claim coverage of a mechanism that does not exist.
+
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import {
+  composeLocalAgent,
+  DIGEST_JOB_ID_SOURCE,
+  LOCAL_CURATION_CAPABILITIES,
+  type LocalAgentHost,
+} from '@vostride/agent-qa-agent-local'
+import {
+  fingerprintRecurrence,
+  openIndexWriter,
+  readFingerprintWindow,
+  readTestOutcomeHistory,
+  SUITE_FINGERPRINTS_TABLE,
+} from '@vostride/agent-qa-knowledge-local'
+import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { defaultGuardrailPolicyInput, loadGuardrailPolicy } from '@vostride/agent-qa-safety'
+import type { AuditSink } from '@vostride/agent-qa-safety'
+import {
+  asRef,
+  asRunId,
+  canonicalJson,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  type CompletedRunHandoff,
+  type ElementInfo,
+  type PerTestOutcome,
+  type ScreenState,
+  type StepEvidence,
+  type SubActionEvidence,
+  type Verdict,
+} from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { emitCurationCandidates, type EmitReport } from '../curation/emit-candidates.js'
+import { exercisedAnchors } from '../curation/handoff-anchors.js'
+import {
+  runPostRunTail,
+  type PostRunTailOperations,
+  type RunPostRunTailOptions,
+} from '../curation/post-run-tail.js'
+
+const RUN_ID = 'run-393-05-gate-exclusion'
+const BUILD_ORDINAL = 7
+const PASSING_FILE = 'tests/checkout.yaml'
+const PASSING_NAME = 'checkout completes the payment sheet'
+const FAILING_FILE = 'tests/login.yaml'
+const FAILING_NAME = 'login accepts a returning customer'
+
+const POLICY = loadGuardrailPolicy(defaultGuardrailPolicyInput)
+
+/** The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here. */
+const MINT_IDENTITY = (filePath: string): string => filePath
+
+const TEST_MODEL: JobModelCapability = {
+  modelId: 'test:post-run-gate-run-exclusion',
+  generate: async () => ({ text: 'not an author payload' }),
+}
+
+const TEST_CONFIG: ConfigReaderPort = {
+  getMasked: () => Promise.resolve({
+    schemaVersion: 1,
+    configPath: '/tmp/post-run-gate-run-exclusion.config.yaml',
+    entries: [],
+  }),
+}
+
+// ---- the twin fixture -------------------------------------------------------------------------
+
+function sha(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+const ARTIFACT_BYTES = Buffer.from('gate-run evidence bytes')
+const ARTIFACT_SHA = sha(ARTIFACT_BYTES)
+
+function element(ref: string, name: string, attributes: Record<string, string>): ElementInfo {
+  return {
+    ref: asRef(ref),
+    role: 'button',
+    name,
+    nameNormalized: name.toLowerCase(),
+    bounds: { x: 10, y: 20, width: 100, height: 40 },
+    center: { x: 60, y: 40 },
+    state: { enabled: true, focused: false, visible: true, clickable: true },
+    labels: { ariaLabel: name },
+    attributes,
+  }
+}
+
+function screen(elements: ElementInfo[], url: string): ScreenState {
+  return {
+    platform: 'web',
+    tree: elements.map((entry) => `${entry.role} ${entry.name}`).join('\n'),
+    elements,
+    refMap: Object.fromEntries(
+      elements.map((entry) => [entry.ref, { bounds: entry.bounds!, center: entry.center! }]),
+    ),
+    url,
+    timestamp: 1_750_000_000_000,
+    metadata: {
+      captureMode: 'textOnly',
+      coordSpace: 'viewport',
+      viewportWidth: 1_280,
+      viewportHeight: 720,
+      scroll: { offsetX: 0, offsetY: 0, contentWidth: 1_280, contentHeight: 1_440 },
+    },
+  }
+}
+
+function subAction(ref: string, name: string, testid: string): SubActionEvidence {
+  const elements = [element(ref, name, { 'data-testid': testid })]
+  return {
+    plan: `Use ${ref}`,
+    plannedAction: { type: 'click', ref: asRef(ref) },
+    stateBefore: screen(elements, 'https://shop.example/cart'),
+    stateAfter: screen(elements, 'https://shop.example/cart'),
+    result: { success: true },
+    decisionScreenshotRef: { id: `decision-screenshot:${ARTIFACT_SHA}`, sha: ARTIFACT_SHA },
+  }
+}
+
+function step(stepIndex: number, ref: string, name: string, testid: string): StepEvidence {
+  return {
+    stepIndex,
+    stepText: `Open ${name}`,
+    cacheStatus: 'miss',
+    servedBrief: {
+      scope: { tier: 'product', key: 'storefront' },
+      asOfBuild: BUILD_ORDINAL,
+      budget: 1_000,
+      truncation: 'none',
+      channel1: [],
+      channel2: [],
+      channel3: [],
+      briefDigest: 'brief-digest',
+    },
+    subActions: [subAction(ref, name, testid)],
+    verifierVerdict: { pass: true, reasoning: `${name} opened` },
+  }
+}
+
+const FAILURE_VERDICT: Verdict = {
+  class: 'app_bug',
+  producer: 'deterministic-classifier',
+  confidence: 1,
+  evidence: {
+    citedSteps: [0],
+    citedAnchors: [],
+    citedArtifacts: [],
+    rationale: 'the login form rejected a valid session',
+  },
+  memoryMisdirectionRuledOut: true,
+  perTest: 1,
+}
+
+function members(): PerTestOutcome[] {
+  return [
+    {
+      testId: 'checkout::happy-path',
+      testName: PASSING_NAME,
+      filePath: PASSING_FILE,
+      testIndex: 0,
+      outcome: 'passed',
+      steps: [step(0, 'checkout', 'Checkout', 'checkout')],
+    } as unknown as PerTestOutcome,
+    {
+      testId: 'login::returning',
+      testName: FAILING_NAME,
+      filePath: FAILING_FILE,
+      testIndex: 1,
+      // A FAILED member is what puts a row in `run_fingerprint_windows` (390 D-07) — leg 3 is
+      // unobservable without one, and a suite of passes would make that leg silently vacuous.
+      outcome: 'failed',
+      steps: [step(0, 'signin', 'Sign in', 'signin')],
+      rootCause: FAILURE_VERDICT,
+    } as unknown as PerTestOutcome,
+  ]
+}
+
+/**
+ * The twins. Everything is a shared constant; the ONLY parameter is which markers get stamped.
+ *
+ * `markers` is spread with the same conditional idiom the carriers use, so an "unflagged" twin
+ * carries no key at all rather than `undefined` — a handoff with `excludedFromOutcomes:
+ * undefined` would serialise to the same bytes but is not the shape a runner ever writes.
+ */
+function fixtureHandoff(markers: {
+  gateRun?: true
+  excludedFromOutcomes?: true
+} = {}): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: asRunId(RUN_ID),
+    scope: { tier: 'product', key: 'storefront' },
+    buildOrdinal: BUILD_ORDINAL,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'failed',
+    configDigests: { suiteConfigDigest: 'suite-digest', testConfigDigest: 'test-digest' },
+    startedAt: 1_750_000_000_000,
+    endedAt: 1_750_000_001_000,
+    tests: members(),
+    ...(markers.gateRun === undefined ? {} : { gateRun: markers.gateRun }),
+    ...(markers.excludedFromOutcomes === undefined
+      ? {}
+      : { excludedFromOutcomes: markers.excludedFromOutcomes }),
+  } as unknown as CompletedRunHandoff
+}
+
+const FLAGGED = { gateRun: true, excludedFromOutcomes: true } as const
+
+// ---- roots ------------------------------------------------------------------------------------
+
+const roots: string[] = []
+const hosts: LocalAgentHost[] = []
+
+afterEach(async () => {
+  for (const host of hosts.splice(0)) await host.close()
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+interface Side {
+  agentQaRoot: string
+  knowledgeRoot: string
+  runDir: string
+  handoff: CompletedRunHandoff
+}
+
+/**
+ * One side of a differential, in its OWN roots.
+ *
+ * Separate knowledge roots rather than one shared root are what let both twins keep the same
+ * `runId`: the applied-runs marker is per-store, so an identical id in two stores is two
+ * independent first folds, while in one store the second would answer `already-applied` and the
+ * differential would be measuring idempotency instead of exclusion.
+ */
+function side(label: string, markers: { gateRun?: true; excludedFromOutcomes?: true }): Side {
+  const agentQaRoot = mkdtempSync(join(tmpdir(), `agent-qa-393-05-${label}-`))
+  roots.push(agentQaRoot)
+  const knowledgeRoot = join(agentQaRoot, 'knowledge')
+  mkdirSync(knowledgeRoot, { recursive: true })
+  const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(RUN_ID))
+  mkdirSync(join(runDir, 'blobs'), { recursive: true })
+  writeFileSync(join(runDir, 'blobs', ARTIFACT_SHA), ARTIFACT_BYTES)
+  const handoff = fixtureHandoff(markers)
+  writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(handoff)}\n`, 'utf8')
+  return { agentQaRoot, knowledgeRoot, runDir, handoff }
+}
+
+function twins(): { flagged: Side; plain: Side } {
+  return { flagged: side('flagged', FLAGGED), plain: side('plain', {}) }
+}
+
+/** The REAL fold, through the same capability the post-verdict tail uses. */
+function fold(target: Side): void {
+  LOCAL_CURATION_CAPABILITIES.foldRunOutcomes({
+    knowledgeRoot: target.knowledgeRoot,
+    handoff: target.handoff,
+    runDir: target.runDir,
+    extractAnchors: exercisedAnchors,
+  })
+}
+
+interface Tables {
+  outcomes: { product: string; file_path: string; test_name: string }[]
+  fingerprintRows: number
+  windows: { product: string; fingerprint: string }[]
+  appliedRuns: number
+}
+
+function readTables(target: Side): Tables {
+  const handle = openIndexWriter(target.knowledgeRoot)
+  try {
+    return {
+      outcomes: handle.db.prepare(
+        'SELECT product, file_path, test_name FROM run_test_outcomes ORDER BY file_path',
+      ).all() as unknown as Tables['outcomes'],
+      fingerprintRows: Number(
+        (handle.db.prepare(
+          `SELECT COUNT(*) AS n FROM ${SUITE_FINGERPRINTS_TABLE}`,
+        ).get() as { n: number }).n,
+      ),
+      windows: handle.db.prepare(
+        'SELECT product, fingerprint FROM run_fingerprint_windows ORDER BY fingerprint',
+      ).all() as unknown as Tables['windows'],
+      appliedRuns: Number(
+        (handle.db.prepare(
+          'SELECT COUNT(*) AS n FROM run_outcome_applied_runs',
+        ).get() as { n: number }).n,
+      ),
+    }
+  } finally {
+    handle.close()
+  }
+}
+
+/** Run a read against one side's index, with the connection closed either way. */
+function withIndex<T>(target: Side, read: (db: ReturnType<typeof openIndexWriter>['db']) => T): T {
+  const handle = openIndexWriter(target.knowledgeRoot)
+  try {
+    return read(handle.db)
+  } finally {
+    handle.close()
+  }
+}
+
+// ---- the tail's payload ------------------------------------------------------------------------
+
+function tailOptions(target: Side): RunPostRunTailOptions {
+  const overrides: Partial<PostRunTailOperations> = {}
+  return {
+    runId: RUN_ID,
+    agentQaRoot: target.agentQaRoot,
+    configPath: join(target.agentQaRoot, 'agent-qa.config.yaml'),
+    knowledgeConfig: { dir: 'knowledge' },
+    configDir: target.agentQaRoot,
+    auditSink: {} as AuditSink,
+    policy: POLICY,
+    log: { warn: vi.fn() },
+    operations: {
+      resolveKnowledgeRoot: () => target.knowledgeRoot,
+      runCurationTail: async () => undefined,
+      composeHost: () => {
+        const host = composeLocalAgent({
+          mintQuarantineIdentityPath: MINT_IDENTITY,
+          agentQaRoot: target.agentQaRoot,
+          config: TEST_CONFIG,
+          knowledgeRoot: () => target.knowledgeRoot,
+          model: () => TEST_MODEL,
+          idSource: DIGEST_JOB_ID_SOURCE,
+          postRun: {
+            curateRun: async () => ({ curated: 0, deprecated: 0, complete: true }),
+            candidateProse: 'masker-active',
+          },
+        })
+        hosts.push(host)
+        return host
+      },
+      ...overrides,
+    },
+  }
+}
+
+/** Enqueue only — the drain has its own suites, and the claim here is about the queue RECORD. */
+async function enqueuedAnalyzeRunPayload(target: Side): Promise<Record<string, unknown>> {
+  const tail = runPostRunTail(tailOptions(target))
+  await tail.enqueue()
+  expect(tail.report().enqueue).toBe('enqueued')
+
+  const host = composeLocalAgent({
+    mintQuarantineIdentityPath: MINT_IDENTITY,
+    agentQaRoot: target.agentQaRoot,
+    config: TEST_CONFIG,
+    knowledgeRoot: () => target.knowledgeRoot,
+    model: () => TEST_MODEL,
+    idSource: DIGEST_JOB_ID_SOURCE,
+  })
+  try {
+    const dump = await (await host.jobs()).store.dumpState()
+    const analyze = dump.jobs.filter((row) => row.kind === 'analyze-run')
+    expect(analyze).toHaveLength(1)
+    return analyze[0]!.payload as Record<string, unknown>
+  } finally {
+    await host.close()
+  }
+}
+
+// ---- the premise ------------------------------------------------------------------------------
+
+describe('the exclusion differential premise', () => {
+  it('the twins differ ONLY by the markers', () => {
+    const { flagged, plain } = twins()
+    const stripped = { ...(flagged.handoff as unknown as Record<string, unknown>) }
+    delete stripped.gateRun
+    delete stripped.excludedFromOutcomes
+
+    expect(canonicalJson(stripped)).toBe(
+      canonicalJson(plain.handoff as unknown as Record<string, unknown>),
+    )
+    // …and the markers really are on the flagged side. Without this the equality above would
+    // also hold for two identical unflagged handoffs, and every leg would compare a run to
+    // itself.
+    expect(flagged.handoff.gateRun).toBe(true)
+    expect(flagged.handoff.excludedFromOutcomes).toBe(true)
+    expect(plain.handoff.gateRun).toBeUndefined()
+    expect(plain.handoff.excludedFromOutcomes).toBeUndefined()
+  })
+})
+
+// ---- the four legs ----------------------------------------------------------------------------
+
+describe('leg-1-flake-counters — a flagged run moves no run_test_outcomes row', () => {
+  it('writes zero counter rows for the flagged twin while the unflagged twin writes two', () => {
+    const { flagged, plain } = twins()
+    fold(flagged)
+    fold(plain)
+
+    const flaggedTables = readTables(flagged)
+    const plainTables = readTables(plain)
+
+    // THE MOVING CELL first: without this the zero below is consistent with a fixture that
+    // could never have produced a counter at all.
+    expect(plainTables.outcomes.map((row) => row.file_path)).toEqual([
+      PASSING_FILE,
+      FAILING_FILE,
+    ].sort())
+    expect(flaggedTables.outcomes).toEqual([])
+
+    // The applied-runs marker IS written on both sides. Exclusion is "this run contributes
+    // nothing", not "this run was never folded" — a skipped fold would refold on the next pass
+    // and the rebuild would disagree with the incremental path.
+    expect(flaggedTables.appliedRuns).toBe(1)
+    expect(plainTables.appliedRuns).toBe(1)
+
+    // The identity the unflagged twin created, probed against the flagged store: typed absence.
+    const identity = {
+      product: plainTables.outcomes[0]!.product,
+      filePath: PASSING_FILE,
+      testName: PASSING_NAME,
+    }
+    expect(withIndex(plain, (db) => readTestOutcomeHistory(db, identity))).toMatchObject({
+      passes: 1,
+    })
+    expect(withIndex(flagged, (db) => readTestOutcomeHistory(db, identity))).toBeUndefined()
+  })
+})
+
+describe('leg-2-exemplar-ranking — a flagged run seeds no suite_fingerprints row', () => {
+  it('writes zero ranking-substrate rows for the flagged twin while the unflagged twin writes some', () => {
+    // What this adds over leg 1: a DIFFERENT TABLE, written by a DIFFERENT MODULE
+    // (`applySuiteFingerprints`), reached today through the SAME gate. Gate 3 compares a draft
+    // against this union, so a gate-run that seeded it would let a draft compare against itself
+    // and pass gate 3 on first evaluation and fail it on re-evaluation with no suite change
+    // (Pitfall 8). Leg 1 cannot observe that: the counters could stay empty while the union
+    // filled up through a second, ungated fold pass.
+    const { flagged, plain } = twins()
+    fold(flagged)
+    fold(plain)
+
+    expect(readTables(plain).fingerprintRows).toBeGreaterThan(0)
+    expect(readTables(flagged).fingerprintRows).toBe(0)
+  })
+})
+
+describe('leg-3-quarantine-window — a flagged FAILURE never advances the detection window', () => {
+  it('records no window row for the flagged twin while the unflagged twin records one', () => {
+    const { flagged, plain } = twins()
+    fold(flagged)
+    fold(plain)
+
+    const plainWindows = readTables(plain).windows
+    // The moving cell: the failed member DID reach the window on the unflagged side.
+    expect(plainWindows).toHaveLength(1)
+    expect(readTables(flagged).windows).toEqual([])
+
+    // …and the live recurrence computation the quarantine ladder actually reads answers zero on
+    // the flagged store for the very fingerprint the unflagged store recorded. A row count alone
+    // would not rule out the ladder reaching the failure by some other key.
+    const identity = plainWindows[0]!
+    expect(
+      withIndex(plain, (db) => fingerprintRecurrence(db, identity, BUILD_ORDINAL)),
+    ).toMatchObject({ occurrenceOrdinals: 1 })
+    expect(
+      withIndex(flagged, (db) => fingerprintRecurrence(db, identity, BUILD_ORDINAL)),
+    ).toMatchObject({ occurrenceOrdinals: 0, windowOrdinals: 0 })
+    expect(withIndex(flagged, (db) => readFingerprintWindow(db, identity, BUILD_ORDINAL))).toEqual(
+      [],
+    )
+  })
+})
+
+describe('leg-4-curation-candidates-emitted — knowledge curation still consumes a gate run (C8)', () => {
+  it('emits candidates FROM the flagged handoff, identically to the unflagged twin', () => {
+    // POSITIVE by design. `emitCurationCandidates` has zero occurrences of either marker today,
+    // so C8 currently holds by accident of omission — an "asserts no exclusion" test would pass
+    // against a build that had grown one. This asserts EMISSION, so adding a flag read here
+    // reds it.
+    const { flagged, plain } = twins()
+
+    const flaggedReport = emitCurationCandidates({
+      handoff: flagged.handoff,
+      runDir: flagged.runDir,
+      knowledgeRoot: flagged.knowledgeRoot,
+      policy: POLICY,
+    })
+    const plainReport = emitCurationCandidates({
+      handoff: plain.handoff,
+      runDir: plain.runDir,
+      knowledgeRoot: plain.knowledgeRoot,
+      policy: POLICY,
+    })
+
+    expect(flaggedReport.enqueued).toBeGreaterThan(0)
+    expect(flaggedReport.refused).toBe(0)
+    // Equality over the whole report, candidate ids included: the candidates are
+    // content-addressed, so identical ids are the evidence that the marker did not enter the
+    // projected content at all — the strongest available phrasing of "flag-blind".
+    const shape = (report: EmitReport): unknown => ({
+      enqueued: report.enqueued,
+      coalesced: report.coalesced,
+      capExceeded: report.capExceeded,
+      refused: report.refused,
+      details: report.details.map((detail) => ({
+        candidateId: detail.candidateId,
+        kind: detail.kind,
+        outcome: detail.outcome,
+      })),
+    })
+    expect(shape(flaggedReport)).toEqual(shape(plainReport))
+  })
+})
+
+describe('leg-5-analyze-run-payload — the markers reach the queue record (D-20)', () => {
+  it('enqueues the flagged handoff with both flags and the unflagged twin with neither key', async () => {
+    const { flagged, plain } = twins()
+
+    const flaggedPayload = await enqueuedAnalyzeRunPayload(flagged)
+    expect(flaggedPayload).toMatchObject({ gateRun: true, excludedFromOutcomes: true })
+
+    const plainPayload = await enqueuedAnalyzeRunPayload(plain)
+    // ABSENT, not false and not null. `in` rather than a value comparison, because
+    // `payload.gateRun === undefined` is also true of a payload carrying the key explicitly set
+    // to undefined — a shape a queue inspector would render as present.
+    expect('gateRun' in plainPayload).toBe(false)
+    expect('excludedFromOutcomes' in plainPayload).toBe(false)
+
+    // Both payloads still carry the shared four fields, so the difference above is the markers
+    // and not two differently-assembled payloads.
+    for (const payload of [flaggedPayload, plainPayload]) {
+      expect(payload).toMatchObject({
+        runId: RUN_ID,
+        handoffSchemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+        executionContext: 'local-headless',
+      })
+      expect(typeof payload.handoffDigest).toBe('string')
+    }
+    expect(flaggedPayload.handoffDigest).not.toBe(plainPayload.handoffDigest)
+  })
+
+  it('copies each marker independently — a per-axis handoff yields a per-axis payload (C8)', async () => {
+    // The adjacency WTST-06 resolves explicitly: the flags are DISTINCT axes. A gate run that
+    // still counts (`gateRun` alone) and an excluded run that is not a gate run
+    // (`excludedFromOutcomes` alone) are both real, and a mint that copied one from the other
+    // would be invisible to the both-flags case above.
+    const gateOnly = await enqueuedAnalyzeRunPayload(side('gate-only', { gateRun: true }))
+    expect(gateOnly).toMatchObject({ gateRun: true })
+    expect('excludedFromOutcomes' in gateOnly).toBe(false)
+
+    const excludedOnly = await enqueuedAnalyzeRunPayload(
+      side('excluded-only', { excludedFromOutcomes: true }),
+    )
+    expect(excludedOnly).toMatchObject({ excludedFromOutcomes: true })
+    expect('gateRun' in excludedOnly).toBe(false)
+  })
+
+  it('and the fold exclusion keys ONLY on excludedFromOutcomes, never on gateRun', () => {
+    // The other half of "distinct axes", on the fold side: a `gateRun` run with no exclusion
+    // marker COUNTS. Without this the whole suite would be consistent with an implementation
+    // that excluded on either flag — which would silently stop C8-eligible gate runs from
+    // contributing the outcome evidence they are supposed to contribute.
+    const gateOnly = side('gate-only-fold', { gateRun: true })
+    fold(gateOnly)
+    expect(readTables(gateOnly).outcomes).toHaveLength(2)
+    expect(readTables(gateOnly).fingerprintRows).toBeGreaterThan(0)
+  })
+})
