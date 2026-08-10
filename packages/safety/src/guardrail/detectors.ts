@@ -104,22 +104,49 @@ function normalizeCardCandidate(candidate: string): string {
 }
 
 /**
- * Is this candidate the FRACTIONAL TAIL of a decimal literal rather than a number in its own right?
+ * Is this candidate the fraction of a STANDALONE ZERO-INTEGER DECIMAL rather than a number in its
+ * own right?
  *
- * `CREDIT_CARD_CANDIDATE_RE` cannot see across the `.` in `0.45833333333333337`, so what it offers
- * for scoring is the 17-digit tail `45833333333333337` — which is Luhn-valid, and therefore blocked
- * the entire outbound prompt. Measured 2026-08-10 on the demo's local-form target, where a procedure
- * hint rendered `(confidence 0.45833333333333337, ...)`: every planning turn for that page was
- * refused before it left the process, deterministically, with no way for an operator to tell from
- * `Guardrail blocked outbound prompt leaf: creditCard` that the "card" was a float. About one in ten
- * IEEE-754 decimal expansions of the right length is Luhn-valid, so this is a standing ~10% chance
- * that any given page or brief becomes permanently unplannable.
+ * THE RULE ENFORCED, verbatim — suppress iff all three hold:
+ *   1. `text[start - 1] === '.'`  (a decimal point immediately precedes the candidate)
+ *   2. `text[start - 2] === '0'`  (the integer part is a single zero)
+ *   3. `start === 2`, or `text[start - 3]` is neither a word character `[A-Za-z0-9_]` nor `'.'`
+ *      (that zero stands alone: not glued to a word, not a link in a dotted chain)
+ * Everything else — a nonzero integer part, a word-glued prefix, a dotted chain — is NOT a
+ * fractional tail and falls through to Luhn scoring, i.e. fails toward block.
  *
- * THE TEST IS `\d` THEN `.` IMMEDIATELY BEFORE THE CANDIDATE, and it is deliberately that narrow.
- * A payment card is never the fractional part of a number, so nothing this rejects was ever a
- * finding — while the neighbouring shapes that DO carry cards are untouched: `no.4111111111111111`
- * keeps its match (a letter precedes the dot, not a digit), and so do `4111-1111-1111-1111`,
- * `card: 4111 1111 1111 1111` and a bare PAN at the start of a line.
+ * WHY SUPPRESS AT ALL (measured 2026-08-10, demo local-form target). `CREDIT_CARD_CANDIDATE_RE`
+ * cannot see across the `.` in `0.45833333333333337`, so what it offers for scoring is the 17-digit
+ * tail `45833333333333337` — Luhn-valid, so the entire outbound prompt was blocked. A procedure hint
+ * rendering `(confidence 0.45833333333333337, ...)` refused every planning turn for that page,
+ * deterministically, with no way for an operator to tell from `Guardrail blocked outbound prompt
+ * leaf: creditCard` that the "card" was a float. About one in ten IEEE-754 decimal expansions of
+ * candidate length is Luhn-valid, so that is a standing ~10% chance any given page or brief becomes
+ * permanently unplannable. That fix is preserved exactly: probability and confidence floats print as
+ * `0.<fraction>`, which is precisely the shape this rule — and only this rule — suppresses.
+ *
+ * WHY THE RULE IS SHAPED THIS WAY (regression, measured 2026-08-10, phase 393 verification). The
+ * first cut of this guard tested only the two characters before the candidate — any `<digit>.` at
+ * all. Through the real `scan()` + the default policy, `card 1.4111111111111111 end` and
+ * `v1.4012888888881881 ok` both returned `{"action":"pass"}` while carrying Luhn-valid PANs, under a
+ * policy whose creditCard action is `block`: a false negative in an egress control, i.e. prefixing a
+ * PAN with any digit-and-dot let it leave the process to the model provider. The three conditions
+ * above exist to close that while keeping the float fix.
+ *
+ * RESIDUAL BYPASS, accepted and named. A Luhn-valid PAN written as the fraction of a standalone
+ * zero-integer decimal — `ratio 0.4111111111111111 done` — is still suppressed. It is lexically
+ * indistinguishable from the legitimate probability floats above; no purely lexical detector can
+ * separate them. Pinned deliberately by the test "leaves the residual bypass open on purpose: a PAN
+ * as the fraction of a zero-integer decimal" in `__tests__/detectors.test.ts`, so closing it is a
+ * conscious retune rather than an accident. Adversarial encoding is outside this detector's
+ * accidental-egress scope: an adversary can encode a PAN arbitrarily regardless of this rule.
+ *
+ * ACCEPTED COST, and the retune route. A genuine NONZERO-integer float whose fraction is a Luhn-valid
+ * 13–19 digit run now blocks (~10% of IEEE-754 expansions of that length). The measured
+ * false-positive source never produced one — it emitted probabilities, always `0.<fraction>`. If a
+ * real page ever hits this, the retune is to WIDEN the standalone-decimal test (e.g. admit a
+ * multi-digit integer part that is itself delimited), never to revert to a preceding-bytes test:
+ * that is the shape that shipped the regression above.
  */
 function isFractionalTail(text: string, start: number): boolean {
   if (start < 2 || text[start - 1] !== '.' || text[start - 2] !== '0') {
