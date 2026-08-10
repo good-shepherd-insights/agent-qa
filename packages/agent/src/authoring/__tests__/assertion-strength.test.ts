@@ -302,6 +302,33 @@ describe('assertionStrengthGate — the two clauses composed (D-09)', () => {
     expect(result.falsifiableAssertionCount).toBe(1)
   })
 
+  // 393-06: the reason string is the ONLY place D-12's mixed act-and-verify signal reaches a
+  // receipt reader — `StepClassificationRowSchema` is strict and carries no `mixedHit`, and adding
+  // one was declined because a bare boolean names nothing the step text does not already show.
+  // That makes the reason load-bearing rather than decorative, and it was WRONG here: a mixed step
+  // carrying a quoted literal fell through to the "no quoted expected value" fallback, so the
+  // durable receipt explained the refusal with a statement contradicted by the step beside it.
+  it('says a mixed act-and-verify step was mixed, rather than that it quoted nothing (D-12)', () => {
+    const result = assertionStrengthGate({
+      steps: ['Verify the page says "Saved" and click Continue'],
+    })
+
+    expect(result.pass).toBe(false)
+    expect(result.reason).toContain('acts and verifies in one step')
+    // The false explanation this case exists to prevent. The step quotes "Saved".
+    expect(result.reason).not.toContain('no quoted expected value')
+  })
+
+  it('still reports the no-concrete-content cause when that is genuinely why (D-09 clause (ii))', () => {
+    // The fallback is not dead — it is the honest answer for an assertion that names nothing,
+    // and this pairs with the case above so a fix to one cannot silently swallow the other.
+    const result = assertionStrengthGate({ steps: ['Verify the content is correct'] })
+
+    expect(result.pass).toBe(false)
+    expect(result.reason).toContain('no quoted expected value')
+    expect(result.reason).not.toContain('acts and verifies in one step')
+  })
+
   it('reports the same table classifyDraftSteps does', () => {
     const steps = ['Type "alice" into the Username field', 'Verify the page loaded']
 

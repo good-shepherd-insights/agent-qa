@@ -410,6 +410,17 @@ function gateReason(rows: readonly StepClassificationRow[]): string {
     if (row.vacuityHit !== undefined) causes.add(`vacuous phrase "${row.vacuityHit}"`)
     if (row.tautologyHit === true) causes.add('restates a prior action\'s own literal')
     for (const hit of row.captureSignatureHits) causes.add(`capture signature ${hit}`)
+    // D-12's mixed act-and-verify signal has no receipt ROW field: `StepClassificationRowSchema`
+    // is strict and carries no `mixedHit`, and 393-06 declined to add one — a bare boolean would
+    // name nothing the step text does not already show, where `vacuityHit` names the exact phrase
+    // and `captureSignatureHits` the exact pattern. The cause therefore has to surface HERE, which
+    // is where 393-04's own handoff note said it would. Until this line it did not: a mixed step
+    // carrying a quoted literal fell through to the fallback below and the receipt read
+    // "no quoted expected value" about a step that has one — a durable false explanation, which is
+    // the one thing D-12's tune-toward-reject posture cannot afford.
+    if (isMixedActAndVerify(row.stepText)) {
+      causes.add('acts and verifies in one step, so it has no single verdict to report')
+    }
   }
   if (causes.size === 0) causes.add('no quoted expected value and no named element in a checkable state')
 

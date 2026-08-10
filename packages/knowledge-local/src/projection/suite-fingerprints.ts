@@ -31,19 +31,8 @@
 
 import type { DatabaseSync } from 'node:sqlite'
 
-import {
-  actionAnchorElement,
-  classifySubActionRoute,
-  elementAnchor,
-  resolvedElementEvidence,
-} from '@vostride/agent-qa-schema'
-import type {
-  Anchor,
-  CompletedRunHandoff,
-  PerTestOutcome,
-  StepEvidence,
-  SubActionEvidence,
-} from '@vostride/agent-qa-schema'
+import { testFingerprintElements } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, PerTestOutcome } from '@vostride/agent-qa-schema'
 
 import { ensureRunOutcomeTables } from '../index-open.js'
 
@@ -51,19 +40,19 @@ import { ensureRunOutcomeTables } from '../index-open.js'
 export const SUITE_FINGERPRINTS_TABLE = 'suite_fingerprints'
 
 /**
- * Which action types contribute an ASSERT element rather than an ACTION element (D-13).
+ * The element walk, re-exported from its home in `schema` (393-06).
  *
- * `kind` is the recipe's vocabulary discriminator: asserting a value on a field and typing into
- * it are different coverage facts about the same anchor, so they must key apart. The members are
- * the assert arms of `CommonAction` — the only action shapes whose purpose is a claim about the
- * app rather than a change to it. `extractAI` is deliberately absent: an extraction reads state
- * without asserting anything about it, so it covers surface the way an action does.
+ * It lived here until gate 3's DRAFT side became its second reader. `agent` names neither this
+ * package nor `core` and never will, so a walk that stayed here could only have been mirrored on
+ * the draft side — and a mirrored recipe is two recipes, free to disagree the first time either
+ * is retuned. Its own doc comment already promised that "the draft's own fingerprint is computed
+ * by this same function at the consumer"; moving it is what makes that sentence true rather than
+ * aspirational. `ASSERT_ACTION_TYPES` moved with it on the trigger its comment named.
  *
- * Local rather than hoisted into schema on purpose: this is the FOLD's reading of the vocabulary,
- * and there is exactly one reader today. A second reader is the trigger to hoist it beside
- * `actionAnchorElement`, not before.
+ * Re-exported rather than dropped because this module is where the fold's readers look for it,
+ * and the package barrel already publishes the name.
  */
-const ASSERT_ACTION_TYPES: ReadonlySet<string> = new Set(['assertAI', 'assertValue'])
+export { testFingerprintElements }
 
 /** One test's ordered fingerprint elements, keyed by the stable identity. */
 export interface SuiteFingerprintTestDelta {
@@ -93,60 +82,6 @@ export interface FoldSuiteFingerprintsOptions {
    * this module's header: a gate-run contributes no rows.
    */
   excluded: boolean
-}
-
-/**
- * The anchor one sub-action exercised, or `undefined` when it exercised nothing nameable.
- *
- * Both arms route through schema's own shipped walk rather than re-deriving element resolution:
- * `resolvedElementEvidence` is the ONE implementation of "which element did this ref resolve to
- * on the pre-action screen" (389 D-13's promotion), and it is reached here by handing it a step
- * narrowed to a single sub-action, which is the same reach-the-contract-through-its-public-door
- * idiom the fingerprint recipe uses for route normalization.
- *
- * Falling back to the page anchor is what lets an assertion with no element target — `assertValue`
- * over the URL, the canonical case — still contribute coverage. A sub-action with neither an
- * element nor a route contributes nothing, which is the evidence-less case D-16's text lane
- * catches at the consumer.
- */
-function subActionAnchor(step: StepEvidence, subAction: SubActionEvidence): Anchor | undefined {
-  const [resolved] = resolvedElementEvidence({ ...step, subActions: [subAction] })
-  if (resolved !== undefined) return elementAnchor(resolved)
-  const { route } = classifySubActionRoute(subAction)
-  return route === undefined ? undefined : { t: 'page', route }
-}
-
-/**
- * The ordered elements one test exercised, or `[]` when its evidence yields none.
- *
- * ONLY SUCCEEDED SUB-ACTIONS COUNT. `result.success !== true` means the planned action did not
- * run to an accepted result, and a surface an action failed to reach is not surface the test
- * covers. The draft's own fingerprint is computed by this same function at the consumer, so both
- * sides of gate 3's comparison filter identically — the risk of an asymmetric filter (a draft
- * measured generously against a suite measured strictly) is what makes single-sourcing this rule
- * matter more than which way it is tuned.
- *
- * A route is attached as CONTEXT only to element anchors. A page anchor already IS its route, so
- * repeating it would mint two spellings of one fact.
- */
-export function testFingerprintElements(test: PerTestOutcome): string[] {
-  const elements: string[] = []
-  for (const step of test.steps ?? []) {
-    for (const subAction of step.subActions ?? []) {
-      if (subAction.result?.success !== true) continue
-      const anchor = subActionAnchor(step, subAction)
-      if (anchor === undefined) continue
-      const type = subAction.plannedAction.type
-      const { route } = classifySubActionRoute(subAction)
-      elements.push(actionAnchorElement({
-        kind: ASSERT_ACTION_TYPES.has(type) ? 'assert' : 'action',
-        type,
-        anchor,
-        ...(anchor.t === 'el' && route !== undefined ? { route } : {}),
-      }))
-    }
-  }
-  return elements
 }
 
 /**

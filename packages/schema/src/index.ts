@@ -279,12 +279,17 @@ export {
   validateAnalysisAgainstHandoff,
   VerdictSentencePartsSchema,
   // 393 D-13: the sibling anchor-coverage recipe (gate 3), beside the frozen failure recipe.
+  // `testFingerprintElements` is the ONE walk both sides of gate 3's comparison go through —
+  // knowledge-local's suite fold and the agent's draft side alike (393-06).
   ACTION_ANCHOR_FINGERPRINT_VERSION,
+  ASSERT_ACTION_TYPES,
   actionAnchorElement,
   actionAnchorSequence,
+  testFingerprintElements,
 } from './verdict/index'
 export type {
   ActionAnchorElementInput,
+  FingerprintEvidenceLike,
   AnalysisArtifactAdmission,
   AnalysisValidationReject,
   AnalysisValidationResult,

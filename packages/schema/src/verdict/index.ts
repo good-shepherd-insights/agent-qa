@@ -18,10 +18,15 @@ export type { FailureFingerprintInput } from './failure-fingerprint'
 // it — it answers "what surface did this test exercise", not "how did it fail".
 export {
   ACTION_ANCHOR_FINGERPRINT_VERSION,
+  ASSERT_ACTION_TYPES,
   actionAnchorElement,
   actionAnchorSequence,
+  testFingerprintElements,
 } from './action-anchor-fingerprint'
-export type { ActionAnchorElementInput } from './action-anchor-fingerprint'
+export type {
+  ActionAnchorElementInput,
+  FingerprintEvidenceLike,
+} from './action-anchor-fingerprint'
 export { errorTextOf, failingStepOf } from './fingerprint-input'
 export {
   QUOTE_SEARCHED_STEP_FIELDS,
