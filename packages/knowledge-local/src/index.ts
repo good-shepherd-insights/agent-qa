@@ -341,6 +341,24 @@ export type {
   FingerprintWindowIdentity,
   FingerprintWindowRow,
 } from './projection/fingerprint-window-read.js'
+// 393 D-15 WTST-06 — the suite-fingerprint table: gate 3's comparison substrate, folded by the
+// same pass as the run-outcome projection and read through `createSuiteFingerprintIndex`. Keyed
+// by the stable (filePath, testName) identity, never testId; gate-run handoffs never enter it.
+export {
+  applySuiteFingerprints,
+  createSuiteFingerprintIndex,
+  foldSuiteFingerprints,
+  SUITE_FINGERPRINTS_TABLE,
+  suiteFingerprintDeltas,
+  testFingerprintElements,
+} from './projection/suite-fingerprints.js'
+export type {
+  FoldSuiteFingerprintsOptions,
+  SuiteFingerprintIndex,
+  SuiteFingerprintIndexOptions,
+  SuiteFingerprintsProjection,
+  SuiteFingerprintTestDelta,
+} from './projection/suite-fingerprints.js'
 export { GC_SUPERSEDED_RETAIN_K, runKnowledgeGc } from './gc.js'
 export type {
   GateHorizon,

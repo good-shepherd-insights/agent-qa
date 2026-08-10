@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
@@ -10,15 +13,17 @@ import {
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { ensureRunOutcomeTables } from '../../index-open.js'
 import {
   applyRunOutcomes,
   projectionPartition,
   projectRunOutcomes,
+  rebuildRunOutcomes,
 } from '../run-outcomes.js'
 import {
+  createSuiteFingerprintIndex,
   foldSuiteFingerprints,
   SUITE_FINGERPRINTS_TABLE,
 } from '../suite-fingerprints.js'
@@ -395,4 +400,185 @@ describe('the suite-fingerprint table (393 D-15, gate 3s comparison substrate)',
 
     expect(fingerprintRows(db)).toEqual(first)
   })
+})
+
+describe('the suite-fingerprint read port (393 D-15 / D-16)', () => {
+  it('answers a union whose size is the distinct element count in the table', () => {
+    const db = openDb()
+    foldThroughRunOutcomes(db, handoffFixture({
+      runId: 'run-fp-a',
+      buildOrdinal: 4,
+      tests: [
+        CHECKOUT_TEST,
+        LOGIN_TEST,
+        // A second test exercising the SAME click as CHECKOUT_TEST: three rows arrive, but the
+        // union is a set, so the repeated element counts once. The set semantics live HERE, at
+        // the consumer, exactly as the recipe's own header says (D-14).
+        {
+          filePath: 'suite/checkout.test.ts',
+          testName: 'checkout with a saved card',
+          steps: [[{ type: 'click', ref: 'e1', role: 'button', name: 'checkout', url: '/cart' }]],
+        },
+      ],
+    }))
+    const index = createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT })
+
+    const distinct = new Set(fingerprintRows(db).map((row) => row.element))
+    expect(fingerprintRows(db)).toHaveLength(4)
+    expect(index.elementUnion().size).toBe(distinct.size)
+    expect(index.elementUnion()).toEqual(
+      new Set([CHECKOUT_CLICK_ELEMENT, CHECKOUT_ASSERT_ELEMENT, LOGIN_FILL_ELEMENT]),
+    )
+  })
+
+  it('reports the covered identities so the consumer can derive the evidence-less set (D-16)', () => {
+    const db = openDb()
+    foldThroughRunOutcomes(db, handoffFixture({
+      runId: 'run-fp-a',
+      buildOrdinal: 4,
+      tests: [
+        CHECKOUT_TEST,
+        LOGIN_TEST,
+        { filePath: 'suite/bare.test.ts', testName: 'no evidence at all' },
+      ],
+    }))
+    const index = createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT })
+
+    expect(index.coveredTests()).toEqual([
+      { filePath: 'suite/checkout.test.ts', testName: 'checkout happy path' },
+      { filePath: 'suite/login.test.ts', testName: 'login with a valid password' },
+    ])
+    // The authored-test universe minus the covered set IS the text lane's input. The evidence-less
+    // member is absent here, which is what puts it on that lane rather than silently uncovered.
+    expect(index.elementsForTest('suite/bare.test.ts', 'no evidence at all')).toEqual([])
+    expect(index.elementsForTest('suite/checkout.test.ts', 'checkout happy path')).toEqual([
+      CHECKOUT_CLICK_ELEMENT,
+      CHECKOUT_ASSERT_ELEMENT,
+    ])
+  })
+
+  it('answers an empty union and no covered tests over an empty table (D-16 empty-suite edge)', () => {
+    const index = createSuiteFingerprintIndex(openDb(), { product: SHOP_PRODUCT })
+
+    expect(index.elementUnion()).toEqual(new Set())
+    expect(index.coveredTests()).toEqual([])
+    expect(index.elementsForTest('suite/anything.test.ts', 'anything')).toEqual([])
+  })
+
+  it('scopes every read to its own partition — a draft never compares against another product', () => {
+    const db = openDb()
+    foldThroughRunOutcomes(db, handoffFixture({
+      runId: 'run-fp-a',
+      buildOrdinal: 4,
+      tests: [CHECKOUT_TEST],
+    }))
+
+    const other = createSuiteFingerprintIndex(db, { product: 'some-other-product' })
+    expect(other.elementUnion()).toEqual(new Set())
+    expect(other.coveredTests()).toEqual([])
+  })
+})
+
+const tempDirs: string[] = []
+
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  tempDirs.push(dir)
+  return dir
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
+
+describe('rebuild identity for the suite-fingerprint table (WTST-06 ordering, L12)', () => {
+  /**
+   * Three runs over two identities, one of them a flagged gate-run:
+   *  - `run-a` (ordinal 4) covers checkout and login.
+   *  - `run-b` (ordinal 9) re-covers checkout with DIFFERENT evidence — the newest-wins case.
+   *  - `run-gate` (ordinal 12) is the NEWEST run and is flagged, so if the exclusion were not
+   *    applied on a path it would win everywhere and be impossible to miss.
+   */
+  function corpus(): CompletedRunHandoff[] {
+    return [
+      handoffFixture({ runId: 'run-a', buildOrdinal: 4, tests: [CHECKOUT_TEST, LOGIN_TEST] }),
+      handoffFixture({
+        runId: 'run-b',
+        buildOrdinal: 9,
+        tests: [{
+          ...CHECKOUT_TEST,
+          steps: [[{ type: 'click', ref: 'e2', role: 'link', name: 'pay now', url: '/pay' }]],
+        }],
+      }),
+      handoffFixture({
+        runId: 'run-gate',
+        buildOrdinal: 12,
+        tests: [{
+          ...CHECKOUT_TEST,
+          steps: [[{ type: 'click', ref: 'e3', role: 'button', name: 'gate run only', url: '/gate' }]],
+        }],
+        excludedFromOutcomes: true,
+      }),
+    ]
+  }
+
+  function foldAll(handoffs: CompletedRunHandoff[]): DatabaseSync {
+    const db = openDb()
+    for (const handoff of handoffs) foldThroughRunOutcomes(db, handoff)
+    return db
+  }
+
+  function dump(db: DatabaseSync): unknown[] {
+    return db.prepare(`
+      SELECT product, file_path, test_name, seq, element, run_id, build_ordinal
+      FROM ${SUITE_FINGERPRINTS_TABLE}
+      ORDER BY product, file_path, test_name, seq
+    `).all()
+  }
+
+  it(
+    'produces one row set from either fold order AND from a rebuild, with the flagged run '
+    + 'absent from all three',
+    () => {
+      const handoffs = corpus()
+      const forward = foldAll(handoffs)
+      const reversed = foldAll([...handoffs].reverse())
+
+      const runsRoot = tempDir('suite-fingerprints-rebuild-')
+      for (const handoff of handoffs) {
+        const dir = join(runsRoot, String(handoff.runId))
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(join(dir, 'handoff.json'), JSON.stringify(handoff))
+      }
+      const rebuilt = openDb()
+      // Pre-seed a row the rebuild must clear, so a rebuild that never touched this table would
+      // fail here rather than pass by coincidence.
+      foldThroughRunOutcomes(rebuilt, handoffFixture({
+        runId: 'run-stale',
+        buildOrdinal: 99,
+        tests: [{
+          filePath: 'suite/stale.test.ts',
+          testName: 'a row from a run that no longer exists',
+          steps: [[{ type: 'click', ref: 'e7', role: 'button', name: 'stale', url: '/stale' }]],
+        }],
+      }))
+      expect(rebuildRunOutcomes(rebuilt, runsRoot, { extractAnchors })).toEqual({
+        folded: 3,
+        skipped: 0,
+      })
+
+      const expected = dump(forward)
+      expect(expected).toHaveLength(2)
+      expect(dump(reversed)).toEqual(expected)
+      expect(dump(rebuilt)).toEqual(expected)
+
+      // The newest run in the corpus is the flagged one; nothing it touched is anywhere.
+      const everyElement = dump(rebuilt).map((row) => (row as { element: string }).element)
+      expect(everyElement.join(' ')).not.toContain('gate run only')
+      expect(dump(rebuilt).map((row) => (row as { run_id: string }).run_id)).toEqual([
+        'run-b',
+        'run-a',
+      ])
+    },
+  )
 })
