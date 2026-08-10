@@ -642,13 +642,22 @@ describe('the frozen corpus classes, by literal step text (4180c78b)', () => {
       ))
   })
 
-  // THE REGRESSION PIN for the WR-06 narrowing (393-09). The controls above prove the rule on
-  // constructed inputs; this proves the rule cost the frozen denominator nothing. Title-casing
-  // is applied to every corpus draft's prose and the verdict is compared against that draft's
-  // own frozen `falsifiableAssertion` column — read from expectations.json, never from an
-  // inline boolean, so a future edit to the narrowing cannot be absorbed by editing the
-  // expectation beside it.
-  it.each(CORPUS)('title-casing $draft moves no frozen verdict', ({ draft, steps }) => {
+  // WHAT THIS WALK PROVES, and what it cannot (relabelled 393-12 after the verifier measured it).
+  //
+  // It proves the FROZEN CORPUS is insensitive to prose casing: title-case every draft's prose and
+  // every verdict still equals that draft's own frozen `falsifiableAssertion` column, read from
+  // expectations.json rather than an inline boolean so no future edit can be absorbed beside it.
+  // That is a real property and worth pinning.
+  //
+  // It CANNOT observe `namesAnElement`. The verifier reverted the concreteness rule to its
+  // pre-393-09 one-liner and re-ran this group alone: 8/8 green with the rule gone. Every
+  // `expected: true` draft carries a quoted literal, so `concrete` short-circuits on
+  // `literals.length > 0` and the element-name arm is never consulted; every `expected: false`
+  // draft is refused by the vacuity, capture-signature or tautology arm in any casing. Its former
+  // label ("the regression pin for the WR-06 narrowing … proves the rule cost the denominator
+  // nothing") presented it as evidence for a change it is blind to. The pins for the concreteness
+  // arm are the constructed casing-loop controls above, which measurably red without the rule.
+  it.each(CORPUS)('title-casing $draft — the frozen corpus is casing-insensitive (this walk cannot observe namesAnElement)', ({ draft, steps }) => {
     const frozen = EXPECTATIONS.drafts[draft]?.expectedGates.falsifiableAssertion
 
     expect(frozen).toBeTypeOf('boolean')
@@ -814,11 +823,16 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
     // is false for all of them — which is why deleting the vacuity conjunct changes no
     // behaviour on the current lexicons (recorded as surviving mutant M4).
     //
-    // The title-cased arm is what makes this a live guard instead of a comment: it satisfies
-    // `namesAnElement`, so the FIRST member that ever carries a state term ("page is visible"
-    // is the obvious candidate) makes the concreteness arm answer true and hands the whole
-    // decision to the vacuity conjunct. Verified by construction, not by argument — adding
-    // such a member and deleting the conjunct reds this case.
+    // 393-12 corrected which widening triggers it. The casing arm below is no longer what
+    // satisfies `namesAnElement` — the rule is casing-blind, so recasing a member changes
+    // nothing, and "page is visible" is refused by the concreteness arm in every casing
+    // (`page` is a GENERIC_PAGE_NOUNS member, `is` a NON_ELEMENT_WORDS one, `visible` an
+    // EXPECTED_STATE_TERMS one). The member shape that WOULD hand the whole decision to the
+    // vacuity conjunct carries both a state term and a residue word outside all three exclusion
+    // sets — "banner is visible" is that shape. Verified by measurement, not by argument: adding
+    // that member and deleting the conjunct (393-12, snapshot + `diff` proof) reds this case and
+    // this case alone. The three casings are kept because a casing-blind rule is exactly the
+    // claim they now check.
     const titleCase = (phrase: string) =>
       phrase.replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
 
