@@ -5,4 +5,4 @@ use:
   browser:
     headless: true
 steps:
-  - Verify the first form field is labeled "Username"
+  - Verify the page shows the text "Username"
