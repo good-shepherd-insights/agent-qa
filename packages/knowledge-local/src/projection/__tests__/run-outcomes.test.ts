@@ -569,7 +569,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     }), { extractAnchors }))
 
     const report = rebuildRunOutcomes(rebuilt, runsRoot, { extractAnchors })
-    expect(report).toEqual({ folded: 3, skipped: 0 })
+    expect(report).toEqual({ folded: 3, skippedHandoffs: 0, skippedArtifacts: 0 })
     const incrementalDump = dumpTables(incremental)
     expect(dumpTables(rebuilt)).toEqual(incrementalDump)
     expect(incrementalDump.outcomes).not.toContainEqual(
@@ -590,11 +590,13 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     const db = openDb()
     expect(rebuildRunOutcomes(db, emptyRoot, { extractAnchors })).toEqual({
       folded: 0,
-      skipped: 0,
+      skippedHandoffs: 0,
+      skippedArtifacts: 0,
     })
     expect(rebuildRunOutcomes(db, join(emptyRoot, 'missing'), { extractAnchors })).toEqual({
       folded: 0,
-      skipped: 0,
+      skippedHandoffs: 0,
+      skippedArtifacts: 0,
     })
     expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes').get()).toMatchObject({ n: 0 })
     expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_anchors').get()).toMatchObject({ n: 0 })
@@ -634,7 +636,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
 
     const db = openDb()
     const report = rebuildRunOutcomes(db, runsRoot, { extractAnchors })
-    expect(report).toEqual({ folded: 1, skipped: 1 })
+    expect(report).toEqual({ folded: 1, skippedHandoffs: 1, skippedArtifacts: 0 })
 
     const rows = db.prepare('SELECT test_name FROM run_test_outcomes').all()
     expect(rows).toEqual([{ test_name: 'checkout happy path' }])
@@ -702,7 +704,8 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     const rebuilt = openDb()
     expect(rebuildRunOutcomes(rebuilt, runsRoot, { extractAnchors })).toEqual({
       folded: 1,
-      skipped: 1,
+      skippedHandoffs: 1,
+      skippedArtifacts: 0,
     })
     expect(dumpTables(rebuilt)).toEqual(dumpTables(incremental))
   })

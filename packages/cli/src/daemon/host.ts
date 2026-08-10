@@ -1881,7 +1881,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       if (reconcile.kind === 'rebuilt') {
         logger.info(
           'daemon: run-outcome projection rebuilt '
-          + `(folded ${reconcile.report.folded}, skipped ${reconcile.report.skipped})`,
+          + `(folded ${reconcile.report.folded}, `
+          + `skipped ${reconcile.report.skippedHandoffs} handoff, `
+          + `${reconcile.report.skippedArtifacts} artifact)`,
         )
       }
     } catch (error) {

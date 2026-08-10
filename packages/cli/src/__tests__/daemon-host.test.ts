@@ -3501,7 +3501,10 @@ describe('runDaemonHost — the run-outcome projection reconcile (393 CR-02-daem
             options: options as ReconcileCall['options'],
             tracesAtCall: [...harness.traces],
           })
-          return { kind: 'rebuilt', report: { folded: 2, skipped: 0 } }
+          return {
+            kind: 'rebuilt',
+            report: { folded: 2, skippedHandoffs: 0, skippedArtifacts: 1 },
+          }
         },
       },
       logger: { info, error: vi.fn() },
@@ -3535,7 +3538,9 @@ describe('runDaemonHost — the run-outcome projection reconcile (393 CR-02-daem
     expect(calls[0]!.tracesAtCall).not.toContain('jobs-opened')
 
     // A rebuild of the derived index is never silent — the tail's own rule, on the second host.
-    expect(info).toHaveBeenCalledWith(expect.stringContaining('folded 2, skipped 0'))
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('folded 2, skipped 0 handoff, 1 artifact'),
+    )
   })
 
   it('serves past a throwing reconcile, with one logged error', async () => {

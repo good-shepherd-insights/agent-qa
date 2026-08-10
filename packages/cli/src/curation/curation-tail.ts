@@ -786,7 +786,9 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       opts.log.info?.(
         'curation: run-outcome projection rebuilt at version '
         + `${LOCAL_CURATION_CAPABILITIES.runOutcomesProjectionVersion} `
-        + `(folded ${reconcile.report.folded}, skipped ${reconcile.report.skipped})`,
+        + `(folded ${reconcile.report.folded}, `
+        + `skipped ${reconcile.report.skippedHandoffs} handoff, `
+        + `${reconcile.report.skippedArtifacts} artifact)`,
       )
     }
   } catch {

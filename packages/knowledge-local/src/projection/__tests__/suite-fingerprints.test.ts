@@ -564,7 +564,8 @@ describe('rebuild identity for the suite-fingerprint table (WTST-06 ordering, L1
       }))
       expect(rebuildRunOutcomes(rebuilt, runsRoot, { extractAnchors })).toEqual({
         folded: 3,
-        skipped: 0,
+        skippedHandoffs: 0,
+        skippedArtifacts: 0,
       })
 
       const expected = dump(forward)

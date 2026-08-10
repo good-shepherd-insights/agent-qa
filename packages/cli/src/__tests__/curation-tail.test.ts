@@ -1389,7 +1389,10 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
     const currentRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
     const reconcileRunOutcomesProjection = vi.fn(() => {
       order.push('reconcile')
-      return { kind: 'rebuilt' as const, report: { folded: 2, skipped: 0 } }
+      return {
+        kind: 'rebuilt' as const,
+        report: { folded: 2, skippedHandoffs: 1, skippedArtifacts: 0 },
+      }
     })
     const foldRunOutcomes = vi.fn(() => {
       order.push('fold')
@@ -1417,7 +1420,9 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
     expect(order.indexOf('reconcile')).toBeLessThan(order.indexOf('fold'))
     expect(order.lastIndexOf('reconcile')).toBe(0)
     // A rebuild of the derived index is never silent.
-    expect(info).toHaveBeenCalledWith(expect.stringContaining('folded 2, skipped 0'))
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('folded 2, skipped 1 handoff, 0 artifact'),
+    )
   })
 
   it('isolates a throwing reconcile: warned, and every per-run fold still happens', async () => {

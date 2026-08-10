@@ -184,9 +184,21 @@ export interface RebuildRunOutcomesOptions {
   extractAnchors: ExtractStepAnchors
 }
 
+/**
+ * What one rebuild did, with its two skip causes kept APART (393 round 7, CR-01-WIDENED).
+ *
+ * A single conflating counter answered "how many runs did not fold" and nothing an operator could
+ * act on: a malformed `handoff.json` and an unloadable `analysis.json` are different files, written
+ * by different producers, and fixed differently. There is deliberately no third counter for a
+ * projection or write failure — that class is no longer a skip at all. It propagates out of
+ * `rebuildRunOutcomes` and the rebuild produces no report.
+ */
 export interface RebuildRunOutcomesReport {
   folded: number
-  skipped: number
+  /** Runs whose `handoff.json` would not load or carries a pre-381 / structurally unsafe shape. */
+  skippedHandoffs: number
+  /** Runs whose `handoff.json` loaded but whose `analysis.json` threw (the D-09 second document). */
+  skippedArtifacts: number
 }
 
 /**
@@ -690,7 +702,7 @@ export function rebuildRunOutcomes(
     DELETE FROM run_outcome_projection_version;
   `)
 
-  const report: RebuildRunOutcomesReport = { folded: 0, skipped: 0 }
+  const report: RebuildRunOutcomesReport = { folded: 0, skippedHandoffs: 0, skippedArtifacts: 0 }
   // A missing runs root is the ABRF-02 empty edge, not a failure: the family is legitimately
   // empty at the CURRENT semantics, so it still earns the stamp below — otherwise a project with
   // no runs yet would rebuild on every single sweep forever.
@@ -704,7 +716,7 @@ export function rebuildRunOutcomes(
     for (const runDir of runDirs) {
       const handoff = loadRebuildHandoff(join(runDir, RUN_HANDOFF_FILE))
       if (handoff === undefined) {
-        report.skipped += 1
+        report.skippedHandoffs += 1
         continue
       }
       // D-09 / L12: `analysis.json` is read from beside `handoff.json` through the SAME loader the
@@ -717,23 +729,38 @@ export function rebuildRunOutcomes(
       // at whatever prefix of the sorted run dirs preceded the bad file. This is `loadRebuildHandoff`'s
       // malformed-file-is-a-counted-skip posture applied per run to the document written beside it.
       //
-      // The catch scope is ONE run — not the loop, not the family. A run whose artifact will not
-      // load is SKIPPED ENTIRELY rather than folded to the deterministic floor: floor counters for
-      // that run are values no fold ever produced (the incremental path refuses to produce them),
-      // so parity with that path means absence, not a floor. `applyRunOutcomes` owns its own
-      // transaction (`BEGIN IMMEDIATE`) and rolls back on error, so a caught apply failure leaves
-      // the family consistent — which is also why wrapping the whole rebuild in one transaction is
-      // not the fix here: the inner transaction does not compose.
+      // THE CATCH IS ONE FAILURE CLASS WIDE, and the scope is the argument (393 round 7,
+      // CR-01-WIDENED). It wraps the LOADER CALL and nothing else, because the reason above is a
+      // reason about UNTRUSTED PERSISTED BYTES: one run's bad file is that run's problem, and
+      // charging the family for it would be the wrong trade. A `projectRunOutcomes` or
+      // `applyRunOutcomes` failure is a different animal entirely — SQLITE_BUSY past the writer
+      // timeout, ENOSPC, a constraint violation — and it says the WRITE PATH is unavailable, which
+      // is never true of one run only. Swallowing that as a per-run skip walked the loop to the
+      // unconditional stamp below and published an EMPTY `suite_fingerprints` as CURRENT: gate 3's
+      // own comparison substrate, wrong silently and forever, since every later reconcile then
+      // answers 'current' and never looks again. So those calls sit OUTSIDE the try and their
+      // throws leave `rebuildRunOutcomes` — the loop never reaches the stamp, and the DELETE-FIRST /
+      // STAMP-LAST order documented above turns that into the self-heal: no stamp reads as a
+      // mismatch and the next sweep rebuilds. Fail closed, then recover, rather than fail quiet.
+      //
+      // A run whose artifact will not load is SKIPPED ENTIRELY rather than folded to the
+      // deterministic floor: floor counters for that run are values no fold ever produced (the
+      // incremental path refuses to produce them), so parity with that path means absence, not a
+      // floor. `applyRunOutcomes` owns its own transaction (`BEGIN IMMEDIATE`) and rolls back on
+      // error, so a propagating apply failure still leaves the family internally consistent — which
+      // is also why wrapping the whole rebuild in one transaction is not the fix here: the inner
+      // transaction does not compose.
+      let artifact: RunAnalysisArtifact | undefined
       try {
-        const artifact = loadRunArtifact(runDir, String(handoff.runId))
-        applyRunOutcomes(db, projectRunOutcomes(handoff, {
-          extractAnchors: opts.extractAnchors,
-          ...(artifact === undefined ? {} : { artifact }),
-        }))
+        artifact = loadRunArtifact(runDir, String(handoff.runId))
       } catch {
-        report.skipped += 1
+        report.skippedArtifacts += 1
         continue
       }
+      applyRunOutcomes(db, projectRunOutcomes(handoff, {
+        extractAnchors: opts.extractAnchors,
+        ...(artifact === undefined ? {} : { artifact }),
+      }))
       report.folded += 1
     }
   }

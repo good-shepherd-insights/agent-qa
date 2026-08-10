@@ -310,7 +310,8 @@ describe('D-09: the projection fold consumes resolved verdicts', () => {
 
       expect(rebuildRunOutcomes(rebuilt.db, runsRoot, { extractAnchors })).toEqual({
         folded: 3,
-        skipped: 0,
+        skippedHandoffs: 0,
+        skippedArtifacts: 0,
       })
       expect(canonicalJson(dumpTables(rebuilt.db))).toBe(
         canonicalJson(dumpTables(incremental.db)),

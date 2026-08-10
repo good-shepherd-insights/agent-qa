@@ -411,7 +411,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     const result = reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors })
     expect(result.kind).toBe('rebuilt')
     expect(result.kind === 'rebuilt' ? result.report : undefined)
-      .toEqual({ folded: HISTORICAL_RUNS.length, skipped: 0 })
+      .toEqual({ folded: HISTORICAL_RUNS.length, skippedHandoffs: 0, skippedArtifacts: 0 })
 
     withIndex(knowledgeRoot, (db) => {
       const fingerprintCount = db.prepare('SELECT COUNT(*) AS n FROM suite_fingerprints').get() as
@@ -504,7 +504,10 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     // incremental path hard-fails on the same bytes, so parity means ABSENCE, and floor counters
     // for a run no fold ever produced would misrepresent AI-resolved verdicts at their
     // unresolved floor.
-    expect(result).toEqual({ kind: 'rebuilt', report: { folded: 2, skipped: 1 } })
+    expect(result).toEqual({
+      kind: 'rebuilt',
+      report: { folded: 2, skippedHandoffs: 0, skippedArtifacts: 1 },
+    })
 
     withIndex(knowledgeRoot, (db) => {
       // The stamp lands, so the next sweep answers `current` instead of re-destroying the family
@@ -591,7 +594,10 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     withIndex(knowledgeRoot, (db) => expect(flakeCountOf(db)).toBe(0))
 
     expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }))
-      .toEqual({ kind: 'rebuilt', report: { folded: 4, skipped: 0 } })
+      .toEqual({
+        kind: 'rebuilt',
+        report: { folded: 4, skippedHandoffs: 0, skippedArtifacts: 0 },
+      })
 
     withIndex(knowledgeRoot, (db) => expect(flakeCountOf(db)).toBe(1))
   })
@@ -617,7 +623,10 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     const runsRoot = tempDir('reconcile-empty-runs-')
 
     const result = reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors })
-    expect(result).toEqual({ kind: 'rebuilt', report: { folded: 0, skipped: 0 } })
+    expect(result).toEqual({
+      kind: 'rebuilt',
+      report: { folded: 0, skippedHandoffs: 0, skippedArtifacts: 0 },
+    })
 
     withIndex(knowledgeRoot, (db) => {
       expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes').get()).toMatchObject({ n: 0 })
