@@ -19,6 +19,16 @@
 // similarity instead, over-flagging toward "already covered" — the safe direction, symmetric with
 // the ratified dedup posture — and every compared test carries the lane that answered for it, so a
 // fingerprint-lane fact and a text-lane guess can never be read as the same claim.
+//
+// DECIDER PRECEDENCE, AND IT IS NOT SYMMETRIC (D-14 over D-16 · CR-01). Wherever the fingerprint
+// lane CAN speak — a non-empty suite union — it is the whole verdict, and the text lane's
+// resemblances are recorded per compared test without deciding. Only when the union is empty, so
+// the primary lane has nothing to say, does the text lane decide. The shipped decider was
+// `novel > 0 && textCovered.length === 0`, which is the other arrangement: a 0.5 Jaccard guess
+// vetoing a fingerprint fact, and — because the derived index is gitignored and therefore empty on
+// every fresh checkout and every CI job — the SOLE decider in the common case, on a threshold D-14
+// says this gate does not have. Two concurrent deciders is the defect, not the ordering of them.
+// If a future change gives the text lane a say where a union exists, it is re-minting that defect.
 
 import type { AddsValueFinding } from '@vostride/agent-qa-schema'
 
@@ -200,7 +210,12 @@ export function addsValueGate(input: AddsValueGateInput): AddsValueGateResult {
     })
   }
 
-  const pass = novelElements.length > 0 && textCovered.length === 0
+  // D-14 outranks D-16 wherever the primary lane has evidence: a non-empty union means the
+  // fingerprint lane spoke, and its answer is the verdict. The text lane decides only in the state
+  // it was ratified for — an index that can say nothing at all.
+  const pass = union.size > 0
+    ? novelElements.length > 0
+    : novelElements.length > 0 && textCovered.length === 0
 
   return { pass, finding: { novelElements, comparedTests }, reason: gateReason({
     pass,
@@ -218,11 +233,23 @@ function gateReason(input: {
   draftElementCount: number
   textCovered: readonly SuiteTextCorpusEntryLike[]
 }): string {
-  if (input.pass) {
-    return `${input.novelElements.length} element(s) absent from the suite union of `
-      + `${input.unionSize}, and no evidence-less suite test resembles the draft (D-14/D-16)`
+  // Every branch NAMES THE LANE THAT ANSWERED. The verdict is one boolean over two possible
+  // sources, so a receipt that does not say which one decided cannot be audited for whether a
+  // fingerprint fact or a degraded-lane guess produced it.
+  if (input.pass && input.unionSize > 0) {
+    const decided = `${input.novelElements.length} element(s) absent from the suite union of `
+      + `${input.unionSize} — the fingerprint lane decided (D-14)`
+    if (input.textCovered.length === 0) {
+      return `${decided}, and no evidence-less suite test resembles the draft (D-16)`
+    }
+    return `${decided}; ${input.textCovered.length} evidence-less suite test(s) resemble the draft `
+      + 'on the degraded text lane and are recorded per compared test without deciding (D-16)'
   }
-  if (input.textCovered.length > 0) {
+  if (input.pass) {
+    return 'the suite fingerprint index is empty, so the degraded text lane decided: no '
+      + 'evidence-less suite test resembles the draft (D-16)'
+  }
+  if (input.unionSize === 0 && input.textCovered.length > 0) {
     return 'the text fallback lane matched '
       + input.textCovered.map((entry) => `${entry.filePath}::${entry.testName}`).join(', ')
       + ` at or above ${TEXT_FALLBACK_SIMILARITY_THRESHOLD} similarity — an evidence-less suite `
