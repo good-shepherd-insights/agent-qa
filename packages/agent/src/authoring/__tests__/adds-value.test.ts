@@ -96,6 +96,31 @@ describe('addsValueGate — the fingerprint lane (D-14)', () => {
     expect(result.finding.comparedTests).toHaveLength(2)
   })
 
+  it('per-test `covered` means SUBSUMES the draft, not merely overlaps it', () => {
+    // Found by a surviving mutant: swapping `every` for `some` in the per-test coverage check
+    // changed no outcome, because every case so far had the two agreeing. They are different
+    // claims, and the receipt publishes one of them — "this test already covers your draft" is
+    // actionable, "this test touches something your draft also touches" is noise dressed as an
+    // answer. The union-level verdict is unaffected either way, which is exactly why the
+    // difference could hide.
+    const result = addsValueGate({
+      draft: ACCEPT_CONTROL_TEXT,
+      draftElements: ['el-a', 'el-b'],
+      index: fakeFingerprintIndex([
+        { filePath: 'suite/partial.yaml', testName: 'Touches only A', elements: ['el-a'] },
+        { filePath: 'suite/whole.yaml', testName: 'Covers A and B', elements: ['el-a', 'el-b'] },
+      ]),
+      textCorpus: [],
+    })
+
+    const byName = new Map(result.finding.comparedTests.map((row) => [row.testName, row.covered]))
+    expect(byName.get('Touches only A')).toBe(false)
+    expect(byName.get('Covers A and B')).toBe(true)
+    // The gate itself turns on the UNION, which holds both — the per-test rows explain, they do
+    // not decide (D-14).
+    expect(result.pass).toBe(false)
+  })
+
   it('has no similarity threshold on the fingerprint lane — one novel element is enough', () => {
     // 19 of 20 elements shared, and the draft still adds value. A gate that scored overlap would
     // call this covered; D-14 says the answer is set membership, not proportion.

@@ -131,6 +131,7 @@ export async function evaluateDraft(
   // Gate 3, over the draft's own execution evidence.
   const draftElements = draftFingerprintElements(stability.draftMembers)
   const addsValue = addsValueGate({
+    draft: { testName: input.draft.testName, steps: input.draft.steps },
     draftElements,
     index: ports.fingerprints,
     textCorpus: ports.textCorpus,
