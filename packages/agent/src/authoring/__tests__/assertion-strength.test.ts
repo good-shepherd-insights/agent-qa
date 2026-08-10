@@ -309,6 +309,102 @@ describe('namesAnElement — capitalization is a signal only inside prose case (
   })
 })
 
+describe('namesAnElement — content decides; casing never does (393-12, WR-06)', () => {
+  // WHY THESE CONTROLS REACH THE CONCRETENESS ARM, by construction rather than by hope.
+  //
+  // No step below carries a double-quoted span, so `concrete` cannot short-circuit on
+  // `literals.length > 0` and `namesAnElement` is genuinely consulted. `page is visible` is NOT a
+  // VACUOUS_ASSERTION_PHRASES member — the lexicon's own retune comment calls it the obvious
+  // candidate the set does not hold — so the vacuity arm cannot decide either. No capture
+  // signature, no prior-action literal to restate, and no MIXED_STEP_SEPARATORS token is present,
+  // so those three arms are silent too. Every cell below is therefore a reading of the
+  // concreteness arm and nothing else, which the per-cell arm-attribution assertions re-check.
+  //
+  // The frozen corpus cannot observe this arm at all: every expected-true draft carries a quoted
+  // literal and every expected-false draft is refused by another arm, which is why THESE
+  // constructed controls are the pins and the corpus walk below is not.
+  //
+  // Both loops are loops on purpose. The two prior attempts at this defect each moved a casing
+  // boundary and satisfied a handful of enumerated cells; a loop over the whole casing axis cannot
+  // be satisfied that way — any rule that consults letter case reds at least one cell in one
+  // direction or the other.
+
+  const VACUOUS_PAGE_CASINGS = [
+    'Verify the page is visible',
+    'Verify the Page is visible',
+    'Verify The page is visible',
+    'Verify The Page is visible',
+    'Verify The Page Is Visible',
+    'Verify THE PAGE IS VISIBLE',
+  ] as const
+
+  const NAMED_ELEMENT_CASINGS = [
+    'Verify the submit button is disabled',
+    'Verify the Submit button is disabled',
+    'Verify The submit button is disabled',
+    'Verify The Submit button is disabled',
+    'Verify The Submit Button Is Disabled',
+    'Verify THE SUBMIT BUTTON IS DISABLED',
+  ] as const
+
+  it.each(VACUOUS_PAGE_CASINGS)('refuses the generic-page claim in every casing: %s', (step) => {
+    const result = assertionStrengthGate({ steps: [step] })
+    const row = result.table[0]
+
+    expect(result.pass).toBe(false)
+    expect(result.falsifiableAssertionCount).toBe(0)
+    expect(row?.role).toBe('assertion')
+    expect(row?.falsifiable).toBe(false)
+    // Arm attribution: the CONCRETENESS arm refused this, not the vacuity or capture arm. Without
+    // these two lines a future vacuity-lexicon widening could carry the cell while the arm under
+    // test rots underneath it.
+    expect(row?.vacuityHit).toBeUndefined()
+    expect(row?.captureSignatureHits).toEqual([])
+  })
+
+  it.each(NAMED_ELEMENT_CASINGS)('accepts the named-element claim in every casing: %s', (step) => {
+    const result = assertionStrengthGate({ steps: [step] })
+
+    expect(result.pass).toBe(true)
+    expect(result.falsifiableAssertionCount).toBe(1)
+    expect(result.table[0]?.vacuityHit).toBeUndefined()
+    expect(result.table[0]?.captureSignatureHits).toEqual([])
+  })
+
+  it('accepts the title-cased concrete assertions the two-sided-case rule falsely rejected', () => {
+    // THE MEASURED FALSE REJECT, fixed rather than disclosed. The rule this group replaced required
+    // the residue to carry BOTH a capital-initial and a lowercase-initial word, so these two steps —
+    // each naming a real control in a binary observable state, in the title case the module's own
+    // premise says LLM drafts commonly use — lost gate 4 while their prose-cased twins kept it.
+    expect(assertionStrengthGate({ steps: ['Verify The Submit Button Is Disabled'] }).pass).toBe(true)
+    expect(assertionStrengthGate({ steps: ['Verify The Username Field Is Empty'] }).pass).toBe(true)
+  })
+
+  it('leaves the documented residual open on purpose: an unlisted residue word reads as an element name', () => {
+    // THE RESIDUAL, pinned deliberately so closing it is a conscious retune rather than an accident.
+    // A lexical check cannot know the page: `banner` is outside all three exclusion sets, so this
+    // passes whether or not the page has a banner. Closing it means adding a member to
+    // GENERIC_PAGE_NOUNS and re-running the frozen corpus — never a character-case test, which is
+    // the shape that shipped both prior defects.
+    expect(assertionStrengthGate({ steps: ['Verify the banner is visible'] }).pass).toBe(true)
+  })
+
+  it('pays the documented accepted cost: a claim naming ONLY a generic page noun is refused, in either casing', () => {
+    // THE ACCEPTED COST. `form` is a GENERIC_PAGE_NOUNS member, so every residue token here is
+    // excluded and the claim loses gate 4 even though a human could arguably check it. The author's
+    // recovery route is naming the specific element (`Verify the Login form is empty`) or quoting a
+    // literal. Casing is not the recovery route, which is exactly what the pair below asserts.
+    for (const step of ['Verify the Form is empty', 'Verify the form is empty']) {
+      const row = onlyRow([step])
+
+      expect({ step, pass: assertionStrengthGate({ steps: [step] }).pass }).toEqual({ step, pass: false })
+      expect(row.vacuityHit).toBeUndefined()
+    }
+
+    expect(assertionStrengthGate({ steps: ['Verify the Login form is empty'] }).pass).toBe(true)
+  })
+})
+
 describe('classifyDraftSteps — the table (D-11)', () => {
   it('emits exactly one row per input step, in order, with the text carried verbatim', () => {
     const steps = [
