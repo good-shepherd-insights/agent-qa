@@ -1,0 +1,405 @@
+// The projection-version reconcile differential (393 CR-02).
+//
+// THE PRE-v4 STATE IS PRODUCED, NOT WRITTEN. Every historical run below is folded through the
+// REAL `foldRunOutcomes` path against a REAL index on disk, exactly as the shipping tail folds
+// it. Only two DELETEs are synthetic — the `suite_fingerprints` rows and the version row — and
+// those stand in for the producer that no longer exists in this tree: a v3-era fold, which had
+// no fingerprint write and no stamp, left precisely markers + counters + an empty fingerprint
+// table + no version row. Hand-building the index instead would have risked pinning an
+// unproducible shape, and a differential over impossible inputs cannot tell a vacuous corpus
+// from a real closure (the produced-not-literal law).
+//
+// The two directions are pinned together on purpose (the two-sided contract pin law): a backfill
+// that converges is only half the contract, and the other half — an already-current index that
+// never re-folds — is where a re-fold-every-open regression and double-counted counters would
+// live.
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { DatabaseSync } from 'node:sqlite'
+
+import {
+  actionAnchorElement,
+  type Action,
+  type CompletedRunHandoff,
+  type ElementInfo,
+  type PerTestOutcome,
+  type ScopeKey,
+  type StepEvidence,
+  type SubActionEvidence,
+} from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { openIndexWriter } from '../../index-open.js'
+import {
+  foldRunOutcomes,
+  projectionPartition,
+  reconcileRunOutcomesProjection,
+  RUN_OUTCOMES_PROJECTION_VERSION,
+} from '../run-outcomes.js'
+import { createSuiteFingerprintIndex } from '../suite-fingerprints.js'
+
+const SHOP_SCOPE: ScopeKey = { tier: 'product', key: 'shop-web' }
+const SHOP_PRODUCT = projectionPartition(SHOP_SCOPE).product
+
+const tempDirs: string[] = []
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    rmSync(tempDirs.pop()!, { recursive: true, force: true })
+  }
+})
+
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  tempDirs.push(dir)
+  return dir
+}
+
+// Fixture builders mirror `suite-fingerprints.test.ts`: the fingerprint recipe reads SUCCEEDED
+// sub-actions and the element the planned action's ref names, so a handoff that carries only
+// step anchors would fold to an empty fingerprint table and the convergence assertion would pass
+// vacuously against zero.
+interface SubActionFixture {
+  type: string
+  ref?: string
+  role?: string
+  name?: string
+  url?: string
+}
+
+interface TestFixture {
+  filePath: string
+  testName: string
+  steps: SubActionFixture[][]
+}
+
+function elementInfo(ref: string, role: string, name: string): ElementInfo {
+  return {
+    ref,
+    role,
+    name,
+    nameNormalized: name,
+    state: { enabled: true, focused: false, visible: true },
+    labels: {},
+    attributes: {},
+  } as unknown as ElementInfo
+}
+
+function screenState(url: string | undefined, elements: ElementInfo[]): unknown {
+  return {
+    platform: 'web',
+    tree: '',
+    elements,
+    refMap: {},
+    timestamp: 0,
+    metadata: {},
+    ...(url === undefined ? {} : { url }),
+  }
+}
+
+function subActionEvidence(fixture: SubActionFixture): SubActionEvidence {
+  const elements = fixture.ref === undefined
+    ? []
+    : [elementInfo(fixture.ref, fixture.role ?? 'button', fixture.name ?? 'checkout')]
+  return {
+    plan: `plan ${fixture.type}`,
+    plannedAction: {
+      type: fixture.type,
+      ...(fixture.ref === undefined ? {} : { ref: fixture.ref }),
+    } as unknown as Action,
+    stateBefore: screenState(fixture.url, elements),
+    result: { success: true },
+  } as unknown as SubActionEvidence
+}
+
+function stepEvidence(stepIndex: number, subActions: SubActionFixture[]): StepEvidence {
+  return {
+    stepIndex,
+    stepText: `step ${stepIndex}`,
+    cacheStatus: 'miss',
+    servedBrief: {
+      scope: SHOP_SCOPE,
+      asOfBuild: 1,
+      budget: 1,
+      truncation: 'none',
+      channel1: [],
+      channel2: [],
+      channel3: [],
+      briefDigest: 'fixture-brief-digest',
+    },
+    subActions: subActions.map(subActionEvidence),
+    verifierVerdict: { pass: true, reasoning: 'fixture verdict' },
+  } as unknown as StepEvidence
+}
+
+function perTest(fixture: TestFixture, testIndex: number): PerTestOutcome {
+  return {
+    testId: `${fixture.filePath}::${fixture.testName}`,
+    testName: fixture.testName,
+    filePath: fixture.filePath,
+    testIndex,
+    outcome: 'passed',
+    steps: fixture.steps.map((subActions, index) => stepEvidence(index, subActions)),
+  } as unknown as PerTestOutcome
+}
+
+function handoffFixture(input: {
+  runId: string
+  buildOrdinal: number
+  tests: TestFixture[]
+  excludedFromOutcomes?: true
+}): CompletedRunHandoff {
+  return {
+    schemaVersion: 3,
+    runId: input.runId,
+    buildOrdinal: input.buildOrdinal,
+    scope: SHOP_SCOPE,
+    executionContext: 'ci',
+    aggregateVerdict: 'passed',
+    configDigests: {
+      suiteConfigDigest: 'fixture-suite-config-digest',
+      testConfigDigest: 'fixture-test-config-digest',
+    },
+    startedAt: input.buildOrdinal * 1_000,
+    endedAt: input.buildOrdinal * 1_000 + 1,
+    tests: input.tests.map((fixture, testIndex) => perTest(fixture, testIndex)),
+    ...(input.excludedFromOutcomes === true ? { excludedFromOutcomes: true } : {}),
+  } as unknown as CompletedRunHandoff
+}
+
+const extractAnchors = (): [] => []
+
+const CHECKOUT_TEST: TestFixture = {
+  filePath: 'suite/checkout.test.ts',
+  testName: 'checkout happy path',
+  steps: [[{ type: 'click', ref: 'e1', role: 'button', name: 'checkout', url: '/cart' }]],
+}
+
+const LOGIN_TEST: TestFixture = {
+  filePath: 'suite/login.test.ts',
+  testName: 'login with a valid password',
+  steps: [[{ type: 'fill', ref: 'e9', role: 'textbox', name: 'password', url: '/login' }]],
+}
+
+/** The gate-run's own draft test — WTST-06's exclusion subject on the rebuild path. */
+const GATE_TEST: TestFixture = {
+  filePath: 'suite/internal-gate.test.ts',
+  testName: 'gate run draft',
+  steps: [[{ type: 'click', ref: 'e4', role: 'button', name: 'gate only', url: '/gate' }]],
+}
+
+const CHECKOUT_ELEMENT = actionAnchorElement({
+  kind: 'action',
+  type: 'click',
+  anchor: { t: 'el', role: 'button', name: 'checkout', ordinal: 0 },
+  route: '/cart',
+})
+
+const GATE_ELEMENT = actionAnchorElement({
+  kind: 'action',
+  type: 'click',
+  anchor: { t: 'el', role: 'button', name: 'gate only', ordinal: 0 },
+  route: '/gate',
+})
+
+const HISTORICAL_RUNS: CompletedRunHandoff[] = [
+  handoffFixture({ runId: '001-checkout', buildOrdinal: 1, tests: [CHECKOUT_TEST] }),
+  handoffFixture({ runId: '002-login', buildOrdinal: 2, tests: [LOGIN_TEST] }),
+  handoffFixture({
+    runId: '003-gate',
+    buildOrdinal: 3,
+    tests: [GATE_TEST],
+    excludedFromOutcomes: true,
+  }),
+]
+
+interface ProjectionDump {
+  outcomes: unknown[]
+  anchors: unknown[]
+  appliedRuns: unknown[]
+  windows: unknown[]
+  fingerprints: unknown[]
+  version: unknown[]
+}
+
+function dumpProjection(db: DatabaseSync): ProjectionDump {
+  return {
+    outcomes: db.prepare(
+      'SELECT * FROM run_test_outcomes ORDER BY product, file_path, test_name',
+    ).all(),
+    anchors: db.prepare(
+      'SELECT * FROM run_test_anchors ORDER BY product, file_path, test_name, anchor_normalized_json',
+    ).all(),
+    appliedRuns: db.prepare(
+      'SELECT * FROM run_outcome_applied_runs ORDER BY product, run_id',
+    ).all(),
+    windows: db.prepare(
+      'SELECT * FROM run_fingerprint_windows ORDER BY product, file_path, test_name, build_ordinal',
+    ).all(),
+    fingerprints: db.prepare(
+      'SELECT * FROM suite_fingerprints ORDER BY product, file_path, test_name, seq',
+    ).all(),
+    version: db.prepare('SELECT * FROM run_outcome_projection_version ORDER BY id').all(),
+  }
+}
+
+function withIndex<T>(knowledgeRoot: string, read: (db: DatabaseSync) => T): T {
+  const handle = openIndexWriter(knowledgeRoot)
+  try {
+    return read(handle.db)
+  } finally {
+    handle.close()
+  }
+}
+
+interface PreV4Project {
+  knowledgeRoot: string
+  runsRoot: string
+}
+
+/**
+ * PRODUCE the pre-v4 state, then subtract exactly what a v3-era fold never wrote.
+ *
+ * Everything up to the two DELETEs is the real production path: the same `foldRunOutcomes` the
+ * curation tail calls, against the same `openIndexWriter` index, over handoff documents written
+ * to a real runs root the way the runner writes them.
+ */
+function producePreV4Project(): PreV4Project {
+  const knowledgeRoot = tempDir('reconcile-knowledge-')
+  const runsRoot = tempDir('reconcile-runs-')
+
+  for (const handoff of HISTORICAL_RUNS) {
+    const runDir = join(runsRoot, String(handoff.runId))
+    mkdirSync(runDir, { recursive: true })
+    writeFileSync(join(runDir, 'handoff.json'), JSON.stringify(handoff))
+    const report = foldRunOutcomes({ knowledgeRoot, handoff, extractAnchors })
+    expect(report.kind).toBe('applied')
+  }
+
+  withIndex(knowledgeRoot, (db) => {
+    // The only synthetic step: strip what a v3-era fold never produced.
+    db.exec('DELETE FROM suite_fingerprints')
+    db.exec('DELETE FROM run_outcome_projection_version')
+  })
+
+  return { knowledgeRoot, runsRoot }
+}
+
+describe('reconcileRunOutcomesProjection — the projection-version backfill (393 CR-02)', () => {
+  it('converges a pre-v4 index: suite_fingerprints goes empty -> populated with no counter drift', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project()
+
+    const before = withIndex(knowledgeRoot, (db) => {
+      expect(db.prepare('SELECT COUNT(*) AS n FROM suite_fingerprints').get())
+        .toMatchObject({ n: 0 })
+      expect(db.prepare('SELECT COUNT(*) AS n FROM run_outcome_applied_runs').get())
+        .toMatchObject({ n: HISTORICAL_RUNS.length })
+      expect(createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion().size)
+        .toBe(0)
+      return dumpProjection(db)
+    })
+
+    const result = reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors })
+    expect(result.kind).toBe('rebuilt')
+    expect(result.kind === 'rebuilt' ? result.report : undefined)
+      .toEqual({ folded: HISTORICAL_RUNS.length, skipped: 0 })
+
+    withIndex(knowledgeRoot, (db) => {
+      const fingerprintCount = db.prepare('SELECT COUNT(*) AS n FROM suite_fingerprints').get() as
+        { n: number }
+      expect(fingerprintCount.n).toBeGreaterThan(0)
+
+      const union = createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion()
+      expect(union.size).toBeGreaterThan(0)
+      expect(union.has(CHECKOUT_ELEMENT)).toBe(true)
+
+      // Counter parity: the rebuild recomputes from the same handoffs, so nothing double-counts.
+      expect(dumpProjection(db).outcomes).toEqual(before.outcomes)
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all())
+        .toEqual([{ id: 1, version: RUN_OUTCOMES_PROJECTION_VERSION }])
+    })
+  })
+
+  it('answers current on an already-stamped index, writes nothing, and keeps the marker final', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project()
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+
+    const before = withIndex(knowledgeRoot, dumpProjection)
+
+    const second = reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors })
+    expect(second).toEqual({ kind: 'current' })
+
+    expect(withIndex(knowledgeRoot, dumpProjection)).toEqual(before)
+
+    // The marker short-circuit is intact AT the current version: an already-folded run still
+    // answers 'already-applied' rather than refolding on every open.
+    const refold = foldRunOutcomes({
+      knowledgeRoot,
+      handoff: HISTORICAL_RUNS[0]!,
+      extractAnchors,
+    })
+    expect(refold.kind).toBe('already-applied')
+    expect(withIndex(knowledgeRoot, dumpProjection)).toEqual(before)
+  })
+
+  it('an excludedFromOutcomes gate-run contributes zero rows through the rebuild (WTST-06)', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project()
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+
+    withIndex(knowledgeRoot, (db) => {
+      const union = createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion()
+      expect(union.has(GATE_ELEMENT)).toBe(false)
+      expect(
+        db.prepare('SELECT COUNT(*) AS n FROM suite_fingerprints WHERE file_path = ?')
+          .get(GATE_TEST.filePath),
+      ).toMatchObject({ n: 0 })
+      expect(
+        db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes WHERE file_path = ?')
+          .get(GATE_TEST.filePath),
+      ).toMatchObject({ n: 0 })
+      // The run itself is still marked applied — exclusion removes its members, never its receipt.
+      expect(
+        db.prepare('SELECT COUNT(*) AS n FROM run_outcome_applied_runs WHERE product = ? AND run_id = ?')
+          .get(SHOP_PRODUCT, '003-gate'),
+      ).toMatchObject({ n: 1 })
+    })
+  })
+
+  it('leaves memidex source-of-truth rows byte-identical across a rebuild', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project()
+
+    withIndex(knowledgeRoot, (db) => {
+      db.prepare('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v')
+        .run('fixture-source-of-truth', 'survives-the-rebuild')
+    })
+    const metaBefore = withIndex(knowledgeRoot, (db) =>
+      db.prepare('SELECT * FROM meta ORDER BY k').all())
+
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+
+    expect(withIndex(knowledgeRoot, (db) => db.prepare('SELECT * FROM meta ORDER BY k').all()))
+      .toEqual(metaBefore)
+  })
+
+  it('stamps the current version over an empty project without folding anything', () => {
+    const knowledgeRoot = tempDir('reconcile-empty-knowledge-')
+    const runsRoot = tempDir('reconcile-empty-runs-')
+
+    const result = reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors })
+    expect(result).toEqual({ kind: 'rebuilt', report: { folded: 0, skipped: 0 } })
+
+    withIndex(knowledgeRoot, (db) => {
+      expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes').get()).toMatchObject({ n: 0 })
+      expect(db.prepare('SELECT COUNT(*) AS n FROM suite_fingerprints').get()).toMatchObject({ n: 0 })
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all())
+        .toEqual([{ id: 1, version: RUN_OUTCOMES_PROJECTION_VERSION }])
+    })
+
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }))
+      .toEqual({ kind: 'current' })
+  })
+})
