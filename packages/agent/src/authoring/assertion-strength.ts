@@ -112,15 +112,15 @@ export const ACTION_VERBS = [
  * sits as a conjunct in the falsifiability rule, and that conjunct decides nothing on the
  * current membership: no member contains an `EXPECTED_STATE_TERMS` token, so a remainder that
  * equals a member is already non-concrete and refused by the other arm. It is kept as a guard
- * against exactly the widening this comment invites, and 393-12 changed WHICH widening that is.
- * `page is visible` is no longer the candidate: `namesAnElement` is now closed-lexicon membership
- * over normalized residue tokens, and every token of that phrase sits in `GENERIC_PAGE_NOUNS`,
- * `NON_ELEMENT_WORDS` or `EXPECTED_STATE_TERMS`, so the concreteness arm refuses it first — in
- * every casing. The member that would hand this conjunct the whole decision is one carrying BOTH
- * an `EXPECTED_STATE_TERMS` token AND a residue word outside all three exclusion sets:
- * `banner is visible` is that shape. The guard still has a live trigger rather than a promise —
- * `assertion-strength.test.ts`'s cross-lexicon closure case walks every member and reds if the
- * conjunct goes away under such a widening.
+ * against exactly the widening this comment invites, and 393-13 re-derived WHICH widening that is.
+ * `page is visible` is not the candidate: `namesAnElement` is membership in the one positive
+ * `ELEMENT_NOUNS` lexicon over normalized residue tokens, and NO token of that phrase is a member,
+ * so the concreteness arm refuses it first — in every casing, and under every function-word
+ * padding. The member that would hand this conjunct the whole decision is one carrying BOTH an
+ * `EXPECTED_STATE_TERMS` token AND an `ELEMENT_NOUNS` member: `banner is visible` is that shape.
+ * The guard still has a live trigger rather than a promise — `assertion-strength.test.ts`'s
+ * cross-lexicon closure case walks every member and reds if the conjunct goes away under such a
+ * widening.
  *
  * Order is alphabetical and NOT load-bearing: the set is read by membership.
  */
@@ -145,13 +145,12 @@ export const VACUOUS_ASSERTION_PHRASES = [
  * this set makes more assertions falsifiable without a quoted literal, which is the arm most
  * likely to accept a weak oracle — re-run the frozen corpus, and prefer a quoted literal.
  *
- * ONE RETUNE, TWO ARMS (393-12). A member added here is ALSO excluded from element-name candidacy
- * in `namesAnElement`, so widening this set simultaneously makes more assertions state-bearing and
- * makes fewer words able to name an element — the two effects point in opposite directions. The
- * coupling is deliberate (a word that names a state is not the name of a control, and reading it as
- * one is how `is visible` would have become its own element), and this sentence is its record: the
- * W-10 rule that one retune must not silently move two measurements is satisfied by saying so here,
- * not by a second copy of the set.
+ * ONE RETUNE, ONE ARM AGAIN — DE-COUPLED 2026-08-10 (393-13). Between 393-12 and this plan a member
+ * added here was ALSO excluded from element-name candidacy in `namesAnElement`, so a single retune
+ * moved two measurements in opposite directions. The inversion ended that: `namesAnElement` now
+ * consults only `ELEMENT_NOUNS` and never reads this set at all, so a member added here widens
+ * state-bearing and nothing else. Recorded rather than silently dropped, because the W-10 property
+ * being RESTORED is as much a fact about this lexicon as the coupling was.
  */
 export const EXPECTED_STATE_TERMS = [
   'checked',
@@ -401,8 +400,51 @@ function isMixedActAndVerify(text: string): boolean {
  * one positive closed set `ELEMENT_NOUNS`. Letter case is never consulted: the verdict for a step
  * and for any recasing of that step is identical, by construction.
  *
- * The full disclosure structure — the measured history, the residual, the widened accepted cost —
- * lands with this plan's documentation task; this block states only what the code above does.
+ * WHY THE RULE IS SHAPED THIS WAY (three regressions, every one of them measured, 2026-08-10,
+ * phase 393 verification). The FIRST rule read any post-verb word beginning with a capital letter
+ * as an element name, on the house-style premise that a draft writes `the Submit button`.
+ * Title-cased prose defeated it outright: `Verify The Page Is Visible` — the exact vacuous claim
+ * D-12 exists to refuse — passed gate 4 while its lowercase twin was refused, and the drafts this
+ * filter exists for are LLM-authored and commonly title-cased. The SECOND rule kept the capital and
+ * added a neighbour condition — the residue had to carry a capital-initial word beside a
+ * lowercase-initial one — which removed only the two degenerate casings and left the whole
+ * mixed-case interior open: `Verify the Page is visible` PASSED, one character from the refused
+ * form, while `Verify The Submit Button Is Disabled` — a real control in a binary observable state
+ * — FAILED. The THIRD rule removed the casing axis entirely and asked instead whether some residue
+ * token was a member of NONE of three exclusion lists. That closed the casing axis for good, and
+ * the defect simply moved: every ordinary function word nobody had thought to list — a negation, a
+ * modal, an adverb, a copula — was outside all three sets and therefore read as an element name, so
+ * `Verify the page is not visible` PASSED while `Verify the page is visible` was refused, and seven
+ * more paddings of the same vacuous claim with it.
+ *
+ * The common cause of that third failure is the SHAPE, not the membership: an exclusion list's
+ * omissions leak toward ACCEPT, which is the unsafe direction, so completing the list is a race
+ * against every word in the language. Inverting to a positive lexicon flips the rot direction — an
+ * omission now leaks toward REJECT, D-12's ratified side — which is why this closure is structural
+ * rather than a fourth enumeration. It is the same lesson the casing arc taught twice: a closure
+ * anchored in an external vocabulary holds, and a closure phrased as a relation among the module's
+ * own predicates moves.
+ *
+ * RESIDUAL, accepted and named. A lexicon MEMBER reads as an element name whatever the page
+ * actually holds: `Verify the banner is visible` passes whether or not the page has a banner.
+ * Membership can decide that a word names a KIND of element; nothing lexical can decide that this
+ * page holds one. Pinned deliberately by the deliberately-passing test "leaves the documented
+ * residual open on purpose: a lexicon MEMBER reads as an element name" in
+ * `__tests__/assertion-strength.test.ts`. Closing it needs the resolved a11y evidence gate 3 works
+ * from — it is not reachable by any `ELEMENT_NOUNS` retune.
+ *
+ * ACCEPTED COST — WIDENED by this inversion, knowingly — and the retune route. An UNLISTED genuine
+ * element noun is now refused: `Verify the widget is visible` and `Verify the carousel is visible`
+ * lose gate 4 though each names a real thing, and `Verify the Login form is empty` — which the
+ * previous rule pinned as the author's recovery route — loses it too. That is a deliberate verdict
+ * flip, in D-12's tune-toward-reject direction, and it is what buys the property that an omission
+ * can no longer leak a vacuous claim through. All three are pinned by deliberately-failing drafts
+ * in the accepted-cost test. The AUTHOR's route out is a lexicon noun — `Verify the login field is
+ * empty` passes, and is pinned — or quoting the literal the page must show. The MAINTAINER's route
+ * is an `ELEMENT_NOUNS` membership change plus a re-run of the frozen corpus (D-09), never a
+ * character-case test and never a fourth exclusion list: those are the two shapes that shipped the
+ * three regressions above. Note the direction before retuning: ADDING a member moves this gate
+ * toward accept.
  */
 function namesAnElement(text: string): boolean {
   return afterLeadingToken(unquotedResidue(text))
