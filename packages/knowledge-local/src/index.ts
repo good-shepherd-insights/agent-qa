@@ -299,6 +299,7 @@ export {
   LAST_OUTCOMES_LIMIT,
   projectRunOutcomes,
   rebuildRunOutcomes,
+  reconcileRunOutcomesProjection,
   RUN_OUTCOMES_PROJECTION_VERSION,
 } from './projection/run-outcomes.js'
 export type {
@@ -311,6 +312,8 @@ export type {
   QuarantineFoldOutcome,
   RebuildRunOutcomesOptions,
   RebuildRunOutcomesReport,
+  ReconcileRunOutcomesProjectionOptions,
+  ReconcileRunOutcomesProjectionResult,
   RunOutcomeFailureKey,
   RunOutcomesProjection,
   RunOutcomeTestDelta,

@@ -435,6 +435,10 @@ function bootstrapVecSchema(db: DatabaseSync, activeProfile: EmbeddingProfile): 
  * `.agent-qa/runs/<runId>/handoff.json` (plus each run's `analysis.json`) scans alone (L12).
  * Deliberately absent from REQUIRED_INDEX_TABLES — like the per-profile vec tables, a lost
  * projection heals on the next writer open + rebuild rather than failing health probes.
+ * `run_outcome_projection_version` is the singleton stamp that says WHICH fold semantics produced
+ * the rows beside it; `reconcileRunOutcomesProjection` compares it against
+ * `RUN_OUTCOMES_PROJECTION_VERSION` and rebuilds the family whenever it is absent or differs, so
+ * an index folded by older semantics converges instead of staying silently stale.
  */
 export function ensureRunOutcomeTables(db: DatabaseSync): void {
   const outcomeColumns = db.prepare("PRAGMA table_info('run_test_outcomes')").all()
@@ -448,6 +452,7 @@ export function ensureRunOutcomeTables(db: DatabaseSync): void {
       DROP TABLE IF EXISTS run_outcome_applied_runs;
       DROP TABLE IF EXISTS run_fingerprint_windows;
       DROP TABLE IF EXISTS suite_fingerprints;
+      DROP TABLE IF EXISTS run_outcome_projection_version;
     `)
   }
 
@@ -507,6 +512,16 @@ export function ensureRunOutcomeTables(db: DatabaseSync): void {
       run_id TEXT NOT NULL,
       build_ordinal INTEGER NOT NULL,
       PRIMARY KEY (product, file_path, test_name, seq)
+    );
+
+    -- 393 CR-02: the stored fold-semantics stamp for the five tables above. Singleton by
+    -- construction (the CHECK admits exactly one row) because "which semantics produced this
+    -- family" is one fact about one derived index, and a second row could only ever be a second
+    -- answer to it. Absent is a legal state and means MISMATCH: a pre-stamp index and an index
+    -- whose file was deleted both read as absent, and both want the same rebuild.
+    CREATE TABLE IF NOT EXISTS run_outcome_projection_version (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      version INTEGER NOT NULL
     );
   `)
 }

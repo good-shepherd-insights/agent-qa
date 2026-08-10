@@ -631,11 +631,25 @@ function loadRebuildHandoff(file: string): CompletedRunHandoff | undefined {
   }
 }
 
+/** The stored fold-semantics stamp, or `undefined` on an index that has never carried one. */
+function readStoredProjectionVersion(db: DatabaseSync): number | undefined {
+  const row = db
+    .prepare('SELECT version FROM run_outcome_projection_version WHERE id = 1')
+    .get() as { version: number } | undefined
+  return row?.version
+}
+
 /**
  * Full rebuild: clear the projection tables, scan every run dir under `runsRoot`, and
  * refold each loadable handoff. Reproduces tables byte-identical to the incremental fold
  * (L12); a rebuild over zero handoff dirs yields empty tables without error (ABRF-02
  * empty edge). Load failures and pre-381 shapes are counted skips.
+ *
+ * DELETE-FIRST, STAMP-LAST, and that order is the crash story rather than a style choice (393
+ * CR-02). The version row is cleared with the family it describes and re-written only after the
+ * refold loop has run to completion, so a crash anywhere in between leaves NO stamp — which
+ * `reconcileRunOutcomesProjection` reads as a mismatch and rebuilds again. The projection
+ * therefore self-heals from a partial rebuild instead of stamping a half-built family as current.
  */
 export function rebuildRunOutcomes(
   db: DatabaseSync,
@@ -649,33 +663,97 @@ export function rebuildRunOutcomes(
     DELETE FROM run_outcome_applied_runs;
     DELETE FROM run_fingerprint_windows;
     DELETE FROM suite_fingerprints;
+    DELETE FROM run_outcome_projection_version;
   `)
 
   const report: RebuildRunOutcomesReport = { folded: 0, skipped: 0 }
-  if (!existsSync(runsRoot)) return report
+  // A missing runs root is the ABRF-02 empty edge, not a failure: the family is legitimately
+  // empty at the CURRENT semantics, so it still earns the stamp below — otherwise a project with
+  // no runs yet would rebuild on every single sweep forever.
+  if (existsSync(runsRoot)) {
+    const runDirs = readdirSync(runsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(runsRoot, entry.name))
+      .filter((dir) => existsSync(join(dir, RUN_HANDOFF_FILE)))
+      .sort()
 
-  const runDirs = readdirSync(runsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(runsRoot, entry.name))
-    .filter((dir) => existsSync(join(dir, RUN_HANDOFF_FILE)))
-    .sort()
-
-  for (const runDir of runDirs) {
-    const handoff = loadRebuildHandoff(join(runDir, RUN_HANDOFF_FILE))
-    if (handoff === undefined) {
-      report.skipped += 1
-      continue
+    for (const runDir of runDirs) {
+      const handoff = loadRebuildHandoff(join(runDir, RUN_HANDOFF_FILE))
+      if (handoff === undefined) {
+        report.skipped += 1
+        continue
+      }
+      // D-09 / L12: `analysis.json` is read from beside `handoff.json` through the SAME loader the
+      // incremental fold uses, so the rebuild reproduces resolved-verdict tables byte-identically.
+      const artifact = loadRunArtifact(runDir, String(handoff.runId))
+      applyRunOutcomes(db, projectRunOutcomes(handoff, {
+        extractAnchors: opts.extractAnchors,
+        ...(artifact === undefined ? {} : { artifact }),
+      }))
+      report.folded += 1
     }
-    // D-09 / L12: `analysis.json` is read from beside `handoff.json` through the SAME loader the
-    // incremental fold uses, so the rebuild reproduces resolved-verdict tables byte-identically.
-    const artifact = loadRunArtifact(runDir, String(handoff.runId))
-    applyRunOutcomes(db, projectRunOutcomes(handoff, {
-      extractAnchors: opts.extractAnchors,
-      ...(artifact === undefined ? {} : { artifact }),
-    }))
-    report.folded += 1
   }
+
+  db.prepare('INSERT OR REPLACE INTO run_outcome_projection_version (id, version) VALUES (1, ?)')
+    .run(RUN_OUTCOMES_PROJECTION_VERSION)
   return report
+}
+
+/** What one reconcile did — a fact the caller can print, never a silent side effect. */
+export type ReconcileRunOutcomesProjectionResult =
+  | { kind: 'current' }
+  | { kind: 'rebuilt'; report: RebuildRunOutcomesReport }
+
+export interface ReconcileRunOutcomesProjectionOptions {
+  /** Absolute agent-qa-knowledge root hosting the derived index SQLite. */
+  knowledgeRoot: string
+  /** `<agentQaRoot>/runs` — the scan root the rebuild refolds from. */
+  runsRoot: string
+  extractAnchors: ExtractStepAnchors
+}
+
+/**
+ * THE version trigger: reconcile the stored fold semantics with the shipped ones (393 CR-02).
+ *
+ * `RUN_OUTCOMES_PROJECTION_VERSION`'s doc block has always promised that a bump makes
+ * already-receipted runs refold. Nothing performed that refold: `applyRunOutcomes` short-circuits
+ * on the `run_outcome_applied_runs` marker before it can reach the fingerprint write, and nothing
+ * cleared the marker on a version change — so on any project that folded runs before a bump, the
+ * new table stayed empty forever and gate 3's fingerprint lane never had data to decide on. This
+ * function is what makes that promise true, and it composes machinery that already existed rather
+ * than adding a parallel path: `rebuildRunOutcomes` already clears the family, already re-reads
+ * every `handoff.json` + `analysis.json` through the one shared loader, and already reaches
+ * `applySuiteFingerprints` for every fold.
+ *
+ * ABSENT MEANS MISMATCH, deliberately. Every pre-stamp index reads as absent, which is exactly the
+ * population that needs to converge; so does an index whose file was deleted, which is exactly the
+ * population that needs to re-heal. Treating absence as "probably fine" would have made the
+ * upgrade path the one path this function does not serve.
+ *
+ * WHY A REBUILD RATHER THAN A PER-RUN VERSION COLUMN. Refolding runs in place through the
+ * incremental path would add each run's counters a SECOND time — the fold accumulates, it does not
+ * replace. The rebuild is the mechanism precisely because it clears before it refolds, which is
+ * also why the derived family is safe to move this way at all (L12: every row here is reproducible
+ * from run artifacts on disk).
+ */
+export function reconcileRunOutcomesProjection(
+  opts: ReconcileRunOutcomesProjectionOptions,
+): ReconcileRunOutcomesProjectionResult {
+  const handle = openIndexWriter(opts.knowledgeRoot)
+  try {
+    ensureRunOutcomeTables(handle.db)
+    if (readStoredProjectionVersion(handle.db) === RUN_OUTCOMES_PROJECTION_VERSION) {
+      return { kind: 'current' }
+    }
+    return {
+      kind: 'rebuilt',
+      report: rebuildRunOutcomes(handle.db, opts.runsRoot, {
+        extractAnchors: opts.extractAnchors,
+      }),
+    }
+  } finally {
+    handle.close()
+  }
 }
 
 /**
