@@ -591,6 +591,12 @@ export function applyRunOutcomes(
  * into a silent floor. A PRESENT file recording ANOTHER run's id is refused by identity
  * (`admitAnalysisArtifactForRun`, G-389-3A) and folds to the floor: counters and windows never key
  * off another run's verdicts, the 388 cross-instance class.
+ *
+ * THE LOADER ALWAYS RETHROWS, and what that costs is the CALLER's call (393 round 6, CR-01). On the
+ * incremental `foldRunOutcomes` path the throw stands: one run's fold fails loudly rather than
+ * silently recording a resolved run at its unresolved floor. In `rebuildRunOutcomes` the per-run
+ * body catches it and counts a skip, because there the same throw would abandon a family the
+ * rebuild has already DELETEd. Two postures, one loader — do not "fix" this by softening the loader.
  */
 function loadRunArtifact(runDir: string, runId: string): RunAnalysisArtifact | undefined {
   let bytes: string
@@ -659,7 +665,9 @@ function readStoredProjectionVersion(db: DatabaseSync): number | undefined {
  * Full rebuild: clear the projection tables, scan every run dir under `runsRoot`, and
  * refold each loadable handoff. Reproduces tables byte-identical to the incremental fold
  * (L12); a rebuild over zero handoff dirs yields empty tables without error (ABRF-02
- * empty edge). Load failures and pre-381 shapes are counted skips.
+ * empty edge). Load failures and pre-381 shapes are counted skips — including a run whose
+ * `analysis.json` will not load, which costs that run's contribution and nothing else (393 round 6,
+ * CR-01). One unreadable artifact must never truncate a family this function has already deleted.
  *
  * DELETE-FIRST, STAMP-LAST, and that order is the crash story rather than a style choice (393
  * CR-02). The version row is cleared with the family it describes and re-written only after the
@@ -700,12 +708,32 @@ export function rebuildRunOutcomes(
         continue
       }
       // D-09 / L12: `analysis.json` is read from beside `handoff.json` through the SAME loader the
-      // incremental fold uses, so the rebuild reproduces resolved-verdict tables byte-identically.
-      const artifact = loadRunArtifact(runDir, String(handoff.runId))
-      applyRunOutcomes(db, projectRunOutcomes(handoff, {
-        extractAnchors: opts.extractAnchors,
-        ...(artifact === undefined ? {} : { artifact }),
-      }))
+      // incremental fold uses, so the rebuild reproduces resolved-verdict tables byte-identically —
+      // but the two paths' FAILURE postures are deliberately asymmetric (393 round 6, CR-01). An
+      // unreadable artifact is a counted skip HERE and a hard failure on the incremental path, and
+      // each posture is argued where it lives: the incremental fold is one run's own verdict edge,
+      // where a silent floor would misrepresent an AI-resolved run as unresolved; this loop runs
+      // downstream of the six DELETEs above, where the same throw would truncate the whole family
+      // at whatever prefix of the sorted run dirs preceded the bad file. This is `loadRebuildHandoff`'s
+      // malformed-file-is-a-counted-skip posture applied per run to the document written beside it.
+      //
+      // The catch scope is ONE run — not the loop, not the family. A run whose artifact will not
+      // load is SKIPPED ENTIRELY rather than folded to the deterministic floor: floor counters for
+      // that run are values no fold ever produced (the incremental path refuses to produce them),
+      // so parity with that path means absence, not a floor. `applyRunOutcomes` owns its own
+      // transaction (`BEGIN IMMEDIATE`) and rolls back on error, so a caught apply failure leaves
+      // the family consistent — which is also why wrapping the whole rebuild in one transaction is
+      // not the fix here: the inner transaction does not compose.
+      try {
+        const artifact = loadRunArtifact(runDir, String(handoff.runId))
+        applyRunOutcomes(db, projectRunOutcomes(handoff, {
+          extractAnchors: opts.extractAnchors,
+          ...(artifact === undefined ? {} : { artifact }),
+        }))
+      } catch {
+        report.skipped += 1
+        continue
+      }
       report.folded += 1
     }
   }

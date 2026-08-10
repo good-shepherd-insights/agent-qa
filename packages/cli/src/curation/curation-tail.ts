@@ -779,9 +779,14 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       )
     }
   } catch {
+    // What a thrown reconcile actually leaves behind (393 round 6, CR-01): the rebuild aborted
+    // partway, so the run-outcome projection family is UNSTAMPED and possibly partially rebuilt —
+    // not merely "unreconciled". Unstamped is the recoverable state by construction: the next
+    // sweep reads the absent stamp as a mismatch and rebuilds the family again.
     opts.log.warn(
-      'Post-verdict knowledge curation: the run-outcome projection version could not be'
-      + ' reconciled; continuing the sweep.',
+      'Post-verdict knowledge curation: the run-outcome projection rebuild failed partway; the'
+      + ' projection family is left unstamped and possibly partially rebuilt, and the next sweep'
+      + ' will rebuild it again. Continuing this sweep.',
     )
   }
 

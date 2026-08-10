@@ -1438,8 +1438,17 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
       runCurationTail(baseOptions(operations, { log: { warn } })),
     ).resolves.toBeUndefined()
 
+    // The warn has to be true about what the throw LEFT, not just that it happened: a reconcile
+    // that throws aborted a rebuild downstream of the family's DELETE, so the family is unstamped
+    // and possibly partial — and unstamped is exactly what makes the next sweep rebuild it.
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('run-outcome projection version could not be reconciled'),
+      expect.stringContaining('the run-outcome projection rebuild failed partway'),
+    )
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('unstamped and possibly partially rebuilt'),
+    )
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('the next sweep will rebuild it again'),
     )
     expect(foldRunOutcomes).toHaveBeenCalledOnce()
     expect(drainQueue).toHaveBeenCalledOnce()
