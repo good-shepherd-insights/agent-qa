@@ -1,0 +1,8 @@
+name: Check the label on the first field of the local account form
+test-id: t_ser-odel-stu-needs-bella-rating-simple-his-this-ledged
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Verify the first form field is labeled "Username"

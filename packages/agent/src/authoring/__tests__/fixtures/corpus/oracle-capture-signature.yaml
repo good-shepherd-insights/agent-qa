@@ -1,0 +1,11 @@
+name: Submit the local account form and check the submission reference
+test-id: t_ruby-ich-fried-duck-beg-altern-leger-gin-forcer-true
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Type "alice" into the Username field
+  - Type "hunter2" into the Password field
+  - Click the Submit button
+  - Verify the page shows the submission reference "3f9c1ab27d5e4086bb17c2e5a94d0f6b"

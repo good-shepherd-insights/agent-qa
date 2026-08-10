@@ -1,0 +1,10 @@
+name: Type a username into the local account form and read it back
+test-id: t_mog-pawn-onto-thumb-terne-elves-seal-far-ugh-rag
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Type "alice" into the Username field
+  - Type "hunter2" into the Password field
+  - Verify the Username field contains "alice"
