@@ -153,6 +153,67 @@ export const EXPECTED_STATE_TERMS = [
 ] as const
 
 /**
+ * The closed generic-page-noun set — the first exclusion of `namesAnElement` (D-09 discipline).
+ *
+ * A PINNED CONSTANT, never config. RETUNE COMMENT: a member is a noun that names the page AS A
+ * WHOLE rather than a control on it, so a claim built only out of members says nothing an author
+ * could have got wrong about a particular thing. Widening this set REFUSES more drafts — D-12's
+ * safe direction — but it costs real drafts, so add a member only with the vacuous claim it
+ * refuses, and re-run the frozen corpus afterwards: the expectations table is the denominator that
+ * says whether the widening was a fix or a leak.
+ *
+ * Read by exact membership over a NORMALIZED (lowercased, non-letters stripped) residue token —
+ * membership never position, exact never substring. `the Login form is empty` still names an
+ * element, because `login` is not a member.
+ *
+ * Order is alphabetical and NOT load-bearing: the set is read by membership.
+ */
+export const GENERIC_PAGE_NOUNS = [
+  'app',
+  'browser',
+  'content',
+  'form',
+  'page',
+  'screen',
+  'site',
+] as const
+
+/**
+ * The closed non-element-word set — the second exclusion of `namesAnElement` (D-09 discipline).
+ *
+ * A PINNED CONSTANT, never config. RETUNE COMMENT: a member is a word that STRUCTURALLY cannot name
+ * an element — an article or determiner, a copula, a bare pronoun. Unlike `GENERIC_PAGE_NOUNS`,
+ * whose members are real nouns that merely point at the wrong thing, nothing here can ever be a
+ * control's name, so widening is close to free and narrowing is what costs a verdict. Same
+ * discipline either way: a member arrives with the claim it changes, and the frozen corpus is
+ * re-run.
+ *
+ * Declared SEPARATELY from `LEADING_ARTICLES`, which overlaps it, and that duplication is
+ * deliberate — the same W-10 reason as `MIXED_STEP_SEPARATORS` beside the chat separators.
+ * `LEADING_ARTICLES` moves what the VACUITY remainder normalizes to; this set moves ELEMENT-NAME
+ * candidacy. One shared constant would let a single retune silently move two unrelated
+ * measurements.
+ *
+ * Order is alphabetical and NOT load-bearing: the set is read by membership.
+ */
+export const NON_ELEMENT_WORDS = [
+  'a',
+  'an',
+  'anything',
+  'are',
+  'everything',
+  'is',
+  'it',
+  'nothing',
+  'something',
+  'that',
+  'the',
+  'this',
+  'was',
+  'were',
+] as const
+
+/**
  * The closed capture-signature set — D-10, the oracle-capture class.
  *
  * A PINNED CONSTANT, never config. RETUNE COMMENT: a member matches a value only a CAPTURE
@@ -262,7 +323,7 @@ function unquotedResidue(text: string): string {
   return text.replace(QUOTED_LITERAL_RE, ' ')
 }
 
-/** The step after its leading token, preserving original case for the element-name test. */
+/** The step after its leading token, byte-for-byte — every caller normalizes for itself. */
 function afterLeadingToken(text: string): string {
   const trimmed = text.trim()
   const boundary = trimmed.search(/\s/)
@@ -313,33 +374,23 @@ function isMixedActAndVerify(text: string): boolean {
 /**
  * Whether the assertion names a specific element rather than the page in general.
  *
- * A capitalized token after the leading verb IS the element name in this file's house step
- * style (`the Submit button`, `the Username field`) — the drafts' own convention, and the one
- * signal available without a fifth lexicon of element nouns. `the content is visible` names
- * nothing and stays non-falsifiable, which is D-12's direction.
- *
- * CAPITALIZATION COUNTS ONLY INSIDE ORDINARY PROSE CASE (393-09, WR-06). The residue must carry
- * BOTH a capital-initial word and a lowercase-initial word. The house style names an element as
- * a capitalized word set INSIDE lowercase prose — `the Submit button`, `the Username field` —
- * and the capital is meaningful only because its neighbours are not capitalized. A sentence
- * where EVERY word is capitalized (`The Page Is Visible`, or its shouting twin
- * `THE PAGE IS VISIBLE`) is exercising a casing style, not pointing at a control, and reading a
- * name out of it made the verdict a function of letter case: `Verify The Page Is Visible`
- * passed gate 4 while `Verify the page is visible` was refused, for the same claim. The drafts
- * this filter exists for are LLM-authored and commonly title-cased, so that was a reachable
- * accept-direction leak in a gate whose ratified posture is tune-toward-reject (D-12).
- *
- * This narrows a SIGNAL, not a lexicon: D-09's closed sets are untouched, and the accept
- * direction is unmoved wherever a quoted literal decides (capitalization is never consulted
- * there) or wherever the element name sits in prose. Both directions are pinned by the corpus
- * title-case walk in `assertion-strength.test.ts`, which re-reads the frozen expectations table
- * rather than an inline expectation, so a later retune here cannot be absorbed by editing the
- * verdict beside it.
+ * THE RULE ENFORCED, verbatim (393-12, WR-06): the post-verb residue, with double-quoted spans
+ * already removed, is split on whitespace and each piece normalized by `normalizeToken`
+ * (lowercased, non-letters stripped). The answer is true iff AT LEAST ONE normalized token is
+ * non-empty and is a member of NONE of three closed sets — `GENERIC_PAGE_NOUNS`,
+ * `NON_ELEMENT_WORDS`, `EXPECTED_STATE_TERMS`. Letter case is never consulted: the verdict for a
+ * step and for any recasing of that step is identical, by construction.
  */
 function namesAnElement(text: string): boolean {
-  const words = afterLeadingToken(unquotedResidue(text)).split(/\s+/)
-
-  return words.some((word) => /^[A-Z]/.test(word)) && words.some((word) => /^[a-z]/.test(word))
+  return afterLeadingToken(unquotedResidue(text))
+    .split(/\s+/)
+    .map(normalizeToken)
+    .some((token) => (
+      token !== ''
+      && !(GENERIC_PAGE_NOUNS as readonly string[]).includes(token)
+      && !(NON_ELEMENT_WORDS as readonly string[]).includes(token)
+      && !(EXPECTED_STATE_TERMS as readonly string[]).includes(token)
+    ))
 }
 
 function hasExpectedStateTerm(text: string): boolean {

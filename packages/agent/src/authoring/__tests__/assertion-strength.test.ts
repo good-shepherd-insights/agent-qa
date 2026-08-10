@@ -24,6 +24,8 @@ import {
   ASSERTION_VERBS,
   CAPTURE_SIGNATURE_PATTERNS,
   EXPECTED_STATE_TERMS,
+  GENERIC_PAGE_NOUNS,
+  NON_ELEMENT_WORDS,
   VACUOUS_ASSERTION_PHRASES,
   assertionStrengthGate,
   classifyDraftSteps,
@@ -753,6 +755,31 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
       'upload',
       'visit',
     ])
+    expect([...GENERIC_PAGE_NOUNS]).toEqual([
+      'app',
+      'browser',
+      'content',
+      'form',
+      'page',
+      'screen',
+      'site',
+    ])
+    expect([...NON_ELEMENT_WORDS]).toEqual([
+      'a',
+      'an',
+      'anything',
+      'are',
+      'everything',
+      'is',
+      'it',
+      'nothing',
+      'something',
+      'that',
+      'the',
+      'this',
+      'was',
+      'were',
+    ])
     expect(CAPTURE_SIGNATURE_PATTERNS.map((entry) => entry.name)).toEqual([
       'iso-8601-timestamp',
       'long-hex',
@@ -767,6 +794,8 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
       VACUOUS_ASSERTION_PHRASES,
       EXPECTED_STATE_TERMS,
       ACTION_VERBS,
+      GENERIC_PAGE_NOUNS,
+      NON_ELEMENT_WORDS,
       CAPTURE_SIGNATURE_PATTERNS.map((entry) => entry.name),
     ]
 
