@@ -59,7 +59,14 @@ export interface CurationTailReceipt {
   schemaVersion: typeof CURATION_TAIL_RECEIPT_SCHEMA_VERSION
   runId: string
   handoffDigest: string
-  /** Run-outcome projection component: a version bump refolds already-receipted runs. */
+  /**
+   * Run-outcome projection component: a version bump refolds already-receipted runs.
+   *
+   * This field alone only re-RUNS them (393 CR-02). The per-run fold behind it short-circuits on
+   * the durable applied-runs marker, so what actually re-derives the rows at a new version is the
+   * once-per-sweep `reconcileRunOutcomesProjection` below; the receipts then rewrite here at the
+   * new version through this same sweep.
+   */
   projectionVersion: number
   drainKind: 'drained' | 'handed-off'
   /** The standing writer that accepted the handoff; null when this run drained inline. */
@@ -87,6 +94,7 @@ export interface CurationTailOperations {
   openKnowledgeReader(config: OpenServingKnowledgeReaderConfig): KnowledgeHintReader
   emitCanaryOutcomes: typeof emitCanaryOutcomes
   foldRunOutcomes: LocalCurationCapabilities['foldRunOutcomes']
+  reconcileRunOutcomesProjection: LocalCurationCapabilities['reconcileRunOutcomesProjection']
   buildCuratorAuthor: typeof buildCuratorAuthor
   drainQueue: LocalCurationCapabilities['drainQueue']
   listCompletedRunDirs(agentQaRoot: string): string[]
@@ -137,6 +145,7 @@ function defaultOperations(): CurationTailOperations {
     openKnowledgeReader: LOCAL_CURATION_CAPABILITIES.openKnowledgeReader,
     emitCanaryOutcomes,
     foldRunOutcomes: LOCAL_CURATION_CAPABILITIES.foldRunOutcomes,
+    reconcileRunOutcomesProjection: LOCAL_CURATION_CAPABILITIES.reconcileRunOutcomesProjection,
     buildCuratorAuthor,
     drainQueue: LOCAL_CURATION_CAPABILITIES.drainQueue,
     listCompletedRunDirs,
@@ -745,6 +754,35 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
   } catch {
     opts.log.warn(incompleteWarning(String(currentHandoff.runId)))
     return
+  }
+
+  // 393 CR-02: ONCE per sweep, before any per-run fold. The projection version is a fact about the
+  // whole derived family, not about one run, and the rebuild it can trigger clears that family —
+  // so running it inside the loop would re-clear rows the loop had just folded.
+  //
+  // ISOLATED on the fold-failure posture two hundred lines down: a reconcile that throws warns and
+  // the sweep continues. The per-run folds behind it are marker-safe with or without it, and a
+  // backfill that cannot run is a projection that stays stale, never a curation that stops. The
+  // 'rebuilt' arm logs its counts because a silent rebuild of the derived index is exactly the
+  // kind of work an operator should be able to see happen.
+  try {
+    const reconcile = operations.reconcileRunOutcomesProjection({
+      knowledgeRoot,
+      runsRoot: join(opts.agentQaRoot, RUNS_SUBDIR),
+      extractAnchors: exercisedAnchors,
+    })
+    if (reconcile.kind === 'rebuilt') {
+      opts.log.info?.(
+        'curation: run-outcome projection rebuilt at version '
+        + `${LOCAL_CURATION_CAPABILITIES.runOutcomesProjectionVersion} `
+        + `(folded ${reconcile.report.folded}, skipped ${reconcile.report.skipped})`,
+      )
+    }
+  } catch {
+    opts.log.warn(
+      'Post-verdict knowledge curation: the run-outcome projection version could not be'
+      + ' reconciled; continuing the sweep.',
+    )
   }
 
   for (const runDir of runDirs) {

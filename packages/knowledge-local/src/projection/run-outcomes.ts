@@ -73,7 +73,19 @@ import type { SuiteFingerprintTestDelta } from './suite-fingerprints.js'
  * index is gitignored and rebuildable (L12), so this bump IS the migration.
  * Version 4 (393 D-15) makes this one fold pass ALSO populate the suite-fingerprint table gate 3
  * compares drafts against, so an already-receipted run must refold to contribute its elements.
- * Same argument, same L12 ground: no data script exists or is needed.
+ *
+ * HOW THAT REFOLD ACTUALLY HAPPENS (393 CR-02), because the receipt alone cannot do it. The tail
+ * stores this number in each run's receipt, so a bump invalidates every receipt and the sweep
+ * re-runs each historical run — but the per-run fold then answers 'already-applied' off the
+ * durable marker and writes nothing. The stamp is therefore ALSO stored in the index itself, in
+ * `run_outcome_projection_version`, and `reconcileRunOutcomesProjection` compares the two ONCE per
+ * curation-tail sweep, before the per-run loop: a differing or absent stamp rebuilds the whole
+ * projection family from the runs root through `rebuildRunOutcomes`, which clears the family
+ * (marker included) and re-reads every `handoff.json` + `analysis.json` from disk. THAT is how an
+ * already-receipted run contributes its elements. The per-run receipts then rewrite at the new
+ * version through the same sweep. Same L12 ground as the bumps above: the family is derived, so
+ * the rebuild IS the migration — but it is a mechanism that runs, not an argument that it is
+ * unnecessary.
  *
  * NOT the case argued at `cli/src/commands/run.ts:1949` (390-08 D-01), where a bump was
  * deliberately declined: there the rebuild would have replayed stored handoffs carrying the OLD
@@ -290,10 +302,14 @@ function countedOutcome(outcome: PerTestOutcome['outcome']): boolean | undefined
  *     wherever it governs, which is exactly how an unknown→flake upgrade moves the flake counter
  *     instead of the projection contradicting the resolved verdict.
  *
- * ACCEPTED SHAPE (the 389-06 precedent): a run whose artifact is written AFTER its fold never
- * refolds — the `run_outcome_applied_runs` marker is final — so an upgraded class reaches the
- * counters and the fingerprint windows only through LATER runs. The rebuild path re-reads every
- * artifact from disk, which is where a late upgrade eventually lands.
+ * ACCEPTED SHAPE (the 389-06 precedent): a run whose artifact is written AFTER its fold does not
+ * refold at the projection version it was folded at. The `run_outcome_applied_runs` marker is
+ * final WITHIN a version, so an upgraded class reaches the counters and the fingerprint windows
+ * only through LATER runs. ACROSS a version it is not final at all (393 CR-02):
+ * `reconcileRunOutcomesProjection` clears the marker through `rebuildRunOutcomes`, which re-reads
+ * every artifact from disk — which is where a late upgrade eventually lands, and which is why the
+ * version-4 note at the head of this file and this paragraph describe one mechanism rather than
+ * contradicting each other.
  */
 function resolveProjectionClasses(
   handoff: CompletedRunHandoff,

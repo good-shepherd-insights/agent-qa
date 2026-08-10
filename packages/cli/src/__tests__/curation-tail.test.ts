@@ -332,6 +332,7 @@ function successfulOperations(
     readCurationTailReceipt: () => undefined,
     writeCurationTailReceipt: vi.fn(),
     foldRunOutcomes: vi.fn(() => ({ kind: 'applied' as const, tests: 0, ...NO_DETECTION })),
+    reconcileRunOutcomesProjection: vi.fn(() => ({ kind: 'current' as const })),
     ...overrides,
   }
 }
@@ -1375,6 +1376,74 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+
+  // 393 CR-02. The reconcile is the half of the version bump that re-derives rows; the receipt
+  // above is the half that re-runs them. Both pins here are about POSITION and BLAST RADIUS,
+  // because those are the two ways this wiring could be present and still wrong: a reconcile
+  // inside the loop would clear rows the loop just folded, and a reconcile that can abort the
+  // sweep would let a stale projection stop curation outright.
+  it('reconciles the projection version exactly once, before any per-run fold', async () => {
+    const order: string[] = []
+    const secondRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch('run-sibling'))
+    const currentRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+    const reconcileRunOutcomesProjection = vi.fn(() => {
+      order.push('reconcile')
+      return { kind: 'rebuilt' as const, report: { folded: 2, skipped: 0 } }
+    })
+    const foldRunOutcomes = vi.fn(() => {
+      order.push('fold')
+      return { kind: 'applied' as const, tests: 0, ...NO_DETECTION }
+    })
+    const info = vi.fn()
+    const operations = successfulOperations({
+      loadCompletedRunHandoff: () => handoff(),
+      listCompletedRunDirs: () => [secondRunDir, currentRunDir],
+      reconcileRunOutcomesProjection,
+      foldRunOutcomes,
+    })
+
+    await runCurationTail(baseOptions(operations, { log: { warn: vi.fn(), info } }))
+
+    expect(reconcileRunOutcomesProjection).toHaveBeenCalledOnce()
+    expect(reconcileRunOutcomesProjection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knowledgeRoot,
+        runsRoot: join(agentQaRoot, RUNS_SUBDIR),
+      }),
+    )
+    expect(foldRunOutcomes).toHaveBeenCalledTimes(2)
+    expect(order[0]).toBe('reconcile')
+    expect(order.indexOf('reconcile')).toBeLessThan(order.indexOf('fold'))
+    expect(order.lastIndexOf('reconcile')).toBe(0)
+    // A rebuild of the derived index is never silent.
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('folded 2, skipped 0'))
+  })
+
+  it('isolates a throwing reconcile: warned, and every per-run fold still happens', async () => {
+    const warn = vi.fn()
+    const foldRunOutcomes = vi.fn(successfulOperations().foldRunOutcomes)
+    const drainQueue = vi.fn(successfulOperations().drainQueue)
+    const writeCurationTailReceipt = vi.fn()
+    const operations = successfulOperations({
+      reconcileRunOutcomesProjection() {
+        throw new Error('reconcile failed')
+      },
+      foldRunOutcomes,
+      drainQueue,
+      writeCurationTailReceipt,
+    })
+
+    await expect(
+      runCurationTail(baseOptions(operations, { log: { warn } })),
+    ).resolves.toBeUndefined()
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('run-outcome projection version could not be reconciled'),
+    )
+    expect(foldRunOutcomes).toHaveBeenCalledOnce()
+    expect(drainQueue).toHaveBeenCalledOnce()
+    expect(writeCurationTailReceipt).toHaveBeenCalledOnce()
   })
 })
 

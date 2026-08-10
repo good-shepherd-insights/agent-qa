@@ -114,6 +114,7 @@ import {
   readEmbedderWorkerRegistration,
   readWriterLease,
   rebuildIndex,
+  reconcileRunOutcomesProjection,
   entityIndexDbPath,
   resolveEntityRef,
   sightEntity,
@@ -370,9 +371,20 @@ export interface LocalCurationCapabilities {
   readonly openKnowledgeReader: typeof openKnowledgeReader
   readonly drainQueue: typeof drainQueue
   readonly foldRunOutcomes: typeof foldRunOutcomes
+  /**
+   * THE mechanism a version bump rides (393 CR-02). The per-run receipt below carries the
+   * version, but invalidating receipts only re-runs folds that answer 'already-applied' on the
+   * durable marker — so the refold the bump promises happens HERE, through a rebuild of the
+   * derived family, or it does not happen at all.
+   */
+  readonly reconcileRunOutcomesProjection: typeof reconcileRunOutcomesProjection
   readonly enqueueCurationCandidateProjection: typeof enqueueCurationCandidateProjection
   readonly readCanonicalBundleAnchors: typeof readCanonicalBundleAnchors
-  /** Component of the tail's receipt: a bump refolds runs already receipted at the old version. */
+  /**
+   * Component of the tail's receipt: a bump refolds runs already receipted at the old version.
+   * The receipt is the per-run half of that promise; `reconcileRunOutcomesProjection` above is
+   * the half that actually re-derives the rows.
+   */
   readonly runOutcomesProjectionVersion: typeof RUN_OUTCOMES_PROJECTION_VERSION
   readonly maintenance: LocalKnowledgeMaintenanceCapabilities
 }
@@ -381,6 +393,7 @@ export const LOCAL_CURATION_CAPABILITIES: LocalCurationCapabilities = Object.fre
   openKnowledgeReader,
   drainQueue,
   foldRunOutcomes,
+  reconcileRunOutcomesProjection,
   enqueueCurationCandidateProjection,
   readCanonicalBundleAnchors,
   runOutcomesProjectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
