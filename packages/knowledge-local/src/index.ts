@@ -742,6 +742,20 @@ export {
 // is the factory, on the `createQuarantineOperations` precedent.
 export { createProposalsInbox } from './review/proposals-inbox.js'
 export type { ProposalsInboxOptions } from './review/proposals-inbox.js'
+// 393 D-19 WTST-02 — the draft-receipts store: the proposals-store idiom applied to keep-gate
+// receipts. One schema-versioned `<contentDigest>.json` per draft under the gitignored
+// `<agentQaRoot>/draft-receipts/`, written atomically, refs never run payloads.
+export {
+  createDraftReceiptsStore,
+  DRAFT_RECEIPTS_DIR_NAME,
+  DraftReceiptDigestError,
+  DraftReceiptSchemaVersionError,
+  draftReceiptsDir,
+} from './authoring/draft-receipts-store.js'
+export type {
+  DraftReceiptsStore,
+  DraftReceiptsStoreOptions,
+} from './authoring/draft-receipts-store.js'
 export type {
   AppliedProposalRecord,
   ProposalInboxEntry,

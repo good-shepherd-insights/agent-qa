@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -169,8 +177,9 @@ describe('the draft-receipts store (393 D-19, the proposals-store idiom)', () =>
       handoff: { runId: 'run-1' },
     } as unknown as DraftReceipt)).rejects.toThrow()
 
-    expect(readdirSync(receiptsDir(root), { withFileTypes: true }).length === 0
-      || !readdirSync(receiptsDir(root)).some((name) => name.endsWith('.json'))).toBe(true)
+    // The refusal fires before the directory is even created — a rejected receipt leaves the
+    // store in exactly the state it was in, with no empty dir to explain later.
+    expect(existsSync(receiptsDir(root))).toBe(false)
   })
 
   it('lists every stored receipt in a deterministic order', async () => {
