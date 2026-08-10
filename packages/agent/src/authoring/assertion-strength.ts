@@ -317,11 +317,29 @@ function isMixedActAndVerify(text: string): boolean {
  * style (`the Submit button`, `the Username field`) — the drafts' own convention, and the one
  * signal available without a fifth lexicon of element nouns. `the content is visible` names
  * nothing and stays non-falsifiable, which is D-12's direction.
+ *
+ * CAPITALIZATION COUNTS ONLY INSIDE ORDINARY PROSE CASE (393-09, WR-06). The residue must carry
+ * BOTH a capital-initial word and a lowercase-initial word. The house style names an element as
+ * a capitalized word set INSIDE lowercase prose — `the Submit button`, `the Username field` —
+ * and the capital is meaningful only because its neighbours are not capitalized. A sentence
+ * where EVERY word is capitalized (`The Page Is Visible`, or its shouting twin
+ * `THE PAGE IS VISIBLE`) is exercising a casing style, not pointing at a control, and reading a
+ * name out of it made the verdict a function of letter case: `Verify The Page Is Visible`
+ * passed gate 4 while `Verify the page is visible` was refused, for the same claim. The drafts
+ * this filter exists for are LLM-authored and commonly title-cased, so that was a reachable
+ * accept-direction leak in a gate whose ratified posture is tune-toward-reject (D-12).
+ *
+ * This narrows a SIGNAL, not a lexicon: D-09's closed sets are untouched, and the accept
+ * direction is unmoved wherever a quoted literal decides (capitalization is never consulted
+ * there) or wherever the element name sits in prose. Both directions are pinned by the corpus
+ * title-case walk in `assertion-strength.test.ts`, which re-reads the frozen expectations table
+ * rather than an inline expectation, so a later retune here cannot be absorbed by editing the
+ * verdict beside it.
  */
 function namesAnElement(text: string): boolean {
-  return afterLeadingToken(unquotedResidue(text))
-    .split(/\s+/)
-    .some((word) => /^[A-Z]/.test(word))
+  const words = afterLeadingToken(unquotedResidue(text)).split(/\s+/)
+
+  return words.some((word) => /^[A-Z]/.test(word)) && words.some((word) => /^[a-z]/.test(word))
 }
 
 function hasExpectedStateTerm(text: string): boolean {
