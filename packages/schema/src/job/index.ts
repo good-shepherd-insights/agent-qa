@@ -13,3 +13,8 @@ export type { JobCheckpointEnvelope } from './job-checkpoint'
 export { JOB_CHECKPOINT_SCHEMA_VERSION, jobCheckpointEnvelopeSchema } from './job-checkpoint'
 export type { JobHandlerOutcome } from './job-outcome'
 export { jobHandlerOutcomeSchema } from './job-outcome'
+// 393 D-20 (WTST-06): the `analyze-run` payload mirror, validated at the ENQUEUE site. Homed
+// here in `job/` rather than a second near-homographic `jobs/` directory — `JobKind` already
+// names 'analyze-run', so this is this module's own vocabulary.
+export { AnalyzeRunPayloadSchema } from './analyze-run-payload'
+export type { AnalyzeRunPayload } from './analyze-run-payload'

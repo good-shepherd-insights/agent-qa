@@ -26,6 +26,7 @@ export type {
   RunArtifactTestSourceSnapshot,
 } from './run-artifact'
 export type { RunStatus, ExecutionContext } from './run-status'
+export { EXECUTION_CONTEXT_VALUES } from './run-status'
 export type { MemberTestOutcome } from './member-outcome'
 export type { RunSession, RunCompletion } from './run-session'
 // Bus schema v1 (D-05): envelope, event union + vocabulary, payload projections.

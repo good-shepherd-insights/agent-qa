@@ -10,6 +10,7 @@ import type { RunEventEnvelope, RunEventPayload } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
 import { asRunId } from '../run/run-id'
 import type { RunId } from '../run/run-id'
+import { EXECUTION_CONTEXT_VALUES } from '../run/run-status'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
 import type { Verdict } from '../verdict/verdict'
 
@@ -50,12 +51,9 @@ const runStatusValues = [
   'cancelled',
 ] as const satisfies readonly RunStatus[]
 
-const executionContextValues = [
-  'local-interactive',
-  'local-headless',
-  'ci',
-  'cloud',
-] as const satisfies readonly ExecutionContext[]
+// 393: hoisted to `run/run-status.ts` beside the type, so the analyze-run payload mirror
+// enumerates the same closed set rather than keeping a second copy of it.
+const executionContextValues = EXECUTION_CONTEXT_VALUES
 
 const scopeKeySchema = z.object({
   tier: z.enum(scopeTierValues),

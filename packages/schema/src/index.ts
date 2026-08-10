@@ -434,7 +434,10 @@ export {
   jobCheckpointEnvelopeSchema,
   jobEnqueueRequestSchema,
   jobHandlerOutcomeSchema,
+  // 393 D-20 (WTST-06): the analyze-run payload mirror, validated producer-side at enqueue.
+  AnalyzeRunPayloadSchema,
 } from './job/index'
+export type { AnalyzeRunPayload } from './job/index'
 export type { Patch, FileChange, Hunk, PatchStatus, PatchId } from './patch/index'
 export { asPatchId, patchSchema } from './patch/index'
 
