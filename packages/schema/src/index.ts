@@ -278,8 +278,13 @@ export {
   searchedTestOutcomeTexts,
   validateAnalysisAgainstHandoff,
   VerdictSentencePartsSchema,
+  // 393 D-13: the sibling anchor-coverage recipe (gate 3), beside the frozen failure recipe.
+  ACTION_ANCHOR_FINGERPRINT_VERSION,
+  actionAnchorElement,
+  actionAnchorSequence,
 } from './verdict/index'
 export type {
+  ActionAnchorElementInput,
   AnalysisArtifactAdmission,
   AnalysisValidationReject,
   AnalysisValidationResult,

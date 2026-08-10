@@ -14,6 +14,14 @@ export type { AnalysisArtifactAdmission, RunAnalysisArtifact } from './analysis-
 export { resolveRunVerdicts } from './resolved-verdicts'
 export { failureFingerprint } from './failure-fingerprint'
 export type { FailureFingerprintInput } from './failure-fingerprint'
+// 393 D-13: the SIBLING coverage recipe, beside the frozen failure recipe and never extending
+// it — it answers "what surface did this test exercise", not "how did it fail".
+export {
+  ACTION_ANCHOR_FINGERPRINT_VERSION,
+  actionAnchorElement,
+  actionAnchorSequence,
+} from './action-anchor-fingerprint'
+export type { ActionAnchorElementInput } from './action-anchor-fingerprint'
 export { errorTextOf, failingStepOf } from './fingerprint-input'
 export {
   QUOTE_SEARCHED_STEP_FIELDS,
