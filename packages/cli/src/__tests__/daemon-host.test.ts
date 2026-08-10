@@ -21,6 +21,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import { RUNS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import {
   acquireWriterLease,
   embedderWorkerSocketPath,
@@ -50,6 +51,7 @@ import {
   createDaemonCommand,
   type DaemonCommandDeps,
 } from '../commands/daemon.js'
+import { exercisedAnchors } from '../curation/handoff-anchors.js'
 import type { DrainSessionReceipt } from '../daemon/drain-receipts.js'
 import {
   DAEMON_SHUTDOWN_GRACE_MS,
@@ -3460,5 +3462,144 @@ describe('daemon lifecycle event durability and torn-tail reading', () => {
       events: [],
       warnings: [],
     })
+  })
+})
+
+// The run-outcome projection reconcile on the DAEMON host (393 round 6, CR-02-daemon).
+//
+// The tail's reconcile is reachable from the CLI host only: `runCurationTail`'s single production
+// caller returns before it whenever the drain hands off, which is exactly the posture a standing
+// daemon puts every run in. So on a daemon-hosted project the backfill never ran and
+// `suite_fingerprints` stayed empty forever — while `host.ts`'s own comment insists the two hosts
+// must not have two bodies. These cells pin the mechanism on the daemon side rather than a comment
+// qualifying the promise away.
+describe('runDaemonHost — the run-outcome projection reconcile (393 CR-02-daemon)', () => {
+  interface ReconcileCall {
+    readonly options: {
+      knowledgeRoot: string
+      runsRoot: string
+      extractAnchors: unknown
+    }
+    readonly tracesAtCall: readonly DaemonHostTraceStep[]
+  }
+
+  it('reconciles ONCE per acquired lease, after claim recovery and before the agent composes', async () => {
+    const paths = makePaths('reconcile-once')
+    const harness = hostHarness()
+    const calls: ReconcileCall[] = []
+    const info = vi.fn()
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        reconcileRunOutcomesProjection: (options) => {
+          calls.push({
+            options: options as ReconcileCall['options'],
+            tracesAtCall: [...harness.traces],
+          })
+          return { kind: 'rebuilt', report: { folded: 2, skipped: 0 } }
+        },
+      },
+      logger: { info, error: vi.fn() },
+    })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'daemon registration was not written',
+    )
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+
+    // ONCE per acquired lease — not once per job. A per-job reconcile would re-run a destructive
+    // rebuild candidate on every fold and widen the concurrent-writer surface.
+    expect(calls).toHaveLength(1)
+
+    // The roots are the host's own inputs, spelled the way the tail spells them.
+    expect(calls[0]!.options).toMatchObject({
+      knowledgeRoot: paths.knowledgeRoot,
+      runsRoot: join(paths.agentQaRoot, RUNS_SUBDIR),
+    })
+    // The same anchor walk the tail hands in, by IDENTITY: a different extractor would silently
+    // rebuild a different anchor table than the incremental path produces (L12 parity).
+    expect(calls[0]!.options.extractAnchors).toBe(exercisedAnchors)
+
+    // POSITION, read off the host's own trace ledger at the moment of the call: the lease is held
+    // and abandoned claims are recovered before the rebuild touches the derived family, and the
+    // rebuild happens before job processing can fold anything into it.
+    expect(calls[0]!.tracesAtCall).toContain('lease-acquired')
+    expect(calls[0]!.tracesAtCall).toContain('claims-recovered')
+    expect(calls[0]!.tracesAtCall).not.toContain('local-agent-composed')
+    expect(calls[0]!.tracesAtCall).not.toContain('jobs-opened')
+
+    // A rebuild of the derived index is never silent — the tail's own rule, on the second host.
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('folded 2, skipped 0'))
+  })
+
+  it('serves past a throwing reconcile, with one logged error', async () => {
+    const paths = makePaths('reconcile-throws')
+    const harness = hostHarness()
+    const error = vi.fn()
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        reconcileRunOutcomesProjection: () => {
+          throw new Error('reconcile failed')
+        },
+      },
+      logger: { info: vi.fn(), error },
+    })
+
+    // A daemon that cannot reconcile must still serve: startup continues to registration.
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'daemon registration was not written',
+    )
+    expect(harness.traces).toContain('jobs-opened')
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+
+    const reconcileErrors = error.mock.calls
+      .map((call) => String(call[0]))
+      .filter((message) => message.includes('run-outcome projection'))
+    expect(reconcileErrors).toHaveLength(1)
+    expect(reconcileErrors[0]).toContain('reconcile failed')
+  })
+
+  it('logs nothing extra when the projection is already current', async () => {
+    const paths = makePaths('reconcile-current')
+    const harness = hostHarness()
+    const info = vi.fn()
+
+    const running = runDaemonHost({
+      agentQaRoot: paths.agentQaRoot,
+      knowledgeRoot: paths.knowledgeRoot,
+      config: TEST_CONFIG,
+      model: () => TEST_MODEL,
+      operations: {
+        ...harness.operations,
+        reconcileRunOutcomesProjection: () => ({ kind: 'current' }),
+      },
+      logger: { info, error: vi.fn() },
+    })
+    await waitUntil(
+      () => existsSync(join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE)),
+      'daemon registration was not written',
+    )
+    harness.signal('SIGTERM')
+    await expect(running).resolves.toBe(0)
+
+    // The steady state is EVERY start after the first convergence; a line per boot would be noise.
+    expect(
+      info.mock.calls.map((call) => String(call[0]))
+        .filter((message) => message.includes('run-outcome projection')),
+    ).toEqual([])
   })
 })
