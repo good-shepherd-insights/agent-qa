@@ -594,6 +594,18 @@ export function applyRunOutcomes(
 }
 
 /**
+ * An errno-coded fs failure — the FILESYSTEM refusing, not the file's contents being wrong. Every
+ * `fs` throw carries a string `code`; `JSON.parse` throws a `SyntaxError` and the schema guard
+ * throws a `VersionGuardError`, and neither carries one. ENOENT never reaches this predicate: both
+ * loaders convert it to `undefined` (legitimate absence) before anything else can rethrow.
+ */
+function isErrnoHostFault(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && typeof (error as NodeJS.ErrnoException).code === 'string'
+}
+
+/**
  * One run's persisted analysis artifact, loaded from that run's OWN dir (390 D-09). THE shared
  * loader: the incremental fold and the full rebuild both call it, which is what keeps L12 parity
  * true rather than asserted.
@@ -607,8 +619,10 @@ export function applyRunOutcomes(
  * THE LOADER ALWAYS RETHROWS, and what that costs is the CALLER's call (393 round 6, CR-01). On the
  * incremental `foldRunOutcomes` path the throw stands: one run's fold fails loudly rather than
  * silently recording a resolved run at its unresolved floor. In `rebuildRunOutcomes` the per-run
- * body catches it and counts a skip, because there the same throw would abandon a family the
- * rebuild has already DELETEd. Two postures, one loader — do not "fix" this by softening the loader.
+ * body catches the BAD-BYTES class and counts a skip, because there those throws would abandon a
+ * family the rebuild has already DELETEd — while an errno-coded HOST fault rethrows from that same
+ * call site (393 round 8, CR-01-READ). Two postures, one loader — do not "fix" this by softening
+ * the loader.
  */
 function loadRunArtifact(runDir: string, runId: string): RunAnalysisArtifact | undefined {
   let bytes: string
@@ -626,8 +640,16 @@ function loadRunArtifact(runDir: string, runId: string): RunAnalysisArtifact | u
 }
 
 function loadRebuildHandoff(file: string): CompletedRunHandoff | undefined {
+  let bytes: string
   try {
-    const guarded = guardCompletedRunHandoff(JSON.parse(readFileSync(file, 'utf8')))
+    bytes = readFileSync(file, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+
+  try {
+    const guarded = guardCompletedRunHandoff(JSON.parse(bytes))
 
     // WR-03 / L12 fail-closed boundary: EVERY structural access on this untrusted
     // persisted document stays inside this try. A malformed file is a counted skip,
@@ -677,9 +699,11 @@ function readStoredProjectionVersion(db: DatabaseSync): number | undefined {
  * Full rebuild: clear the projection tables, scan every run dir under `runsRoot`, and
  * refold each loadable handoff. Reproduces tables byte-identical to the incremental fold
  * (L12); a rebuild over zero handoff dirs yields empty tables without error (ABRF-02
- * empty edge). Load failures and pre-381 shapes are counted skips — including a run whose
- * `analysis.json` will not load, which costs that run's contribution and nothing else (393 round 6,
- * CR-01). One unreadable artifact must never truncate a family this function has already deleted.
+ * empty edge). BAD-BYTES load failures and pre-381 shapes are counted skips — including a run whose
+ * `analysis.json` will not decode, which costs that run's contribution and nothing else (393 round
+ * 6, CR-01). One undecodable artifact must never truncate a family this function has already
+ * deleted; an errno-coded HOST fault on either document propagates instead, so no sweep can stamp a
+ * family the filesystem prevented it from reading (393 round 8, CR-01-READ).
  *
  * DELETE-FIRST, STAMP-LAST, and that order is the crash story rather than a style choice (393
  * CR-02). The version row is cleared with the family it describes and re-written only after the
@@ -722,7 +746,8 @@ export function rebuildRunOutcomes(
       // D-09 / L12: `analysis.json` is read from beside `handoff.json` through the SAME loader the
       // incremental fold uses, so the rebuild reproduces resolved-verdict tables byte-identically —
       // but the two paths' FAILURE postures are deliberately asymmetric (393 round 6, CR-01). An
-      // unreadable artifact is a counted skip HERE and a hard failure on the incremental path, and
+      // UNDECODABLE artifact — bad bytes, not an unavailable filesystem — is a counted skip HERE
+      // and a hard failure on the incremental path, and
       // each posture is argued where it lives: the incremental fold is one run's own verdict edge,
       // where a silent floor would misrepresent an AI-resolved run as unresolved; this loop runs
       // downstream of the six DELETEs above, where the same throw would truncate the whole family
@@ -730,9 +755,13 @@ export function rebuildRunOutcomes(
       // malformed-file-is-a-counted-skip posture applied per run to the document written beside it.
       //
       // THE CATCH IS ONE FAILURE CLASS WIDE, and the scope is the argument (393 round 7,
-      // CR-01-WIDENED). It wraps the LOADER CALL and nothing else, because the reason above is a
-      // reason about UNTRUSTED PERSISTED BYTES: one run's bad file is that run's problem, and
-      // charging the family for it would be the wrong trade. A `projectRunOutcomes` or
+      // CR-01-WIDENED). It wraps the LOADER CALL and nothing else, and inside that call it keeps
+      // ONE CLASS, because the reason above is a reason about UNTRUSTED PERSISTED BYTES: one run's
+      // bad file is that run's problem, and charging the family for it would be the wrong trade. An
+      // errno-coded HOST fault is not that file's problem at all — an unavailable filesystem is no
+      // more true of one run than an unavailable write path is, so `isErrnoHostFault` rethrows it
+      // (393 round 8, CR-01-READ), and `loadRebuildHandoff` reads its own document under the same
+      // rule. A `projectRunOutcomes` or
       // `applyRunOutcomes` failure is a different animal entirely — SQLITE_BUSY past the writer
       // timeout, ENOSPC, a constraint violation — and it says the WRITE PATH is unavailable, which
       // is never true of one run only. Swallowing that as a per-run skip walked the loop to the
@@ -753,7 +782,8 @@ export function rebuildRunOutcomes(
       let artifact: RunAnalysisArtifact | undefined
       try {
         artifact = loadRunArtifact(runDir, String(handoff.runId))
-      } catch {
+      } catch (error) {
+        if (isErrnoHostFault(error)) throw error
         report.skippedArtifacts += 1
         continue
       }
