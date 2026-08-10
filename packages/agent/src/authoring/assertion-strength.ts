@@ -113,11 +113,12 @@ export const ACTION_VERBS = [
  * current membership: no member contains an `EXPECTED_STATE_TERMS` token, so a remainder that
  * equals a member is already non-concrete and refused by the other arm. It is kept as a guard
  * against exactly the widening this comment invites, and 393-15 re-derived WHICH widening that is.
- * `page is visible` is not the candidate: `namesElementInExpectedState` resolves `visible` to the
- * nearest set-noun on its left, which is the `PAGE_WHOLE_NOUNS` member `page`, so the concreteness
- * arm refuses it first — in every casing, and under every function-word padding. The member that
- * would hand this conjunct the whole decision is one carrying an `EXPECTED_STATE_TERMS` token whose
- * nearest set-noun to the LEFT is an `ELEMENT_NOUNS` member: `banner is visible` is that shape.
+ * `page is visible` is not the candidate: `namesElementInExpectedState` walks left from `visible` and
+ * answers on the `PAGE_WHOLE_NOUNS` member `page`, so the concreteness arm refuses it first — in
+ * every casing, and under every padding (a padding word the walk may cross reaches `page` anyway,
+ * and one it may not stops the walk, which refuses too). The member that would hand this conjunct
+ * the whole decision is one carrying an `EXPECTED_STATE_TERMS` token whose nearest content word to
+ * the LEFT is an `ELEMENT_NOUNS` member: `banner is visible` is that shape.
  * The guard still has a live trigger rather than a promise — `assertion-strength.test.ts`'s
  * cross-lexicon closure case walks every member and reds if the conjunct goes away under such a
  * widening.
@@ -184,9 +185,12 @@ export const EXPECTED_STATE_TERMS = [
  *
  * WHAT IS DELIBERATELY ABSENT. The page-whole nouns — app, browser, content, form, page, screen,
  * site — are NOT members, because a claim naming only those says nothing an author could have got
- * wrong about a particular thing. That absence is what refuses `page is visible` and `the form is
- * empty`, in every casing and under every function-word padding, and it is load-bearing: adding
- * `form` here would re-open the exact claim D-12 exists to reject.
+ * wrong about a particular thing. That absence is a NECESSARY condition of refusing `page is visible`
+ * and `the form is empty` — the walk tests element membership first, so a page-whole noun listed here
+ * would resolve those claims TRUE before any refusal branch is reached — and it is load-bearing in
+ * exactly that sense: adding `form` here would re-open the claim D-12 exists to reject. What it is
+ * no longer is SUFFICIENT on its own; since 393-17 a non-member is refused by the walk's stop rather
+ * than merely failing to be accepted, which is what makes the refusal hold for nouns nobody listed.
  *
  * Order is alphabetical and NOT load-bearing: the set is read by membership.
  */
@@ -245,7 +249,12 @@ export const ELEMENT_NOUNS = [
  * is refused BY NAME. That is D-12's safe direction and still a real cost, so a member arrives with
  * the vacuous draft it catches plus a frozen-corpus re-run. Since 393-17 REMOVING a member no longer
  * moves the verdict at all — the walk's default stop refuses the same token one branch later — and
- * OMISSION, including omission by inflection or by synonym, behaves the same way.
+ * OMISSION, including omission by inflection or by synonym, behaves the same way and therefore fails
+ * toward REJECT. Before that it did not: the walk crossed whatever this set failed to spell, so an
+ * omission here was measurably an ACCEPT-direction hole in a tune-toward-reject gate, and a plural
+ * was enough to open it. What the set still carries, now that it no longer carries the verdict, is
+ * the refusal's NAME — it says which class of subject the gate is refusing, where the default stop
+ * can only say "not an element" — plus the intent it pins and the disjointness discipline below.
  *
  * A token may not be a member of this set and of `ELEMENT_NOUNS` (or of `EXPECTED_STATE_TERMS`):
  * the walk would have two answers for it. The disjointness is pinned in the lexicon-discipline
@@ -504,7 +513,7 @@ function isMixedActAndVerify(text: string): boolean {
  * Whether the assertion names an element that is IN an expected state — D-09 clause (ii)'s second
  * route to concreteness, as ONE relation rather than two unrelated scans.
  *
- * THE RULE ENFORCED, verbatim (393-15). The post-verb residue, with double-quoted spans already
+ * THE RULE ENFORCED, verbatim (393-15, 393-17). The post-verb residue, with double-quoted spans already
  * removed, is tokenized ONCE: split on whitespace, each piece through `normalizeToken` (lowercased,
  * non-letters stripped). For every index whose token is an `EXPECTED_STATE_TERMS` member, walk LEFT
  * from that index one token at a time and answer on the FIRST token that is not a function word: an
@@ -516,18 +525,19 @@ function isMixedActAndVerify(text: string): boolean {
  * up. The answer is true iff at least one state-term occurrence resolves TRUE. The `PAGE_WHOLE_NOUNS`
  * branch stands AHEAD of the stop and is redundant with it on today's memberships — the stop would
  * refuse those same seven tokens one branch later — and it is kept because it names the refusal
- * class the gate exists for, which the default stop cannot say. Letter case is never consulted: `normalizeToken`
- * lowercases, so a step and any recasing of it get the identical verdict by construction. There is
- * no distance constant anywhere in the rule: the walk runs to the start of the residue, and what
- * decides is WHICH set-noun it meets first, never how far away that noun sat.
+ * class the gate exists for, which the default stop cannot say. Letter case is never consulted:
+ * `normalizeToken` lowercases, so a step and any recasing of it get the identical verdict by
+ * construction. There is no distance constant anywhere in the rule: what decides is WHICH token the
+ * walk meets first, never how far away it sat — and because everything outside the continue set
+ * stops the walk, no verdict can now depend on how many words the sentence put in between.
  *
  * One tokenization consequence, deliberate and in D-12's direction: a state term fused into a
  * hyphenated compound normalizes into a single token that is no longer a member, so the compound
  * anchors nothing and the claim is refused. Punctuation merely attached to a state term
  * (`visible.`) still normalizes clean and anchors as usual.
  *
- * WHY THE RULE IS SHAPED THIS WAY (four regressions, every one of them measured, 2026-08-10, phase
- * 393 verification rounds 2–5). The FIRST rule read any post-verb word beginning with a capital
+ * WHY THE RULE IS SHAPED THIS WAY (five regressions, every one of them measured, 2026-08-10 and
+ * 2026-08-11, phase 393 verification rounds 2–6). The FIRST rule read any post-verb word beginning with a capital
  * letter as an element name, on the house-style premise that a draft writes `the Submit button`.
  * Title-cased prose defeated it outright: `Verify The Page Is Visible` — the exact vacuous claim
  * D-12 exists to refuse — passed gate 4 while its lowercase twin was refused, and the drafts this
@@ -552,19 +562,40 @@ function isMixedActAndVerify(text: string): boolean {
  * scans is strictly WEAKER than the rule it implements, because it can be satisfied by two facts
  * about different parts of the sentence. Relating the arms — one tokenization, one walk, one
  * decision per state term — is what makes the composed predicate say what D-09 clause (ii) says.
+ * The FIFTH rule related the arms correctly and then privileged the claim's subject only when that
+ * subject was one of seven exact spellings: every other subject token was crossed rather than
+ * answered on, so the walk kept going left, past the subject and across the clause boundary, until
+ * some element noun turned up. Inflection alone defeated it — a page-whole subject written in the
+ * plural, or with a synonym the seven-member set did not hold, or hyphenated so it normalized into
+ * one unrecognized token, handed the verdict to a noun in a different clause with no state asserted
+ * of it. A single trailing character flipped the answer, which is the same defect as the SECOND
+ * rule's one-character boundary wearing a different lexicon. The common cause with the fourth is
+ * that both let an ENUMERATION carry the refusal: a rule that refuses only what it can name is
+ * strictly weaker than the rule it implements, because the sentences it has never heard of fall to
+ * the accepting side. Making the refusal the DEFAULT and the crossing the enumeration is what
+ * removes the spelling dependency, and it is why the continue set may only ever hold a closed class.
  *
  * The removed rules are described in words on purpose. Naming their functions or restating their
  * character classes here would leave a durable, greppable account of a mechanism that no longer
  * exists, which is how a comment starts teaching the shape it was written to retire.
  *
- * RESIDUAL, accepted and named — BOTH of them, which is exactly as wide as the code.
+ * RESIDUAL, accepted and named — BOTH of them, and the width claim is RE-DERIVED from the shipped
+ * walk rather than carried forward (393-17; the round-6 disclosure asserted the same width over a
+ * rule that had a third bypass, which is what made the claim false). The derivation: an occurrence
+ * resolves TRUE only when an `ELEMENT_NOUNS` member stands to the left of the anchor with nothing
+ * but `FUNCTION_WORDS` members in between, and no clause-boundary token — no conjunction, no
+ * separator, no unknown noun — is in that set. So TRUE now requires the member to occupy the
+ * anchor's own subject position under a nearest-content-word reading, and the two bypasses below
+ * are the two ways that reading can still be wrong. There is no third: a member in another clause,
+ * at a distance, in a prepositional object or standing as a verb cannot reach the anchor any more,
+ * because reaching it means crossing a token that stops the walk.
  *   (a) MEMBERSHIP CANNOT KNOW THE PAGE. `Verify the banner is visible` passes whether or not the
  *       page has a banner. Membership decides that a word names a KIND of element; nothing lexical
  *       can decide that this page holds one. Pinned by the deliberately-passing test "leaves the
  *       documented residual open on purpose: a lexicon MEMBER reads as an element name" in
  *       `__tests__/assertion-strength.test.ts`. Closing it needs the resolved a11y evidence gate 3
  *       works from — it is not reachable by any lexicon retune.
- *   (b) NEAREST-PRECEDING IS A SUBJECT PROXY, NOT SYNTAX. The rule reads the nearest set-noun to
+ *   (b) NEAREST-PRECEDING IS A SUBJECT PROXY, NOT SYNTAX. The rule reads the nearest content word to
  *       the left of a state term as that state's subject, which it usually is and need not be. A
  *       member standing between a page-whole subject head and the state term reads as the subject,
  *       so `Verify the page with the banner is visible` passes although the claim is about the
@@ -572,7 +603,7 @@ function isMixedActAndVerify(text: string): boolean {
  *       nearest-preceding is a subject PROXY, not syntax". Closing it needs a parse, not a lexicon:
  *       the fix is a dependency analysis of the sentence, which is a different class of tool from
  *       a deterministic hermetic membership check, so it is accepted here rather than approximated
- *       with a heuristic that would ship a fifth axis.
+ *       with a heuristic that would ship another axis.
  *
  * ACCEPTED COST, priced in the open, and the retune routes. Every item below is a REAL draft this
  * gate refuses; all are pinned by deliberately-failing cells in the accepted-cost test.
@@ -590,13 +621,23 @@ function isMixedActAndVerify(text: string): boolean {
  *     noun nearer the state term is refused, so `Verify the header on the page is visible` fails
  *     because `page`, not `header`, is what the walk meets first. This is D-12's direction — the
  *     sentence is ambiguous about what is being claimed visible — and it is a cost, not a bonus.
+ *   - The INTERVENING-TOKEN cost, new with the total refuser: ANY token outside the three sets
+ *     standing between a member and its state term refuses a genuine claim, because the walk stops
+ *     on it rather than crossing it. `Verify the submit button is currently visible` loses gate 4 to
+ *     one ordinary adverb, and `Verify the button badge is visible` loses it to an unknown subject
+ *     head standing one clause nearer than the member. Both are pinned RED-first. This is the price
+ *     of a closed continue set, and it is charged in the SAFE direction: what an omission from that
+ *     set costs is a refused genuine draft, never an accepted vacuous one.
  * The AUTHOR's route out is a singular lexicon noun standing beside its state (`Verify the login
  * field is empty` passes, and is pinned), or quoting the literal the page must show. The
- * MAINTAINER's routes are an `ELEMENT_NOUNS` membership change (which moves the gate toward ACCEPT)
- * or a `PAGE_WHOLE_NOUNS` membership change (which moves it toward REJECT), each with the frozen
- * corpus re-run that says whether the retune was a fix or a leak — never a character-case test,
- * never a fourth exclusion list, and never a third independent whole-residue scan: those are the
- * three shapes that shipped the four regressions above.
+ * MAINTAINER's routes are an `ELEMENT_NOUNS` membership change or a `FUNCTION_WORDS` membership
+ * change (both move the gate toward ACCEPT — one more subject the walk will answer TRUE on, one
+ * more token it will cross to get there) or a `PAGE_WHOLE_NOUNS` membership change (which moves the
+ * NAMED refusal without moving the verdict, since the stop already refuses whatever that set omits),
+ * each with the frozen corpus re-run that says whether the retune was a fix or a leak — never a
+ * character-case test, never a fourth exclusion list, never an independent whole-residue scan, and
+ * never a refuser that can only refuse what it is able to name: those are the four shapes that
+ * shipped the five regressions above.
  */
 function namesElementInExpectedState(text: string): boolean {
   const tokens = afterLeadingToken(unquotedResidue(text)).split(/\s+/).map(normalizeToken)
@@ -708,15 +749,20 @@ function gateReason(rows: readonly StepClassificationRow[]): string {
       causes.add('acts and verifies in one step, so it has no single verdict to report')
     }
   }
-  // THE FALLBACK MUST BE TRUE OF EVERY STEP THAT REACHES IT (393-15). Its previous tail said the
-  // step named no element, which was false about `Verify the Submit buttons are disabled` and about
-  // every other plural or unlisted noun the lexicon does not hold — a durable receipt denying
-  // something the author plainly wrote. What is actually true of every step reaching this line is
-  // the RELATION's verdict: whatever the sentence mentions, no lexicon member stood as the nearest
-  // set-noun before an expected-state term.
+  // THE FALLBACK MUST BE TRUE OF EVERY STEP THAT REACHES IT (393-15, re-derived 393-17). Two tails
+  // have now been retired here for the same reason, and the reason is worth stating once: a tail
+  // that describes the rule's INPUTS goes stale the moment the rule changes, while a tail that
+  // states the RELATION the rule decides stays true as long as the rule decides it. The first tail
+  // said the step named no element — false about `Verify the Submit buttons are disabled` and every
+  // other plural or unlisted noun, a durable receipt denying what the author plainly wrote. The
+  // second said no element noun stood as the NEAREST set-noun before a state term, which the total
+  // refuser falsified at once: in `Verify the submit button is currently visible` an element noun IS
+  // the nearest set-noun before `visible`, and the gate refuses anyway, because an ordinary adverb
+  // stands between them. What is true of every step reaching this line is the relation as the walk
+  // now decides it — and, as before, it may not deny an element or a literal the author wrote.
   if (causes.size === 0) {
     causes.add(
-      'no quoted expected value, and no element noun this gate knows stands as the nearest set-noun before an expected-state term',
+      'no quoted expected value, and no element noun this gate knows stands before an expected-state term with only function words between them',
     )
   }
 

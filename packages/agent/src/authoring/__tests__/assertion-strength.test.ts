@@ -896,8 +896,24 @@ describe('assertionStrengthGate — the two clauses composed (D-09)', () => {
 
     expect(result.pass).toBe(false)
     expect(result.reason).toContain('no quoted expected value')
-    expect(result.reason).toContain('nearest set-noun before an expected-state term')
+    expect(result.reason).toContain('with only function words between them')
     expect(result.reason).not.toContain('acts and verifies in one step')
+  })
+
+  it('states the relation the walk decides, VERBATIM, on a step the stop refused (393-17)', () => {
+    // THE SECOND FALSE TAIL, pinned so a third cannot land quietly. The tail this replaced said no
+    // element noun stood NEAREST the anchor among the walk's set-nouns — which is a durable false
+    // statement about exactly this step, because `button` is an element noun and is the nearest such
+    // noun before `visible`. The gate refuses this step because `currently` stands between them, not
+    // because the sentence named nothing. The retired wording is described here rather than quoted,
+    // so no greppable copy of it survives its own pin. The live tail is asserted VERBATIM rather
+    // than by fragment: a fragment match is what let the previous tail drift out from under it.
+    const result = assertionStrengthGate({ steps: ['Verify the submit button is currently visible'] })
+
+    expect(result.pass).toBe(false)
+    expect(result.reason).toBe(
+      '1 assertion step(s), none falsifiable: no quoted expected value, and no element noun this gate knows stands before an expected-state term with only function words between them (D-09 clause (ii))',
+    )
   })
 
   it('never tells an author who NAMED an element that they named none (393-15)', () => {
@@ -910,7 +926,7 @@ describe('assertionStrengthGate — the two clauses composed (D-09)', () => {
 
     expect(result.pass).toBe(false)
     expect(result.reason).not.toContain('no named element in a checkable state')
-    expect(result.reason).toContain('nearest set-noun before an expected-state term')
+    expect(result.reason).toContain('with only function words between them')
   })
 
   it('reports the same table classifyDraftSteps does', () => {
@@ -1222,11 +1238,21 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
       'was',
       'were',
     ])
-    // The page-whole nouns are absent from ELEMENT_NOUNS on purpose, and the absence is what
-    // refuses the vacuous claim. A membership rule's omissions fail toward REJECT, so this is the
-    // one lexicon whose NON-members are load-bearing in the safe direction rather than the leaky
-    // one. Since 393-15 they are also a set in their own right — they STOP the relation's leftward
-    // walk — so the two facts are pinned side by side.
+    // The page-whole nouns are absent from ELEMENT_NOUNS on purpose, and since 393-15 they are also
+    // a set in their own right — they stop the relation's leftward walk BY NAME — so the two facts
+    // are pinned side by side.
+    //
+    // THE OMISSION DIRECTION, corrected 393-17 and stated for all three lexicons the walk reads.
+    // This comment used to say that a membership rule's omissions fail toward REJECT and that
+    // PAGE_WHOLE_NOUNS was therefore the one lexicon whose non-members were load-bearing in the safe
+    // direction. That was measurably backwards for the very set it pins: under the enumerated
+    // refuser the walk CROSSED whatever this set failed to spell, so a plural or a synonym leaked
+    // toward ACCEPT — the direction D-12 forbids — while the paragraph asserted the opposite.
+    // After the total-refuser fix it is true of every lexicon here, and for one reason: an
+    // unrecognized token stops the walk. ELEMENT_NOUNS absence refuses (the member is never
+    // matched), PAGE_WHOLE_NOUNS omission refuses (the stop catches what the name misses), and
+    // FUNCTION_WORDS omission refuses (an uncrossed token ends the walk). The retunes that move the
+    // gate toward ACCEPT are ADDITIONS, and only to ELEMENT_NOUNS or FUNCTION_WORDS.
     for (const nonMember of PAGE_WHOLE_NOUNS) {
       expect({ nonMember, member: (ELEMENT_NOUNS as readonly string[]).includes(nonMember) })
         .toEqual({ nonMember, member: false })
