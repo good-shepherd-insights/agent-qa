@@ -13,6 +13,12 @@
 // that converges is only half the contract, and the other half — an already-current index that
 // never re-folds — is where a re-fold-every-open regression and double-counted counters would
 // live.
+//
+// 393 round 6 / CR-01 + WR-06: the run dirs now carry the SECOND document production writes beside
+// the handoff. Until this round every fixture below wrote `handoff.json` alone, so the rebuild's
+// `analysis.json` leg was unexercised in BOTH directions — which is precisely the hole through
+// which a family-truncating unguarded read shipped green. The artifact bytes are planted RAW so a
+// TRUNCATED file (the crash / full-disk shape) is expressible, not just an exotic schemaVersion.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,13 +26,18 @@ import type { DatabaseSync } from 'node:sqlite'
 
 import {
   actionAnchorElement,
+  ANALYSIS_FILE,
+  canonicalJson,
+  CURRENT_ANALYSIS_SCHEMA_VERSION,
   type Action,
   type CompletedRunHandoff,
   type ElementInfo,
   type PerTestOutcome,
+  type RunAnalysisArtifact,
   type ScopeKey,
   type StepEvidence,
   type SubActionEvidence,
+  type Verdict,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -214,6 +225,91 @@ const HISTORICAL_RUNS: CompletedRunHandoff[] = [
   }),
 ]
 
+// ---------------------------------------------------------------------------
+// The artifact leg (393 round 6 / WR-06). Mirrors run-outcomes-resolved.test.ts's fixtures: one
+// FAILING member carrying no `rootCause`, whose deterministic floor is the minted `unknown` — not
+// a flake. That is what makes the artifact's upgrade observable, and what stops the valid-artifact
+// cell from passing vacuously on a projection the floor alone would have produced.
+// ---------------------------------------------------------------------------
+
+const FLAKE_RUN_ID = '004-payment'
+const FLAKY_FILE = 'suite/payment.test.ts'
+const FLAKY_TEST = 'checkout retries the payment sheet'
+
+function unknownFailureHandoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
+  return {
+    schemaVersion: 3,
+    runId,
+    buildOrdinal,
+    scope: SHOP_SCOPE,
+    executionContext: 'ci',
+    aggregateVerdict: 'failed',
+    configDigests: {
+      suiteConfigDigest: 'fixture-suite-config-digest',
+      testConfigDigest: 'fixture-test-config-digest',
+    },
+    startedAt: buildOrdinal * 1_000,
+    endedAt: buildOrdinal * 1_000 + 1,
+    tests: [{
+      testId: `${runId}-payment`,
+      testName: FLAKY_TEST,
+      filePath: FLAKY_FILE,
+      testIndex: 0,
+      outcome: 'failed',
+      steps: [{
+        ...stepEvidence(0, [{ type: 'click', ref: 'e7', role: 'button', name: 'pay now', url: '/pay' }]),
+        verifierVerdict: { pass: false, reasoning: 'the payment sheet never opened' },
+      } as unknown as StepEvidence],
+    } as unknown as PerTestOutcome],
+  } as unknown as CompletedRunHandoff
+}
+
+/** The 389 supersession: the author upgraded the floor's `unknown` to `flake`. */
+function flakeArtifact(runId: string): RunAnalysisArtifact {
+  const verdict: Verdict = {
+    class: 'flake',
+    producer: 'analyze-run',
+    confidence: 0.82,
+    evidence: {
+      citedSteps: [0],
+      citedAnchors: [],
+      citedArtifacts: [],
+      rationale: 'the same step passed on the immediate re-run',
+    },
+    memoryMisdirectionRuledOut: true,
+    perTest: 0,
+  }
+  return {
+    schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
+    runId,
+    verdicts: [verdict],
+    parts: [{
+      perTest: 0,
+      groundingQuote: { stepIndex: 0, quote: 'the payment sheet never opened' },
+      discriminator: 'intermittent, no persistent cause',
+      nextAction: 're-run to confirm stability',
+      links: [],
+    }],
+  }
+}
+
+const FLAKE_RUN = unknownFailureHandoff(FLAKE_RUN_ID, 4)
+
+/**
+ * A truncated `analysis.json`: real bytes of a real artifact, cut mid-string. This is the shape a
+ * crash or a full disk produces — `JSON.parse` throws straight out of the loader, whose `try`
+ * wraps only `readFileSync`. Deliberately NOT a `schemaVersion: 9999` literal, because the point
+ * is that the unguarded read is reachable from an ordinary durability failure.
+ */
+const TRUNCATED_ARTIFACT_BYTES = canonicalJson(flakeArtifact('002-login')).slice(0, 40)
+
+function flakeCountOf(db: DatabaseSync): number {
+  const row = db.prepare(
+    'SELECT flake_count FROM run_test_outcomes WHERE file_path = ? AND test_name = ?',
+  ).get(FLAKY_FILE, FLAKY_TEST) as { flake_count: number } | undefined
+  return Number(row?.flake_count ?? -1)
+}
+
 interface ProjectionDump {
   outcomes: unknown[]
   anchors: unknown[]
@@ -264,15 +360,27 @@ interface PreV4Project {
  * Everything up to the two DELETEs is the real production path: the same `foldRunOutcomes` the
  * curation tail calls, against the same `openIndexWriter` index, over handoff documents written
  * to a real runs root the way the runner writes them.
+ *
+ * `artifacts` plants RAW `analysis.json` bytes beside a run's handoff, keyed by runId. Raw rather
+ * than typed, because the poisoned cell's whole subject is a file that is NOT a valid artifact and
+ * could not be expressed as one (WR-06). The pre-state folds pass no `runDir`, so a planted
+ * artifact contributes nothing until the REBUILD reads it — which is exactly the leg under test.
  */
-function producePreV4Project(): PreV4Project {
+function producePreV4Project(options: {
+  runs?: readonly CompletedRunHandoff[]
+  artifacts?: Readonly<Record<string, string>>
+} = {}): PreV4Project {
   const knowledgeRoot = tempDir('reconcile-knowledge-')
   const runsRoot = tempDir('reconcile-runs-')
 
-  for (const handoff of HISTORICAL_RUNS) {
+  for (const handoff of options.runs ?? HISTORICAL_RUNS) {
     const runDir = join(runsRoot, String(handoff.runId))
     mkdirSync(runDir, { recursive: true })
     writeFileSync(join(runDir, 'handoff.json'), JSON.stringify(handoff))
+    const artifactBytes = options.artifacts?.[String(handoff.runId)]
+    if (artifactBytes !== undefined) {
+      writeFileSync(join(runDir, ANALYSIS_FILE), artifactBytes, 'utf8')
+    }
     const report = foldRunOutcomes({ knowledgeRoot, handoff, extractAnchors })
     expect(report.kind).toBe('applied')
   }
@@ -383,6 +491,78 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
 
     expect(withIndex(knowledgeRoot, (db) => db.prepare('SELECT * FROM meta ORDER BY k').all()))
       .toEqual(metaBefore)
+  })
+
+  it('costs ONE run, never the family, when a run dir carries a truncated analysis.json (CR-01)', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project({
+      artifacts: { '002-login': TRUNCATED_ARTIFACT_BYTES },
+    })
+
+    const result = reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors })
+
+    // The poisoned run is SKIPPED ENTIRELY, not folded to the deterministic floor: the
+    // incremental path hard-fails on the same bytes, so parity means ABSENCE, and floor counters
+    // for a run no fold ever produced would misrepresent AI-resolved verdicts at their
+    // unresolved floor.
+    expect(result).toEqual({ kind: 'rebuilt', report: { folded: 2, skipped: 1 } })
+
+    withIndex(knowledgeRoot, (db) => {
+      // The stamp lands, so the next sweep answers `current` instead of re-destroying the family
+      // on every sweep for as long as the bad artifact exists.
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all())
+        .toEqual([{ id: 1, version: RUN_OUTCOMES_PROJECTION_VERSION }])
+
+      const appliedRunIds = (db.prepare(
+        'SELECT run_id FROM run_outcome_applied_runs WHERE product = ? ORDER BY run_id',
+      ).all(SHOP_PRODUCT) as { run_id: string }[]).map((row) => row.run_id)
+      expect(appliedRunIds).toEqual(['001-checkout', '003-gate'])
+
+      // The runs AFTER the poisoned one in sort order still fold — the pre-fix module truncated
+      // the family at the bad file and left everything past it missing.
+      const union = createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion()
+      expect(union.has(CHECKOUT_ELEMENT)).toBe(true)
+      expect(
+        db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes WHERE file_path = ?')
+          .get(CHECKOUT_TEST.filePath),
+      ).toMatchObject({ n: 1 })
+      expect(
+        db.prepare('SELECT COUNT(*) AS n FROM run_test_outcomes WHERE file_path = ?')
+          .get(LOGIN_TEST.filePath),
+      ).toMatchObject({ n: 0 })
+    })
+  })
+
+  it('reads a VALID analysis.json through the reconcile-driven rebuild (WR-06, the other half)', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project({
+      runs: [...HISTORICAL_RUNS, FLAKE_RUN],
+      artifacts: { [FLAKE_RUN_ID]: canonicalJson(flakeArtifact(FLAKE_RUN_ID)) },
+    })
+
+    // The pre-state folds passed no runDir, so the floor governs: an `unknown` failure is not a
+    // flake. A rebuild that read handoffs alone would leave this at 0 and every fingerprint
+    // assertion above would still pass — which is how an unexercised artifact leg stays invisible.
+    withIndex(knowledgeRoot, (db) => expect(flakeCountOf(db)).toBe(0))
+
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }))
+      .toEqual({ kind: 'rebuilt', report: { folded: 4, skipped: 0 } })
+
+    withIndex(knowledgeRoot, (db) => expect(flakeCountOf(db)).toBe(1))
+  })
+
+  it('keeps the INCREMENTAL fold hard-failing on the same truncated artifact', () => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project({
+      artifacts: { '002-login': TRUNCATED_ARTIFACT_BYTES },
+    })
+
+    // The per-run catch belongs to the REBUILD loop and nowhere else. "Never swallowed into a
+    // silent floor" was argued for this path, and this is the case the rebuild's new guard still
+    // has to reject — drawn from outside the fix's own assumption.
+    expect(() => foldRunOutcomes({
+      knowledgeRoot,
+      handoff: HISTORICAL_RUNS[1]!,
+      runDir: join(runsRoot, '002-login'),
+      extractAnchors,
+    })).toThrow(SyntaxError)
   })
 
   it('stamps the current version over an empty project without folding anything', () => {
