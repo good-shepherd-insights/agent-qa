@@ -12,6 +12,7 @@
 // core), and the produced path is already covered by the cli suite. If a literal here ever
 // disagrees with the frozen draft, the cli suite is the authority.
 
+import { StepClassificationRowSchema } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -436,6 +437,19 @@ describe('the frozen corpus classes, by literal step text (4180c78b)', () => {
 
     expect(assertions).toHaveLength(1)
     expect(assertions[0]?.vacuityHit).toBe('page loaded')
+  })
+
+  it('every row of every draft survives the receipt schema at RUNTIME, not just at compile time', () => {
+    // `StepClassificationRowSchema` is `.strict()`, and plan 06 persists these rows inside a
+    // `DraftReceipt`. A type annotation is erased; a stray key is not, and it would surface as
+    // a refused write one plan downstream rather than as a red here. This is also the assertion
+    // that keeps the frozen suite's `text`/`kind` spelling from leaking across the projection
+    // into the receipt shape, which the strict schema would refuse by name.
+    for (const entry of CORPUS) {
+      for (const row of classifyDraftSteps(entry.steps)) {
+        expect(StepClassificationRowSchema.safeParse(row).success).toBe(true)
+      }
+    }
   })
 
   it('the two oracle-capture drafts fail for DIFFERENT recorded reasons', () => {

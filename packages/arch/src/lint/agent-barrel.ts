@@ -249,6 +249,14 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // grammar could red for a reason unrelated to the mechanism it is measuring. Neither symbol is
   // dispatch: one answers a boolean about a string, the other refuses the two orchestration names
   // and otherwise returns a string, and an unregistered id still dies at `invokeFunction`.
+  // 393 plan 04, D-08/WTST-02: gate 4's static assertion-strength check, in SORT position
+  // like its neighbours. It is on this list because plan 01's cli-side proving suite NAMED it on
+  // this barrel while no evaluator existed — the RED-first receipt — so its absence would have
+  // been the drift. A total pure function of an array of strings: it holds no capability, reaches
+  // no storage and dispatches nothing, and the four lexicons plus the two receipt-facing entry
+  // points it sits beside stay off this list on purpose, so widening a lexicon remains an edit
+  // inside the module that carries its retune comment.
+  'evaluateAssertionStrength',
   'fromToolName',
   'invokeFunction',
   'isChatMetaToolName',

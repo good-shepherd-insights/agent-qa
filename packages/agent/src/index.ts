@@ -462,3 +462,23 @@ export type {
   JobModelRequest,
   JobRecordedValueOutcome,
 } from './jobs/record-llm-authorship.js'
+
+// 393 D-08/D-11, WTST-02: gate 4's static assertion-strength check.
+//
+// ONE value, and it is the narrowest one that satisfies the contract. Plan 01 committed
+// `packages/cli/src/authoring/__tests__/corpus-static-gates.test.ts` FAILING against a named
+// export on this barrel, before any evaluator existed, and that ordering is the phase's whole
+// signature proof — so this export exists to be reached by a suite that named it first, not
+// because a consumer asked for a lexicon.
+//
+// The module's other exports — `assertionStrengthGate`, `classifyDraftSteps` and the five
+// pinned lexicons — are deliberately NOT here. Every one of their consumers (the receipt
+// assembler, the gate orchestration, the unit differentials) lives inside this package and
+// reaches them by relative import, and publishing a lexicon would make widening it a change
+// another package could make without touching the retune comment that governs it.
+//
+// It opens no dispatch path, and the reason is structural rather than by analogy: it is a
+// total pure function from an array of strings to a plain object. No fs, no clock, no model,
+// no registry, no storage is in its reach — D-06 forces exactly that, because the hermetic
+// lane runs this per commit with no LLM by contract.
+export { evaluateAssertionStrength } from './authoring/assertion-strength.js'
