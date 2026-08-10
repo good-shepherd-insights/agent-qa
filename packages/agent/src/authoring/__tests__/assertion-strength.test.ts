@@ -214,6 +214,15 @@ describe('classifyDraftSteps — mixed act-and-verify steps (D-12)', () => {
 
     expect(row.falsifiable).toBe(true)
   })
+
+  it('does not read a SEPARATOR out of a quoted expected value either', () => {
+    // The stronger control: the literal carries both a separator and an action verb after
+    // it, so a mixed scan over the raw step splits INSIDE the expected value and rejects a
+    // single-verdict assertion. Only stripping quotes before the scan gets this right.
+    const row = onlyRow(['Verify the page says "Saved, then click Continue"'])
+
+    expect(row.falsifiable).toBe(true)
+  })
 })
 
 describe('classifyDraftSteps — the table (D-11)', () => {
@@ -504,6 +513,32 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
 
     for (const lexicon of lexicons) {
       expect([...lexicon]).toEqual([...new Set(lexicon)].sort())
+    }
+  })
+
+  it('no vacuity phrase survives as a falsifiable assertion, in any casing', () => {
+    // THE CROSS-LEXICON CLOSURE, and it is a guard rather than a restatement.
+    //
+    // The falsifiability conjunction refuses a vacuous remainder twice over: once because it
+    // matched the lexicon, and once because a phrase that names no element in a checkable
+    // state is not concrete to begin with. Today the second refusal alone is sufficient for
+    // every member — no member contains an EXPECTED_STATE_TERMS token, so `hasExpectedStateTerm`
+    // is false for all of them — which is why deleting the vacuity conjunct changes no
+    // behaviour on the current lexicons (recorded as surviving mutant M4).
+    //
+    // The title-cased arm is what makes this a live guard instead of a comment: it satisfies
+    // `namesAnElement`, so the FIRST member that ever carries a state term ("page is visible"
+    // is the obvious candidate) makes the concreteness arm answer true and hands the whole
+    // decision to the vacuity conjunct. Verified by construction, not by argument — adding
+    // such a member and deleting the conjunct reds this case.
+    const titleCase = (phrase: string) =>
+      phrase.replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
+
+    for (const phrase of VACUOUS_ASSERTION_PHRASES) {
+      for (const step of [`Verify ${phrase}`, `Verify the ${phrase}`, `Verify the ${titleCase(phrase)}`]) {
+        expect({ step, falsifiable: onlyRow([step]).falsifiable }).toEqual({ step, falsifiable: false })
+      }
+      expect(onlyRow([`Verify the ${phrase}`]).vacuityHit).toBe(phrase)
     }
   })
 
