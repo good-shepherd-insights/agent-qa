@@ -148,7 +148,8 @@ export const VACUOUS_ASSERTION_PHRASES = [
  * WHAT ONE RETUNE HERE MOVES — RE-DERIVED 2026-08-10 (393-15). This set is the relation's ANCHOR:
  * every member is a position the leftward walk starts from. A member added here therefore widens
  * WHICH STATES count as checkable and nothing else — the element side of the relation still answers
- * by `ELEMENT_NOUNS` membership alone, and the refusal side by `PAGE_WHOLE_NOUNS` membership alone.
+ * by `ELEMENT_NOUNS` membership alone, and the refusal side by everything that is not an element
+ * member (a named page-whole noun, or, since 393-17, any token outside the walk's continue set).
  * (Between 393-12 and 393-13 a member added here was ALSO excluded from element-name candidacy, so
  * one retune moved two measurements in opposite directions; that coupling is gone. What replaced it
  * is a READ, not a coupling: the set is consumed as anchor positions, which is why the earlier
@@ -240,11 +241,11 @@ export const ELEMENT_NOUNS = [
  * cause of the defect this set exists to close, and re-introducing it here would reproduce it.
  *
  * RETUNE COMMENT, AND ITS DIRECTION IS THE OPPOSITE OF `ELEMENT_NOUNS`'. ADDING a member moves the
- * gate toward REJECT: every claim whose nearest set-noun before a state term is that member is
- * refused. That is D-12's safe direction and still a real cost, so a member arrives with the vacuous
- * draft it catches plus a frozen-corpus re-run. REMOVING a member moves the gate toward ACCEPT — the
- * direction that costs a user a bad test — so a removal needs the draft it rescues and the same
- * re-run.
+ * gate toward REJECT: every claim whose nearest non-function-word before a state term is that member
+ * is refused BY NAME. That is D-12's safe direction and still a real cost, so a member arrives with
+ * the vacuous draft it catches plus a frozen-corpus re-run. Since 393-17 REMOVING a member no longer
+ * moves the verdict at all — the walk's default stop refuses the same token one branch later — and
+ * OMISSION, including omission by inflection or by synonym, behaves the same way.
  *
  * A token may not be a member of this set and of `ELEMENT_NOUNS` (or of `EXPECTED_STATE_TERMS`):
  * the walk would have two answers for it. The disjointness is pinned in the lexicon-discipline
@@ -260,6 +261,55 @@ export const PAGE_WHOLE_NOUNS = [
   'page',
   'screen',
   'site',
+] as const
+
+/**
+ * The closed function-word set — the leftward walk's CONTINUE set (393-17).
+ *
+ * A PINNED CONSTANT, never config. These are the ONLY tokens the walk may cross between an
+ * expected-state term and the noun that is its subject. Everything else stops the walk, which is
+ * what makes the refuser TOTAL rather than enumerated: a subject head this module has never heard
+ * of refuses the claim instead of being walked through in search of a member in another clause.
+ *
+ * WHY THESE NINE. `is`, `not` and `still` are what the accept controls require — `Verify the submit
+ * button is disabled`, `Verify The Submit Button Is Not Visible`, `Verify the username field is
+ * still empty` are real drafts that must keep gate 4. The rest is the closed be-copula paradigm
+ * (`are`, `be`, `been`, `being`, `was`, `were`), included as a paradigm rather than one tense at a
+ * time because a verdict that moved when an author wrote `was` for `is` would be the one-character
+ * flip this round exists to remove.
+ *
+ * WHAT IS DELIBERATELY EXCLUDED, and each exclusion is load-bearing. CONJUNCTIONS: they mark the
+ * clause boundary the walk must never cross, so admitting `and` would re-open the cross-clause
+ * rescue by construction — the exact defect. PREPOSITIONS: a preposition heads a noun phrase, so a
+ * noun always stands between the member and the anchor and that noun decides first; admitting the
+ * preposition would only let the walk reach past its own object. ARTICLES: an article always stands
+ * to the LEFT of its own noun, so it is never reachable between a member and its state term, and
+ * listing it would be a member with no live position. And every open adverb class beyond `still`
+ * and `not`, because an open class cannot be closed and a set that tries is a set that leaks.
+ *
+ * RETUNE COMMENT, and its direction is `ELEMENT_NOUNS`' rather than `PAGE_WHOLE_NOUNS`' (D-12).
+ * ADDING a member is an ACCEPT-direction move — one more token the walk may bridge, so claims that
+ * were refused start passing — and therefore arrives with the real draft it rescues plus a
+ * frozen-corpus re-run. OMISSION fails toward REJECT: an exotic intervening adverb refuses a genuine
+ * claim, which is a real cost and the SAFE rot direction, priced beside the other accepted costs on
+ * `namesElementInExpectedState`. That asymmetry is the whole point of the set — the pre-fix posture
+ * had a lexicon whose omissions failed toward ACCEPT, and this one cannot.
+ *
+ * Read in exactly one place: inside the walk, as the continue case. Never scanned across a residue.
+ * Not exported from the agent barrel (the `PAGE_WHOLE_NOUNS` precedent).
+ *
+ * Order is alphabetical and NOT load-bearing: the set is read by membership.
+ */
+export const FUNCTION_WORDS = [
+  'are',
+  'be',
+  'been',
+  'being',
+  'is',
+  'not',
+  'still',
+  'was',
+  'were',
 ] as const
 
 /**
@@ -457,10 +507,16 @@ function isMixedActAndVerify(text: string): boolean {
  * THE RULE ENFORCED, verbatim (393-15). The post-verb residue, with double-quoted spans already
  * removed, is tokenized ONCE: split on whitespace, each piece through `normalizeToken` (lowercased,
  * non-letters stripped). For every index whose token is an `EXPECTED_STATE_TERMS` member, walk LEFT
- * from that index and take the FIRST token that belongs to either set — an `ELEMENT_NOUNS` member
- * resolves that occurrence TRUE, a `PAGE_WHOLE_NOUNS` member resolves it FALSE and stops the walk,
- * and reaching the start of the residue with neither resolves it FALSE. The answer is true iff at
- * least one state-term occurrence resolves TRUE. Letter case is never consulted: `normalizeToken`
+ * from that index one token at a time and answer on the FIRST token that is not a function word: an
+ * `ELEMENT_NOUNS` member resolves that occurrence TRUE, a `PAGE_WHOLE_NOUNS` member resolves it
+ * FALSE, a `FUNCTION_WORDS` member is crossed and the walk continues, and ANY OTHER token resolves
+ * it FALSE and stops. Reaching the start of the residue resolves it FALSE too. CONTINUING is the
+ * enumerated case and STOPPING is the default, which is what makes the refuser total: a subject head
+ * outside all three sets refuses the claim rather than being walked through until some member turns
+ * up. The answer is true iff at least one state-term occurrence resolves TRUE. The `PAGE_WHOLE_NOUNS`
+ * branch stands AHEAD of the stop and is redundant with it on today's memberships — the stop would
+ * refuse those same seven tokens one branch later — and it is kept because it names the refusal
+ * class the gate exists for, which the default stop cannot say. Letter case is never consulted: `normalizeToken`
  * lowercases, so a step and any recasing of it get the identical verdict by construction. There is
  * no distance constant anywhere in the rule: the walk runs to the start of the residue, and what
  * decides is WHICH set-noun it meets first, never how far away that noun sat.
@@ -552,6 +608,7 @@ function namesElementInExpectedState(text: string): boolean {
       const token = tokens[left] ?? ''
       if ((ELEMENT_NOUNS as readonly string[]).includes(token)) return true
       if ((PAGE_WHOLE_NOUNS as readonly string[]).includes(token)) break
+      if (!(FUNCTION_WORDS as readonly string[]).includes(token)) break
     }
   }
   return false

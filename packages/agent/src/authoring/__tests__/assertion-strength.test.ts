@@ -25,6 +25,7 @@ import {
   CAPTURE_SIGNATURE_PATTERNS,
   ELEMENT_NOUNS,
   EXPECTED_STATE_TERMS,
+  FUNCTION_WORDS,
   PAGE_WHOLE_NOUNS,
   VACUOUS_ASSERTION_PHRASES,
   assertionStrengthGate,
@@ -664,6 +665,22 @@ describe('the concreteness relation — a page-whole SUBJECT is refused whatever
     expect(row?.captureSignatureHits).toEqual([])
   })
 
+  it.each(FUNCTION_WORDS)('PRESERVATION — every continue-set member really does bridge member to anchor: the banner %s visible', (word) => {
+    // The accept side of the total refuser, and the cell that prices a REMOVAL from the continue
+    // set. Each member is claimed to be a token the walk may cross; this is the claim, measured. If
+    // a member is ever dropped, its cell reds here rather than silently refusing a genuine draft in
+    // the field — which is exactly how an omission in this set fails toward REJECT and stays
+    // visible. Its counterpart is the stop loop above: together they pin both directions of the
+    // one boundary the round-7 rule introduces.
+    const step = `Verify the banner ${word} visible`
+    const result = assertionStrengthGate({ steps: [step] })
+
+    expect({ step, pass: result.pass }).toEqual({ step, pass: true })
+    expect(result.falsifiableAssertionCount).toBe(1)
+    expect(result.table[0]?.vacuityHit).toBeUndefined()
+    expect(result.table[0]?.captureSignatureHits).toEqual([])
+  })
+
   it.each(RESTATED_EMPTY_CAPTURES)('refuses an assertion restating a prior EMPTY capture (WR-01): $assertion', ({ action, assertion }) => {
     const row = onlyRow([action, assertion])
 
@@ -1194,6 +1211,17 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
       'screen',
       'site',
     ])
+    expect([...FUNCTION_WORDS]).toEqual([
+      'are',
+      'be',
+      'been',
+      'being',
+      'is',
+      'not',
+      'still',
+      'was',
+      'were',
+    ])
     // The page-whole nouns are absent from ELEMENT_NOUNS on purpose, and the absence is what
     // refuses the vacuous claim. A membership rule's omissions fail toward REJECT, so this is the
     // one lexicon whose NON-members are load-bearing in the safe direction rather than the leaky
@@ -1219,6 +1247,7 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
       ACTION_VERBS,
       ELEMENT_NOUNS,
       PAGE_WHOLE_NOUNS,
+      FUNCTION_WORDS,
       CAPTURE_SIGNATURE_PATTERNS.map((entry) => entry.name),
     ]
 
@@ -1227,18 +1256,24 @@ describe('the lexicons are closed pinned sets (D-09, the 392-16 discipline)', ()
     }
   })
 
-  it('the relation\'s three input sets are pairwise disjoint, so the walk has one answer per token', () => {
+  it('the relation\'s four input sets are pairwise disjoint, so the walk has one answer per token', () => {
     // The guard's own inputs, pinned as COMPLETE sets rather than sampled. `namesElementInExpectedState`
-    // asks three questions of one token stream — is this an anchor, does it resolve TRUE, does it stop
-    // the walk — and a token belonging to two of the sets would answer two of them at once. Which
-    // branch won would then depend on the order the code happens to test them in, which is exactly the
-    // kind of undeclared precedence a lexical gate cannot afford.
+    // asks four questions of one token stream — is this an anchor, does it resolve TRUE, does it stop
+    // the walk by NAME, may the walk cross it — and a token belonging to two of the sets would answer
+    // two of them at once. Which branch won would then depend on the order the code happens to test
+    // them in, which is exactly the kind of undeclared precedence a lexical gate cannot afford. Since
+    // 393-17 the fourth set is the continue set, and it is the one whose overlap would be worst: a
+    // token in both FUNCTION_WORDS and ELEMENT_NOUNS would be simultaneously "cross me" and "I am the
+    // subject", which is the difference between accepting and refusing the sentence around it.
     const overlaps = (left: readonly string[], right: readonly string[]) =>
       left.filter((token) => right.includes(token))
 
     expect(overlaps(PAGE_WHOLE_NOUNS, ELEMENT_NOUNS)).toEqual([])
     expect(overlaps(PAGE_WHOLE_NOUNS, EXPECTED_STATE_TERMS)).toEqual([])
     expect(overlaps(ELEMENT_NOUNS, EXPECTED_STATE_TERMS)).toEqual([])
+    expect(overlaps(FUNCTION_WORDS, ELEMENT_NOUNS)).toEqual([])
+    expect(overlaps(FUNCTION_WORDS, PAGE_WHOLE_NOUNS)).toEqual([])
+    expect(overlaps(FUNCTION_WORDS, EXPECTED_STATE_TERMS)).toEqual([])
   })
 
   it('no vacuity phrase survives as a falsifiable assertion, in any casing', () => {
