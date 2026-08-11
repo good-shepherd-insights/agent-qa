@@ -1,0 +1,10 @@
+name: Check the local form heading and the back link
+test-id: t_dedup-unfingerprinted-member-fault-rename-posing-video
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Verify the page heading says "Local Form"
+  - Click the "Back to the form" link
+  - Verify the Username field is visible

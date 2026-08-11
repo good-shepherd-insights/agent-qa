@@ -1,0 +1,10 @@
+name: Sign in on the local account form
+test-id: t_dedup-below-threshold-vise-series-table-rog-range-emu
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Type "hunter2" into the Password field
+  - Enter "correct-horse" in the Password field
+  - Press the Submit button

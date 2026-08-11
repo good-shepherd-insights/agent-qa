@@ -1,0 +1,10 @@
+name: Confirm the local form heading and the back link
+test-id: t_dedup-unfingerprinted-dup-icy-scar-ocular-joint-volt
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Check the page heading reads "Local Form"
+  - Press the "Back to the form" link
+  - Confirm the Username field is visible

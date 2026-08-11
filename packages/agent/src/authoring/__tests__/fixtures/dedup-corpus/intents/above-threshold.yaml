@@ -1,0 +1,11 @@
+name: Sign in on the local account form
+test-id: t_dedup-above-threshold-clock-inject-pill-adds-ima-video
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Enter "bob" in the Username field
+  - Enter "correct-horse" in the Password field
+  - Type "alice" into the Account name field
+  - Press the Submit button

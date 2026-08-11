@@ -1,0 +1,8 @@
+name: Submit the form as a returning user
+test-id: t_dedup-at-threshold-plot-argent-rang-draft-hair-hunter
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Click the Submit button

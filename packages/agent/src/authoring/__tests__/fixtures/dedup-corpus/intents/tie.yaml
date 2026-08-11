@@ -1,0 +1,10 @@
+name: Submit the account name form and check the receipt
+test-id: t_dedup-tie-intent-series-table-rog-rang-draft-hair-vise
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Enter "alice" in the Account name field
+  - Press the Submit button
+  - Verify the page says "Received!"

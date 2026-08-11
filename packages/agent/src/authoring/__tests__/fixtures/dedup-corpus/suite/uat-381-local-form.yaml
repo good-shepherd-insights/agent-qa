@@ -1,0 +1,11 @@
+name: Sign in on the local account form
+test-id: t_irish-vise-series-table-rog-rang-draft-hair-hunter-range
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Type "{{env:PROBE_USER}}" into the Username field
+  - Type "{{secret:PROBE_TOKEN}}" into the Password field
+  - Click the Submit button
+  - Verify the page says "Received!"

@@ -1,0 +1,10 @@
+name: Submit the account name form and confirm receipt
+test-id: t_dedup-tie-alpha-common-binary-tol-liv-argent-hong-lat
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Type "alice" into the Account name field
+  - Click the Submit button
+  - Verify the page says "Received!"

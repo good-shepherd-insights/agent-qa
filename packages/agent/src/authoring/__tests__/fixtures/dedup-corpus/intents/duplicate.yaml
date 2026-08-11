@@ -1,0 +1,11 @@
+name: Log in on the local account form
+test-id: t_dedup-obvious-dup-hend-repair-fight-volt-joint-flu-skill
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Enter "bob" in the Username field
+  - Enter "correct-horse" in the Password field
+  - Press the Submit button
+  - Verify the page says "Received!"

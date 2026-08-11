@@ -1,0 +1,9 @@
+name: Confirm the local account form page heading
+test-id: t_dedup-accept-control-noise-memory-common-binary-tol-liv
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Type "alice" into the Username field
+  - Verify the page heading says "Local Form"

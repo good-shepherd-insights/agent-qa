@@ -1,0 +1,10 @@
+name: Submit the account name form and confirm receipt
+test-id: t_dedup-tie-beta-memory-noise-plot-hong-lat-common-binary
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Type "alice" into the Account name field
+  - Click the Submit button
+  - Verify the page says "Received!"

@@ -1,0 +1,10 @@
+name: Submit the local form as a returning user
+test-id: t_posing-clock-inject-pill-adds-ima-rename-video-emu-fault
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Type "{{env:PROBE_USER}}" into the Username field
+  - Click the Submit button
+  - Verify the page says "Received!"
