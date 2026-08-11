@@ -33,8 +33,14 @@ export const AGENT_QA_CLI_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-dashboard-ui',
   '@vostride/agent-qa-eval',
   '@vostride/agent-qa-eval-local',
-  '@vostride/agent-qa-ids',
   '@vostride/agent-qa-ios',
+  // 2026-08-12 (Phase 394 plan 11, FUNC-02): the ids package is GONE from this list for exactly
+  // the reason recorded below it. `create-test` and `create-suite` were the CLI's only shipped
+  // source naming it — they minted a test or suite id locally to stamp into a scaffolded YAML file
+  // — and both verbs are retired behind the authoring loop, which mints nothing on a surface. The
+  // workspace dependency STAYS: this package's tests still construct and check canonical ids, and
+  // the contract describes what the shipped source names.
+  //
   // 2026-08-02 (Phase 387 plan 09, D-20): knowledge-local is GONE from this list, not moved. The
   // CLI's last direct reach into the knowledge package was `knowledge-read.ts`'s inspect/diff, and
   // those verbs are now thin clients over `knowledge.records.*`. The package is still a workspace

@@ -59,18 +59,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'model/response cache administration over host paths; joins the config and environment action class',
   },
   {
-    file: 'packages/cli/src/commands/create-suite.ts',
-    specifier: '@vostride/agent-qa-ids',
-    clearedBy: '394',
-    reason: 'suite scaffolding mints ids locally; moves behind the write_test authoring loop',
-  },
-  {
-    file: 'packages/cli/src/commands/create-test.ts',
-    specifier: '@vostride/agent-qa-ids',
-    clearedBy: '394',
-    reason: 'test scaffolding mints ids locally; moves behind the write_test authoring loop',
-  },
-  {
     file: 'packages/cli/src/commands/dashboard.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: 'M5',

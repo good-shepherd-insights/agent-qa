@@ -15,8 +15,6 @@ export { createAuthStateCommand } from './auth-state.js'
 export { createDevicesCommand } from './devices.js'
 export { createEntitiesCommand } from './entities.js'
 export { createEvalCommand } from './eval.js'
-export { createCreateTestCommand } from './create-test.js'
-export { createCreateSuiteCommand } from './create-suite.js'
 export { createSkillsCommand } from './skills.js'
 export { createAskCommand } from './ask.js'
 // 392 D-01: the REPL, beside the one-shot verb it shares a turn engine with.

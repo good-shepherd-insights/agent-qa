@@ -5,8 +5,6 @@ import {
   createAuthStateCommand,
   createCacheCommand,
   createConfigCommand,
-  createCreateSuiteCommand,
-  createCreateTestCommand,
   createDashboardCommand,
   createDaemonCommand,
   createDevicesCommand,
@@ -66,8 +64,6 @@ program.addCommand(createAuthStateCommand())
 program.addCommand(createDevicesCommand())
 program.addCommand(createEntitiesCommand())
 program.addCommand(createEvalCommand())
-program.addCommand(createCreateTestCommand())
-program.addCommand(createCreateSuiteCommand())
 program.addCommand(createSkillsCommand())
 program.addCommand(createFnCommand())
 // 392 D-01/D-24: the one-shot chat verb, registered beside `fn` because it is the same KIND of
