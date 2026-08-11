@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# 394-apply-mutation.sh — the acceptance bar for D-06's one-commit apply (394-10).
+# 394-apply-mutation.sh — the acceptance bar for D-06's one-commit apply and T-394-43's credential
+# gate (394-10).
 #
 # WHAT THIS PROVES, and why a green suite does not prove it. `one-commit-apply.test.ts` passing says
 # a draft became a commit. It does NOT say the suite would CATCH the two implementations D-06
@@ -9,6 +10,23 @@
 #   M   the dirty check WIDENED       — `git status --porcelain` over the whole repository.
 #   N1  the staging pathspec DROPPED  — `git add --all` instead of the single path.
 #   N2  the commit pathspec DROPPED   — `git commit -m msg` with no `-- <path>`.
+#
+#   O   the credential gate UNWIRED   — the screen still exists; the loop stops calling it.
+#   P   a credential family DELETED   — the set SHRINKS by one.
+#   Q   `injectionShape` ADDED        — the set GROWS by one.
+#
+# P AND Q ARE A PAIR AND NEITHER ALONE IS THE CONTROL. P proves the family set cannot shrink
+# unnoticed. Q proves it cannot GROW unnoticed, which is the dangerous direction: sweeping in a
+# family the safety policy deliberately dispositions as `route` would convert a Curator-review
+# signal into a hard write-path refusal — re-deciding a posture this module does not own, silently,
+# with every other gate here green. Q must red the ACCEPTANCE cell and the MEMBERSHIP cell, and the
+# membership cell exists because a behavioural suite can only see the exclusion through whatever
+# fixture it happens to drive.
+#
+# O IS THE 394-09 TWO-LAYER LESSON, MEASURED AGAIN. The gate can be defeated inside the screen or at
+# its call site, and seven of that file's thirteen cells call the screen DIRECTLY — so they cannot
+# see an unwired loop at all. Without this leg the suite would prove the screen correct and leave
+# the wiring free.
 #
 # M IS THE 394-04 LESSON ON THIS PATH. A gate that refuses everything passes a refuse-only corpus,
 # and a repo-wide dirty check passes every refusal cell in the file while making the feature
@@ -55,10 +73,13 @@ cd "$REPO_ROOT"
 
 SUBJECT_PATHS=(
   "packages/cli/src/composition/local-agent-host.ts"
+  "packages/agent/src/authoring/loop.ts"
 )
 
 CLI_FILTER="agent-qa"
+AGENT_FILTER="@vostride/agent-qa-agent"
 APPLY_SUITE="src/__tests__/one-commit-apply.test.ts"
+GATE_SUITE="src/authoring/__tests__/secret-guardrail.test.ts"
 
 WORK="$(mktemp -d)"
 LOG="$WORK/leg.log"
@@ -102,6 +123,21 @@ issues no --amend, no -a and no ref-moving subcommand"
 # arrangement where a person's own work is already in the index when they accept.
 ALLOWED_N2="keeps an unrelated STAGED file out of the commit
 puts the -- operand separator before every caller-controlled path"
+# O unwires the gate from the loop. The six cells that DRIVE the loop red; the seven that call the
+# screen directly, or read the exported set, stay green — which is the whole reason this leg exists
+# beside P and Q rather than being implied by them.
+ALLOWED_O="refuses a draft whose step carries a
+refuses a credential in the test NAME too"
+# P deletes `pemKey`. Its own cell reds, the whole-set membership assertion reds, and the n-gram
+# cell reds because it iterates the same corpus and that family no longer refuses at all. Every one
+# is an assertion that the set still contains the deleted family.
+ALLOWED_P="refuses a draft whose step carries a pemKey literal
+excludes injectionShape and email, read off the exported constant itself
+never repeats the matched value, nor any run of it longer than four characters"
+# Q adds `injectionShape`. EXACTLY TWO cells red, and they are the pair the plan requires: the
+# acceptance cell whose fixture makes that family fire, and the membership cell read off the value.
+ALLOWED_Q="accepts an instruction-override string even though injectionShape FIRES on it
+excludes injectionShape and email, read off the exported constant itself"
 
 apply_mutation () {
   case "${APPLY_MUTATION_SELFTEST:-}" in
@@ -119,12 +155,21 @@ apply_mutation () {
     N2)
       perl -0pi -e "s/\['commit', '--quiet', '-m', message, '--', targetPath\]/['commit', '--quiet', '-m', message]/" \
         "$REPO_ROOT/packages/cli/src/composition/local-agent-host.ts" ;;
+    O)
+      perl -0pi -e 's/\n  screenDraftForCredentials\(draft\)\n/\n/' \
+        "$REPO_ROOT/packages/agent/src/authoring/loop.ts" ;;
+    P)
+      perl -0pi -e "s/\n  'pemKey',//" \
+        "$REPO_ROOT/packages/agent/src/authoring/loop.ts" ;;
+    Q)
+      perl -0pi -e "s/\n  'apiKey',\n\] as const/\n  'apiKey',\n  'injectionShape',\n] as const/" \
+        "$REPO_ROOT/packages/agent/src/authoring/loop.ts" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac
 }
 
 run_leg () {
-  local name="$1" label="$2" allowed="$3"
+  local name="$1" label="$2" allowed="$3" filter="$4" suite="$5" prefix="$6"
 
   echo "=== MUTATION $name — $label"
   restore_subjects
@@ -135,7 +180,7 @@ run_leg () {
   done
 
   set +e
-  pnpm --filter "$CLI_FILTER" exec vitest run "$APPLY_SUITE" > "$LOG" 2>&1
+  pnpm --filter "$filter" exec vitest run "$suite" > "$LOG" 2>&1
   local rc=$?
   set -e
   echo "  leg exited $rc"
@@ -148,8 +193,8 @@ run_leg () {
   fi
 
   local red
-  red="$(grep -oE "^ FAIL  $APPLY_SUITE > .*" "$LOG" \
-    | sed "s|^ FAIL  $APPLY_SUITE > applyTestDraftAsOneCommit > ||" | sort -u)"
+  red="$(grep -oE "^ FAIL  $suite > .*" "$LOG" \
+    | sed "s|^ FAIL  $suite > ||" | sed "s|^$prefix > ||" | sort -u)"
   echo "  cells red:"
   local line fragment ok
   while IFS= read -r line; do
@@ -196,21 +241,35 @@ if [ "$BUILD_RC" -ne 0 ]; then
   echo "FATAL: the dependency rebuild failed — see $WORK/build.log" >&2
   exit 1
 fi
-set +e
-pnpm --filter "$CLI_FILTER" exec vitest run "$APPLY_SUITE" > "$LOG" 2>&1
-PREFLIGHT_RC=$?
-set -e
-echo "  $APPLY_SUITE exited $PREFLIGHT_RC"
-grep -E '^      Tests' "$LOG" || true
-if [ "$PREFLIGHT_RC" -ne 0 ]; then
-  echo "FATAL: $APPLY_SUITE is already red before any mutation" >&2
-  exit 1
-fi
+for preflight in "$CLI_FILTER|$APPLY_SUITE" "$AGENT_FILTER|$GATE_SUITE"; do
+  set +e
+  pnpm --filter "${preflight%%|*}" exec vitest run "${preflight##*|}" > "$LOG" 2>&1
+  PREFLIGHT_RC=$?
+  set -e
+  echo "  ${preflight##*|} exited $PREFLIGHT_RC"
+  grep -E '^      Tests' "$LOG" || true
+  if [ "$PREFLIGHT_RC" -ne 0 ]; then
+    echo "FATAL: ${preflight##*|} is already red before any mutation" >&2
+    exit 1
+  fi
+done
 echo
 
-run_leg M  "the dirty check widened to the whole repository" "$ALLOWED_M"
-run_leg N1 "the staging pathspec dropped for git add --all"  "$ALLOWED_N1"
-run_leg N2 "the commit pathspec dropped"                     "$ALLOWED_N2"
+APPLY_PREFIX="applyTestDraftAsOneCommit"
+
+run_leg M  "the dirty check widened to the whole repository" "$ALLOWED_M" \
+  "$CLI_FILTER" "$APPLY_SUITE" "$APPLY_PREFIX"
+run_leg N1 "the staging pathspec dropped for git add --all"  "$ALLOWED_N1" \
+  "$CLI_FILTER" "$APPLY_SUITE" "$APPLY_PREFIX"
+run_leg N2 "the commit pathspec dropped"                     "$ALLOWED_N2" \
+  "$CLI_FILTER" "$APPLY_SUITE" "$APPLY_PREFIX"
+run_leg O  "the credential gate unwired from the loop"       "$ALLOWED_O" \
+  "$AGENT_FILTER" "$GATE_SUITE" "a pasted credential never reaches an inbox"
+run_leg P  "a credential family deleted from the set"        "$ALLOWED_P" \
+  "$AGENT_FILTER" "$GATE_SUITE" ""
+run_leg Q  "injectionShape added to the credential set"      "$ALLOWED_Q" \
+  "$AGENT_FILTER" "$GATE_SUITE" ""
 
 echo "PASS — an unrelated dirty file cannot block the apply, an unrelated staged file cannot"
-echo "       join its commit, and the apply stages nothing but the one file it wrote."
+echo "       join its commit, the apply stages nothing but the one file it wrote, and the"
+echo "       credential family set can neither shrink nor grow without a cell saying so."

@@ -40,6 +40,11 @@
 // those plans add a case behind a discriminant every consumer already reads.
 
 import {
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+  scan,
+} from '@vostride/agent-qa-safety'
+import {
   CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
   DRAFT_STABILITY_RUNS_N,
   authoredSuiteTargetPath,
@@ -261,6 +266,124 @@ export class AuthoringDraftUnparsableError extends Error {
  * is a broken precondition rather than an ambiguous signal — filing an evidence-less finding would
  * report an application bug nobody observed, which is the cardinal error pointed the other way.
  */
+/**
+ * THE CREDENTIAL FAMILIES A DRAFT MAY NOT CARRY (394-10, T-394-43 · WTST-01).
+ *
+ * A SUBSET of the egress guardrail's OWN detector families, read off `scan`'s `fired[]`, so the
+ * write path and the egress path cannot answer "is this a secret" differently. A second detector
+ * here would be a second answer to one question, and the first time the two disagreed the weaker
+ * one would be the one running on the path that writes a file into somebody's repository.
+ *
+ * SPELLED AS A POSITIVE SET rather than as a negation, because a negation is only readable if you
+ * already know the whole family list — and because the two families it leaves out are DECISIONS
+ * rather than omissions:
+ *
+ *   `email` is out because a login test legitimately types `user@example.com`, and refusing it
+ *   would make this gate reject the most ordinary test the product authors. The safety policy
+ *   dispositions it `redact` on egress, which is the right answer for a prompt leaving the process
+ *   and the wrong one for a fixture value a test needs verbatim.
+ *
+ *   `injectionShape` is out because it is a SOFT ROUTING SIGNAL by construction — its own header in
+ *   `packages/safety/src/guardrail/detectors.ts` says a match costs Curator review rather than a
+ *   deterministic rejection, and the policy schema defaults it to `route`. Promoting it to a hard
+ *   write-path refusal would re-decide a safety posture this module does not own, and would do it
+ *   silently, with every other gate still green.
+ *
+ * BOTH EXCLUSIONS ARE ASSERTED ON THIS VALUE ITSELF in `__tests__/secret-guardrail.test.ts`, not
+ * inferred from a draft that happened to be accepted — so a later edge-case fix that GROWS this set
+ * fails a cell by name even when no behavioural case notices. Mutation P proves the set cannot
+ * shrink unnoticed and mutation Q proves it cannot grow; growth is the dangerous direction here,
+ * and only the pair covers both.
+ */
+export const CREDENTIAL_DETECTOR_FAMILIES = [
+  'awsKey',
+  'creditCard',
+  'pemKey',
+  'bearer',
+  'apiKey',
+] as const
+
+export type CredentialDetectorFamily = (typeof CREDENTIAL_DETECTOR_FAMILIES)[number]
+
+function isCredentialFamily(detector: string): detector is CredentialDetectorFamily {
+  return (CREDENTIAL_DETECTOR_FAMILIES as readonly string[]).includes(detector)
+}
+
+/**
+ * A draft carries a raw credential literal, so it never becomes a proposal.
+ *
+ * IT NAMES THE FAMILY, THE PLACE AND THE FINGERPRINT, AND NEVER THE VALUE. A refusal that quoted
+ * the credential back would copy it into a proposal record, a log line and a terminal scrollback —
+ * which is the disclosure the guardrail exists to prevent, performed by the guardrail. The scan
+ * already computes a `redactedFingerprint` (`sha256hex16` of the match) for exactly this purpose:
+ * a name for the match that is not the match, so a refusal can be specific without being
+ * disclosive. Minting a second hash here would be a second answer to "which match was it".
+ */
+export class DraftSecretRefusedError extends Error {
+  constructor(
+    readonly family: CredentialDetectorFamily,
+    readonly location: string,
+    readonly redactedFingerprint: string,
+    /** Absent when the match is in the test's NAME rather than in a step. */
+    readonly stepIndex?: number,
+  ) {
+    super(
+      `authoring: refusing to propose this draft — the ${family} detector fired at ${location} `
+        + `(fingerprint ${redactedFingerprint}). The matched value is deliberately not repeated `
+        + 'here. Reference the credential by name through the supported interpolation form instead '
+        + 'of pasting it into a test.',
+    )
+    this.name = 'DraftSecretRefusedError'
+  }
+}
+
+/**
+ * Refuse a draft whose content carries a raw credential literal — BEFORE it is verified, and
+ * therefore long before an envelope exists (T-394-43).
+ *
+ * WHY HERE RATHER THAN AT `testDraftProposal`, which is where the plan's word "proposal
+ * construction" points. Measured: `DraftReceipt.stepTable[].stepText` is verbatim step text and the
+ * receipt is PERSISTED (`.agent-qa/draft-receipts/<digest>.json`), and stage 4 spends
+ * `DRAFT_STABILITY_RUNS_N` real child runs typing that text into a real browser. A scan performed
+ * after stage 4 would therefore fire only once the credential had already been written to a durable
+ * file on disk and driven through a live application. The requirement is that no human is ever
+ * asked to accept such a draft; screening here satisfies it AND closes the two earlier exposures a
+ * later screen cannot.
+ *
+ * IT SCANS THE DRAFT AS PARSED, not the model's raw emission, so a credential introduced by D-18's
+ * refinement round or by a repair patch is caught on the same path as one the first compile wrote.
+ *
+ * ONE POLICY PER CALL, built from `defaultGuardrailPolicyInput` — the same input
+ * `createGuardrailProviderRequestHook` composes its policy from.
+ */
+export function screenDraftForCredentials(draft: {
+  readonly testName: string
+  readonly steps: readonly string[]
+}): void {
+  const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
+  const locations: readonly { text: string; label: string; stepIndex?: number }[] = [
+    { text: draft.testName, label: 'the test name' },
+    ...draft.steps.map((text, index) => ({
+      text,
+      label: `step ${index + 1}`,
+      stepIndex: index,
+    })),
+  ]
+
+  for (const location of locations) {
+    // `fired` is ordered by `DETECTOR_PRECEDENCE`, so the family reported is the highest-precedence
+    // one that matched rather than whichever the iteration happened to reach first.
+    const hit = scan(location.text, policy).fired.find((entry) => isCredentialFamily(entry.detector))
+    if (hit === undefined) continue
+    throw new DraftSecretRefusedError(
+      hit.detector as CredentialDetectorFamily,
+      location.label,
+      hit.redactedFingerprint,
+      location.stepIndex,
+    )
+  }
+}
+
 export class AuthoringLoopUnroutableEvidenceError extends Error {
   constructor(readonly disposition: DraftDisposition, readonly cause: Error) {
     super(
@@ -646,6 +769,13 @@ export async function runAuthoringLoop(
   // built against for a step that has no independent entry point.
   const refinement = await refineDraft(compiled, input, deps)
   const draft = refinement.draft
+
+  // T-394-43, AND IT SITS HERE FOR A MEASURED REASON — see `screenDraftForCredentials`. It is after
+  // the refinement round so a credential a patch introduced is screened on the same path as one the
+  // compile wrote, and before stage 4 so no gate run types the value into a live application and no
+  // receipt records it on disk. Nothing has been proposed at this point and nothing will be: the
+  // throw ends the invocation with no receipt, no envelope and no human asked.
+  screenDraftForCredentials(draft)
 
   stages.push('verify')
   const receipt = await deps.shelf.verifyDraft({

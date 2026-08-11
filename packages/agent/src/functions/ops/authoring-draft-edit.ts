@@ -61,6 +61,7 @@ import type {
 
 import { bindEntityNames } from '../../authoring/entity-binding.js'
 import type { EntityBinding } from '../../authoring/entity-binding.js'
+import { screenDraftForCredentials } from '../../authoring/loop.js'
 import { buildTieredPrompt } from '../../prompt/tiered-prompt-builder.js'
 import { FunctionNotBoundError } from '../spec.js'
 import type { FunctionSpec } from '../spec.js'
@@ -283,6 +284,13 @@ export const authoringDraftEditSpec: FunctionSpec<
     //    rather than one it would have to re-prove for a second implementation.
     const staged = await shelf.applyPatches(resolution.draft, parsed.data)
     if (staged.kind === 'unparsable') throw new EditResultUnparsableError(staged.reason)
+
+    // 6. THE SAME CREDENTIAL GATE THE LOOP RUNS (394-10, T-394-43). This op is the SECOND producer
+    //    of a `test-draft` proposal, and its artifact reaches the same inbox and the same
+    //    one-commit apply — so a gate that ran only on the loop's path would leave the write path
+    //    reachable by the shorter route. A model asked to "add the API key" is exactly how a
+    //    literal arrives here.
+    screenDraftForCredentials(staged.draft)
 
     const draftRef = {
       filePath: staged.draft.filePath,
