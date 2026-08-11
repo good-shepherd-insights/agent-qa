@@ -60,9 +60,18 @@ SIGNATURE_CELL="row clean-definitive-assertion-fail reproduces its frozen route"
 # its arm, and the evidence that arm has to carry — so a red in either is the differential working.
 # Anything else is collateral and is fatal. Keep this list minimal: widening it to quieten a
 # surprise red is how a differential stops being one.
+# 394-06 MEASURED AND ADDED THE LAST TWO, and they are the differential getting STRONGER rather
+# than the list being widened to quieten a surprise. With stage 5 wired, a router that routes a
+# clean definitive assertion-fail to repair does not merely misclassify: the loop's finding branch
+# is never taken, `repairDraft` runs, and the call-site cells that measured zero probe starts red
+# too. Every entry here is an assertion about the SAME signature row — a clean fail must not reach
+# repair — observed at the derivation and now also at the call site. Anything else is collateral
+# and is fatal.
 ALLOWED_RED_CELLS=(
   "$SIGNATURE_CELL"
   "refs the exact trace and both a11y snapshots at the failure point"
+  "finding-branch-never-repairs answers a finding without starting a single probe"
+  "finding-branch-never-repairs carries the evidence refs the route derived"
 )
 
 # ---- MUTATION CELL 2 (394-06) ------------------------------------------------------------------
@@ -326,9 +335,15 @@ printf 'typecheck leg exited %s\n' "$TSC2_RC"
   || fatal "the finding branch compiled while calling repairDraft — the two route arms are assignable"
 grep -q "authoring/loop.ts" "$WORK/mutation2-tsc.log" \
   || fatal "the typecheck red does not name $LOOP_REL"
-grep -q "repairDraft" "$WORK/mutation2-tsc.log" \
-  || fatal "the typecheck red does not name repairDraft"
-printf 'typecheck red names %s and repairDraft:\n' "$LOOP_REL"
+# THE EXACT SENTENCE SC-2 ASSERTS, required verbatim rather than the token `repairDraft`. Measured
+# at 394-06: tsc reports the call as `Argument of type 'FindingRoute' is not assignable to
+# parameter of type 'RepairRoute'` and never names the callee. Requiring the callee's name would
+# have passed on any unrelated type error in this file that happened to mention it; requiring this
+# sentence passes only on the non-assignability the two route arms exist to have.
+grep -qF "Argument of type 'FindingRoute' is not assignable to parameter of type 'RepairRoute'" \
+  "$WORK/mutation2-tsc.log" \
+  || fatal "the typecheck red is not the FindingRoute-to-RepairRoute non-assignability"
+printf 'typecheck red names %s and the non-assignability:\n' "$LOOP_REL"
 grep -m1 "authoring/loop.ts" "$WORK/mutation2-tsc.log" | sed 's/^/  /'
 
 # LEG B — the behaviour, because a build in which somebody reached for a cast still runs. esbuild
@@ -397,7 +412,7 @@ printf '\n'
 printf 'CELL 2\n'
 printf 'mutated file      : %s\n' "$LOOP_REL"
 printf 'mutation          : the stage-5 finding branch calling repairDraft\n'
-printf 'typecheck         : exit %s, naming %s and repairDraft\n' "$TSC2_RC" "$LOOP_REL"
+printf 'typecheck         : exit %s, naming %s and the FindingRoute-to-RepairRoute refusal\n' "$TSC2_RC" "$LOOP_REL"
 printf 'cell red by name  : %s\n' "$LOOP_SIGNATURE_CELL"
 printf 'under mutation    : %s (exit %s)\n' "$MUTATION2_COUNTS" "$MUTATION2_RC"
 printf 'sha256 before     : %s\n' "$LOOP_SHA_BEFORE"
