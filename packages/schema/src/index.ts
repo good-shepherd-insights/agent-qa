@@ -735,6 +735,9 @@ export {
   // 394 D-04: the stage-2 dedup refusal's payload and its two named continuations.
   AUTHORING_DEDUP_CONTINUATIONS,
   AuthoringDedupRefusalSchema,
+  // 394-09 D-21: the authoring.draft.edit op contracts — the patch contract's second consumer.
+  AuthoringDraftEditInputSchema,
+  AuthoringDraftEditOutputSchema,
   // 394-07 D-12: the authoring.funnel.get op contracts and the closed window scope.
   AuthoringFunnelGetInputSchema,
   AuthoringFunnelGetOutputSchema,
@@ -772,6 +775,8 @@ export type {
   AuthoringLoopOutcomeKind,
   AuthoringDedupContinuation,
   AuthoringDedupRefusal,
+  AuthoringDraftEditInput,
+  AuthoringDraftEditOutput,
   AuthoringFunnelGetInput,
   AuthoringFunnelGetOutput,
   AuthoringFunnelWindow,

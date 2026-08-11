@@ -101,6 +101,14 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
     intent: 'nothing in this fixture can author this',
     scope: { tier: 'product', key: 'nothing-in-this-fixture' },
   },
+  // 394-09 D-21: a PARSING input, on its sibling's reasoning — `{}` fails both non-empty fields,
+  // so the empty default would report an input error and this case would read that as
+  // `dispatched`. The exact-address ref keeps the leg aimed at the BINDING check: free text would
+  // reach the entity resolver first and refuse there instead.
+  'authoring.draft.edit': {
+    testRef: 'tests/nothing-in-this-fixture.yaml::Nothing In This Fixture',
+    intent: 'nothing in this fixture can edit this',
+  },
   // 394-07 D-12: a PARSING input, on its siblings' reasoning. Unlike `quarantine.list`, whose
   // input is genuinely the empty query and which therefore needs no row here, this op REQUIRES a
   // window — the projection's denominator, which nothing can guess — so the `{}` default would

@@ -114,6 +114,12 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // a draft authored from nothing this project knows is indistinguishable, at the caller, from
   // one authored from everything it knows.
   'authoring.draft.write': 'unbound',
+  // 394-09 D-21: UNBOUND here for its siblings' reason — this fixture supplies neither the shelf
+  // (its `boundThrough`) nor the draft evaluation its invoke checks by the same name.
+  // `composeLocalAgent` binds both wherever the host can parse a test file and reach a model, so
+  // both production hosts list it bound. A host missing either half must refuse by NAME rather
+  // than answer an edit it could not apply.
+  'authoring.draft.edit': 'unbound',
   // 394-07 D-12: UNBOUND here for its two siblings' reason — this fixture supplies no funnel
   // bundle. `composeLocalAgent` binds it wherever the host owns an agent-qa runtime root, which
   // is every local composition, so both production hosts list it bound. A host without one must
@@ -239,6 +245,15 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   'authoring.draft.write': {
     intent: 'nothing in this fixture can author this',
     scope: { tier: 'product', key: 'nothing-in-this-fixture' },
+  },
+  // 394-09 D-21: a PARSING input, on the same reasoning — validation precedes the binding check.
+  // BOTH fields are non-empty and required, so `{}` would report an input error and the unbound
+  // leg would certify nothing about binding. The ref is deliberately the exact-address spelling:
+  // free text would be routed to the entity resolver, and this leg has to reach the BINDING check
+  // rather than a never-guess refusal about a fixture that resolves nothing.
+  'authoring.draft.edit': {
+    testRef: 'tests/nothing-in-this-fixture.yaml::Nothing In This Fixture',
+    intent: 'nothing in this fixture can edit this',
   },
   // 394-07 D-12: a PARSING input, on the same reasoning — validation precedes the binding check.
   // The window is REQUIRED and closed, so `{}` would report an input error and the unbound leg

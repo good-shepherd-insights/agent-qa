@@ -205,6 +205,12 @@ const ALL_FUNCTION_IDS = [
   // It declares `run` AND `read`, so it is NON-read and drops out of safe-mode filtering with
   // `runs.start` and the write verbs — the derived drop-out set below grows by one and the filter
   // assertion keeps testing the RULE rather than a frozen list.
+  // 394-09 D-21: in SORT position BEFORE both its siblings (`edit` precedes `verify` precedes
+  // `write`), not appended — this list is compared against the registry's lexicographic listing, so
+  // an appended id would fail on ORDER while every member was present. It declares `test-write`
+  // AND `read`, so it is non-read and joins the derived drop-out set; nothing below is edited,
+  // which is what keeps the filter assertion a claim about the RULE rather than a frozen list.
+  'authoring.draft.edit',
   'authoring.draft.verify',
   // 394 D-01: in SORT position beside its sibling (`verify` precedes `write`), not appended —
   // this list is compared against the registry's lexicographic listing, so an appended id would

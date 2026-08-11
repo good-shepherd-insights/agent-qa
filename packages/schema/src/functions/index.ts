@@ -115,3 +115,14 @@ export type {
   AuthoringFunnelGetOutput,
   AuthoringFunnelWindow,
 } from './authoring'
+// 394-09 D-21: `authoring.draft.edit`'s contracts. The op proposes and nothing more — plan 10's
+// one-commit apply is what turns an accepted proposal into a repository change — so the output
+// carries the staged draft, what it was edited FROM, and the RFC-6902 ops that produced it.
+export {
+  AuthoringDraftEditInputSchema,
+  AuthoringDraftEditOutputSchema,
+} from './authoring'
+export type {
+  AuthoringDraftEditInput,
+  AuthoringDraftEditOutput,
+} from './authoring'

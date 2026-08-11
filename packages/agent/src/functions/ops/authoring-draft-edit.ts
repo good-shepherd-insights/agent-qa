@@ -1,0 +1,320 @@
+// `authoring.draft.edit` — the user-facing test edit as a catalogued capability (394-09, D-21).
+//
+// WHY IT REGISTERS, AND WHY NOW. "Edit that test to also verify the coupon banner" is a thing a
+// person asks, and 392 D-07 binds every registered op into the chat planner's toolset 1:1 — so
+// registering it is what makes the sentence work from chat, MCP and the CLI on the day it lands,
+// through one implementation rather than three. The timing is the other half: 394-03 minted the
+// RFC-6902 vocabulary and the CST applier, and until this op existed the repair loop was its only
+// consumer. A contract with one consumer is a contract shaped like its one caller, and this
+// project has already paid for that (the two-sided contract law, 388/390/392). Two real consumers
+// from day one is the whole reason D-21 puts the edit verb in 394 instead of the next phase.
+//
+// THE ID IS `authoring.draft.edit` — three lowercase dot segments, no underscore, `draft` the
+// subject and `edit` the verb, so the family reads `authoring.draft.{write, verify, edit}`. The two
+// shipped mechanisms that force the spelling were re-measured for this op rather than inherited:
+//   1. `parity-coverage.test.ts` requires every registered id to match `^[a-z]+(?:\.[a-z]+)+$` off
+//      the registry; `authoring.draft.edit` matches and `authoring.draft_edit` does not.
+//   2. `chat/tool-names.ts` maps ids onto provider-safe tool names by `.` ↔ `_` and REFUSES an id
+//      already carrying `_`, because such a name has two pre-images under the inverse — so an
+//      underscore id would raise `ChatToolNameError` for the WHOLE projection (T-394-07).
+//
+// IT IS NOT A LOOP STAGE, which is the argument `loop-ordering.test.ts` requires beside the name.
+// That pin exists to forbid promoting a stage of `authoring.draft.write` to its own registered op,
+// since a planner holding one could run compile without dedup or verify without either. This verb
+// is not a stage of anything: it takes an existing COMMITTED test and a change to make to it, it
+// has no place in the six-stage order, and invoking it before, during or after a loop invocation
+// answers the same question. It widens the domain without widening the loop's entry surface.
+//
+// TWO SCOPES, AND `run` IS ABSENT ON PURPOSE. This op edits a committed test and starts no run at
+// all. Declaring `run` would be padding, and padding on a verb is how a caller reaches an execution
+// power through an editing one: a grant issued for "let it edit my tests" would carry the power to
+// spend this machine on child processes (T-394-37). `test-write` is the power it actually exercises
+// — 394-01 minted that scope for precisely this class of verb — and `read` covers resolving the
+// target through the entity directory, which is the same read `entities.resolve` itself requires.
+//
+// IT DOES NOT RE-RUN THE GATES, and CONTEXT leaves that call to this plan, so it is made here and
+// written down. An edit to an already-committed test does not automatically re-verify: the
+// standalone `authoring.draft.verify` op exists for exactly the question "is this test worth
+// keeping", and folding it in would fire a nine-run fan-out on every one-line edit — the cost
+// WTST-08's preview exists to keep a person in charge of. One verb per question. A caller who wants
+// gate coverage over the edited draft invokes the verify op with the returned `draftRef.filePath`,
+// which is a shelf path that op already accepts.
+//
+// THE PROPOSAL IS THE END OF THIS OP. Nothing is written to the committed suite here: the edited
+// document is staged on the draft shelf and lands as a `test-draft` arm on 391's envelope. Plan
+// 10's one-commit apply is what turns an accepted proposal into a repository change, which is the
+// shipped propose-plus-apply posture rather than a new rule for this verb.
+
+import {
+  AuthoringDraftEditInputSchema,
+  AuthoringDraftEditOutputSchema,
+  CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
+  TestEditPatchSetSchema,
+  isEditablePointer,
+} from '@vostride/agent-qa-schema'
+import type {
+  AuthoringDraftEditInput,
+  AuthoringDraftEditOutput,
+  PatchOp,
+  TestEditPatchSet,
+} from '@vostride/agent-qa-schema'
+
+import { bindEntityNames } from '../../authoring/entity-binding.js'
+import type { EntityBinding } from '../../authoring/entity-binding.js'
+import { buildTieredPrompt } from '../../prompt/tiered-prompt-builder.js'
+import { FunctionNotBoundError } from '../spec.js'
+import type { FunctionSpec } from '../spec.js'
+
+export const AUTHORING_DRAFT_EDIT_FUNCTION_ID = 'authoring.draft.edit'
+
+/**
+ * The `agent_context` this op carries into the ONE tiered prompt builder (389 D-04).
+ *
+ * Pinned, and distinct from the loop's two, for the reason those are pinned: it lands in the stable
+ * tier, which is the byte prefix a provider's prompt cache keys on.
+ */
+export const AUTHORING_EDIT_AGENT_CONTEXT =
+  'authoring.draft.edit — express a requested change to an existing test as RFC-6902 patches'
+
+/** The bound ref named a file this host cannot resolve to a parsable test. */
+export class EditTargetUnreadableError extends Error {
+  constructor(readonly testRef: string, readonly reason: string) {
+    super(`${AUTHORING_DRAFT_EDIT_FUNCTION_ID}: ${testRef} is not an editable test: ${reason}`)
+    this.name = 'EditTargetUnreadableError'
+  }
+}
+
+/**
+ * The ref bound to an entity this build cannot open a file for.
+ *
+ * A NAMED refusal rather than a guess at a path. A resolved descriptor names a real entity, and a
+ * store that did not report a test identity has told this layer it cannot say which file that is —
+ * recovering one from the entity's title would be exactly the plausible-but-wrong attribution the
+ * render-never-recompute boundary exists to refuse.
+ */
+export class EditTargetHasNoFileError extends Error {
+  constructor(readonly testRef: string, readonly boundRef: string) {
+    super(
+      `${AUTHORING_DRAFT_EDIT_FUNCTION_ID}: "${testRef}" bound to ${boundRef}, which names a real `
+        + 'entity that this host cannot resolve to a test file; nothing was edited',
+    )
+    this.name = 'EditTargetHasNoFileError'
+  }
+}
+
+/** The model emitted something that is not a `{thoughts, patches}` set. */
+export class EditPatchSetUnparsableError extends Error {
+  constructor(readonly reason: string) {
+    super(`${AUTHORING_DRAFT_EDIT_FUNCTION_ID}: the emitted edit is not a patch set: ${reason}`)
+    this.name = 'EditPatchSetUnparsableError'
+  }
+}
+
+/**
+ * A patch addressed a document root outside the editable region (T-394-36).
+ *
+ * THE SAME PREDICATE THE APPLIER USES, ASKED ON THIS SIDE OF THE PORT. `isEditablePointer` is
+ * exported from `schema` precisely so the fence is expressible where the applier is not, and the
+ * host runs it again over the whole set before any mutation. That is the two-sided posture this
+ * phase applies to every rule that matters — not a second fence with its own idea of the region,
+ * because both sides read the one exported predicate over the one pinned root set.
+ *
+ * The value of asking here is that a retarget is refused before a model's emission reaches the
+ * host at all, and the refusal is a class a caller in this layer can catch by name rather than a
+ * host error arriving as prose.
+ */
+export class EditRegionRefusedError extends Error {
+  constructor(readonly offendingPaths: readonly string[]) {
+    super(
+      `${AUTHORING_DRAFT_EDIT_FUNCTION_ID}: ${offendingPaths.length} patch path(s) address a `
+        + `document root outside the editable region (${offendingPaths.join(', ')}); the WHOLE set `
+        + 'was refused and nothing was staged',
+    )
+    this.name = 'EditRegionRefusedError'
+  }
+}
+
+/** The patched document no longer parses as a test. Nothing was staged. */
+export class EditResultUnparsableError extends Error {
+  constructor(readonly reason: string) {
+    super(
+      `${AUTHORING_DRAFT_EDIT_FUNCTION_ID}: applying the edit produced a document that is not a `
+        + `parsable test, so nothing was staged: ${reason}`,
+    )
+    this.name = 'EditResultUnparsableError'
+  }
+}
+
+/**
+ * The WHOLE set is refused on the first offending path, never partially applied.
+ *
+ * The applier's own posture (394-03) and the repair fence's (394-06), for the same reason: a
+ * per-op check would already have rewritten the legitimate target before it refused the retarget,
+ * which leaves a half-edited document behind on the one path where correctness matters most.
+ */
+function fenceRegion(patchSet: TestEditPatchSet): void {
+  const offending = patchSet.patches
+    .map((patch: PatchOp) => patch.path)
+    .filter((path) => !isEditablePointer(path))
+  if (offending.length > 0) throw new EditRegionRefusedError(offending)
+}
+
+/** The bound target's identity, or the named refusal for a binding with no file behind it. */
+function identityOf(binding: EntityBinding, testRef: string) {
+  if (binding.identity === undefined) throw new EditTargetHasNoFileError(testRef, binding.ref)
+  return binding.identity
+}
+
+export const authoringDraftEditSpec: FunctionSpec<
+  AuthoringDraftEditInput,
+  AuthoringDraftEditOutput
+> = {
+  id: AUTHORING_DRAFT_EDIT_FUNCTION_ID,
+  summary: 'Express a requested change to an existing test as a proposal carrying its diff.',
+  // See the header for why `run` is absent and why that absence is the mitigation rather than an
+  // economy: this op starts zero runs, and a verb that declared the power to would be a grant a
+  // person issued for editing that also bought execution.
+  requiredScopes: ['test-write', 'read'],
+  resultKind: 'unary',
+  // The WRITE half — a host with no model and no shelf cannot express an edit at all. The read
+  // half (`draftEvaluation`, which resolves and parses the committed target) is checked by the same
+  // name inside the invoke, on `authoring-draft-write.ts`'s precedent: `boundThrough` names one
+  // key, and a host missing the other would otherwise list this op `bound` and then fail far from
+  // whichever half was forgotten.
+  boundThrough: 'draftShelf',
+  input: AuthoringDraftEditInputSchema,
+  output: AuthoringDraftEditOutputSchema,
+  // `mutating-local`, and the contrast with `authoring.draft.write` is deliberate. That op declares
+  // `mutating-shared` because it spends up to nine child `agent-qa run` processes of a person's
+  // compute (D-10), which is a cost only a person can consent to — so an ask nobody can answer is
+  // the right answer for an unattended host. This op takes ONE model call, starts zero runs, and
+  // writes only to the gitignored draft shelf; the artifact it produces is a proposal that a human
+  // still has to accept before anything reaches the repository. Raising it to the ask tier would
+  // deny every edit in CI and the daemon while protecting a decision the inbox already protects.
+  //
+  // The mechanics: `recognized: true` with no `readOnly` puts the classifier's floor at
+  // mutating-local, `declaredTier` states that tier rather than relying on the floor, and the name
+  // tokens (fn · authoring · draft · edit) hit neither destructive lexicon.
+  risk: {
+    name: `fn:${AUTHORING_DRAFT_EDIT_FUNCTION_ID}`,
+    recognized: true,
+    declaredTier: 'mutating-local',
+  },
+  async invoke(input, deps) {
+    const shelf = deps.draftShelf
+    const evaluation = deps.draftEvaluation
+    if (shelf === undefined || evaluation === undefined) {
+      throw new FunctionNotBoundError(AUTHORING_DRAFT_EDIT_FUNCTION_ID)
+    }
+
+    // 1. WHICH TEST. Never guessed at (D-19): an exact address is parsed, and anything else goes to
+    //    the house resolver, whose ambiguity and low-confidence arms are typed refusals that end
+    //    this invocation with nothing edited.
+    const [binding] = await bindEntityNames([input.testRef], { entities: deps.entities })
+    if (binding === undefined) throw new EditTargetUnreadableError(input.testRef, 'no binding')
+    const identity = identityOf(binding, input.testRef)
+
+    // 2. ITS BYTES, through the shipped resolution that already answers the workspace-boundary
+    //    question by name. The refusal arms collapse to one class here because the caller's next
+    //    move is the same for all of them — the ref named something this host will not edit — and
+    //    the arm is carried as the reason rather than lost.
+    const resolution = await evaluation.resolveDraft(identity.filePath)
+    if (resolution.kind !== 'parsed') {
+      throw new EditTargetUnreadableError(input.testRef, resolution.kind)
+    }
+    // The bound NAME must be the test that is actually there. A file whose single test has been
+    // renamed since the ref was minted would otherwise be edited under somebody else's name.
+    if (resolution.draft.testName !== identity.testName) {
+      throw new EditTargetUnreadableError(
+        input.testRef,
+        `the file holds "${resolution.draft.testName}", not "${identity.testName}"`,
+      )
+    }
+
+    // 3. ONE model call through the ONE builder, and one only. A retry hidden here would make this
+    //    verb's cost a number nobody counted.
+    const request = buildTieredPrompt({
+      agent_context: AUTHORING_EDIT_AGENT_CONTEXT,
+      stable: [
+        {
+          title: 'Role',
+          body: 'You edit an existing agent-qa test document. Reply with ONE JSON object and '
+            + 'nothing else: {"thoughts": string, "patches": [...]}, where each patch is an '
+            + 'RFC-6902 op with "op" one of add/remove/replace, a JSON Pointer "path", and for '
+            + 'add/replace a string "value". Only /steps, /name and /context may be addressed — '
+            + 'the target application and the test identity are not yours to change. Change as '
+            + 'little as the request needs.',
+        },
+      ],
+      context: [
+        { title: 'The requested change', body: input.intent },
+        {
+          title: 'The test as it stands',
+          body: [
+            `Test name: ${resolution.draft.testName}`,
+            'Steps, in order:',
+            ...resolution.draft.steps.map((step, index) => `  ${index}. ${step}`),
+          ].join('\n'),
+        },
+      ],
+      volatile: [],
+    })
+
+    const model = await shelf.model()
+    const emitted = await model.generate(request)
+
+    // 4. THE CONTRACT, then the FENCE, then the mutation — in that order, because a set that is
+    //    refused must be refused before anything is staged.
+    let json: unknown
+    try {
+      json = JSON.parse(emitted.text)
+    } catch (error) {
+      throw new EditPatchSetUnparsableError(`it is not JSON (${(error as Error).message})`)
+    }
+    const parsed = TestEditPatchSetSchema.safeParse(json)
+    if (!parsed.success) {
+      throw new EditPatchSetUnparsableError(parsed.error.issues[0]?.message ?? 'shape refused')
+    }
+    fenceRegion(parsed.data)
+
+    // 5. THE SAME APPLIER THE REPAIR LOOP USES, reached through the port because it needs the yaml
+    //    CST and this package may not depend on `core`. Reusing it is what makes "an edit never
+    //    reformats an untouched line" a property this op inherits from a frozen byte-diff corpus
+    //    rather than one it would have to re-prove for a second implementation.
+    const staged = await shelf.applyPatches(resolution.draft, parsed.data)
+    if (staged.kind === 'unparsable') throw new EditResultUnparsableError(staged.reason)
+
+    const draftRef = {
+      filePath: staged.draft.filePath,
+      testId: staged.draft.testId,
+      testName: staged.draft.testName,
+      contentDigest: staged.draft.contentDigest,
+    }
+
+    return {
+      draftRef,
+      editedFrom: {
+        filePath: identity.filePath,
+        testName: identity.testName,
+        boundBy: binding.source,
+      },
+      patches: parsed.data.patches,
+      thoughts: parsed.data.thoughts,
+      proposal: {
+        schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
+        draftRef,
+        // `unverified` is the honest value and not a placeholder: it is what the disposition
+        // vocabulary means by a draft no gate has judged, and this op deliberately runs none. A
+        // `keep-eligible` here would be a verdict about gates that never ran.
+        disposition: 'unverified',
+        // ZERO AND ZERO. The pair is WTST-08's honesty contract and it holds trivially here,
+        // which is the point: an edit previews no runs because it takes none, and reporting a
+        // preview it never made would put a number in front of a person that describes nothing.
+        runsPreviewed: 0,
+        runsConsumed: 0,
+        repairIterations: 0,
+        summaryLine: `${identity.testName} — edited, ${parsed.data.patches.length} change(s)`,
+      },
+    }
+  },
+}

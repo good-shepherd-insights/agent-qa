@@ -562,6 +562,16 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 394-09 D-21 · WTST-07: the user-facing edit. BOUND on this host for its siblings' reason —
+      // the CLI supplies the draft-authoring port and the draft evaluation, which are the two
+      // halves this op checks. It declares TWO scopes and NOT `run`: it edits a committed test and
+      // starts nothing, so a listing shows a person that letting the agent edit their tests does
+      // not also buy it the power to spend their machine on runs.
+      'authoring.draft.edit': {
+        requiredScopes: ['test-write', 'read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       // 394-07 D-12/D-13 · WTST-05: the honesty funnel read. BOUND on this host and — unlike its
       // two authoring siblings above — bound UNCONDITIONALLY, because it is a read over records
       // this composition owns by owning the agent-qa runtime root rather than a capability that

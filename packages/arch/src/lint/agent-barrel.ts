@@ -96,6 +96,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // than the orchestrator behind it — and the alternative is a literal in each, which 387 D-11
   // forbids for the reason a renamed op would then leave a string nothing dispatches. The SPEC
   // stays inside `functions/` like every other, so this opens no dispatch path.
+  // 394-09 plan 09, D-21: the user-facing edit's id, on the exact footing of its siblings and for
+  // the identical reason — the byte-confinement proof lives in `packages/cli` (the applier needs
+  // the yaml CST, which `agent` may not depend on) and reaches the op through `invokeFunction` by
+  // name, and 387 D-11 forbids the literal it would otherwise spell. The SPEC stays inside
+  // `functions/`, so this opens no dispatch path.
+  'AUTHORING_DRAFT_EDIT_FUNCTION_ID',
   'AUTHORING_DRAFT_VERIFY_FUNCTION_ID',
   // 394 plan 02, D-01: the authoring LOOP's id, on the exact footing of its sibling above and for
   // the identical reason — `composeLocalAgent()` and this phase's e2e proof both put this name on

@@ -19,6 +19,7 @@ import { toSchemaProjection } from './declaration-projection.js'
 import type { FunctionBindingStatus } from './spec.js'
 import { agentAskSpec } from './ops/agent-ask.js'
 import { analysisGetSpec } from './ops/analysis-get.js'
+import { authoringDraftEditSpec } from './ops/authoring-draft-edit.js'
 import { authoringDraftWriteSpec } from './ops/authoring-draft-write.js'
 import { authoringFunnelGetSpec } from './ops/authoring-funnel-get.js'
 import { authoringVerifyDraftSpec } from './ops/authoring-verify-draft.js'
@@ -234,6 +235,27 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // reads as a loop that filtered everything, which is the one wrong answer that would make the
   // acceptance-failure flag unable to fire on the very hosts that most need it.
   authoringFunnelGetSpec as FunctionSpec,
+  // 2026-08-11 (394-09 D-21 · WTST-07): the user-facing edit, and the patch contract's SECOND real
+  // consumer. Until this op existed, `applyPatchSetToTestDoc` and the RFC-6902 vocabulary had one
+  // caller — the repair loop — and a contract with one consumer is a contract shaped like its one
+  // caller. That is not a style objection: this project has twice paid for a one-sided contract
+  // that looked correct because only one side ever exercised it (the two-sided contract law).
+  //
+  // It is NOT a stage of `authoring.draft.write`, which is the argument `loop-ordering.test.ts`
+  // requires beside a new `authoring.` id. That pin forbids promoting a loop stage to its own
+  // registered op, because a planner holding one could reorder or skip the rest. This verb takes an
+  // existing COMMITTED test and a change to make to it; it has no position in the six-stage order,
+  // and invoking it before, during or after a loop invocation answers the same question.
+  //
+  // `mutating-local` and NOT the write op's `mutating-shared`: it takes one model call, starts zero
+  // runs, and writes only to the gitignored draft shelf. The consent that matters for an edit is
+  // the inbox accept that turns the proposal into a commit, which 391 already owns.
+  //
+  // Bound through the OPTIONAL `draftShelf` bundle; `draftEvaluation` is checked by the same name
+  // inside the invoke, because resolving the target's bytes and applying the patch set are two
+  // halves of one capability and a host that had only one of them would list this op `bound` and
+  // then fail far from whichever half was missing.
+  authoringDraftEditSpec as FunctionSpec,
 ]
 
 /**

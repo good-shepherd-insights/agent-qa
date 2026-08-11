@@ -15,6 +15,8 @@ import { z } from 'zod'
 
 import { AuthoringFunnelSchema } from '../authoring/funnel'
 import { DraftReceiptSchema, DraftRefSchema } from '../authoring/draft-receipt'
+import { PatchOpSchema } from '../authoring/patch-ops'
+import { TestDraftProposalV1Schema } from '../authoring/proposal-arms'
 import type { ScopeTier } from '../identity/scope-key'
 
 export const AuthoringVerifyDraftInputSchema = z.object({
@@ -268,3 +270,65 @@ export type AuthoringFunnelGetInput = z.infer<typeof AuthoringFunnelGetInputSche
 export const AuthoringFunnelGetOutputSchema = AuthoringFunnelSchema
 
 export type AuthoringFunnelGetOutput = z.infer<typeof AuthoringFunnelGetOutputSchema>
+
+// ---- `authoring.draft.edit`: the patch contract's second consumer (394-09, D-21 · WTST-07) ------
+
+/**
+ * What a caller hands the edit op.
+ *
+ * TWO FIELDS, AND BOTH CROSS A TRUST BOUNDARY. `testRef` decides WHICH of a person's committed
+ * tests is rewritten, and `intent` is free text that reaches a model and becomes a patch set. So
+ * `.strict()` and non-empty are the shape refusal, and everything a schema cannot check is refused
+ * downstream by a named error: the ref by the never-guess binder (D-19), the emitted patches by the
+ * region fence, and the patched document by the parser before anything is proposed.
+ *
+ * `testRef` accepts the `<filePath>::<testName>` spelling this project already prints — the same
+ * string a dedup refusal hands back — as well as free text, which is routed to the house resolver.
+ * Which of the two arrived is not a caller's declaration but a fact about the string, decided in
+ * one place; a `kind` discriminant here would let a caller assert an exact address for text that
+ * is not one.
+ */
+export const AuthoringDraftEditInputSchema = z.object({
+  /** The test to edit: `<filePath>::<testName>`, or a name to resolve. Never guessed at. */
+  testRef: z.string().min(1),
+  /** Plain-English description of the change. */
+  intent: z.string().min(1),
+}).strict()
+
+export type AuthoringDraftEditInput = z.infer<typeof AuthoringDraftEditInputSchema>
+
+/**
+ * What one edit answers: the proposal, the draft it points at, and the diff that produced it.
+ *
+ * THE DIFF RIDES THE OUTPUT AND NOT THE PROPOSAL ARM, which is a decision rather than an oversight.
+ * `TestDraftProposalV1` is 394-06's arm and it describes EVERY test draft this phase produces —
+ * including the ones the loop authors whole, which have no diff at all, because a new file has no
+ * untouched lines to have preserved (D-02). A `patches` field on the arm would therefore be absent
+ * or empty for the majority of the artifacts it appears on, and an inbox reader would have to learn
+ * that an empty diff means two different things. The patch set is a fact about THIS invocation, and
+ * this is the shape that invocation's caller reads.
+ *
+ * The ops are the diff in the contract's own vocabulary, and they are more precise than a line
+ * range: a JSON Pointer names a node, and the guarantee that the rendered bytes changed only where
+ * those pointers reach is 394-03's frozen corpus over the very applier this op reuses — which is
+ * the whole argument for reusing it rather than writing a second one.
+ */
+export const AuthoringDraftEditOutputSchema = z.object({
+  /** The edited draft, staged on the shelf. Nothing is written to the committed suite here. */
+  draftRef: DraftRefSchema,
+  /** The committed test this edit was applied to, as the binder resolved it. */
+  editedFrom: z.object({
+    filePath: z.string().min(1),
+    testName: z.string().min(1),
+    /** How the ref bound: an exact address, or a unique high-confidence resolver hit (D-19). */
+    boundBy: z.enum(['exact-ref', 'resolver']),
+  }).strict(),
+  /** The RFC-6902 ops that were applied — the diff. See the contract's doc block. */
+  patches: z.array(PatchOpSchema),
+  /** The model's own account of the change, stored as prose so nothing downstream parses it. */
+  thoughts: z.string(),
+  /** The `test-draft` arm this edit lands on 391's envelope as. */
+  proposal: TestDraftProposalV1Schema,
+}).strict()
+
+export type AuthoringDraftEditOutput = z.infer<typeof AuthoringDraftEditOutputSchema>

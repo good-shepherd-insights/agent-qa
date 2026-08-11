@@ -149,6 +149,12 @@ export { RUNS_START_FUNCTION_ID } from './functions/ops/runs-start.js'
 // because this phase's e2e proof reaches the loop the way a surface does: through
 // `invokeFunction`, by name, on a real registry.
 export { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from './functions/ops/authoring-draft-write.js'
+// 394-09 D-21 · WTST-07: the user-facing edit's id, on exactly the footing of the three ids above.
+// Published because this phase's byte-confinement proof has to reach the op the way a surface does
+// — through `invokeFunction`, by name, on a real registry — and that proof can only live in
+// `packages/cli`, where the yaml CST applier the op reuses is actually bound. The SPEC stays inside
+// `functions/`, so this opens no dispatch path (T-384-01).
+export { AUTHORING_DRAFT_EDIT_FUNCTION_ID } from './functions/ops/authoring-draft-edit.js'
 // 394 D-01 · WTST-01: the loop's own vocabulary. `AUTHORING_LOOP_STAGES` is the closed, ORDERED
 // stage list the ordering pin asserts sequence equality against, and `runAuthoringLoop` is the
 // orchestration itself — published so a pin can drive the real function over injected fakes rather

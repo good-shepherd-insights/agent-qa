@@ -337,6 +337,14 @@ function minimalDeps(): FunctionDeps {
  * every registered op 1:1) a way to run dedup, compile or route on its own and reorder or skip
  * the rest.
  *
+ * 394-09 ADDS `authoring.draft.edit`, and the same argument has to be made for it rather than
+ * assumed from the family name. It is not a stage of the loop: it takes an EXISTING committed test
+ * plus a change to make to it, where every loop stage takes an intent and a draft in flight. It has
+ * no position in the six-stage order — there is nothing it could be moved before or after — and
+ * invoking it before, during or after a loop invocation answers the same question. A planner
+ * holding it therefore gains a user-facing entry point and no way to run the loop out of order,
+ * which is the distinction this pin exists to make somebody state out loud.
+ *
  * The funnel read is not a stage and cannot become one. It runs over records the loop has already
  * written, it takes no draft and no intent, it starts nothing, and there is no ordering it could
  * be moved within: invoking it before, during or after a loop invocation answers a question about
@@ -345,6 +353,7 @@ function minimalDeps(): FunctionDeps {
  * loud, in the same change that makes it.
  */
 const EXPECTED_AUTHORING_IDS: readonly string[] = [
+  'authoring.draft.edit',
   'authoring.draft.verify',
   'authoring.draft.write',
   'authoring.funnel.get',

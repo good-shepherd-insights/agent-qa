@@ -24,6 +24,7 @@ import type { z } from 'zod'
 
 import { agentAskSpec } from '../functions/ops/agent-ask.js'
 import { analysisGetSpec } from '../functions/ops/analysis-get.js'
+import { authoringDraftEditSpec } from '../functions/ops/authoring-draft-edit.js'
 import { authoringDraftWriteSpec } from '../functions/ops/authoring-draft-write.js'
 import { authoringFunnelGetSpec } from '../functions/ops/authoring-funnel-get.js'
 import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
@@ -88,6 +89,7 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // and `receipt` are absent exactly on the stage-2 refusal arm (plan 04), so a catalogue that
   // published them as required would tell 396's consumers that every authoring call yields a
   // receipt, which is the one claim the honesty funnel's side counters exist to contradict.
+  'authoring.draft.edit': authoringDraftEditSpec,
   'authoring.draft.write': authoringDraftWriteSpec,
   // 394-07 D-12: the funnel read's contracts, on its siblings' footing. The map is compared for
   // exact key-set equality against the registry, so this row is what stops a capability joining
