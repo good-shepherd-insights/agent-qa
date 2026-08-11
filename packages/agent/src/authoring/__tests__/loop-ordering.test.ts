@@ -122,6 +122,13 @@ function observedLoop() {
       written.push(contents)
       return Promise.resolve({ kind: 'staged' as const, draft: { ...ACCEPT_CONTROL_DRAFT, filePath: STAGED_PATH } })
     },
+    // Never reached by this file: the accept control passes its gates, so stage 5 answers
+    // `drafted` and the repair arm is not entered. Present because the shelf's contract requires
+    // it — a host that can stage a draft can patch one — and a fake that answered a patch it was
+    // never asked for would be a second staging path this pin could accidentally observe.
+    applyPatches(): Promise<never> {
+      throw new Error('the accept control never enters repair, so no patch is ever applied')
+    },
     async verifyDraft(input): Promise<DraftReceipt> {
       expect(input.draftPath).toBe(STAGED_PATH)
       observed.push('verify')

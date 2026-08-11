@@ -24,6 +24,7 @@ import type {
   RunStartAcknowledgement,
   RunsStartInput,
   ScopeKey,
+  TestEditPatchSet,
 } from '@vostride/agent-qa-schema'
 
 import type { JobModelCapability } from '../jobs/record-llm-authorship.js'
@@ -198,6 +199,22 @@ export interface DraftShelfPortLike {
   model(): Promise<JobModelCapability>
   /** Parse, then write, in that order. An unparsable draft leaves nothing on disk. */
   write(contents: string): Promise<DraftStageOutcome>
+  /**
+   * Apply an RFC-6902 patch set to a staged draft and stage the result (394-06, D-09/D-20).
+   *
+   * THE ONE PATCH APPLIER, REACHED THROUGH A PORT RATHER THAN AN IMPORT. `applyPatchSetToTestDoc`
+   * lives in `core` — it needs the yaml CST so untouched nodes keep their source bytes — and this
+   * package may not depend on `core` at all (the FUNC-02 firewall stated at the top of this file).
+   * The host binds this verb over that applier, so the repair loop and the user-facing edit op are
+   * two consumers of one contract, which is the property a patch vocabulary with a single consumer
+   * cannot keep.
+   *
+   * It answers the SAME `DraftStageOutcome` the whole-document `write` answers, and for the same
+   * reason: what comes back from a model cannot be trusted to still be a runnable test document
+   * after it is applied, so the result is parsed before it is anything else, and an unparsable
+   * result leaves the shelf as it was.
+   */
+  applyPatches(draft: ParsedDraftLike, patchSet: TestEditPatchSet): Promise<DraftStageOutcome>
   /**
    * Stage 4, dispatched as the REGISTERED `authoring.draft.verify` op (D-01, op-calls-op).
    *

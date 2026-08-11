@@ -160,6 +160,22 @@ const CORPUS: readonly (readonly [string, TestEditPatchSet])[] = [
 
 // ---- the scripted host ------------------------------------------------------------------------
 
+/**
+ * How many patches this harness will hand out before it refuses — the INSTRUMENT's own bound.
+ *
+ * Measured, not guessed. An implementation in which a fenced patch does not consume an iteration
+ * does not FAIL the adversarial cells below: it never returns from them. Mutation C was run
+ * without this ceiling and vitest reported a killed worker and a V8 heap exhaustion after 26s,
+ * with no cell named at all — a differential whose red says only "something hung" has not shown
+ * which property broke. Neither does a per-cell timeout rescue it, because vitest's timeout marks
+ * a cell failed without interrupting the loop, which then exhausts the heap anyway.
+ *
+ * So the instrument carries the bound instead. Twelve is four times K: comfortably above any
+ * legitimate sequence, and finite, so an unbounded loop reds by NAME on the cell that provoked it
+ * rather than taking the whole file down with it.
+ */
+const HARNESS_EMISSION_CEILING = 12
+
 interface ProbeScript {
   /** One entry per probe, in order. `undefined` models a probe whose record is unreadable. */
   readonly probes: readonly (readonly MemberFixture[] | undefined)[]
@@ -270,6 +286,12 @@ function harness(emissions: readonly string[], script: ProbeScript): Harness {
     model: () => Promise.resolve({
       modelId: 'fixture:repair',
       generate(request: { prompt: string }) {
+        if (promptsSeen.length >= HARNESS_EMISSION_CEILING) {
+          throw new Error(
+            `the repair loop asked for patch ${promptsSeen.length + 1} of a scripted sequence `
+              + `capped at ${HARNESS_EMISSION_CEILING}: K did not bound the iterations`,
+          )
+        }
         promptsSeen.push(request.prompt)
         const text = emissions[emitted] ?? emissions.at(-1) ?? '{}'
         emitted += 1
@@ -298,6 +320,14 @@ function harness(emissions: readonly string[], script: ProbeScript): Harness {
 }
 
 const emit = (set: TestEditPatchSet): string => JSON.stringify(set)
+
+/**
+ * The per-cell timeout the four adversarial cells carry — a second net behind the harness ceiling.
+ *
+ * Every one of them scripts an emission that repeats forever, so K is the ONLY thing that can end
+ * the call.
+ */
+const ADVERSARIAL_CELL_TIMEOUT_MS = 5_000
 
 /** A probe in which every step the patch left in place passed — a repaired draft. */
 function passingProbe(): readonly MemberFixture[] {
@@ -429,7 +459,7 @@ describe('fenced-counts-against-K: a refused patch spends an iteration', () => {
     expect(outcome.iterations).toBe(3)
     expect(bench.startInputs).toHaveLength(1)
     expect(bench.promptsSeen).toHaveLength(3)
-  })
+  }, ADVERSARIAL_CELL_TIMEOUT_MS)
 })
 
 describe('K-termination: repair is bounded for every input', () => {
@@ -448,7 +478,7 @@ describe('K-termination: repair is bounded for every input', () => {
     expect(outcome.iterations).toBe(REPAIR_ITERATION_CAP)
     expect(bench.promptsSeen).toHaveLength(REPAIR_ITERATION_CAP)
     expect(bench.startInputs).toEqual([])
-  })
+  }, ADVERSARIAL_CELL_TIMEOUT_MS)
 
   it('K-termination takes at most K probe runs when every patch is admitted and every probe fails', async () => {
     const { repairDraft, REPAIR_ITERATION_CAP } = await loadRepair()
@@ -462,7 +492,7 @@ describe('K-termination: repair is bounded for every input', () => {
     expect(outcome.kind).toBe('abandoned')
     expect(bench.startInputs).toHaveLength(REPAIR_ITERATION_CAP)
     expect(outcome.iterations).toBe(REPAIR_ITERATION_CAP)
-  })
+  }, ADVERSARIAL_CELL_TIMEOUT_MS)
 
   it('K-termination stops a model whose emission is not a patch set at all', async () => {
     const { repairDraft, REPAIR_ITERATION_CAP } = await loadRepair()
@@ -473,7 +503,7 @@ describe('K-termination: repair is bounded for every input', () => {
     expect(outcome.kind).toBe('abandoned')
     expect(outcome.iterations).toBe(REPAIR_ITERATION_CAP)
     expect(bench.startInputs).toEqual([])
-  })
+  }, ADVERSARIAL_CELL_TIMEOUT_MS)
 })
 
 describe('one receipt per draft, and one disposition derivation', () => {
