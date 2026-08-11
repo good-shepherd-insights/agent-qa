@@ -39,11 +39,87 @@ const record: ProposalRecord = {
 }
 
 describe('the envelope vocabulary is closed and spelled once', () => {
-  it('has exactly one kind today, and the predicate matches it exactly', () => {
-    expect(PROPOSAL_KINDS).toEqual(['knowledge'])
+  // A HAND-MAINTAINED CENSUS, and the reason it stays hand-maintained: `PROPOSAL_KINDS` feeds two
+  // exhaustive `Record<ProposalKind, …>` sites, so a kind added without an answer at either FAILS
+  // TO COMPILE. What no compiler can catch is a kind added and then never decided about here, or
+  // one silently removed — a `.toEqual` over a literal list is the only cell that reds for that,
+  // and it is the site 394-06 had to update by hand when the list went from one member to three.
+  it('has exactly three kinds, and the predicate matches them exactly', () => {
+    expect(PROPOSAL_KINDS).toEqual(['knowledge', 'test-draft', 'finding'])
     expect(isProposalKind('knowledge')).toBe(true)
+    expect(isProposalKind('test-draft')).toBe(true)
+    expect(isProposalKind('finding')).toBe(true)
     expect(isProposalKind('config')).toBe(false)
     expect(isProposalKind(undefined)).toBe(false)
+  })
+
+  it('parses a test-draft record and a finding record on the same envelope (394 D-05/D-11)', () => {
+    const testDraft = ProposalRecordSchema.parse({
+      schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+      id: 'prop_cccccccc-dddd',
+      kind: 'test-draft',
+      origin: { emittedBy: 'authoring.draft.write', at: 2_000 },
+      payload: {
+        schemaVersion: 1,
+        draftRef: {
+          filePath: 'tests/.agent-qa-drafts/abc.yaml',
+          testId: 't_abc',
+          testName: 'Submit the local account form',
+          contentDigest: 'abc',
+        },
+        disposition: 'keep-eligible',
+        actualRuns: 7,
+        repairIterations: 1,
+        summaryLine: 'a repaired draft that passed its stability gate',
+      },
+    })
+    expect(testDraft.kind).toBe('test-draft')
+
+    const finding = ProposalRecordSchema.parse({
+      schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+      id: 'prop_eeeeeeee-ffff',
+      kind: 'finding',
+      origin: { emittedBy: 'authoring.draft.write', at: 3_000 },
+      payload: {
+        schemaVersion: 1,
+        draftRef: {
+          filePath: 'tests/.agent-qa-drafts/def.yaml',
+          testId: 't_def',
+          testName: 'Confirm the saved banner',
+          contentDigest: 'def',
+        },
+        signalClass: 'clean-definitive-assertion-fail',
+        failurePoint: {
+          runId: 'r_1',
+          stepIndex: 2,
+          stepText: 'Verify the banner says "Saved"',
+          reasoning: 'the banner said "Error"',
+        },
+        evidenceRefs: [
+          {
+            runId: 'r_1',
+            filePath: 'tests/.agent-qa-drafts/def.yaml',
+            testName: 'Confirm the saved banner',
+            stepIndex: 2,
+            channel: 'step-trace',
+          },
+        ],
+        explanation: 'the application shows an error where the test expects a confirmation',
+      },
+    })
+    expect(finding.kind).toBe('finding')
+  })
+
+  it('refuses a payload wearing the wrong kind — the discriminated union is the guard', () => {
+    // Nine kind/payload combinations exist for three legal ones. A flat `kind` enum beside a
+    // payload union would have admitted all nine, and every one of them would parse forever.
+    expect(ProposalRecordSchema.safeParse({
+      schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+      id: 'prop_aaaaaaaa-bbbb',
+      kind: 'finding',
+      origin: { emittedBy: 'knowledge.accept.propose', at: 1 },
+      payload: knowledgePayload,
+    }).success).toBe(false)
   })
 
   it('pins the four-state lifecycle in order (D-12)', () => {

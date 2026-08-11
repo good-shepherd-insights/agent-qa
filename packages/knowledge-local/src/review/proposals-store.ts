@@ -184,6 +184,17 @@ export interface StoredProposal {
 export function extractStoredProposal(raw: unknown): StoredProposal {
   if (typeof raw === 'object' && raw !== null && 'payload' in raw) {
     const record = ProposalRecordSchema.parse(raw)
+    // THIS STORE HOLDS KNOWLEDGE PROPOSALS. 394 gave the envelope two more kinds, and the wrapper
+    // is generic over all three — so a record of another kind is a well-formed document in the
+    // wrong directory, and refusing it by name is the only answer that does not silently read a
+    // finding as a knowledge proposal. The narrow is a `parse` on the arm rather than a cast: a
+    // cast would have compiled and then failed at whichever field was read first.
+    if (record.kind !== 'knowledge') {
+      throw new TypeError(
+        `the knowledge proposals store was handed a ${record.kind} proposal (${record.id}); `
+          + 'that kind is stored elsewhere and is not readable here',
+      )
+    }
     return { payload: record.payload, origin: record.origin }
   }
   return { payload: KnowledgeProposalV1Schema.parse(raw) }
@@ -845,7 +856,11 @@ export function listProposalEnvelopes(
     }
   }
 
-  const entries: ProposalInboxEntry[] = []
+  // Narrowed to the knowledge arm rather than to the generic entry: every envelope here came out
+  // of `envelopeAt`, which reads THIS store's files, and the ordering key below is a field only
+  // that arm has. Widening the local type would have needed a cast at the sort, which is the
+  // shape of edit that later reads a finding's payload as a knowledge proposal's.
+  const entries: { envelope: KnowledgeProposalEnvelope; applyInFlight: boolean }[] = []
   for (const [id, located] of durable) {
     const envelope = envelopeAt(located.path, located.state, options.now)
     if (envelope === undefined) continue
@@ -883,11 +898,14 @@ export function showProposalEnvelope(
 }
 
 /** Read one durable file and project it into the read-time envelope its state implies. */
+/** The knowledge arm, which is the only one this store's files can hold. */
+type KnowledgeProposalEnvelope = Extract<ProposalEnvelope, { kind: 'knowledge' }>
+
 function envelopeAt(
   path: string,
   state: ProposalDurableState,
   now: number,
-): ProposalEnvelope | undefined {
+): KnowledgeProposalEnvelope | undefined {
   const raw = readJsonIfPresent(path)
   if (raw === undefined) return undefined
   if (state === 'applied') {
@@ -916,7 +934,7 @@ function envelopeOf(
   durableState: ProposalDurableState,
   decision: ProposalDecisionRecord | undefined,
   now: number,
-): ProposalEnvelope {
+): KnowledgeProposalEnvelope {
   return {
     id: stored.payload.proposalId,
     kind: 'knowledge',

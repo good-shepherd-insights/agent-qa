@@ -33,6 +33,7 @@ import {
   PROPOSAL_EXPIRY_MS,
 } from '@vostride/agent-qa-schema'
 import type {
+  ProposalInboxEntryDto,
   Anchor,
   FunctionCaller,
   KnowledgeProposeOutcomeDto,
@@ -45,6 +46,24 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost } from '../composition/compose-local-agent.js'
+
+/**
+ * The KNOWLEDGE payload off an envelope this store produced (394-06).
+ *
+ * `ProposalEnvelope` became a discriminated union when 394 added the test-draft and finding arms,
+ * and this file drives the knowledge inbox end to end. Narrowing through an ASSERTION rather than
+ * a cast means a future envelope of another kind reaching this store reds here by name instead of
+ * being read as a knowledge proposal — which is precisely the confusion the discriminated form
+ * exists to prevent.
+ */
+function knowledgePayloadOf(
+  envelope: ProposalInboxEntryDto['envelope'],
+): Extract<ProposalInboxEntryDto['envelope'], { kind: 'knowledge' }>['payload'] {
+  expect(envelope.kind).toBe('knowledge')
+  if (envelope.kind !== 'knowledge') throw new Error('unreachable: asserted above')
+  return envelope.payload
+}
+
 
 const LIST_ID = 'proposals.list'
 const SHOW_ID = 'proposals.show'
@@ -190,7 +209,7 @@ describe('the proposals inbox, end to end over the composed host (PROP-03)', () 
     expect((await list()).entries.map((entry) => entry.envelope.id))
       .toEqual(listed.entries.map((entry) => entry.envelope.id))
     // …and it is the store's law, not the readdir order: minted-at ascending.
-    const instants = listed.entries.map((entry) => entry.envelope.payload.proposedAt)
+    const instants = listed.entries.map((entry) => knowledgePayloadOf(entry.envelope).proposedAt)
     expect([...instants].sort((left, right) => left - right)).toEqual(instants)
   })
 
@@ -212,9 +231,9 @@ describe('the proposals inbox, end to end over the composed host (PROP-03)', () 
     // assertion a claim about reading BEFORE deciding rather than after.
     expect(envelope.decision).toBeUndefined()
     // The forget receipt PREVIEW — "show me what would be removed" — answerable while pending.
-    expect(envelope.payload.verb).toBe('forget')
-    expect(envelope.payload.receiptPreview?.tombstonedRecords.length).toBeGreaterThan(0)
-    expect(envelope.payload.receiptPreview?.projectionsToScrub.length).toBeGreaterThan(0)
+    expect(knowledgePayloadOf(envelope).verb).toBe('forget')
+    expect(knowledgePayloadOf(envelope).receiptPreview?.tombstonedRecords.length).toBeGreaterThan(0)
+    expect(knowledgePayloadOf(envelope).receiptPreview?.projectionsToScrub.length).toBeGreaterThan(0)
     // Where to go and look, and who proposed it — the op id the KREV verb carried in itself.
     expect(envelope.evidenceRefs.some((ref) => ref.grain === 'record')).toBe(true)
     expect(envelope.origin?.emittedBy).toBe(PROPOSE_ID)
@@ -250,7 +269,7 @@ describe('the proposals inbox, end to end over the composed host (PROP-03)', () 
       expect(rejected.entry.envelope.decision?.decision).toBe('rejected')
       expect(rejected.entry.envelope.decision?.reason).toBe('the evidence is a month old')
       // RETAINED, not deleted: the proposal is still readable under the same id.
-      expect(rejected.entry.envelope.payload.proposalId).toBe(proposalId)
+      expect(knowledgePayloadOf(rejected.entry.envelope).proposalId).toBe(proposalId)
 
       const second = (await invokeFunction(
         host.registry,
@@ -300,7 +319,7 @@ describe('the proposals inbox, end to end over the composed host (PROP-03)', () 
 
   it('reports a pending proposal as expired once the window has passed, file untouched', async () => {
     const proposalId = await propose('checkout button', 11)
-    const proposedAt = (await list()).entries[0]!.envelope.payload.proposedAt
+    const proposedAt = knowledgePayloadOf((await list()).entries[0]!.envelope).proposedAt
 
     // A SECOND host over the SAME root, whose only difference is the clock the whole composition
     // reads. Nothing on disk moves; the question is asked from a month later.

@@ -313,6 +313,12 @@ function draftAuthoring(options: {
     // 394: the same posture `JOB_MODEL` takes above, on the other half of the authoring seam.
     // Nothing in THIS file authors a draft — it evaluates one that already exists — so a host
     // that staged bytes here would be modelling a call this suite never makes.
+    // 394-06: present because the port requires it, and never reached by this file — neither
+    // case routes to repair, so no patch is ever applied. A fake answering one it was not asked
+    // for would be a second staging path these e2e pins could accidentally observe.
+    applyPatchesToDraft(): Promise<never> {
+      throw new Error('this case never enters repair, so no patch set is ever applied')
+    },
     stageDraft() {
       return Promise.reject(new Error('no draft is authored from a keep-gate evaluation'))
     },

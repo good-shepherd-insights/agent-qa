@@ -103,13 +103,36 @@ function reportError(verb: string, error: unknown): void {
   process.exitCode = 1
 }
 
+/**
+ * The one-line headline per kind — a fourth exhaustive site over the kind vocabulary (394-06).
+ *
+ * The row used to read `payload.verb`, which was total while the envelope had one arm. With three
+ * it is a compile error, and the `satisfies never` below keeps it one: a kind added without a
+ * headline cannot fall through to a knowledge proposal's verb.
+ *
+ * REFS AND COUNTS ONLY, exactly as the row's own rule says. `show` is the verb a person reaches
+ * for when they want the bytes.
+ */
+function payloadHeadline(envelope: ProposalInboxEntryDto['envelope']): string {
+  switch (envelope.kind) {
+    case 'knowledge':
+      return envelope.payload.verb
+    case 'test-draft':
+      return `${envelope.payload.draftRef.testName} (${envelope.payload.disposition})`
+    case 'finding':
+      return `${envelope.payload.draftRef.testName} (${envelope.payload.signalClass})`
+    default:
+      return envelope satisfies never
+  }
+}
+
 /** One inbox row — the envelope's own facts, and never its payload's contents. */
 function renderEntry(entry: ProposalInboxEntryDto): string {
   const { envelope } = entry
   const origin = envelope.origin
   return [
     `${pc.bold(envelope.id)}  ${envelope.status}${entry.applyInFlight ? ' (apply in flight)' : ''}`,
-    `  ${envelope.kind}: ${envelope.payload.verb}`,
+    `  ${envelope.kind}: ${payloadHeadline(envelope)}`,
     ...(origin === undefined
       ? []
       : [`  from ${origin.emittedBy}${origin.runId === undefined ? '' : ` · run ${origin.runId}`}`]),

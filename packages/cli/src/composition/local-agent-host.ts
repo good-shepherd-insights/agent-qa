@@ -54,9 +54,12 @@ import type {
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import {
   AgentQaConfigSchema,
+  applyPatchSetToTestDoc,
   discoverWorkspaceFiles,
   generateRunId,
   parseTestFile,
+  parseTestFileWithTokens,
+  renderPatchedTestDoc,
   resolveKnowledgeRoot,
   resolveWorkspacePaths,
   workspaceRelativeIdentityPath,
@@ -70,6 +73,7 @@ import type {
   RiskActionDescriptor,
   RunId,
   RunsStartInput,
+  TestEditPatchSet,
 } from '@vostride/agent-qa-schema'
 
 import { loadConfigFile, loadEnvOverrides, resolveConfig } from '../config.js'
@@ -670,6 +674,54 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
           contentDigest,
         },
       }
+    },
+
+    /**
+     * Apply an RFC-6902 patch set to a staged draft and stage the result (394-06 D-09/D-20).
+     *
+     * THE ONE APPLIER, AND THE ONLY PLACE IT IS REACHED FROM THE AUTHORING PATH. `agent` declares
+     * the capability as a shelf verb because it may not depend on `core`; this is where the
+     * dependency actually exists, which is the same reason `stageDraft` above lives here.
+     *
+     * IT GOES THROUGH `stageDraft`, not around it. The rendered bytes are handed back to the
+     * same parse-then-write verb a fresh compile uses, so a patched document that no longer
+     * parses is refused with nothing written, and the new draft's digest is over the bytes that
+     * were actually stored — which is the whole of `DraftRef.contentDigest`'s promise that a later
+     * edit cannot inherit an earlier receipt.
+     *
+     * EVERY REFUSAL THE APPLIER RAISES BECOMES `unparsable` DATA. A pointer outside the editable
+     * region, an unresolvable path, a collection where a scalar was required: all of them are
+     * things a MODEL emitted, so they are ordinary answers rather than faults of this host, and
+     * the repair loop's own accounting is what decides what to do about one.
+     */
+    async applyPatchesToDraft(
+      draft: { readonly filePath: string },
+      patchSet: TestEditPatchSet,
+    ): Promise<DraftStageOutcome> {
+      let source: string
+      try {
+        source = readFileSync(resolve(configDir, draft.filePath), 'utf8')
+      } catch (error) {
+        return {
+          kind: 'unparsable',
+          reason: `the staged draft could not be read: ${
+            error instanceof Error ? error.message : String(error)}`,
+        }
+      }
+
+      let rendered: string
+      try {
+        const parsed = parseTestFileWithTokens(source, draft.filePath)
+        applyPatchSetToTestDoc(parsed, patchSet)
+        rendered = renderPatchedTestDoc(parsed, draft.filePath)
+      } catch (error) {
+        return {
+          kind: 'unparsable',
+          reason: error instanceof Error ? error.message : String(error),
+        }
+      }
+
+      return await this.stageDraft(rendered)
     },
 
     /**

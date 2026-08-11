@@ -216,6 +216,20 @@ export interface DraftShelfPortLike {
    */
   applyPatches(draft: ParsedDraftLike, patchSet: TestEditPatchSet): Promise<DraftStageOutcome>
   /**
+   * The run capability stage 5 reads evidence through and the repair arm probes with (394-06).
+   *
+   * ON THIS BUNDLE rather than as a fourth loop dep, on the bundle's own stated reasoning: none of
+   * these capabilities is independently bindable. `verifyDraft` already dispatches an op that
+   * starts gate runs, so a host that can verify a draft can start and read one by construction —
+   * a shelf bound without this would be a host that can ask whether a draft is any good and cannot
+   * look at the runs that answered.
+   *
+   * It is the HANDOFF reader (`DraftRunPortLike.get`) and not `runs.get`'s projection, because the
+   * router decides on per-step execution evidence — terminations, planning failures, cycle flags —
+   * and none of that survives a `RunDetail`, whose only step-shaped field is a count.
+   */
+  readonly runs: DraftRunPortLike
+  /**
    * Stage 4, dispatched as the REGISTERED `authoring.draft.verify` op (D-01, op-calls-op).
    *
    * A closure the composition root mints over the registry it is building, exactly as

@@ -19,6 +19,7 @@
 
 import { z } from 'zod'
 
+import { FindingProposalV1Schema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
 import { KnowledgeProposalV1Schema, ProposalIdSchema } from '../knowledge/proposal'
 
 /**
@@ -31,12 +32,21 @@ export const CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION = 1
 /**
  * The closed kind discriminant, spelled ONCE (388 C13).
  *
- * One member today, and the single-member array is the point rather than an accident: the
- * machinery that enumerates, decides and digests proposals is written against the discriminant,
- * so a second kind is a payload arm plus a member here — not a change to any consumer. 393/394
- * add test drafts, 395 adds config, 396 projects the same shape over MCP.
+ * The single-member array was the point rather than an accident: the machinery that enumerates,
+ * decides and digests proposals is written against the discriminant, so a second kind is a payload
+ * arm plus a member here — not a change to any consumer. 395 adds config, 396 projects the same
+ * shape over MCP.
+ *
+ * 394 LANDED TWO OF THEM, and the choice of two rather than one is the interesting part.
+ * `test-draft` is a verified draft awaiting the human decision D-05 says every draft gets, even a
+ * keep-eligible one. `finding` is a draft that failed for the RIGHT reason — the application looks
+ * wrong — and accepting it is an acknowledgement with no side effect (D-11). They are separate
+ * KINDS rather than one kind with a flag because this vocabulary feeds two exhaustive
+ * `Record<ProposalKind, …>` sites, so a discriminated kind gets compile-time coverage at both for
+ * free while a field would get none: an unhandled flag routes to the test-draft apply and renders
+ * the test-draft's decision line, and nothing anywhere fails to compile.
  */
-export const PROPOSAL_KINDS = ['knowledge'] as const
+export const PROPOSAL_KINDS = ['knowledge', 'test-draft', 'finding'] as const
 
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number]
 
@@ -163,6 +173,22 @@ export const ProposalRecordSchema = z.discriminatedUnion('kind', [
     origin: ProposalOriginSchema,
     payload: KnowledgeProposalV1Schema,
   }).strict(),
+  // 394 D-05: every draft proposes, keep-eligible included.
+  z.object({
+    schemaVersion: z.literal(CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION),
+    id: ProposalIdSchema,
+    kind: z.literal('test-draft'),
+    origin: ProposalOriginSchema,
+    payload: TestDraftProposalV1Schema,
+  }).strict(),
+  // 394 D-11: the app-broken branch, recorded and surfaced rather than filed.
+  z.object({
+    schemaVersion: z.literal(CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION),
+    id: ProposalIdSchema,
+    kind: z.literal('finding'),
+    origin: ProposalOriginSchema,
+    payload: FindingProposalV1Schema,
+  }).strict(),
 ])
 
 export type ProposalRecord = z.infer<typeof ProposalRecordSchema>
@@ -207,9 +233,9 @@ export function computeProposalEnvelopeStatus(input: {
  * a schema here would invite somebody to persist one — which is precisely the second
  * representation of `status` this module refuses to keep.
  */
-export interface ProposalEnvelope {
+/** Everything an envelope carries that does NOT depend on which kind it is. */
+export interface ProposalEnvelopeCommon {
   id: string
-  kind: ProposalKind
   /** Computed by {@link computeProposalEnvelopeStatus}, never read off a file. */
   status: ProposalEnvelopeStatus
   /**
@@ -228,6 +254,28 @@ export interface ProposalEnvelope {
   evidenceRefs: readonly ProposalEvidenceRef[]
   /** Present exactly when somebody decided. Absent for `pending` and for `expired`. */
   decision?: ProposalDecisionRecord
-  /** The kind's own content, unforked. */
-  payload: ProposalRecord['payload']
 }
+
+/**
+ * The READ-TIME envelope: the durable record plus the two things only a reader can know.
+ *
+ * A DTO rather than a zod schema, and that is the honest shape: nothing parses one off a wire.
+ * It is what a projection composes and a surface renders, so the contract it owes is a type, and
+ * a schema here would invite somebody to persist one — which is precisely the second
+ * representation of `status` this module refuses to keep.
+ *
+ * DISCRIMINATED ON `kind`, WITH THE PAYLOAD CORRELATED (394-06). It was a flat interface carrying
+ * `kind: ProposalKind` and `payload: ProposalRecord['payload']` as INDEPENDENT fields, which was
+ * harmless while there was one kind and one payload. With three it would be actively wrong: a
+ * reader narrowing on `envelope.kind === 'knowledge'` would learn nothing about `payload`, so
+ * every consumer would have to re-discriminate on the payload's own fields — a second
+ * classification of the same value, free to disagree with the first. Correlating them means the
+ * narrow a consumer already writes is the narrow that works.
+ */
+export type ProposalEnvelope = {
+  [K in ProposalKind]: ProposalEnvelopeCommon & {
+    kind: K
+    /** The kind's own content, unforked. */
+    payload: Extract<ProposalRecord, { kind: K }>['payload']
+  }
+}[ProposalKind]

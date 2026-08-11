@@ -332,6 +332,12 @@ function draftAuthoring(workspace: string, suiteText: readonly {
   }
 
   return {
+    // 394-06: present because the port requires it, and never reached by this file — neither
+    // case routes to repair, so no patch is ever applied. A fake answering one it was not asked
+    // for would be a second staging path these e2e pins could accidentally observe.
+    applyPatchesToDraft(): Promise<never> {
+      throw new Error('this case never enters repair, so no patch set is ever applied')
+    },
     stageDraft(contents: string): Promise<DraftStageOutcome> {
       const contentDigest = createHash('sha256').update(contents).digest('hex')
       const filePath = `${SHELF_DIR}/${contentDigest}.yaml`

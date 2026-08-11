@@ -76,8 +76,18 @@ function knowledgePayload(): KnowledgeProposalV1 {
   }
 }
 
+/**
+ * The KNOWLEDGE arm of the envelope, named once (394-06).
+ *
+ * `ProposalInboxEntryDto['envelope']` became a discriminated union when 394 added its two arms, and
+ * `Partial<>` over a union distributes into a shape whose `kind` and `payload` are free to come
+ * from different members — which is the very disagreement the discriminated form exists to refuse.
+ * Narrowing to the arm this file actually drives keeps the overrides honest.
+ */
+type KnowledgeEnvelope = Extract<ProposalInboxEntryDto['envelope'], { kind: 'knowledge' }>
+
 function inboxEntry(
-  overrides: Partial<ProposalInboxEntryDto['envelope']> & { applyInFlight?: boolean } = {},
+  overrides: Partial<KnowledgeEnvelope> & { applyInFlight?: boolean } = {},
 ): ProposalInboxEntryDto {
   const { applyInFlight = false, ...envelope } = overrides
   return {
@@ -275,15 +285,27 @@ describe('proposals.accept — plain applies, always escalates (D-01)', () => {
     expect(Object.keys(APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND).sort()).toEqual([...PROPOSAL_KINDS].sort())
   })
 
-  it('has no proposal kind whose apply class is protected TODAY — so the refusal arm below is arm plumbing', () => {
-    // This is the honest scoping of the next case, pinned rather than left in prose. The closed
-    // protected set holds `fn:proposals.accept` and `fn:grants.revoke`; neither is any kind's
-    // apply verb, so a real mint refusal is unreachable through this op today. The day a later
-    // phase protects a kind's apply verb — 395's config surface is the candidate — this case goes
-    // RED and forces somebody to decide what an accept of that kind should do.
-    for (const actionClass of Object.values(APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND)) {
-      expect(isProtectedActionClass(actionClass), actionClass).toBe(false)
-    }
+  it('partitions the kinds by whether their apply class is protected — the decision, not a default', () => {
+    // THIS CELL USED TO SAY "none of them", and its own comment said it would go RED the day a
+    // later phase protected a kind's apply verb, forcing somebody to decide what an accept of that
+    // kind should do. 394-06 was that day, and this is the decision.
+    //
+    // `finding` is PROTECTED, deliberately. Accepting one is an acknowledgement — D-11's
+    // record-and-surface: no file, no commit, no issue filed — so there is no committing op to
+    // read a class off, and the only honest answer to "what would a standing approval over this
+    // cover" is the accept verb itself, which is in the closed protected set. The consequence is
+    // the intended one: nobody may pre-approve acknowledging what the loop says is an application
+    // defect, because an acknowledgement is a person having looked and a standing one is a person
+    // having stopped looking. The mint refuses as DATA beside a successful apply, so the decision
+    // is still recorded — which is exactly the arm the next case exercises, now reachable.
+    //
+    // `test-draft` is NOT protected. Its apply is a real write plus one commit (D-06) landing with
+    // `authoring.draft.apply`, and D-05 names accept-with-always on that op as the lights-out path
+    // — so protecting it would close a door the phase deliberately leaves open.
+    const protectedKinds = Object.entries(APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND)
+      .filter(([, actionClass]) => isProtectedActionClass(actionClass))
+      .map(([kind]) => kind)
+    expect(protectedKinds).toEqual(['finding'])
   })
 
   it('reports a mint refusal BESIDE a successful apply, never instead of it', async () => {

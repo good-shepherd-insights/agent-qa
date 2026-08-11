@@ -816,6 +816,25 @@ export type {
   TestEditPatchSet,
 } from './authoring/index'
 
+// 394-06 (WTST-01/WTST-04, D-05/D-11): the two envelope payload arms — a verified draft awaiting a
+// human decision, and a correctly-failing draft filed as a finding — plus the ONE run-evidence
+// coordinate vocabulary the router builds and a finding carries.
+export {
+  CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
+  FindingFailurePointSchema,
+  FindingProposalV1Schema,
+  RUN_EVIDENCE_CHANNELS,
+  RunEvidenceRefSchema,
+  TestDraftProposalV1Schema,
+} from './authoring/index'
+export type {
+  FindingFailurePoint,
+  FindingProposalV1,
+  RunEvidenceChannel,
+  RunEvidenceRef,
+  TestDraftProposalV1,
+} from './authoring/index'
+
 // 387 ENTY-01/ENTY-02 — entity addressing: short-IDs, the agentqa:// URI scheme, the one
 // card shape and the two resolution unions.
 export {
@@ -966,6 +985,7 @@ export type {
   ProposalDecisionRecord,
   ProposalDurableState,
   ProposalEnvelope,
+  ProposalEnvelopeCommon,
   ProposalEnvelopeStatus,
   ProposalEvidenceGrain,
   ProposalEvidenceRef,

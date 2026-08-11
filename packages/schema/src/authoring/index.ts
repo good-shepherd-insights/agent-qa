@@ -44,3 +44,21 @@ export type {
   PatchOpKind,
   TestEditPatchSet,
 } from './patch-ops'
+
+// 394-06 (WTST-01/WTST-04, D-05/D-11): the two envelope payload arms, and the ONE evidence-ref
+// vocabulary the router builds and a finding carries.
+export {
+  CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
+  FindingFailurePointSchema,
+  FindingProposalV1Schema,
+  RUN_EVIDENCE_CHANNELS,
+  RunEvidenceRefSchema,
+  TestDraftProposalV1Schema,
+} from './proposal-arms'
+export type {
+  FindingFailurePoint,
+  FindingProposalV1,
+  RunEvidenceChannel,
+  RunEvidenceRef,
+  TestDraftProposalV1,
+} from './proposal-arms'

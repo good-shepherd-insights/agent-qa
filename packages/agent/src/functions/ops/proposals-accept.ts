@@ -71,6 +71,39 @@ import { knowledgeProposalApplySpec } from './knowledge-proposal-apply.js'
 export const PROPOSALS_ACCEPT_FUNCTION_ID = 'proposals.accept'
 
 /**
+ * This verb's own gate-seen action name, spelled once and read by the spec below AND by the
+ * `finding` route — so the two cannot drift into naming different classes for the same op.
+ */
+const PROPOSALS_ACCEPT_ACTION_CLASS = `fn:${PROPOSALS_ACCEPT_FUNCTION_ID}`
+
+/**
+ * The op plan 10 registers to WRITE an accepted draft into the suite and make its one commit
+ * (D-06). Named here as an id rather than as a class literal, so the route below derives the same
+ * `fn:`-prefixed spelling every registered op's `risk.name` carries — and so plan 10 replaces one
+ * import rather than hunting a string.
+ */
+const AUTHORING_DRAFT_APPLY_FUNCTION_ID = 'authoring.draft.apply'
+
+/**
+ * A kind whose apply op has not been registered yet. A NAMED refusal, never a silent success.
+ *
+ * UNREACHABLE IN PRODUCTION TODAY and stated rather than assumed: no envelope of this kind can
+ * exist in any store, because the loop that mints one (`authoring.draft.write`) is not a
+ * registered op in this build. The alternative — answering `applied` for a write that did not
+ * happen — would hand a person a receipt for a file that is not on disk, at the one verb whose
+ * whole job is to be the honest record of what a decision did.
+ */
+export class ProposalApplyRouteUnimplementedError extends Error {
+  constructor(readonly kind: ProposalKind, readonly awaitingFunctionId: string) {
+    super(
+      `proposals.accept: the ${kind} apply route is not implemented in this build; `
+        + `it lands with ${awaitingFunctionId}`,
+    )
+    this.name = 'ProposalApplyRouteUnimplementedError'
+  }
+}
+
+/**
  * How one proposal kind is committed, and therefore what a standing approval over it covers.
  *
  * A TOTAL `Record` over {@link PROPOSAL_KINDS} rather than a switch with a default: 393's test
@@ -98,6 +131,33 @@ const ROUTE_FOR_KIND: Readonly<Record<ProposalKind, ProposalApplyRoute>> = Objec
       return { kind: 'knowledge', outcome: await review.apply(proposalId) }
     },
   },
+  // 394 D-05/D-06: accepting a verified draft WRITES it into the suite and makes one git commit
+  // for that file. The write is plan 10's; what is decided here is that the route exists, that its
+  // covered class is the WRITING op's rather than this one's, and that until that op is registered
+  // the route refuses BY NAME instead of reporting a write that did not happen.
+  'test-draft': {
+    actionClass: `fn:${AUTHORING_DRAFT_APPLY_FUNCTION_ID}`,
+    apply(): Promise<ProposalsAcceptApplied> {
+      throw new ProposalApplyRouteUnimplementedError('test-draft', AUTHORING_DRAFT_APPLY_FUNCTION_ID)
+    },
+  },
+  // 394 D-11: ACKNOWLEDGE-ONLY. Accepting a finding records the decision and does nothing else —
+  // no file, no commit, no issue filed. The decision trail 391 already keeps is the entire effect,
+  // which is what "record-and-surface" means, and it is why this arm needs no port at all.
+  //
+  // ITS COVERED CLASS IS THIS VERB'S OWN, AND THAT IS THE DECISION RATHER THAN A CONVENIENCE.
+  // There is no committing op to read a class off, so the only honest answer to "what would a
+  // standing approval over acknowledging findings cover" is the accept itself — and
+  // `fn:proposals.accept` is a PROTECTED class, so such a grant can never be minted. Nobody may
+  // pre-approve acknowledging what the loop says is an application defect: an acknowledgement is
+  // a person having looked, and a standing one is a person having stopped looking. The mint
+  // refuses as DATA beside a successful apply, so the decision is still recorded.
+  finding: {
+    actionClass: PROPOSALS_ACCEPT_ACTION_CLASS,
+    async apply(): Promise<ProposalsAcceptApplied> {
+      return await Promise.resolve({ kind: 'finding', outcome: { acknowledged: true } })
+    },
+  },
 })
 
 /**
@@ -105,10 +165,13 @@ const ROUTE_FOR_KIND: Readonly<Record<ProposalKind, ProposalApplyRoute>> = Objec
  *
  * Exported so a differential can range it rather than restate it. Two properties are worth
  * measuring and neither is visible from inside this module: that each entry equals the registered
- * apply op's `risk.name` (the produced-not-literal rule, machine-checked), and that no entry is
- * currently a member of the closed protected set — which is what makes the accept's
- * `protected-class` arm a documented-unreachable path in production today, and what will force a
- * deliberate answer on the day a later phase protects a kind's apply verb.
+ * apply op's `risk.name` (the produced-not-literal rule, machine-checked), and WHICH entries are
+ * members of the closed protected set.
+ *
+ * 394-06 made the second question interesting. It used to have one answer for every kind — none —
+ * which made the accept's `protected-class` arm a documented-unreachable path. The `finding` arm
+ * is now deliberately protected, because acknowledging an application defect is precisely the
+ * thing nobody may pre-approve, so the partition is per kind and the corpus pins it that way.
  */
 export const APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND: Readonly<Record<ProposalKind, string>> =
   Object.freeze(
@@ -187,7 +250,7 @@ export const proposalsAcceptSpec: FunctionSpec<ProposalsAcceptInput, ProposalsAc
   input: ProposalsAcceptInputSchema,
   output: ProposalsAcceptOutputSchema,
   risk: {
-    name: `fn:${PROPOSALS_ACCEPT_FUNCTION_ID}`,
+    name: PROPOSALS_ACCEPT_ACTION_CLASS,
     recognized: true,
     readOnly: false,
     declaredTier: 'mutating-shared',

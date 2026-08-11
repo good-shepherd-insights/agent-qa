@@ -251,12 +251,19 @@ function applyToSteps(draft: ParsedDraftLike, set: TestEditPatchSet): ParsedDraf
   return { ...draft, steps, contentDigest: `${draft.contentDigest}+${set.patches.length}` }
 }
 
-function harness(emissions: readonly string[], script: ProbeScript): Harness {
+function harness(
+  emissions: readonly string[],
+  script: ProbeScript,
+  /** Runs already on record, addressed by id — what stage 5's routing handoff reads. */
+  preloaded: Readonly<Record<string, readonly MemberFixture[]>> = {},
+): Harness {
   const promptsSeen: string[] = []
   const startInputs: RunsStartInput[] = []
   const appliedSets: TestEditPatchSet[] = []
   const verifyCalls: number[] = []
-  const documents = new Map<string, CompletedRunHandoff | undefined>()
+  const documents = new Map<string, CompletedRunHandoff | undefined>(
+    Object.entries(preloaded).map(([runId, members]) => [runId, runDocument(runId, members)]),
+  )
   let emitted = 0
 
   const runs: DraftRunPortLike = {
@@ -282,7 +289,12 @@ function harness(emissions: readonly string[], script: ProbeScript): Harness {
     },
   }
 
+  // ONE run port instance, reachable both as the repair loop's own dep and as the shelf's member.
+  // The shelf carries it because stage 5 reads run evidence through the same capability the
+  // repair arm probes with — a second instance here would let a cell count starts on one and
+  // assert against the other.
   const shelf = {
+    runs,
     model: () => Promise.resolve({
       modelId: 'fixture:repair',
       generate(request: { prompt: string }) {
@@ -564,5 +576,87 @@ describe('the repair prompt carries the run evidence at the failure point', () =
     expect(prompt).toContain('step 2')
     expect(prompt).toContain('state-before')
     expect(prompt).toContain('termination')
+  })
+})
+
+// ---- SC-2 at the CALL SITE: the finding branch never enters repair -----------------------------
+//
+// The type-level half lives in `router.test-d.ts` and says the call does not compile. This is the
+// BEHAVIOURAL half, and it is what `scripts/394-router-mutation.sh` cell 2 reds: a differential
+// that could only red a typecheck would say nothing about a build in which somebody reached for a
+// cast, and vitest does not typecheck `.test.ts` at all.
+
+/** A clean definitive assertion-fail: the verifier said no, a verdict source says which path. */
+const CLEAN_FAIL_MEMBER: MemberFixture = {
+  filePath: DRAFT.filePath,
+  testName: DRAFT.testName,
+  outcome: 'failed',
+  steps: BEST_PRIOR_MEMBER.steps,
+  failedSteps: [2],
+  verdictSourceSteps: [{ stepIndex: 2, source: 'assert-value' as never }],
+}
+
+const ROUTING_RUN_ID = 'r_gate-2'
+
+/** A `rejected` receipt whose last gate run is the one stage 5 reads evidence out of. */
+const REJECTED_RECEIPT: DraftReceipt = DraftReceiptSchema.parse({
+  ...FINAL_RECEIPT,
+  draftRef: DRAFT_REF,
+  gates: {
+    ...FINAL_RECEIPT.gates,
+    executesDefinitive: { pass: false, runRefs: [ROUTING_RUN_ID], indefinitiveRunRefs: [] },
+  },
+  gateRuns: [{
+    runId: ROUTING_RUN_ID,
+    memberOutcome: 'failed',
+    definitive: true,
+    healed: false,
+    reason: 'fixture: the claim was evaluated and did not hold',
+  }],
+  disposition: 'rejected',
+})
+
+describe('stage 5: the app-broken branch cannot reach repair', () => {
+  it('finding-branch-never-repairs answers a finding without starting a single probe', async () => {
+    const { routeAfterVerify } = await import('../loop.js')
+    // Nothing is scripted for the model or for probes. If the finding branch reached repair, the
+    // very first thing it would do is ask for a patch — so this harness has nothing to give it.
+    const bench = harness([], { probes: [] }, { [ROUTING_RUN_ID]: [CLEAN_FAIL_MEMBER] })
+
+    const outcome = await routeAfterVerify(DRAFT, REJECTED_RECEIPT, {
+      read: {
+        getAuthoringBrief: () => { throw new Error('stage 5 does not read the brief') },
+        suiteTextCorpus: () => { throw new Error('stage 5 does not screen the suite') },
+      },
+      shelf: bench.deps.shelf as never,
+    })
+
+    expect(outcome.kind).toBe('finding')
+    // MEASURED, not described: no probe was started and no patch was ever asked for. A finding
+    // branch wired into `repairDraft` spends a child process against the user's application in
+    // order to "fix" a test whose claim the application simply did not satisfy — which is oracle
+    // capture by construction, the one implementation D-08 exists to forbid.
+    expect(bench.startInputs).toEqual([])
+    expect(bench.promptsSeen).toEqual([])
+    expect(bench.appliedSets).toEqual([])
+  })
+
+  it('finding-branch-never-repairs carries the evidence refs the route derived', async () => {
+    const { routeAfterVerify } = await import('../loop.js')
+    const bench = harness([], { probes: [] }, { [ROUTING_RUN_ID]: [CLEAN_FAIL_MEMBER] })
+
+    const outcome = await routeAfterVerify(DRAFT, REJECTED_RECEIPT, {
+      read: {
+        getAuthoringBrief: () => { throw new Error('stage 5 does not read the brief') },
+        suiteTextCorpus: () => { throw new Error('stage 5 does not screen the suite') },
+      },
+      shelf: bench.deps.shelf as never,
+    })
+
+    expect(outcome.kind === 'finding' && outcome.proposal.signalClass)
+      .toBe('clean-definitive-assertion-fail')
+    expect(outcome.kind === 'finding' && outcome.proposal.evidenceRefs.length).toBeGreaterThan(0)
+    // The MODEL fills this downstream, once the branch is already chosen — never before.
+    expect(outcome.kind === 'finding' && outcome.proposal.explanation).toBe('')
   })
 })

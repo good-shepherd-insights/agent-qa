@@ -15,6 +15,7 @@
 
 import { z } from 'zod'
 
+import { FindingProposalV1Schema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
 import { KnowledgeProposalV1Schema, ProposalIdSchema } from '../knowledge/proposal'
 import { KnowledgeApplyOutcomeSchema } from '../knowledge/review-verbs'
 import { GrantRecordOutcomeSchema } from '../safety/grant-ops'
@@ -43,15 +44,30 @@ import type { ProposalEnvelope } from './envelope'
  * and would strip the decision trail out of every surface — the failure mode a `.strict()` object
  * cannot catch, because the value it is stripping is one it was never told to expect.
  */
-export const ProposalEnvelopeSchema = z.object({
-  id: z.string().min(1),
-  kind: z.enum(PROPOSAL_KINDS),
-  status: z.enum(PROPOSAL_ENVELOPE_STATUSES),
-  origin: ProposalOriginSchema.optional(),
-  evidenceRefs: z.array(ProposalEvidenceRefSchema).readonly(),
-  decision: ProposalDecisionRecordSchema.optional(),
-  payload: KnowledgeProposalV1Schema,
-}).strict()
+const proposalEnvelopeArm = <K extends string, P extends z.ZodType>(kind: K, payload: P) =>
+  z.object({
+    id: z.string().min(1),
+    kind: z.literal(kind),
+    status: z.enum(PROPOSAL_ENVELOPE_STATUSES),
+    origin: ProposalOriginSchema.optional(),
+    evidenceRefs: z.array(ProposalEvidenceRefSchema).readonly(),
+    decision: ProposalDecisionRecordSchema.optional(),
+    payload,
+  }).strict()
+
+/**
+ * A DISCRIMINATED UNION since 394-06, mirroring the DTO's own correlation.
+ *
+ * A flat `kind: z.enum(PROPOSAL_KINDS)` beside `payload: z.union([...])` would parse an envelope
+ * whose kind said `finding` and whose payload was a knowledge proposal — nine combinations for
+ * three legal ones, all of them valid on the wire. The discriminated form admits the three, and
+ * the parity pin below then carries that same guarantee into the DTO.
+ */
+export const ProposalEnvelopeSchema = z.discriminatedUnion('kind', [
+  proposalEnvelopeArm('knowledge', KnowledgeProposalV1Schema),
+  proposalEnvelopeArm('test-draft', TestDraftProposalV1Schema),
+  proposalEnvelopeArm('finding', FindingProposalV1Schema),
+])
 
 /** True only when the two types are mutually assignable — a real equality, not a subtype check. */
 type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -198,6 +214,26 @@ export type ProposalsAcceptInput = z.infer<typeof ProposalsAcceptInputSchema>
  */
 export const ProposalsAcceptAppliedSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('knowledge'), outcome: KnowledgeApplyOutcomeSchema }).strict(),
+  // 394 D-05: the apply that WRITES the draft into the suite and makes one git commit for it
+  // (D-06). Plan 10 implements the write; the outcome shape is named here because this is the
+  // surface that reports it.
+  z.object({
+    kind: z.literal('test-draft'),
+    outcome: z.object({
+      /** Where the accepted draft was written. */
+      filePath: z.string().min(1),
+      /** The one commit D-06 makes for that file, or absent when the apply is not yet wired. */
+      commit: z.string().min(1).optional(),
+    }).strict(),
+  }).strict(),
+  // 394 D-11: record-and-surface. Accepting a finding is an ACKNOWLEDGEMENT — the decision trail
+  // is the whole of what happens, so this arm carries no target and no receipt of a change. It is
+  // a distinct arm rather than an omitted one so a surface can render "acknowledged" instead of
+  // having to infer it from a missing field.
+  z.object({
+    kind: z.literal('finding'),
+    outcome: z.object({ acknowledged: z.literal(true) }).strict(),
+  }).strict(),
 ])
 
 export type ProposalsAcceptApplied = z.infer<typeof ProposalsAcceptAppliedSchema>

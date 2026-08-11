@@ -187,6 +187,7 @@ import type {
   RunEventEnvelope,
   RunId,
   RunStartAcknowledgement,
+  TestEditPatchSet,
   RunsStartInput,
   ScopeKey,
   SessionLogPort,
@@ -951,6 +952,18 @@ export interface DraftAuthoringPort {
    * cannot inherit an earlier receipt — is only true while the digest is over what was stored.
    */
   stageDraft(contents: string): Promise<DraftStageOutcome>
+  /**
+   * 394-06 D-09/D-20: apply an RFC-6902 patch set to a staged draft and stage the result.
+   *
+   * AT THE HOST for the same reason its two neighbours are: `applyPatchSetToTestDoc` needs the
+   * yaml CST from `@vostride/agent-qa-core`, which neither this package nor `agent` may import.
+   * It answers the same `DraftStageOutcome`, so a patch that renders an unrunnable document is
+   * refused with the shelf untouched rather than written and discovered later.
+   */
+  applyPatchesToDraft(
+    draft: ParsedDraftDescriptor,
+    patchSet: TestEditPatchSet,
+  ): Promise<DraftStageOutcome>
 }
 
 /**
@@ -2596,6 +2609,29 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         draftShelf: {
           model: async () => await input.model(),
           write: (contents: string) => authoringLoopHost.stageDraft(contents),
+          // 394-06 D-09/D-20: the ONE RFC-6902 applier, reached at the host because it needs the
+          // yaml CST and neither `agent` nor this package may depend on `core`. Same seam,
+          // same reason and same shape as `stageDraft` right above it.
+          applyPatches: (draft, patchSet) => authoringLoopHost.applyPatchesToDraft(draft, patchSet),
+          // 394-06: stage 5's evidence reader and the repair arm's probe runner. The reader is
+          // the same `runsReader` the gate evaluator is bound to — a second reader would be a
+          // second answer to what one run recorded — and the starter dispatches the REGISTERED
+          // `runs.start` on the gate-run caller, so a probe is marker-stamped exactly as a gate
+          // run is and is excluded from outcomes for the same reason.
+          runs: {
+            start: async (request): Promise<RunStartAcknowledgement> => {
+              if (composedRegistry === undefined) {
+                throw new TypeError('a repair probe started before its registry finished composing')
+              }
+              return await invokeFunction(
+                composedRegistry,
+                RUNS_START_FUNCTION_ID,
+                request,
+                AUTHORING_GATE_RUN_CALLER,
+              ) as RunStartAcknowledgement
+            },
+            get: (runId: string) => runsReader.get(runId as RunId),
+          },
           verifyDraft: async (verifyInput: AuthoringVerifyDraftInput): Promise<DraftReceipt> => {
             if (composedRegistry === undefined) {
               throw new TypeError('a draft was verified before its registry finished composing')

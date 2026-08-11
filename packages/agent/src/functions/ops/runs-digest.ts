@@ -82,6 +82,14 @@ const SHORT_ID_LENGTH = 12
  */
 const REQUIRED_DECISION: Record<ProposalKind, string> = {
   knowledge: 'accept or reject',
+  // 394 D-05: accepting WRITES the draft into the suite and commits it, so the decision is about
+  // the repository rather than about the knowledge store — and the line says so, because "accept
+  // or reject" would read identically for two decisions with very different consequences.
+  'test-draft': 'add this test to the suite, or reject it',
+  // 394 D-11: an acknowledgement, and the wording refuses to promise anything else. Accepting a
+  // finding files nothing and fixes nothing; it records that a person looked at what the loop
+  // found. A line reading "accept or reject" here would imply an apply that does not exist.
+  finding: 'acknowledge this application finding, or reject it',
 }
 
 /** A target ref as a REF — the id or short-ID it addresses, never the record's content. */
@@ -98,7 +106,7 @@ function targetRefText(target: KnowledgeTargetRef): string {
  * reason text — all of which are on the payload, all of which are one `proposals.show` away,
  * and none of which belongs in a value three surfaces render directly.
  */
-function summaryLineFor(payload: KnowledgeProposalV1): string {
+function knowledgeSummaryLine(payload: KnowledgeProposalV1): string {
   const deltas = `${payload.deltas.length} delta${payload.deltas.length === 1 ? '' : 's'}`
   const tombstoned = payload.receiptPreview?.tombstonedRecords.length
   return [
@@ -108,11 +116,38 @@ function summaryLineFor(payload: KnowledgeProposalV1): string {
   ].join(', ')
 }
 
+/**
+ * One line per proposal, per kind — a THIRD exhaustive site over the kind vocabulary (394-06).
+ *
+ * It became one when the envelope's payload was correlated with its kind. Before that the digest
+ * read `payload.verb` off a type that had exactly one arm; a kind added without a line here is now
+ * a compile error at the `satisfies never` below, which is the same mechanism the two `Record`s
+ * use and for the same reason: a fall-through would render a test draft wearing a knowledge
+ * proposal's summary.
+ *
+ * Every arm is REFS AND COUNTS (D-18). The draft's steps, the finding's explanation and the run's
+ * evidence all stay one `proposals.show` away.
+ */
+function summaryLineFor(envelope: ProposalEnvelope): string {
+  switch (envelope.kind) {
+    case 'knowledge':
+      return knowledgeSummaryLine(envelope.payload)
+    case 'test-draft':
+      return `test draft ${envelope.payload.draftRef.testName}, `
+        + `${envelope.payload.disposition}, ${envelope.payload.actualRuns} run(s)`
+    case 'finding':
+      return `finding on ${envelope.payload.draftRef.testName}, `
+        + `${envelope.payload.signalClass}, ${envelope.payload.evidenceRefs.length} evidence ref(s)`
+    default:
+      return envelope satisfies never
+  }
+}
+
 function proposalRow(envelope: ProposalEnvelope): RunDigestProposalRow {
   return {
     id: envelope.id,
     shortId: envelope.id.slice(0, SHORT_ID_LENGTH),
-    summaryLine: summaryLineFor(envelope.payload),
+    summaryLine: summaryLineFor(envelope),
     // WR-05: only a PENDING proposal is owed a decision. An applied, rejected or expired one is
     // listed because it is part of what this run produced, and asking a person to accept or
     // reject something already decided is an instruction they cannot carry out — so the slot

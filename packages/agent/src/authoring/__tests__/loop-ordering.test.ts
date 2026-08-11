@@ -122,6 +122,10 @@ function observedLoop() {
       written.push(contents)
       return Promise.resolve({ kind: 'staged' as const, draft: { ...ACCEPT_CONTROL_DRAFT, filePath: STAGED_PATH } })
     },
+    // The accept control passes its gates, so stage 5 answers `drafted` without consulting a run —
+    // but a shelf that could not run one would be a host that verifies drafts and cannot look at
+    // what answered. Bound to the shared fake so the port is real rather than absent.
+    runs: fakeRunPort({ runs: [] }),
     // Never reached by this file: the accept control passes its gates, so stage 5 answers
     // `drafted` and the repair arm is not entered. Present because the shelf's contract requires
     // it — a host that can stage a draft can patch one — and a fake that answered a patch it was

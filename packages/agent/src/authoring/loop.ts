@@ -39,21 +39,30 @@
 // answer returned in the meantime. {@link AuthoringLoopOutcome} declares all four arms today so
 // those plans add a case behind a discriminant every consumer already reads.
 
+import { CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   AuthoringBrief,
+  CompletedRunHandoff,
   DraftDisposition,
   DraftReceipt,
   DraftRef,
+  FindingProposalV1,
   ScopeKey,
+  TestDraftProposalV1,
 } from '@vostride/agent-qa-schema'
 
 import { dedupBeforeAuthor } from './dedup.js'
 import type { DedupScreening } from './dedup.js'
 import type {
   AuthoringReadPortLike,
+  DraftRunPortLike,
   DraftShelfPortLike,
   ParsedDraftLike,
 } from './ports.js'
+import { repairDraft } from './repair.js'
+import type { RepairOutcome } from './repair.js'
+import { AuthoringRouterUnroutableError, routeRepairOrFinding } from './router.js'
+import type { FindingRoute } from './router.js'
 import { buildTieredPrompt } from '../prompt/tiered-prompt-builder.js'
 
 /**
@@ -94,10 +103,25 @@ export const AUTHORING_COMPILE_AGENT_CONTEXT =
  * branches on rather than new cases behind a discriminant they already read.
  */
 export type AuthoringLoopOutcome =
-  | { readonly kind: 'drafted'; readonly draftRef: DraftRef; readonly receipt: DraftReceipt }
+  | {
+      readonly kind: 'drafted'
+      readonly draftRef: DraftRef
+      readonly receipt: DraftReceipt
+      readonly proposal: TestDraftProposalV1
+    }
   | { readonly kind: 'refused'; readonly draftRef?: DraftRef; readonly receipt?: DraftReceipt }
-  | { readonly kind: 'repaired'; readonly draftRef: DraftRef; readonly receipt: DraftReceipt }
-  | { readonly kind: 'finding'; readonly draftRef: DraftRef; readonly receipt: DraftReceipt }
+  | {
+      readonly kind: 'repaired'
+      readonly draftRef: DraftRef
+      readonly receipt: DraftReceipt
+      readonly proposal: TestDraftProposalV1
+    }
+  | {
+      readonly kind: 'finding'
+      readonly draftRef: DraftRef
+      readonly receipt: DraftReceipt
+      readonly proposal: FindingProposalV1
+    }
 
 export interface AuthoringLoopInput {
   readonly intent: string
@@ -108,6 +132,13 @@ export interface AuthoringLoopInput {
 
 export interface AuthoringLoopDeps {
   readonly read: AuthoringReadPortLike
+  /**
+   * The compile half, plus stage 5's run reader (394-06).
+   *
+   * The run capability rides this bundle rather than arriving as a third dep: see the port's own
+   * `runs` doc. What it buys the loop is that "can this host author" stays ONE question with one
+   * answer, which is the property D-01's composition rests on.
+   */
   readonly shelf: DraftShelfPortLike
 }
 
@@ -163,27 +194,100 @@ export class AuthoringDraftUnparsableError extends Error {
 }
 
 /**
- * The receipt's disposition has no route in this build.
+ * The router could not place a rejected receipt's evidence.
  *
- * The honest answer for a tracer that implements one arm of a four-arm union. `rejected` routes
- * to repair or to a finding by D-08's deterministic rule, which plan 05 lands, and `unverified`
- * is what a draft-mode evaluation is forced to (D-18) — neither is a `drafted`, and returning one
- * anyway would be a wrong answer wearing a correct one's clothes, at the exact seam where the
- * cardinal error (a mis-routed app bug iterated into passing) lives. Plans 05 and 06 replace this
- * throw with the `repaired` and `finding` branches.
+ * The honest answer for the one case stage 5 genuinely cannot decide: the gates said no, and the
+ * run record the receipt names is not readable, or holds no member with this draft's identity. That
+ * is a broken precondition rather than an ambiguous signal — filing an evidence-less finding would
+ * report an application bug nobody observed, which is the cardinal error pointed the other way.
  */
-export class AuthoringLoopUnroutedDispositionError extends Error {
-  constructor(readonly disposition: DraftDisposition) {
+export class AuthoringLoopUnroutableEvidenceError extends Error {
+  constructor(readonly disposition: DraftDisposition, readonly cause: Error) {
     super(
-      `authoring.draft.write: no route is implemented for a ${disposition} receipt; `
-        + 'the repair and finding branches land in plans 05 and 06',
+      `authoring.draft.write: a ${disposition} receipt could not be routed — ${cause.message}`,
     )
-    this.name = 'AuthoringLoopUnroutedDispositionError'
+    this.name = 'AuthoringLoopUnroutableEvidenceError'
   }
 }
 
-/** The dispositions stage 5 answers `drafted` for — the gates judged the draft and did not say no. */
-const DRAFTED_DISPOSITIONS: readonly DraftDisposition[] = ['keep-eligible', 'proposal-only']
+/**
+ * The dispositions stage 5 answers `drafted` for — the gates did not say no.
+ *
+ * `unverified` joins the two that were here in the tracer, and the reason is D-05 rather than
+ * convenience: it is what a DRAFT-MODE evaluation is forced to (rule 1 of the disposition table),
+ * and a draft-mode run is a caller deliberately asking for one cheap run. Such a draft is not a
+ * finding — no run said the application is wrong — and it is not repairable — no mechanics evidence
+ * exists to repair against. It is a draft nobody has verified, which is exactly what the test-draft
+ * arm's `disposition` field says out loud, so it proposes and a human decides. `rejected` is the
+ * only disposition that routes, because it is the only one a gate actually refused.
+ */
+const DRAFTED_DISPOSITIONS: readonly DraftDisposition[] = [
+  'keep-eligible',
+  'proposal-only',
+  'unverified',
+]
+
+/** The draft's identity as the receipt and both envelope arms spell it. */
+function draftRefOf(draft: ParsedDraftLike): DraftRef {
+  return {
+    filePath: draft.filePath,
+    testId: draft.testId,
+    testName: draft.testName,
+    contentDigest: draft.contentDigest,
+  }
+}
+
+/**
+ * The test-draft envelope arm for a draft that reached a receipt (D-05).
+ *
+ * `actualRuns` is read off the receipt's OWN `gateRuns` plus whatever repair spent — never a
+ * predicted figure. WTST-08's honesty half is that the preview promises a bound before dispatch and
+ * the receipt reports what was actually consumed; a number derived from the bound would make the
+ * two agree by construction and measure nothing.
+ */
+function testDraftProposal(
+  draftRef: DraftRef,
+  receipt: DraftReceipt,
+  repairIterations: number,
+): TestDraftProposalV1 {
+  return {
+    schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
+    draftRef,
+    disposition: receipt.disposition,
+    actualRuns: receipt.gateRuns.length + repairIterations,
+    repairIterations,
+    summaryLine: `${draftRef.testName} — ${receipt.disposition}`,
+  }
+}
+
+/**
+ * The finding envelope arm (D-11), built from the ROUTE and from nothing a model wrote.
+ *
+ * `explanation` is left empty here and filled by the model downstream, once the branch is already
+ * chosen. That ordering is the whole of "the LLM writes the finding's evidence-linked explanation;
+ * it never makes the routing decision" — a prose field populated before the arm is picked would be
+ * a channel through which model output could reach a branch it may not influence.
+ */
+function findingProposal(draftRef: DraftRef, route: FindingRoute): FindingProposalV1 {
+  return {
+    schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
+    draftRef,
+    signalClass: route.signalClass,
+    failurePoint: route.failurePoint === null
+      ? null
+      : {
+          runId: route.failurePoint.runId,
+          stepIndex: route.failurePoint.stepIndex,
+          stepText: route.failurePoint.stepText,
+          reasoning: route.failurePoint.reasoning,
+          ...(route.failurePoint.verdictSource === undefined
+            ? {}
+            : { verdictSource: String(route.failurePoint.verdictSource) }),
+        },
+    evidenceRefs: route.evidenceRefs,
+    explanation: '',
+  }
+}
 
 /** The brief's exemplars, as the context block a compile reads them from. */
 function exemplarBlockBody(brief: AuthoringBrief): string {
@@ -250,25 +354,107 @@ async function compileDraft(
 }
 
 /**
- * Stage 5 — the receipt becomes an outcome.
+ * The run whose evidence stage 5 routes on: the LAST gate run the receipt names.
  *
- * Reads `receipt.disposition`, the value `computeDraftDisposition` produced, and derives nothing
- * of its own: 393 D-18 put that rule in one place expressly so 394 would be structurally unable
- * to grow a second reading of it.
+ * ONE ANSWER TO A QUESTION THE DERIVATION DELIBERATELY DOES NOT OWN. `routeRepairOrFinding` takes
+ * a single run document because a routing rule that also chose its own evidence would be two rules
+ * in one function. Which of an evaluation's several runs supplies that document is a fact about
+ * the EVALUATION, and it is answered here: the last one taken, because gate 2 early-stops on a
+ * verdict flip (D-17) and the run that stopped it is the one carrying the failure the gates
+ * ultimately reported. An absent record yields `undefined`, which the router refuses BY NAME
+ * rather than routing on.
  */
-export function routeAfterVerify(draft: ParsedDraftLike, receipt: DraftReceipt): AuthoringLoopOutcome {
-  if (!DRAFTED_DISPOSITIONS.includes(receipt.disposition)) {
-    throw new AuthoringLoopUnroutedDispositionError(receipt.disposition)
+async function routingHandoff(
+  receipt: DraftReceipt,
+  runs: DraftRunPortLike,
+): Promise<CompletedRunHandoff | undefined> {
+  const lastRun = receipt.gateRuns.at(-1)
+  return lastRun === undefined ? undefined : await runs.get(lastRun.runId)
+}
+
+/**
+ * Stage 5 — the receipt becomes an outcome, and both terminal outcomes carry their envelope arm.
+ *
+ * TWO DERIVATIONS, ASKED IN ORDER, NEITHER RE-IMPLEMENTED HERE. The first is
+ * `computeDraftDisposition`'s, already stored on the receipt: did the gates say no. The second is
+ * `routeRepairOrFinding`'s, over the run's own evidence: is a rejection the DRAFT's problem or the
+ * APPLICATION's. This function asks them; it answers neither. The two are separate functions
+ * rather than one because they read different things — a disposition reads four booleans and two
+ * counts, a route reads per-step execution evidence — and a single function taking both would be
+ * a parameter list through which a gate verdict could influence the branch.
+ *
+ * THE REPAIR ARM IS ENTERED ONLY THROUGH A `RepairRoute`. `repairDraft` cannot be handed the
+ * finding arm — the two route types are mutually non-assignable — so the app-broken branch is
+ * structurally unable to reach repair rather than merely not wired to it (SC-2, T-394-22).
+ *
+ * A REPAIR THAT DID NOT SUCCEED BECOMES A FINDING, not a silent failure. The draft failed, repair
+ * was allowed K attempts and none produced a passing probe, and the honest thing to hand a person
+ * is the evidence plus what was tried. The route's own evidence refs are what the finding carries,
+ * so an exhausted repair and a first-pass finding are the same artifact class differing only in
+ * how much was spent before it was filed.
+ */
+export async function routeAfterVerify(
+  draft: ParsedDraftLike,
+  receipt: DraftReceipt,
+  deps: AuthoringLoopDeps,
+): Promise<AuthoringLoopOutcome> {
+  const draftRef = draftRefOf(draft)
+  if (DRAFTED_DISPOSITIONS.includes(receipt.disposition)) {
+    return {
+      kind: 'drafted',
+      draftRef,
+      receipt,
+      proposal: testDraftProposal(draftRef, receipt, 0),
+    }
+  }
+
+  const handoff = await routingHandoff(receipt, deps.shelf.runs)
+  let route
+  try {
+    route = routeRepairOrFinding(draftRef, handoff)
+  } catch (error) {
+    if (!(error instanceof AuthoringRouterUnroutableError)) throw error
+    throw new AuthoringLoopUnroutableEvidenceError(receipt.disposition, error)
+  }
+
+  if (route.kind === 'finding') {
+    return { kind: 'finding', draftRef, receipt, proposal: findingProposal(draftRef, route) }
+  }
+
+  // `handoff` is defined here: the router refuses `no-run-evidence` by name, and that refusal was
+  // already converted above — so reaching a repair arm at all means a run document was read.
+  const repaired: RepairOutcome = await repairDraft(route, {
+    draft,
+    handoff: handoff as CompletedRunHandoff,
+    shelf: deps.shelf,
+    runs: deps.shelf.runs,
+  })
+
+  if (repaired.kind === 'repaired') {
+    const repairedRef = draftRefOf(repaired.draft)
+    return {
+      kind: 'repaired',
+      draftRef: repairedRef,
+      receipt: repaired.receipt,
+      proposal: testDraftProposal(repairedRef, repaired.receipt, repaired.iterations),
+    }
+  }
+
+  const exhaustedRoute: FindingRoute = {
+    kind: 'finding',
+    signalClass: 'indefinitive-failure',
+    failurePoint: null,
+    evidenceRefs: [],
   }
   return {
-    kind: 'drafted',
-    draftRef: {
-      filePath: draft.filePath,
-      testId: draft.testId,
-      testName: draft.testName,
-      contentDigest: draft.contentDigest,
-    },
+    kind: 'finding',
+    draftRef,
     receipt,
+    proposal: {
+      ...findingProposal(draftRef, exhaustedRoute),
+      signalClass: `repair-${repaired.abandonment.kind}`,
+      explanation: repaired.abandonment.error.message,
+    },
   }
 }
 
@@ -314,7 +500,7 @@ export async function runAuthoringLoop(
   })
 
   stages.push('route')
-  const outcome = routeAfterVerify(draft, receipt)
+  const outcome = await routeAfterVerify(draft, receipt, deps)
 
   stages.push('compound')
 

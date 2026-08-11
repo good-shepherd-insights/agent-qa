@@ -19,6 +19,7 @@ export type {
   ProposalDecisionRecord,
   ProposalDurableState,
   ProposalEnvelope,
+  ProposalEnvelopeCommon,
   ProposalEnvelopeStatus,
   ProposalEvidenceGrain,
   ProposalEvidenceRef,
