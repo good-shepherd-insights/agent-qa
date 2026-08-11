@@ -26,7 +26,7 @@
 //
 // WHAT IT COSTS TO BE WRONG, per direction, is what the threshold comment below measures.
 
-import { AUTHORING_DEDUP_CONTINUATIONS } from '@vostride/agent-qa-schema'
+import { AUTHORING_DEDUP_CONTINUATIONS, suiteTestRef } from '@vostride/agent-qa-schema'
 import type { AuthoringDedupContinuation } from '@vostride/agent-qa-schema'
 
 import { textOverlap } from './adds-value.js'
@@ -130,9 +130,17 @@ export type DedupScreening =
     readonly continuations: readonly AuthoringDedupContinuation[]
   }
 
-/** The `entities.resolve` reference for a suite test — the house spelling, in one place. */
+/**
+ * The `entities.resolve` reference for a suite test — the house spelling, in one place.
+ *
+ * DELEGATES to `suiteTestRef` rather than re-forming the string (394-09). Two spellings of one
+ * reference were live in the tree — this one and the schema's, minted there with the words "so no
+ * surface invents a second" — and while they agreed the drift was invisible. The one that survives
+ * is the one in `schema`, because the binder that CONSUMES this ref lives on the other side of the
+ * package boundary from the lane that produces it.
+ */
 export function dedupMatchRef(identity: SuiteTestIdentity): string {
-  return `${identity.filePath}::${identity.testName}`
+  return suiteTestRef(identity.filePath, identity.testName)
 }
 
 /**
