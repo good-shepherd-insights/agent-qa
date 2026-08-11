@@ -62,3 +62,26 @@ export type {
   RunEvidenceRef,
   TestDraftProposalV1,
 } from './proposal-arms'
+
+// 394-07 (WTST-05, D-13/D-15): the honesty funnel — the frozen four stages, the pinned ceiling
+// and floor, the ONE computation, and the mechanical no-success-framing screen.
+export {
+  AUTHORING_FUNNEL_STAGES,
+  AuthoringFunnelSchema,
+  FUNNEL_MIN_DRAFTS_FLOOR,
+  FUNNEL_PHRASES,
+  FUNNEL_SUCCESS_FRAMING_LEXICON,
+  FunnelSuccessFramingError,
+  KEEP_RATE_CEILING,
+  computeAuthoringFunnel,
+  renderFunnelLine,
+  successFramingViolations,
+} from './funnel'
+export type {
+  AuthoringAcceptance,
+  AuthoringFunnel,
+  AuthoringFunnelInput,
+  AuthoringFunnelStage,
+  FunnelRenderParts,
+  FunnelSideCounters,
+} from './funnel'

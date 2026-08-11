@@ -835,6 +835,32 @@ export type {
   TestDraftProposalV1,
 } from './authoring/index'
 
+// 394-07 (WTST-05, D-13/D-15): the honesty funnel. `computeAuthoringFunnel` is the ONE
+// derivation of the four frozen stages, the keep rate and the acceptance-failure flag —
+// chat, the CLI and the per-run digest all render what it returns and derive nothing.
+// `successFramingViolations` is the prohibition made mechanical: it is exported so a surface
+// composing a BLOCK around the funnel's line screens its own wording through the same words.
+export {
+  AUTHORING_FUNNEL_STAGES,
+  AuthoringFunnelSchema,
+  FUNNEL_MIN_DRAFTS_FLOOR,
+  FUNNEL_PHRASES,
+  FUNNEL_SUCCESS_FRAMING_LEXICON,
+  FunnelSuccessFramingError,
+  KEEP_RATE_CEILING,
+  computeAuthoringFunnel,
+  renderFunnelLine,
+  successFramingViolations,
+} from './authoring/index'
+export type {
+  AuthoringAcceptance,
+  AuthoringFunnel,
+  AuthoringFunnelInput,
+  AuthoringFunnelStage,
+  FunnelRenderParts,
+  FunnelSideCounters,
+} from './authoring/index'
+
 // 387 ENTY-01/ENTY-02 — entity addressing: short-IDs, the agentqa:// URI scheme, the one
 // card shape and the two resolution unions.
 export {
