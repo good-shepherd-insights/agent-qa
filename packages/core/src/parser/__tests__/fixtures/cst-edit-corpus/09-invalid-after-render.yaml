@@ -1,0 +1,6 @@
+# Exactly one step, so removing it leaves a document TestDefinitionSchema cannot accept.
+name: Sign in on the local account form
+test-id: t_cloth-array-illy-summer-bios-bid-legacy-lobal-vert-axed
+target: local-form
+steps:
+  - Click the Submit button

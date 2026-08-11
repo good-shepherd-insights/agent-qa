@@ -1,0 +1,220 @@
+{
+  "$comment": [
+    "THE FROZEN SCORING DENOMINATOR for phase 394's edit contract (D-20, WTST-07). One entry",
+    "per edit case. Gap-closure rounds MUST NOT mint new members or edit these vectors to",
+    "re-score: the whole signature proof is that this exact table is observed RED with NO",
+    "applier in existence and green at the end of the phase, with nothing added in between",
+    "(the treadmill law).",
+    "",
+    "Each row is the sole catcher for one property, named in `rationale`. If two rows would",
+    "red on the same defect, one of them is not earning its place.",
+    "",
+    "THE DIFF INSTRUMENT. `expect.removedInputLines` and `expect.addedOutputLines` are the",
+    "output of an LCS alignment over per-line sha256 digests of the RAW BYTES — not a",
+    "positional comparison and not a decoded-string comparison. A positional diff cannot",
+    "express a removal at all (every following line shifts, so a one-line delete reports the",
+    "whole tail as changed), and a decoded comparison would call two different byte sequences",
+    "equal whenever they normalise to the same text. Everything not named in those two arrays",
+    "is asserted byte-identical, so the vectors are exact sets and never a superset or an",
+    "at-most.",
+    "",
+    "`measured` records what was observed AT FREEZE TIME, which is a fact about the INPUT",
+    "file and nothing else — its line numbering, and that it parses through the shipped",
+    "`parseTestFile`. No row's expectation was read off an applier's output, because at freeze",
+    "time no applier existed. That is what makes this a denominator rather than a transcript."
+  ],
+
+  "schemaVersion": 1,
+  "frozenAt": "2026-08-11",
+  "appliedBy": "packages/core/src/parser/cst-patch.ts (did not exist when this table was frozen)",
+  "vocabulary": "packages/schema/src/authoring/patch-ops.ts — the RFC-6902 {thoughts, patches} envelope",
+
+  "cases": {
+    "01-untouched-round-trip": {
+      "input": "01-untouched-round-trip.yaml",
+      "patchSet": {
+        "thoughts": "The test already does what was asked; there is nothing to change.",
+        "patches": []
+      },
+      "expect": {
+        "kind": "rendered",
+        "removedInputLines": [],
+        "addedOutputLines": [],
+        "outputIdenticalToInput": true
+      },
+      "rationale": "The sole catcher for rendering anything other than the WHOLE token array. The input's line 1 is a comment that lives in the token stream BEFORE the document token, so `CST.stringify(documentToken)` drops it and this row is the only one that would notice. It is also the sole catcher for an empty patch set being treated as an error rather than a no-op: `patches: []` must render byte-identical output and reach a caller as success.",
+      "measured": "Freeze time: 12 lines, parses through parseTestFile with 0 errors. Line 1 is a leading comment, line 4 is a single-quoted scalar carrying a trailing comment, lines 5-7 are a nested block map, lines 8-12 a block sequence.",
+      "disclosure": null
+    },
+
+    "02-replace-one-step": {
+      "input": "02-replace-one-step.yaml",
+      "patchSet": {
+        "thoughts": "The password step names the wrong field label.",
+        "patches": [
+          {
+            "op": "replace",
+            "path": "/steps/1",
+            "value": "Type \"{{secret:PROBE_TOKEN}}\" into the Passphrase field"
+          }
+        ]
+      },
+      "expect": {
+        "kind": "rendered",
+        "removedInputLines": [7],
+        "addedOutputLines": [7],
+        "bytesIdenticalInputLines": [1, 2, 3, 4, 5, 6, 8, 9]
+      },
+      "rationale": "The sole catcher for a single-scalar edit that is not confined to its own line. Any render that goes through a plain JS value re-quotes line 4 (single-quoted becomes plain or double-quoted) and drops its trailing comment, so the byte-identity list is where that failure lands rather than in the changed-line vector.",
+      "measured": "Freeze time: 9 lines, parses with 0 errors. /steps/1 is input line 7.",
+      "disclosure": null
+    },
+
+    "03-append-at-end-of-file": {
+      "input": "03-append-at-end-of-file.yaml",
+      "patchSet": {
+        "thoughts": "The test never confirms the user ended up signed in.",
+        "patches": [
+          {
+            "op": "add",
+            "path": "/steps/-",
+            "value": "Verify the Logout button is visible"
+          }
+        ]
+      },
+      "expect": {
+        "kind": "rendered",
+        "removedInputLines": [],
+        "addedOutputLines": [9],
+        "bytesIdenticalInputLines": [1, 2, 3, 4, 5, 6, 7, 8],
+        "outputEndsWithExactlyOneNewline": true
+      },
+      "rationale": "The sole catcher for the trailing-newline defect the 394 research probe actually hit: an appended item built without an end token produces a final line with no newline, or glues itself onto the previous line. It is also the only row where the appended item is the LAST thing in the file, so nothing after it can mask a missing terminator.",
+      "measured": "Freeze time: 8 lines, parses with 0 errors, file ends with exactly one newline. `steps` is the last collection in the file.",
+      "disclosure": null
+    },
+
+    "04-remove-middle-step": {
+      "input": "04-remove-middle-step.yaml",
+      "patchSet": {
+        "thoughts": "The password step is not needed; the form accepts a bare username.",
+        "patches": [{ "op": "remove", "path": "/steps/1" }]
+      },
+      "expect": {
+        "kind": "rendered",
+        "removedInputLines": [7],
+        "addedOutputLines": [],
+        "bytesIdenticalInputLines": [1, 2, 3, 4, 5, 6, 8, 9]
+      },
+      "rationale": "The sole catcher for re-indentation on removal. Removing a block-sequence item at index 1 promotes the item at index 2 into a position whose leading whitespace is carried by a DIFFERENT token than its own start array; an applier that rebuilds the start tokens uniformly, or forgets that item 0 alone omits its leading space, changes the indentation of a line it was never asked to touch. `addedOutputLines` being empty is the assertion: not one line was rewritten.",
+      "measured": "Freeze time: 9 lines, parses with 0 errors. /steps/1 is input line 7; line 4 carries a trailing comment three lines above the removal.",
+      "disclosure": null
+    },
+
+    "05-two-ops-adjacent-indices": {
+      "input": "05-two-ops-adjacent-indices.yaml",
+      "patchSet": {
+        "thoughts": "Add the missing password step, then rename the button the next step clicks.",
+        "patches": [
+          {
+            "op": "add",
+            "path": "/steps/1",
+            "value": "Type \"{{secret:PROBE_TOKEN}}\" into the Password field"
+          },
+          { "op": "replace", "path": "/steps/2", "value": "Click the Sign in button" }
+        ]
+      },
+      "expect": {
+        "kind": "rendered",
+        "removedInputLines": [7],
+        "addedOutputLines": [7, 8],
+        "bytesIdenticalInputLines": [1, 2, 3, 4, 5, 6],
+        "stepsAfter": [
+          "Type \"{{env:PROBE_USER}}\" into the Username field",
+          "Type \"{{secret:PROBE_TOKEN}}\" into the Password field",
+          "Click the Sign in button",
+          "Verify the page says \"Received!\""
+        ]
+      },
+      "rationale": "The sole catcher for pointer-shift semantics. `/steps/2` in the second op must resolve against the document AS THE FIRST OP LEFT IT, where index 2 is the step that was index 1 before the insert. An applier that resolves every pointer against the original document would rewrite the LAST step instead and leave `Click the Submit button` untouched — a mutation that produces a plausible, schema-valid, entirely wrong test. `stepsAfter` is what names the evidence: the changed-line vector alone cannot distinguish the two outcomes.",
+      "measured": "Freeze time: 8 lines, parses with 0 errors. Original steps are, in order, the Username type at line 6, the Submit click at line 7 and the Received assertion at line 8; all three texts are distinct.",
+      "disclosure": null
+    },
+
+    "06-non-ascii-scalar": {
+      "input": "06-non-ascii-scalar.yaml",
+      "patchSet": {
+        "thoughts": "The submit button was relabelled from Envoyer to Valider.",
+        "patches": [{ "op": "replace", "path": "/steps/1", "value": "Click the Valider button" }]
+      },
+      "expect": {
+        "kind": "rendered",
+        "removedInputLines": [8],
+        "addedOutputLines": [8],
+        "bytesIdenticalInputLines": [1, 2, 3, 4, 5, 6, 7, 9]
+      },
+      "rationale": "The sole catcher for `unchanged` meaning unchanged TEXT rather than unchanged BYTES. Lines 2, 5, 7 and 9 carry an em dash, CJK, guillemets, an emoji and accented Latin; a render that round-trips through a decoder can re-encode or normalise any of them while every decoded-string comparison in the suite still reports equality. Every assertion on this row is a sha256 over raw bytes, so a re-encoding is a failure by construction.",
+      "measured": "Freeze time: 9 lines, parses with 0 errors, 9 lines encode to more bytes than characters. /steps/1 is input line 8 and is pure ASCII, so the edit itself cannot explain a multi-byte change anywhere else.",
+      "disclosure": null
+    },
+
+    "07-key-order-preserved": {
+      "input": "07-key-order-preserved.yaml",
+      "patchSet": {
+        "thoughts": "The submit button is labelled Sign in on this build.",
+        "patches": [{ "op": "replace", "path": "/steps/1", "value": "Click the Sign in button" }]
+      },
+      "expect": {
+        "kind": "rendered",
+        "removedInputLines": [5],
+        "addedOutputLines": [5],
+        "bytesIdenticalInputLines": [1, 2, 3, 4, 6, 7, 8, 9],
+        "topLevelKeyLinesAfter": [2, 3, 7, 8, 9]
+      },
+      "rationale": "The sole catcher for key reordering. The input's top-level keys run target, steps, name, test-id, context — neither alphabetical nor the house order — and the patch touches only a sequence element nested inside the second of them. Any applier that rebuilds the mapping from a plain object emits the keys in insertion or sorted order and moves lines nobody addressed. `topLevelKeyLinesAfter` asserts the key lines as BYTE POSITIONS in the output rather than as a set of key names, because a set comparison passes on a reordered document.",
+      "measured": "Freeze time: 9 lines, parses with 0 errors. Top-level key lines are 2 (target), 3 (steps), 7 (name), 8 (test-id), 9 (context). /steps/1 is input line 5.",
+      "disclosure": null
+    },
+
+    "08-pointer-outside-editable-roots": {
+      "input": "08-pointer-outside-editable-roots.yaml",
+      "patchSet": {
+        "thoughts": "Rename the field and point the test at the production build.",
+        "patches": [
+          {
+            "op": "replace",
+            "path": "/steps/0",
+            "value": "Type \"{{env:PROBE_USER}}\" into the Email field"
+          },
+          { "op": "replace", "path": "/target", "value": "production-web" }
+        ]
+      },
+      "expect": {
+        "kind": "refusal",
+        "errorName": "PatchPointerOutsideEditableRegionError",
+        "refusedPointer": "/target",
+        "renderedBytes": 0,
+        "documentUntouchedAfterRefusal": true
+      },
+      "rationale": "The sole catcher for T-394-10, and it is deliberately a MIXED set: the first op is legitimate and would apply. The fence must refuse the whole set BEFORE any mutation, so an applier that checks each op as it reaches it would have already rewritten `/steps/0` by the time it sees `/target` — leaving a partially edited document behind a refusal. `renderedBytes: 0` is that assertion; the changed-line vectors cannot express it because nothing is rendered.",
+      "measured": "Freeze time: 8 lines, parses with 0 errors. `target` is a top-level key at line 4 and is NOT a member of EDITABLE_POINTER_ROOTS; `/steps/0` is line 6 and is inside the fence.",
+      "disclosure": null
+    },
+
+    "09-invalid-after-render": {
+      "input": "09-invalid-after-render.yaml",
+      "patchSet": {
+        "thoughts": "Drop the submit click; the form auto-submits on blur.",
+        "patches": [{ "op": "remove", "path": "/steps/0" }]
+      },
+      "expect": {
+        "kind": "refusal",
+        "errorName": "PatchedDocumentInvalidError",
+        "renderedBytes": 0
+      },
+      "rationale": "The sole catcher for WTST-07's schema-validated-before-write half. The op is inside the fence, the pointer resolves, and the CST mutation succeeds — the resulting document is simply one this project cannot run, because `steps` requires at least one member. Every other row would pass an applier that skipped the post-render re-parse entirely. DISCLOSED below: the plan specified a `replace` for this case, and a `replace` cannot reach it.",
+      "measured": "Freeze time: 6 lines, parses with 0 errors, exactly one step at line 6. TestDefinitionSchema requires steps to be an array with min length 1.",
+      "disclosure": "The plan's text asks for `a replace whose value makes the document fail TestDefinitionSchema`. Measured: no such replace exists. Every editable root resolves to a string-typed leaf, and CST.setScalarValue always writes a well-formed scalar of the requested value — so a replace inside the fence cannot produce a document the schema rejects. `remove` can, by emptying a min(1) array. The property the case is the sole catcher for is unchanged; only the op that reaches it differs."
+    }
+  }
+}

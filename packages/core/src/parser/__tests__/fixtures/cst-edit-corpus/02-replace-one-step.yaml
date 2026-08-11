@@ -1,0 +1,9 @@
+# A leading comment, kept so case 02 proves the replace did not disturb it either.
+name: Sign in on the local account form
+test-id: t_dose-warm-pea-sharp-hong-tested-lari-sat-import-slow
+target: 'local-form' # single-quoted on purpose, with a trailing comment
+steps:
+  - Type "{{env:PROBE_USER}}" into the Username field
+  - Type "{{secret:PROBE_TOKEN}}" into the Password field
+  - Click the Submit button
+  - Verify the page says "Received!"

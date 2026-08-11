@@ -1,0 +1,8 @@
+# The target below is what a retargeting patch would rewrite; nothing here may be reachable.
+name: Sign in on the local account form
+test-id: t_gar-affa-went-alter-ona-funk-summer-excel-ade-otto
+target: local-form
+steps:
+  - Type "{{env:PROBE_USER}}" into the Username field
+  - Click the Submit button
+  - Verify the page says "Received!"

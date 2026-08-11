@@ -1,0 +1,9 @@
+# Multi-byte scalars: an accented name, a CJK label, an emoji and a typographic dash.
+name: Se connecter au formulaire local — 本地表单
+test-id: t_decode-secret-opt-vela-thus-doom-travel-apps-god-mort
+target: local-form
+context: Le libellé du bouton est « Envoyer » ✅
+steps:
+  - Type "café ☕" into the Nom d'utilisateur field
+  - Click the Envoyer button
+  - Verify the page says "Reçu !"

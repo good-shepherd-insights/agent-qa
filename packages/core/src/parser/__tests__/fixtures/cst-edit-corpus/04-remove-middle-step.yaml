@@ -1,0 +1,9 @@
+# A removal must delete one line and re-indent nothing; the trailing comment below is the tell.
+name: Sign in on the local account form
+test-id: t_during-fusc-ikat-drag-drawer-vali-teen-pst-osc-iba
+target: 'local-form' # a trailing comment that must survive a removal three lines below
+steps:
+  - Type "{{env:PROBE_USER}}" into the Username field
+  - Type "{{secret:PROBE_TOKEN}}" into the Password field
+  - Click the Submit button
+  - Verify the page says "Received!"
