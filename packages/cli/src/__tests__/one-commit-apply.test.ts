@@ -1,0 +1,344 @@
+// The one-commit apply, against a REAL git repository (394-10, D-06 · WTST-01/WTST-07).
+//
+// WHY A REAL REPOSITORY AND NOT A MOCKED EXEC. The claim here is about what `git log` says
+// afterwards — one commit, one file, the proposal id in the message — and a suite built over a
+// scripted exec would pass identically against an implementation that recorded the right argv and
+// produced no commit at all. So every cell below runs `git init`, seeds a commit, and reads the
+// result back out of git rather than out of the code under test. The injected seam is still used,
+// but only where the SUBJECT of the cell is the argv itself or a spawn failure that cannot be
+// provoked with a real binary.
+//
+// THIS IS THE FIRST WRITE THIS PRODUCT MAKES TO A USER'S OWN HISTORY. The properties are therefore
+// stated as refusals rather than as behaviours: a dirty target refuses and changes nothing, an
+// absent git refuses instead of skipping, a target that moved under the proposal refuses instead of
+// overwriting, and the commit carries exactly the one file the apply wrote. Each has its own cell,
+// and the ones a plausible wrong implementation would still satisfy have a mutation beside them in
+// `scripts/394-apply-mutation.sh`.
+
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import {
+  APPLY_GIT_TIMEOUT_MS,
+  ApplyTargetChangedError,
+  DirtyApplyTargetError,
+  GitUnavailableForApplyError,
+  applyTestDraftAsOneCommit,
+} from '../composition/local-agent-host.js'
+import type { GitApplyExec, TestDraftApplyRequest } from '../composition/local-agent-host.js'
+
+const DRAFT_BYTES = `name: The coupon banner appears after a code is applied
+target: local-form
+steps:
+  - Open the cart
+  - Apply the coupon FREESHIP
+  - Verify the coupon banner is visible
+`
+
+const TARGET_PATH = 'tests/coupon-banner.yaml'
+const PROPOSAL_ID = 'prop_01J9ZZKQ7X8Q4M6N2R5T3V7W9A'
+
+let root: string
+let configPath: string
+let draftPath: string
+
+function git(...args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+  if (result.error !== undefined) throw result.error
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
+/** The head commit's changed paths, read out of git rather than out of the subject. */
+function headStatPaths(): string[] {
+  const shown = git('show', '--stat', '--name-only', '--format=', 'HEAD')
+  return shown.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0)
+}
+
+function headMessage(): string {
+  return git('log', '-1', '--format=%B', 'HEAD').stdout
+}
+
+function commitCount(): number {
+  return Number(git('rev-list', '--count', 'HEAD').stdout.trim())
+}
+
+/** Every file under the workspace with its bytes — the instrument for "the tree is unchanged". */
+function treeSnapshot(dir = root, prefix = ''): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const name of readdirSync(dir, { withFileTypes: true })) {
+    if (name.name === '.git') continue
+    const child = join(dir, name.name)
+    const key = prefix === '' ? name.name : `${prefix}/${name.name}`
+    if (name.isDirectory()) Object.assign(out, treeSnapshot(child, key))
+    else out[key] = createHash('sha256').update(readFileSync(child)).digest('hex')
+  }
+  return out
+}
+
+/**
+ * Assert a NAMED refusal, and assert the name is a class before believing the throw.
+ *
+ * `expect(fn).toThrow(SomeClass)` where `SomeClass` is `undefined` degrades to "throws anything",
+ * so a refusal cell written that way passes against a module that exports no such class at all —
+ * which is exactly the state this file was committed in, and it would have reported four of these
+ * cells GREEN with no subject in existence. The `typeof` line is what makes the RED real.
+ */
+function expectRefusal(fn: () => unknown, ctor: unknown, name: string): void {
+  expect(typeof ctor).toBe('function')
+  let caught: unknown
+  try {
+    fn()
+  } catch (error) {
+    caught = error
+  }
+  expect(caught).toBeInstanceOf(ctor as new (...args: never[]) => Error)
+  expect((caught as Error).name).toBe(name)
+}
+
+function request(overrides: Partial<TestDraftApplyRequest> = {}): TestDraftApplyRequest {
+  return {
+    proposalId: PROPOSAL_ID,
+    draftPath,
+    targetPath: TARGET_PATH,
+    summaryLine: 'The coupon banner appears after a code is applied — keep-eligible',
+    ...overrides,
+  }
+}
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'one-commit-apply-'))
+  configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    `workspace:
+  testMatch:
+    - tests/**/*.yaml
+`,
+  )
+  mkdirSync(join(root, 'tests', '.agent-qa-drafts'), { recursive: true })
+  draftPath = 'tests/.agent-qa-drafts/deadbeef.yaml'
+  writeFileSync(join(root, draftPath), DRAFT_BYTES)
+
+  git('init', '--quiet')
+  git('config', 'user.name', 'agent-qa apply test')
+  git('config', 'user.email', 'apply-test@example.invalid')
+  git('config', 'commit.gpgsign', 'false')
+  git('config', 'gpg.format', 'openpgp')
+  writeFileSync(join(root, 'README.md'), 'seeded\n')
+  git('add', '--', 'README.md')
+  git('commit', '--quiet', '-m', 'seed')
+})
+
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true })
+})
+
+describe('applyTestDraftAsOneCommit', () => {
+  it('writes the draft to its target and makes exactly ONE commit of exactly ONE file', () => {
+    const before = commitCount()
+    const result = applyTestDraftAsOneCommit({ configPath, request: request() })
+
+    expect(result.filePath).toBe(TARGET_PATH)
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(DRAFT_BYTES)
+    expect(commitCount()).toBe(before + 1)
+    expect(headStatPaths()).toEqual([TARGET_PATH])
+    expect(result.commit).toMatch(/^[0-9a-f]{7,40}$/)
+  })
+
+  it('names the proposal id in the commit message, so history says which artifact produced it', () => {
+    applyTestDraftAsOneCommit({ configPath, request: request() })
+    const message = headMessage()
+    expect(message).toContain(PROPOSAL_ID)
+    expect(message.toLowerCase()).toContain('agent-qa')
+  })
+
+  it('refuses a DIRTY target by name and leaves the working tree byte-unchanged', () => {
+    // A human has uncommitted work at exactly the file the agent is about to write.
+    writeFileSync(join(root, TARGET_PATH), 'name: mine, not yet committed\nsteps:\n  - Open\n')
+    const before = treeSnapshot()
+    const commitsBefore = commitCount()
+
+    expectRefusal(
+      () => applyTestDraftAsOneCommit({ configPath, request: request() }),
+      DirtyApplyTargetError,
+      'DirtyApplyTargetError',
+    )
+
+    expect(treeSnapshot()).toEqual(before)
+    expect(commitCount()).toBe(commitsBefore)
+  })
+
+  it('does NOT block on an unrelated dirty file elsewhere in the repository', () => {
+    // THE ALLOW SIDE. A repo-wide dirtiness check passes every refusal cell above and makes the
+    // feature unusable in any real working session, so the admit direction needs its own cell.
+    writeFileSync(join(root, 'README.md'), 'seeded, and edited by a person mid-session\n')
+
+    const result = applyTestDraftAsOneCommit({ configPath, request: request() })
+
+    expect(result.filePath).toBe(TARGET_PATH)
+    expect(headStatPaths()).toEqual([TARGET_PATH])
+  })
+
+  it('keeps an unrelated STAGED file out of the commit', () => {
+    // The person staged their own work before accepting. An `add` pathspec alone does not close
+    // this: the index already carries their file, so the COMMIT has to name its pathspec too.
+    writeFileSync(join(root, 'README.md'), 'seeded, staged by a person\n')
+    git('add', '--', 'README.md')
+
+    applyTestDraftAsOneCommit({ configPath, request: request() })
+
+    expect(headStatPaths()).toEqual([TARGET_PATH])
+  })
+
+  it('stages nothing but its own target', () => {
+    // The other half of the same rule: the apply must not quietly add a person's other work to
+    // their index either, even where the commit's pathspec would keep it out of the commit.
+    writeFileSync(join(root, 'README.md'), 'seeded, edited by a person\n')
+
+    applyTestDraftAsOneCommit({ configPath, request: request() })
+
+    const staged = git('diff', '--cached', '--name-only').stdout.trim()
+    expect(staged).toBe('')
+  })
+
+  it('refuses by name when git is absent, rather than skipping the way a verification may', () => {
+    const enoent: GitApplyExec = () => {
+      const error = new Error('spawnSync git ENOENT') as NodeJS.ErrnoException
+      error.code = 'ENOENT'
+      return { status: null, signal: null, stdout: '', stderr: '', error }
+    }
+    expectRefusal(
+      () => applyTestDraftAsOneCommit({ configPath, request: request(), exec: enoent }),
+      GitUnavailableForApplyError,
+      'GitUnavailableForApplyError',
+    )
+  })
+
+  it('rethrows a non-ENOENT spawn failure instead of reading it as git saying no', () => {
+    const eacces: GitApplyExec = () => {
+      const error = new Error('spawnSync git EACCES') as NodeJS.ErrnoException
+      error.code = 'EACCES'
+      return { status: null, signal: null, stdout: '', stderr: '', error }
+    }
+    expect(() => applyTestDraftAsOneCommit({ configPath, request: request(), exec: eacces }))
+      .toThrow(/EACCES/)
+    expect(() => applyTestDraftAsOneCommit({ configPath, request: request(), exec: eacces }))
+      .not.toThrow(GitUnavailableForApplyError)
+  })
+
+  it('refuses by name when the target changed between the proposal and the accept', () => {
+    const committed = 'name: the committed version\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), committed)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed this test')
+    const proposalTimeDigest = createHash('sha256').update('name: what the proposal read\n').digest('hex')
+
+    expectRefusal(
+      () => applyTestDraftAsOneCommit({
+        configPath,
+        request: request({ sourceDigest: proposalTimeDigest }),
+      }),
+      ApplyTargetChangedError,
+      'ApplyTargetChangedError',
+    )
+
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(committed)
+  })
+
+  it('applies when the sourceDigest still matches the target on disk', () => {
+    // The ADMIT side of the digest check, so a re-check that refused everything cannot pass.
+    const committed = 'name: the committed version\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), committed)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed this test')
+
+    const result = applyTestDraftAsOneCommit({
+      configPath,
+      request: request({ sourceDigest: createHash('sha256').update(committed).digest('hex') }),
+    })
+
+    expect(result.filePath).toBe(TARGET_PATH)
+    expect(headStatPaths()).toEqual([TARGET_PATH])
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(DRAFT_BYTES)
+  })
+
+  it('refuses by name when the proposal carries no sourceDigest and the target now exists', () => {
+    // An absent digest is a claim about ABSENCE, not a waiver of the check.
+    const committed = 'name: somebody got there first\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), committed)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed this test')
+
+    expectRefusal(
+      () => applyTestDraftAsOneCommit({ configPath, request: request() }),
+      ApplyTargetChangedError,
+      'ApplyTargetChangedError',
+    )
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(committed)
+  })
+
+  it('refuses a target that escapes the workspace, by the computation that mints the identity', () => {
+    expect(() => applyTestDraftAsOneCommit({
+      configPath,
+      request: request({ targetPath: '../outside/evil.yaml' }),
+    })).toThrow(/escapes config directory/)
+  })
+
+  it('puts the -- operand separator before every caller-controlled path', () => {
+    const argv: string[][] = []
+    const recording: GitApplyExec = (file, args, options) => {
+      argv.push([file, ...args])
+      return spawnSync(file, [...args], options) as ReturnType<GitApplyExec>
+    }
+
+    applyTestDraftAsOneCommit({ configPath, request: request(), exec: recording })
+
+    expect(argv.length).toBeGreaterThan(0)
+    for (const line of argv) {
+      const separator = line.indexOf('--')
+      expect(separator).toBeGreaterThan(0)
+      // Every argument AFTER the separator is a path, and the target is one of them.
+      expect(line.slice(separator + 1)).toContain(TARGET_PATH)
+    }
+  })
+
+  it('issues no --amend, no -a and no ref-moving subcommand', () => {
+    const argv: string[][] = []
+    const recording: GitApplyExec = (file, args, options) => {
+      argv.push([file, ...args])
+      return spawnSync(file, [...args], options) as ReturnType<GitApplyExec>
+    }
+
+    applyTestDraftAsOneCommit({ configPath, request: request(), exec: recording })
+
+    const subcommands = argv.map((line) => line[1])
+    expect([...new Set(subcommands)].sort()).toEqual(['add', 'commit', 'status'])
+    for (const line of argv) {
+      expect(line).not.toContain('--amend')
+      expect(line).not.toContain('-a')
+      expect(line).not.toContain('--all')
+      expect(line).not.toContain('-A')
+      expect(line).not.toContain('-f')
+      expect(line).not.toContain('--force')
+    }
+  })
+
+  it('bounds every git invocation with a finite timeout', () => {
+    const timeouts: number[] = []
+    const recording: GitApplyExec = (file, args, options) => {
+      timeouts.push(options.timeout)
+      return spawnSync(file, [...args], options) as ReturnType<GitApplyExec>
+    }
+
+    applyTestDraftAsOneCommit({ configPath, request: request(), exec: recording })
+
+    expect(timeouts.length).toBeGreaterThan(0)
+    expect([...new Set(timeouts)]).toEqual([APPLY_GIT_TIMEOUT_MS])
+    expect(Number.isFinite(APPLY_GIT_TIMEOUT_MS)).toBe(true)
+  })
+})
