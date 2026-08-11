@@ -885,6 +885,28 @@ export type {
   SuiteStabilityPosture,
 } from './authoring/index'
 
+// 394-08 (WTST-08, D-03/D-10): the ONE fan-out arithmetic. `computeFanOutBound` is the only place
+// `initial N + K probes + final N` is added up — the dispatch confirm renders it and the finished
+// proposal reports against it, so a preview that understated what the loop would spend cannot be
+// produced by one surface disagreeing with the other.
+export {
+  FAN_OUT_PHRASES,
+  FAN_OUT_RUN_PURPOSES,
+  FanOutBoundError,
+  NO_RUNS_FAN_OUT_BOUND,
+  buildFanOutReport,
+  computeFanOutBound,
+  renderFanOutPreview,
+  renderFanOutReport,
+} from './authoring/index'
+export type {
+  ConsumedRun,
+  FanOutBound,
+  FanOutBoundInput,
+  FanOutReport,
+  FanOutRunPurpose,
+} from './authoring/index'
+
 // 387 ENTY-01/ENTY-02 — entity addressing: short-IDs, the agentqa:// URI scheme, the one
 // card shape and the two resolution unions.
 export {

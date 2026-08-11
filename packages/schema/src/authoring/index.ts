@@ -86,6 +86,27 @@ export type {
   FunnelSideCounters,
 } from './funnel'
 
+// 394-08 (WTST-08, D-03/D-10): the ONE fan-out arithmetic. The dispatch confirm and the proposal's
+// report both read it, so the number a person consents on and the number they are shown afterwards
+// cannot be two answers.
+export {
+  FAN_OUT_PHRASES,
+  FAN_OUT_RUN_PURPOSES,
+  FanOutBoundError,
+  NO_RUNS_FAN_OUT_BOUND,
+  buildFanOutReport,
+  computeFanOutBound,
+  renderFanOutPreview,
+  renderFanOutReport,
+} from './fan-out'
+export type {
+  ConsumedRun,
+  FanOutBound,
+  FanOutBoundInput,
+  FanOutReport,
+  FanOutRunPurpose,
+} from './fan-out'
+
 // 394-07 (WTST-05, D-14): the mixed-verdict suite-stability read — pure, and it starts ZERO runs.
 export {
   NEIGHBOUR_INSTABILITY_REASONS,

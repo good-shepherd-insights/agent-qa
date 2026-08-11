@@ -1,0 +1,232 @@
+// The ONE fan-out arithmetic (Phase 394, D-03/D-10 · WTST-08).
+//
+// WHAT THIS NUMBER IS FOR. WTST-08's owner decision is preview and honest reporting with NO
+// enforced pre-dispatch budget. That decision moves the whole mitigation for an unbounded fan-out
+// onto DISCLOSURE — the number a person is shown at the dispatch confirm is the control, and the
+// number the finished proposal reports is what makes the disclosure falsifiable. A preview lower
+// than the loop's own worst case is therefore a consent defect and never a rounding choice: it is a
+// person having agreed to less compute than was actually taken from them.
+//
+// WHY IT LIVES IN `schema`. The dispatch confirm is composed in `agent` and the report rides a
+// proposal arm this package owns, so a bound spelled in `agent` and read by a receipt would be an
+// arithmetic each surface restates. One function in the one package both sides already depend on is
+// what makes "the preview and the report cannot disagree" a structural fact rather than a habit. It
+// is also why the terms arrive as INPUTS: `DRAFT_STABILITY_RUNS_N` lives here, but the repair cap K
+// lives in `agent` beside the loop that spends it, and a schema that reached for it would need a
+// dependency edge pointing the wrong way.
+//
+// THE ORDERED CONTRACT — where each term comes from, and what one costs:
+//   initialN  the first stability gate, `DRAFT_STABILITY_RUNS_N` (or 1 when the caller asked for
+//             draft mode). EARLY-STOPPED: gate 2 stops on a verdict flip, so this term is an upper
+//             bound on that gate and not a promise that it will be spent.
+//   probeK    one probe run per repair iteration, bounded by `REPAIR_ITERATION_CAP`. A fenced or
+//             unparsable emission consumes an iteration WITHOUT starting a run, so this term is an
+//             upper bound too.
+//   finalN    the full stability gate on the repaired candidate, `DRAFT_STABILITY_RUNS_N` again.
+//             It is a SEPARATE quantity from `initialN` even when the two are numerically equal —
+//             the first judges what the model wrote, the second judges what repair produced.
+// EVERY ONE OF THESE RUNS IS A FULL CHILD `agent-qa run` PROCESS against the user's application,
+// not a function call. That is what makes nine of them a number worth putting in front of a person.
+//
+// THE TWO N TERMS ARE NEVER COLLAPSED. A `FanOutBound` carrying only a sum, or a single doubled
+// term, would let a later reader re-derive `2N + K` and lose the distinction — and with the shipped
+// constants the collapse is invisible, because both terms are 3. The terms are separate keys, the
+// type pins the key set by equality, and the runtime cells that catch a collapse are the ones that
+// use draft mode, where the two terms differ.
+
+/** The three terms, as the caller that knows all three supplies them. */
+export interface FanOutBoundInput {
+  /** The first stability gate's run count — `DRAFT_STABILITY_RUNS_N`, or 1 in draft mode. */
+  readonly initialN: number
+  /** One probe per repair iteration — `REPAIR_ITERATION_CAP`. */
+  readonly probeK: number
+  /** The final stability gate on the repaired candidate — `DRAFT_STABILITY_RUNS_N`. */
+  readonly finalN: number
+}
+
+/** The three terms and their total, all four separately readable. */
+export interface FanOutBound extends FanOutBoundInput {
+  readonly total: number
+}
+
+/**
+ * A term that would SUBTRACT from the disclosure.
+ *
+ * The one arithmetic error this number may never make, so it is refused at the input rather than
+ * clamped: a negative term is a caller bug, and the safe-looking repair — treating it as zero —
+ * would answer a smaller bound than the loop's worst case, which is the defect itself.
+ */
+export class FanOutBoundError extends Error {
+  constructor(readonly term: keyof FanOutBoundInput, readonly value: number) {
+    super(
+      `fan-out bound: ${term} must be a non-negative integer, and it was ${value} — `
+        + 'a term that subtracts would make the preview lower than the loop\'s own worst case',
+    )
+    this.name = 'FanOutBoundError'
+  }
+}
+
+/**
+ * THE ONE fan-out arithmetic. `initialN + probeK + finalN`, with all three terms preserved.
+ *
+ * Pure and total: one argument, no clock, no store, no config. `schema`'s only runtime dependency
+ * is `zod`, so there is nothing here for a later edit to reach for even if it wanted to.
+ */
+export function computeFanOutBound(input: FanOutBoundInput): FanOutBound {
+  for (const term of ['initialN', 'probeK', 'finalN'] as const) {
+    const value = input[term]
+    if (!Number.isInteger(value) || value < 0) throw new FanOutBoundError(term, value)
+  }
+  return {
+    initialN: input.initialN,
+    probeK: input.probeK,
+    finalN: input.finalN,
+    total: input.initialN + input.probeK + input.finalN,
+  }
+}
+
+/**
+ * The bound of an invocation in which no draft ever reached verification.
+ *
+ * PRODUCED through the function rather than written as a literal `{initialN: 0, …, total: 0}`, so
+ * it cannot pin a shape the function would not answer. A dedup refusal (D-04) ends the invocation
+ * before a byte is authored, so all three terms really are zero — this is a true value, not a
+ * placeholder standing in for a number nobody computed.
+ */
+export const NO_RUNS_FAN_OUT_BOUND: FanOutBound = computeFanOutBound({
+  initialN: 0,
+  probeK: 0,
+  finalN: 0,
+})
+
+/** What a consumed run was STARTED for. Closed, and the two are not interchangeable. */
+export const FAN_OUT_RUN_PURPOSES = ['gate', 'probe'] as const
+
+export type FanOutRunPurpose = (typeof FAN_OUT_RUN_PURPOSES)[number]
+
+/**
+ * One run the invocation actually spent — a ref and a role, never the run document.
+ *
+ * `completedAt` is OPTIONAL because a run whose record could not be read is a real posture: the run
+ * happened and must be counted, and pretending to know when it finished would fabricate a position
+ * in the sequence. See the ordering rule below for where such an entry lands.
+ */
+export interface ConsumedRun {
+  readonly runId: string
+  readonly purpose: FanOutRunPurpose
+  /** Epoch milliseconds, when the run's record says so. */
+  readonly completedAt?: number
+}
+
+/**
+ * What was previewed, beside what was actually consumed.
+ *
+ * Both numbers ride ONE object so a reader cannot be handed either alone. The actual alone leaves
+ * the disclosure unfalsifiable; the preview alone is the defect WTST-08 exists to prevent.
+ */
+export interface FanOutReport {
+  readonly previewed: FanOutBound
+  /** Distinct runs, in the order they finished, ties broken by run id. */
+  readonly consumed: readonly ConsumedRun[]
+  readonly consumedTotal: number
+  /**
+   * The actual figure exceeded the previewed bound.
+   *
+   * REPORTED, NEVER CLAMPED AND NEVER THROWN. A clamp would turn a consent defect into a silent
+   * correctness bug — the artifact would carry the number the preview promised rather than the
+   * number that was spent — and a throw would destroy the receipt that holds the evidence for it.
+   * The flag is a disclosure of the same kind the report itself is, and every path this phase
+   * exercises asserts it is false.
+   */
+  readonly exceedsPreview: boolean
+}
+
+/**
+ * Order the consumed runs into a sequence two renders of one report cannot disagree about.
+ *
+ * COMPLETION ORDER, TIES BROKEN BY RUN ID. Gate runs a fast local executor finishes inside the same
+ * millisecond genuinely tie, so the id is what makes the order total rather than a fallback nobody
+ * reaches. A run with NO known completion time sorts after every timed one, ordered by id among its
+ * own kind: sorting it as `0` would place a run nothing timed ahead of runs that really did finish
+ * first, which is a fabricated sequence rather than an unknown one.
+ */
+function orderConsumedRuns(runs: readonly ConsumedRun[]): readonly ConsumedRun[] {
+  return [...runs].sort((left, right) => {
+    const leftTime = left.completedAt
+    const rightTime = right.completedAt
+    if (leftTime !== undefined && rightTime !== undefined && leftTime !== rightTime) {
+      return leftTime - rightTime
+    }
+    if (leftTime === undefined && rightTime !== undefined) return 1
+    if (leftTime !== undefined && rightTime === undefined) return -1
+    return left.runId < right.runId ? -1 : left.runId > right.runId ? 1 : 0
+  })
+}
+
+/**
+ * Pair a previewed bound with the runs an invocation actually spent.
+ *
+ * DISTINCT BY RUN ID, and the first role wins. A run that served as the last repair probe and then
+ * counted toward the final stability gate is ONE child process, and it was started as a probe —
+ * counting it twice would inflate the actual figure in the safe-looking direction, which is exactly
+ * how a real preview under-count would be masked by the report that exists to expose it.
+ */
+export function buildFanOutReport(input: {
+  readonly previewed: FanOutBound
+  readonly runs: readonly ConsumedRun[]
+}): FanOutReport {
+  const distinct = new Map<string, ConsumedRun>()
+  for (const run of input.runs) {
+    if (!distinct.has(run.runId)) distinct.set(run.runId, run)
+  }
+  const consumed = orderConsumedRuns([...distinct.values()])
+  return {
+    previewed: input.previewed,
+    consumed,
+    consumedTotal: consumed.length,
+    exceedsPreview: consumed.length > input.previewed.total,
+  }
+}
+
+/** The wording table both renders compose from — the ONE place this plan's words live. */
+export const FAN_OUT_PHRASES = {
+  runCost: 'each run is a full `agent-qa run` process against your application',
+  previewLead: 'This authoring invocation will execute up to',
+  stability: 'stability runs',
+  probes: 'repair probes',
+  finalStability: 'final stability runs',
+  reportLead: 'Runs consumed:',
+  previewedWord: 'previewed',
+  exceeded: 'THIS EXCEEDS THE PREVIEWED BOUND — report this, it is a defect in the bound',
+} as const
+
+/**
+ * The disclosure the dispatch confirm renders — the sentence a person actually consents on.
+ *
+ * COMPOSED FROM THE BOUND'S OWN INTEGERS AND NOTHING ELSE. No caller text reaches this string: the
+ * `intent` an arbitrary caller supplies is free text that already reaches a model, and a confirm
+ * message it could write is a channel through which a caller could dress up what they are asking a
+ * person to approve. Every token below is either a pinned phrase or a number this file computed.
+ *
+ * It names all three terms rather than only the total, because "up to 9 runs" is a number and
+ * "3 stability runs + up to 3 repair probes + 3 final stability runs" is an explanation of it.
+ */
+export function renderFanOutPreview(bound: FanOutBound): string {
+  return `${FAN_OUT_PHRASES.previewLead} ${bound.total} runs `
+    + `(${bound.initialN} ${FAN_OUT_PHRASES.stability}, up to ${bound.probeK} `
+    + `${FAN_OUT_PHRASES.probes}, ${bound.finalN} ${FAN_OUT_PHRASES.finalStability}). `
+    + `${FAN_OUT_PHRASES.runCost}.`
+}
+
+/**
+ * The honest half: what was actually spent, beside what was disclosed.
+ *
+ * The two figures are rendered in ONE line for the reason they ride one object — a reader handed
+ * the actual alone cannot check the disclosure, and a reader handed the disclosure alone is being
+ * told what was promised rather than what happened.
+ */
+export function renderFanOutReport(report: FanOutReport): string {
+  const line = `${FAN_OUT_PHRASES.reportLead} ${report.consumedTotal} `
+    + `(${FAN_OUT_PHRASES.previewedWord} up to ${report.previewed.total})`
+  return report.exceedsPreview ? `${line} — ${FAN_OUT_PHRASES.exceeded}` : line
+}
