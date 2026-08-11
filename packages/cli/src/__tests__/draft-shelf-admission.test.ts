@@ -30,7 +30,7 @@ import {
   draftShelfDir,
   shelfPathFor,
 } from '../composition/local-agent-host.js'
-import { resolveConfig } from '../config.js'
+import { loadConfigFile } from '../config.js'
 
 const DRAFT_BYTES = `name: a draft
 steps:
@@ -57,8 +57,14 @@ beforeEach(() => {
     - tests/**/*.yaml
   suiteMatch:
     - suites/**/*.suite.yaml
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
 `,
   )
+  for (const name of ['hooks.yaml', '.env', '.env.secrets.local']) {
+    writeFileSync(join(root, name), '')
+  }
   mkdirSync(join(root, 'tests'), { recursive: true })
   writeFileSync(join(root, 'tests', 'real-test.yaml'), REAL_TEST_BYTES)
 })
@@ -67,8 +73,17 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
+/**
+ * The workspace resolution `runs.start` performs, from the real file on disk.
+ *
+ * Deliberately `loadConfigFile` rather than the whole-config `resolveConfig`: admission reads
+ * `config.workspace` and nothing else, and validating a complete four-bucket config here would
+ * make this file fail for a missing `use.mobile.appState` — a fact about config completeness, not
+ * about whether a shelf path is admitted.
+ */
 async function workspace() {
-  return resolveWorkspacePaths({ config: await resolveConfig({ configPath, loadAuthPlugins: false }), configPath })
+  const config = (await loadConfigFile(configPath)) as Parameters<typeof resolveWorkspacePaths>[0]['config']
+  return resolveWorkspacePaths({ config, configPath })
 }
 
 describe('the draft shelf location', () => {

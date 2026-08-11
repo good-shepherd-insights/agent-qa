@@ -116,7 +116,14 @@ export const TARGET_GITIGNORE_PROBES = [
     expected: 'ignored',
     requiredRule: DURABLE_TEMPORARY_GITIGNORE_RULE,
   },
+  {
+    path: 'tests/.agent-qa-drafts/0123456789abcdef.yaml',
+    expected: 'ignored',
+    requiredRule: 'tests/.agent-qa-drafts/',
+  },
   { path: 'agent-qa.config.yaml', expected: 'visible' },
+  // Beside the probe above, this is the two-sided pin the shelf needs from git: a draft under
+  // `tests/` is covered, and an ordinary test in the same tree is still commit-visible.
   { path: 'tests/example-pass.yaml', expected: 'visible' },
 ] as const satisfies readonly GitignoreProbe[]
 
@@ -167,6 +174,11 @@ export const KNOWLEDGE_GITIGNORE_PROBES = [
 const TARGET_GITIGNORE_ENTRIES = [
   '.agent-qa/',
   '.agent-qa/auth-states/',
+  // 394 (T-394-03): the draft shelf. It sits INSIDE `tests/` on purpose — see the two-sided
+  // admission note in `composition/local-agent-host.ts` — which is exactly why it needs a rule of
+  // its own: everything else under `tests/` is a file the user means to commit, and an authored
+  // draft is not one until they accept it.
+  'tests/.agent-qa-drafts/',
   'node_modules/',
   'agent-qa.local.yaml',
   '.env',

@@ -603,6 +603,12 @@ function buildGitignoreEntries(): string[] {
   return [
     directoryGitignoreEntry(INIT_RUNTIME_DIR),
     directoryGitignoreEntry(INIT_AUTH_STATES_DIR),
+    // 394 (T-394-03): the draft shelf, which lives INSIDE `tests/` because that is the only
+    // location a run will admit — see the two-sided admission note in
+    // `composition/local-agent-host.ts`. Spelled literally here for the same reason the durable
+    // temporary rule below is: init-filesystem.js is mocked wholesale by the init suite, and
+    // `TARGET_GITIGNORE_ENTRIES` is the other copy the agreement test pins this against.
+    'tests/.agent-qa-drafts/',
     'node_modules/',
     DEFAULT_LOCAL_CONFIG_FILE,
     DEFAULT_ENV_FILE,

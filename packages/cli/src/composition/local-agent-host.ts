@@ -21,7 +21,17 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync, statSync } from 'node:fs'
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -655,6 +665,186 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
         }
       }
       return entries
+    },
+  }
+}
+
+// THE DRAFT SHELF: where an authored draft lives so that a run can actually verify it (394,
+// WTST-01). `tests/.agent-qa-drafts/`, and deliberately NOT `.agent-qa/drafts/`. The location is
+// forced by a TWO-SIDED admission property that only a dot-directory inside the workspace's own
+// test patterns satisfies, and both sides were measured against the in-tree glob@13.0.6 on
+// 2026-08-11:
+//
+//   ADMITTED BY A RUN. `runs.start` hands its `patterns` to `resolveWorkspaceFileTarget`, which
+//   THROWS `Workspace test file is not matched by configured workspace patterns` for anything
+//   `workspace.testMatch` does not match. Against the house pattern tests/**/*.yaml, `globToRegex`
+//   compiles the globstar segment to `(?:.*/)?` and the star to `[^/]*`, giving
+//   ^tests/(?:.*/)?[^/]*\.yaml$ — which MATCHES tests/.agent-qa-drafts/<digest>.yaml. A shelf
+//   under .agent-qa/ matches nothing, so the loop could never verify a draft there at all.
+//
+//   INVISIBLE TO DISCOVERY. `discoverWorkspaceFiles` calls glob(patterns, {cwd, ignore, absolute,
+//   nodir}) and passes NO `dot` option; glob@13.0.6 defaults dot:false. Measured on one workspace
+//   holding both files: ['tests/real/t.yaml'] without it, and both paths with dot:true. THE
+//   LEADING DOT IS THE WHOLE MECHANISM — suite discovery, gate 3's corpus enumeration and a bare
+//   `agent-qa run` never see a draft because of it. If dot:true is ever passed at that call site,
+//   drafts join the suite and this shelf has to move.
+//
+// It lives in THIS file for the reason the draft port above already states: the boundary check is
+// `workspaceRelativeIdentityPath`, that needs `@vostride/agent-qa-core`, and the FUNC-02 ledger
+// entry this file already carries is the only one that will ever exist for it.
+export const DRAFT_SHELF_PARENT = 'tests'
+export const DRAFT_SHELF_DIR_NAME = '.agent-qa-drafts'
+
+/** The durable name shape, and the in-flight sibling that is never a draft. */
+const DRAFT_SUFFIX = '.yaml'
+const DRAFT_TEMP_SUFFIX = '.tmp'
+
+/**
+ * The digest shapes this shelf will turn into a path.
+ *
+ * IN-03 applied where the joining happens, verbatim from `draft-receipts-store.ts`: a
+ * `contentDigest` arrives from a caller and becomes a filename two lines later, so a value
+ * carrying `../` would be a caller-supplied arbitrary-path primitive. Wider than sha256-hex
+ * because the DTO promises only a non-empty string, narrow enough that no member can name a path
+ * separator, a parent directory or a hidden file.
+ */
+const SAFE_DRAFT_DIGEST = /^[A-Za-z0-9_-]{1,128}$/
+
+/**
+ * The shelf's one named refusal (T-394-02).
+ *
+ * ONE class for both rules because they are one rule seen twice: a digest that can name a path and
+ * a path that escapes the workspace are the same failure — an address this workspace cannot own.
+ * `reason` says which check fired without splitting the vocabulary a caller has to handle.
+ */
+export class DraftShelfOutsideWorkspaceError extends Error {
+  constructor(
+    readonly reason: 'unsafe-digest' | 'outside-workspace',
+    readonly request: string,
+    detail: string,
+  ) {
+    super(
+      `draft shelf: refusing to address ${JSON.stringify(request)} — ${detail}. A shelf path's `
+      + 'containment and its identity are the same computation, so a path with no '
+      + 'workspace-relative identity is exactly a path no run in this workspace could be handed.',
+    )
+    this.name = 'DraftShelfOutsideWorkspaceError'
+  }
+}
+
+function shelfIdentity(configDir: string, workspaceRelativePath: string): string {
+  try {
+    return workspaceRelativeIdentityPath(configDir, workspaceRelativePath)
+  } catch (error) {
+    throw new DraftShelfOutsideWorkspaceError(
+      'outside-workspace',
+      workspaceRelativePath,
+      (error as Error).message,
+    )
+  }
+}
+
+/** The absolute shelf directory for one workspace. Creates nothing. */
+export function draftShelfDir(configDir: string): string {
+  return resolve(configDir, shelfIdentity(configDir, `${DRAFT_SHELF_PARENT}/${DRAFT_SHELF_DIR_NAME}`))
+}
+
+/** The absolute path one draft's bytes are addressed by. Creates nothing. */
+export function shelfPathFor(configDir: string, contentDigest: string): string {
+  if (!SAFE_DRAFT_DIGEST.test(contentDigest)) {
+    throw new DraftShelfOutsideWorkspaceError(
+      'unsafe-digest',
+      contentDigest,
+      'a draft digest must be 1-128 characters of [A-Za-z0-9_-]',
+    )
+  }
+  return resolve(
+    configDir,
+    shelfIdentity(
+      configDir,
+      `${DRAFT_SHELF_PARENT}/${DRAFT_SHELF_DIR_NAME}/${contentDigest}${DRAFT_SUFFIX}`,
+    ),
+  )
+}
+
+/** Hosts may reject directory handles with only these established portability errors. */
+const UNSUPPORTED_DIRECTORY_FSYNC_CODES = new Set(['EINVAL', 'EISDIR', 'EPERM', 'ENOTSUP'])
+
+function fsyncPath(path: string): void {
+  let fd: number | undefined
+  try {
+    fd = openSync(path, 'r')
+    fsyncSync(fd)
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
+}
+
+function fsyncShelfDirectory(path: string): void {
+  try {
+    fsyncPath(path)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === undefined || !UNSUPPORTED_DIRECTORY_FSYNC_CODES.has(code)) throw error
+  }
+}
+
+/**
+ * Write bytes atomically: full content to a PID-suffixed sibling, fsync, durable rename.
+ *
+ * The proposals-store / receipts-store posture wholesale, and the pid is the same load-bearing
+ * detail — a shared temp name would make the rename's atomicity irrelevant, because the bytes
+ * being renamed could be half of another process's draft. Two concurrent `authoring.draft.write`
+ * calls in one workspace therefore never collide and never expose a half-written draft to a run.
+ */
+function writeShelfFileAtomically(path: string, contents: string): void {
+  const temp = `${path}.${process.pid}${DRAFT_TEMP_SUFFIX}`
+  writeFileSync(temp, contents, 'utf8')
+  fsyncPath(temp)
+  fsyncShelfDirectory(dirname(temp))
+  renameSync(temp, path)
+  fsyncShelfDirectory(dirname(path))
+}
+
+export interface DraftShelf {
+  /** Stage one draft's bytes; answers the WORKSPACE-RELATIVE path a run can be handed. */
+  write(contentDigest: string, contents: string): string
+  /** Every staged draft, sorted, as workspace-relative paths. Never an in-flight temp. */
+  list(): readonly string[]
+}
+
+/**
+ * Bind the shelf over one workspace.
+ *
+ * LAZY, exactly as the receipts store is: nothing opens and nothing is created until the first
+ * write, which is what lets a composition root bind this unconditionally without deciding whether
+ * a project has ever authored a draft — an absent directory and an empty shelf are one answer.
+ */
+export function createDraftShelf(configDir: string): DraftShelf {
+  const directory = draftShelfDir(configDir)
+
+  return {
+    write(contentDigest: string, contents: string): string {
+      const path = shelfPathFor(configDir, contentDigest)
+      mkdirSync(directory, { recursive: true })
+      writeShelfFileAtomically(path, contents)
+      return `${DRAFT_SHELF_PARENT}/${DRAFT_SHELF_DIR_NAME}/${contentDigest}${DRAFT_SUFFIX}`
+    },
+
+    list(): readonly string[] {
+      let names: readonly string[]
+      try {
+        names = readdirSync(directory)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+        throw error
+      }
+      // DETERMINISTIC ORDER, and an in-flight temp is NOISE rather than a draft: it sits beside a
+      // durable name that either is already in this listing or is about to be.
+      return [...names]
+        .sort()
+        .filter(name => !name.endsWith(DRAFT_TEMP_SUFFIX) && name.endsWith(DRAFT_SUFFIX))
+        .map(name => `${DRAFT_SHELF_PARENT}/${DRAFT_SHELF_DIR_NAME}/${name}`)
     },
   }
 }
