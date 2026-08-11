@@ -1,0 +1,313 @@
+{
+  "$comment": [
+    "THE FROZEN ROUTING DENOMINATOR for phase 394's repair-vs-finding router (D-08 · WTST-04).",
+    "Gap-closure rounds MUST NOT mint new members or edit these expectations to re-classify:",
+    "the whole proof is that this exact table is observed RED with no router in existence and",
+    "green at the end of the phase, with nothing added in between (the treadmill law). A row",
+    "that stops catching what its rationale claims is a finding about the router, never a",
+    "reason to move the row.",
+    "",
+    "WHAT A ROW IS. A row is a MEMBER SPEC -- eight fields describing one member test's run",
+    "evidence -- which the test builds into a real CompletedRunHandoff through the shared",
+    "builders in ../../evidence-fixtures.ts. Nothing here is a CompletedRunHandoff literal. A",
+    "corpus assembled as a type literal can pin an input no producer is able to emit, and a",
+    "mutation differential then reds only impossible fixtures, which cannot tell a vacuous",
+    "corpus apart from a real closure.",
+    "",
+    "THE CONTROL SHAPE, which is the reason the table looks the way it does. 394-04 found that",
+    "every pre-existing end-to-end cell screened against an EMPTY suite, so 'the lane admits'",
+    "was untested on the only input where refusing was possible at all -- and a threshold that",
+    "refused everything would have passed the whole file. Its closing advice was to check",
+    "whether this plan's cells had the same shape. They did, and this is the fix: every row",
+    "except the signature cell declares itself a variant of another row by a NAMED set of",
+    "fields, and the corpus-integrity cell verifies that declaration mechanically against the",
+    "actual key-set difference. So every discriminating signal has a row on each side of it,",
+    "and the two rows differ in that signal ALONE.",
+    "",
+    "THE PAIRS THIS BUYS, each crossing an arm boundary on one field:",
+    "  clean-definitive-assertion-fail (FINDING)  vs  mechanics-termination        (REPAIR)",
+    "  clean-definitive-assertion-fail (FINDING)  vs  mechanics-planning-failure   (REPAIR)",
+    "  clean-definitive-assertion-fail (FINDING)  vs  mechanics-cycle              (REPAIR)",
+    "  clean-definitive-assertion-fail (FINDING)  vs  mechanics-stagnation         (REPAIR)",
+    "  passing-run                     (REFUSE)   vs  mechanics-member-timeout     (REPAIR)",
+    "  passing-run                     (REFUSE)   vs  mechanics-member-cancelled   (REPAIR)",
+    "and the sharpest pair in the table, which differs in NO field at all except one integer:",
+    "  mechanics-termination (infeasibleSteps [1], the failing step)     -> REPAIR",
+    "  mixed-evidence        (infeasibleSteps [0], a different step)     -> FINDING",
+    "Same signal, same count, same everything; only WHERE it sits. A router whose mechanics",
+    "scan is narrowed to the failing step gives these two rows the same answer, and no other",
+    "cell in this file would notice.",
+    "",
+    "WHY THREE ROWS POINT AT FINDING AND ONLY TWO CLASSES ARE REPAIR-SHAPED. D-08's asymmetry:",
+    "a mis-filed test-wrong costs one human look, a mis-routed application bug gets iterated",
+    "into passing, and only the second is unrecoverable. Ambiguity therefore routes to finding.",
+    "The three finding-direction cells are named below.",
+    "",
+    "measured/ rationale on every row records what was actually observed on 2026-08-11 by",
+    "running the row through the shipped classifier, not what the table's author expected."
+  ],
+
+  "schemaVersion": 1,
+  "frozenAt": "2026-08-11",
+
+  "baseRow": "clean-definitive-assertion-fail",
+  "memberSpecKeys": [
+    "outcome",
+    "stepCount",
+    "failedSteps",
+    "verdictSourceSteps",
+    "infeasibleSteps",
+    "planningFailureSteps",
+    "cycleSteps",
+    "stagnationSteps"
+  ],
+
+  "findingDirectionRows": [
+    "clean-definitive-assertion-fail",
+    "mixed-evidence",
+    "indefinitive-failure"
+  ],
+
+  "rows": [
+    {
+      "id": "clean-definitive-assertion-fail",
+      "variantOf": null,
+      "variesBy": null,
+      "member": {
+        "outcome": "failed",
+        "stepCount": 2,
+        "failedSteps": [1],
+        "verdictSourceSteps": [{ "stepIndex": 1, "source": "assert-value" }],
+        "infeasibleSteps": [],
+        "planningFailureSteps": [],
+        "cycleSteps": [],
+        "stagnationSteps": []
+      },
+      "expected": {
+        "route": "finding",
+        "signalClass": "clean-definitive-assertion-fail",
+        "failingStepIndex": 1,
+        "verdictSource": "assert-value",
+        "mechanics": []
+      },
+      "rationale": "SOLE CATCHER for: a clean definitive assertion-fail NEVER reaches the repair arm. THE PHASE'S SIGNATURE CELL. Step 1's verifier said no, the deterministic assertValue comparator produced that verdict, and no step carries a mechanics signal -- so nothing about this failure is about how the test ACTS, and 'repairing' it could only mean rewriting what it CLAIMS to match what the application showed. That is oracle capture by construction (D-08), and this is the one row that says so.",
+      "measured": "route finding, signalClass clean-definitive-assertion-fail, failurePoint step 1 with verdictSource assert-value; scanned 2 steps and found zero mechanics signals and no member-level one."
+    },
+    {
+      "id": "mechanics-termination",
+      "variantOf": "clean-definitive-assertion-fail",
+      "variesBy": ["infeasibleSteps"],
+      "member": {
+        "outcome": "failed",
+        "stepCount": 2,
+        "failedSteps": [1],
+        "verdictSourceSteps": [{ "stepIndex": 1, "source": "assert-value" }],
+        "infeasibleSteps": [1],
+        "planningFailureSteps": [],
+        "cycleSteps": [],
+        "stagnationSteps": []
+      },
+      "expected": {
+        "route": "repair",
+        "signalClass": "execution-mechanics",
+        "failingStepIndex": 1,
+        "verdictSource": null,
+        "mechanics": [{ "stepIndex": 1, "signal": "termination" }]
+      },
+      "rationale": "SOLE CATCHER for: a typed infeasible termination ON the failing step is execution mechanics, and mechanics repair. It is the signature cell plus one field: the same failing step, the same verdict source, plus a termination block. The step could not be carried out at all, so there is no expectation to have been wrong about -- the draft's mechanics are what need work.",
+      "measured": "route repair, signalClass execution-mechanics, mechanics [{stepIndex 1, termination}], failingStepIndex 1; the clean-fail test rejected step 1 because that step itself carries a mechanics signal."
+    },
+    {
+      "id": "mechanics-planning-failure",
+      "variantOf": "clean-definitive-assertion-fail",
+      "variesBy": ["planningFailureSteps"],
+      "member": {
+        "outcome": "failed",
+        "stepCount": 2,
+        "failedSteps": [1],
+        "verdictSourceSteps": [{ "stepIndex": 1, "source": "assert-value" }],
+        "infeasibleSteps": [],
+        "planningFailureSteps": [1],
+        "cycleSteps": [],
+        "stagnationSteps": []
+      },
+      "expected": {
+        "route": "repair",
+        "signalClass": "execution-mechanics",
+        "failingStepIndex": 1,
+        "verdictSource": null,
+        "mechanics": [{ "stepIndex": 1, "signal": "planning-failure" }]
+      },
+      "rationale": "SOLE CATCHER for: a structurally failed planning turn is execution mechanics. Distinct from the termination row because the two blocks are recorded by different machinery -- a termination is a turn DECLARING the step impossible, a planning failure is the turn producing no usable decision at all -- and a router that read only one of them would classify the other as a clean fail and file a finding about an application that was never exercised.",
+      "measured": "route repair, signalClass execution-mechanics, mechanics [{stepIndex 1, planning-failure}]."
+    },
+    {
+      "id": "mechanics-cycle",
+      "variantOf": "clean-definitive-assertion-fail",
+      "variesBy": ["cycleSteps"],
+      "member": {
+        "outcome": "failed",
+        "stepCount": 2,
+        "failedSteps": [1],
+        "verdictSourceSteps": [{ "stepIndex": 1, "source": "assert-value" }],
+        "infeasibleSteps": [],
+        "planningFailureSteps": [],
+        "cycleSteps": [1],
+        "stagnationSteps": []
+      },
+      "expected": {
+        "route": "repair",
+        "signalClass": "execution-mechanics",
+        "failingStepIndex": 1,
+        "verdictSource": null,
+        "mechanics": [{ "stepIndex": 1, "signal": "cycle" }]
+      },
+      "rationale": "SOLE CATCHER for: a flagged cycle is execution mechanics. The gate-1 indefinitive family 393 measured has four members and this is the third; a router keyed on the first two would send a cycling draft to a finding, which reports an application bug that the run never established.",
+      "measured": "route repair, signalClass execution-mechanics, mechanics [{stepIndex 1, cycle}]."
+    },
+    {
+      "id": "mechanics-stagnation",
+      "variantOf": "clean-definitive-assertion-fail",
+      "variesBy": ["stagnationSteps"],
+      "member": {
+        "outcome": "failed",
+        "stepCount": 2,
+        "failedSteps": [1],
+        "verdictSourceSteps": [{ "stepIndex": 1, "source": "assert-value" }],
+        "infeasibleSteps": [],
+        "planningFailureSteps": [],
+        "cycleSteps": [],
+        "stagnationSteps": [1]
+      },
+      "expected": {
+        "route": "repair",
+        "signalClass": "execution-mechanics",
+        "failingStepIndex": 1,
+        "verdictSource": null,
+        "mechanics": [{ "stepIndex": 1, "signal": "stagnation" }]
+      },
+      "rationale": "SOLE CATCHER for: an exhausted per-element stagnation ladder is execution mechanics -- the fourth member of the indefinitive family, and the one most easily mistaken for an assertion problem because the step text is usually an assertion. The ladder exhausting means the element never responded, which is a grounding fact, not a claim about what the application displays.",
+      "measured": "route repair, signalClass execution-mechanics, mechanics [{stepIndex 1, stagnation}]."
+    },
+    {
+      "id": "mechanics-member-timeout",
+      "variantOf": "passing-run",
+      "variesBy": ["outcome"],
+      "member": {
+        "outcome": "timeout",
+        "stepCount": 2,
+        "failedSteps": [],
+        "verdictSourceSteps": [],
+        "infeasibleSteps": [],
+        "planningFailureSteps": [],
+        "cycleSteps": [],
+        "stagnationSteps": []
+      },
+      "expected": {
+        "route": "repair",
+        "signalClass": "execution-mechanics",
+        "failingStepIndex": null,
+        "verdictSource": null,
+        "mechanics": [{ "stepIndex": null, "signal": "member-timeout" }]
+      },
+      "rationale": "SOLE CATCHER for: a MEMBER-LEVEL mechanics signal, carried by the outcome rather than by any step. Not one step said no; the member ran out of time. A router whose scan looked only at StepEvidence would find nothing here and fall through to the ambiguity arm, filing a finding about an application nobody observed misbehaving. It is also the row that proves failingStepIndex is nullable for a reason -- there is no step to point at.",
+      "measured": "route repair, signalClass execution-mechanics, mechanics [{stepIndex null, member-timeout}], failingStepIndex null."
+    },
+    {
+      "id": "mechanics-member-cancelled",
+      "variantOf": "passing-run",
+      "variesBy": ["outcome"],
+      "member": {
+        "outcome": "cancelled",
+        "stepCount": 2,
+        "failedSteps": [],
+        "verdictSourceSteps": [],
+        "infeasibleSteps": [],
+        "planningFailureSteps": [],
+        "cycleSteps": [],
+        "stagnationSteps": []
+      },
+      "expected": {
+        "route": "repair",
+        "signalClass": "execution-mechanics",
+        "failingStepIndex": null,
+        "verdictSource": null,
+        "mechanics": [{ "stepIndex": null, "signal": "member-cancelled" }]
+      },
+      "rationale": "SOLE CATCHER for: cancellation is the SECOND member-level mechanics outcome, and it is a different fact from a timeout -- something stopped the run rather than the run overrunning. Both are in RunStatus and neither is a statement about the application, so a router that enumerated only one would route the other by ambiguity into a finding.",
+      "measured": "route repair, signalClass execution-mechanics, mechanics [{stepIndex null, member-cancelled}], failingStepIndex null."
+    },
+    {
+      "id": "mixed-evidence",
+      "variantOf": "clean-definitive-assertion-fail",
+      "variesBy": ["infeasibleSteps"],
+      "member": {
+        "outcome": "failed",
+        "stepCount": 2,
+        "failedSteps": [1],
+        "verdictSourceSteps": [{ "stepIndex": 1, "source": "assert-value" }],
+        "infeasibleSteps": [0],
+        "planningFailureSteps": [],
+        "cycleSteps": [],
+        "stagnationSteps": []
+      },
+      "expected": {
+        "route": "finding",
+        "signalClass": "mixed-evidence",
+        "failingStepIndex": 1,
+        "verdictSource": "assert-value",
+        "mechanics": [{ "stepIndex": 0, "signal": "termination" }]
+      },
+      "rationale": "SOLE CATCHER for: MIXED evidence is ambiguity, and ambiguity routes to finding. A FINDING-DIRECTION CELL. It differs from mechanics-termination in exactly one integer -- the termination sits on step 0 instead of on the failing step 1 -- and lands on the opposite arm. A router whose mechanics scan is narrowed to the failing step gives these two rows the same class, which is why this pair, and not any single row, is what pins the scan's width.",
+      "measured": "route finding, signalClass mixed-evidence; the clean-fail test accepted step 1 (its own step carries no mechanics) while the all-steps scan found a termination on step 0."
+    },
+    {
+      "id": "indefinitive-failure",
+      "variantOf": "clean-definitive-assertion-fail",
+      "variesBy": ["verdictSourceSteps"],
+      "member": {
+        "outcome": "failed",
+        "stepCount": 2,
+        "failedSteps": [1],
+        "verdictSourceSteps": [],
+        "infeasibleSteps": [],
+        "planningFailureSteps": [],
+        "cycleSteps": [],
+        "stagnationSteps": []
+      },
+      "expected": {
+        "route": "finding",
+        "signalClass": "indefinitive-failure",
+        "failingStepIndex": 1,
+        "verdictSource": null,
+        "mechanics": []
+      },
+      "rationale": "SOLE CATCHER for: a failure with NEITHER a mechanics signal NOR a definitive verdict source is unclassifiable, and unclassifiable is ambiguity. A FINDING-DIRECTION CELL. It is the signature cell with the verdict source removed and nothing else changed, so it is the row that proves the router actually READS verdictSource rather than treating any failed step as definitive -- a router that skipped that field would classify this identically to the signature cell and no other row would notice.",
+      "measured": "route finding, signalClass indefinitive-failure; step 1's verdict is false and it records no verdictSource, so the definitive test rejects it and the mechanics scan finds nothing."
+    },
+    {
+      "id": "passing-run",
+      "variantOf": "clean-definitive-assertion-fail",
+      "variesBy": ["outcome", "failedSteps", "verdictSourceSteps"],
+      "member": {
+        "outcome": "healed",
+        "stepCount": 2,
+        "failedSteps": [],
+        "verdictSourceSteps": [],
+        "infeasibleSteps": [],
+        "planningFailureSteps": [],
+        "cycleSteps": [],
+        "stagnationSteps": []
+      },
+      "expected": {
+        "route": "refuse",
+        "signalClass": "no-failure",
+        "failingStepIndex": null,
+        "verdictSource": null,
+        "mechanics": []
+      },
+      "rationale": "SOLE CATCHER for: the router REFUSES rather than inventing a route. There is no failure here to route -- a healed pass is a pass (393-01 F3) -- and both arms would be a wrong answer wearing a correct one's clothes. This is also the ADMIT-side control for the whole member-outcome axis: mechanics-member-timeout and mechanics-member-cancelled are this row with the outcome changed and nothing else, so a router that answered 'repair' for every member outcome it did not recognise would pass those two rows and fail here.",
+      "measured": "signalClass no-failure; routing throws AuthoringRouterUnroutableError naming no-failure. Outcome healed with no step verdict false."
+    }
+  ]
+}

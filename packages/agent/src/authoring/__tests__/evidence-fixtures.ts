@@ -17,12 +17,27 @@ import type {
   MemberTestOutcome,
   PerTestOutcome,
   RunStartAcknowledgement,
+  RunStatus,
   RunsStartInput,
   StepEvidence,
   SubActionEvidence,
+  VerdictSource,
 } from '@vostride/agent-qa-schema'
 
 import type { DraftRunPortLike, ParsedDraftLike, SuiteFingerprintIndexLike } from '../ports.js'
+
+// ---- 394-05 widening -------------------------------------------------------------------------
+//
+// The router (394-05) reads FAILURE evidence, and every builder below was written by 393 for the
+// gate evaluator, which only ever needed passing or mechanically-broken members. Four additive
+// optional members close that gap: a step whose verifier said NO (`failedSteps`), the path that
+// produced that verdict (`verdictSourceSteps`), the exhausted-ladder terminal block
+// (`stagnationSteps`), and an aggregate override for a document whose member did not pass.
+//
+// Additive and optional, so every 393 fixture builds byte-identically to before. They are added
+// HERE rather than mirrored in the router's own suite because a corpus assembled from a second
+// builder is a corpus of inputs the first builder cannot emit, which is the produced-not-literal
+// law applied to fixtures rather than to documents.
 
 export const LOCAL_FORM_URL = 'http://127.0.0.1:8931/form.html'
 
@@ -51,6 +66,18 @@ export interface MemberFixture {
   readonly cycleSteps?: readonly number[]
   /** Step indices carrying a recorded self-heal. */
   readonly selfHealSteps?: readonly number[]
+  /** Step indices whose verifier said NO — `verifierVerdict.pass === false` (394-05). */
+  readonly failedSteps?: readonly number[]
+  /** Which path produced a step's verdict, per step (394-05). Absent ⇒ the step records none. */
+  readonly verdictSourceSteps?: readonly VerdictSourceFixture[]
+  /** Step indices carrying the exhausted-ladder stagnation terminal block (394-05). */
+  readonly stagnationSteps?: readonly number[]
+}
+
+/** One step's recorded {@link VerdictSource}. */
+export interface VerdictSourceFixture {
+  readonly stepIndex: number
+  readonly source: VerdictSource
 }
 
 function elementInfo(ref: string, role: string, name: string): ElementInfo {
@@ -133,12 +160,37 @@ function stepEvidence(
       channel3: [],
     },
     subActions: subActions.map(subActionEvidence),
-    verifierVerdict: { pass: true, reasoning: 'fixture' },
+    verifierVerdict: member.failedSteps?.includes(stepIndex) === true
+      ? { pass: false, reasoning: `fixture: step ${stepIndex} did not show what the test claims` }
+      : { pass: true, reasoning: 'fixture' },
+    ...(() => {
+      const row = member.verdictSourceSteps?.find((entry) => entry.stepIndex === stepIndex)
+      return row === undefined ? {} : { verdictSource: row.source }
+    })(),
+    ...(member.stagnationSteps?.includes(stepIndex) === true
+      ? {
+          stagnation: {
+            anchorKey: 'fixture:anchor',
+            counts: [{ class: 'unresponsive', count: 3 }],
+            total: 3,
+          },
+        }
+      : {}),
     ...(member.infeasibleSteps?.includes(stepIndex) === true
       ? { termination: { kind: 'infeasible', reason: 'fixture: the control does not exist' } }
       : {}),
     ...(member.planningFailureSteps?.includes(stepIndex) === true
-      ? { planningFailure: { turnIndex: 0, exchanges: [] } }
+      // The REAL `PlanningFailureEvidence` shape (`reason`/`message`/`exchanges`). It was
+      // `{turnIndex, exchanges}` until 394-05: nothing reads the fields — every consumer reads
+      // PRESENCE — so the cast hid it, and a fixture that models a shape the runner never writes
+      // is exactly the input a differential cannot distinguish from a real one.
+      ? {
+          planningFailure: {
+            reason: 'planning-turn-failed',
+            message: 'fixture: the planning turn produced no usable decision',
+            exchanges: [],
+          },
+        }
       : {}),
     ...(member.cycleSteps?.includes(stepIndex) === true
       ? { cycle: { revisitedKey: 'k', windowSummary: [], reason: 'fixture: revisitation' } }
@@ -173,6 +225,21 @@ export function memberOutcome(fixture: MemberFixture): PerTestOutcome {
   } as unknown as PerTestOutcome
 }
 
+/**
+ * The aggregate a run document carries, DERIVED from its members rather than pinned (394-05).
+ *
+ * A document whose member timed out while its `aggregateVerdict` read `passed` is not a document
+ * the runner can produce, and the router's corpus must not be able to pin one. Skips are not
+ * failures; a heal is a pass.
+ */
+function deriveAggregateVerdict(members: readonly MemberFixture[]): RunStatus {
+  const outcomes = members.map((member) => member.outcome)
+  for (const status of ['cancelled', 'timeout', 'failed', 'healed'] as const) {
+    if (outcomes.includes(status)) return status
+  }
+  return 'passed'
+}
+
 export function runDocument(runId: string, members: readonly MemberFixture[]): CompletedRunHandoff {
   return {
     schemaVersion: 6,
@@ -182,7 +249,7 @@ export function runDocument(runId: string, members: readonly MemberFixture[]): C
     gateRun: true,
     excludedFromOutcomes: true,
     executionContext: 'local-headless',
-    aggregateVerdict: 'passed',
+    aggregateVerdict: deriveAggregateVerdict(members),
     configDigests: { suiteConfigDigest: 'a', testConfigDigest: 'b' },
     startedAt: 0,
     endedAt: 1,
