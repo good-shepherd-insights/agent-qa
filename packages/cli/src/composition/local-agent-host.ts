@@ -19,7 +19,7 @@
 // surface naming it without a ledger entry, and the ledger only ever SHRINKS — new surface code
 // can never join it. This file already carries that entry, so the placement mints none.
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   closeSync,
@@ -29,6 +29,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -945,6 +946,335 @@ export function createDraftShelf(configDir: string): DraftShelf {
         .filter(name => !name.endsWith(DRAFT_TEMP_SUFFIX) && name.endsWith(DRAFT_SUFFIX))
         .map(name => `${DRAFT_SHELF_PARENT}/${DRAFT_SHELF_DIR_NAME}/${name}`)
     },
+  }
+}
+
+// THE ONE-COMMIT APPLY (394-10, D-06 · WTST-01/WTST-07). The first write this product makes to a
+// user's own git history.
+//
+// IT LIVES IN THIS FILE for the reason every verb above it does: the boundary check is
+// `workspaceRelativeIdentityPath`, that needs `@vostride/agent-qa-core`, and the FUNC-02 surface
+// firewall forbids a NEW `packages/cli` file naming that package — the ledger only ever shrinks.
+// This file already carries the entry, so the placement mints no new debt.
+//
+// IT EXTENDS THE `runGitSymbolicRef` IDIOM rather than inventing one: an injected exec seam
+// defaulting to `spawnSync`, a finite timeout on every invocation, and ENOENT distinguished from
+// every other spawn failure. What it does NOT inherit is `checkIgnoreStatus`'s skip-on-ENOENT
+// branch, and the difference is the whole point of writing it down. A read-only VERIFICATION may
+// skip itself when git is absent, because there is a degraded posture to fall back to and a safety
+// check that disables itself on an unexpected error is the wrong default. A COMMIT has no degraded
+// posture: there is nothing to fall back TO, and "git was not there so nothing was recorded" read
+// as success would tell a person their draft is in their history when it is on their disk and
+// nowhere else. So git-absent is a typed refusal here and a skip nowhere on this path.
+//
+// THE DIRTY CHECK IS SCOPED TO THE TARGET PATH, and that scoping is a safety property in BOTH
+// directions. A human with uncommitted work at exactly the file the agent is about to write must
+// have the apply refuse — otherwise `git log` would attribute their edit to the agent's commit and
+// the agent's edit to them, which is the one thing this apply may never do. And dirtiness ANYWHERE
+// ELSE is not the agent's business: a repo-wide check would refuse every real working session, and
+// it would pass every refusal cell written above while doing it.
+
+/**
+ * The bound on each synchronous git invocation the apply makes.
+ *
+ * RETUNE: raise it if a real repository's `git status` on one pathspec is genuinely slower than
+ * this — that is the only one of the three that scales with repository size, and it is scoped to a
+ * single path precisely so it does not. It may NOT become unbounded or configurable: a hanging
+ * subprocess inside an accept is an accept that never answers, and the operator sees a terminal
+ * that has stopped rather than a refusal they can act on (T-394-45).
+ */
+export const APPLY_GIT_TIMEOUT_MS = 20_000
+
+/**
+ * The injected exec seam, shaped as `spawnSync` — the `runGitSymbolicRef` idiom.
+ *
+ * `spawnSync` rather than `execFileSync` because the apply has to TRIAGE: a non-zero status is
+ * git's own answer, an `error` is a failure to ask at all, and `execFileSync` collapses both into
+ * one throw. `checkIgnoreStatus` makes exactly this distinction for exactly this reason.
+ */
+export type GitApplyExec = (
+  file: string,
+  args: readonly string[],
+  options: { cwd: string; encoding: 'utf8'; timeout: number },
+) => {
+  status: number | null
+  signal: NodeJS.Signals | null
+  stdout: string
+  stderr: string
+  error?: Error
+}
+
+/** What an accepted `test-draft` proposal asks this host to do. */
+export interface TestDraftApplyRequest {
+  /** Named in the commit message, so history attributes the change to the artifact that made it. */
+  readonly proposalId: string
+  /** The staged draft's workspace-relative shelf path — where the bytes come FROM. */
+  readonly draftPath: string
+  /** Where the bytes go. Workspace-relative; boundary-checked by the identity mint and nothing else. */
+  readonly targetPath: string
+  /**
+   * sha256 of the target's bytes as the proposal read them, or ABSENT when the target did not exist.
+   *
+   * Absent is a claim about absence, never a waiver: an apply carrying no digest requires the
+   * target to STILL not exist, because a new suite file that has since been created by somebody
+   * else is exactly the collision this field is here to catch.
+   */
+  readonly sourceDigest?: string
+  /** The one line a person read in their inbox. Becomes the commit subject. */
+  readonly summaryLine: string
+}
+
+export interface TestDraftApplyResult {
+  /** Workspace-relative, as the identity mint spells it. */
+  readonly filePath: string
+  /** The commit this apply made, abbreviated as git prints it. */
+  readonly commit: string
+}
+
+/**
+ * A person has uncommitted work at the exact file the agent was about to write.
+ *
+ * The refusal is the mitigation for T-394-40 and it is a REPUDIATION control rather than a
+ * convenience: an apply that swept those bytes in would produce a commit indistinguishable, in
+ * `git log`, from the person having written the agent's change themselves.
+ */
+export class DirtyApplyTargetError extends Error {
+  constructor(readonly targetPath: string, readonly porcelain: string) {
+    super(
+      `refusing to apply to ${JSON.stringify(targetPath)}: it carries uncommitted work `
+      + `(${JSON.stringify(porcelain)}). Commit or stash that file first — an agent commit and a `
+      + 'human commit never share a change, because a shared one attributes each edit to the other.',
+    )
+    this.name = 'DirtyApplyTargetError'
+  }
+}
+
+/**
+ * git could not be run at all. A REFUSAL, never a skip — see this section's header.
+ */
+export class GitUnavailableForApplyError extends Error {
+  constructor(readonly targetPath: string, readonly cause: Error) {
+    super(
+      `refusing to apply to ${JSON.stringify(targetPath)}: git could not be run `
+      + `(${cause.message}). An apply has nothing to degrade to — a draft written without a commit `
+      + 'is a change nobody can find, so this refuses rather than reporting a commit that is not there.',
+    )
+    this.name = 'GitUnavailableForApplyError'
+  }
+}
+
+/**
+ * The target moved between the proposal's read and this accept (T-394-44).
+ *
+ * The window is real and ordinary: a proposal sits in an inbox until somebody looks at it, and the
+ * file it targets is one a person may have been editing the whole time.
+ */
+export class ApplyTargetChangedError extends Error {
+  constructor(
+    readonly targetPath: string,
+    readonly expected: string | undefined,
+    readonly found: string | undefined,
+  ) {
+    super(
+      `refusing to apply to ${JSON.stringify(targetPath)}: it is not what the proposal read. `
+      + (expected === undefined
+        ? 'The proposal recorded no source digest, which is a claim that the target did not exist; '
+          + 'it exists now.'
+        : found === undefined
+          ? 'The proposal recorded a source digest, but the target is no longer there.'
+          : `Expected ${expected}, found ${found}.`)
+      + ' Re-run the authoring loop against the file as it stands.',
+    )
+    this.name = 'ApplyTargetChangedError'
+  }
+}
+
+function runApplyGit(
+  exec: GitApplyExec,
+  cwd: string,
+  targetPath: string,
+  args: readonly string[],
+): { status: number; stdout: string; stderr: string } {
+  const result = exec('git', args, { cwd, encoding: 'utf8', timeout: APPLY_GIT_TIMEOUT_MS })
+  if (result.error !== undefined) {
+    // THE ONE TRIAGE. ENOENT is "git is not installed"; every other errno — EACCES, EAGAIN,
+    // EMFILE, an ETIMEDOUT from the bound above — means the question could not be asked for a
+    // reason nobody has thought about, and a write path that treated those as "git said no" would
+    // be inventing an answer. They leave this function as themselves.
+    if ((result.error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new GitUnavailableForApplyError(targetPath, result.error)
+    }
+    throw result.error
+  }
+  if (result.status === null) {
+    throw new Error(
+      `git ${args[0] ?? ''} exited without a status`
+      + `${result.signal === null ? '' : ` (signal ${result.signal})`}`,
+    )
+  }
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
+/**
+ * Is anything uncommitted at this ONE path?
+ *
+ * `--` before the pathspec, as every caller-controlled path in this file is. The pathspec is what
+ * makes the answer about the target rather than about the repository.
+ */
+export function runGitStatusPorcelain(
+  exec: GitApplyExec,
+  cwd: string,
+  targetPath: string,
+): string {
+  const result = runApplyGit(exec, cwd, targetPath, ['status', '--porcelain', '--', targetPath])
+  if (result.status !== 0) {
+    throw new Error(
+      `git status exited ${result.status} for ${JSON.stringify(targetPath)}: ${result.stderr.trim()}`,
+    )
+  }
+  return result.stdout.trim()
+}
+
+/** Stage exactly one path. Never `-A`, never `.`, never a glob this host expanded. */
+export function runGitAdd(exec: GitApplyExec, cwd: string, targetPath: string): void {
+  const result = runApplyGit(exec, cwd, targetPath, ['add', '--', targetPath])
+  if (result.status !== 0) {
+    throw new Error(
+      `git add exited ${result.status} for ${JSON.stringify(targetPath)}: ${result.stderr.trim()}`,
+    )
+  }
+}
+
+/**
+ * Commit exactly one path.
+ *
+ * THE PATHSPEC ON THE COMMIT IS A SECOND, INDEPENDENT CONTROL and not a restatement of the add's.
+ * A pathspec commit builds its tree from the named paths and the current HEAD, so anything a
+ * person had already staged before accepting stays staged and stays out of this commit. The add's
+ * pathspec cannot express that — by the time the add runs, their file is already in the index.
+ *
+ * No `-a`, no `--amend`, and no ref-moving subcommand anywhere on this path. Each of those turns
+ * one recorded change into an edit of somebody else's.
+ */
+export function runGitCommit(
+  exec: GitApplyExec,
+  cwd: string,
+  targetPath: string,
+  message: string,
+): string {
+  const committed = runApplyGit(
+    exec,
+    cwd,
+    targetPath,
+    ['commit', '--quiet', '-m', message, '--', targetPath],
+  )
+  if (committed.status !== 0) {
+    throw new Error(
+      `git commit exited ${committed.status} for ${JSON.stringify(targetPath)}: `
+      + `${committed.stderr.trim()}`,
+    )
+  }
+  const head = runApplyGit(exec, cwd, targetPath, ['rev-parse', '--short', 'HEAD'])
+  if (head.status !== 0) {
+    throw new Error(`git rev-parse exited ${head.status} after the apply's commit`)
+  }
+  return head.stdout.trim()
+}
+
+/**
+ * The commit message.
+ *
+ * IT NAMES THE PROPOSAL AND IT NAMES THE AUTHOR. The prohibition this discharges is not about
+ * tidiness: a commit that presented agent-written test content as a person's own work would make
+ * the repository's own history the wrong place to find out where a test came from, and the person
+ * whose name is on the commit would be the last to know. The proposal id is the link back to the
+ * receipt, the gate verdicts and the runs that produced it.
+ */
+function applyCommitMessage(request: TestDraftApplyRequest): string {
+  return `test: ${request.summaryLine}\n\n`
+    + `Authored by agent-qa and accepted from proposal ${request.proposalId}.\n`
+    + `Draft: ${request.draftPath}\n`
+}
+
+export interface ApplyTestDraftInput {
+  /** The project's config file; its directory is the workspace root the identity mint resolves against. */
+  readonly configPath: string
+  readonly request: TestDraftApplyRequest
+  /** Injected for tests; defaults to `spawnSync`. */
+  readonly exec?: GitApplyExec
+}
+
+/**
+ * Write an accepted draft to its target suite path and make ONE commit containing ONE file.
+ *
+ * THE ORDER IS THE CONTRACT. Identity, then the dirty check, then the digest re-check, then write,
+ * then add, then commit — and every refusal above the write leaves the working tree byte-unchanged.
+ *
+ * DIRTY BEFORE DIGEST, and the ordering is a decision rather than a sequence. The two overlap: a
+ * target a person has edited is usually BOTH dirty and no longer what the proposal read, so
+ * whichever is asked first decides which sentence the person gets. "You have uncommitted work at
+ * this file" names something they can act on immediately; "the target is not what the proposal
+ * read" is true but tells them less about why. The narrower check is asked second, where it still
+ * catches the case dirtiness cannot see at all — a target somebody else COMMITTED since the
+ * proposal was made, which is perfectly clean and completely different from what the proposal read.
+ *
+ * THE DIGEST RE-CHECK IS IMMEDIATELY BEFORE THE WRITE, and that placement is the mitigation rather
+ * than a detail: the window it closes is the one between the proposal's read and this accept, and a
+ * check performed anywhere earlier leaves a window of its own.
+ */
+export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraftApplyResult {
+  const { request } = input
+  const configDir = dirname(resolve(input.configPath))
+  const exec = input.exec ?? (spawnSync as unknown as GitApplyExec)
+
+  // THE BOUNDARY CHECK IS `workspaceRelativeIdentityPath` AND NOTHING ELSE (T-394-41). The refusal
+  // and the identity are the same computation, so there is no second rule to drift from this one —
+  // a target with no workspace-relative identity is exactly a target no run in this workspace could
+  // have been handed, and it throws out of the mint rather than out of a check beside it.
+  const identityPath = workspaceRelativeIdentityPath(configDir, request.targetPath)
+  const absoluteTarget = resolve(configDir, identityPath)
+
+  const porcelain = runGitStatusPorcelain(exec, configDir, identityPath)
+  if (porcelain !== '') throw new DirtyApplyTargetError(identityPath, porcelain)
+
+  const existing = readTargetIfPresent(absoluteTarget)
+  const foundDigest = existing === undefined
+    ? undefined
+    : createHash('sha256').update(existing).digest('hex')
+  if (foundDigest !== request.sourceDigest) {
+    throw new ApplyTargetChangedError(identityPath, request.sourceDigest, foundDigest)
+  }
+
+  const draftIdentity = workspaceRelativeIdentityPath(configDir, request.draftPath)
+  const contents = readFileSync(resolve(configDir, draftIdentity), 'utf8')
+
+  mkdirSync(dirname(absoluteTarget), { recursive: true })
+  writeFileSync(absoluteTarget, contents, 'utf8')
+
+  try {
+    runGitAdd(exec, configDir, identityPath)
+    return {
+      filePath: identityPath,
+      commit: runGitCommit(exec, configDir, identityPath, applyCommitMessage(request)),
+    }
+  } catch (error) {
+    // A GIT FAILURE AFTER THE WRITE PUTS THE FILE BACK. Everything above this line refuses with the
+    // tree untouched; below it, a bare throw would leave bytes on a person's disk that no commit
+    // explains and that this apply already told the caller it did not make. Restoring is exact
+    // rather than best-effort: the previous state is either "no such file" or bytes this function
+    // read moments ago under the same lock-free assumption the digest re-check makes.
+    if (existing === undefined) rmSync(absoluteTarget, { force: true })
+    else writeFileSync(absoluteTarget, existing, 'utf8')
+    throw error
+  }
+}
+
+function readTargetIfPresent(absolutePath: string): string | undefined {
+  try {
+    return readFileSync(absolutePath, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
   }
 }
 

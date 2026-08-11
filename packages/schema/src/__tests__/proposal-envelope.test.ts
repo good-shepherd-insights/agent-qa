@@ -67,6 +67,9 @@ describe('the envelope vocabulary is closed and spelled once', () => {
           testName: 'Submit the local account form',
           contentDigest: 'abc',
         },
+        // 394-10: where accepting writes it. No `sourceDigest` beside it, which is the loop's own
+        // case — a new file, so an absent digest is the claim the apply re-checks.
+        targetPath: 'tests/submit-the-local-account-form.yaml',
         disposition: 'keep-eligible',
         // 394-08: the two figures ride the arm together — the bound the dispatch confirm disclosed
         // and the distinct runs this draft really spent.

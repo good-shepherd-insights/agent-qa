@@ -832,12 +832,14 @@ export type {
 // human decision, and a correctly-failing draft filed as a finding — plus the ONE run-evidence
 // coordinate vocabulary the router builds and a finding carries.
 export {
+  AUTHORED_SUITE_SLUG_MAX_LENGTH,
   CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
   FindingFailurePointSchema,
   FindingProposalV1Schema,
   RUN_EVIDENCE_CHANNELS,
   RunEvidenceRefSchema,
   TestDraftProposalV1Schema,
+  authoredSuiteTargetPath,
 } from './authoring/index'
 export type {
   FindingFailurePoint,

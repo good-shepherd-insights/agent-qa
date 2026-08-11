@@ -42,6 +42,7 @@
 import {
   CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
   DRAFT_STABILITY_RUNS_N,
+  authoredSuiteTargetPath,
   NO_RUNS_FAN_OUT_BOUND,
   buildFanOutReport,
   computeFanOutBound,
@@ -314,6 +315,12 @@ function testDraftProposal(
   return {
     schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
     draftRef,
+    // WHERE ACCEPTING WILL WRITE IT, derived from where the DRAFT already sits (394-10, D-06).
+    // There is deliberately no `sourceDigest` beside it: a loop-authored draft is a NEW file
+    // (D-02 — creation is not an edit), and an absent digest is what the apply re-checks as the
+    // claim that the target still does not exist. That is the collision guard for two drafts
+    // whose names slug the same way, and it fails toward a refusal rather than an overwrite.
+    targetPath: authoredSuiteTargetPath(draftRef.filePath, draftRef.testName),
     disposition: receipt.disposition,
     runsPreviewed: fanOut.previewed.total,
     runsConsumed: fanOut.consumedTotal,

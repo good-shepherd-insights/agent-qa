@@ -90,6 +90,13 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // posture and one key for both would make it unsayable. It fired on this one too, and once more
 // only under `tsc --noEmit` (vitest printed `Type Errors  no errors` for the same tree — the
 // dual-witness rule, hit for the seventh consecutive plan).
+// 394-10 D-06/WTST-01 extends it a twelfth time, by name again: `draftApply` — the one-commit
+// apply an accepted `test-draft` reaches. It is NOT a member of `draftShelf`, and the split is the
+// same one the funnel's is, taken on the other axis: every member of that bundle is a capability
+// the authoring LOOP exercises, and this one is exercised by `proposals.accept` on a host that
+// need not be able to author anything at all. It is also the first key in this union bound WITHOUT
+// its neighbour's condition — the shelf requires a run executor, and committing an
+// already-decided draft requires a checkout root and nothing else.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -105,6 +112,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'authoringRead'
     | 'draftShelf'
     | 'authoringFunnel'
+    | 'draftApply'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

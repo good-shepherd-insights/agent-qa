@@ -49,6 +49,7 @@ import type { AuthoringFunnelPortLike } from '../authoring/funnel.js'
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
 import type {
   AuthoringReadPortLike,
+  DraftApplyPortLike,
   DraftShelfPortLike,
   ParsedDraftLike,
 } from '../authoring/ports.js'
@@ -117,6 +118,7 @@ export type OptionalFunctionDepKey =
   | 'authoringRead'
   | 'draftShelf'
   | 'authoringFunnel'
+  | 'draftApply'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -852,6 +854,20 @@ export interface FunctionDeps {
    * permanently zero, which would make the acceptance-failure flag structurally unable to fire.
    */
   authoringFunnel?: AuthoringFunnelPortLike
+  /**
+   * 394-10 D-06 / WTST-01: the one-commit apply an accepted `test-draft` reaches.
+   *
+   * OPTIONAL for the reason `knowledgeReview` is, and the stakes are this phase's whole subject. A
+   * host with no checkout root genuinely cannot write a file into a suite or make a commit, and the
+   * alternative to saying so BY NAME is an accept that answers `applied` for a write that did not
+   * happen — a receipt for a file that is not on disk, handed to a person at the one verb whose
+   * whole job is to be the honest record of what their decision did.
+   *
+   * Bound wherever `draftAuthoring` is, and NOT gated on the run executor beside it: applying an
+   * already-decided draft needs a checkout root and nothing else. A host that cannot start runs can
+   * still hold a person's accept.
+   */
+  draftApply?: DraftApplyPortLike
 }
 
 /**

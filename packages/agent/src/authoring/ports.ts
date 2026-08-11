@@ -261,3 +261,46 @@ export interface DraftShelfPortLike {
    */
   verifyDraft(input: AuthoringVerifyDraftInput): Promise<DraftReceipt>
 }
+
+/**
+ * The one-commit apply (394-10, D-06 · WTST-01), as a host capability this package cannot name.
+ *
+ * A STRUCTURAL MIRROR on this file's stated discipline: writing a file and making a git commit
+ * needs the CHECKOUT ROOT and `workspaceRelativeIdentityPath`, both of which live in `core`, which
+ * `agent` may not depend on. `composeLocalAgent()` binds the CLI host's `applyTestDraftAsOneCommit`
+ * here unchanged.
+ *
+ * IT IS NOT ON `DraftShelfPortLike`. Every member of that bundle is a capability the AUTHORING LOOP
+ * exercises, and this one is exercised by `proposals.accept` — a different op, reached by a human
+ * decision, on a host that need not be able to author anything at all (a read-only surface can
+ * still hold a person's accept). Bundling it would have made "can this host run the loop" and "can
+ * this host commit an accepted draft" one question with one answer, which they are not.
+ *
+ * THE REQUEST CARRIES THE PAYLOAD RATHER THAN ONLY AN ID, and that is measured rather than
+ * stylistic: the shipped `KnowledgeReviewPort.apply(proposalId)` can take an id because
+ * `knowledge-local`'s proposals store holds knowledge records and reads them back. NOTHING persists
+ * a `test-draft` record on any host in this build — `writePendingProposal` takes a
+ * `KnowledgeProposalV1` and `extractStoredProposal` refuses every other kind BY NAME — so a port
+ * taking an id would be asking a host to look up something no store can hold.
+ */
+export interface DraftApplyPortLike {
+  apply(request: TestDraftApplyRequestLike): Promise<TestDraftApplyResultLike>
+}
+
+/** What accepting a `test-draft` asks the host to write and commit. */
+export interface TestDraftApplyRequestLike {
+  readonly proposalId: string
+  /** The staged draft's workspace-relative shelf path — where the bytes come from. */
+  readonly draftPath: string
+  /** Where they go. Boundary-checked at the host by the identity mint and nothing else. */
+  readonly targetPath: string
+  /** Absent means the proposal read no target, which the host re-checks as a claim about absence. */
+  readonly sourceDigest?: string
+  /** The line a person read in their inbox; becomes the commit subject. */
+  readonly summaryLine: string
+}
+
+export interface TestDraftApplyResultLike {
+  readonly filePath: string
+  readonly commit: string
+}

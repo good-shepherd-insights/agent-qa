@@ -87,6 +87,7 @@ function appliedEnvelope(digest: string): ProposalEnvelope {
         testName: `draft ${digest}`,
         contentDigest: digest,
       },
+      targetPath: `tests/draft-${digest}.yaml`,
       disposition: 'keep-eligible',
       runsPreviewed: 9,
       runsConsumed: 3,

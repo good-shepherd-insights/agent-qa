@@ -303,6 +303,12 @@ export const authoringDraftEditSpec: FunctionSpec<
       proposal: {
         schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
         draftRef,
+        // THE EDIT'S TARGET IS THE FILE IT EDITED, and its digest is the bytes this op read out of
+        // that file moments ago (394-10, T-394-44). This is the arm's `sourceDigest`-PRESENT case
+        // and the loop's write path is the absent one — between them the apply's re-check has both
+        // directions exercised by real producers rather than by a fixture.
+        targetPath: identity.filePath,
+        sourceDigest: resolution.draft.contentDigest,
         // `unverified` is the honest value and not a placeholder: it is what the disposition
         // vocabulary means by a draft no gate has judged, and this op deliberately runs none. A
         // `keep-eligible` here would be a verdict about gates that never ran.

@@ -48,8 +48,10 @@ export type {
 // 394-06 (WTST-01/WTST-04, D-05/D-11): the two envelope payload arms, and the ONE evidence-ref
 // vocabulary the router builds and a finding carries.
 export {
+  AUTHORED_SUITE_SLUG_MAX_LENGTH,
   CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
   FindingFailurePointSchema,
+  authoredSuiteTargetPath,
   FindingProposalV1Schema,
   RUN_EVIDENCE_CHANNELS,
   RunEvidenceRefSchema,

@@ -78,6 +78,7 @@ function testDraftEnvelope(digest: string, decision?: 'applied' | 'rejected'): P
         testName: `draft ${digest}`,
         contentDigest: digest,
       },
+      targetPath: `tests/draft-${digest}.yaml`,
       disposition: 'keep-eligible',
       runsPreviewed: 9,
       runsConsumed: 3,

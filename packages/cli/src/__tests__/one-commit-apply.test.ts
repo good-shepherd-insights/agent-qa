@@ -129,9 +129,19 @@ beforeEach(() => {
   git('config', 'user.email', 'apply-test@example.invalid')
   git('config', 'commit.gpgsign', 'false')
   git('config', 'gpg.format', 'openpgp')
+  // The shelf is gitignored in every real project (`agent-qa init` writes the managed block), so a
+  // fixture that left it visible would start every cell with a dirty repository — which would make
+  // a repo-wide dirty check refuse EVERYTHING and turn the differential that catches one into a
+  // suite that reds on all fifteen rows and names nothing.
+  writeFileSync(join(root, '.gitignore'), 'tests/.agent-qa-drafts/\n')
   writeFileSync(join(root, 'README.md'), 'seeded\n')
-  git('add', '--', 'README.md')
+  git('add', '--', '.gitignore', 'README.md', 'agent-qa.config.yaml')
   git('commit', '--quiet', '-m', 'seed')
+  // The instrument's own precondition: a clean tree before every cell, so "this file is dirty" is
+  // something a cell ARRANGED rather than something the fixture left lying around.
+  if (git('status', '--porcelain').stdout.trim() !== '') {
+    throw new Error(`the fixture repository is not clean: ${git('status', '--porcelain').stdout}`)
+  }
 })
 
 afterEach(() => {
@@ -298,13 +308,18 @@ describe('applyTestDraftAsOneCommit', () => {
 
     applyTestDraftAsOneCommit({ configPath, request: request(), exec: recording })
 
-    expect(argv.length).toBeGreaterThan(0)
-    for (const line of argv) {
-      const separator = line.indexOf('--')
-      expect(separator).toBeGreaterThan(0)
-      // Every argument AFTER the separator is a path, and the target is one of them.
-      expect(line.slice(separator + 1)).toContain(TARGET_PATH)
+    // THE PROPERTY IS POSITIONAL, not "the token appears somewhere". Every argv line carrying the
+    // caller-controlled target must have `--` IMMEDIATELY before it, which is the only arrangement
+    // that stops a target beginning with a dash from being parsed as one of git's own options.
+    const carrying = argv.filter((line) => line.includes(TARGET_PATH))
+    expect(carrying.length).toBe(3)
+    for (const line of carrying) {
+      expect(line[line.indexOf(TARGET_PATH) - 1]).toBe('--')
     }
+    // And the ONE line that carries no caller path carries no separator either, so the assertion
+    // above is about paths rather than about a token this host sprinkles everywhere.
+    const readOnly = argv.filter((line) => !line.includes(TARGET_PATH))
+    expect(readOnly.map((line) => line[1])).toEqual(['rev-parse'])
   })
 
   it('issues no --amend, no -a and no ref-moving subcommand', () => {
@@ -317,7 +332,7 @@ describe('applyTestDraftAsOneCommit', () => {
     applyTestDraftAsOneCommit({ configPath, request: request(), exec: recording })
 
     const subcommands = argv.map((line) => line[1])
-    expect([...new Set(subcommands)].sort()).toEqual(['add', 'commit', 'status'])
+    expect([...new Set(subcommands)].sort()).toEqual(['add', 'commit', 'rev-parse', 'status'])
     for (const line of argv) {
       expect(line).not.toContain('--amend')
       expect(line).not.toContain('-a')
