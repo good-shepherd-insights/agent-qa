@@ -40,6 +40,7 @@ import type {
   RunEvidenceRef,
 } from '../router.js'
 import type { classifyFailureEvidence, routeRepairOrFinding } from '../router.js'
+import type { RepairDeps } from '../repair.js'
 
 // ---- 1. the two arms are mutually unreachable ---------------------------------------------
 
@@ -139,3 +140,31 @@ expectTypeOf<NonNullable<FindingRoute['failurePoint']>['verdictSource']>()
 expectTypeOf<keyof RunEvidenceRef>().toEqualTypeOf<
   'runId' | 'filePath' | 'testName' | 'stepIndex' | 'subActionIndex' | 'channel'
 >()
+
+// ---- 4. the finding branch cannot reach the repair entry point (394-06, D-08 · T-394-22) ------
+//
+// SC-2's second half, and the one a behavioural cell cannot carry: `repairDraft` takes a
+// `RepairRoute`, so wiring the app-broken branch into it is a COMPILE error rather than a
+// behaviour a corpus has to catch after the fact. Section 1 above already pinned the two arms
+// mutually non-assignable; this cell pins that the repair entry point actually spends that
+// separation instead of widening its parameter to `PostVerifyRoute` and branching inside.
+//
+// `@ts-expect-error` IS ITSELF TWO-SIDED. It fails when the error DISAPPEARS — so the day someone
+// widens `repairDraft`'s parameter, or gives `FindingRoute` the fields that make it assignable,
+// this line reds with "Unused '@ts-expect-error' directive". That is exactly the regression the
+// cell exists to catch, and it is why the pin is a directive rather than an assertion about types.
+
+// Declared rather than imported as a value: this file is compiled by `vitest --typecheck` and by
+// `tsc --noEmit` and is never executed, so a type-space reference to the export is the honest
+// spelling — and it still fails to resolve, by name, while the module does not exist.
+declare const repairDraft: typeof import('../repair.js')['repairDraft']
+declare const repairDeps: RepairDeps
+
+// @ts-expect-error — a FindingRoute is not a RepairRoute, and repair must be unreachable from it.
+void repairDraft(finding, repairDeps)
+
+// The positive direction, so the cell above is a statement about a call that otherwise WORKS
+// rather than about a function nothing can call.
+void repairDraft(repair, repairDeps)
+
+expectTypeOf<Parameters<typeof repairDraft>[0]>().toEqualTypeOf<RepairRoute>()
