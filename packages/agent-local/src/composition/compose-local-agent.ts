@@ -1819,6 +1819,12 @@ export function postRunCapabilities(
  *
  * `surface` is `'chat'` on both and is ATTRIBUTION ONLY. Nothing in the function layer may branch
  * on it (`invoke.ts:28-29`), and the origin split above is exactly why nothing needs to.
+ *
+ * 2026-08-11 (Phase 394 / WTST-01): both stages hold `test-write`, so the chat planner can reach
+ * the authoring loop. What constrains that power is the two decision points D-03 names — the
+ * ask-tier confirm at dispatch and the 391 inbox accept — not the absence of a grant. Withholding
+ * the grant here would refuse the loop for a reason that has nothing to do with the loop, and a
+ * refusal nobody chose is the worst kind.
  */
 export const CHAT_STAGE_SCOPES: readonly FunctionScope[] = [
   'read',
@@ -1826,6 +1832,7 @@ export const CHAT_STAGE_SCOPES: readonly FunctionScope[] = [
   'config-write',
   'knowledge-write',
   'approval-write',
+  'test-write',
 ]
 
 export const CHAT_RESOLVER_CALLER: FunctionCaller = Object.freeze({

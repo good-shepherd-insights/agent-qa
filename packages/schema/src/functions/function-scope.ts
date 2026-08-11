@@ -29,6 +29,15 @@ import { z } from 'zod'
  * proposals and revoke the standing grants that constrain it. One of those is a decision about
  * content and the other is a decision about consent, and the whole sovereignty argument of this
  * phase is that they are not the same power. 397 inherits this member rather than re-minting it.
+ *
+ * Dated counter-note (2026-08-11, Phase 394 / WTST-01): extended a third time, with `test-write`,
+ * and on exactly the reasoning above rather than by appeal to it. The alternative was to spend
+ * `run` on the authoring loop, and that is the same privilege conflation on a different axis: a
+ * caller granted the power to EXECUTE this project's tests would thereby have been granted the
+ * power to AUTHOR new ones into the repository and commit them, and those are not the same power —
+ * one consumes the suite, the other writes it. `config-write` is no better; it is the reuse the
+ * 387 note already refused, one directory over. The ask-tier gate is a different axis again and
+ * closes neither. 397 inherits this member rather than re-minting it.
  */
 export const FunctionScopeSchema = z.enum([
   'read',
@@ -36,6 +45,7 @@ export const FunctionScopeSchema = z.enum([
   'config-write',
   'knowledge-write',
   'approval-write',
+  'test-write',
 ])
 
 export type FunctionScope = z.infer<typeof FunctionScopeSchema>
