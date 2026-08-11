@@ -75,17 +75,62 @@ describe('the corpus manifest is versioned and internally coherent', () => {
     // THE SIZE AND THE VERSION MOVE TOGETHER, in one commit, or the ratio reported afterwards is a
     // number about a set nobody can name. v4 was 392-11's gap round: 18 + two regression cells.
     // v5 is 392-14's: 20 + the two the ROUND-2 verification found still invisible. v6 is 392-15's:
-    // 22 + the mixed-mapping cell the ROUND-3 verification found neither lane had.
+    // 22 + the mixed-mapping cell the ROUND-3 verification found neither lane had. v7 is 394-11's
+    // ARRIVAL FLIP: the size is unchanged at 23 and two live cells change arm, which is exactly the
+    // case this pin exists to make visible — a flip moves the denominator without moving the size.
     expect(SCENARIO_CORPUS.length).toBe(23)
-    expect(SCENARIO_CORPUS_VERSION).toBe(6)
-    // The denominators the ceiling is computed over, pinned per lane. Both gap-round cells are
+    expect(SCENARIO_CORPUS_VERSION).toBe(7)
+    // The denominators the ceiling is computed over, pinned per lane. Every gap-round cell is
     // `fail_closed` precisely so these two numbers did NOT move — a corpus round that quietly grew
-    // the denominator would report a better rate for having done work (the treadmill law).
+    // the denominator would report a better rate for having done work (the treadmill law). What
+    // DOES move them is a deliberate flip, and 394-11 is the first one: the live count rises by the
+    // two write-test cells the authoring loop makes routable, and the hermetic count is unchanged
+    // because `fn-unknown-op` names an id this build still does not register (see its manifest
+    // comment — the loop shipped as `authoring.draft.write`, so that cell keeps proving the
+    // negative rather than joining the population).
     const denominator = (lane: string): number =>
       SCENARIO_CORPUS.filter((entry) => entry.lane === lane && entry.kind === 'should_execute')
         .length
     expect(denominator('hermetic')).toBe(11)
-    expect(denominator('live')).toBe(3)
+    expect(denominator('live')).toBe(5)
+  })
+
+  it('states denominators in its own header that are the ones the list actually has', () => {
+    // THE HEADER IS WHAT A READER TRUSTS, and until this cell existed it was prose nothing checked.
+    // A manifest whose header still claims the previous per-lane numbers is a manifest that lies,
+    // and the lie is invisible to every other assertion here because they all read the LIST. So the
+    // header carries ONE canonical line, this cell parses it, and the two are compared against each
+    // other rather than restated as two literals that can drift apart in silence.
+    const source = readFileSync(join(SCENARIOS_ROOT, 'manifest.ts'), 'utf8')
+    const stated = /DENOMINATORS AT THIS VERSION: (\d+) hermetic, (\d+) live/.exec(source)
+    expect(
+      stated,
+      'the manifest header must carry exactly one line of the form '
+        + '"DENOMINATORS AT THIS VERSION: N hermetic, M live" — it is the number a reader quotes',
+    ).not.toBeNull()
+    const denominator = (lane: string): number =>
+      SCENARIO_CORPUS.filter((entry) => entry.lane === lane && entry.kind === 'should_execute')
+        .length
+    expect(Number(stated?.[1])).toBe(denominator('hermetic'))
+    expect(Number(stated?.[2])).toBe(denominator('live'))
+  })
+
+  it('records 394s arrival flip by name: two cells route, and two still refuse', () => {
+    // D-08's FLIP LAW, made an assertion rather than a paragraph. The authoring loop registering
+    // `authoring.draft.write` is what moves these lines, so a build that lost the op would red HERE
+    // as well as in the parity walk — and a reader who found all four cells refusing would know the
+    // capability had regressed rather than having to reconstruct it.
+    //
+    // THE TWO THAT STAY REFUSING ARE THE POINT OF THIS CELL. A phase that registers ops can make an
+    // unknown-op test pass for the wrong reason, so the negative direction is pinned beside the
+    // positive one: `fn-unknown-op` addresses an id nothing registers, and `pin-and-write-test`
+    // measures the CR-04 directive/pin probe rather than the write-test half.
+    const kindOf = (id: string): string | undefined =>
+      SCENARIO_CORPUS.find((entry) => entry.id === id)?.kind
+    expect(kindOf('write-test-for-checkout')).toBe('should_execute')
+    expect(kindOf('write-test-2fa-and-run')).toBe('should_execute')
+    expect(kindOf('fn-unknown-op')).toBe('fail_closed')
+    expect(kindOf('pin-and-write-test')).toBe('fail_closed')
   })
 
   it('assigns each class its D-13 lane, with every exception NAMED', () => {
