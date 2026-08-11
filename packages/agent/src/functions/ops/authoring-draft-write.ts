@@ -114,16 +114,36 @@ export const authoringDraftWriteSpec: FunctionSpec<
       { read, shelf },
     )
 
-    // Projected arm-agnostically, which is what lets plans 04-06 land a branch inside the loop and
-    // reach this line unchanged. `drafted` is the only arm this build's router can produce — every
-    // other disposition refuses BY NAME inside the loop rather than returning a shrug — so the two
-    // spreads below are both taken today; they exist so that a stage-2 refusal, which has no draft
-    // and no receipt, does not have to invent either.
+    // Projected arm-agnostically, which is what lets plans 05-06 land a branch inside the loop and
+    // reach this line unchanged. The two optional spreads carry a `drafted` invocation's draft and
+    // receipt and are simply absent on a stage-2 refusal, which has neither.
+    //
+    // THE REFUSAL PAYLOAD IS READ OFF THE SCREENING, not off the outcome. The `refused` arm of
+    // `AuthoringLoopOutcome` stays exactly the shape 394-02 declared — it is a discriminant, not a
+    // carrier — and what a refusal has to NAME is a fact about the dedup screening that produced
+    // it. Reading it here is what makes D-04's refuse-and-LINK reach a caller at all: a chat
+    // surface told `refused` with no `refusal` could report that something matched but never say
+    // what, and re-invoking is the only continuation this stateless design offers.
     const outcome = result.outcome
+    const dedup = result.dedup
     return {
       outcome: outcome.kind,
       ...(outcome.draftRef === undefined ? {} : { draftRef: outcome.draftRef }),
       ...(outcome.receipt === undefined ? {} : { receipt: outcome.receipt }),
+      ...(dedup.kind === 'duplicate'
+        ? {
+          refusal: {
+            filePath: dedup.evidence.matched.filePath,
+            testName: dedup.evidence.matched.testName,
+            matchedRef: dedup.evidence.matchedRef,
+            score: dedup.evidence.score,
+            threshold: dedup.evidence.threshold,
+            sharedTokens: dedup.evidence.sharedTokens,
+            comparedTests: dedup.comparedTests,
+            continuations: [...dedup.continuations],
+          },
+        }
+        : {}),
     }
   },
 }

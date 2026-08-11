@@ -88,11 +88,15 @@ export type {
 // vocabulary is declared WHOLE here in the tracer so plans 04-06 add a branch behind a
 // discriminant every consumer already reads, never a member to the shape.
 export {
+  AUTHORING_DEDUP_CONTINUATIONS,
   AUTHORING_LOOP_OUTCOMES,
+  AuthoringDedupRefusalSchema,
   AuthoringDraftWriteInputSchema,
   AuthoringDraftWriteOutputSchema,
 } from './authoring'
 export type {
+  AuthoringDedupContinuation,
+  AuthoringDedupRefusal,
   AuthoringDraftWriteInput,
   AuthoringDraftWriteOutput,
   AuthoringLoopOutcomeKind,

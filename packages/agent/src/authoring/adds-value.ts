@@ -102,21 +102,45 @@ function tokens(texts: readonly string[]): Set<string> {
 }
 
 /**
+ * What one text comparison produced: the Jaccard score AND the intersection size behind it.
+ *
+ * TWO READINGS OF ONE COMPARISON, not two comparisons. `textSimilarity` is the score alone and is
+ * what this gate decides on; 394's stage-2 dedup refusal has to NAME the evidence that produced
+ * its verdict (D-04), and a shared-token count recomputed on the other side of that seam would be
+ * a second tokenizer — the one thing D-16 says must not exist, since two normalizers let a
+ * pre-authoring screen and a post-run gate disagree about the same pair. So the count is reported
+ * out of the same traversal over the same {@link tokens} normalizer, and there is still exactly
+ * one definition of how alike two tests are.
+ */
+export interface TextOverlap {
+  /** Token-set Jaccard, symmetric and bounded. */
+  readonly score: number
+  /** How many normalized tokens the two texts share — the numerator, reported. */
+  readonly sharedTokens: number
+}
+
+/**
  * Token-set Jaccard between a draft and a suite test's text (D-16's fallback comparison).
  *
  * Symmetric and bounded, and TWO EMPTY TEXTS SCORE 0 rather than 1: the degenerate `0/0` is not
  * an identity, and reading it as one would let a single empty text-corpus entry cover every draft
  * ever evaluated — an over-flag so complete it would turn the safe direction into a gate that
- * always says no.
+ * always says no. A zero score on an empty side reports zero shared tokens, which is the true
+ * count rather than a sentinel.
  */
-export function textSimilarity(draft: DraftTextLike, entry: SuiteTextCorpusEntryLike): number {
+export function textOverlap(draft: DraftTextLike, entry: SuiteTextCorpusEntryLike): TextOverlap {
   const left = tokens([draft.testName, ...draft.steps])
   const right = tokens([entry.testName, ...entry.stepsText])
-  if (left.size === 0 || right.size === 0) return 0
+  if (left.size === 0 || right.size === 0) return { score: 0, sharedTokens: 0 }
 
   let shared = 0
   for (const token of left) if (right.has(token)) shared += 1
-  return shared / (left.size + right.size - shared)
+  return { score: shared / (left.size + right.size - shared), sharedTokens: shared }
+}
+
+/** The score half of {@link textOverlap} — this gate's whole reading of a text comparison. */
+export function textSimilarity(draft: DraftTextLike, entry: SuiteTextCorpusEntryLike): number {
+  return textOverlap(draft, entry).score
 }
 
 /** The draft's elements that no suite test has exercised, deduplicated, in first-seen order. */

@@ -21,6 +21,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { AUTHORING_DEDUP_CONTINUATIONS } from '@vostride/agent-qa-schema'
 import { parse } from 'yaml'
 import { describe, expect, it } from 'vitest'
 
@@ -248,7 +249,7 @@ describe('dedupBeforeAuthor against the frozen corpus', () => {
   )
 
   it('names BOTH continuations on every refusal, out of one closed vocabulary', async () => {
-    const { dedupBeforeAuthor, DEDUP_CONTINUATIONS } = await loadDedup()
+    const { dedupBeforeAuthor } = await loadDedup()
     const row = rowNamed('obvious-duplicate')
     const { intent, corpus } = inputsFor(row)
     const screening = dedupBeforeAuthor(intent, corpus)
@@ -256,28 +257,39 @@ describe('dedupBeforeAuthor against the frozen corpus', () => {
     if (screening.kind !== 'duplicate') throw new Error('the obvious duplicate must refuse')
     // D-04: refuse-and-link carries the two named continuations. Two, not "at least one" -- a
     // refusal offering only "extend that test" cannot be acted on by an author whose draft is a
-    // different assertion about the same flow.
-    expect(DEDUP_CONTINUATIONS).toHaveLength(2)
-    expect(screening.continuations).toEqual([...DEDUP_CONTINUATIONS])
-    expect(DEDUP_CONTINUATIONS.join(' ')).toContain('extend')
-    expect(DEDUP_CONTINUATIONS.join(' ')).toContain('assertion')
+    // different assertion about the same flow. The vocabulary is the SCHEMA's, which is the
+    // assertion that no second spelling was minted in this package.
+    expect(AUTHORING_DEDUP_CONTINUATIONS).toHaveLength(2)
+    expect(screening.continuations).toEqual([...AUTHORING_DEDUP_CONTINUATIONS])
+    expect(AUTHORING_DEDUP_CONTINUATIONS.join(' ')).toContain('extend')
+    expect(AUTHORING_DEDUP_CONTINUATIONS.join(' ')).toContain('assertion')
   })
 
-  it('refuses through a NAMED error class carrying the same evidence', async () => {
-    const { dedupBeforeAuthor, NearDuplicateRefusedError } = await loadDedup()
+  it('REFUSES BY RETURNING, never by throwing (D-04: a typed op result)', async () => {
+    const { dedupBeforeAuthor } = await loadDedup()
     const row = rowNamed('obvious-duplicate')
     const { intent, corpus } = inputsFor(row)
+
+    // A throw would make the refusal an error surface, and the op would FAIL rather than answer
+    // `refused` with its link. D-04 makes it a result the caller reads and chat renders, which is
+    // only checkable by asserting the call returns at all.
+    expect(() => dedupBeforeAuthor(intent, corpus)).not.toThrow()
     const screening = dedupBeforeAuthor(intent, corpus)
     if (screening.kind !== 'duplicate') throw new Error('the obvious duplicate must refuse')
+    expect(screening.evidence.matchedRef)
+      .toBe('demo/init/tests/uat-381-local-form.yaml::Sign in on the local account form')
+  })
 
-    const error = new NearDuplicateRefusedError(screening.evidence, screening.continuations)
-    expect(error.name).toBe('NearDuplicateRefusedError')
-    expect(error).toBeInstanceOf(Error)
-    // The message NAMES the match rather than reporting that something matched.
-    expect(error.message).toContain('demo/init/tests/uat-381-local-form.yaml')
-    expect(error.message).toContain('Sign in on the local account form')
-    expect(error.message).toContain('0.5')
-    expect(error.evidence).toEqual(screening.evidence)
+  it('is deterministic: two screenings of one suite report one duplicate', async () => {
+    const { dedupBeforeAuthor } = await loadDedup()
+    // The tie row is the one that can differ between invocations if the tie-break is dropped, so
+    // it is the one worth running twice. Determinism is what makes the frozen corpus a proof at
+    // all -- a lane whose answer moved between runs could not be pinned by any table.
+    const row = rowNamed('tie')
+    const { intent, corpus } = inputsFor(row)
+    const first = dedupBeforeAuthor(intent, corpus)
+    const second = dedupBeforeAuthor(intent, [...corpus].reverse())
+    expect(first).toEqual(second)
   })
 })
 

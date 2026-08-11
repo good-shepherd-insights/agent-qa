@@ -47,12 +47,12 @@ import type {
   ScopeKey,
 } from '@vostride/agent-qa-schema'
 
-import { textSimilarity } from './adds-value.js'
+import { dedupBeforeAuthor } from './dedup.js'
+import type { DedupScreening } from './dedup.js'
 import type {
   AuthoringReadPortLike,
   DraftShelfPortLike,
   ParsedDraftLike,
-  SuiteTextCorpusEntryLike,
 } from './ports.js'
 import { buildTieredPrompt } from '../prompt/tiered-prompt-builder.js'
 
@@ -84,23 +84,6 @@ export type AuthoringLoopStage = (typeof AUTHORING_LOOP_STAGES)[number]
  */
 export const AUTHORING_COMPILE_AGENT_CONTEXT =
   'authoring.draft.write — compile a whole test document from an intent and a brief'
-
-/**
- * How stage 2 read the suite, and the arm it took.
- *
- * `closest` is present whenever the corpus was non-empty, and it is what plan 04's refusing arm
- * will compare against its pinned threshold. Reporting it from the tracer means the walk is
- * observable now rather than a call whose only evidence is that it did not throw.
- */
-export interface DedupScreening {
-  readonly kind: 'no-duplicate'
-  readonly comparedTests: number
-  readonly closest?: {
-    readonly filePath: string
-    readonly testName: string
-    readonly similarity: number
-  }
-}
 
 /**
  * How one loop invocation ended.
@@ -142,7 +125,24 @@ export interface AuthoringLoopResult {
   readonly outcome: AuthoringLoopOutcome
   readonly stages: readonly AuthoringLoopStage[]
   readonly dedup: DedupScreening
+  /** Which named side counters this invocation incremented. See the vocabulary's doc block. */
+  readonly sideCounters: readonly AuthoringLoopSideCounter[]
 }
+
+/**
+ * Facts about an invocation that are counted BESIDE the funnel, never as a stage of it (D-15).
+ *
+ * A dedup refusal is the first member, and the distinction is the whole reason the vocabulary
+ * exists. Plan 07 projects the loop as a funnel — how many intents reached compile, verify, a
+ * keep-eligible receipt — and a refusal that was folded into a funnel stage would read as an
+ * invocation the pipeline FILTERED. It is not: it is an invocation the pipeline never entered,
+ * refused for a working-as-intended reason before any cost was incurred. Counting it inside the
+ * funnel would inflate the filter rate with successes and break comparison against the reference
+ * distribution, which is exactly the number the funnel exists to be compared against.
+ */
+export const AUTHORING_LOOP_SIDE_COUNTERS = ['dedup-refused'] as const
+
+export type AuthoringLoopSideCounter = (typeof AUTHORING_LOOP_SIDE_COUNTERS)[number]
 
 /**
  * The model emitted something that is not a parsable test document.
@@ -184,35 +184,6 @@ export class AuthoringLoopUnroutedDispositionError extends Error {
 
 /** The dispositions stage 5 answers `drafted` for — the gates judged the draft and did not say no. */
 const DRAFTED_DISPOSITIONS: readonly DraftDisposition[] = ['keep-eligible', 'proposal-only']
-
-/**
- * Stage 2 — screen the intent against the authored suite, BEFORE anything is authored.
- *
- * Reuses `textSimilarity`, the shipped comparison gate 3's degraded lane already screens with
- * (393 D-16), rather than a second recipe: two notions of "how alike are these two tests" would
- * let the pre-authoring screen and the post-run gate disagree about the same pair.
- *
- * The intent stands in for the draft's text because at this point there IS no draft — that is
- * what makes the screen worth doing. An intent has no execution fingerprint, so the anchor-level
- * recipe cannot fire here, and no LLM judges duplication (D-16).
- */
-export function dedupBeforeAuthor(
-  intent: string,
-  corpus: readonly SuiteTextCorpusEntryLike[],
-): DedupScreening {
-  let closest: DedupScreening['closest']
-  for (const entry of corpus) {
-    const similarity = textSimilarity({ testName: intent, steps: [] }, entry)
-    if (closest === undefined || similarity > closest.similarity) {
-      closest = { filePath: entry.filePath, testName: entry.testName, similarity }
-    }
-  }
-  return {
-    kind: 'no-duplicate',
-    comparedTests: corpus.length,
-    ...(closest === undefined ? {} : { closest }),
-  }
-}
 
 /** The brief's exemplars, as the context block a compile reads them from. */
 function exemplarBlockBody(brief: AuthoringBrief): string {
@@ -313,6 +284,26 @@ export async function runAuthoringLoop(
   stages.push('dedup')
   const dedup = dedupBeforeAuthor(input.intent, await deps.read.suiteTextCorpus())
 
+  // THE INVOCATION ENDS HERE, and it ends BEFORE `compileDraft` — which is the only place a model
+  // is reached. D-04: the refusal is a typed op result, fail-closed and stateless. There is no
+  // suspended-op state and no in-turn "continue anyway": chat renders the refusal with its link
+  // and its two continuations, and the user re-invokes deliberately. An in-turn continue would
+  // need a suspended op to resume into, which is machinery this phase does not build and which
+  // would turn a refusal a user must read into one they can dismiss.
+  //
+  // `stages` stops at `dedup`, so the trace says WHERE this invocation ended rather than claiming
+  // six stages ran. The `refused` arm carries neither a `draftRef` nor a `receipt` because there
+  // is no draft and no gate-run to have produced one; the evidence lives on `dedup`, which is a
+  // fact about the SCREENING rather than about the outcome.
+  if (dedup.kind === 'duplicate') {
+    return {
+      outcome: { kind: 'refused' },
+      stages,
+      dedup,
+      sideCounters: ['dedup-refused'],
+    }
+  }
+
   stages.push('compile')
   const draft = await compileDraft(input, brief, deps.shelf)
 
@@ -327,5 +318,5 @@ export async function runAuthoringLoop(
 
   stages.push('compound')
 
-  return { outcome, stages, dedup }
+  return { outcome, stages, dedup, sideCounters: [] }
 }

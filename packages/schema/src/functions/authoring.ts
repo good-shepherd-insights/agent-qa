@@ -81,6 +81,70 @@ export const AUTHORING_LOOP_OUTCOMES = [
 export type AuthoringLoopOutcomeKind = (typeof AUTHORING_LOOP_OUTCOMES)[number]
 
 /**
+ * The two continuations a dedup refusal offers (394 D-04) — CLOSED, and minted here.
+ *
+ * It lives in `schema` rather than beside the lane that produces it because the op's output
+ * validates it and chat renders it, and 384 D-16 puts a DTO's vocabulary where every surface
+ * reading it can share one spelling. A second `as const` in `agent` would be the drift that law
+ * exists to prevent, and would make "which continuation did an author take" — a question plan
+ * 07's funnel asks — answerable two ways.
+ *
+ * TWO MEMBERS, and neither covers the other. An author whose intent really is the existing test
+ * takes `extend-that-test`; an author whose intent is a DIFFERENT assertion about the same flow
+ * has nothing to extend and takes `name-the-differing-assertion`, which is the honest question to
+ * put to someone the screen may have over-flagged. Offering only the first would make an
+ * over-flagging screen — the ratified safe direction — unappealable.
+ */
+export const AUTHORING_DEDUP_CONTINUATIONS = [
+  'extend-that-test',
+  'name-the-differing-assertion',
+] as const
+
+export type AuthoringDedupContinuation = (typeof AUTHORING_DEDUP_CONTINUATIONS)[number]
+
+/**
+ * What a stage-2 refusal NAMES (394 D-04).
+ *
+ * THE OUTPUT'S ONE PAYLOAD ARM, AND THE EXCEPTION IS PRINCIPLED. The output contract below states
+ * that it carries no payload per outcome, because a finding's evidence and a proposal's diff ride
+ * 391's envelope into the inbox and a second copy here would be a second place to read one
+ * artifact. A dedup refusal has NO such home: nothing was authored, so there is no draft, no
+ * receipt, no gate-run and no envelope, and D-04 makes the refusal a typed op RESULT that ends the
+ * invocation and is rendered by chat. Omitting the payload would not avoid a second read path, it
+ * would remove the only one — leaving a caller told `refused` with no way to learn what it
+ * matched, which is precisely the refuse-and-LINK requirement.
+ *
+ * `matchedRef` is the reference a caller hands to `entities.resolve`, spelled
+ * `<filePath>::<testName>`. It is deliberately NOT a `TST-###` short-ID: a short-ID exists only
+ * once something has sighted the entity, sighting is what mints the permanent address, and no
+ * `TST` sighting source is wired on any host in this build — so printing one would publish an
+ * address that resolves to nothing (ENTY-01's never-guess law).
+ *
+ * `threshold` rides beside `score` because a refusal reporting 0.52 without saying what it was
+ * compared against cannot tell an author whether their intent was borderline or identical.
+ */
+export const AuthoringDedupRefusalSchema = z.object({
+  /** Workspace-relative path of the suite test the intent duplicates. */
+  filePath: z.string().min(1),
+  /** That test's display name — identity half two, never `testId`. */
+  testName: z.string().min(1),
+  /** The `entities.resolve` reference for it, in one spelling. */
+  matchedRef: z.string().min(1),
+  /** Token-set similarity, in [0,1]. */
+  score: z.number().min(0).max(1),
+  /** The pinned value it met or exceeded. */
+  threshold: z.number().min(0).max(1),
+  /** How many normalized tokens the intent and that test share — the score's numerator. */
+  sharedTokens: z.number().int().min(0),
+  /** How many suite tests were screened. The universe is the suite, not a covered subset. */
+  comparedTests: z.number().int().min(0),
+  /** Both continuations, always — see the vocabulary's own doc block. */
+  continuations: z.array(z.enum(AUTHORING_DEDUP_CONTINUATIONS)).length(2),
+}).strict()
+
+export type AuthoringDedupRefusal = z.infer<typeof AuthoringDedupRefusalSchema>
+
+/**
  * What a caller hands the loop.
  *
  * `.strict()` and a non-empty intent for the reason the verify input states above, and here the
@@ -132,6 +196,11 @@ export const AuthoringDraftWriteOutputSchema = z.object({
   draftRef: DraftRefSchema.optional(),
   receipt: DraftReceiptSchema.optional(),
   outcome: z.enum(AUTHORING_LOOP_OUTCOMES),
+  /**
+   * Present exactly on a stage-2 `refused` invocation. See {@link AuthoringDedupRefusalSchema}
+   * for why this one payload arm exists where the paragraph above rules the others out.
+   */
+  refusal: AuthoringDedupRefusalSchema.optional(),
 }).strict()
 
 export type AuthoringDraftWriteOutput = z.infer<typeof AuthoringDraftWriteOutputSchema>

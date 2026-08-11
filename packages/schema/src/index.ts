@@ -732,6 +732,9 @@ export {
   AUTHORING_LOOP_OUTCOMES,
   AuthoringDraftWriteInputSchema,
   AuthoringDraftWriteOutputSchema,
+  // 394 D-04: the stage-2 dedup refusal's payload and its two named continuations.
+  AUTHORING_DEDUP_CONTINUATIONS,
+  AuthoringDedupRefusalSchema,
 } from './functions/index'
 export type {
   FunctionCaller,
@@ -763,6 +766,8 @@ export type {
   AuthoringDraftWriteInput,
   AuthoringDraftWriteOutput,
   AuthoringLoopOutcomeKind,
+  AuthoringDedupContinuation,
+  AuthoringDedupRefusal,
 } from './functions/index'
 
 // 393 (WTST-02, D-18/D-19): the keep-gate authoring vocabulary. `computeDraftDisposition` is
