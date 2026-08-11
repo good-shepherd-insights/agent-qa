@@ -176,9 +176,12 @@ export type {
 } from './authoring/loop.js'
 export type {
   AuthoringReadPortLike,
+  DraftApplyPortLike,
   DraftReceiptsReadPortLike,
   DraftShelfPortLike,
   DraftStageOutcome,
+  TestDraftApplyRequestLike,
+  TestDraftApplyResultLike,
 } from './authoring/ports.js'
 // 394-07 D-12/D-13 · WTST-05: the funnel read's id, on the exact footing of the op-id constants
 // above — a name a surface puts on the wire, never a dispatch handle. Published because

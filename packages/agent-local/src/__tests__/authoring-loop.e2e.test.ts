@@ -24,7 +24,15 @@
 // `contentDigest` is derived from a separate read of those bytes on the way into gate evaluation.
 
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -52,6 +60,7 @@ import {
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   asRunId,
+  authoredSuiteTargetPath,
   computeDraftDisposition,
   renderFanOutPreview,
 } from '@vostride/agent-qa-schema'
@@ -529,6 +538,43 @@ describe('authoring.draft.write end to end through the composition root', () => 
 
     // …and the receipt was PERSISTED, keyed by the same digest — one store, one answer.
     expect(readdirSync(join(agentQaRoot, 'draft-receipts'))).toEqual([`${shelfDigest}.json`])
+  })
+
+  it('proposes a KEEP-ELIGIBLE draft without writing it — the accepted stage is the human (D-05)', async () => {
+    // THE HALF OF D-05 THAT IS AN ABSENCE. A keep-eligible draft is the one the loop is most
+    // confident about, which is exactly the one a route that auto-wrote would write — and a route
+    // that wrote here would make the funnel's `accepted` stage meaningless and would be the private
+    // write power the L10 posture abolishes. So the claim is measured as nothing having happened:
+    // the arm names where accepting WOULD write, that path does not exist, and the suite directory
+    // still holds only the file this fixture put there.
+    const executor = fixtureExecutor(agentQaRoot)
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: scriptedModel().capability,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    expect(result.receipt?.disposition).toBe('keep-eligible')
+
+    // Where accepting WOULD write, computed through the loop's OWN recipe rather than by spelling a
+    // path here — a literal would go on passing the day the recipe changed, which is precisely when
+    // this claim stops being about the right file.
+    const targetPath = authoredSuiteTargetPath(
+      result.draftRef?.filePath ?? '',
+      result.draftRef?.testName ?? '',
+    )
+    expect(targetPath).toBe('tests/confirm-the-local-account-form-page-heading.yaml')
+    expect(existsSync(join(workspace, targetPath))).toBe(false)
+    // The suite directory holds what the fixture put there and nothing else: the shelf, and no new
+    // test file beside it.
+    expect(readdirSync(join(workspace, 'tests'))).toEqual(['.agent-qa-drafts'])
   })
 
   it('lists as bound on a composed host, off the declarations rather than CLI stdout', () => {

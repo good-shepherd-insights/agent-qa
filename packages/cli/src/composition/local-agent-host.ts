@@ -38,8 +38,11 @@ import { createInterface } from 'node:readline'
 
 import type {
   ConfigReaderPort,
+  DraftApplyPortLike,
   JobModelCapability,
   StartedRun,
+  TestDraftApplyRequestLike,
+  TestDraftApplyResultLike,
 } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type {
@@ -1269,6 +1272,22 @@ export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraft
   }
 }
 
+/**
+ * The port `proposals.accept` reaches when a person accepts a `test-draft`, pre-bound to one
+ * workspace.
+ *
+ * A FACTORY over the pure function above rather than a second implementation, on
+ * `createDraftAuthoringPort`'s idiom: the composition root binds a capability, the capability is one
+ * call, and the `configPath` is the only thing a host knows that the layer does not.
+ */
+export function createTestDraftApplyPort(configPath: string): DraftApplyPortLike {
+  return {
+    apply(request: TestDraftApplyRequestLike): Promise<TestDraftApplyResultLike> {
+      return Promise.resolve(applyTestDraftAsOneCommit({ configPath, request }))
+    },
+  }
+}
+
 function readTargetIfPresent(absolutePath: string): string | undefined {
   try {
     return readFileSync(absolutePath, 'utf8')
@@ -1550,6 +1569,11 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // run executor one line up, this is what makes `authoring.draft.verify` read `bound` in this
     // composition's catalog; a host missing either would list it `unbound` BY NAME instead.
     draftAuthoring: createDraftAuthoringPort(input.configPath),
+    // 394-10 D-06: the one-commit apply, bound unconditionally for the same reason its neighbour
+    // is — a CLI always has a config path and therefore a checkout root. It is a SEPARATE binding
+    // rather than a member of the port above because the two answer different questions: that one
+    // is "can this host author a draft", this one is "can this host commit one a person accepted".
+    draftApply: createTestDraftApplyPort(input.configPath),
     config: createMaskedConfigReader(input.configPath),
     knowledgeRoot,
     // D-18: when a live daemon holds the writer lease, this host hands it the SAME

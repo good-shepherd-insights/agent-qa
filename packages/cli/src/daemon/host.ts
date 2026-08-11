@@ -6,7 +6,11 @@ import { dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { isDeepStrictEqual } from 'node:util'
 
-import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import type {
+  ConfigReaderPort,
+  DraftApplyPortLike,
+  JobModelCapability,
+} from '@vostride/agent-qa-agent'
 import {
   composeJobRecovery,
   composeLocalAgent,
@@ -528,6 +532,21 @@ async function resolveDraftAuthoring(
   if (configPath === undefined) return undefined
   const { createDraftAuthoringPort } = await import('../composition/local-agent-host.js')
   return createDraftAuthoringPort(configPath)
+}
+
+/**
+ * The one-commit apply, on the same deferred-import seam and the same absent-means-unbound rule
+ * (394-10, D-06).
+ *
+ * A DAEMON THAT CANNOT RESOLVE A CHECKOUT ROOT CANNOT COMMIT ANYTHING, and omitting the field makes
+ * an accept of a `test-draft` refuse BY NAME rather than report a write that did not happen.
+ */
+async function resolveDraftApply(
+  configPath: string | undefined,
+): Promise<DraftApplyPortLike | undefined> {
+  if (configPath === undefined) return undefined
+  const { createTestDraftApplyPort } = await import('../composition/local-agent-host.js')
+  return createTestDraftApplyPort(configPath)
 }
 
 /**
@@ -1900,6 +1919,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     }
 
     const draftAuthoring = await resolveDraftAuthoring(input.configPath)
+    const draftApply = await resolveDraftApply(input.configPath)
     localAgent = operations.composeLocalAgent({
       agentQaRoot: input.agentQaRoot,
       config: input.config,
@@ -1961,6 +1981,11 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       // compose the same root. Conditionally spread, so a daemon with no workspace lists the
       // capability `unbound` BY NAME rather than binding one that cannot resolve a draft path.
       ...(draftAuthoring === undefined ? {} : { draftAuthoring }),
+      // 394-10 D-06: bound on its OWN condition. A daemon binds no ConfirmPort, so an accept
+      // reaching this port has already been satisfied by a credential or a standing grant — which
+      // is precisely D-05's lights-out path, and the reason it is bound here rather than left to
+      // the interactive host alone.
+      ...(draftApply === undefined ? {} : { draftApply }),
       // 387-08 D-18 / D-5: this process IS the writer-lease holder, so an apply it performs hands
       // in the authority it already owns rather than asking for a lease it cannot be granted
       // twice — a holder that calls `acquireWriterLease` is told `held` by itself and then has

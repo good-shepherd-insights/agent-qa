@@ -595,6 +595,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // 394-07 plan 07, D-12: the READ half of the receipts store, mirrored narrowly. A separate type
   // from the write port on purpose — the funnel projection is structurally unable to persist
   // anything, which is how "nothing new is persisted" stays a property rather than a promise.
+  // 394-10 plan 10, D-06: the one-commit apply, and the request/result pair that crosses to it.
+  // Types only, and the port is deliberately NOT a member of `DraftShelfPortLike` — that bundle is
+  // the authoring LOOP's capabilities, and this one is exercised by a human's accept on a host
+  // that need not be able to author at all.
+  'DraftApplyPortLike',
   'DraftReceiptsReadPortLike',
   // 394 plan 02, D-01: the loop's write half and what staging one compiled draft answers. Types
   // only — the port is a shape a composition root fills, and the outcome is a two-arm union whose
@@ -707,6 +712,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'StepEvidenceLookup',
   // 394-07 plan 07, D-14: see the funnel note beside `AuthoringFunnelPortLike` above.
   'SuiteOutcomeHistoryPortLike',
+  // 394-10 plan 10, D-06: what an accepted `test-draft` asks a host to write, and what it answers.
+  // Inert record shapes; the capability itself is `DraftApplyPortLike` above.
+  'TestDraftApplyRequestLike',
+  'TestDraftApplyResultLike',
   'ToolsPort',
   'TurnEngine',
   'TurnEngineDeps',

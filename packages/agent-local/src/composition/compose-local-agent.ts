@@ -61,6 +61,7 @@ import type {
   KnowledgeReaderPort,
   PostRunJobCapabilities,
   RecurrenceLadder,
+  DraftApplyPortLike,
   RecurrenceProvider,
   RunInvocationPort,
   RunsReaderPort,
@@ -1370,6 +1371,19 @@ export interface ComposeLocalAgentInput {
    * CHECKOUT ROOT, and neither this package nor `agent` may name `@vostride/agent-qa-core`.
    */
   readonly draftAuthoring?: DraftAuthoringPort
+  /**
+   * 394-10 D-06 / WTST-01: the one-commit apply an accepted `test-draft` reaches.
+   *
+   * Host-supplied for the reason `mintQuarantineIdentityPath` and `draftAuthoring` are: writing a
+   * file into a suite and committing it needs the CHECKOUT ROOT and `workspaceRelativeIdentityPath`,
+   * and neither this package nor `agent` may name `@vostride/agent-qa-core`.
+   *
+   * DELIBERATELY NOT GATED ON `runExecution` the way `draftAuthoring` is. A host that cannot start
+   * runs can still hold a person's accept — committing a draft somebody already decided about needs
+   * a checkout root and nothing else — so folding it into `authoringLoopHost` would have made an
+   * accept refuse on a host that is perfectly able to honour it.
+   */
+  readonly draftApply?: DraftApplyPortLike
   /**
    * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
    *
@@ -2693,6 +2707,21 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           },
         },
       }),
+      // 394-10 D-05/D-06: the ONE write to a user's git history this product makes, bound as the
+      // host handed it and spread on its OWN condition rather than the loop's.
+      //
+      // D-05's two halves, recorded where the binding is. FIRST: accept-with-always over a
+      // `test-draft` is the lights-out path, and it is reachable — the kind is deliberately absent
+      // from the closed protected set, so a person may decide once that accepted drafts commit
+      // without a further prompt. The protected-class rules apply to it unchanged: the grant covers
+      // `fn:authoring.draft.apply` and nothing else, and `finding` beside it stays protected
+      // because nobody may pre-approve acknowledging an application defect. SECOND: keep-eligible
+      // NEVER auto-writes. Every draft proposes, keep-eligible included; it renders as
+      // recommended-accept with its receipt, and the funnel's accepted stage IS the human decision.
+      // A route that wrote on keep-eligible would make that stage meaningless and would be exactly
+      // the private write power the L10 posture abolishes — which is why this port is reached from
+      // `proposals.accept` and from no path the loop can take.
+      ...(input.draftApply === undefined ? {} : { draftApply: input.draftApply }),
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
     // 391 PROP-01 / D-11: the real standing-approval reader, over the SAME committed knowledge root

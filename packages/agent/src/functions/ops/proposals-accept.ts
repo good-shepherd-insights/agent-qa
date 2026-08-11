@@ -55,6 +55,7 @@ import {
   STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
+  ProposalInboxEntryDto,
   ProposalKind,
   ProposalsAcceptApplied,
   ProposalsAcceptGrantOutcome,
@@ -77,31 +78,20 @@ export const PROPOSALS_ACCEPT_FUNCTION_ID = 'proposals.accept'
 const PROPOSALS_ACCEPT_ACTION_CLASS = `fn:${PROPOSALS_ACCEPT_FUNCTION_ID}`
 
 /**
- * The op plan 10 registers to WRITE an accepted draft into the suite and make its one commit
- * (D-06). Named here as an id rather than as a class literal, so the route below derives the same
- * `fn:`-prefixed spelling every registered op's `risk.name` carries — and so plan 10 replaces one
- * import rather than hunting a string.
- */
-const AUTHORING_DRAFT_APPLY_FUNCTION_ID = 'authoring.draft.apply'
-
-/**
- * A kind whose apply op has not been registered yet. A NAMED refusal, never a silent success.
+ * The class a standing approval over an accepted `test-draft` covers (394-10, D-06).
  *
- * UNREACHABLE IN PRODUCTION TODAY and stated rather than assumed: no envelope of this kind can
- * exist in any store, because the loop that mints one (`authoring.draft.write`) is not a
- * registered op in this build. The alternative — answering `applied` for a write that did not
- * happen — would hand a person a receipt for a file that is not on disk, at the one verb whose
- * whole job is to be the honest record of what a decision did.
+ * IT IS THE WRITING VERB'S NAME AND NOT THIS ONE'S, which is the whole of what the produced-class
+ * rule buys here: accepting a draft commits a file, so what a person pre-approves is the WRITE, and
+ * a grant recorded under `fn:proposals.accept` would cover accepting anything at all.
+ *
+ * There is deliberately no registered op behind this id. 394-06 named it expecting one, and the
+ * apply is reached through the bound {@link FunctionDeps.draftApply} port instead — the SAME
+ * port-level reuse the knowledge arm takes, and for the same reason its own header gives:
+ * op-calling-op would put a second gate evaluation and a second audit row in front of one human
+ * decision. The id survives as the CLASS NAME because the class is what a grant matches, and it is
+ * the honest spelling of "may agent-qa commit an accepted draft without asking again".
  */
-export class ProposalApplyRouteUnimplementedError extends Error {
-  constructor(readonly kind: ProposalKind, readonly awaitingFunctionId: string) {
-    super(
-      `proposals.accept: the ${kind} apply route is not implemented in this build; `
-        + `it lands with ${awaitingFunctionId}`,
-    )
-    this.name = 'ProposalApplyRouteUnimplementedError'
-  }
-}
+const AUTHORING_DRAFT_APPLY_ACTION_CLASS = 'fn:authoring.draft.apply'
 
 /**
  * How one proposal kind is committed, and therefore what a standing approval over it covers.
@@ -115,14 +105,23 @@ export class ProposalApplyRouteUnimplementedError extends Error {
  * for a verb the apply did not actually use — the two would otherwise be two tables free to agree
  * today and disagree after the first routing change.
  */
-interface ProposalApplyRoute {
+type ProposalEnvelopeDto = ProposalInboxEntryDto['envelope']
+
+/** The payload arm that travels with one kind. Correlated, so a route cannot read another's. */
+type ProposalPayloadFor<K extends ProposalKind> = Extract<ProposalEnvelopeDto, { kind: K }>['payload']
+
+interface ProposalApplyRoute<K extends ProposalKind> {
   /** The gate-seen action name, READ off the committing op's own descriptor. Never a literal. */
   readonly actionClass: string
   /** Commit through the port the committing op itself binds through — never by invoking it. */
-  apply(deps: FunctionDeps, proposalId: string): Promise<ProposalsAcceptApplied>
+  apply(
+    deps: FunctionDeps,
+    proposalId: string,
+    payload: ProposalPayloadFor<K>,
+  ): Promise<ProposalsAcceptApplied>
 }
 
-const ROUTE_FOR_KIND: Readonly<Record<ProposalKind, ProposalApplyRoute>> = Object.freeze({
+const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> = Object.freeze({
   knowledge: {
     actionClass: knowledgeProposalApplySpec.risk.name,
     async apply(deps: FunctionDeps, proposalId: string): Promise<ProposalsAcceptApplied> {
@@ -131,14 +130,46 @@ const ROUTE_FOR_KIND: Readonly<Record<ProposalKind, ProposalApplyRoute>> = Objec
       return { kind: 'knowledge', outcome: await review.apply(proposalId) }
     },
   },
-  // 394 D-05/D-06: accepting a verified draft WRITES it into the suite and makes one git commit
-  // for that file. The write is plan 10's; what is decided here is that the route exists, that its
-  // covered class is the WRITING op's rather than this one's, and that until that op is registered
-  // the route refuses BY NAME instead of reporting a write that did not happen.
+  // 394 D-05/D-06: accepting a verified draft WRITES it into the suite and makes ONE git commit
+  // containing exactly that file. This is the lights-out path D-05 names — the kind is deliberately
+  // NOT in the protected set, so accept-with-always over it is a decision a person is allowed to
+  // make once. The `finding` arm below is the opposite call, and the two sit here together so the
+  // difference is readable rather than inferred.
+  //
+  // THE PAYLOAD TRAVELS TO THE PORT, and it has to: the shipped `KnowledgeReviewPort.apply` takes
+  // an id because `knowledge-local`'s store holds knowledge records and reads them back, and
+  // NOTHING on any host in this build persists a `test-draft` record — `writePendingProposal` takes
+  // a `KnowledgeProposalV1` and `extractStoredProposal` refuses every other kind by name. A port
+  // taking an id alone would be asking a host to look up something no store can hold.
   'test-draft': {
-    actionClass: `fn:${AUTHORING_DRAFT_APPLY_FUNCTION_ID}`,
-    apply(): Promise<ProposalsAcceptApplied> {
-      throw new ProposalApplyRouteUnimplementedError('test-draft', AUTHORING_DRAFT_APPLY_FUNCTION_ID)
+    actionClass: AUTHORING_DRAFT_APPLY_ACTION_CLASS,
+    async apply(
+      deps: FunctionDeps,
+      proposalId: string,
+      payload: ProposalPayloadFor<'test-draft'>,
+    ): Promise<ProposalsAcceptApplied> {
+      // AN UNBOUND APPLY REFUSES BY NAME. An accept that reported `applied` while writing nothing
+      // would be a wrong answer wearing a correct one's clothes: the inbox would show a decision
+      // the repository never received, and the person would go looking for a commit that is not
+      // there. `FunctionNotBoundError` is the shipped spelling — the knowledge arm above raises the
+      // same class for the same condition, and a parallel class would be a second vocabulary for
+      // one fact.
+      const draftApply = deps.draftApply
+      if (draftApply === undefined) throw new FunctionNotBoundError(PROPOSALS_ACCEPT_FUNCTION_ID)
+      const written = await draftApply.apply({
+        proposalId,
+        // The SHELF path is where the accepted bytes come from, and `targetPath` is where they go.
+        // Both ride the arm; neither is recomputed here, because a second recipe for either would
+        // be free to disagree with the one `sourceDigest` was taken over.
+        draftPath: payload.draftRef.filePath,
+        targetPath: payload.targetPath,
+        ...(payload.sourceDigest === undefined ? {} : { sourceDigest: payload.sourceDigest }),
+        summaryLine: payload.summaryLine,
+      })
+      return {
+        kind: 'test-draft',
+        outcome: { filePath: written.filePath, commit: written.commit },
+      }
     },
   },
   // 394 D-11: ACKNOWLEDGE-ONLY. Accepting a finding records the decision and does nothing else —
@@ -159,6 +190,38 @@ const ROUTE_FOR_KIND: Readonly<Record<ProposalKind, ProposalApplyRoute>> = Objec
     },
   },
 })
+
+/**
+ * Dispatch one envelope to its own route, with its own payload.
+ *
+ * A SWITCH BESIDE THE TOTAL `Record`, and the pair is not a redundancy. The Record makes a new
+ * `PROPOSAL_KINDS` member fail to compile for want of a ROUTE; this switch makes it fail to compile
+ * for want of a CORRELATION — `ROUTE_FOR_KIND[envelope.kind].apply(…, envelope.payload)` written
+ * directly does not typecheck, because the index and the payload are each the whole union and
+ * nothing relates them. The alternative was a route taking the payload union and re-narrowing
+ * inside itself, which is a second classification of one value, free to disagree with the first.
+ *
+ * No `default:` and no cast. The closing arm assigns to `never`, so a fourth kind is a compile
+ * error here as well as at the Record above.
+ */
+function applyEnvelope(
+  deps: FunctionDeps,
+  proposalId: string,
+  envelope: ProposalEnvelopeDto,
+): Promise<ProposalsAcceptApplied> {
+  switch (envelope.kind) {
+    case 'knowledge':
+      return ROUTE_FOR_KIND.knowledge.apply(deps, proposalId, envelope.payload)
+    case 'test-draft':
+      return ROUTE_FOR_KIND['test-draft'].apply(deps, proposalId, envelope.payload)
+    case 'finding':
+      return ROUTE_FOR_KIND.finding.apply(deps, proposalId, envelope.payload)
+    default: {
+      const unhandled: never = envelope
+      throw new TypeError(`proposals.accept: unhandled proposal kind ${JSON.stringify(unhandled)}`)
+    }
+  }
+}
 
 /**
  * The class a standing approval over each kind covers — the PRODUCED spelling, published.
@@ -360,6 +423,6 @@ async function resolveApply(
   }
   return {
     outcome: 'applied',
-    applied: await ROUTE_FOR_KIND[entry.envelope.kind].apply(deps, input.proposalId),
+    applied: await applyEnvelope(deps, input.proposalId, entry.envelope),
   }
 }

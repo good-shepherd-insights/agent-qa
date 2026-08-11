@@ -41,7 +41,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { FunctionDeniedError, FunctionOriginError, invokeFunction } from '../invoke.js'
+import { FunctionDeniedError, FunctionNotBoundError, FunctionOriginError, invokeFunction } from '../invoke.js'
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '../ops/knowledge-proposal-apply.js'
 import {
   APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND,
@@ -50,6 +50,7 @@ import {
 import { createFunctionRegistry } from '../registry.js'
 import type { FunctionRegistry } from '../registry.js'
 import type { FunctionDeps, KnowledgeReviewPort } from '../spec.js'
+import type { DraftApplyPortLike, TestDraftApplyRequestLike } from '../../authoring/ports.js'
 
 const PROPOSAL_ID = 'prop_aaaaaaaa-bbbb'
 
@@ -103,6 +104,56 @@ function inboxEntry(
   }
 }
 
+/**
+ * The TEST-DRAFT arm (394-10, D-05/D-06), narrowed on the same reasoning as the knowledge one.
+ *
+ * `targetPath` and no `sourceDigest`, which is the LOOP's own case: a draft the loop authored is a
+ * new file (D-02 — creation is not an edit), so an absent digest is the claim the host re-checks.
+ */
+function testDraftEntry(
+  overrides: Partial<Extract<ProposalInboxEntryDto['envelope'], { kind: 'test-draft' }>> = {},
+): ProposalInboxEntryDto {
+  return {
+    applyInFlight: false,
+    envelope: {
+      id: PROPOSAL_ID,
+      kind: 'test-draft',
+      status: 'pending',
+      evidenceRefs: [],
+      payload: {
+        schemaVersion: 1,
+        draftRef: {
+          filePath: 'tests/.agent-qa-drafts/abc123.yaml',
+          testId: 't_coupon',
+          testName: 'The coupon banner appears',
+          contentDigest: 'abc123',
+        },
+        targetPath: 'tests/the-coupon-banner-appears.yaml',
+        disposition: 'keep-eligible',
+        runsPreviewed: 9,
+        runsConsumed: 3,
+        repairIterations: 0,
+        summaryLine: 'The coupon banner appears — keep-eligible',
+      },
+      ...overrides,
+    },
+  }
+}
+
+/** Records every one-commit apply, so "the write really happened" is observable. */
+function recordingDraftApply(): { port: DraftApplyPortLike; calls: TestDraftApplyRequestLike[] } {
+  const calls: TestDraftApplyRequestLike[] = []
+  return {
+    calls,
+    port: {
+      apply: (request) => {
+        calls.push(request)
+        return Promise.resolve({ filePath: request.targetPath, commit: 'c0ffee1' })
+      },
+    },
+  }
+}
+
 /** Records what the mint was asked for, and answers whatever the case needs it to answer. */
 function recordingGrants(
   answer: (input: GrantRecordInput) => GrantRecordOutcome = (input) => ({
@@ -152,6 +203,7 @@ interface Host {
   registry: FunctionRegistry
   grants: ReturnType<typeof recordingGrants>
   review: ReturnType<typeof recordingReview>
+  draftApply: ReturnType<typeof recordingDraftApply>
   confirmed: RiskActionDescriptor[]
 }
 
@@ -159,11 +211,14 @@ function host(options: {
   context?: ExecutionContext
   entry?: ProposalInboxEntryDto | 'not-found'
   grantAnswer?: (input: GrantRecordInput) => GrantRecordOutcome
+  /** Leave the one-commit apply UNBOUND, which is the host that cannot commit anything. */
+  unboundDraftApply?: true
 } = {}): Host {
   const grants = options.grantAnswer === undefined
     ? recordingGrants()
     : recordingGrants(options.grantAnswer)
   const review = recordingReview()
+  const draftApply = recordingDraftApply()
   const confirmed: RiskActionDescriptor[] = []
   const entry = options.entry ?? inboxEntry()
 
@@ -203,11 +258,13 @@ function host(options: {
     },
     knowledgeReview: review.port,
     standingGrants: grants.port,
+    ...(options.unboundDraftApply === true ? {} : { draftApply: draftApply.port }),
   }
 
   return {
     grants,
     review,
+    draftApply,
     confirmed,
     registry: createFunctionRegistry({
       deps,
@@ -404,5 +461,86 @@ describe('proposals.accept — the door, and what happens without it', () => {
     // The prompt was never reached: fail-closed fires ahead of it, which is the arm every
     // non-interactive host lands on.
     expect(built.confirmed).toEqual([])
+  })
+})
+
+describe('proposals.accept — the test-draft route (394-10, D-05/D-06)', () => {
+  it('reaches the bound one-commit apply, carrying the arm the envelope actually holds', async () => {
+    const built = host({ entry: testDraftEntry() })
+
+    const answer = await accept(built, { proposalId: PROPOSAL_ID })
+
+    expect(answer.apply.outcome).toBe('applied')
+    // THE PAYLOAD TRAVELS, and the assertion is on the values rather than on "it was called": a
+    // route that reached the port with a target it recomputed for itself would pass a call count
+    // and would write to a path the proposal's own `sourceDigest` was never taken over.
+    expect(built.draftApply.calls).toEqual([{
+      proposalId: PROPOSAL_ID,
+      draftPath: 'tests/.agent-qa-drafts/abc123.yaml',
+      targetPath: 'tests/the-coupon-banner-appears.yaml',
+      summaryLine: 'The coupon banner appears — keep-eligible',
+    }])
+    expect(answer.apply).toMatchObject({
+      applied: { kind: 'test-draft', outcome: { filePath: 'tests/the-coupon-banner-appears.yaml', commit: 'c0ffee1' } },
+    })
+    // The KNOWLEDGE port was never touched — the route is per kind, not a fallback.
+    expect(built.review.applied).toEqual([])
+  })
+
+  it('carries a sourceDigest through when the proposal has one, and omits it when it does not', async () => {
+    // The edit op's case: a proposal against an EXISTING committed test carries that file's digest.
+    const withDigest = testDraftEntry({
+      payload: {
+        ...testDraftEntry().envelope.payload as Extract<ProposalInboxEntryDto['envelope'], { kind: 'test-draft' }>['payload'],
+        targetPath: 'tests/checkout.yaml',
+        sourceDigest: 'd1d1d1',
+      },
+    })
+    const built = host({ entry: withDigest })
+
+    await accept(built, { proposalId: PROPOSAL_ID })
+
+    expect(built.draftApply.calls[0]?.sourceDigest).toBe('d1d1d1')
+    // And the absent direction, so "it forwards the field" is not satisfied by always sending one.
+    const plain = host({ entry: testDraftEntry() })
+    await accept(plain, { proposalId: PROPOSAL_ID })
+    expect(Object.keys(plain.draftApply.calls[0] ?? {})).not.toContain('sourceDigest')
+  })
+
+  it('refuses BY NAME when the one-commit apply is unbound, and writes nothing', async () => {
+    // A wrong answer wearing a correct one's clothes is the failure this refusal exists to prevent:
+    // an accept that reported `applied` would leave the inbox showing a decision the repository
+    // never received, and send a person looking for a commit that is not there.
+    const built = host({ entry: testDraftEntry(), unboundDraftApply: true })
+
+    await expect(accept(built, { proposalId: PROPOSAL_ID }))
+      .rejects.toBeInstanceOf(FunctionNotBoundError)
+    expect(built.draftApply.calls).toEqual([])
+    expect(built.grants.calls).toEqual([])
+  })
+
+  it('mints a standing grant over the WRITING class on the always form — D-05 lights-out', async () => {
+    const built = host({ entry: testDraftEntry() })
+
+    const answer = await accept(built, { proposalId: PROPOSAL_ID, always: true })
+
+    expect(answer.apply.outcome).toBe('applied')
+    expect(built.grants.calls.map((call) => call.actionClass))
+      .toEqual([APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND['test-draft']])
+    // NOT the accept verb's own class. A grant recorded under `fn:proposals.accept` would cover
+    // accepting ANYTHING, which is a different and much larger permission than the one a person
+    // meant to give — and it is the one the `finding` arm deliberately makes unmintable.
+    expect(built.grants.calls[0]?.actionClass).not.toBe(`fn:${PROPOSALS_ACCEPT_FUNCTION_ID}`)
+    expect(answer.grant.kind).toBe('recorded')
+  })
+
+  it('rejects rather than applies when the envelope is already rejected — nothing is written', async () => {
+    const rejected = testDraftEntry({ status: 'rejected' })
+    const built = host({ entry: rejected })
+
+    const answer = await accept(built, { proposalId: PROPOSAL_ID })
+
+    expect(answer.apply.outcome).toBe('already-rejected')
+    expect(built.draftApply.calls).toEqual([])
   })
 })
