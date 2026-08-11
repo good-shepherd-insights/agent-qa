@@ -1,0 +1,380 @@
+// Stage 5's deterministic repair-vs-finding derivation (Phase 394, D-08 · WTST-04).
+//
+// ONE function decides whether a failing draft is the DRAFT's problem or the APPLICATION's, and
+// this file is the only place that decision is made. The table below is the contract, not an
+// implementation detail; it is evaluated in this order, over the draft's OWN member inside one
+// run's evidence.
+//
+//   0. The run evidence holds no member with the draft's identity — or there is no run evidence
+//      at all -> `no-run-evidence` -> REFUSED BY NAME. This is a broken precondition, not an
+//      ambiguous signal: the router was not given the input it exists to read.
+//   1. The member did not fail — a terminal outcome of passed, healed or skipped with no step
+//      verdict false -> `no-failure` -> REFUSED BY NAME. A healed pass is a pass (393-01 F3).
+//      Nothing here is a routing question, and either arm would be a wrong answer wearing a
+//      correct one's clothes.
+//   2. SOME step is a CLEAN DEFINITIVE ASSERTION-FAIL — its verifier said no, a `verdictSource`
+//      records which path produced that verdict, and that step carries no mechanics signal of
+//      its own. Then:
+//        2a. no mechanics signal anywhere in the member
+//            -> `clean-definitive-assertion-fail` -> FINDING, unconditionally.
+//        2b. a mechanics signal somewhere else in the member
+//            -> `mixed-evidence` -> FINDING.
+//   3. A mechanics signal on any step, or a member outcome of timeout or cancelled
+//      -> `execution-mechanics` -> REPAIR.
+//   4. Anything else -> `indefinitive-failure` -> FINDING.
+//
+// WHY RULE 2 IS EVALUATED BEFORE RULE 3, AND WHY AMBIGUITY LANDS IN THE FINDING ARM. Repairing a
+// clean assertion-fail can only mean rewriting what the test CLAIMS to match what the application
+// actually showed, which is oracle capture by construction — the draft class gate 4's corpus
+// exists to reject, manufactured by the very loop that is supposed to filter it. So D-08 says a
+// clean definitive assertion-fail routes to a finding ALWAYS, which is only true if the clean-fail
+// test is asked first; a mechanics-first table would let one unrelated timed-out step pull a
+// perfectly clean fail into the repair arm. The same asymmetry decides every remaining case: a
+// mis-filed test-wrong costs one human look and is undone by that look, while a mis-routed
+// application bug gets iterated into passing and is then indistinguishable from a test that
+// always worked. Only the second is unrecoverable, so every class this file cannot place with
+// confidence points at the finding arm.
+//
+// THE MECHANICS SCAN COVERS THE WHOLE MEMBER, NOT THE FAILING STEP. Rule 2's split between 2a and
+// 2b is what makes mixed evidence land in a finding, and narrowing the scan to the failing step
+// collapses that split: a termination on step 0 and a termination on the failing step would
+// classify identically. The frozen corpus carries that exact pair, differing in one integer.
+//
+// THE MODEL NEVER MAKES THIS DECISION. Both exported functions take a draft IDENTITY and one run
+// document. Neither takes a model, a prompt, or any string a model produced — `router.test-d.ts`
+// pins both parameter lists as exact tuples, so there is no argument for model output to arrive
+// through, and the identity is a lookup key rather than a decision input: every value that
+// decides is a field of the run's own `PerTestOutcome` or `StepEvidence`. The model writes the
+// finding's evidence-linked explanation, downstream, once the branch is already chosen.
+//
+// THE FINDING CARRIES REFS, NEVER PAYLOADS (391 D-18, map not territory). WTST-04 asks the finding
+// to name the exact trace and the a11y snapshot at the failure point; both already live on the
+// handoff, the snapshots as `SubActionEvidence.stateBefore` and `stateAfter`, so this arm carries
+// coordinates into the run's own durable records. That is also why the loop binds
+// `DraftRunPortLike.get` rather than reading `runs.get`'s projection: the per-step sub-action
+// evidence these coordinates address does not survive that projection.
+//
+// THIS FILE DOES NOT WIRE ITSELF IN. Plan 06 owns the stage-5 call site, together with the repair
+// arm's consumer, so the two land in one commit and the wiring is never half-connected. `loop.ts`
+// keeps its own `routeAfterVerify`, which answers a DIFFERENT question — which outcome a
+// disposition implies — and the derivation here is named for the question it answers so the two
+// can coexist until plan 06 makes one call the other.
+
+import type {
+  CompletedRunHandoff,
+  DraftRef,
+  MemberTestOutcome,
+  PerTestOutcome,
+  StepEvidence,
+  VerdictSource,
+} from '@vostride/agent-qa-schema'
+
+/**
+ * The closed vocabulary of what one member's failure evidence WAS.
+ *
+ * Six members, because refusing is a classification too: a router that could only answer `repair`
+ * or `finding` would have to invent one of them for a run it should not have been handed, and the
+ * two refusing classes are how the caller learns which of its own preconditions broke.
+ */
+export const ROUTER_SIGNAL_CLASSES = [
+  'execution-mechanics',
+  'clean-definitive-assertion-fail',
+  'mixed-evidence',
+  'indefinitive-failure',
+  'no-failure',
+  'no-run-evidence',
+] as const
+
+export type RouterSignalClass = (typeof ROUTER_SIGNAL_CLASSES)[number]
+
+/** The single class the repair arm may carry. */
+export type RouterRepairSignalClass = 'execution-mechanics'
+
+/** The three classes the finding arm may carry — one definitive, two ambiguous. */
+export type RouterFindingSignalClass =
+  | 'clean-definitive-assertion-fail'
+  | 'mixed-evidence'
+  | 'indefinitive-failure'
+
+/**
+ * The closed set of execution-mechanics signals, spelled once.
+ *
+ * The first four are the gate-1 indefinitive family 393 measured, read as PRESENCE exactly as
+ * gate 1 reads them: a recorded termination block is a turn declaring the step could not be
+ * carried out, and narrowing that to today's single `kind` literal would silently reclassify a
+ * later one as an assertion problem. The last two are member-level and carried by the outcome
+ * rather than by any step, which is why a scan over `StepEvidence` alone cannot see them.
+ */
+export const ROUTER_MECHANICS_SIGNALS = [
+  'termination',
+  'planning-failure',
+  'cycle',
+  'stagnation',
+  'member-timeout',
+  'member-cancelled',
+] as const
+
+export type RouterMechanicsSignalName = (typeof ROUTER_MECHANICS_SIGNALS)[number]
+
+/** Which durable record an evidence coordinate addresses. */
+export const ROUTER_EVIDENCE_CHANNELS = ['step-trace', 'state-before', 'state-after'] as const
+
+export type RouterEvidenceChannel = (typeof ROUTER_EVIDENCE_CHANNELS)[number]
+
+/** One mechanics signal and where it was found. `stepIndex: null` ⇒ carried by the member. */
+export interface MechanicsSignal {
+  readonly stepIndex: number | null
+  readonly signal: RouterMechanicsSignalName
+}
+
+/**
+ * A COORDINATE into the run's own durable records. Never a payload.
+ *
+ * `router.test-d.ts` pins this key set by equality, so a screen state, an element tree or a
+ * rendered snapshot copied onto a finding is a type error here rather than a surprise inside
+ * whatever durable record a later plan writes the finding into.
+ */
+export interface RunEvidenceRef {
+  readonly runId: string
+  readonly filePath: string
+  readonly testName: string
+  readonly stepIndex: number
+  /** Absent on the `step-trace` channel, which addresses the whole step. */
+  readonly subActionIndex?: number
+  readonly channel: RouterEvidenceChannel
+}
+
+/** Where the failure was observed, in the run's own words. */
+export interface RouterFailurePoint {
+  readonly runId: string
+  readonly stepIndex: number
+  /** Pre-interpolation step text, the same rule every other authoring surface follows. */
+  readonly stepText: string
+  /** The verifier's own reasoning for saying no. */
+  readonly reasoning: string
+  /** Which path produced the verdict. Absent ⇒ the failure was not definitive. */
+  readonly verdictSource?: VerdictSource
+}
+
+/**
+ * The draft's mechanics need work; nothing here is a claim about the application.
+ *
+ * Carries `mechanics` and `failingStepIndex`, neither of which exists on {@link FindingRoute}.
+ * That is deliberate rather than incidental: two records differing only by a `kind` literal are
+ * assignable in enough directions to make a type-level unreachability pin decorative, and SC-2's
+ * claim is exactly an unreachability claim.
+ */
+export interface RepairRoute {
+  readonly kind: 'repair'
+  readonly signalClass: RouterRepairSignalClass
+  /** Every signal found, with its location. Non-empty whenever this arm is produced. */
+  readonly mechanics: readonly MechanicsSignal[]
+  /** The first step whose verifier said no, or `null` for a member-level signal. */
+  readonly failingStepIndex: number | null
+}
+
+/**
+ * The application looks wrong, or the evidence does not say clearly enough to risk repairing.
+ *
+ * Carries `failurePoint` and `evidenceRefs`, neither of which exists on {@link RepairRoute}.
+ * `failurePoint` is nullable because rule 4 admits a member that failed at the member level with
+ * no step verdict to point at; `evidenceRefs` is not, because a finding a reader cannot trace is
+ * not a finding.
+ */
+export interface FindingRoute {
+  readonly kind: 'finding'
+  readonly signalClass: RouterFindingSignalClass
+  readonly failurePoint: RouterFailurePoint | null
+  readonly evidenceRefs: readonly RunEvidenceRef[]
+}
+
+export type PostVerifyRoute = RepairRoute | FindingRoute
+
+/**
+ * The router was handed something that is not a routing question.
+ *
+ * Named rather than silently answered, on the loop's own precedent: an outcome invented for an
+ * input the rules do not cover is a wrong answer at the exact seam where the cardinal error — a
+ * real application bug iterated into a passing test — lives.
+ */
+export class AuthoringRouterUnroutableError extends Error {
+  constructor(readonly signalClass: RouterSignalClass) {
+    super(
+      `authoring router: ${signalClass} is not a routable class; `
+        + 'the router decides repair versus finding for a draft that FAILED, '
+        + 'and this evidence poses no such question',
+    )
+    this.name = 'AuthoringRouterUnroutableError'
+  }
+}
+
+/**
+ * Which arm each class produces. THE ONE MAPPING SITE.
+ *
+ * A table rather than a chain of returns so that the routing decision has a single line per class
+ * that a differential can edit and a reader can audit. `scripts/394-router-mutation.sh` mutates
+ * exactly the clean-fail line here and requires the corpus to red on the signature row by name.
+ */
+const ROUTE_ARM_BY_SIGNAL_CLASS = {
+  'execution-mechanics': 'repair',
+  'clean-definitive-assertion-fail': 'finding',
+  'mixed-evidence': 'finding',
+  'indefinitive-failure': 'finding',
+  'no-failure': 'refuse',
+  'no-run-evidence': 'refuse',
+} as const satisfies Record<RouterSignalClass, 'repair' | 'finding' | 'refuse'>
+
+/** Member outcomes that are not a failure. A heal is a pass; a skip never ran. */
+const NON_FAILING_OUTCOMES: readonly MemberTestOutcome[] = ['passed', 'healed', 'skipped']
+
+/** Member outcomes that ARE an execution-mechanics fact rather than a verdict about the app. */
+const MEMBER_MECHANICS: ReadonlyMap<MemberTestOutcome, RouterMechanicsSignalName> = new Map([
+  ['timeout', 'member-timeout'],
+  ['cancelled', 'member-cancelled'],
+])
+
+/** The mechanics signals recorded ON one step, in the declared vocabulary order. */
+function stepMechanics(step: StepEvidence): readonly RouterMechanicsSignalName[] {
+  const found: RouterMechanicsSignalName[] = []
+  if (step.termination !== undefined) found.push('termination')
+  if (step.planningFailure !== undefined) found.push('planning-failure')
+  if (step.cycle !== undefined) found.push('cycle')
+  if (step.stagnation !== undefined) found.push('stagnation')
+  return found
+}
+
+/** Every mechanics signal in the member: the whole step scan, then the member-level outcome. */
+function scanMechanics(member: PerTestOutcome): readonly MechanicsSignal[] {
+  const signals: MechanicsSignal[] = []
+  for (const step of member.steps) {
+    for (const signal of stepMechanics(step)) signals.push({ stepIndex: step.stepIndex, signal })
+  }
+  const memberSignal = MEMBER_MECHANICS.get(member.outcome)
+  if (memberSignal !== undefined) signals.push({ stepIndex: null, signal: memberSignal })
+  return signals
+}
+
+function isFailedVerdict(step: StepEvidence): boolean {
+  return step.verifierVerdict.pass === false
+}
+
+/**
+ * A step whose failure is about WHAT THE TEST CLAIMS rather than how it acted.
+ *
+ * Three conjuncts, all required. The verifier said no; a `verdictSource` records which path
+ * produced that verdict, so the answer is definitive rather than an unexplained negative; and the
+ * step itself carries no mechanics signal, so the claim was actually evaluated against something.
+ */
+function firstCleanDefinitiveFail(member: PerTestOutcome): StepEvidence | undefined {
+  return member.steps.find(
+    (step) =>
+      isFailedVerdict(step)
+      && step.verdictSource !== undefined
+      && stepMechanics(step).length === 0,
+  )
+}
+
+/** The draft's own member, keyed on the stable (filePath, testName) identity — never `testId`. */
+function memberFor(
+  draftRef: DraftRef,
+  handoff: CompletedRunHandoff | undefined,
+): PerTestOutcome | undefined {
+  return handoff?.tests.find(
+    (member) => member.filePath === draftRef.filePath && member.testName === draftRef.testName,
+  )
+}
+
+/**
+ * The ONE classification (the table above, in order). Pure and total over every input.
+ *
+ * The thin half of the scan, in the shipped `textSimilarity` idiom: this answers the class, and
+ * the router below re-reads the same member for the evidence its arm has to carry. A caller that
+ * wants only the class — a receipt, a counter, a log line — need not build a route to get it.
+ */
+export function classifyFailureEvidence(
+  draftRef: DraftRef,
+  handoff: CompletedRunHandoff | undefined,
+): RouterSignalClass {
+  const member = memberFor(draftRef, handoff)
+  if (member === undefined) return 'no-run-evidence'
+
+  const failed = !NON_FAILING_OUTCOMES.includes(member.outcome) || member.steps.some(isFailedVerdict)
+  if (!failed) return 'no-failure'
+
+  const mechanics = scanMechanics(member)
+  if (firstCleanDefinitiveFail(member) !== undefined) {
+    return mechanics.length === 0 ? 'clean-definitive-assertion-fail' : 'mixed-evidence'
+  }
+  if (mechanics.length > 0) return 'execution-mechanics'
+  return 'indefinitive-failure'
+}
+
+/** The coordinates addressing one step's trace and every a11y snapshot recorded under it. */
+function evidenceRefsFor(
+  runId: string,
+  member: PerTestOutcome,
+  step: StepEvidence,
+): readonly RunEvidenceRef[] {
+  const base = { runId, filePath: member.filePath, testName: member.testName, stepIndex: step.stepIndex }
+  const refs: RunEvidenceRef[] = [{ ...base, channel: 'step-trace' }]
+  step.subActions.forEach((subAction, subActionIndex) => {
+    refs.push({ ...base, subActionIndex, channel: 'state-before' })
+    if (subAction.stateAfter !== undefined) {
+      refs.push({ ...base, subActionIndex, channel: 'state-after' })
+    }
+  })
+  return refs
+}
+
+/**
+ * The one deterministic repair-versus-finding derivation (D-08).
+ *
+ * Pure: it reads the run document and mutates nothing. Total over every classification the table
+ * produces — the two non-routing classes refuse BY NAME rather than returning an arm, which is
+ * the loop's own posture for a case a later plan owns.
+ *
+ * The caller supplies the handoff of the run whose evidence the receipt's gates judged; choosing
+ * among an evaluation's several runs is the stage-5 wiring's job, and lands with plan 06.
+ */
+export function routeRepairOrFinding(
+  draftRef: DraftRef,
+  handoff: CompletedRunHandoff | undefined,
+): PostVerifyRoute {
+  const signalClass = classifyFailureEvidence(draftRef, handoff)
+  const arm = ROUTE_ARM_BY_SIGNAL_CLASS[signalClass]
+  if (arm === 'refuse') throw new AuthoringRouterUnroutableError(signalClass)
+
+  const member = memberFor(draftRef, handoff)
+  if (member === undefined || handoff === undefined) {
+    throw new AuthoringRouterUnroutableError('no-run-evidence')
+  }
+
+  const failingStep = member.steps.find(isFailedVerdict)
+  if (arm === 'repair') {
+    return {
+      kind: 'repair',
+      signalClass: 'execution-mechanics',
+      mechanics: scanMechanics(member),
+      failingStepIndex: failingStep?.stepIndex ?? null,
+    }
+  }
+
+  // The finding points at the step whose CLAIM failed when there is one, and otherwise at the
+  // first step the verifier rejected — never at a step chosen because it carried a mechanics
+  // signal, which would name a symptom of the run rather than the application behaviour.
+  const point = firstCleanDefinitiveFail(member) ?? failingStep
+  return {
+    kind: 'finding',
+    signalClass: signalClass as RouterFindingSignalClass,
+    failurePoint: point === undefined
+      ? null
+      : {
+          runId: handoff.runId,
+          stepIndex: point.stepIndex,
+          stepText: point.stepText,
+          reasoning: point.verifierVerdict.reasoning,
+          ...(point.verdictSource === undefined ? {} : { verdictSource: point.verdictSource }),
+        },
+    evidenceRefs: point === undefined ? [] : evidenceRefsFor(handoff.runId, member, point),
+  }
+}
