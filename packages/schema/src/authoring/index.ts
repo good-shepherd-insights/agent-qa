@@ -26,3 +26,21 @@ export type {
   GateRunRecord,
   StepClassificationRow,
 } from './draft-receipt'
+
+// 394 (WTST-07, D-20): the RFC-6902 edit vocabulary. Deliberately NOT the unified-diff `patch/`
+// vocabulary — see the header of `patch-ops.ts` for why the two are not unified.
+export {
+  EDITABLE_POINTER_ROOTS,
+  PATCH_OP_KINDS,
+  PatchOpSchema,
+  TestEditPatchSetSchema,
+  isEditablePointer,
+  parseJsonPointer,
+  pointerRootOf,
+} from './patch-ops'
+export type {
+  EditablePointerRoot,
+  PatchOp,
+  PatchOpKind,
+  TestEditPatchSet,
+} from './patch-ops'

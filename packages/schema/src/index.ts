@@ -793,6 +793,24 @@ export type {
   StepClassificationRow,
 } from './authoring/index'
 
+// 394 (WTST-07, D-20): the RFC-6902 `{thoughts, patches}` edit vocabulary and the pinned
+// editable-region fence. The CST applier in `core` is its only mutating consumer.
+export {
+  EDITABLE_POINTER_ROOTS,
+  PATCH_OP_KINDS,
+  PatchOpSchema,
+  TestEditPatchSetSchema,
+  isEditablePointer,
+  parseJsonPointer,
+  pointerRootOf,
+} from './authoring/index'
+export type {
+  EditablePointerRoot,
+  PatchOp,
+  PatchOpKind,
+  TestEditPatchSet,
+} from './authoring/index'
+
 // 387 ENTY-01/ENTY-02 — entity addressing: short-IDs, the agentqa:// URI scheme, the one
 // card shape and the two resolution unions.
 export {
