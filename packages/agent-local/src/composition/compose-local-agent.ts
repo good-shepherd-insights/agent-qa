@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
   CHAT_HELP_TEXT,
   CHAT_RESOLVER_TABLE,
   createAgentJobQueue,
@@ -136,6 +137,7 @@ import {
   type EntityIndexSweepReport,
   type ResolveEntityRefDeps,
   applyReview,
+  createAuthoringReader,
   openAddressingLedger as openAddressingLedgerForReview,
   proposeReview,
 } from '@vostride/agent-qa-knowledge-local'
@@ -171,8 +173,11 @@ import {
   STANDING_APPROVAL_SCOPE,
 } from '@vostride/agent-qa-schema'
 import type {
+  AuthoringBrief,
+  AuthoringVerifyDraftInput,
   ChatSessionHandle,
   CompletedRunHandoff,
+  DraftReceipt,
   FunctionCaller,
   FunctionScope,
   GrantRecordOutcome,
@@ -183,6 +188,7 @@ import type {
   RunId,
   RunStartAcknowledgement,
   RunsStartInput,
+  ScopeKey,
   SessionLogPort,
 } from '@vostride/agent-qa-schema'
 
@@ -929,7 +935,34 @@ export interface SuiteTextEntry {
 export interface DraftAuthoringPort {
   parseDraft(filePath: string): Promise<DraftParseOutcome>
   suiteTextCorpus(): Promise<readonly SuiteTextEntry[]>
+  /**
+   * 394 D-01 · WTST-01: PARSE the compiled draft, then WRITE it to the shelf — in that order, as
+   * one verb, joining for exactly the reason the two above bundle.
+   *
+   * ONE VERB AND NOT TWO, because the order is the mitigation (T-394-06). Model-authored YAML is
+   * the one input on the authoring path that no schema at the op boundary can vet, and separate
+   * verbs would let a caller write first and discover the parse failure afterwards — with bytes
+   * already on this workspace's disk. Here an unparsable draft answers `unparsable` having
+   * created nothing at all.
+   *
+   * THE DIGEST IS THE HOST'S, over the bytes it is writing, and it is the caller's only
+   * addressing: the shelf path is minted from it, so nothing the model emitted reaches the
+   * filesystem as a path component. `DraftRef.contentDigest`'s whole promise — a later edit
+   * cannot inherit an earlier receipt — is only true while the digest is over what was stored.
+   */
+  stageDraft(contents: string): Promise<DraftStageOutcome>
 }
+
+/**
+ * What staging produced: a parsed draft that IS on the shelf, or a refusal that wrote nothing.
+ *
+ * Structurally the mirror of `agent`'s `DraftStageOutcome`, on this file's own mirror discipline
+ * — that type lives inside `agent`'s `authoring/` and the value crossing this seam is assignable
+ * to it unchanged.
+ */
+export type DraftStageOutcome =
+  | { readonly kind: 'staged'; readonly draft: ParsedDraftDescriptor }
+  | { readonly kind: 'unparsable'; readonly reason: string }
 
 /** The suite comparison, materialized once per evaluation. */
 interface FingerprintSnapshot {
@@ -1110,6 +1143,36 @@ function createDraftEvaluation(input: DraftEvaluationBindingInput) {
  * `requiresHumanOrigin`, so this is an honest attribution rather than a permission routed around.
  */
 const AUTHORING_GATE_RUN_CALLER: FunctionCaller = Object.freeze({
+  surface: 'authoring',
+  grantedScopes: ['run', 'read'] as readonly FunctionScope[],
+  safeMode: false,
+  origin: 'agent',
+})
+
+/**
+ * The caller the authoring loop's stage 4 dispatches `authoring.draft.verify` as (394 D-01,
+ * op-calls-op · T-394-05).
+ *
+ * ITS TWO SCOPES ARE EXACTLY THE CALLEE'S, AND THAT IS THE MITIGATION. `authoring.draft.write`
+ * declares three — `test-write`, `run`, `read` — because it writes a file; `authoring.draft.verify`
+ * declares two, because its whole effect is the gate-runs it takes. A minted caller carrying the
+ * OUTER op's three would hand the inner call a power it does not declare and nobody granted for
+ * it, which is a widening performed by a nested call rather than by a person. So this narrows,
+ * and the narrowing is checkable: the array below is the callee's `requiredScopes`, asserted
+ * against the spec off the registry rather than trusted.
+ *
+ * There is no second minted caller for `runs.start` / `runs.get`, and its absence is the design
+ * rather than an omission. The loop takes no run of its own: every gate-run is started INSIDE
+ * `authoring.draft.verify`, which already dispatches it on {@link AUTHORING_GATE_RUN_CALLER}
+ * above. A caller minted here for a dispatch that does not exist would be a set of grants nothing
+ * checks and nobody could tell had gone wrong.
+ *
+ * `origin: agent` for the reason the gate-run caller is: a person asked for a test to be written,
+ * and the verification that answers it is the system's own doing. `authoring.draft.verify`
+ * declares no `requiresHumanOrigin`, so this is an honest attribution and not a permission routed
+ * around.
+ */
+const AUTHORING_LOOP_VERIFY_CALLER: FunctionCaller = Object.freeze({
   surface: 'authoring',
   grantedScopes: ['run', 'read'] as readonly FunctionScope[],
   safeMode: false,
@@ -2249,6 +2312,15 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       : { resolveWriterAuthority: input.resolveWriterAuthority }),
   })
 
+  // 394 D-01: the authoring loop's host half, narrowed ONCE so the loop's closures capture a value
+  // rather than an optional property — and so "can this host author a draft" is decided in one
+  // place. `runExecution` is part of the condition even though nothing here calls it: stage 4
+  // dispatches `authoring.draft.verify`, which is itself unbound without it, so a host bound to
+  // author but not to verify would produce a draft and then refuse to say whether it is any good.
+  const authoringLoopHost = input.draftAuthoring !== undefined && input.runExecution !== undefined
+    ? input.draftAuthoring
+    : undefined
+
   // 392 D-03: the chat surface's inline confirm, built by the host over this composition's mint and
   // this session's log. `undefined` where there is nobody to ask, which leaves `confirm` absent and
   // the gate's deny-by-default in place — the v48 posture D-03 says is unchanged for non-TTY.
@@ -2468,6 +2540,74 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             ) as RunStartAcknowledgement
           },
         }),
+      }),
+      // 394 D-01 / WTST-01: the authoring LOOP's two halves, bound HERE and therefore on BOTH
+      // hosts, under the SAME condition the evaluator above is bound under — the loop's stage 4
+      // dispatches `authoring.draft.verify`, so a host that cannot verify a draft cannot author
+      // one either, and a third answer to "can this host author" would be a third thing to keep
+      // in step.
+      //
+      // THE READ HALF IS `getAuthoringBrief`'S FIRST PRODUCTION CALLER. The port has been
+      // implemented and unbound since v51 (`knowledge-local/src/serving/authoring-reader.ts`),
+      // which means every field of its contract is crossing a real seam for the first time here;
+      // a mismatch surfaces at this binding rather than in a surface. The reader is built PER
+      // CALL over a freshly resolved knowledge root, on the standing-approval reader's stated
+      // reasoning — the CLI resolves its root asynchronously and per call, and a root captured
+      // once would serve a brief out of a knowledge tree the invocation is not serving from. No
+      // `product` is bound: the composition does not own one, and the SCOPE arrives on the op's
+      // input, which is the honest half of the pair the reader filters on.
+      //
+      // `suiteTextCorpus` is the SAME host walk gate 3's degraded lane already consumes, reached
+      // here for stage 2's pre-authoring screen. One walk, one notion of what a suite test's text
+      // is; a second enumeration would let the screen and the gate disagree about the same pair.
+      //
+      // THE WRITE HALF bundles the model, the shelf and the verify dispatch, because none of the
+      // three is independently bindable: a host with a model and no shelf cannot author, one with
+      // a shelf and no model has nothing to author with, and one that can do both but cannot
+      // verify would produce a test and have nothing to say about whether it is worth keeping.
+      // The model is a FACTORY, resolved at most once and only when a draft is actually compiled,
+      // the same idiom `openJobs` uses — binding this capability must not construct a client for a
+      // host that never authors.
+      //
+      // WHY THE ROUTER (plan 05) WILL READ `DraftRunPortLike.get`'s `CompletedRunHandoff` AND NOT
+      // `runs.get`'s PROJECTION. D-08 routes on run EVIDENCE — step terminations, planning
+      // failure, cycle flags, the per-step sub-action record — and `runs.get` projects a
+      // `RunDetail` in which none of that survives (`stepCount` is its only step-shaped field).
+      // This is `createDraftEvaluation`'s own posture, stated one layer out: the op is reached for
+      // what an op owns, and the reader is read for evidence no projection carries. A router built
+      // on the projection would have to infer a mechanics failure from a member verdict, and
+      // inferring an app defect out of a bare member verdict is precisely the cardinal error D-08
+      // exists to make unreachable.
+      //
+      // A NOTE FOR WHOEVER EDITS THIS PARAGRAPH. The arch dependency scan reads import specifiers
+      // out of this file's RAW BYTES, comments included, so any prose shaped like an import's
+      // trailing clause — the keyword, then a quoted phrase — is reported as an undeclared
+      // external dependency of this package. Two drafts of this comment tripped it, once on a
+      // sentence about verdicts and once on the sentence explaining the first. Keep quoted phrases
+      // away from that keyword here.
+      ...(authoringLoopHost === undefined ? {} : {
+        authoringRead: {
+          async getAuthoringBrief(intent: string, scope: ScopeKey): Promise<AuthoringBrief> {
+            const knowledgeRoot = await input.knowledgeRoot()
+            return createAuthoringReader({ knowledgeRoot }).getAuthoringBrief(intent, scope)
+          },
+          suiteTextCorpus: () => authoringLoopHost.suiteTextCorpus(),
+        },
+        draftShelf: {
+          model: async () => await input.model(),
+          write: (contents: string) => authoringLoopHost.stageDraft(contents),
+          verifyDraft: async (verifyInput: AuthoringVerifyDraftInput): Promise<DraftReceipt> => {
+            if (composedRegistry === undefined) {
+              throw new TypeError('a draft was verified before its registry finished composing')
+            }
+            return await invokeFunction(
+              composedRegistry,
+              AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
+              verifyInput,
+              AUTHORING_LOOP_VERIFY_CALLER,
+            ) as DraftReceipt
+          },
+        },
       }),
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),

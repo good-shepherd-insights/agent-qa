@@ -551,6 +551,17 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 394 D-01: the authoring loop's one public entry, BOUND on this host for the reason its
+      // sibling above is — the CLI supplies the draft-authoring port and a run executor, which is
+      // the same condition both halves of the loop bind under. It declares a THIRD scope,
+      // `test-write`, because it writes a file where its sibling only starts runs; 394-01 minted
+      // that scope for exactly this declaration, and it is what a listing shows a person who asks
+      // what authoring a test costs them.
+      'authoring.draft.write': {
+        requiredScopes: ['test-write', 'run', 'read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       'config.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.

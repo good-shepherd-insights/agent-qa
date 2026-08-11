@@ -13,7 +13,8 @@
 
 import { z } from 'zod'
 
-import { DraftReceiptSchema } from '../authoring/draft-receipt'
+import { DraftReceiptSchema, DraftRefSchema } from '../authoring/draft-receipt'
+import type { ScopeTier } from '../identity/scope-key'
 
 export const AuthoringVerifyDraftInputSchema = z.object({
   /** Path to the draft test file to evaluate. Resolved and boundary-checked at the invoke. */
@@ -39,3 +40,98 @@ export type AuthoringVerifyDraftInput = z.infer<typeof AuthoringVerifyDraftInput
 export const AuthoringVerifyDraftOutputSchema = DraftReceiptSchema
 
 export type AuthoringVerifyDraftOutput = z.infer<typeof AuthoringVerifyDraftOutputSchema>
+
+// ---- `authoring.draft.write`: the six-stage loop's one public entry (394, D-01 · WTST-01) ------
+
+/**
+ * The scope the brief is read at and the draft is authored for.
+ *
+ * A module-private schema on the `functions/runs.ts` and `functions/knowledge.ts` idiom — each
+ * file that has to validate a scope keeps its own, because there is no exported `ScopeKeySchema`
+ * in this package and minting one now would publish a fourth spelling of a two-field object three
+ * files already validate identically.
+ */
+const scopeKeySchema = z.object({
+  tier: z.enum(['global', 'product', 'suite', 'test'] satisfies readonly ScopeTier[]),
+  key: z.string().min(1),
+}).strict()
+
+/**
+ * How one loop invocation ended — the CLOSED vocabulary, declared whole in 394-02 (D-01).
+ *
+ * All four members exist from the tracer onward and only `drafted` is reachable in it. That is
+ * deliberate rather than premature: the loop is a six-stage pipeline whose stages land across
+ * plans 04, 05 and 06, and a vocabulary that grew a member per plan would make each of those a
+ * change to the SHAPE every consumer branches on — the op's output contract, 396's MCP
+ * projection, 397's parity walk — instead of a new branch behind a discriminant they already
+ * read. Declaring the whole set now costs one enum and buys three plans that add a case.
+ *
+ *   `drafted`  the draft was compiled, staged and verified; the receipt carries the verdict.
+ *   `refused`  stage 2 found the intent already covered and ended the invocation (D-04, plan 04).
+ *   `repaired` stage 5 routed to bounded repair and a later iteration passed (D-08/D-10, plan 05).
+ *   `finding`  stage 5 routed to the app-broken branch: a correctly-failing draft (D-11, plan 06).
+ */
+export const AUTHORING_LOOP_OUTCOMES = [
+  'drafted',
+  'refused',
+  'repaired',
+  'finding',
+] as const
+
+export type AuthoringLoopOutcomeKind = (typeof AUTHORING_LOOP_OUTCOMES)[number]
+
+/**
+ * What a caller hands the loop.
+ *
+ * `.strict()` and a non-empty intent for the reason the verify input states above, and here the
+ * argument is sharper: `intent` is free text from an arbitrary caller that reaches an LLM and then
+ * becomes bytes on this workspace's disk (T-394-06). The refusal surface a schema can hold is the
+ * shape and the emptiness; what the model produces is validated again, by the parser, before a
+ * single byte is written.
+ */
+export const AuthoringDraftWriteInputSchema = z.object({
+  /** Plain-English description of the test to author. */
+  intent: z.string().min(1),
+  /** Which scope the authoring brief is read at, and the draft is authored for. */
+  scope: scopeKeySchema,
+  /**
+   * Draft mode: the stability gate runs ONCE instead of the pinned N.
+   *
+   * Handed straight through to `authoring.draft.verify`, marker idiom and consequences intact —
+   * a draft-mode evaluation's disposition is forced to `unverified`, so nothing authored this way
+   * can be auto-kept. `z.literal(true)` for the same reason it is there: `false` is a refusal, not
+   * a second spelling of absence.
+   */
+  draftMode: z.literal(true).optional(),
+}).strict()
+
+export type AuthoringDraftWriteInput = z.infer<typeof AuthoringDraftWriteInputSchema>
+
+/**
+ * What one loop invocation answers.
+ *
+ * The receipt is the WHOLE receipt the evaluator minted and persisted, not a summary of it — the
+ * verify op's own rule, inherited because this op reaches that op rather than re-deciding
+ * anything. `draftRef` is carried beside it even though the receipt already holds one, because it
+ * is the answer to a different question: which draft this call produced, addressable without
+ * knowing that a receipt is a thing that has a ref inside it.
+ *
+ * There is no payload arm per outcome. A finding's evidence and a proposal's diff ride 391's
+ * envelope into the inbox (D-05/D-11), so widening this contract with them would mint a second
+ * place the same artifact could be read from.
+ *
+ * BOTH ARE OPTIONAL, AND `outcome` SAYS WHICH TO EXPECT — the `KnowledgeApplyOutcome.forgetReceipt`
+ * idiom. A `drafted`, `repaired` or `finding` invocation carries both; a `refused` one ends at
+ * stage 2 with no draft compiled and therefore no receipt to mint (D-04, plan 04). Requiring them
+ * would have made plan 04's arrival a WIDENING of this op's output contract — the shape change the
+ * whole-vocabulary-now discipline exists to avoid — and padding a refusal with an empty receipt
+ * would be worse: a receipt is a durable record of gates that ran, and a synthetic one would be a
+ * verdict about a draft that was never authored.
+ */
+export const AuthoringDraftWriteOutputSchema = z.object({
+  draftRef: DraftRefSchema.optional(),
+  receipt: DraftReceiptSchema.optional(),
+  outcome: z.enum(AUTHORING_LOOP_OUTCOMES),
+}).strict()
+
+export type AuthoringDraftWriteOutput = z.infer<typeof AuthoringDraftWriteOutputSchema>

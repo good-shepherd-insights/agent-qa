@@ -46,7 +46,11 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
-import type { ParsedDraftLike } from '../authoring/ports.js'
+import type {
+  AuthoringReadPortLike,
+  DraftShelfPortLike,
+  ParsedDraftLike,
+} from '../authoring/ports.js'
 import type { RecurrenceProvider } from '../analysis/render-sentence.js'
 import type { ChainJobIds } from '../jobs/chain-identity.js'
 import type { JobIdSource } from '../jobs/engine.js'
@@ -109,6 +113,8 @@ export type OptionalFunctionDepKey =
   | 'standingGrants'
   | 'chatTurn'
   | 'draftEvaluation'
+  | 'authoringRead'
+  | 'draftShelf'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -786,6 +792,29 @@ export interface FunctionDeps {
    * whichever package happened to own the syscall, one layer below where a caller catches it.
    */
   draftEvaluation?: DraftEvaluationPort
+  /**
+   * 394 D-01 / WTST-01: the authoring loop's read half — the brief, and the authored suite as
+   * text (stages 1-2).
+   *
+   * OPTIONAL for the reason `draftEvaluation` is, and the honest absence is load-bearing here in
+   * a way it is nowhere else in this record. A host with no knowledge index cannot serve an
+   * authoring brief, and the alternative to saying so by name is compiling a test from an EMPTY
+   * brief — which produces a plausible draft, authored against nothing this project knows, and
+   * says so nowhere. That is a wrong answer wearing a correct one's clothes, and it is wearing
+   * them into a file the user is asked to commit.
+   */
+  authoringRead?: AuthoringReadPortLike
+  /**
+   * 394 D-01 / WTST-01: the authoring loop's compile half — the model, and the draft shelf
+   * (stage 3).
+   *
+   * Bound with `authoringRead` or not at all: `composeLocalAgent()` supplies the pair, because a
+   * host that can read but not write is not a degraded author, it is a host that must say
+   * `unbound` by name. `authoring.draft.write` names THIS key in `boundThrough` — it is the half
+   * that makes the op mutating — and refuses on either half's absence at the invoke, so an
+   * in-layer caller holding the spec directly gets the same named error.
+   */
+  draftShelf?: DraftShelfPortLike
 }
 
 /**

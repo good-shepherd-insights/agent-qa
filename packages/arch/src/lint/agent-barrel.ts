@@ -97,6 +97,16 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // forbids for the reason a renamed op would then leave a string nothing dispatches. The SPEC
   // stays inside `functions/` like every other, so this opens no dispatch path.
   'AUTHORING_DRAFT_VERIFY_FUNCTION_ID',
+  // 394 plan 02, D-01: the authoring LOOP's id, on the exact footing of its sibling above and for
+  // the identical reason — `composeLocalAgent()` and this phase's e2e proof both put this name on
+  // the wire, and 387 D-11 forbids the literal each would otherwise spell. The SPEC stays inside
+  // `functions/`.
+  'AUTHORING_DRAFT_WRITE_FUNCTION_ID',
+  // 394 plan 02, D-01: the CLOSED, ORDERED stage vocabulary. A frozen string tuple, and it is on
+  // this list because it is the SUBJECT of a claim rather than decoration — the ordering pin
+  // asserts sequence equality against it, and a vocabulary a pin cannot name is one the pin has to
+  // re-spell, which makes the pin a second list of the stages instead of a check on the first.
+  'AUTHORING_LOOP_STAGES',
   'AmbiguousStepAddressError',
   // 392 plan 01: the closed stage-1 resolver table and its lookup. A DECLARATION and a pure
   // predicate walk over it — the table's entries name op ids, and naming an op buys nothing
@@ -312,6 +322,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'replayToModelMessages',
   // 392 plan 01: the pure table walk stage 1 is (see `CHAT_RESOLVER_TABLE` above).
   'resolveClause',
+  // 394 plan 02, D-01: the six-stage orchestration itself. A PURE function of (input, deps) — it
+  // reaches no host API and no registry; every capability it needs arrives in the deps record the
+  // op hands it, and the op is the only thing that can assemble one. Published so the ordering pin
+  // drives the real function over injected fakes rather than inferring a stage order from the op's
+  // observable side effects, which is the difference between pinning the order and pinning a
+  // shadow of it.
+  'runAuthoringLoop',
   // 392 plan 09: how a scenario is ADDRESSED — `<class>/<id>.yml`. A pure string join, published
   // beside the manifest so the two runners and the closure walk cannot spell a corpus path three
   // ways.
@@ -413,7 +430,19 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'AnalysisArtifactReaderPort',
   'AnalysisCluster',
   'AnalysisClusterMember',
+  // 394 plan 02, D-01: the loop's own vocabulary, types only — its input, its dep record, its
+  // four-arm outcome union, its result (outcome + the stages actually entered) and the stage name
+  // type — plus the two host-half mirrors a composition root implements and the outcome of staging
+  // a compiled draft. Nothing here carries behaviour across the barrel; what they carry is the
+  // SHAPE plans 04-06 fill, which is exactly the widening this exact-equality pin exists to make a
+  // visible edit rather than a quiet one.
+  'AuthoringLoopDeps',
+  'AuthoringLoopInput',
+  'AuthoringLoopOutcome',
+  'AuthoringLoopResult',
+  'AuthoringLoopStage',
   'AuthoringReadPort',
+  'AuthoringReadPortLike',
   'BoundRecordLlmAuthorship',
   // 392 plan 01: the turn engine's injected-seam vocabulary and its dep record. Types only, so
   // none of them carries behaviour across the barrel — what they carry is the SHAPE the expansion
@@ -525,6 +554,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // compares against, so naming it is what keeps those two from being two answers.
   'CreateChatStateInput',
   'CreateFunctionRegistryOptions',
+  // 394 plan 02, D-01: the loop's write half and what staging one compiled draft answers. Types
+  // only — the port is a shape a composition root fills, and the outcome is a two-arm union whose
+  // refusal arm is the T-394-06 mitigation stated as a return type.
+  'DraftShelfPortLike',
+  'DraftStageOutcome',
   'EntityDirectoryPort',
   'FallbackContinuationInput',
   'FallbackContinuationProducer',

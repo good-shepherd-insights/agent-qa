@@ -46,6 +46,7 @@ import type {
   ComposeLocalAgentInput,
   DraftAuthoringPort,
   DraftParseOutcome,
+  DraftStageOutcome,
   LocalAgentHost,
   RunExecutionPort,
   SuiteTextEntry,
@@ -623,6 +624,52 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
           contentDigest: createHash('sha256').update(content).digest('hex'),
         },
       })
+    },
+
+    /**
+     * Stage a compiled draft: PARSE first, WRITE second, and nothing at all when the parse fails
+     * (394 D-01 · T-394-06).
+     *
+     * The order is the whole verb. What arrives here is bytes an LLM produced from a free-text
+     * intent — the one input on the authoring path no schema at the op boundary can vet — so it is
+     * put through the SAME `parseTestFile` + `singleDraftTest` pair a committed draft goes through
+     * above, and only bytes that survived that become a file. A caller cannot reverse the two,
+     * because there is only the one verb.
+     *
+     * PARSED UNDER THE PATH IT WILL LIVE AT, which is why the digest is computed before the parse
+     * rather than after: the shelf path is minted from the digest, and the parser is handed that
+     * path so any position an error names — and the `filePath` gates 1-2 later join on — is the
+     * path the draft actually occupies. Parsing under a placeholder and re-parsing after the write
+     * would be two parses of one file with two chances to disagree.
+     */
+    async stageDraft(contents: string): Promise<DraftStageOutcome> {
+      const contentDigest = createHash('sha256').update(contents).digest('hex')
+      const identityPath = `${DRAFT_SHELF_PARENT}/${DRAFT_SHELF_DIR_NAME}/${contentDigest}.yaml`
+
+      const parsed = parseTestFile(contents, identityPath)
+      if (parsed.errors.length > 0) {
+        return {
+          kind: 'unparsable',
+          reason: parsed.errors.map((error) => error.message).join('; '),
+        }
+      }
+      const test = singleDraftTest(parsed.tests)
+      if (typeof test === 'string') return { kind: 'unparsable', reason: test }
+
+      // Only now. The shelf's own guards still apply — the digest is character-class checked and
+      // the join is boundary-checked — so a defect that produced a hostile digest is refused by
+      // `DraftShelfOutsideWorkspaceError` rather than by this function's silence.
+      const writtenPath = createDraftShelf(configDir).write(contentDigest, contents)
+      return {
+        kind: 'staged',
+        draft: {
+          testId: (test as { 'test-id'?: string })['test-id'] ?? test.name,
+          filePath: writtenPath,
+          testName: test.name,
+          steps: draftStepTexts(test),
+          contentDigest,
+        },
+      }
     },
 
     /**

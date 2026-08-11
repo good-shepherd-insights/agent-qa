@@ -19,6 +19,7 @@ import { toSchemaProjection } from './declaration-projection.js'
 import type { FunctionBindingStatus } from './spec.js'
 import { agentAskSpec } from './ops/agent-ask.js'
 import { analysisGetSpec } from './ops/analysis-get.js'
+import { authoringDraftWriteSpec } from './ops/authoring-draft-write.js'
 import { authoringVerifyDraftSpec } from './ops/authoring-verify-draft.js'
 import { configGetSpec } from './ops/config-get.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
@@ -199,6 +200,24 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // Registering it does NOT flip 392's `write_test` fail-closed scenario: that tool name stays
   // absent from the catalogue until 394 (D-01), and nothing here mints it.
   authoringVerifyDraftSpec as FunctionSpec,
+  // 2026-08-11 (394 D-01 · WTST-01): the authoring LOOP's one public entry, beside the evaluator
+  // it composes. All six stages — brief, dedup, compile, verify, route, compound — run INSIDE this
+  // op, because the stage order is an invariant and registering a stage each would make it a hope
+  // about the plan the chat planner happened to make rather than a property of the code. Everything
+  // under the surface still crosses the function layer: stage 4 dispatches `authoring.draft.verify`
+  // through `invokeFunction` on a caller minted with exactly that op's declared scopes.
+  //
+  // Bound through the OPTIONAL `draftShelf` bundle — the model and the shelf — whose binding site
+  // is `composeLocalAgent()` in `@vostride/agent-qa-agent-local` (385 D-15, therefore both the CLI
+  // and the daemon). The read half (`authoringRead`) is supplied with it or not at all and the
+  // invoke refuses on either by the same name, so a host that cannot serve an authoring brief says
+  // `unbound` BY NAME rather than compiling a test against an empty one — a plausible draft
+  // authored against nothing this project knows, which is the failure that looks most like success.
+  //
+  // Inverting the entry above: registering THIS one DOES flip 392's `write_test` fail-closed chat
+  // scenarios, because the tool name they were waiting on now exists in the catalogue the planner
+  // binds 1:1. Plan 11 performs the flip and pins planned == executed.
+  authoringDraftWriteSpec as FunctionSpec,
 ]
 
 /**

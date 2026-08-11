@@ -94,6 +94,13 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // would read that as `dispatched` too. A parsing input is not enough here — it has to be one the
   // op's own pure refusals let through.
   'authoring.draft.verify': { draftPath: 'tests/nothing-in-this-fixture.yaml' },
+  // 394 D-01: a PARSING input, on its sibling's reasoning — `{}` fails the contract's non-empty
+  // intent and its required scope, so the empty default would report an input error and this case
+  // would read that as `dispatched`, certifying nothing about binding.
+  'authoring.draft.write': {
+    intent: 'nothing in this fixture can author this',
+    scope: { tier: 'product', key: 'nothing-in-this-fixture' },
+  },
   'runs.get': { runId: 'run-alpha' },
   'runs.events': { runId: 'run-alpha' },
   'runs.postprocessing': { runId: 'run-alpha' },

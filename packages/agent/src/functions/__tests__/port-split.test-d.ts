@@ -76,6 +76,12 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // (vitest printed `Type Errors  no errors` for the same tree; 393-05 measured the mechanical
 // cause — `typecheck.include` never looks at a `.test.ts`, and this is a `.test-d.ts`, which is
 // exactly why the dual-witness rule keeps `tsc` as the authority).
+// 394 D-01 extends it a ninth and tenth time, by name again, and this pair is the first that has
+// to be read as a pair: `authoringRead` (the brief + the suite text corpus, stages 1-2) and
+// `draftShelf` (the model + the shelf + the verify dispatch, stages 3-4). `authoring.draft.write`
+// names only `draftShelf` in `boundThrough` — a spec may name one key — and refuses on EITHER
+// half at the invoke, because a host bound to compile but not to read would serve an empty brief
+// rather than say so. The pin fired on both, and once more only under `tsc --noEmit`.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -88,6 +94,8 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'standingGrants'
     | 'chatTurn'
     | 'draftEvaluation'
+    | 'authoringRead'
+    | 'draftShelf'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

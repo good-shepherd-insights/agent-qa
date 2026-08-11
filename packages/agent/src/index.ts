@@ -143,6 +143,30 @@ export { PROPOSALS_LIST_FUNCTION_ID } from './functions/ops/proposals-list.js'
 // literal pointing at a string nothing dispatches.
 export { AUTHORING_DRAFT_VERIFY_FUNCTION_ID } from './functions/ops/authoring-verify-draft.js'
 export { RUNS_START_FUNCTION_ID } from './functions/ops/runs-start.js'
+// 394 D-01: the authoring loop's one public entry, on exactly the footing of the two ids above —
+// a name a caller puts on the wire, never a dispatch handle. Published because
+// `composeLocalAgent()` binds the loop's verify closure by IMPORTING the verify id (387 D-11), and
+// because this phase's e2e proof reaches the loop the way a surface does: through
+// `invokeFunction`, by name, on a real registry.
+export { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from './functions/ops/authoring-draft-write.js'
+// 394 D-01 · WTST-01: the loop's own vocabulary. `AUTHORING_LOOP_STAGES` is the closed, ORDERED
+// stage list the ordering pin asserts sequence equality against, and `runAuthoringLoop` is the
+// orchestration itself — published so a pin can drive the real function over injected fakes rather
+// than re-deriving a stage order from the op's observable side effects. Neither is a capability:
+// the loop is a pure function of (input, deps) and cannot reach a host API or a registry.
+export { AUTHORING_LOOP_STAGES, runAuthoringLoop } from './authoring/loop.js'
+export type {
+  AuthoringLoopDeps,
+  AuthoringLoopInput,
+  AuthoringLoopOutcome,
+  AuthoringLoopResult,
+  AuthoringLoopStage,
+} from './authoring/loop.js'
+export type {
+  AuthoringReadPortLike,
+  DraftShelfPortLike,
+  DraftStageOutcome,
+} from './authoring/ports.js'
 export { createTurnEngine } from './chat/turn-engine.js'
 export { CHAT_HELP_TEXT, CHAT_RESOLVER_TABLE, resolveClause } from './chat/resolver-table.js'
 export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile.js'

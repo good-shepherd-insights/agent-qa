@@ -158,6 +158,10 @@ export type {
   // otherwise.
   DraftAuthoringPort,
   DraftParseOutcome,
+  // 394 D-01: the fourth, joining for the reason the three above did — the CLI implements
+  // `stageDraft` over `parseTestFile` and the shelf, and cannot name what it is filling without
+  // this type.
+  DraftStageOutcome,
   ParsedDraftDescriptor,
   SuiteTextEntry,
   CreateKnowledgeReviewInput,

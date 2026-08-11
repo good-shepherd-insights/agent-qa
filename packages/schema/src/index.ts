@@ -728,6 +728,10 @@ export {
   // `verify_draft`; that spelling is unrepresentable — see functions/authoring.ts).
   AuthoringVerifyDraftInputSchema,
   AuthoringVerifyDraftOutputSchema,
+  // 394 D-01: the authoring.draft.write op contracts and the closed loop-outcome vocabulary.
+  AUTHORING_LOOP_OUTCOMES,
+  AuthoringDraftWriteInputSchema,
+  AuthoringDraftWriteOutputSchema,
 } from './functions/index'
 export type {
   FunctionCaller,
@@ -756,6 +760,9 @@ export type {
   ConfigGetInput,
   AuthoringVerifyDraftInput,
   AuthoringVerifyDraftOutput,
+  AuthoringDraftWriteInput,
+  AuthoringDraftWriteOutput,
+  AuthoringLoopOutcomeKind,
 } from './functions/index'
 
 // 393 (WTST-02, D-18/D-19): the keep-gate authoring vocabulary. `computeDraftDisposition` is

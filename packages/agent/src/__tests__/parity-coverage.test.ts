@@ -106,6 +106,14 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // four booleans were computed from no runs at all — a refusal wearing a verdict's clothes is the
   // one answer that would let a draft be kept on the strength of nothing.
   'authoring.draft.verify': 'unbound',
+  // 394 D-01: UNBOUND here for the reason its sibling above is, and on both of its halves — this
+  // fixture supplies neither the authoring read nor the shelf. `composeLocalAgent` binds the pair
+  // wherever the host can parse a test file AND start a run, which is the same condition the
+  // evaluator binds under, because the loop's stage 4 dispatches the evaluator. A host missing
+  // either half must refuse by NAME rather than compile a test against an EMPTY authoring brief:
+  // a draft authored from nothing this project knows is indistinguishable, at the caller, from
+  // one authored from everything it knows.
+  'authoring.draft.write': 'unbound',
   // 392 D-24: UNBOUND here because this fixture supplies no turn engine — a claim about the
   // composition and not about the op, exactly like `analysis.get` below. `composeLocalAgent`
   // assembles one, so both production hosts list `agent.ask` as bound. A host with no engine must
@@ -217,6 +225,14 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // any fixture; `draftMode` is optional and omitted, because the unbound leg needs a parsing input
   // and nothing more.
   'authoring.draft.verify': { draftPath: 'tests/nothing-in-this-fixture.yaml' },
+  // 394 D-01: a PARSING input for a capability this composition cannot run, on the same reasoning
+  // — validation precedes the binding check. Non-empty intent and a well-formed scope are the
+  // contract's two requirements; `draftMode` is optional and omitted, because the unbound leg
+  // needs a parsing input and nothing more.
+  'authoring.draft.write': {
+    intent: 'nothing in this fixture can author this',
+    scope: { tier: 'product', key: 'nothing-in-this-fixture' },
+  },
   'config.get': {},
   // 387: `resolve` takes any reference at all, so the sample is free text that matches
   // nothing — the fixture directory is empty and the honest answer is the none arm. `get`

@@ -17,11 +17,16 @@
 // it is not a house style to apply everywhere.
 
 import type {
+  AuthoringBrief,
+  AuthoringVerifyDraftInput,
   CompletedRunHandoff,
   DraftReceipt,
   RunStartAcknowledgement,
   RunsStartInput,
+  ScopeKey,
 } from '@vostride/agent-qa-schema'
+
+import type { JobModelCapability } from '../jobs/record-llm-authorship.js'
 
 /**
  * A parsed draft, reduced to what the four gates and the receipt read.
@@ -115,4 +120,94 @@ export interface SuiteTextCorpusEntryLike {
  */
 export interface DraftReceiptsStoreLike {
   put(receipt: DraftReceipt): Promise<void>
+}
+
+// ---- the authoring LOOP's two host halves (394, D-01 · WTST-01) ---------------------------------
+//
+// The loop needs three things this package cannot name, and they group into exactly two facts
+// about a host rather than into three deps. Stages 1-2 READ what the project already knows — the
+// authoring brief and the authored suite as text — before a byte is authored. Stage 3 COMPILES:
+// it needs a model and it needs somewhere to put what the model produced. A host either can do
+// each half or it cannot, and `composeLocalAgent()` supplies both halves or neither.
+//
+// `AuthoringBrief` and `ScopeKey` are used in the REAL schema vocabulary rather than mirrored,
+// on the `DraftRunPortLike` reasoning stated at the top of this file: those types live in
+// `schema`, which this package already depends on, so there is no dependency to invert and a
+// mirror of them would be a second spelling of a contract `AuthoringReadPort` already owns.
+
+/**
+ * The read half of the loop (stages 1-2).
+ *
+ * TWO VERBS, ONE FACT. `getAuthoringBrief` is the substrate stage 3 compiles from;
+ * `suiteTextCorpus` is the comparison universe stage 2 screens the intent against. A host that
+ * could serve one and not the other does not exist — both are reads of this project's own state
+ * through capabilities the composition root holds together — so splitting them would make "can
+ * this host run the loop's read stages" two questions with one answer, and would let a
+ * composition report the op bound while dedup-before-author had nothing to compare against. An
+ * empty corpus is a legitimate answer; an absent one is a host that cannot screen.
+ *
+ * `suiteTextCorpus` yields the SHIPPED {@link SuiteTextCorpusEntryLike} rather than a second
+ * entry shape, so stage 2 and gate 3's degraded lane screen the same rows through the same
+ * `textSimilarity` and cannot drift into two notions of what a suite test's text is.
+ */
+export interface AuthoringReadPortLike {
+  getAuthoringBrief(intent: string, scope: ScopeKey): Promise<AuthoringBrief>
+  suiteTextCorpus(): Promise<readonly SuiteTextCorpusEntryLike[]>
+}
+
+/**
+ * What staging a compiled draft produced — parsed and written, or refused and NOT written.
+ *
+ * The refusal arm is the T-394-06 mitigation expressed as a return type. Model-authored YAML is
+ * the one input on this path that no schema at the op boundary can vet, so it is parsed before it
+ * becomes a file; a shape that could only answer "here is your path" would have forced the caller
+ * to discover an unparsable draft one stage later, from the verify op, with the bytes already on
+ * disk.
+ */
+export type DraftStageOutcome =
+  | { readonly kind: 'staged'; readonly draft: ParsedDraftLike }
+  | { readonly kind: 'unparsable'; readonly reason: string }
+
+/**
+ * The compile half of the loop (stage 3).
+ *
+ * ONE BUNDLED CAPABILITY rather than two deps, on the shipped `draftEvaluation` precedent: a host
+ * with a model and no shelf cannot author, and a host with a shelf and no model has nothing to
+ * author with, so binding them separately would let a composition list this op `bound` and fail
+ * far from whichever half was forgotten.
+ *
+ * `write` TAKES THE BYTES AND NOTHING ELSE. The digest is computed by the host over the bytes it
+ * is writing, never supplied by the caller — `DraftRef.contentDigest`'s whole promise is that a
+ * later edit cannot inherit an earlier receipt, and a caller that could name the digest could
+ * name one that is not the digest of anything. The path is minted from that digest, so nothing
+ * the model emitted reaches the filesystem as a path component either.
+ *
+ * The returned draft's `filePath` is WORKSPACE-RELATIVE, which is one spelling doing three jobs:
+ * it is what `authoring.draft.verify` takes as `draftPath`, what `runs.start` accepts in
+ * `patterns`, and what the runner records on `PerTestOutcome.filePath` so gates 1-2 can find the
+ * draft's own member.
+ */
+export interface DraftShelfPortLike {
+  /**
+   * The model stage 3 authors with — built by the host through `createModel` (389 D-04).
+   *
+   * A FACTORY and not an object, on the composition root's own `model` idiom: a model is
+   * resolved at most once and lazily, when something actually needs one, so a composition can
+   * bind this capability without constructing a client for a host that never authors a draft.
+   */
+  model(): Promise<JobModelCapability>
+  /** Parse, then write, in that order. An unparsable draft leaves nothing on disk. */
+  write(contents: string): Promise<DraftStageOutcome>
+  /**
+   * Stage 4, dispatched as the REGISTERED `authoring.draft.verify` op (D-01, op-calls-op).
+   *
+   * A closure the composition root mints over the registry it is building, exactly as
+   * `createDraftEvaluation`'s `startGateRun` is minted over the same deferred reference — it is
+   * how a registered op reaches a sibling registered op without this package being able to name a
+   * registry. It rides THIS bundle rather than a dep of its own because it is not independently
+   * bindable either: a host that can compile and stage a draft but cannot verify one would author
+   * a test and then have nothing to say about whether it is worth keeping, which is the one answer
+   * the loop exists to produce.
+   */
+  verifyDraft(input: AuthoringVerifyDraftInput): Promise<DraftReceipt>
 }

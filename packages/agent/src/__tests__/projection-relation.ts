@@ -24,6 +24,7 @@ import type { z } from 'zod'
 
 import { agentAskSpec } from '../functions/ops/agent-ask.js'
 import { analysisGetSpec } from '../functions/ops/analysis-get.js'
+import { authoringDraftWriteSpec } from '../functions/ops/authoring-draft-write.js'
 import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
@@ -80,6 +81,13 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // unable to say that the four booleans are reported SEPARATELY, which is the literal text of
   // WTST-02.
   'authoring.draft.verify': authoringVerifyDraftSpec,
+  // 394 D-01. Paired the day it is registered (the growth seam working as designed). Its OUTPUT
+  // embeds the receipt above — so it inherits that nesting — beside two OPTIONAL members and a
+  // closed outcome enum, and the optionality is the part a careless projection loses. `draftRef`
+  // and `receipt` are absent exactly on the stage-2 refusal arm (plan 04), so a catalogue that
+  // published them as required would tell 396's consumers that every authoring call yields a
+  // receipt, which is the one claim the honesty funnel's side counters exist to contradict.
+  'authoring.draft.write': authoringDraftWriteSpec,
   'agent.ask': agentAskSpec,
   // 389 D-11. Paired the day it is registered (the growth seam working as designed): its
   // output is the first here carrying two parallel per-test arrays plus a nested cluster

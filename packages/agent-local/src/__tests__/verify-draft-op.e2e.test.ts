@@ -310,6 +310,12 @@ function draftAuthoring(options: {
     suiteTextCorpus() {
       return Promise.resolve(options.suiteTextCorpus ?? [])
     },
+    // 394: the same posture `JOB_MODEL` takes above, on the other half of the authoring seam.
+    // Nothing in THIS file authors a draft — it evaluates one that already exists — so a host
+    // that staged bytes here would be modelling a call this suite never makes.
+    stageDraft() {
+      return Promise.reject(new Error('no draft is authored from a keep-gate evaluation'))
+    },
   }
 }
 
