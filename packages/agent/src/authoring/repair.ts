@@ -44,7 +44,6 @@
 // contract, two consumers" property holds through the binding rather than through an import.
 
 import {
-  DRAFT_STABILITY_RUNS_N,
   TestEditPatchSetSchema,
   parseJsonPointer,
 } from '@vostride/agent-qa-schema'
@@ -189,11 +188,13 @@ export type RepairOutcome =
       readonly draft: ParsedDraftLike
       readonly receipt: DraftReceipt
       readonly iterations: number
+      readonly probeRunIds: readonly string[]
     }
   | {
       readonly kind: 'abandoned'
       readonly abandonment: RepairAbandonment
       readonly iterations: number
+      readonly probeRunIds: readonly string[]
     }
 
 /**
@@ -431,6 +432,12 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
 
   let candidate = deps.draft
   let lastRefusal = 'no iteration was taken'
+  // 394-08 / WTST-08: the probe runs this sequence actually started, so the caller can report what
+  // was CONSUMED rather than what was attempted. `iterations` cannot answer that question — a
+  // fenced or unparsable emission spends an iteration and starts nothing — and an actual-runs
+  // figure derived from the iteration count would over-report by exactly the refusals D-09 exists
+  // to produce. Every element is appended at the ONE place a probe is started.
+  const probeRunIds: string[] = []
 
   for (let iteration = 1; iteration <= REPAIR_ITERATION_CAP; iteration += 1) {
     const emitted = await model.generate(
@@ -462,6 +469,7 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
     }
 
     const acknowledgement = await deps.runs.start(probeStartInput(staged.draft))
+    probeRunIds.push(acknowledgement.runId)
     const probe = await deps.runs.get(acknowledgement.runId)
 
     const regression = prefixRegression(staged.draft, probe, prefix)
@@ -470,6 +478,7 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
         kind: 'abandoned',
         abandonment: { kind: 'prefix-regressed', error: regression },
         iterations: iteration,
+        probeRunIds: [...probeRunIds],
       }
     }
 
@@ -478,7 +487,13 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
       // end. `stabilityRunsRequested` reaching the disposition table as `DRAFT_STABILITY_RUNS_N`
       // rather than as 1 is what lets a repaired draft be anything other than `unverified`.
       const receipt = await deps.shelf.verifyDraft({ draftPath: staged.draft.filePath })
-      return { kind: 'repaired', draft: staged.draft, receipt, iterations: iteration }
+      return {
+        kind: 'repaired',
+        draft: staged.draft,
+        receipt,
+        iterations: iteration,
+        probeRunIds: [...probeRunIds],
+      }
     }
 
     candidate = staged.draft
@@ -492,6 +507,7 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
       error: new RepairExhaustedError(REPAIR_ITERATION_CAP, lastRefusal),
     },
     iterations: REPAIR_ITERATION_CAP,
+    probeRunIds: [...probeRunIds],
   }
 }
 
@@ -515,13 +531,8 @@ function parsePatchSet(text: string): TestEditPatchSet | string {
   return parsed.data
 }
 
-/**
- * The fan-out one repair sequence can cost, as the D-03 preview and the receipt both read it.
- *
- * Initial N + K probes + final N. Exported so the preview and the report range over ONE arithmetic
- * rather than each restating it; a second copy is how a preview starts promising a number the
- * receipt then contradicts.
- */
-export function repairFanOutBound(stabilityRunsN: number = DRAFT_STABILITY_RUNS_N): number {
-  return stabilityRunsN + REPAIR_ITERATION_CAP + stabilityRunsN
-}
+// 394-08: `repairFanOutBound` used to live here, returning a bare number over its own `+`. It is
+// GONE, replaced by `authoringFanOutBound` in `loop.ts` over `computeFanOutBound` in `schema` —
+// which is the ONE arithmetic the dispatch confirm and the finished proposal both read. Two
+// additions of the same three terms is precisely how a preview begins promising a number the
+// report then contradicts, and a bare total could not have kept the two N terms apart.

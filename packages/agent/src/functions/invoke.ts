@@ -189,8 +189,19 @@ export async function invokeFunction(
     internals.standingApprovalReader === undefined
       ? undefined
       : await internals.standingApprovalReader()
+  // 394-08 D-03 / WTST-08: the per-invocation DISCLOSURE, composed here because this is the only
+  // place that holds both the spec and the parsed input at the moment the gate is called.
+  //
+  // IT IS A MESSAGE AND NOTHING ELSE. The descriptor handed to `evaluate` is `spec.risk` with one
+  // extra display-only field: the name, the tier flags and the recognition are copied unchanged, so
+  // the classification, the audit row, the standing-grant match and the session deny overlay all
+  // see exactly what they saw before. Spread CONDITIONALLY, so an op with nothing to disclose hands
+  // the gate the identical object it always did rather than one carrying `disclosure: undefined`.
+  const action = spec.disclose === undefined
+    ? spec.risk
+    : { ...spec.risk, disclosure: spec.disclose(parsed.data) }
   const policy = await evaluate(
-    spec.risk,
+    action,
     internals.resolveExecutionContext(),
     {
       actionScope: STANDING_APPROVAL_SCOPE,

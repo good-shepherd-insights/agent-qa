@@ -31,11 +31,18 @@ import { dirname, join } from 'node:path'
 import {
   AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
   AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+  FunctionDeniedError,
   FunctionNotBoundError,
   FunctionScopeError,
+  authoringFanOutBound,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { JobModelCapability, JobModelRequest } from '@vostride/agent-qa-agent'
+import {
+  getActiveExecutionContext,
+  resolveExecutionContext,
+  setActiveExecutionContextResolver,
+} from '@vostride/agent-qa-safety'
 import { FsEventLog, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   AUTHORING_DEDUP_CONTINUATIONS,
@@ -46,6 +53,7 @@ import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   asRunId,
   computeDraftDisposition,
+  renderFanOutPreview,
 } from '@vostride/agent-qa-schema'
 import type {
   Action,
@@ -54,6 +62,7 @@ import type {
   ElementInfo,
   FunctionCaller,
   MaskedResolvedConfig,
+  RiskActionDescriptor,
   RunsStartInput,
   StepEvidence,
   SubActionEvidence,
@@ -370,6 +379,28 @@ function draftAuthoring(workspace: string, suiteText: readonly {
   }
 }
 
+/**
+ * A `ConfirmPort` that RECORDS what it was asked and answers a fixed way (394-08, D-03).
+ *
+ * The recording is the whole instrument: D-03's claim is that the dispatch confirm happens EXACTLY
+ * ONCE, before the loop starts, carrying the fan-out preview — and none of those three is
+ * observable from a boolean the gate consumed. `actions` holds the descriptors verbatim, so a cell
+ * can compare the rendered figure against `authoringFanOutBound` rather than against a literal.
+ */
+function recordingConfirm(answer: boolean): {
+  readonly port: (action: RiskActionDescriptor) => boolean
+  readonly actions: RiskActionDescriptor[]
+} {
+  const actions: RiskActionDescriptor[] = []
+  return {
+    actions,
+    port: (action: RiskActionDescriptor) => {
+      actions.push(action)
+      return answer
+    },
+  }
+}
+
 describe('authoring.draft.write end to end through the composition root', () => {
   let root: string
   let agentQaRoot: string
@@ -382,17 +413,32 @@ describe('authoring.draft.write end to end through the composition root', () => 
     workspace = join(root, 'workspace')
     mkdirSync(agentQaRoot, { recursive: true })
     mkdirSync(workspace, { recursive: true })
+
+    // 394-08 D-03: `authoring.draft.write` is ask-tier, so every case below needs a context in
+    // which an ask is REACHABLE at all — `requiresFailClosed` is true for everything except
+    // `local-interactive`, and a vitest worker resolves `local-headless`. This is production's own
+    // `resolveExecutionContext` with only the env/TTY read replaced, by the exact signal pair the
+    // detector would hand it at a terminal (the `daemon-host.test.ts` idiom, verbatim).
+    //
+    // The fail-closed arm is NOT skipped by doing this — it has its own cell below, which pins the
+    // headless context back for the duration of one case.
+    setActiveExecutionContextResolver(() => resolveExecutionContext({ isTty: true, ciMarkers: false }))
+    expect(getActiveExecutionContext()).toBe('local-interactive')
   })
 
   afterEach(() => {
     for (const composed of hosts.splice(0)) void composed.close()
     rmSync(root, { recursive: true, force: true })
+    // Restore the MODULE default rather than the detector, so no TTY-shaped ambient leaks into a
+    // later file that shares this worker.
+    setActiveExecutionContextResolver(() => 'local-headless')
   })
 
   function compose(input: {
     readonly executor?: RunExecutionPort
     readonly authoring?: DraftAuthoringPort
     readonly model?: () => JobModelCapability
+    readonly confirm?: (action: RiskActionDescriptor) => boolean
   }): LocalAgentHost {
     const host = composeLocalAgent({
       agentQaRoot,
@@ -400,6 +446,10 @@ describe('authoring.draft.write end to end through the composition root', () => 
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
       knowledgeRoot: () => join(root, 'agent-qa-knowledge'),
       model: input.model ?? (() => scriptedModel().capability()),
+      // An APPROVING confirm by default, so every case that is not about the gate keeps measuring
+      // what it was written to measure. The decline arm is a cell of its own, and it supplies its
+      // own port — a default that denied would have turned every unrelated cell into a gate test.
+      confirm: input.confirm ?? (() => true),
       ...(input.executor === undefined ? {} : { runExecution: input.executor }),
       ...(input.authoring === undefined ? {} : { draftAuthoring: input.authoring }),
     })
@@ -629,6 +679,128 @@ describe('authoring.draft.write end to end through the composition root', () => 
     expect(result.outcome).toBe('drafted')
     expect(result.refusal).toBeUndefined()
     expect(model.requests).toHaveLength(1)
+  })
+
+  // ---- D-03's dispatch confirm: one ask, before anything, carrying the fan-out preview ---------
+
+  it('asks EXACTLY ONCE at dispatch, before the brief is read, carrying the fan-out preview', async () => {
+    const executor = fixtureExecutor(agentQaRoot)
+    const model = scriptedModel()
+    const confirm = recordingConfirm(true)
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: model.capability,
+      confirm: confirm.port,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    expect(result.outcome).toBe('drafted')
+    // ONE ask for a loop that spent three child processes. D-03: one approval starts the loop,
+    // which then runs unattended — a count of 2 here would be a suspended mid-loop approval state
+    // by another name, and 3 would be one prompt per run.
+    expect(confirm.actions).toHaveLength(1)
+    expect(executor.startInputs).toHaveLength(DRAFT_STABILITY_RUNS_N)
+
+    // THE NUMBER IS COMPARED AGAINST THE FUNCTION, NEVER AGAINST A LITERAL. A hard-coded 9 would
+    // pass just as happily against a second arithmetic that had drifted from the one the report
+    // reads, which is the single-source claim's whole content.
+    const bound = authoringFanOutBound({})
+    expect(confirm.actions[0]?.disclosure).toBe(renderFanOutPreview(bound))
+    expect(confirm.actions[0]?.disclosure).toContain(`up to ${bound.total} runs`)
+
+    // The ask is about THIS action class, and the class name is untouched by the disclosure — it is
+    // the same string a standing grant would have to match and the audit row records.
+    expect(confirm.actions[0]?.name).toBe(`fn:${AUTHORING_DRAFT_WRITE_FUNCTION_ID}`)
+  })
+
+  it('previews the DRAFT-MODE bound, which is smaller — so the preview is not one fixed number', async () => {
+    const executor = fixtureExecutor(agentQaRoot)
+    const confirm = recordingConfirm(true)
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      confirm: confirm.port,
+    })
+
+    await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE, draftMode: true },
+      HUMAN,
+    )
+
+    // The other side of the discriminator. Without it, a disclosure hard-coded to the default bound
+    // would pass the cell above — and the two N terms would be untested at the one surface where a
+    // person reads them, because in the default configuration they are equal.
+    const draftBound = authoringFanOutBound({ draftMode: true })
+    expect(draftBound.initialN).toBe(1)
+    expect(draftBound.finalN).toBe(DRAFT_STABILITY_RUNS_N)
+    expect(draftBound.total).toBeLessThan(authoringFanOutBound({}).total)
+    expect(confirm.actions[0]?.disclosure).toBe(renderFanOutPreview(draftBound))
+  })
+
+  it('declines: a typed refusal, ZERO runs started, and an empty shelf', async () => {
+    const executor = fixtureExecutor(agentQaRoot)
+    const model = scriptedModel()
+    const confirm = recordingConfirm(false)
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: model.capability,
+      confirm: confirm.port,
+    })
+
+    const failure = await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    ).then(() => undefined, (error: unknown) => error as FunctionDeniedError)
+
+    expect(failure).toBeInstanceOf(FunctionDeniedError)
+    expect(failure?.reason).toContain('prompted-denied')
+    // A decline COSTS NOTHING: no run, no model call, nothing on the shelf. Asserting only the
+    // typed refusal would pass for a loop that ran to completion and then threw.
+    expect(confirm.actions).toHaveLength(1)
+    expect(executor.startInputs).toHaveLength(0)
+    expect(model.requests).toHaveLength(0)
+    expect(readdirSync(workspace)).toEqual([])
+  })
+
+  it('DENIES in a fail-closed context, by name — the cost of the ask tier, stated', async () => {
+    // The tier raise's real consequence, pinned rather than discovered later: a non-interactive
+    // host — CI, the daemon — cannot author, because an ask nobody can answer is a deny. The gate's
+    // own reason names the ways out, so this cell asserts the reason and not merely the throw.
+    setActiveExecutionContextResolver(() => 'local-headless')
+    const executor = fixtureExecutor(agentQaRoot)
+    const confirm = recordingConfirm(true)
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      confirm: confirm.port,
+    })
+
+    const failure = await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    ).then(() => undefined, (error: unknown) => error as FunctionDeniedError)
+
+    expect(failure).toBeInstanceOf(FunctionDeniedError)
+    expect(failure?.reason).toContain('fail-closed')
+    expect(failure?.reason).toContain('--trust-session')
+    // The confirm was never REACHED — the fail-closed arm returns before the prompt, so a person
+    // is not asked a question whose answer could not be honoured anyway.
+    expect(confirm.actions).toEqual([])
+    expect(executor.startInputs).toHaveLength(0)
   })
 
   it('refuses an empty intent at the contract, before a model is ever asked', async () => {

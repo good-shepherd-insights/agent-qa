@@ -154,7 +154,13 @@ export { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from './functions/ops/authoring-dra
 // orchestration itself — published so a pin can drive the real function over injected fakes rather
 // than re-deriving a stage order from the op's observable side effects. Neither is a capability:
 // the loop is a pure function of (input, deps) and cannot reach a host API or a registry.
-export { AUTHORING_LOOP_STAGES, runAuthoringLoop } from './authoring/loop.js'
+// 394-08 D-03/D-10 · WTST-08: `authoringFanOutBound` is the ONE site that assembles the bound's
+// three terms — `DRAFT_STABILITY_RUNS_N` (or 1 in draft mode), `REPAIR_ITERATION_CAP`, and
+// `DRAFT_STABILITY_RUNS_N` again — and the only caller of `computeFanOutBound` in this package.
+// Published because the dispatch-confirm cells compare the rendered figure against THIS FUNCTION
+// rather than against a literal: a hard-coded 9 in a test would pass just as happily against a
+// second, drifting arithmetic, which is the exact failure the single source exists to prevent.
+export { AUTHORING_LOOP_STAGES, authoringFanOutBound, runAuthoringLoop } from './authoring/loop.js'
 export type {
   AuthoringLoopDeps,
   AuthoringLoopInput,

@@ -68,7 +68,10 @@ describe('the envelope vocabulary is closed and spelled once', () => {
           contentDigest: 'abc',
         },
         disposition: 'keep-eligible',
-        actualRuns: 7,
+        // 394-08: the two figures ride the arm together — the bound the dispatch confirm disclosed
+        // and the distinct runs this draft really spent.
+        runsPreviewed: 9,
+        runsConsumed: 7,
         repairIterations: 1,
         summaryLine: 'a repaired draft that passed its stability gate',
       },

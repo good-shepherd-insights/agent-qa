@@ -623,7 +623,9 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
     // very first thing it would do is ask for a patch — so this harness has nothing to give it.
     const bench = harness([], { probes: [] }, { [ROUTING_RUN_ID]: [CLEAN_FAIL_MEMBER] })
 
-    const outcome = await routeAfterVerify(DRAFT, REJECTED_RECEIPT, {
+    // 394-08: stage 5 answers `{outcome, fanOut}` — the runs an invocation spent are known only
+    // where repair is entered, so the report leaves from here rather than being totalled outside.
+    const { outcome } = await routeAfterVerify(DRAFT, REJECTED_RECEIPT, {
       read: {
         getAuthoringBrief: () => { throw new Error('stage 5 does not read the brief') },
         suiteTextCorpus: () => { throw new Error('stage 5 does not screen the suite') },
@@ -645,7 +647,9 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
     const { routeAfterVerify } = await import('../loop.js')
     const bench = harness([], { probes: [] }, { [ROUTING_RUN_ID]: [CLEAN_FAIL_MEMBER] })
 
-    const outcome = await routeAfterVerify(DRAFT, REJECTED_RECEIPT, {
+    // 394-08: stage 5 answers `{outcome, fanOut}` — the runs an invocation spent are known only
+    // where repair is entered, so the report leaves from here rather than being totalled outside.
+    const { outcome } = await routeAfterVerify(DRAFT, REJECTED_RECEIPT, {
       read: {
         getAuthoringBrief: () => { throw new Error('stage 5 does not read the brief') },
         suiteTextCorpus: () => { throw new Error('stage 5 does not screen the suite') },

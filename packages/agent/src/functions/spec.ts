@@ -256,6 +256,26 @@ export interface FunctionSpec<Input = unknown, Output = unknown> extends Functio
    * the iterable itself against it would be a category error.
    */
   output: z.ZodType<Output>
+  /**
+   * What THIS invocation is about to cost, in the words a person deciding needs (394-08, D-03).
+   *
+   * OPTIONAL, and absent on every op with nothing invocation-specific to disclose — which is almost
+   * all of them. Where it is present, `invokeFunction` calls it with the PARSED input and hands the
+   * string to the gate as `RiskActionDescriptor.disclosure`, so a confirm prompt can say what the
+   * approval will actually spend instead of only naming the action class.
+   *
+   * IT COMPOSES A MESSAGE; IT DECIDES NOTHING. The tier, the action class, the audit row and the
+   * standing-grant match are all read off `risk` and are untouched by whatever this returns, so a
+   * disclosure cannot widen, narrow or rename the thing being asked about.
+   *
+   * IT LIVES ON THE SPEC, NOT ON {@link FunctionMetadata}. A declaration is an INERT projection
+   * (BL-01) — nothing reachable through `registry.list()` is runnable — and a function-valued field
+   * on the shared base would have put a callable back on every listing.
+   *
+   * PURE BY CONTRACT: it runs inside the gate path on every ask-tier invocation, so a port reached
+   * from here would be I/O placed between a caller and its authorization decision.
+   */
+  disclose?(input: Input): string
   invoke(input: Input, deps: FunctionDeps): Promise<Output>
 }
 

@@ -219,6 +219,15 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // 392 plan 09: the ceiling comparison itself — strict greater-than on cross-multiplied
   // integers. Published so no consumer re-derives it as a rounded percentage, which is the exact
   // failure the exact arithmetic exists to prevent.
+  // 394-08 plan 08, D-03/D-10 · WTST-08: the ONE site that assembles the fan-out bound's three
+  // terms, and the only caller of `computeFanOutBound` in this package. It joins the value list on
+  // `ceilingExceeded`'s precedent and for its stated reason — that constant is published so no
+  // consumer re-derives the comparison as a rounded percentage — with one addition that is this
+  // op's whole point: the dispatch-confirm cells compare the number a person was SHOWN against this
+  // function rather than against a literal, and a literal in a test passes just as happily against
+  // a second arithmetic that has drifted. It is a pure function of one optional boolean: it reaches
+  // no storage, holds no capability and dispatches nothing.
+  'authoringFanOutBound',
   'ceilingExceeded',
   'chainJobIdsForRun',
   // 389 plan 05: render-time pure clustering (D-14). A total deterministic function of

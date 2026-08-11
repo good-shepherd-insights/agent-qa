@@ -39,13 +39,22 @@
 // answer returned in the meantime. {@link AuthoringLoopOutcome} declares all four arms today so
 // those plans add a case behind a discriminant every consumer already reads.
 
-import { CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
+  DRAFT_STABILITY_RUNS_N,
+  NO_RUNS_FAN_OUT_BOUND,
+  buildFanOutReport,
+  computeFanOutBound,
+} from '@vostride/agent-qa-schema'
 import type {
   AuthoringBrief,
   CompletedRunHandoff,
+  ConsumedRun,
   DraftDisposition,
   DraftReceipt,
   DraftRef,
+  FanOutBound,
+  FanOutReport,
   FindingProposalV1,
   ScopeKey,
   TestDraftProposalV1,
@@ -59,7 +68,7 @@ import type {
   DraftShelfPortLike,
   ParsedDraftLike,
 } from './ports.js'
-import { repairDraft } from './repair.js'
+import { REPAIR_ITERATION_CAP, repairDraft } from './repair.js'
 import type { RepairOutcome } from './repair.js'
 import { AuthoringRouterUnroutableError, routeRepairOrFinding } from './router.js'
 import type { FindingRoute } from './router.js'
@@ -130,6 +139,31 @@ export interface AuthoringLoopInput {
   readonly draftMode?: true
 }
 
+/**
+ * The fan-out ONE invocation of this loop can cost, in child `agent-qa run` processes (D-03/D-10).
+ *
+ * THE SINGLE PLACE THE THREE TERMS ARE ASSEMBLED, and the only caller of `computeFanOutBound` in
+ * this package. The dispatch confirm renders what this returns and the finished proposal reports
+ * against it, so the number a person consents on and the number they are shown afterwards are the
+ * same function of the same input rather than two agreeing arithmetics. A surface recomputing
+ * `N + K + N` for itself would be free to drift the moment either constant moved — which is what
+ * mutation I in `scripts/394-fan-out-mutation.sh` demonstrates rather than asserts.
+ *
+ * DRAFT MODE IS THE CASE WHERE THE TWO N TERMS DIFFER. A draft-mode caller asks for ONE cheap gate
+ * run (rule 1 of the disposition table), but the FINAL stability gate still runs the pinned N on
+ * the repaired candidate — `repairDraft` deliberately drops the draft-mode marker for it. So the
+ * bound is `1 + K + N`, not `2 * 1 + K`, and it is the configuration the schema cells use to prove
+ * the two terms stay separate: with the shipped constants they are both 3, and a collapse would be
+ * invisible under default values.
+ */
+export function authoringFanOutBound(input: { readonly draftMode?: true }): FanOutBound {
+  return computeFanOutBound({
+    initialN: input.draftMode === true ? 1 : DRAFT_STABILITY_RUNS_N,
+    probeK: REPAIR_ITERATION_CAP,
+    finalN: DRAFT_STABILITY_RUNS_N,
+  })
+}
+
 export interface AuthoringLoopDeps {
   readonly read: AuthoringReadPortLike
   /**
@@ -158,6 +192,14 @@ export interface AuthoringLoopResult {
   readonly dedup: DedupScreening
   /** Which named side counters this invocation incremented. See the vocabulary's doc block. */
   readonly sideCounters: readonly AuthoringLoopSideCounter[]
+  /**
+   * What was previewed at dispatch, beside the runs this invocation actually spent (WTST-08).
+   *
+   * ON THE RESULT AND NOT ONLY ON THE PROPOSAL ARM, because a stage-2 refusal has no arm — D-04
+   * ends it with no draft, no receipt and no envelope — and "this invocation cost nothing" is a
+   * fact a caller is entitled to for every outcome, not only the ones that produced something.
+   */
+  readonly fanOut: FanOutReport
 }
 
 /**
@@ -240,21 +282,24 @@ function draftRefOf(draft: ParsedDraftLike): DraftRef {
 /**
  * The test-draft envelope arm for a draft that reached a receipt (D-05).
  *
- * `actualRuns` is read off the receipt's OWN `gateRuns` plus whatever repair spent — never a
- * predicted figure. WTST-08's honesty half is that the preview promises a bound before dispatch and
- * the receipt reports what was actually consumed; a number derived from the bound would make the
- * two agree by construction and measure nothing.
+ * `runsConsumed` is read off the REPORT — the distinct run ids this invocation actually started —
+ * and never off the bound. WTST-08's honesty half is that the preview promises a number before
+ * dispatch and the proposal reports what was spent; a figure derived from the bound would make the
+ * two agree by construction and measure nothing. `runsPreviewed` is the bound itself, carried
+ * beside it so the comparison is available to whoever reads the arm rather than to nobody.
  */
 function testDraftProposal(
   draftRef: DraftRef,
   receipt: DraftReceipt,
   repairIterations: number,
+  fanOut: FanOutReport,
 ): TestDraftProposalV1 {
   return {
     schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
     draftRef,
     disposition: receipt.disposition,
-    actualRuns: receipt.gateRuns.length + repairIterations,
+    runsPreviewed: fanOut.previewed.total,
+    runsConsumed: fanOut.consumedTotal,
     repairIterations,
     summaryLine: `${draftRef.testName} — ${receipt.disposition}`,
   }
@@ -354,6 +399,60 @@ async function compileDraft(
 }
 
 /**
+ * What stage 5 answers: the outcome, and the runs the whole invocation spent reaching it.
+ *
+ * The fan-out report rides OUT of stage 5 rather than being assembled by the caller, because stage
+ * 5 is the only place that knows what repair spent. A caller totalling it from the outside would be
+ * counting attempts it can see rather than runs that happened.
+ */
+export interface AuthoringLoopRouting {
+  readonly outcome: AuthoringLoopOutcome
+  readonly fanOut: FanOutReport
+}
+
+/**
+ * The gate runs a receipt names, as consumed runs with their completion times.
+ *
+ * The time is read from the run's OWN record rather than stamped here: `GateRunRecord` carries a
+ * run id and the draft's member outcome, not a clock, and a timestamp minted at read time would
+ * order the sequence by when somebody looked rather than by when the runs finished. A record that
+ * cannot be read still COUNTS — the run happened — and simply carries no time, which is what the
+ * report's ordering rule has an unknown-time arm for.
+ */
+async function consumedGateRuns(
+  receipt: DraftReceipt,
+  runs: DraftRunPortLike,
+): Promise<readonly ConsumedRun[]> {
+  const consumed: ConsumedRun[] = []
+  for (const record of receipt.gateRuns) {
+    const document = await runs.get(record.runId)
+    consumed.push({
+      runId: record.runId,
+      purpose: 'gate',
+      ...(document?.endedAt === undefined ? {} : { completedAt: document.endedAt }),
+    })
+  }
+  return consumed
+}
+
+/** The probe runs a repair sequence started, on `consumedGateRuns`' terms. */
+async function consumedProbeRuns(
+  probeRunIds: readonly string[],
+  runs: DraftRunPortLike,
+): Promise<readonly ConsumedRun[]> {
+  const consumed: ConsumedRun[] = []
+  for (const runId of probeRunIds) {
+    const document = await runs.get(runId)
+    consumed.push({
+      runId,
+      purpose: 'probe',
+      ...(document?.endedAt === undefined ? {} : { completedAt: document.endedAt }),
+    })
+  }
+  return consumed
+}
+
+/**
  * The run whose evidence stage 5 routes on: the LAST gate run the receipt names.
  *
  * ONE ANSWER TO A QUESTION THE DERIVATION DELIBERATELY DOES NOT OWN. `routeRepairOrFinding` takes
@@ -397,14 +496,24 @@ export async function routeAfterVerify(
   draft: ParsedDraftLike,
   receipt: DraftReceipt,
   deps: AuthoringLoopDeps,
-): Promise<AuthoringLoopOutcome> {
+  previewed: FanOutBound = NO_RUNS_FAN_OUT_BOUND,
+): Promise<AuthoringLoopRouting> {
   const draftRef = draftRefOf(draft)
+  // The runs the EVALUATION already spent, read off the receipt's own record of them. It is the
+  // receipt's list rather than a count this function keeps, because the receipt is what was
+  // durably written — a tally maintained here could drift from the evidence a person later reads.
+  const gateRuns = await consumedGateRuns(receipt, deps.shelf.runs)
+
   if (DRAFTED_DISPOSITIONS.includes(receipt.disposition)) {
+    const fanOut = buildFanOutReport({ previewed, runs: gateRuns })
     return {
-      kind: 'drafted',
-      draftRef,
-      receipt,
-      proposal: testDraftProposal(draftRef, receipt, 0),
+      outcome: {
+        kind: 'drafted',
+        draftRef,
+        receipt,
+        proposal: testDraftProposal(draftRef, receipt, 0, fanOut),
+      },
+      fanOut,
     }
   }
 
@@ -418,7 +527,10 @@ export async function routeAfterVerify(
   }
 
   if (route.kind === 'finding') {
-    return { kind: 'finding', draftRef, receipt, proposal: findingProposal(draftRef, route) }
+    return {
+      outcome: { kind: 'finding', draftRef, receipt, proposal: findingProposal(draftRef, route) },
+      fanOut: buildFanOutReport({ previewed, runs: gateRuns }),
+    }
   }
 
   // `handoff` is defined here: the router refuses `no-run-evidence` by name, and that refusal was
@@ -430,13 +542,30 @@ export async function routeAfterVerify(
     runs: deps.shelf.runs,
   })
 
+  // EVERY RUN THIS INVOCATION SPENT, in one list: the evaluation's gate runs, repair's probes, and
+  // the FINAL stability gate's runs off the repaired receipt. The report counts distinct ids, so a
+  // run appearing in two of these three lists contributes once — and a fenced iteration, which
+  // started nothing, contributes nothing.
+  const probes: readonly ConsumedRun[] = await consumedProbeRuns(
+    repaired.probeRunIds,
+    deps.shelf.runs,
+  )
+
   if (repaired.kind === 'repaired') {
     const repairedRef = draftRefOf(repaired.draft)
+    const finalGateRuns = await consumedGateRuns(repaired.receipt, deps.shelf.runs)
+    const fanOut = buildFanOutReport({
+      previewed,
+      runs: [...gateRuns, ...probes, ...finalGateRuns],
+    })
     return {
-      kind: 'repaired',
-      draftRef: repairedRef,
-      receipt: repaired.receipt,
-      proposal: testDraftProposal(repairedRef, repaired.receipt, repaired.iterations),
+      outcome: {
+        kind: 'repaired',
+        draftRef: repairedRef,
+        receipt: repaired.receipt,
+        proposal: testDraftProposal(repairedRef, repaired.receipt, repaired.iterations, fanOut),
+      },
+      fanOut,
     }
   }
 
@@ -447,14 +576,17 @@ export async function routeAfterVerify(
     evidenceRefs: [],
   }
   return {
-    kind: 'finding',
-    draftRef,
-    receipt,
-    proposal: {
-      ...findingProposal(draftRef, exhaustedRoute),
-      signalClass: `repair-${repaired.abandonment.kind}`,
-      explanation: repaired.abandonment.error.message,
+    outcome: {
+      kind: 'finding',
+      draftRef,
+      receipt,
+      proposal: {
+        ...findingProposal(draftRef, exhaustedRoute),
+        signalClass: `repair-${repaired.abandonment.kind}`,
+        explanation: repaired.abandonment.error.message,
+      },
     },
+    fanOut: buildFanOutReport({ previewed, runs: [...gateRuns, ...probes] }),
   }
 }
 
@@ -463,6 +595,10 @@ export async function runAuthoringLoop(
   deps: AuthoringLoopDeps,
 ): Promise<AuthoringLoopResult> {
   const stages: AuthoringLoopStage[] = []
+  // The SAME function the dispatch confirm rendered, over the SAME input. Not a number handed in
+  // from the op — a threaded value could be edited in transit, and then the receipt would report a
+  // preview nobody was shown. One function, two callers, identical arguments.
+  const previewed = authoringFanOutBound(input)
 
   stages.push('brief')
   const brief = await deps.read.getAuthoringBrief(input.intent, input.scope)
@@ -487,6 +623,12 @@ export async function runAuthoringLoop(
       stages,
       dedup,
       sideCounters: ['dedup-refused'],
+      // ZERO PREVIEWED AND ZERO CONSUMED, and the first of those is a decision. The dispatch
+      // confirm disclosed the worst case for these inputs, as it must — it fires before anything
+      // is known. This report describes the INVOCATION, and this invocation ended before a draft
+      // existed, so nothing was ever going to run. `NO_RUNS_FAN_OUT_BOUND` is that fact; carrying
+      // the dispatch bound here would report a fan-out for a path that has none.
+      fanOut: buildFanOutReport({ previewed: NO_RUNS_FAN_OUT_BOUND, runs: [] }),
     }
   }
 
@@ -500,9 +642,9 @@ export async function runAuthoringLoop(
   })
 
   stages.push('route')
-  const outcome = await routeAfterVerify(draft, receipt, deps)
+  const routed = await routeAfterVerify(draft, receipt, deps, previewed)
 
   stages.push('compound')
 
-  return { outcome, stages, dedup, sideCounters: [] }
+  return { outcome: routed.outcome, stages, dedup, sideCounters: [], fanOut: routed.fanOut }
 }

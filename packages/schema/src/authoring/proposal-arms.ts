@@ -92,16 +92,30 @@ export type FindingFailurePoint = z.infer<typeof FindingFailurePointSchema>
  *
  * `disposition` is the value `computeDraftDisposition` produced, copied off the receipt rather than
  * re-derived — one derivation, and a surface that recomputed it would answer differently the day N
- * is retuned. `actualRuns` is the fan-out this draft really consumed, which is WTST-08's honesty
- * half: the preview promises a bound before dispatch and this reports what was spent. Plan 08 fills
- * the arithmetic behind it; the field exists here because the envelope is what reports it.
+ * is retuned.
+ *
+ * `runsPreviewed` AND `runsConsumed` RIDE THIS ARM TOGETHER, and that pairing is WTST-08 (394-08,
+ * D-03). The preview promises a bound before dispatch; this reports what was actually spent. The
+ * actual figure ALONE would leave the disclosure unfalsifiable — nothing to compare it against —
+ * and the preview alone is the defect the requirement exists to prevent. One reader, one arm, both
+ * numbers.
+ *
+ * They replace plan 06's single `actualRuns`, which was `gateRuns.length + repairIterations`. That
+ * count was wrong in the direction that matters: a repair iteration whose patch is FENCED consumes
+ * an iteration and starts no run at all (D-09), so an invocation that spent 3 runs could report 6.
+ * An over-count hides a real preview breach behind a number that looks worse than reality, which is
+ * the one way an honesty field can lie while appearing conservative. `runsConsumed` counts DISTINCT
+ * run ids, so it can neither over-count a fenced iteration nor double-count a run that served as
+ * both the last probe and part of the final stability gate.
  */
 export const TestDraftProposalV1Schema = z.object({
   schemaVersion: z.literal(CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION),
   draftRef: DraftRefSchema,
   disposition: z.enum(DRAFT_DISPOSITIONS),
-  /** Runs actually taken for this draft: the gate runs, any repair probes, and the final gate. */
-  actualRuns: z.number().int().nonnegative(),
+  /** The upper bound the dispatch confirm disclosed: initial N + K probes + final N. */
+  runsPreviewed: z.number().int().nonnegative(),
+  /** Distinct runs this draft really consumed — gate runs AND repair probes, counted once each. */
+  runsConsumed: z.number().int().nonnegative(),
   /** Repair iterations spent. `0` for a draft that was never routed to repair. */
   repairIterations: z.number().int().nonnegative(),
   /** One line a person reads in an inbox list. Never the draft's bytes. */

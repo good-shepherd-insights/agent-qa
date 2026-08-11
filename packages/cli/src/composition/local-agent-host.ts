@@ -966,6 +966,22 @@ export function createDraftShelf(configDir: string): DraftShelf {
  * would turn "the person went to get coffee" into a policy decision, and the decision it would make
  * is the one nobody asked for.
  */
+/**
+ * Write the per-invocation disclosure, when the action carries one (394-08, D-03 · WTST-08).
+ *
+ * ONE writer for BOTH confirm forms, so the one-form CLI prompt and chat's three-way inline confirm
+ * cannot end up showing a person different things about the same call. It writes nothing at all when
+ * the field is absent, which is every action but this phase's authoring dispatch — so no existing
+ * prompt gains a blank line.
+ *
+ * The string is composed by the op through `FunctionSpec.disclose` and reaches here as inert data;
+ * this function decides only WHERE it goes, never what it says.
+ */
+function writeDisclosure(output: NodeJS.WritableStream, action: RiskActionDescriptor): void {
+  if (action.disclosure === undefined) return
+  output.write(`agent-qa: ${action.disclosure}\n`)
+}
+
 export function createTtyConfirmPort(
   options: {
     readonly isTty?: boolean
@@ -1000,6 +1016,12 @@ export function createTtyConfirmPort(
     // The ACTION NAME, verbatim — the same string the audit row carries and the same one a
     // standing grant would have to match. A friendlier paraphrase here would leave a person
     // unable to connect what they were asked about to what a `grants.list` later shows them.
+    //
+    // THE DISCLOSURE IS A SEPARATE LINE, ABOVE (394-08 D-03 / WTST-08). It says what THIS
+    // invocation is about to cost, which the class name cannot; keeping it on its own line is what
+    // lets the name stay verbatim rather than becoming a paraphrase with a number in it. Absent on
+    // every action that has nothing invocation-specific to say, which is almost all of them.
+    writeDisclosure(output, action)
     prompt.question(
       `agent-qa: ${action.name} needs your approval. Proceed? [y/N] `,
       (typed: string) => {
@@ -1159,6 +1181,11 @@ export function createChatConfirmPort(
       settle(false, () => ledger({ actionClass: action.name, decision: 'deny' }))
     })
 
+    // Both forms show the same disclosure, for the reason this wrapper is an extension rather than
+    // a fork: the person answering `a` is deciding about the same call as the person answering `y`,
+    // and a standing approval granted without the cost in front of them would be the widest answer
+    // taken with the least information.
+    writeDisclosure(output, action)
     prompt.question(
       `agent-qa: ${action.name} needs your approval. Proceed? [y/a/N] `
       + '(y = once, a = always allow this action class) ',

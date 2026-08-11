@@ -45,13 +45,14 @@
 import {
   AuthoringDraftWriteInputSchema,
   AuthoringDraftWriteOutputSchema,
+  renderFanOutPreview,
 } from '@vostride/agent-qa-schema'
 import type {
   AuthoringDraftWriteInput,
   AuthoringDraftWriteOutput,
 } from '@vostride/agent-qa-schema'
 
-import { runAuthoringLoop } from '../../authoring/loop.js'
+import { authoringFanOutBound, runAuthoringLoop } from '../../authoring/loop.js'
 import { FunctionNotBoundError } from '../spec.js'
 import type { FunctionSpec } from '../spec.js'
 
@@ -71,25 +72,59 @@ export const authoringDraftWriteSpec: FunctionSpec<
   boundThrough: 'draftShelf',
   input: AuthoringDraftWriteInputSchema,
   output: AuthoringDraftWriteOutputSchema,
-  // `authoring.draft.verify`'s tier argument, and it lands in the same place for the same
-  // reasons — plus one this op adds. `recognized: true` with no `readOnly` puts the classifier's
-  // floor at mutating-local; `declaredTier` states that tier rather than relying on the floor; the
-  // name tokens (fn · authoring · draft · write) hit neither destructive lexicon.
+  // `mutating-shared`, AND THE CONTRAST WITH `authoring.draft.verify` IS THE POINT (394-08, D-03).
   //
-  // `mutating-local` and not `mutating-shared`, even though this op writes a file. What it writes
-  // is a DRAFT on the gitignored shelf — `tests/.agent-qa-drafts/`, invisible to suite discovery
-  // and to `git`, staged so a run can verify it — and nothing here reaches the authored suite or
-  // any shared signal. Acceptance is what puts a draft into the repository, and acceptance is a
-  // person's decision on 391's inbox (D-05), behind an op of its own. Raising the tier here would
-  // ASK in every context and DENY in fail-closed ones, which would leave the loop unable to author
-  // in CI while still not being the place the shared write actually happens.
+  // The mechanics first: `recognized: true` with no `readOnly` puts the classifier's floor at
+  // mutating-local, `declaredTier` raises it from there, and the name tokens (fn · authoring ·
+  // draft · write) hit neither destructive lexicon — so the declared tier is what the gate sees.
   //
-  // Plan 08 raises the ask to the dispatch confirm with D-03's fan-out preview. That is one gate
-  // at one decision point; a second one here would be a second prompt for one act.
+  // `authoring-verify-draft.ts` chose `mutating-local` and its argument was correct FOR IT: an
+  // ask-tier op denies in every fail-closed context, and an evaluator that cannot verify a draft in
+  // CI is a keep-filter that stops working exactly where it needs to run unattended. Verifying is
+  // all cost and no consequence — gate-runs are `excludedFromOutcomes`, so they leave no trace a
+  // colleague reads.
+  //
+  // THIS OP IS GENUINELY DIFFERENT, and it differs in the two ways that decide a tier. It SPENDS a
+  // person's compute and model budget on their own machine — up to nine full child `agent-qa run`
+  // processes against their application (D-10) — and from plan 10 the artifact it produces is
+  // committed. So here the ask is the POINT rather than an obstacle: WTST-08's owner decision was
+  // preview and honest reporting with NO enforced budget, which makes the disclosure at this confirm
+  // the only control there is. An op that asked nobody would be an unbounded fan-out with a comment
+  // about how expensive it is.
+  //
+  // WHAT THE RAISE COSTS, STATED RATHER THAN DISCOVERED. A fail-closed context — CI, the daemon,
+  // any non-interactive host — now DENIES this op by name, and the gate's own reason line names the
+  // ways out (`--trust-session`, a trust credential, a standing approval). That is the ratified
+  // posture and not an oversight: an unattended host authoring nine child runs against an
+  // application with nobody watching is the case the preview exists to prevent, and the disclosure
+  // cannot do its job where there is nobody to read it.
+  //
+  // TWO DECISION POINTS AND NO MORE (D-03). This confirm, and 391's inbox accept. One approval here
+  // starts a loop that then runs unattended, however many runs it consumes — there is no suspended
+  // mid-loop approval state, no second confirm inside the loop, and no approval token threaded
+  // through the stages for a later caller to replay.
+  //
+  // DO NOT HARMONISE THE TWO TIERS. They are different answers because the ops differ, and a later
+  // edit making them match would either put the evaluator behind a prompt it cannot answer in CI or
+  // remove the only consent this phase has.
   risk: {
     name: `fn:${AUTHORING_DRAFT_WRITE_FUNCTION_ID}`,
     recognized: true,
-    declaredTier: 'mutating-local',
+    declaredTier: 'mutating-shared',
+  },
+  // D-03's fan-out preview, rendered from the ONE bound function and from NOTHING ELSE.
+  //
+  // `authoringFanOutBound` is the single site that assembles the three terms, and
+  // `renderFanOutPreview` is the single site that turns them into words. A sum spelled here would
+  // be a second arithmetic for the same number, free to drift the moment `REPAIR_ITERATION_CAP` or
+  // `DRAFT_STABILITY_RUNS_N` moves — and the direction it would drift in is the one WTST-08 forbids,
+  // because the number a person already approved is the one that is too small.
+  //
+  // NO CALLER TEXT REACHES THE PROMPT. Only `draftMode` is read: `intent` is free text from an
+  // arbitrary caller (T-394-06), and a confirm message it could write would let the asker dress up
+  // what they are asking a person to approve, at the one moment the person is deciding.
+  disclose(input: AuthoringDraftWriteInput): string {
+    return renderFanOutPreview(authoringFanOutBound(input))
   },
   async invoke(input, deps) {
     // `invokeFunction` already refused this composition on `draftShelf`, so reaching here with no

@@ -133,8 +133,12 @@ function summaryLineFor(envelope: ProposalEnvelope): string {
     case 'knowledge':
       return knowledgeSummaryLine(envelope.payload)
     case 'test-draft':
+      // BOTH figures, because one of them alone is the defect WTST-08 exists to prevent: the
+      // actual with nothing to compare it against is unfalsifiable, and the preview alone reports
+      // what was promised rather than what was spent (394-08, D-03).
       return `test draft ${envelope.payload.draftRef.testName}, `
-        + `${envelope.payload.disposition}, ${envelope.payload.actualRuns} run(s)`
+        + `${envelope.payload.disposition}, ${envelope.payload.runsConsumed} run(s) `
+        + `of up to ${envelope.payload.runsPreviewed} previewed`
     case 'finding':
       return `finding on ${envelope.payload.draftRef.testName}, `
         + `${envelope.payload.signalClass}, ${envelope.payload.evidenceRefs.length} evidence ref(s)`
