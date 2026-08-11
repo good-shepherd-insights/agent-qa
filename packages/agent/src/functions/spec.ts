@@ -45,6 +45,7 @@ import type {
   StepEvidence,
 } from '@vostride/agent-qa-schema'
 
+import type { AuthoringFunnelPortLike } from '../authoring/funnel.js'
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
 import type {
   AuthoringReadPortLike,
@@ -115,6 +116,7 @@ export type OptionalFunctionDepKey =
   | 'draftEvaluation'
   | 'authoringRead'
   | 'draftShelf'
+  | 'authoringFunnel'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -815,6 +817,21 @@ export interface FunctionDeps {
    * in-layer caller holding the spec directly gets the same named error.
    */
   draftShelf?: DraftShelfPortLike
+  /**
+   * 394-07 D-12 / WTST-05: the honesty funnel's reads — the receipts store, the proposals inbox,
+   * and (optionally within the bundle) the outcome projection and quarantine ledger D-14 consults.
+   *
+   * OPTIONAL for the reason `proposalsInbox` is, and the stakes sit on the READ side in the same
+   * way. A host with no agent-qa runtime root cannot list draft receipts, and the alternative to
+   * saying so by name is answering an all-zero funnel — which does not merely under-report, it
+   * reports a loop that filtered everything, the one reading of a zero funnel that FLATTERS the
+   * loop this measurement exists to keep honest.
+   *
+   * ONE bundle rather than separate deps, on the `draftEvaluation` reasoning: a host that could
+   * list receipts and not read the inbox would answer a funnel whose `accepted` stage is
+   * permanently zero, which would make the acceptance-failure flag structurally unable to fire.
+   */
+  authoringFunnel?: AuthoringFunnelPortLike
 }
 
 /**

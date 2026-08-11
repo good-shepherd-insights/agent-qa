@@ -25,6 +25,7 @@ import type { z } from 'zod'
 import { agentAskSpec } from '../functions/ops/agent-ask.js'
 import { analysisGetSpec } from '../functions/ops/analysis-get.js'
 import { authoringDraftWriteSpec } from '../functions/ops/authoring-draft-write.js'
+import { authoringFunnelGetSpec } from '../functions/ops/authoring-funnel-get.js'
 import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
@@ -88,6 +89,10 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // published them as required would tell 396's consumers that every authoring call yields a
   // receipt, which is the one claim the honesty funnel's side counters exist to contradict.
   'authoring.draft.write': authoringDraftWriteSpec,
+  // 394-07 D-12: the funnel read's contracts, on its siblings' footing. The map is compared for
+  // exact key-set equality against the registry, so this row is what stops a capability joining
+  // the layer without its contracts being reachable for the projection relation.
+  'authoring.funnel.get': authoringFunnelGetSpec,
   'agent.ask': agentAskSpec,
   // 389 D-11. Paired the day it is registered (the growth seam working as designed): its
   // output is the first here carrying two parallel per-test arrays plus a nested cluster

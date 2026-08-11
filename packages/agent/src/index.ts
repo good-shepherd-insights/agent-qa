@@ -164,9 +164,30 @@ export type {
 } from './authoring/loop.js'
 export type {
   AuthoringReadPortLike,
+  DraftReceiptsReadPortLike,
   DraftShelfPortLike,
   DraftStageOutcome,
 } from './authoring/ports.js'
+// 394-07 D-12/D-13 · WTST-05: the funnel read's id, on the exact footing of the op-id constants
+// above — a name a surface puts on the wire, never a dispatch handle. Published because
+// `composeLocalAgent()` and the CLI's funnel render both have to name it, and 387 D-11 forbids the
+// literal each would otherwise spell. The SPEC stays inside `functions/`.
+export { AUTHORING_FUNNEL_GET_FUNCTION_ID } from './functions/ops/authoring-funnel-get.js'
+// 394-07 D-12/D-14: the projection and the mixed-verdict stability gather, plus the port bundle a
+// composition root fills. Both functions are PURE over injected reads — they reach no host API,
+// no registry and no run capability, which is D-14's zero-runs claim expressed as an absence in
+// the port's own shape rather than as a promise. Published because the composition root is the
+// only thing that can bind the bundle, and because `scopeReceiptsToWindow` is the exact-equality
+// session rule a cell drives alone.
+export {
+  gatherSuiteStability,
+  projectAuthoringFunnel,
+  scopeReceiptsToWindow,
+} from './authoring/funnel.js'
+export type {
+  AuthoringFunnelPortLike,
+  SuiteOutcomeHistoryPortLike,
+} from './authoring/funnel.js'
 export { createTurnEngine } from './chat/turn-engine.js'
 export { CHAT_HELP_TEXT, CHAT_RESOLVER_TABLE, resolveClause } from './chat/resolver-table.js'
 export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile.js'

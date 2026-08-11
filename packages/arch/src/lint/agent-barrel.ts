@@ -102,6 +102,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // the wire, and 387 D-11 forbids the literal each would otherwise spell. The SPEC stays inside
   // `functions/`.
   'AUTHORING_DRAFT_WRITE_FUNCTION_ID',
+  // 394-07 plan 07, D-12/D-13: the honesty funnel read's id, on the exact footing of its two
+  // siblings above and for the identical reason — `composeLocalAgent()` binds through it and a
+  // CLI render must put this name on the wire, and 387 D-11 forbids the literal each would
+  // otherwise spell. The SPEC stays inside `functions/`, so this opens no dispatch path.
+  'AUTHORING_FUNNEL_GET_FUNCTION_ID',
   // 394 plan 02, D-01: the CLOSED, ORDERED stage vocabulary. A frozen string tuple, and it is on
   // this list because it is the SUBJECT of a claim rather than decoration — the ordering pin
   // asserts sequence equality against it, and a vocabulary a pin cannot name is one the pin has to
@@ -282,6 +287,15 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // inside the module that carries its retune comment.
   'evaluateAssertionStrength',
   'fromToolName',
+  // 394-07 plan 07, D-12/D-14: the funnel projection, the mixed-verdict stability gather and the
+  // pure window scope — this entry and `projectAuthoringFunnel` / `scopeReceiptsToWindow` below,
+  // each in ASCII SORT position because this list is compared positionally. All three are pure
+  // functions over INJECTED reads, and the bundle a composition fills carries no run capability at
+  // all — which is what makes D-14's zero-runs claim structural rather than a rule. They are here
+  // because the composition root that binds the bundle and the surfaces that render the funnel are
+  // both outside this package, and because the exact-equality session rule is driven by a cell
+  // directly rather than through the op's observable output.
+  'gatherSuiteStability',
   'invokeFunction',
   'isChatMetaToolName',
   // 392 plan 06: the pure trigger pass (see `createChatCompactionHook` above). A total function of
@@ -297,6 +311,7 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // 392 plan 07: the registry walk projected to execute-less tools. Safe here for a reason the
   // absence of a callback makes structural: what it returns cannot run anything, so a surface
   // holding it holds a catalogue description and not a dispatch path.
+  'projectAuthoringFunnel',
   'projectPlannerTools',
   'recordLlmAuthorship',
   // 391-06: the clustered BLOCK layout, relocated out of the CLI when `runs.digest` became its
@@ -333,6 +348,8 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // beside the manifest so the two runners and the closure walk cannot spell a corpus path three
   // ways.
   'scenarioRelativePath',
+  // 394-07 plan 07: see the funnel note beside `gatherSuiteStability` above.
+  'scopeReceiptsToWindow',
   // 392 plan 02, D-09: THE conjunction grammar — the quote-aware tokenizer the composition root
   // binds as the engine's `ClauseSplitter`. It REPLACES `wholeUtteranceSplitter`, which plan 01
   // published as the tracer's placeholder and which this plan deletes: a published splitter that
@@ -436,6 +453,12 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // a compiled draft. Nothing here carries behaviour across the barrel; what they carry is the
   // SHAPE plans 04-06 fill, which is exactly the widening this exact-equality pin exists to make a
   // visible edit rather than a quiet one.
+  // 394-07 plan 07, D-12: the funnel's port bundle and (below) the outcome-history mirror a
+  // composition root fills, both in ASCII SORT position. TYPES, so neither carries a capability
+  // across the barrel; what they carry is the SHAPE `composeLocalAgent()` binds, and pinning them
+  // is what makes a widening — a run capability arriving on the funnel's bundle, say — a visible
+  // edit to this list rather than a quiet acquisition of the thing D-14 exists to forbid.
+  'AuthoringFunnelPortLike',
   'AuthoringLoopDeps',
   'AuthoringLoopInput',
   'AuthoringLoopOutcome',
@@ -554,6 +577,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // compares against, so naming it is what keeps those two from being two answers.
   'CreateChatStateInput',
   'CreateFunctionRegistryOptions',
+  // 394-07 plan 07, D-12: the READ half of the receipts store, mirrored narrowly. A separate type
+  // from the write port on purpose — the funnel projection is structurally unable to persist
+  // anything, which is how "nothing new is persisted" stays a property rather than a promise.
+  'DraftReceiptsReadPortLike',
   // 394 plan 02, D-01: the loop's write half and what staging one compiled draft answers. Types
   // only — the port is a shape a composition root fills, and the outcome is a two-arm union whose
   // refusal arm is the T-394-06 mitigation stated as a return type.
@@ -663,6 +690,8 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'StartedRun',
   'StepEvidenceAddress',
   'StepEvidenceLookup',
+  // 394-07 plan 07, D-14: see the funnel note beside `AuthoringFunnelPortLike` above.
+  'SuiteOutcomeHistoryPortLike',
   'ToolsPort',
   'TurnEngine',
   'TurnEngineDeps',

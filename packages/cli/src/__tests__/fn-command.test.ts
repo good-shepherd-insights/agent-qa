@@ -562,6 +562,17 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 394-07 D-12/D-13 · WTST-05: the honesty funnel read. BOUND on this host and — unlike its
+      // two authoring siblings above — bound UNCONDITIONALLY, because it is a read over records
+      // this composition owns by owning the agent-qa runtime root rather than a capability that
+      // needs a model and a run executor. It declares `read` ALONE, which is what a listing shows
+      // a person who asks what reading their own authoring history costs them; the exposure it
+      // implies is stated in the op's own header so a reviewer can object to the tier.
+      'authoring.funnel.get': {
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       'config.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.

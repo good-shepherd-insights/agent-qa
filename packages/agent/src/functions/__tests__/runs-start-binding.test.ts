@@ -101,6 +101,11 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
     intent: 'nothing in this fixture can author this',
     scope: { tier: 'product', key: 'nothing-in-this-fixture' },
   },
+  // 394-07 D-12: a PARSING input, on its siblings' reasoning. Unlike `quarantine.list`, whose
+  // input is genuinely the empty query and which therefore needs no row here, this op REQUIRES a
+  // window — the projection's denominator, which nothing can guess — so the `{}` default would
+  // report an input error and this case would read that as `dispatched`.
+  'authoring.funnel.get': { window: { scope: 'all-time' } },
   'runs.get': { runId: 'run-alpha' },
   'runs.events': { runId: 'run-alpha' },
   'runs.postprocessing': { runId: 'run-alpha' },

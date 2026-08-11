@@ -114,6 +114,13 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // a draft authored from nothing this project knows is indistinguishable, at the caller, from
   // one authored from everything it knows.
   'authoring.draft.write': 'unbound',
+  // 394-07 D-12: UNBOUND here for its two siblings' reason — this fixture supplies no funnel
+  // bundle. `composeLocalAgent` binds it wherever the host owns an agent-qa runtime root, which
+  // is every local composition, so both production hosts list it bound. A host without one must
+  // refuse by NAME rather than answer an all-zero funnel: zero built with zero accepted does not
+  // read as "nothing happened", it reads as a loop that filtered everything — the one wrong
+  // answer that would make the acceptance-failure flag unable to fire on the hosts that need it.
+  'authoring.funnel.get': 'unbound',
   // 392 D-24: UNBOUND here because this fixture supplies no turn engine — a claim about the
   // composition and not about the op, exactly like `analysis.get` below. `composeLocalAgent`
   // assembles one, so both production hosts list `agent.ask` as bound. A host with no engine must
@@ -233,6 +240,11 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
     intent: 'nothing in this fixture can author this',
     scope: { tier: 'product', key: 'nothing-in-this-fixture' },
   },
+  // 394-07 D-12: a PARSING input, on the same reasoning — validation precedes the binding check.
+  // The window is REQUIRED and closed, so `{}` would report an input error and the unbound leg
+  // would certify nothing about binding. `all-time` is the arm with no further field, which is
+  // what makes it the honest sample for a fixture that has no session and no receipts.
+  'authoring.funnel.get': { window: { scope: 'all-time' } },
   'config.get': {},
   // 387: `resolve` takes any reference at all, so the sample is free text that matches
   // nothing — the fixture directory is empty and the honest answer is the none arm. `get`

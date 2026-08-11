@@ -212,6 +212,13 @@ const ALL_FUNCTION_IDS = [
   // it is non-read and joins the derived drop-out set; nothing below is edited, which is what
   // keeps the filter assertion a claim about the RULE rather than about a frozen list.
   'authoring.draft.write',
+  // 394-07 D-12: in SORT position after both `authoring.draft.*` ids (`draft` precedes `funnel`)
+  // and before `config.` — this list is compared against the registry's lexicographic listing, so
+  // an appended id would fail on ORDER while every member was present. It declares `read` ALONE,
+  // so unlike its two authoring siblings it SURVIVES safe-mode filtering and the derived
+  // drop-out set below is unchanged — which is what keeps the filter assertion a claim about the
+  // RULE rather than about a frozen list.
+  'authoring.funnel.get',
   'config.get',
   // 387 D-09: both read-tier, so both survive safe-mode filtering — which is what makes the
   // filter assertion below sharper rather than merely longer. `runs.start` is still the only

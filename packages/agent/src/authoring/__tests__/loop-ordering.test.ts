@@ -283,10 +283,24 @@ function minimalDeps(): FunctionDeps {
  * `authoring.draft.edit` lands in plan 09 and is deliberately absent until it does — a pin that
  * pre-authorised an id nothing registers would go green on the day it arrived and say nothing
  * about it.
+ *
+ * 394-07 ADDS `authoring.funnel.get`, and the addition is a DECISION rather than bookkeeping,
+ * because this pin is not a census — it is the one-public-entry claim. What it forbids is
+ * promoting a loop STAGE to its own registered op, which would hand the chat planner (binding
+ * every registered op 1:1) a way to run dedup, compile or route on its own and reorder or skip
+ * the rest.
+ *
+ * The funnel read is not a stage and cannot become one. It runs over records the loop has already
+ * written, it takes no draft and no intent, it starts nothing, and there is no ordering it could
+ * be moved within: invoking it before, during or after a loop invocation answers a question about
+ * the receipts on disk either way. Registering it therefore widens the DOMAIN without widening the
+ * loop's entry surface — which is the distinction this line exists to make somebody state out
+ * loud, in the same change that makes it.
  */
 const EXPECTED_AUTHORING_IDS: readonly string[] = [
   'authoring.draft.verify',
   'authoring.draft.write',
+  'authoring.funnel.get',
 ]
 
 describe('the loop has exactly one public entry', () => {

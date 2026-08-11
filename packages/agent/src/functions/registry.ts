@@ -20,6 +20,7 @@ import type { FunctionBindingStatus } from './spec.js'
 import { agentAskSpec } from './ops/agent-ask.js'
 import { analysisGetSpec } from './ops/analysis-get.js'
 import { authoringDraftWriteSpec } from './ops/authoring-draft-write.js'
+import { authoringFunnelGetSpec } from './ops/authoring-funnel-get.js'
 import { authoringVerifyDraftSpec } from './ops/authoring-verify-draft.js'
 import { configGetSpec } from './ops/config-get.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
@@ -218,6 +219,21 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // scenarios, because the tool name they were waiting on now exists in the catalogue the planner
   // binds 1:1. Plan 11 performs the flip and pins planned == executed.
   authoringDraftWriteSpec as FunctionSpec,
+  // 2026-08-11 (394-07 D-12/D-13 · WTST-05): the honesty funnel's ONE read, beside the loop it
+  // measures. It is registered rather than left a private computation for the same reason the two
+  // entries above it are: the number that says whether the keep-filter is filtering must be the
+  // SAME number in chat, in the CLI and in the per-run digest, and a projection reachable only
+  // from whichever surface owned it would become three answers the moment the second surface
+  // wanted one. Read-tier and `readOnly` — it starts nothing and writes nothing, which is D-14
+  // expressed as a risk descriptor rather than as a promise.
+  //
+  // Bound through the OPTIONAL `authoringFunnel` bundle, whose binding site is
+  // `composeLocalAgent()` in `@vostride/agent-qa-agent-local` (385 D-15 — therefore both the CLI
+  // and the daemon). A host with no runtime root lists it `unbound` BY NAME rather than answering
+  // an all-zero funnel: zero built with zero accepted does not read as "nothing happened", it
+  // reads as a loop that filtered everything, which is the one wrong answer that would make the
+  // acceptance-failure flag unable to fire on the very hosts that most need it.
+  authoringFunnelGetSpec as FunctionSpec,
 ]
 
 /**

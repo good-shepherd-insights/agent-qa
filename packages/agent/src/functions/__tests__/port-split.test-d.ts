@@ -82,6 +82,14 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // names only `draftShelf` in `boundThrough` — a spec may name one key — and refuses on EITHER
 // half at the invoke, because a host bound to compile but not to read would serve an empty brief
 // rather than say so. The pin fired on both, and once more only under `tsc --noEmit`.
+// 394-07 D-12/WTST-05 extends it an eleventh time, by name again: `authoringFunnel` — the honesty
+// funnel's reads (the receipts store, the proposals inbox, and D-14's optional outcome/quarantine
+// halves). It is a SEPARATE key from `draftShelf` rather than a member of it, and the reason is
+// the direction of the capability: the shelf WRITES drafts and the funnel only READS what was
+// written, so a host able to report on authoring history without being able to author is a real
+// posture and one key for both would make it unsayable. It fired on this one too, and once more
+// only under `tsc --noEmit` (vitest printed `Type Errors  no errors` for the same tree — the
+// dual-witness rule, hit for the seventh consecutive plan).
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -96,6 +104,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'draftEvaluation'
     | 'authoringRead'
     | 'draftShelf'
+    | 'authoringFunnel'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

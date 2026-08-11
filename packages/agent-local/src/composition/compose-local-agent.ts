@@ -2466,6 +2466,54 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // `===`, so a host that supplied nothing would be back to storing whatever a human typed —
       // the round-2 regression. Unlike the authority above there is no host without a checkout
       // root, so the absent case is a compile error rather than a second posture.
+      // 394-07 D-12 / WTST-05: the honesty funnel's reads, bound HERE and therefore on BOTH hosts,
+      // which is the whole point of 385 D-15 — a second binding site would be a second answer to
+      // "how many drafts did this session keep", and that number is the one WTST-05 exists to keep
+      // honest.
+      //
+      // UNCONDITIONAL, unlike the loop's two halves above it, and the asymmetry is the point: the
+      // funnel is a READ over records this host owns by owning `agentQaRoot`, so every local
+      // composition can answer it whether or not it can author anything. An empty receipts
+      // directory and an absent one are the same answer, and nothing opens here — the first byte
+      // is read when the verb is invoked.
+      //
+      // THE RECEIPTS PORT IS THE READ HALF ONLY. The evaluator one binding below is handed the
+      // same store's `put`; this bundle names `list` and nothing else, so the projection is
+      // structurally unable to write the records it reports on. Two narrow mirrors over one store
+      // rather than one wide port.
+      //
+      // `proposals()` maps the inbox's entries down to their envelopes. The inbox row carries
+      // `applyInFlight` beside the envelope — a fact about a decision being applied right now,
+      // which the funnel has no use for: `accepted` counts decisions that were TAKEN, and an
+      // in-flight apply is not one yet. Dropping it here rather than teaching the projection to
+      // ignore it keeps the funnel's input the envelopes it actually reasons about.
+      //
+      // `outcomes` IS DELIBERATELY NOT BOUND, and the absence is measured rather than forgotten.
+      // D-14's stability read keys on the run-outcome projection, whose identity is
+      // (product, filePath, testName) — and `product` is `slugBranch(scope.key)`, a fact that
+      // arrives on the LOOP's input and on no read this op serves. So the honest binding site is
+      // the loop's gate-2 flip path, where the scope is in hand, and it lands with that caller
+      // (394-08/09). Until then `gatherSuiteStability` answers the `no-history` posture it was
+      // designed to answer for a host with no projection — a degraded read STATED, never a clean
+      // bill of health, which is exactly the arm the vocabulary exists to make sayable.
+      authoringFunnel: {
+        receipts: createDraftReceiptsStore({ resolveAgentQaRoot: () => input.agentQaRoot }),
+        proposals: async () => (await createProposalsInbox({
+          resolveAgentQaRoot: () => input.agentQaRoot,
+          now: () => Date.parse(clock.now()),
+        }).list()).map((entry) => entry.envelope),
+        quarantine: {
+          list: async () => (await createQuarantineOperations({
+            resolveKnowledgeRoot: input.knowledgeRoot,
+            auditBaseDir: input.agentQaRoot,
+            now: () => clock.now(),
+            mintIdentityPath: input.mintQuarantineIdentityPath,
+            ...(input.resolveWriterAuthority === undefined
+              ? {}
+              : { resolveWriterAuthority: input.resolveWriterAuthority }),
+          }).list()),
+        },
+      },
       // 391 PROP-03 / D-15: the enumerable inbox, bound HERE and therefore on BOTH hosts — the
       // CLI and 386's daemon compose the same root, which is the whole point of 385 D-15 (a
       // second binding site would be a second answer to "what is waiting on you").
