@@ -142,8 +142,14 @@ describe('the live lane announces which lane actually ran (T-392-32)', () => {
     // 6 as of corpus v4: the five original live cells plus `compound/run-42-and-delete-root`,
     // the CR-03 regression cell. It is `fail_closed`, so the DENOMINATOR did not move — a gap
     // round that grew the denominator would report a better rate for having done work.
+    //
+    // 5 as of corpus v7 (394-11), and the SIZE STAYING AT 6 IS WHY THIS PAIR IS PINNED TOGETHER.
+    // No cell joined the lane; two changed arm, because the authoring loop registered and the two
+    // write-test cells became routable. That is the one movement a denominator is allowed to make
+    // — a deliberate flip that a phase claims as its arrival proof — and it is distinguishable
+    // here from the forbidden one only because both numbers are read at once.
     expect(LIVE_CORPUS.length).toBe(6)
-    expect(LIVE_DENOMINATOR).toBe(3)
+    expect(LIVE_DENOMINATOR).toBe(5)
   })
 })
 

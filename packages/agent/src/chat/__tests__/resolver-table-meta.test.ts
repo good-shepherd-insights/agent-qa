@@ -163,15 +163,22 @@ describe('the canon compound pair exists as committed data (CHAT-02)', () => {
     },
   )
 
-  it('pins the spec example on the fail-closed arm with ZERO executions (D-08/D-10)', () => {
+  it('pins the spec example on the ARRIVED arm, both clauses routed (394-11, D-08/D-10)', () => {
+    // THIS PIN CHANGED ARM WITH THE CORPUS, and that is the second half of D-08's flip law. The
+    // cell was admitted asserting that `write_test` was in no registry, so pre-flight atomicity
+    // refused the whole turn and the runnable second clause did not get to run either. 394
+    // registered the loop as `authoring.draft.write`, and a meta-test still pinning the refusal
+    // would have made the flip a one-file edit that this file then contradicted.
     const scenario = readScenario(COMPOUND_ROOT, 'write-test-2fa-and-run')
     expect(scenario.class).toBe('compound')
     expect(scenario.utterance).toBe('write a test for 2FA and run it')
-    expect(scenario.expect.kind).toBe('fail_closed')
-    expect(scenario.expect.executed).toBe(0)
-    // The unroutable clause is NAMED. A refusal that said only "I could not do that" would leave
-    // a person unable to tell which half of a compound request was refused.
-    expect(scenario.expect.namesClause).toBe('write a test for 2FA')
+    expect(scenario.expect.kind).toBe('should_execute')
+    // Planned EQUALS executed, which is what makes this arrival rather than a relabelling: a cell
+    // asserting only that the turn completed would be satisfied by one that planned the capability
+    // and never reached it.
+    expect(scenario.expect.planned).toBe(2)
+    expect(scenario.expect.executed).toBe(2)
+    expect(scenario.expect.ops).toEqual(['authoring.draft.write', 'runs.start'])
   })
 
   it('pins the happy path at planned == executed == 2 in utterance order (D-11/D-12)', () => {

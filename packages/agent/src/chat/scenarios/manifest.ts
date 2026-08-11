@@ -58,8 +58,31 @@ import type { ScenarioClass, ScenarioExpectationKind, ScenarioLane } from '@vost
  *      planner emitting an extra action call about the MAPPED clause. Pre-fix that call shifted the
  *      binding of every later clause and executed with the model's own arguments; the cell is what
  *      makes the arity accounting's refusal observable per commit rather than only in a unit.
+ * v7 — 394 plan 11, THE ARRIVAL FLIP, and the first version whose size does not move. 392 plan 08
+ *      wrote D-08's flip law and committed three cells asserting that no capability could author a
+ *      test; 394 registered the six-stage loop as `authoring.draft.write`, so two of those three
+ *      change arm: `planner/write-test-for-checkout` and `compound/write-test-2fa-and-run`, both
+ *      LIVE, taking the live denominator to 5. Both now pin planned == executed, because a cell
+ *      that merely completed would be satisfied by a turn that planned the capability and never
+ *      reached it — and reachability is the whole claim a flip makes.
+ *
+ *      TWO CELLS DELIBERATELY DO NOT FLIP, and each refusal is load-bearing for something 394
+ *      does not ship. `deterministic/fn-unknown-op` addresses `write_test`, which was the SPEC's
+ *      noun for the loop and is NOT a registered function id in this build (the id is
+ *      `authoring.draft.write`); its `/fn` utterance therefore still reaches `invokeFunction` with
+ *      an id nothing registers, which is the exact backstop that cell exists to prove, and flipping
+ *      it would have made an unknown-op test pass for the wrong reason. So the HERMETIC denominator
+ *      is unmoved at 11. `compound/pin-and-write-test` measures the CR-04 directive/pin probe — a
+ *      refused turn that had already recorded a pin and an `approval_decision` row — and its
+ *      write-test half is only the vehicle; flipping it would delete the corpus's one cell that
+ *      names a directive on a turn that fails.
+ *
+ * DENOMINATORS AT THIS VERSION: 11 hermetic, 5 live. One canonical line, parsed by
+ * `scenario-manifest.test.ts` and compared against the counts the list below actually has, so this
+ * header cannot go on claiming numbers the corpus stopped having. Every other assertion in that
+ * file reads the LIST, which is exactly why the header needed its own.
  */
-export const SCENARIO_CORPUS_VERSION = 6
+export const SCENARIO_CORPUS_VERSION = 7
 
 /**
  * One admitted scenario.
@@ -101,24 +124,39 @@ export const SCENARIO_CORPUS: readonly ScenarioCorpusEntry[] = Object.freeze([
   // --- deterministic: the three stage-1 edge scenarios (392-02) ---------------------------------
   entry({ id: 'quoted-conjunction', class: 'deterministic', lane: 'hermetic', kind: 'should_execute' }),
   entry({ id: 'near-miss-alias', class: 'deterministic', lane: 'hermetic', kind: 'fail_closed' }),
-  // FLIPS TO should_execute when the authoring loop registers `write_test` (393/394). The flip is
-  // that phase's arrival proof and it moves this line too, which is the point.
+  // DID NOT FLIP, and the reason is a measurement rather than an oversight (394-11). This line was
+  // written to flip when the authoring loop registered `write_test`. 394 registered the loop as
+  // `authoring.draft.write` — `write_test` is the spec's noun for the capability and is not a
+  // function id anywhere in the registry — so the utterance still carries an id nothing registers,
+  // and the cell still proves the one thing it was admitted for: `/fn` validates no op id, and
+  // `invokeFunction` names an unknown one before any dependency is touched. A phase that registers
+  // ops can make an unknown-op test pass for the wrong reason; this one did not.
   entry({ id: 'fn-unknown-op', class: 'deterministic', lane: 'hermetic', kind: 'fail_closed' }),
   // --- planner: natural language, live lane (392-09) --------------------------------------------
   entry({ id: 'list-recent-runs', class: 'planner', lane: 'live', kind: 'should_execute' }),
   entry({ id: 'explain-flaky', class: 'planner', lane: 'live', kind: 'should_execute' }),
-  // D-08's LIVE arm: a capability that has not shipped, phrased the way a person would phrase it.
-  // The hermetic `fn-unknown-op` proves the backstop names an unknown op id; this proves the
-  // planner cannot invent one from prose either.
-  entry({ id: 'write-test-for-checkout', class: 'planner', lane: 'live', kind: 'fail_closed' }),
+  // D-08's LIVE arm, FLIPPED (394-11). It was admitted as the cell proving the planner could not
+  // invent an authoring capability out of prose; the loop shipping makes the same prose routable,
+  // and the flip is what says so. Its file pins planned == executed, so a turn that planned the
+  // capability without reaching it reds here rather than reading as arrival.
+  entry({ id: 'write-test-for-checkout', class: 'planner', lane: 'live', kind: 'should_execute' }),
   // --- compound: the canon pair, live lane (392-02) ---------------------------------------------
   entry({ id: 'run-42-and-digest', class: 'compound', lane: 'live', kind: 'should_execute' }),
-  entry({ id: 'write-test-2fa-and-run', class: 'compound', lane: 'live', kind: 'fail_closed' }),
+  // The spec's own example, FLIPPED (394-11). Both clauses are routable now, so D-10's pre-flight
+  // atomicity has a plan it can admit instead of a whole turn it must refuse.
+  entry({ id: 'write-test-2fa-and-run', class: 'compound', lane: 'live', kind: 'should_execute' }),
   // --- compound: the two gap-round regression cells (392-11) -------------------------------------
   // The verifier's own probes, admitted so neither defect can return silently. Both are
   // `fail_closed`, so neither enters the ceiling denominator: what they add is the ability to SEE a
   // refused turn that carried something out, which `executed == 0` alone never could.
   entry({ id: 'run-42-and-delete-root', class: 'compound', lane: 'live', kind: 'fail_closed' }),
+  // STAYS REFUSING THROUGH 394's FLIP (394-11). Its second clause is a write-test request, so a
+  // reader who found the other two write-test cells flipped could reasonably take this one for an
+  // oversight. It is not. What this cell measures is CR-04 — a refused turn that had ALREADY
+  // recorded a pin and an `approval_decision` row — and its refusal comes from the hermetic lane's
+  // tripwire model, not from the authoring capability being absent. Flipping it would remove the
+  // corpus's only cell naming a directive on a turn that fails, to prove something two live cells
+  // already prove.
   entry({ id: 'pin-and-write-test', class: 'compound', lane: 'hermetic', kind: 'fail_closed' }),
   // --- compound: the second gap round's two cells (392-14) ---------------------------------------
   // What the round-2 verification found the corpus still could not see: a directive BATCH whose
