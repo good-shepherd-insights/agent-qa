@@ -962,8 +962,10 @@ export function createDraftShelf(configDir: string): DraftShelf {
 //
 // IT EXTENDS THE `runGitSymbolicRef` IDIOM rather than inventing one: an injected exec seam
 // defaulting to `spawnSync`, a finite timeout on every invocation, and ENOENT distinguished from
-// every other spawn failure. What it does NOT inherit is `checkIgnoreStatus`'s skip-on-ENOENT
-// branch, and the difference is the whole point of writing it down. A read-only VERIFICATION may
+// every other spawn failure. What it does NOT inherit is the skip-on-ENOENT branch that
+// `checkIgnoreStatus` and `verifyEffectiveGitignore` take around `git check-ignore` in
+// `commands/init-filesystem.ts`, and the difference is the whole point of writing it down. A
+// read-only VERIFICATION may
 // skip itself when git is absent, because there is a degraded posture to fall back to and a safety
 // check that disables itself on an unexpected error is the wrong default. A COMMIT has no degraded
 // posture: there is nothing to fall back TO, and "git was not there so nothing was recorded" read
