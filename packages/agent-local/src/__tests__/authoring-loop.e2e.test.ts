@@ -38,6 +38,7 @@ import {
 import type { JobModelCapability, JobModelRequest } from '@vostride/agent-qa-agent'
 import { FsEventLog, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
+  AUTHORING_DEDUP_CONTINUATIONS,
   AuthoringDraftWriteOutputSchema,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   DRAFT_STABILITY_RUNS_N,
@@ -114,6 +115,33 @@ const DRAFT_STEPS: readonly string[] = [
   'Type "alice" into the Username field',
   'Verify the page heading says "Local Form"',
 ]
+
+interface SuiteTextEntryFixture {
+  readonly filePath: string
+  readonly testName: string
+  readonly stepsText: readonly string[]
+}
+
+/**
+ * A suite test the INTENT above already describes, in different words.
+ *
+ * Every one of the intent's nine normalized tokens appears in this test's text and this test adds
+ * one of its own, so the Jaccard is 9/10 -- comfortably over the pinned 0.45 rather than balanced
+ * on it. The boundary itself is pinned by the frozen corpus in `packages/agent`; what this file
+ * proves is that a refusal travels the whole composed path, which wants an unambiguous input.
+ */
+const NEAR_DUPLICATE_SUITE_TEST: SuiteTextEntryFixture = {
+  filePath: 'tests/local-form-heading.yaml',
+  testName: 'Check the local account form heading',
+  stepsText: ['Verify that the form shows its heading'],
+}
+
+/** A suite test about something else entirely -- the control the refusal must NOT name. */
+const DISTANT_SUITE_TEST: SuiteTextEntryFixture = {
+  filePath: 'tests/billing-ledger.yaml',
+  testName: 'Delete an archived invoice from the billing ledger',
+  stepsText: ['Open the billing ledger', 'Delete the archived invoice'],
+}
 
 interface SubActionFixture {
   readonly type: string
@@ -526,6 +554,75 @@ describe('authoring.draft.write end to end through the composition root', () => 
     // later run — or a later reader — to mistake for a draft.
     expect(readdirSync(workspace)).toEqual([])
     expect(executor.startInputs).toHaveLength(0)
+  })
+
+  it('refuses a near-duplicate intent BEFORE any model call, naming what it matched', async () => {
+    const executor = fixtureExecutor(agentQaRoot)
+    const model = scriptedModel()
+    const host = compose({
+      executor: executor.port,
+      // TWO suite members, and the refusal must name the right one. A cell whose corpus held a
+      // single test would pass for a lane that named whatever it was handed.
+      authoring: draftAuthoring(workspace, [NEAR_DUPLICATE_SUITE_TEST, DISTANT_SUITE_TEST]),
+      model: model.capability,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    expect(AuthoringDraftWriteOutputSchema.safeParse(result).success).toBe(true)
+    expect(result.outcome).toBe('refused')
+
+    // THE ASSERTION THAT MAKES "before a model token is spent" A MEASURED CLAIM rather than a
+    // description of the code's shape. Zero, not "fewer than one" -- the loop reaches the model
+    // exactly once when it authors, so a dedup that ran after compile would read 1 here.
+    expect(model.requests).toHaveLength(0)
+    // And nothing was written, started, or half-done either: no shelf, no gate-run.
+    expect(readdirSync(workspace)).toEqual([])
+    expect(executor.startInputs).toHaveLength(0)
+    expect(result.draftRef).toBeUndefined()
+    expect(result.receipt).toBeUndefined()
+
+    // THE REFUSAL NAMES ITS EVIDENCE (D-04). Asserting `outcome === 'refused'` alone would pass
+    // for a refusal that named the wrong test, or named none at all.
+    expect(result.refusal?.filePath).toBe(NEAR_DUPLICATE_SUITE_TEST.filePath)
+    expect(result.refusal?.testName).toBe(NEAR_DUPLICATE_SUITE_TEST.testName)
+    expect(result.refusal?.matchedRef)
+      .toBe(`${NEAR_DUPLICATE_SUITE_TEST.filePath}::${NEAR_DUPLICATE_SUITE_TEST.testName}`)
+    expect(result.refusal?.score).toBeCloseTo(0.9, 10)
+    expect(result.refusal?.threshold).toBe(0.45)
+    expect(result.refusal?.sharedTokens).toBe(9)
+    // The universe is the whole suite, not the higher-scoring half of it.
+    expect(result.refusal?.comparedTests).toBe(2)
+    expect(result.refusal?.continuations).toEqual([...AUTHORING_DEDUP_CONTINUATIONS])
+  })
+
+  it('still AUTHORS when the same suite holds only a distant test', async () => {
+    // The admit leg beside the refuse leg, over a NON-EMPTY corpus. Every other cell in this file
+    // screens against an empty suite, so without this one "the lane admits" would be untested on
+    // the only input where refusing is possible at all.
+    const executor = fixtureExecutor(agentQaRoot)
+    const model = scriptedModel()
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace, [DISTANT_SUITE_TEST]),
+      model: model.capability,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    expect(result.outcome).toBe('drafted')
+    expect(result.refusal).toBeUndefined()
+    expect(model.requests).toHaveLength(1)
   })
 
   it('refuses an empty intent at the contract, before a model is ever asked', async () => {
