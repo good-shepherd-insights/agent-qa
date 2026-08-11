@@ -1820,7 +1820,7 @@ export function postRunCapabilities(
  * `surface` is `'chat'` on both and is ATTRIBUTION ONLY. Nothing in the function layer may branch
  * on it (`invoke.ts:28-29`), and the origin split above is exactly why nothing needs to.
  */
-const CHAT_STAGE_SCOPES: readonly FunctionScope[] = [
+export const CHAT_STAGE_SCOPES: readonly FunctionScope[] = [
   'read',
   'run',
   'config-write',
@@ -1828,14 +1828,14 @@ const CHAT_STAGE_SCOPES: readonly FunctionScope[] = [
   'approval-write',
 ]
 
-const CHAT_RESOLVER_CALLER: FunctionCaller = Object.freeze({
+export const CHAT_RESOLVER_CALLER: FunctionCaller = Object.freeze({
   surface: 'chat',
   grantedScopes: CHAT_STAGE_SCOPES,
   safeMode: false,
   origin: 'human',
 })
 
-const CHAT_PLANNER_CALLER: FunctionCaller = Object.freeze({
+export const CHAT_PLANNER_CALLER: FunctionCaller = Object.freeze({
   surface: 'chat',
   grantedScopes: CHAT_STAGE_SCOPES,
   safeMode: false,

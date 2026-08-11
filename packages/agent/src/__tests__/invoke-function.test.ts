@@ -143,6 +143,27 @@ const configSetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   invoke: () => Promise.resolve({ ok: true as const }),
 }
 
+/**
+ * A synthetic capability declaring 394's `test-write` beside the two scopes an authoring loop
+ * also needs.
+ *
+ * The point of the multi-scope declaration is that the refusal must be SPECIFIC: a caller holding
+ * `run` and `read` is missing exactly one thing, and being told which one is the difference
+ * between an actionable refusal and a generic denial. Deliberately a non-registered id — the real
+ * `authoring.draft.write` lands later in this phase, and pinning it here would assert a false
+ * thing about a shipped op.
+ */
+const authoringDraftWriteSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
+  id: 'authoring.draft.write.synthetic',
+  summary: 'Synthetic test-write capability used to exercise the scope refusal by name.',
+  requiredScopes: ['test-write', 'run', 'read'],
+  resultKind: 'unary',
+  input: z.object({}).strict(),
+  output: z.object({ ok: z.literal(true) }).strict(),
+  risk: { name: 'fn:authoring.draft.write.synthetic', recognized: true },
+  invoke: () => Promise.resolve({ ok: true as const }),
+}
+
 /** Discards every row. Cases that ASSERT on rows pass an explicit `capturingSink` instead. */
 function noOpSink(): AuditSink {
   return {
@@ -213,6 +234,47 @@ describe('invokeFunction pipeline', () => {
     // The scope check precedes the gate, so nothing dispatched and nothing was audited.
     expect(deps.listCalls()).toBe(0)
     expect(audit.executionRows()).toHaveLength(0)
+  })
+
+  it('refuses a run+read caller at a test-write op, naming the missing scope (394 T-394-01)', async () => {
+    const deps = spyDeps()
+    const audit = capturingSink()
+    const registry = createRegistryFromSpecs(
+      [authoringDraftWriteSpec as FunctionSpec],
+      registryOptions({ deps: deps.deps, auditSink: audit.sink }),
+    )
+
+    const refusal = invokeFunction(
+      registry,
+      'authoring.draft.write.synthetic',
+      {},
+      caller(['run', 'read']),
+    )
+
+    await expect(refusal).rejects.toBeInstanceOf(FunctionScopeError)
+    // BY NAME, and by exactly one name: the caller holds two of the three declared scopes, so a
+    // refusal listing anything else would mean the gate is not reading the declaration.
+    await expect(refusal).rejects.toMatchObject({ missingScopes: ['test-write'] })
+    await expect(refusal).rejects.toThrow(/test-write/)
+    expect(audit.executionRows()).toHaveLength(0)
+  })
+
+  it('lets a caller holding test-write through the same op', async () => {
+    // The other half of the differential. Without it the case above would also pass for a gate
+    // that refused every caller, which measures nothing about `test-write` in particular.
+    const registry = createRegistryFromSpecs(
+      [authoringDraftWriteSpec as FunctionSpec],
+      registryOptions(),
+    )
+
+    await expect(
+      invokeFunction(
+        registry,
+        'authoring.draft.write.synthetic',
+        {},
+        caller(['test-write', 'run', 'read']),
+      ),
+    ).resolves.toEqual({ ok: true })
   })
 
   it('audits every successful read invocation exactly once (D-11 uniform gating)', async () => {

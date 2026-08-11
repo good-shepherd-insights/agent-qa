@@ -35,20 +35,23 @@ describe('the actor-origin axis (391 D-06)', () => {
 })
 
 describe('the capability-scope union', () => {
-  it('carries approval-write as a fifth, distinct member (391 PROP-01)', () => {
+  it('carries test-write as a sixth, distinct member (394 WTST-01)', () => {
     expect(FunctionScopeSchema.options).toEqual([
       'read',
       'run',
       'config-write',
       'knowledge-write',
       'approval-write',
+      'test-write',
     ])
-    expect(FunctionScopeSchema.options).toHaveLength(5)
+    expect(FunctionScopeSchema.options).toHaveLength(6)
   })
 
   it('refuses anything off the union', () => {
     expect(FunctionScopeSchema.safeParse('approval-write').success).toBe(true)
+    expect(FunctionScopeSchema.safeParse('test-write').success).toBe(true)
     expect(FunctionScopeSchema.safeParse('approvals-write').success).toBe(false)
+    expect(FunctionScopeSchema.safeParse('tests-write').success).toBe(false)
     expect(FunctionScopeSchema.safeParse('write').success).toBe(false)
   })
 
@@ -63,5 +66,18 @@ describe('the capability-scope union', () => {
       origin: 'human',
     }
     expect(knowledgeOnly.grantedScopes).not.toContain('approval-write')
+  })
+
+  it('keeps test-write distinct from run', () => {
+    // 394's counter-note, made checkable on the same pattern: executing this project's tests and
+    // authoring new ones into the repository are two grants, so a caller can hold either without
+    // the other.
+    const runOnly: FunctionCaller = {
+      surface: 'synthetic',
+      grantedScopes: ['run', 'read'],
+      safeMode: false,
+      origin: 'agent',
+    }
+    expect(runOnly.grantedScopes).not.toContain('test-write')
   })
 })
