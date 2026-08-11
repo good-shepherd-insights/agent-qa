@@ -735,6 +735,10 @@ export {
   // 394 D-04: the stage-2 dedup refusal's payload and its two named continuations.
   AUTHORING_DEDUP_CONTINUATIONS,
   AuthoringDedupRefusalSchema,
+  // 394-07 D-12: the authoring.funnel.get op contracts and the closed window scope.
+  AuthoringFunnelGetInputSchema,
+  AuthoringFunnelGetOutputSchema,
+  AuthoringFunnelWindowSchema,
 } from './functions/index'
 export type {
   FunctionCaller,
@@ -768,6 +772,9 @@ export type {
   AuthoringLoopOutcomeKind,
   AuthoringDedupContinuation,
   AuthoringDedupRefusal,
+  AuthoringFunnelGetInput,
+  AuthoringFunnelGetOutput,
+  AuthoringFunnelWindow,
 } from './functions/index'
 
 // 393 (WTST-02, D-18/D-19): the keep-gate authoring vocabulary. `computeDraftDisposition` is
@@ -859,6 +866,23 @@ export type {
   AuthoringFunnelStage,
   FunnelRenderParts,
   FunnelSideCounters,
+} from './authoring/index'
+
+// 394-07 (WTST-05, D-14): the mixed-verdict suite-stability read. PURE and it starts zero runs —
+// D-14 is read-side precisely so WTST-08's fan-out preview stays a number somebody can honour.
+export {
+  NEIGHBOUR_INSTABILITY_REASONS,
+  SUITE_STABILITY_POSTURES,
+  assessSuiteStability,
+  suiteTestRef,
+} from './authoring/index'
+export type {
+  FlakyNeighbour,
+  NeighbourInstabilityReason,
+  SuiteNeighbourRow,
+  SuiteStabilityAssessment,
+  SuiteStabilityInput,
+  SuiteStabilityPosture,
 } from './authoring/index'
 
 // 387 ENTY-01/ENTY-02 — entity addressing: short-IDs, the agentqa:// URI scheme, the one

@@ -203,4 +203,47 @@ describe('the draft-receipts store (393 D-19, the proposals-store idiom)', () =>
 
     expect((await store.list()).map((entry) => entry.draftRef.contentDigest)).toEqual([DIGEST_A])
   })
+
+  // ---- 394-07 D-12: the on-disk compatibility cell ---------------------------------------------
+  //
+  // `sessionRef` joined `DraftReceiptSchema` as an OPTIONAL field at the CURRENT schema version,
+  // and this is the cell that says why the version was not bumped. `parseReceipt` refuses any
+  // version mismatch BY NAME, so a bump would make `list()` throw on every receipt already sitting
+  // on a developer's or a CI runner's disk — turning the funnel read op into a crash on exactly
+  // the projects that have used the loop most.
+  //
+  // THE FIXTURE WAS MINTED THROUGH THE PRE-394-07 SCHEMA, not hand-authored to look like one. It
+  // is the bytes that build actually wrote, so a widening that happened to accept a literal
+  // somebody typed but not a real old record could not pass this cell.
+  it('reads a receipt written BEFORE `sessionRef` existed, unchanged and without a bump', async () => {
+    const root = agentQaRoot()
+    const store = storeAt(root)
+    mkdirSync(receiptsDir(root), { recursive: true })
+    const bytes = readFileSync(
+      join(import.meta.dirname, 'fixtures', 'pre-394-07-receipt.json'),
+      'utf8',
+    )
+    // The fixture really is the old shape: no `sessionRef` anywhere in its bytes.
+    expect(bytes).not.toContain('sessionRef')
+    expect(JSON.parse(bytes)).toMatchObject({
+      schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
+    })
+    writeFileSync(join(receiptsDir(root), 'pre394-07-digest.json'), bytes, 'utf8')
+
+    const listed = await store.list()
+
+    expect(listed.map((entry) => entry.draftRef.contentDigest)).toEqual(['pre394-07-digest'])
+    // ABSENT, never defaulted in — a session-scoped window must leave this receipt OUT rather
+    // than attribute it to whichever session happens to be asking.
+    expect(listed[0]?.sessionRef).toBeUndefined()
+    expect(await store.get('pre394-07-digest')).toBeDefined()
+  })
+
+  it('round-trips a receipt that DOES carry a session ref', async () => {
+    const root = agentQaRoot()
+    const store = storeAt(root)
+    await store.put({ ...receiptFixture(), sessionRef: 'sess-alpha' })
+
+    expect((await store.get(DIGEST_A))?.sessionRef).toBe('sess-alpha')
+  })
 })

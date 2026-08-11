@@ -13,6 +13,7 @@
 
 import { z } from 'zod'
 
+import { AuthoringFunnelSchema } from '../authoring/funnel'
 import { DraftReceiptSchema, DraftRefSchema } from '../authoring/draft-receipt'
 import type { ScopeTier } from '../identity/scope-key'
 
@@ -204,3 +205,66 @@ export const AuthoringDraftWriteOutputSchema = z.object({
 }).strict()
 
 export type AuthoringDraftWriteOutput = z.infer<typeof AuthoringDraftWriteOutputSchema>
+
+// ---- `authoring.funnel.get`: the honesty funnel's one read op (394, D-12/D-13 · WTST-05) -------
+
+/**
+ * The window a funnel is computed over — a CLOSED, DISCRIMINATED three-arm scope.
+ *
+ * IT IS A SCOPE, NOT A FILTER, and the distinction is why it exists where `quarantine.list`
+ * deliberately has none. That op's header refuses a filter because "a filter here would make the
+ * verb's answer depend on how it was asked" — a reader concern over rows already in hand. This
+ * parameter does something different in kind: it selects WHICH INVOCATIONS the projection is over,
+ * which is the projection's denominator rather than a predicate applied after it. A funnel with no
+ * scope would be forced to answer all-time, and "how is this session doing" — D-12's stated
+ * default and the question WTST-05 asks — would be unanswerable from any surface.
+ *
+ * THE SESSION ARM CARRIES THE REF, because the op cannot know it. `FunctionSpec.invoke` receives
+ * `(input, deps)` and nothing else — no caller — and `FunctionDeps` holds no session. D-12's
+ * "default scope = current session" is therefore a SURFACE default honoured where the session is
+ * actually known (chat mints one; the CLI has none and asks for all-time), never a schema default
+ * that would have to guess. A defaulted session ref is the one shape that could quietly report a
+ * different session's drafts as this one's.
+ *
+ * `sessionRef` is compared by EXACT STRING EQUALITY and is opaque here: this package mints no
+ * session ids and parses none, so any host's spelling round-trips unexamined.
+ */
+export const AuthoringFunnelWindowSchema = z.discriminatedUnion('scope', [
+  z.object({
+    scope: z.literal('session'),
+    sessionRef: z.string().min(1),
+  }).strict(),
+  z.object({ scope: z.literal('all-time') }).strict(),
+  z.object({
+    scope: z.literal('last-n'),
+    /** The N most recently EVALUATED drafts, newest first by `evaluatedAt`. */
+    n: z.number().int().positive(),
+  }).strict(),
+])
+
+export type AuthoringFunnelWindow = z.infer<typeof AuthoringFunnelWindowSchema>
+
+/**
+ * What a caller hands the funnel read. The window and nothing else.
+ *
+ * `.strict()` on the loop input's reasoning: 392 D-07 binds every registry op into the planner's
+ * toolset, so this shape crosses a trust boundary from an arbitrary caller rather than being
+ * handed between two halves of one program.
+ */
+export const AuthoringFunnelGetInputSchema = z.object({
+  window: AuthoringFunnelWindowSchema,
+}).strict()
+
+export type AuthoringFunnelGetInput = z.infer<typeof AuthoringFunnelGetInputSchema>
+
+/**
+ * The op answers the ONE computation's result, unchanged — see `authoring/funnel.ts`.
+ *
+ * Not a summary of it and not a re-shaping: the op re-derives nothing, so the contract IS the
+ * DTO the derivation produces. The window is deliberately NOT echoed back; a caller knows what it
+ * asked, and echoing it would invite a surface to render the scope off the answer rather than off
+ * the request, which is two sources for one fact.
+ */
+export const AuthoringFunnelGetOutputSchema = AuthoringFunnelSchema
+
+export type AuthoringFunnelGetOutput = z.infer<typeof AuthoringFunnelGetOutputSchema>

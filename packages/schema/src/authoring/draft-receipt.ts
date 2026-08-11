@@ -210,6 +210,21 @@ export const DraftReceiptSchema = z.object({
   disposition: z.enum(DRAFT_DISPOSITIONS),
   /** Epoch milliseconds. */
   evaluatedAt: z.number().int().nonnegative(),
+  /**
+   * The invoking session, as an OPAQUE string the caller supplied (394 D-12 · WTST-05).
+   *
+   * OPTIONAL AT THE CURRENT VERSION, AND THE VERSION IS DELIBERATELY NOT BUMPED. `parseReceipt`
+   * throws `DraftReceiptSchemaVersionError` on any mismatch, so a bump would make `list()` throw
+   * on every receipt already on a developer's or a CI runner's disk — which is precisely how a
+   * funnel READ op becomes a crash. Optional-at-version-1 is the additive shape a stamp-and-
+   * hard-fail store can actually absorb.
+   *
+   * ABSENCE IS EXCLUSION, NEVER A DEFAULT. A session-scoped funnel window compares this by exact
+   * string equality; a receipt carrying no ref is left OUT rather than folded into whichever
+   * session happens to be asking. Defaulting it in would attribute another session's drafts —
+   * and, in the direction that matters, would inflate `built` under somebody else's keep rate.
+   */
+  sessionRef: z.string().min(1).optional(),
 }).strict()
 
 export type DraftReceipt = z.infer<typeof DraftReceiptSchema>

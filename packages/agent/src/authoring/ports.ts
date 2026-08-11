@@ -123,6 +123,25 @@ export interface DraftReceiptsStoreLike {
   put(receipt: DraftReceipt): Promise<void>
 }
 
+/**
+ * The READ half of the same store (394-07, D-12 · WTST-05) — the funnel's whole substrate.
+ *
+ * A SECOND, NARROWER MIRROR rather than a `list` member added to the write port above, and the
+ * split is the point: the evaluator writes and never reads back, and the funnel reads and never
+ * writes. One port carrying both verbs would let a composition hand the funnel projection a
+ * capability to overwrite the very records it is reporting on — and the whole claim of D-12 is
+ * that nothing new is persisted, which is easier to keep when the projection is structurally
+ * unable to persist anything.
+ *
+ * `list()` and nothing else. The real store's `get(contentDigest)` exists, and the funnel has no
+ * use for it: a funnel is about a POPULATION, and a port able to fetch one receipt by address
+ * would invite a projection that walked digests it learned somewhere else — a second denominator
+ * beside the one `list()` defines.
+ */
+export interface DraftReceiptsReadPortLike {
+  list(): Promise<DraftReceipt[]>
+}
+
 // ---- the authoring LOOP's two host halves (394, D-01 · WTST-01) ---------------------------------
 //
 // The loop needs three things this package cannot name, and they group into exactly two facts

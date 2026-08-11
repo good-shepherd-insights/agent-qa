@@ -85,3 +85,19 @@ export type {
   FunnelRenderParts,
   FunnelSideCounters,
 } from './funnel'
+
+// 394-07 (WTST-05, D-14): the mixed-verdict suite-stability read — pure, and it starts ZERO runs.
+export {
+  NEIGHBOUR_INSTABILITY_REASONS,
+  SUITE_STABILITY_POSTURES,
+  assessSuiteStability,
+  suiteTestRef,
+} from './suite-stability'
+export type {
+  FlakyNeighbour,
+  NeighbourInstabilityReason,
+  SuiteNeighbourRow,
+  SuiteStabilityAssessment,
+  SuiteStabilityInput,
+  SuiteStabilityPosture,
+} from './suite-stability'

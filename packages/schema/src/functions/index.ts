@@ -101,3 +101,17 @@ export type {
   AuthoringDraftWriteOutput,
   AuthoringLoopOutcomeKind,
 } from './authoring'
+// 394-07 D-12/D-13: `authoring.funnel.get`'s contracts. The output IS the funnel the ONE
+// computation produces (see ../authoring/funnel.ts) rather than a re-shaping of it, so the
+// schema is re-exported under an op-shaped name instead of being re-declared. The window is a
+// SCOPE — which invocations the projection is over — not a filter over rows already in hand.
+export {
+  AuthoringFunnelGetInputSchema,
+  AuthoringFunnelGetOutputSchema,
+  AuthoringFunnelWindowSchema,
+} from './authoring'
+export type {
+  AuthoringFunnelGetInput,
+  AuthoringFunnelGetOutput,
+  AuthoringFunnelWindow,
+} from './authoring'

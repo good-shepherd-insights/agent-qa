@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "draftRef": {
+    "filePath": "tests/.agent-qa-drafts/pre394-07.yaml",
+    "testId": "t_pre394-07",
+    "testName": "Submit the local account form",
+    "contentDigest": "pre394-07-digest"
+  },
+  "gates": {
+    "executesDefinitive": {
+      "pass": true,
+      "runRefs": [
+        "run-pre-1"
+      ],
+      "indefinitiveRunRefs": [],
+      "reason": "every run reached a definitive verdict"
+    },
+    "stableVerdict": {
+      "pass": true,
+      "runRefs": [
+        "run-pre-1"
+      ],
+      "distinctOutcomes": [
+        "passed"
+      ],
+      "earlyStopped": false
+    },
+    "addsValue": {
+      "pass": true,
+      "novelElementCount": 2,
+      "comparedTestCount": 4
+    },
+    "falsifiableAssertion": {
+      "pass": true,
+      "assertionStepCount": 1,
+      "falsifiableAssertionCount": 1
+    }
+  },
+  "stepTable": [
+    {
+      "stepText": "Verify the confirmation banner says \"Saved\"",
+      "role": "assertion",
+      "falsifiable": true,
+      "captureSignatureHits": []
+    }
+  ],
+  "gateRuns": [
+    {
+      "runId": "run-pre-1",
+      "memberOutcome": "passed",
+      "definitive": true,
+      "healed": false
+    }
+  ],
+  "addsValueFinding": {
+    "novelElements": [
+      "el:button:Save"
+    ],
+    "comparedTests": [
+      {
+        "filePath": "tests/other.yaml",
+        "testName": "other",
+        "lane": "fingerprint",
+        "covered": false
+      }
+    ]
+  },
+  "stabilityRunsRequested": 3,
+  "stabilityRunsCompleted": 3,
+  "disposition": "keep-eligible",
+  "evaluatedAt": 1754870000000
+}
