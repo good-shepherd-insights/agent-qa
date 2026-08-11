@@ -56,6 +56,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { runCurationTail } from '../curation-tail.js'
+import { projectCurationCandidates, projectProcedureTargets } from '../emit-candidates.js'
 import { buildCuratorAuthor } from '../curator-author.js'
 import { emitCanaryOutcomes } from '../emit-canary-outcomes.js'
 
@@ -1104,5 +1105,85 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
     expect(payload?.steps[1]?.action.values['relativePosition']).toEqual({
       json: { x: 5, y: 7 },
     })
+  })
+})
+
+// WHICH DRAFTS INDUCE — the recorded decision, made an invariant (394-11, D-07 · WTST-01).
+//
+// SC-1 stage 6 says a verified pass induces a gated parameterized `procedure` candidate. 394 does
+// not generalise the procedure representation and must not: the parameterized candidate is already
+// produced by the shipped AWM induction path behind `projectProcedureTargets`, which fires on every
+// drain, and gate-runs reach it because `runs.start` spawns a full child run. So the whole of this
+// phase's obligation at stage 6 is to make WHICH drafts induce visible — because the answer is a
+// decision somebody could reasonably have made the other way, and until now it was only implied by
+// the absence of a filter.
+//
+// THE DECISION. A draft that EXECUTED and PASSED induces, even when the keep-filter then rejected
+// it on gate 3 (it added no uncovered value) or gate 4 (its assertion was not falsifiable). The
+// trajectory really did pass, so the procedure it encodes is real knowledge about the application,
+// and gate 3 and gate 4 are judgements about whether a TEST is worth keeping rather than about
+// whether a FLOW happened. The C8 ratification says the same thing one layer down, in the carrier's
+// own doc block: gate runs DO feed curation.
+//
+// THE ALTERNATIVE, and why it was refused. Inducting only from drafts that survived the keep-filter
+// would need the draft's disposition at the projection — and the projection's whole input is a
+// completed-run handoff, which carries no such channel. Supplying one means threading disposition
+// through the CLI curation fold across a package boundary D-07 deliberately avoids, or minting a
+// second Curator write path, which D-07's own bound forbids.
+//
+// WHAT REDS. A future phase that narrows at the projection, or adds a second induction path, goes
+// red HERE rather than silently changing what "induction only from verified passes" means.
+describe('which drafts induce is a recorded decision, not an accident (394-11, D-07)', () => {
+  const base = handoffFor('run-induction-doc', 7)
+  const onlyTest = base.tests[0]!
+
+  it('induces EXACTLY ONE procedure-extraction target from one verified pass', () => {
+    const targets = projectProcedureTargets(base, policy)
+    expect(targets).toHaveLength(1)
+    expect(targets[0]?.kind).toBe('procedure')
+  })
+
+  it('still induces when the keep-filter rejected the draft on gate 3 or gate 4', () => {
+    // THE GATE-RUN MARKER IS THE ONLY THING A REJECTED DRAFT'S RUN LOOKS DIFFERENT BY. Verify-
+    // before-present stamps `gateRun` on every run it spawns, and a draft rejected on gate 3 or
+    // gate 4 is rejected on its CONTENT — it executed to a definitive verdict and passed, which is
+    // exactly the trajectory this projection is about. So the run of a rejected draft is this
+    // handoff, and the count must not move.
+    const gateRunHandoff: CompletedRunHandoff = { ...base, schemaVersion: 4, gateRun: true }
+    const targets = projectProcedureTargets(gateRunHandoff, policy)
+    expect(targets).toHaveLength(1)
+    expect(targets[0]?.kind).toBe('procedure')
+    // And the induced candidate is the SAME one, not a degraded sibling: a narrowing that kept a
+    // target while stripping its trajectory would satisfy a count-only assertion.
+    expect(targets[0]?.bodySeed).toBe(projectProcedureTargets(base, policy)[0]?.bodySeed)
+  })
+
+  it('discriminates on the axes it does have, so the cell above is not a function that never says no', () => {
+    // NON-VACUITY. "The marker changes nothing" is only a claim about `gateRun` if the projection
+    // refuses SOMETHING — D-01's own sentence names the three it refuses, and two are checkable
+    // here without inventing a channel.
+    const failed: CompletedRunHandoff = {
+      ...base,
+      tests: [{ ...onlyTest, outcome: 'failed' }],
+    }
+    expect(projectProcedureTargets(failed, policy)).toHaveLength(0)
+    const singleStep: CompletedRunHandoff = {
+      ...base,
+      tests: [{ ...onlyTest, steps: onlyTest.steps.slice(0, 1) }],
+    }
+    expect(projectProcedureTargets(singleStep, policy)).toHaveLength(0)
+  })
+
+  it('has ONE producer: every procedure candidate in the whole projection comes through it', () => {
+    // D-07's bound, asserted rather than trusted. The count is observed at
+    // `projectProcedureTargets` and compared against every procedure-kind candidate the whole
+    // post-run projection yields — so a second induction path anywhere in the fold shows up as a
+    // candidate this function did not produce.
+    const whole = projectCurationCandidates(base, policy)
+      .filter((candidate) => candidate.kind === 'procedure')
+    const induced = projectProcedureTargets(base, policy)
+    expect(whole).toHaveLength(induced.length)
+    expect(whole.map((candidate) => candidate.bodySeed))
+      .toEqual(induced.map((candidate) => candidate.bodySeed))
   })
 })
