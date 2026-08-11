@@ -301,6 +301,55 @@ describe('the applier exports the refusal vocabulary the corpus scores against',
     ).toThrow(/PatchPointerUnresolvable|does not resolve/)
   })
 
+  // The nine frozen rows do NOT exercise index-0 displacement, and a mutation differential proved
+  // it: deleting the `index === 0` branch of the start-token normaliser left all twelve cells
+  // green. That branch exists because item 0 alone does not carry its own leading whitespace, so
+  // an insert or a removal at index 0 is the one edit that can silently re-indent a line. These
+  // two cells are NOT corpus members — the frozen denominator is not being widened to re-score —
+  // they are ordinary contract assertions covering a hole the differential named. Both were
+  // observed RED against the mutated normaliser before this comment was written.
+  it.each([
+    ['insert at index 0', { op: 'add', path: '/steps/0', value: 'Open the sign-in page' }],
+    ['remove index 0', { op: 'remove', path: '/steps/0' }],
+  ] as const)('%s keeps every sequence item at its original indent', async (_label, op) => {
+    const { applyPatchSetToTestDoc, parseTestFileWithTokens, renderPatchedTestDoc } =
+      await applier()
+    const inputPath = join(CORPUS_DIR, '05-two-ops-adjacent-indices.yaml')
+    const parsed = parseTestFileWithTokens(readFileSync(inputPath, 'utf8'), inputPath)
+
+    applyPatchSetToTestDoc(parsed, { thoughts: '', patches: [op] })
+    const output = renderPatchedTestDoc(parsed, inputPath)
+
+    const itemLines = output.split('\n').filter((line) => line.trimStart().startsWith('- '))
+    expect(itemLines.length).toBeGreaterThan(1)
+    for (const line of itemLines) {
+      expect(line, 'a sequence item lost or gained indentation').toMatch(/^ {2}- \S/)
+    }
+  })
+
+  // Also not a corpus member, and also a hole a differential named: every frozen input ends with a
+  // newline (the preflight asserts it), so none of the nine exercises appending after an item that
+  // has no line terminator. The 394 research probe hit exactly that and produced `- two  - three`
+  // on one line. The source here is the corpus fixture with its final newline stripped, so the
+  // input is still something the real parser accepts rather than a hand-built shape.
+  it('appends after an unterminated last item without gluing the two onto one line', async () => {
+    const { applyPatchSetToTestDoc, parseTestFileWithTokens, renderPatchedTestDoc } =
+      await applier()
+    const inputPath = join(CORPUS_DIR, '05-two-ops-adjacent-indices.yaml')
+    const source = readFileSync(inputPath, 'utf8').replace(/\n$/, '')
+    expect(source.endsWith('\n')).toBe(false)
+
+    const parsed = parseTestFileWithTokens(source, inputPath)
+    applyPatchSetToTestDoc(parsed, {
+      thoughts: '',
+      patches: [{ op: 'add', path: '/steps/-', value: 'Verify the Logout button is visible' }],
+    })
+    const output = renderPatchedTestDoc(parsed, inputPath)
+
+    expect(output).toContain('  - Verify the page says "Received!"\n')
+    expect(output.split('\n').filter((line) => line.trimStart().startsWith('- '))).toHaveLength(4)
+  })
+
   it('round-trips the untouched parse: the whole token array stringifies back to the source', async () => {
     const { parseTestFileWithTokens, renderPatchedTestDoc } = await applier()
     const inputPath = join(CORPUS_DIR, '07-key-order-preserved.yaml')
