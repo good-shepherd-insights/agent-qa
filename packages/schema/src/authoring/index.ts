@@ -122,3 +122,7 @@ export type {
   SuiteStabilityInput,
   SuiteStabilityPosture,
 } from './suite-stability'
+
+// 394-09 (WTST-01, D-17): procedure-by-reference. The vocabulary a compiled step is authored in,
+// derived out of the anchor alone so no learned-shelf record id can reach a committed test.
+export { procedureStepVocabulary } from './procedure-reference'

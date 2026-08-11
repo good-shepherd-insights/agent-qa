@@ -60,6 +60,11 @@ import type {
   TestDraftProposalV1,
 } from '@vostride/agent-qa-schema'
 
+import {
+  PROCEDURE_BY_REFERENCE_INSTRUCTION,
+  exemplarBlockBody,
+  knowledgeBlockBody,
+} from './brief-blocks.js'
 import { dedupBeforeAuthor } from './dedup.js'
 import type { DedupScreening } from './dedup.js'
 import type {
@@ -68,6 +73,8 @@ import type {
   DraftShelfPortLike,
   ParsedDraftLike,
 } from './ports.js'
+import { refineDraft } from './refine.js'
+import type { RefinementOutcome } from './refine.js'
 import { REPAIR_ITERATION_CAP, repairDraft } from './repair.js'
 import type { RepairOutcome } from './repair.js'
 import { AuthoringRouterUnroutableError, routeRepairOrFinding } from './router.js'
@@ -200,6 +207,16 @@ export interface AuthoringLoopResult {
    * fact a caller is entitled to for every outcome, not only the ones that produced something.
    */
   readonly fanOut: FanOutReport
+  /**
+   * What stage 3's one refinement round did (D-18).
+   *
+   * ABSENT exactly when stage 3 was never entered — a stage-2 refusal — and present on every
+   * invocation that compiled anything, including the ones where the round changed nothing. The
+   * distinction the field exists to keep is between a round that found nothing (`no-op`) and one
+   * whose emission could not be used (`not-applied`): both leave the draft alone, and only one of
+   * them is the loop working as designed.
+   */
+  readonly refinement?: RefinementOutcome
 }
 
 /**
@@ -334,39 +351,15 @@ function findingProposal(draftRef: DraftRef, route: FindingRoute): FindingPropos
   }
 }
 
-/** The brief's exemplars, as the context block a compile reads them from. */
-function exemplarBlockBody(brief: AuthoringBrief): string {
-  if (brief.exemplars.length === 0) {
-    return 'No exemplar tests were served for this scope. Follow the house YAML test style.'
-  }
-  return brief.exemplars
-    .map((exemplar) => `- ${exemplar.filePath} · ${exemplar.testName}\n${exemplar.excerpt}`)
-    .join('\n')
-}
-
-/** The brief's facts and cautions, in the precedence the brief itself locked (ABRF-01). */
-function knowledgeBlockBody(brief: AuthoringBrief): string {
-  const lines = [
-    ...brief.cautions.map((caution) => `CAUTION: ${caution.summary}`),
-    // The flow anchor's own vocabulary, rendered from the arm it is: `Anchor` is a union and
-    // only some arms carry a role/name pair, so reading those fields off it directly would
-    // compile against one arm and be wrong about the rest.
-    ...brief.procedures.map(
-      (procedure) => `PROCEDURE: ${procedure.flowAnchor.t === 'flow'
-        ? procedure.flowAnchor.name
-        : JSON.stringify(procedure.flowAnchor)}`,
-    ),
-    ...brief.facts.map((fact) => `FACT: ${fact.summary}`),
-  ]
-  return lines.length === 0 ? 'This scope has no served knowledge yet.' : lines.join('\n')
-}
-
 /**
- * Stage 3 — ONE model call, one whole document, parsed before it is written.
+ * Stage 3, first half — ONE model call, one whole document, parsed before it is written.
  *
  * The prompt extends the ONE tiered builder through `agent_context` (389 D-04's law); there is no
  * second renderer and no persona fork here. What the model returns is handed to the shelf, which
  * parses it and answers `unparsable` without writing when it is not a test.
+ *
+ * The two brief renderers live in `brief-blocks.ts` because the refinement round reads the same
+ * substrate; see that module's header for why they are shared rather than copied.
  */
 async function compileDraft(
   input: AuthoringLoopInput,
@@ -382,6 +375,10 @@ async function compileDraft(
           + 'nothing else — no prose, no fences, no partial edit. Steps are natural language, one '
           + 'per line, and at least one of them must assert concrete expected content.',
       },
+      // D-17's syntactic half, in the STABLE tier beside the role it qualifies. It is a standing
+      // rule about how any step is written rather than a fact about this intent, so it belongs
+      // where the byte prefix is shared across invocations.
+      { title: 'Procedures', body: PROCEDURE_BY_REFERENCE_INSTRUCTION },
     ],
     context: [
       { title: 'Intent', body: input.intent },
@@ -633,7 +630,15 @@ export async function runAuthoringLoop(
   }
 
   stages.push('compile')
-  const draft = await compileDraft(input, brief, deps.shelf)
+  const compiled = await compileDraft(input, brief, deps.shelf)
+  // THE ROUND IS UNCONDITIONAL AND IT IS INSIDE STAGE 3 (D-18). Unconditional: there is no `if`
+  // above this line and no argument that could turn it off — see `refine.ts` for why a trigger
+  // heuristic is the thing D-18 rules out rather than the thing it configures. Inside stage 3
+  // rather than beside it: `AUTHORING_LOOP_STAGES` is a pinned six, refining is part of producing
+  // the draft, and a seventh stage would have re-opened an ordering contract that plans 02-08 all
+  // built against for a step that has no independent entry point.
+  const refinement = await refineDraft(compiled, input, deps)
+  const draft = refinement.draft
 
   stages.push('verify')
   const receipt = await deps.shelf.verifyDraft({
@@ -646,5 +651,12 @@ export async function runAuthoringLoop(
 
   stages.push('compound')
 
-  return { outcome: routed.outcome, stages, dedup, sideCounters: [], fanOut: routed.fanOut }
+  return {
+    outcome: routed.outcome,
+    stages,
+    dedup,
+    sideCounters: [],
+    fanOut: routed.fanOut,
+    refinement,
+  }
 }

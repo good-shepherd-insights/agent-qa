@@ -907,6 +907,12 @@ export type {
   FanOutRunPurpose,
 } from './authoring/index'
 
+// 394-09 (WTST-01, D-17): procedure-by-reference. A served procedure reaches a compiled draft as
+// an ordinary NL step written in the procedure's own anchor vocabulary, matched and replayed at run
+// time against the LIVE record — so a later procedure fix propagates and the committed test carries
+// no learned-shelf record id that supersession or collection could rot.
+export { procedureStepVocabulary } from './authoring/index'
+
 // 387 ENTY-01/ENTY-02 — entity addressing: short-IDs, the agentqa:// URI scheme, the one
 // card shape and the two resolution unions.
 export {

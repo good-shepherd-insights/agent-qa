@@ -44,6 +44,7 @@ import {
 } from './evidence-fixtures.js'
 import { AUTHORING_LOOP_STAGES, runAuthoringLoop } from '../loop.js'
 import type { AuthoringLoopStage } from '../loop.js'
+import { AUTHORING_REFINE_AGENT_CONTEXT } from '../refine.js'
 import { evaluateDraft } from '../verify-draft.js'
 import type {
   AuthoringReadPortLike,
@@ -88,11 +89,19 @@ const SUITE_TEXT: readonly SuiteTextCorpusEntryLike[] = [
 function observedLoop() {
   const observed: AuthoringLoopStage[] = []
 
+  const refineQueries: string[] = []
   const read: AuthoringReadPortLike = {
-    getAuthoringBrief(intent: string, scope: ScopeKey): Promise<AuthoringBrief> {
-      expect(intent).toBe(INTENT)
+    getAuthoringBrief(query: string, scope: ScopeKey): Promise<AuthoringBrief> {
       expect(scope).toEqual(SCOPE)
-      observed.push('brief')
+      // TWO READS, ONE STAGE. Stage 1 asks the INTENT; D-18's refinement round asks the DRAFT, and
+      // it does so from inside stage 3. Only the first is the `brief` stage — recording the second
+      // under that name would make this pin report a stage the vocabulary does not have and would
+      // break the sequence equality below for a loop that is running exactly as designed.
+      if (query === INTENT) {
+        observed.push('brief')
+      } else {
+        refineQueries.push(query)
+      }
       return Promise.resolve(EMPTY_BRIEF)
     },
     suiteTextCorpus(): Promise<readonly SuiteTextCorpusEntryLike[]> {
@@ -102,12 +111,23 @@ function observedLoop() {
   }
 
   const modelCalls: string[] = []
+  const refineCalls: string[] = []
   const written: string[] = []
 
   const shelf: DraftShelfPortLike = {
     model: () => Promise.resolve({
       modelId: 'fixture:loop-ordering',
       generate(request) {
+        // The two stage-3 calls are told apart by their PINNED agent-context lines rather than by
+        // a call counter, so a reordering that put the refinement first would be visible here
+        // instead of being absorbed by an index.
+        if ((request.system ?? '').includes(AUTHORING_REFINE_AGENT_CONTEXT)) {
+          refineCalls.push(request.prompt)
+          // Not a patch set: this file pins ORDER, and a refinement that actually patched would
+          // make every later assertion depend on an applier fake as well. The round still ran,
+          // which is what the counts below assert; `refine.test.ts` owns what it does.
+          return Promise.resolve({ text: 'no changes needed' })
+        }
         observed.push('compile')
         modelCalls.push(request.prompt)
         return Promise.resolve({ text: 'name: whatever the fixture parses to\nsteps: []\n' })
@@ -159,7 +179,7 @@ function observedLoop() {
     },
   }
 
-  return { observed, modelCalls, written, deps: { read, shelf } }
+  return { observed, modelCalls, refineCalls, refineQueries, written, deps: { read, shelf } }
 }
 
 /** The stages that touch an injected dep — the ones an observer outside the loop can witness. */
@@ -235,6 +255,33 @@ describe('the six-stage order is structural, not a habit of the code', () => {
     // to pass — which is the claim, made structurally.
     expect(loop.observed.indexOf('compile')).toBeLessThan(loop.observed.indexOf('verify'))
     expect(loop.written).toHaveLength(1)
+  })
+
+  it('calls the model exactly TWICE — compile, then D-18 one refinement round', async () => {
+    const loop = observedLoop()
+
+    const result = await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // TWO CALLS AND NO MORE. One to author the whole document, one to refine it. A third would be
+    // a retry hidden inside a stage, which would make the fan-out preview's sibling promise — that
+    // the loop's cost is the number a person was shown — a promise about model calls nobody counted.
+    expect(loop.modelCalls).toHaveLength(1)
+    expect(loop.refineCalls).toHaveLength(1)
+    // The SECOND call is built from the draft the FIRST produced: the fixture's staged draft is the
+    // accept control, and its own step text is in the refinement prompt. Text derived from the
+    // draft rather than from the intent is what makes it a second question instead of a retry.
+    for (const step of ACCEPT_CONTROL_DRAFT.steps) {
+      expect(loop.refineCalls[0]).toContain(step)
+    }
+    // …and the round's re-retrieval was keyed on the same words, not on the intent.
+    expect(loop.refineQueries).toHaveLength(1)
+    expect(loop.refineQueries[0]).not.toContain(INTENT)
+    for (const step of ACCEPT_CONTROL_DRAFT.steps) {
+      expect(loop.refineQueries[0]).toContain(step)
+    }
+    // The round RAN and is reported, even though this fixture's emission is not a patch set — an
+    // invocation that entered stage 3 always carries an arm saying what its refinement did.
+    expect(result.refinement?.kind).toBe('not-applied')
   })
 })
 

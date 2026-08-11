@@ -477,10 +477,13 @@ describe('authoring.draft.write end to end through the composition root', () => 
     expect(AuthoringDraftWriteOutputSchema.safeParse(result).success).toBe(true)
     expect(result.outcome).toBe('drafted')
 
-    // ONE model call, and its system block leads with the tier law's `Agent context:` line
-    // carrying the authoring context — the ONE builder extended, never a second renderer.
-    expect(model.requests).toHaveLength(1)
-    expect(model.requests[0]?.system).toMatch(/^Agent context: authoring\.draft\.write — /)
+    // TWO model calls, and both system blocks lead with the tier law's `Agent context:` line —
+    // the ONE builder extended twice through `agent_context`, never a second renderer. The two are
+    // stage 3's halves (394-09, D-18): the whole-document compile, then the one unconditional
+    // refinement round, whose context line names the round rather than the compile.
+    expect(model.requests).toHaveLength(2)
+    expect(model.requests[0]?.system).toMatch(/^Agent context: authoring\.draft\.write — compile /)
+    expect(model.requests[1]?.system).toMatch(/^Agent context: authoring\.draft\.write — refine /)
 
     // The draft really is on the shelf, at the digest-derived name, and the receipt's digest is
     // the sha256 of the bytes that are there. This is the write→read join: the shelf wrote them,
@@ -678,7 +681,8 @@ describe('authoring.draft.write end to end through the composition root', () => 
 
     expect(result.outcome).toBe('drafted')
     expect(result.refusal).toBeUndefined()
-    expect(model.requests).toHaveLength(1)
+    // Two: the compile and D-18's one refinement round. See the first cell for why both are here.
+    expect(model.requests).toHaveLength(2)
   })
 
   // ---- D-03's dispatch confirm: one ask, before anything, carrying the fan-out preview ---------
