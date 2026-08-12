@@ -66,6 +66,15 @@ export interface EvaluateDraftInput {
    * however its four booleans read (D-18, SC3).
    */
   readonly draftMode?: boolean
+  /**
+   * The invoking session, spread onto the receipt when the caller supplied one (394-17, D-12).
+   *
+   * ABSENCE IS EXCLUSION AND THIS MODULE ADDS NO DEFAULT — the receipt schema's own rule, and the
+   * reason the spread below is conditional rather than an assignment. A surface that owns a
+   * session stamps it at the op boundary; every other caller mints an unattributed receipt, which
+   * a session window then leaves out rather than folding into whoever is asking.
+   */
+  readonly sessionRef?: string
 }
 
 export interface EvaluateDraftPorts {
@@ -194,6 +203,7 @@ export async function evaluateDraft(
       stabilityRunsCompleted: stability.runsCompleted,
     }),
     evaluatedAt: (ports.now ?? Date.now)(),
+    ...(input.sessionRef === undefined ? {} : { sessionRef: input.sessionRef }),
   })
 
   await ports.receipts.put(receipt)

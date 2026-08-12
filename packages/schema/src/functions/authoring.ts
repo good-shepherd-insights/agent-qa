@@ -33,6 +33,13 @@ export const AuthoringVerifyDraftInputSchema = z.object({
    * synonym for absence, so a caller cannot half-express the intent.
    */
   draftMode: z.literal(true).optional(),
+  /**
+   * The invoking session, carried to the receipt this evaluation mints.
+   *
+   * Optional and never defaulted, under {@link DraftReceiptSchema}'s own absence-is-exclusion rule
+   * — see the field's doc there for why a defaulted ref is the one shape that misattributes.
+   */
+  sessionRef: z.string().min(1).optional(),
 }).strict()
 
 export type AuthoringVerifyDraftInput = z.infer<typeof AuthoringVerifyDraftInputSchema>
@@ -171,6 +178,14 @@ export const AuthoringDraftWriteInputSchema = z.object({
    * a second spelling of absence.
    */
   draftMode: z.literal(true).optional(),
+  /**
+   * The invoking session, threaded to every receipt this invocation mints — the loop's own and the
+   * one a repaired candidate earns.
+   *
+   * Optional and never defaulted, under {@link DraftReceiptSchema}'s absence-is-exclusion rule; a
+   * session-owning surface stamps it at the invoke and a CLI supplies nothing.
+   */
+  sessionRef: z.string().min(1).optional(),
 }).strict()
 
 export type AuthoringDraftWriteInput = z.infer<typeof AuthoringDraftWriteInputSchema>

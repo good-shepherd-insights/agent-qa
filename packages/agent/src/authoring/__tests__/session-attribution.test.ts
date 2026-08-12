@@ -20,7 +20,7 @@ import {
   AuthoringDraftWriteInputSchema,
   AuthoringVerifyDraftInputSchema,
 } from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff, DraftReceipt, ParsedDraftLike } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, DraftReceipt } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -35,7 +35,7 @@ import { evaluateDraft } from '../verify-draft.js'
 import { repairDraft } from '../repair.js'
 import { routeRepairOrFinding } from '../router.js'
 import type { RepairRoute } from '../router.js'
-import type { DraftRunPortLike, DraftStageOutcome } from '../ports.js'
+import type { DraftRunPortLike, DraftStageOutcome, ParsedDraftLike } from '../ports.js'
 
 function inMemoryStore(): { written: DraftReceipt[]; put(receipt: DraftReceipt): Promise<void> } {
   const written: DraftReceipt[] = []

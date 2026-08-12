@@ -176,6 +176,23 @@ function summariseOutcome(functionId: string, result: unknown): string {
 }
 
 /**
+ * Stamp the chat session onto the authoring write op's args (394-17, D-12 · T-394-66).
+ *
+ * AN OVERWRITE, NEVER A DEFAULT-IF-ABSENT. The value that lands is this composition's own session
+ * id, and a `sessionRef` the PLANNER emitted is a value a model wrote — honouring it would let a
+ * model attribute its draft to another author's session and inflate `built` under somebody else's
+ * keep rate. That is T-392-23's shape one op over: the mint follows the fact, not the plan.
+ *
+ * ONE OP, and a non-object args value is handed back untouched — the op's `.strict()` schema
+ * refuses that call anyway, and stamping a key onto a string would invent a shape nobody sent.
+ */
+function stampSessionRef(functionId: string, args: unknown, sessionId: string): unknown {
+  if (functionId !== AUTHORING_DRAFT_WRITE_FUNCTION_ID) return args
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) return args
+  return { ...args, sessionRef: sessionId }
+}
+
+/**
  * What stage 2 produced when it was skipped or when no planner is bound.
  *
  * The EMPTY plan rather than an absent one, so stage 3 reads one shape whatever happened upstream:
@@ -669,7 +686,11 @@ async function runTurnThrough(
       try {
         // The result is CAPTURED rather than discarded (394-14). It reaches exactly one reader —
         // `summariseOutcome`, which looks at one field of one op and parses it before rendering.
-        const answered = await deps.invoke(step.functionId, step.args, caller)
+        const answered = await deps.invoke(
+          step.functionId,
+          stampSessionRef(step.functionId, step.args, sessionId),
+          caller,
+        )
         receipt = {
           clause: step.clause.text,
           functionId: step.functionId,

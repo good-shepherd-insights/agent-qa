@@ -150,6 +150,14 @@ export interface AuthoringLoopInput {
   readonly scope: ScopeKey
   /** Handed straight through to stage 4. See the op's input contract for what it costs. */
   readonly draftMode?: true
+  /**
+   * The invoking session, threaded to EVERY receipt this invocation mints (394-17, D-12).
+   *
+   * Both of them: stage 4's own evaluation and the final stability gate a repaired candidate goes
+   * through. A thread that stopped at the first would attribute first-try drafts and silently
+   * unattribute every draft that needed repairing — the population a keep rate most needs.
+   */
+  readonly sessionRef?: string
 }
 
 /**
@@ -673,11 +681,17 @@ export async function routeAfterVerify(
 
   // `handoff` is defined here: the router refuses `no-run-evidence` by name, and that refusal was
   // already converted above — so reaching a repair arm at all means a run document was read.
+  // THE SESSION IS READ OFF THE RECEIPT THAT WAS JUST MINTED, never threaded a second time
+  // (394-17, D-12). The repaired candidate belongs to the same invocation as the draft that
+  // failed, so its receipt must carry the same attribution — and taking it from the record stage 4
+  // already wrote makes that true by construction instead of by two threads agreeing. An
+  // unattributed evaluation stays unattributed through repair for the same reason.
   const repaired: RepairOutcome = await repairDraft(route, {
     draft,
     handoff: handoff as CompletedRunHandoff,
     shelf: deps.shelf,
     runs: deps.shelf.runs,
+    ...(receipt.sessionRef === undefined ? {} : { sessionRef: receipt.sessionRef }),
   })
 
   // EVERY RUN THIS INVOCATION SPENT, in one list: the evaluation's gate runs, repair's probes, and
@@ -793,6 +807,7 @@ export async function runAuthoringLoop(
   const receipt = await deps.shelf.verifyDraft({
     draftPath: draft.filePath,
     ...(input.draftMode === undefined ? {} : { draftMode: input.draftMode }),
+    ...(input.sessionRef === undefined ? {} : { sessionRef: input.sessionRef }),
   })
 
   stages.push('route')

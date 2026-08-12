@@ -186,11 +186,15 @@ export const authoringVerifyDraftSpec: FunctionSpec<AuthoringVerifyDraftInput, D
     // The ports are opened only once the draft is known good, so a refused path costs no database
     // handle and no suite walk. `draftMode` is spread rather than assigned through: the evaluator
     // reads absence, and a present `undefined` would be a second spelling of "not draft mode".
+    // `sessionRef` rides the same idiom for a sharper reason — the receipt's absence-is-exclusion
+    // rule means a present `undefined` and an absent key have to stay the same thing all the way
+    // to the mint.
     const ports = await draftEvaluation.openEvaluation(resolution.draft)
     return evaluateDraft(
       {
         draft: resolution.draft,
         ...(input.draftMode === undefined ? {} : { draftMode: input.draftMode }),
+        ...(input.sessionRef === undefined ? {} : { sessionRef: input.sessionRef }),
       },
       ports,
     )

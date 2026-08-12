@@ -217,6 +217,13 @@ export interface RepairDeps {
   readonly handoff: CompletedRunHandoff
   readonly shelf: DraftShelfPortLike
   readonly runs: DraftRunPortLike
+  /**
+   * The session the invocation was entered with, carried to the final stability gate (394-17).
+   *
+   * Handed in rather than re-derived, and ABSENT when the invocation had none — the caller reads
+   * it off the receipt stage 4 already minted, so there is one source for the whole invocation.
+   */
+  readonly sessionRef?: string
 }
 
 // ---- the prefix ------------------------------------------------------------------------------
@@ -528,7 +535,10 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
       // The pinned-N gate, WITHOUT the draft-mode marker — the whole point of stabilising at the
       // end. `stabilityRunsRequested` reaching the disposition table as `DRAFT_STABILITY_RUNS_N`
       // rather than as 1 is what lets a repaired draft be anything other than `unverified`.
-      const receipt = await deps.shelf.verifyDraft({ draftPath: staged.draft.filePath })
+      const receipt = await deps.shelf.verifyDraft({
+        draftPath: staged.draft.filePath,
+        ...(deps.sessionRef === undefined ? {} : { sessionRef: deps.sessionRef }),
+      })
       return {
         kind: 'repaired',
         draft: staged.draft,

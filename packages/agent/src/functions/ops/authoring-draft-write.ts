@@ -145,6 +145,11 @@ export const authoringDraftWriteSpec: FunctionSpec<
         intent: input.intent,
         scope: input.scope,
         ...(input.draftMode === undefined ? {} : { draftMode: input.draftMode }),
+        // 394-17 / D-12: handed on exactly as supplied, and this op invents nothing. The session
+        // is a fact about the SURFACE that dispatched the call — the chat engine stamps its own
+        // id at the invoke boundary — so a default here would attribute a CLI draft to a session
+        // that never asked for it.
+        ...(input.sessionRef === undefined ? {} : { sessionRef: input.sessionRef }),
       },
       { read, shelf },
     )
