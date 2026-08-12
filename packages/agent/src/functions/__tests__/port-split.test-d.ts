@@ -107,6 +107,15 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // draft, and this one disposes of the result. The pin fired on this one too, and once more only
 // under `tsc --noEmit` (vitest printed `Type Errors  no errors` for the same tree — the
 // dual-witness rule, hit for the eleventh consecutive plan).
+// 394-26 (WINDOWS 110) extends it a fourteenth time, by name again: `authoringScope` — which
+// product this project authors for when the caller named none. It is a SEPARATE key from
+// `authoringRead` rather than a third verb on it, and the split is the funnel's argument on a new
+// axis: the brief needs a knowledge index, the derivation needs the resolved config and the
+// workspace's committed tests, and a host can genuinely hold one without the other. Folding it in
+// would make a composition that can derive a scope but serve no brief report the whole read half
+// absent. The pin fired on this one too, and once more only under `tsc --noEmit` (vitest printed
+// `Type Errors  no errors` for the same tree — the dual-witness rule, hit for the twelfth
+// consecutive plan).
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -120,6 +129,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'chatTurn'
     | 'draftEvaluation'
     | 'authoringRead'
+    | 'authoringScope'
     | 'draftShelf'
     | 'authoringFunnel'
     | 'draftApply'

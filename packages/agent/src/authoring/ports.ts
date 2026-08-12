@@ -186,6 +186,23 @@ export interface AuthoringReadPortLike {
 }
 
 /**
+ * The host's answer to "which scope does this project author for?" when the caller named none.
+ *
+ * SEPARATE FROM {@link AuthoringReadPortLike} rather than a third verb on it, because the two are
+ * different facts about a host. The read half needs a knowledge index; this needs the resolved
+ * config and the workspace's committed tests, and a host can genuinely have one without the
+ * other. Bundling them would make a composition that can derive a scope but serve no brief report
+ * the whole read half absent.
+ *
+ * IT EITHER ANSWERS OR IT THROWS, and there is no third arm. A `ScopeKey | undefined` would put
+ * the never-guess decision back at the op, one layer from the evidence — the host is the only
+ * side that knows WHICH candidates it saw, and D-19's posture is that a refusal names them.
+ */
+export interface AuthoringScopePortLike {
+  deriveDefault(): Promise<ScopeKey>
+}
+
+/**
  * What staging a compiled draft produced — parsed and written, or refused and NOT written.
  *
  * The refusal arm is the T-394-06 mitigation expressed as a return type. Model-authored YAML is

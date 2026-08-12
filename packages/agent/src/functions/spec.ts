@@ -50,6 +50,7 @@ import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
 import type {
   AuthoringProposalsWritePortLike,
   AuthoringReadPortLike,
+  AuthoringScopePortLike,
   DraftApplyPortLike,
   DraftShelfPortLike,
   ParsedDraftLike,
@@ -117,6 +118,7 @@ export type OptionalFunctionDepKey =
   | 'chatTurn'
   | 'draftEvaluation'
   | 'authoringRead'
+  | 'authoringScope'
   | 'draftShelf'
   | 'authoringFunnel'
   | 'draftApply'
@@ -830,6 +832,18 @@ export interface FunctionDeps {
    * them into a file the user is asked to commit.
    */
   authoringRead?: AuthoringReadPortLike
+  /**
+   * 394-26 / WTST-01: which scope this project authors for, when the caller named none.
+   *
+   * OPTIONAL and consulted ONLY on absence. `authoring.draft.write`'s `scope` is optional at the
+   * registry (the `runs.start` law), so an input carrying just an intent has to be resolved
+   * before the loop runs — and the resolution reads the config and the workspace, which
+   * `packages/agent` cannot do. A composition that binds the loop's other halves and forgets this
+   * one refuses BY NAME on a scope-less call rather than authoring against a default: a guessed
+   * product is a draft written for the wrong application, which is the one failure mode a silent
+   * fallback here would produce.
+   */
+  authoringScope?: AuthoringScopePortLike
   /**
    * 394 D-01 / WTST-01: the authoring loop's compile half — the model, and the draft shelf
    * (stage 3).

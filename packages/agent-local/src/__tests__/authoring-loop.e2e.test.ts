@@ -463,6 +463,13 @@ function draftAuthoring(workspace: string, suiteText: readonly {
   }
 
   return {
+    // 394-26: present because the port requires it, and THROWING because every case in this file
+    // supplies its scope explicitly. A fake that answered a scope would let a cell pass while the
+    // op silently derived one — which is exactly the arrangement the op's own control cell exists
+    // to forbid.
+    deriveDefaultScope(): Promise<never> {
+      throw new Error('every case here supplies a scope, so nothing derives one')
+    },
     // 394-06: present because the port requires it, and never reached by this file — neither
     // case routes to repair, so no patch is ever applied. A fake answering one it was not asked
     // for would be a second staging path these e2e pins could accidentally observe.

@@ -178,8 +178,17 @@ export type AuthoringDedupRefusal = z.infer<typeof AuthoringDedupRefusalSchema>
 export const AuthoringDraftWriteInputSchema = z.object({
   /** Plain-English description of the test to author. */
   intent: z.string().min(1),
-  /** Which scope the authoring brief is read at, and the draft is authored for. */
-  scope: scopeKeySchema,
+  /**
+   * Which scope the authoring brief is read at, and the draft is authored for.
+   *
+   * OPTIONAL, and absent resolves from the host's configured targets and committed tests — the
+   * `RunsStartInputSchema.scope` law one op over, applied here for the reason that op adopted it:
+   * a model cannot know this project's product keys, and a required field it can only guess at is
+   * a field it refuses the whole call over (WINDOWS 110). A supplied scope always wins; the host
+   * derives only on absence, and refuses by name rather than guessing when the answer is not
+   * unique.
+   */
+  scope: scopeKeySchema.optional(),
   /**
    * Draft mode: the stability gate runs ONCE instead of the pinned N.
    *

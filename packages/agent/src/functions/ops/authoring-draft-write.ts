@@ -146,10 +146,29 @@ export const authoringDraftWriteSpec: FunctionSpec<
       throw new FunctionNotBoundError(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
     }
 
+    // SCOPE IS RESOLVED HERE, ABOVE THE LOOP, AND NOWHERE ELSE (394-26, WINDOWS 110).
+    //
+    // The registry contract makes `scope` optional on the `runs.start` law — absent resolves from
+    // the host — because a model cannot know this project's product keys and refuses the whole
+    // call over a field it can only guess at. `AuthoringLoopInput.scope` stays REQUIRED: the loop
+    // reads the brief at it and names it in the compile prompt, so it must be concrete by the
+    // time the loop starts, and every read inside one invocation is then at one scope.
+    //
+    // A HOST WITH NO DERIVER REFUSES BY NAME. Not a default, and not the first configured
+    // product: authoring against a guessed product writes a test for the wrong application, so
+    // the missing binding is reported where the composition forgot it — the same named error the
+    // three halves above use, checked only when the caller supplied nothing.
+    const scope = input.scope ?? await (async () => {
+      if (deps.authoringScope === undefined) {
+        throw new FunctionNotBoundError(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+      }
+      return await deps.authoringScope.deriveDefault()
+    })()
+
     const result = await runAuthoringLoop(
       {
         intent: input.intent,
-        scope: input.scope,
+        scope,
         ...(input.draftMode === undefined ? {} : { draftMode: input.draftMode }),
         // 394-17 / D-12: handed on exactly as supplied, and this op invents nothing. The session
         // is a fact about the SURFACE that dispatched the call — the chat engine stamps its own

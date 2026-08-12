@@ -77,10 +77,12 @@ import type {
   RiskActionDescriptor,
   RunId,
   RunsStartInput,
+  ScopeKey,
   TestEditPatchSet,
 } from '@vostride/agent-qa-schema'
 
 import { loadConfigFile, loadEnvOverrides, resolveConfig } from '../config.js'
+import { resolveTarget } from '../targets.js'
 import { invokeViaDaemon } from '../daemon/client.js'
 import { resolveCliAnalysisTokenBudget, resolveCliJobModel } from '../llm-utils.js'
 import { buildConfigVisibilityOracle } from './config-visibility.js'
@@ -599,10 +601,99 @@ function singleDraftTest(tests: readonly TestDefinition[]): TestDefinition | str
  * is also the spelling the runner records on `PerTestOutcome.filePath` is what makes gates 1-2 able
  * to find the draft's own member at all.
  */
+/**
+ * A scope-less authoring call the host cannot answer unambiguously (394-26, WINDOWS 110 · D-19).
+ *
+ * IT NAMES EVERY CANDIDATE IT SAW, which is the whole difference between this and returning
+ * `undefined`. A refusal that says only "ambiguous" leaves the author with no way to write the
+ * `scope` that would have worked, and the host is the only side that knows what the alternatives
+ * were. Zero candidates uses the same class: "this project configures no targets" and "it
+ * configures several" are both answers of the form "there is no unique product here".
+ */
+export class AuthoringScopeUnresolvableError extends Error {
+  constructor(readonly candidates: readonly string[]) {
+    super(
+      candidates.length === 0
+        ? 'cannot derive a default authoring scope: this project configures no targets, so there '
+          + 'is no product to author for. Add a target under registry.targets, or pass `scope` '
+          + 'explicitly.'
+        : `cannot derive a default authoring scope: ${candidates.length} products are candidates `
+          + `(${candidates.join(', ')}). Pass \`scope\` explicitly to choose one.`,
+    )
+    this.name = 'AuthoringScopeUnresolvableError'
+  }
+}
+
+/**
+ * WHICH PRODUCT THIS PROJECT AUTHORS FOR, when the caller named no scope (394-26, WINDOWS 110).
+ *
+ * THE ONE DERIVATION, and both hosts reach exactly it: the CLI `fn` surface and the chat/daemon
+ * host both build their authoring capability from `createDraftAuthoringPort` below, which
+ * delegates here. A second resolver — a planner-side default, an utterance parser, a chat-side
+ * stamp — would be a redundant mechanism second-guessing this one, and the two would be free to
+ * answer differently for one workspace.
+ *
+ * THE PRODUCT MAPPING IS `agent-qa run`'S OWN. `resolveTarget` answers a target's `product` when
+ * it has one and the target name otherwise, so the scope a draft is authored for is the scope its
+ * gate runs are attributed under. A mapping spelled here would be a second arithmetic for one
+ * number.
+ *
+ * THE WORKSPACE NARROWS THE CONFIG, and only when it has something to say. A project may declare
+ * several targets and commit tests against one of them; that project has an unambiguous answer
+ * the config alone cannot give. A project with nothing committed falls back to the configured
+ * targets, which is what makes the very first authored test in a fresh checkout reachable at all.
+ *
+ * DISCOVERY IS ADVISORY, on `suiteTextCorpus`'s stated posture one function down: an unreadable
+ * or unparsable file is omitted rather than raised, because one broken test must not make
+ * authoring unreachable. The direction the omission moves the candidate set is the safe one — it
+ * can only shrink it, and a shrunken set still has to survive the singleton check below.
+ *
+ * AMBIGUITY REFUSES AND NAMES ITS EVIDENCE (D-19). A unique candidate binds; zero or several
+ * throw {@link AuthoringScopeUnresolvableError}. Picking the first would author a test for
+ * whichever product happened to sort first in a config file.
+ */
+export async function deriveDefaultAuthoringScope(configPath: string): Promise<ScopeKey> {
+  const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+  const targetNames = Object.keys(
+    (config as { registry?: { targets?: Record<string, unknown> } }).registry?.targets ?? {},
+  )
+
+  const productOfTarget = new Map<string, string>()
+  for (const name of targetNames) productOfTarget.set(name, resolveTarget(config, name).product)
+
+  const workspace = resolveWorkspacePaths({ config, configPath })
+  const files = await discoverWorkspaceFiles({ workspace, kind: 'test' })
+  const exercised = new Set<string>()
+  for (const file of files) {
+    try {
+      const parsed = parseTestFile(readFileSync(file.absolutePath, 'utf8'), file.workspaceRelativePath)
+      if (parsed.errors.length > 0) continue
+      for (const test of parsed.tests) {
+        // A target this config does not declare has no product mapping, so it can neither narrow
+        // nor ambiguate — it is a test this project cannot run either.
+        const product = productOfTarget.get(test.target)
+        if (product !== undefined) exercised.add(product)
+      }
+    } catch {
+      // One unreadable file cannot make authoring unreachable. See the note above.
+    }
+  }
+
+  const candidates = [...(exercised.size > 0 ? exercised : new Set(productOfTarget.values()))].sort()
+  if (candidates.length !== 1) throw new AuthoringScopeUnresolvableError(candidates)
+  return { tier: 'product', key: candidates[0] as string }
+}
+
 export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort {
   const configDir = dirname(resolve(configPath))
 
   return {
+    // The op's absence path reaches THIS, through the composition — see the function's own header
+    // for why there is exactly one derivation and why both hosts must reach it.
+    deriveDefaultScope(): Promise<ScopeKey> {
+      return deriveDefaultAuthoringScope(configPath)
+    },
+
     parseDraft(filePath: string): Promise<DraftParseOutcome> {
       let identityPath: string
       let absolutePath: string

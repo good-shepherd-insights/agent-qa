@@ -310,6 +310,11 @@ function draftAuthoring(options: {
     suiteTextCorpus() {
       return Promise.resolve(options.suiteTextCorpus ?? [])
     },
+    // 394-26: nothing in this file authors, so nothing derives a scope. Throwing rather than
+    // answering keeps that a fact about the run instead of a value a cell could quietly consume.
+    deriveDefaultScope(): Promise<never> {
+      throw new Error('this file evaluates an existing draft, so no scope is derived')
+    },
     // 394: the same posture `JOB_MODEL` takes above, on the other half of the authoring seam.
     // Nothing in THIS file authors a draft — it evaluates one that already exists — so a host
     // that staged bytes here would be modelling a call this suite never makes.

@@ -950,6 +950,19 @@ export interface DraftAuthoringPort {
   parseDraft(filePath: string): Promise<DraftParseOutcome>
   suiteTextCorpus(): Promise<readonly SuiteTextEntry[]>
   /**
+   * 394-26 · WINDOWS 110: which scope this project authors for, when the caller named none.
+   *
+   * ON THIS PORT rather than beside it, and that placement is the guarantee. Both hosts build
+   * their authoring capability from one factory, so a verb that lives here is reached by the CLI
+   * `fn` surface and the chat/daemon host without a second binding either could forget — which is
+   * what makes "there is ONE derivation" a fact about the wiring rather than a convention.
+   *
+   * IT THROWS RATHER THAN ANSWERING `undefined` when the project has no unique product: the host
+   * is the only side that knows which candidates it saw, and a refusal that cannot name them
+   * leaves an author with no way to write the `scope` that would have worked.
+   */
+  deriveDefaultScope(): Promise<ScopeKey>
+  /**
    * 394 D-01 · WTST-01: PARSE the compiled draft, then WRITE it to the shelf — in that order, as
    * one verb, joining for exactly the reason the two above bundle.
    *
@@ -2739,6 +2752,15 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             return createAuthoringReader({ knowledgeRoot }).getAuthoringBrief(intent, scope)
           },
           suiteTextCorpus: () => authoringLoopHost.suiteTextCorpus(),
+        },
+        // 394-26 · WINDOWS 110: the scope an intent-only call is authored at, bound HERE and so on
+        // BOTH hosts, off the same port the read and compile halves come from. Its own deps key
+        // rather than a third verb on `authoringRead`, because deriving a scope needs the resolved
+        // config and the workspace while the brief needs a knowledge index — a host can have one
+        // without the other, and the op refuses on THIS key by name when a scope-less call arrives
+        // at a composition that never bound it.
+        authoringScope: {
+          deriveDefault: () => authoringLoopHost.deriveDefaultScope(),
         },
         draftShelf: {
           model: async () => await input.model(),
