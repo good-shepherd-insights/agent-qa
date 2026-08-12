@@ -271,10 +271,13 @@ export type AuthoringDraftWriteOutput = z.infer<typeof AuthoringDraftWriteOutput
  * actually known, never a schema default that would have to guess. A defaulted session ref is the
  * one shape that could quietly report a different session's drafts as this one's.
  *
- * NO SURFACE CONSTRUCTS A SESSION WINDOW YET. What 394-17 landed is the other half: the chat
- * surface stamps its own session onto `authoring.draft.write`, so receipts are ATTRIBUTED and a
- * session-scoped ask returns that session's drafts once a surface supplies its ref. A caller that
- * supplies none asks all-time, which is the honest answer for a caller that has no session.
+ * CHAT IS THE SURFACE THAT CONSTRUCTS ONE (394-19). It stamps its own session onto the two
+ * `sessionRef`-carrying authoring ops, so receipts are ATTRIBUTED; and at the same invoke it
+ * supplies THIS window — the session arm by default when a planner step carries none, and the
+ * session arm's REF overwritten when the model emitted one — which is D-12's surface default
+ * honoured exactly where the session is known. The all-time and last-n arms pass through
+ * untouched. The CLI has no session, so it constructs nothing and asks all-time, which is the
+ * honest answer for a caller that has none.
  *
  * `sessionRef` is compared by EXACT STRING EQUALITY and is opaque here: this package mints no
  * session ids and parses none, so any host's spelling round-trips unexamined.

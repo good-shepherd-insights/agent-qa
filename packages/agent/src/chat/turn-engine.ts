@@ -45,6 +45,8 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../functions/ops/authoring-draft-write.js'
+import { AUTHORING_DRAFT_VERIFY_FUNCTION_ID } from '../functions/ops/authoring-verify-draft.js'
+import { AUTHORING_FUNNEL_GET_FUNCTION_ID } from '../functions/ops/authoring-funnel-get.js'
 
 import type {
   CallerMint,
@@ -176,20 +178,64 @@ function summariseOutcome(functionId: string, result: unknown): string {
 }
 
 /**
- * Stamp the chat session onto the authoring write op's args (394-17, D-12 · T-394-66).
+ * The ops whose `sessionRef` this surface OWNS (394-17 / 394-19, D-12 · T-394-66 · T-394-74).
  *
- * AN OVERWRITE, NEVER A DEFAULT-IF-ABSENT. The value that lands is this composition's own session
- * id, and a `sessionRef` the PLANNER emitted is a value a model wrote — honouring it would let a
- * model attribute its draft to another author's session and inflate `built` under somebody else's
- * keep rate. That is T-392-23's shape one op over: the mint follows the fact, not the plan.
- *
- * ONE OP, and a non-object args value is handed back untouched — the op's `.strict()` schema
- * refuses that call anyway, and stamping a key onto a string would invent a shape nobody sent.
+ * A SET RATHER THAN AN ID, and that is CR-02's adjudicated fix rather than a generalisation for
+ * its own sake. `authoring.draft.verify` carries the same field, spreads it onto the receipt it
+ * persists, and is planner-reachable like every registered op — so a guard naming only the write
+ * op left the identical forgery open one function id over. Membership makes the guarded vocabulary
+ * a value `session-stamp-vocabulary.test.ts` can compare SET-EQUAL against the registry ops that
+ * actually carry the field, so a future sibling gaining it reds a cell by the omitted name instead
+ * of shipping unguarded. Dropping the field from the verify schema is NOT the alternative fix:
+ * `shelf.verifyDraft` needs it to thread the loop's own ref.
  */
-function stampSessionRef(functionId: string, args: unknown, sessionId: string): unknown {
-  if (functionId !== AUTHORING_DRAFT_WRITE_FUNCTION_ID) return args
+export const SESSION_STAMPED_FUNCTION_IDS: ReadonlySet<string> = new Set([
+  AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+  AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
+])
+
+/** The ops whose `window` this surface may scope to the session it knows (394-19, D-12). */
+export const WINDOW_STAMPED_FUNCTION_IDS: ReadonlySet<string> = new Set([
+  AUTHORING_FUNNEL_GET_FUNCTION_ID,
+])
+
+/**
+ * Stamp the chat session onto the args of the ops this surface owns the session facts for.
+ *
+ * TWO LAWS, AND THEY POINT OPPOSITE WAYS ON PURPOSE. The receipt ref is an OVERWRITE AND NEVER A
+ * DEFAULT — a `sessionRef` the planner emitted is a value a model wrote, honouring it would let a
+ * model attribute its draft to another author's keep rate, and an absent one must stay absent
+ * because absence is exclusion on a receipt. The funnel WINDOW is D-12's ratified SURFACE default
+ * on the read side: the op cannot construct it (`FunctionSpec.invoke` never sees a caller), so the
+ * surface that knows its session supplies it, and only its session ARM's ref is overwritten —
+ * all-time and last-n pass through untouched because a model may legitimately ask a wider
+ * question.
+ *
+ * A non-object args value is handed back untouched — the ops' `.strict()` schemas refuse that call
+ * anyway, and stamping a key onto a string would invent a shape nobody sent.
+ */
+function stampSessionFacts(functionId: string, args: unknown, sessionId: string): unknown {
+  const stampsRef = SESSION_STAMPED_FUNCTION_IDS.has(functionId)
+  const stampsWindow = WINDOW_STAMPED_FUNCTION_IDS.has(functionId)
+  if (!stampsRef && !stampsWindow) return args
   if (typeof args !== 'object' || args === null || Array.isArray(args)) return args
-  return { ...args, sessionRef: sessionId }
+
+  const stamped: Record<string, unknown> = { ...(args as Record<string, unknown>) }
+  if (stampsRef) stamped.sessionRef = sessionId
+  if (stampsWindow) {
+    const window = stamped.window
+    if (window === undefined) {
+      stamped.window = { scope: 'session', sessionRef: sessionId }
+    } else if (
+      typeof window === 'object'
+      && window !== null
+      && !Array.isArray(window)
+      && (window as { scope?: unknown }).scope === 'session'
+    ) {
+      stamped.window = { ...(window as Record<string, unknown>), sessionRef: sessionId }
+    }
+  }
+  return stamped
 }
 
 /**
@@ -688,7 +734,7 @@ async function runTurnThrough(
         // `summariseOutcome`, which looks at one field of one op and parses it before rendering.
         const answered = await deps.invoke(
           step.functionId,
-          stampSessionRef(step.functionId, step.args, sessionId),
+          stampSessionFacts(step.functionId, step.args, sessionId),
           caller,
         )
         receipt = {

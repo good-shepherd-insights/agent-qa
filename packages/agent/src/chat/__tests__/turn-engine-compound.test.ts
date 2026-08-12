@@ -34,6 +34,8 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../../functions/ops/authoring-draft-write.js'
+import { AUTHORING_DRAFT_VERIFY_FUNCTION_ID } from '../../functions/ops/authoring-verify-draft.js'
+import { AUTHORING_FUNNEL_GET_FUNCTION_ID } from '../../functions/ops/authoring-funnel-get.js'
 import { CHAT_RESOLVER_TABLE } from '../resolver-table.js'
 import { deterministicOverrideStrategy } from '../reconcile.js'
 import { splitClauses } from '../clause-split.js'
@@ -720,6 +722,10 @@ const EXCEEDED_REPORT = buildFanOutReport({
 
 const AUTHORING_TOOL = toToolName(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
 const AUTHORING_UTTERANCE = 'write a test for two factor auth'
+const VERIFY_TOOL = toToolName(AUTHORING_DRAFT_VERIFY_FUNCTION_ID)
+const VERIFY_UTTERANCE = 'check the shelved draft again'
+const FUNNEL_TOOL = toToolName(AUTHORING_FUNNEL_GET_FUNCTION_ID)
+const FUNNEL_UTTERANCE = 'how is this session doing so far'
 
 function authoringHarness(report: unknown): Harness {
   return harness({
@@ -863,6 +869,110 @@ describe('the authoring sessionRef stamp (394-17)', () => {
     await run.runTurn({ message: 'proposals' })
 
     expect(run.invocations[0]?.functionId).toBe(PROPOSALS_LIST)
+    expect(run.invocations[0]?.input).not.toHaveProperty('sessionRef')
+  })
+
+  it('OVERWRITES a planner-emitted ref on the VERIFY op too (CR-02)', async () => {
+    // THE SIBLING THE ONE-ID GUARD MISSED. `authoring.draft.verify` carries `sessionRef` on its
+    // own input schema, spreads it onto the receipt it persists, and is planner-reachable like
+    // every other registered op — so a guard that names only the write op leaves the same
+    // attribution forgery open one function id over. The guarded vocabulary has to be the SET of
+    // ops that carry the field, which is what `SESSION_STAMPED_FUNCTION_IDS` states.
+    const run = harness({
+      planned: {
+        toolCalls: [{
+          toolName: VERIFY_TOOL,
+          input: { draftPath: 'tests/.agent-qa-drafts/abc.yaml', sessionRef: 'sess-bravo' },
+        }],
+      },
+      results: { [AUTHORING_DRAFT_VERIFY_FUNCTION_ID]: { ok: true } },
+    })
+
+    await run.runTurn({ message: VERIFY_UTTERANCE })
+
+    expect(run.invocations[0]?.functionId).toBe(AUTHORING_DRAFT_VERIFY_FUNCTION_ID)
+    expect((run.invocations[0]?.input as { sessionRef?: string }).sessionRef).toBe(SESSION_ID)
+    expect(JSON.stringify(run.invocations[0]?.input)).not.toContain('sess-bravo')
+  })
+})
+
+// ---- the funnel window stamp (394-19, D-12 · WTST-05 · T-394-75) --------------------------------
+//
+// THE READ SIDE, AND ITS LAW IS THE OTHER ONE. D-12's "default scope = current session" is a
+// SURFACE default — the op cannot construct it because `FunctionSpec.invoke` never sees a caller —
+// so the surface that KNOWS its session is the one that supplies it. That makes the window stamp a
+// DEFAULT-IF-ABSENT, which the receipt ref deliberately is not: an unattributed receipt must stay
+// unattributed (absence is exclusion), while an unscoped ASK has a right answer for a chat caller.
+//
+// The session arm's REF is still an overwrite, for the write side's reason: which session is being
+// asked about is this composition's fact, not the model's. The all-time and last-n arms pass
+// through byte-untouched, because a model may legitimately ask a question this surface's default
+// does not answer.
+
+describe('the authoring funnel window stamp (394-19)', () => {
+  it('DEFAULTS an absent window to this session — D-12\'s surface default, constructed', async () => {
+    const run = harness({
+      planned: { toolCalls: [{ toolName: FUNNEL_TOOL, input: {} }] },
+      results: { [AUTHORING_FUNNEL_GET_FUNCTION_ID]: { ok: true } },
+    })
+
+    await run.runTurn({ message: FUNNEL_UTTERANCE })
+
+    expect(run.invocations[0]?.functionId).toBe(AUTHORING_FUNNEL_GET_FUNCTION_ID)
+    expect((run.invocations[0]?.input as { window?: unknown }).window)
+      .toEqual({ scope: 'session', sessionRef: SESSION_ID })
+  })
+
+  it('OVERWRITES a planner-emitted session ref in the window', async () => {
+    const run = harness({
+      planned: {
+        toolCalls: [{
+          toolName: FUNNEL_TOOL,
+          input: { window: { scope: 'session', sessionRef: 'sess-bravo' } },
+        }],
+      },
+      results: { [AUTHORING_FUNNEL_GET_FUNCTION_ID]: { ok: true } },
+    })
+
+    await run.runTurn({ message: FUNNEL_UTTERANCE })
+
+    expect((run.invocations[0]?.input as { window?: unknown }).window)
+      .toEqual({ scope: 'session', sessionRef: SESSION_ID })
+    expect(JSON.stringify(run.invocations[0]?.input)).not.toContain('sess-bravo')
+  })
+
+  it('leaves an all-time window byte-untouched — the model may ask a wider question', async () => {
+    const run = harness({
+      planned: {
+        toolCalls: [{ toolName: FUNNEL_TOOL, input: { window: { scope: 'all-time' } } }],
+      },
+      results: { [AUTHORING_FUNNEL_GET_FUNCTION_ID]: { ok: true } },
+    })
+
+    await run.runTurn({ message: FUNNEL_UTTERANCE })
+
+    expect(run.invocations[0]?.input).toEqual({ window: { scope: 'all-time' } })
+  })
+
+  it('leaves a last-n window byte-untouched', async () => {
+    const run = harness({
+      planned: {
+        toolCalls: [{ toolName: FUNNEL_TOOL, input: { window: { scope: 'last-n', n: 5 } } }],
+      },
+      results: { [AUTHORING_FUNNEL_GET_FUNCTION_ID]: { ok: true } },
+    })
+
+    await run.runTurn({ message: FUNNEL_UTTERANCE })
+
+    expect(run.invocations[0]?.input).toEqual({ window: { scope: 'last-n', n: 5 } })
+  })
+
+  it('stamps NO window onto any other op — the blast radius, both stamps', async () => {
+    const run = harness({ results: { [PROPOSALS_LIST]: { ok: true } } })
+
+    await run.runTurn({ message: 'proposals' })
+
+    expect(run.invocations[0]?.input).not.toHaveProperty('window')
     expect(run.invocations[0]?.input).not.toHaveProperty('sessionRef')
   })
 })
