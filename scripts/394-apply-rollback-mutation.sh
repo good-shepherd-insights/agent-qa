@@ -11,7 +11,7 @@
 # could not be read routed through the same catch, so a real commit was answered with a worktree
 # reverted against it.
 #
-# FOUR MUTATIONS, FOUR PROPERTIES, AND THE RED SETS MUST BE PAIRWISE DISJOINT:
+# SIX MUTATIONS, SIX PROPERTIES, AND THE RED SETS MUST BE PAIRWISE DISJOINT:
 #
 #   MUTATION T  the INDEX half of the restore is removed, leaving the worktree-only restore this
 #               file shipped with. A failed apply then leaves the agent's blob staged.
@@ -19,18 +19,31 @@
 #               A commit that exists is then answered with the file reverted against it.
 #   MUTATION N  the nothing-to-commit arm is removed, so an apply that staged nothing reports a
 #               generic `git commit exited 1` instead of refusing by name.
-#   MUTATION P  the index capture is hoisted back BELOW the write, which is where 394-18 left it
-#               and what CR-01 named. The capture's four throw paths then sit outside the try that
-#               owns the rollback with the agent's bytes already on the person's disk.
+#   MUTATION P  the index capture is moved INSIDE the try, below the write. Its four throw paths
+#               then reach a rollback that has no captured entry to put back, so a failed capture
+#               stages a DELETION of the person's own committed test.
+#   MUTATION W  the target write is hoisted back OUT of the try, which is the arrangement 394-23
+#               closed and the third consecutive narrowing of one hole. A write that fails
+#               mid-flight then leaves a person's committed test truncated with no restore at all.
+#   MUTATION U  `readTargetIfPresent` decodes and re-encodes as UTF-8 — the round-trip this file
+#               shipped with. The digest is then over a DECODING of the target rather than over the
+#               target, and the rollback puts U+FFFD back where bytes were.
 #
-# WHY P IS A LEG AND NOT A COMMENT (394-20). The other three mutate what the rollback DOES; P
-# mutates WHERE a read happens, and nothing in the first three could tell the two placements apart —
-# the verifier found three legs and no coverage of the placement at all, so a hoist back down would
-# have returned in silence.
+# WHY P AND W ARE TWO LEGS AND NOT ONE. Both are about placement, and they are placements of
+# DIFFERENT statements relative to the same try: P moves the capture in, W moves the write out. The
+# pre-394-23 arrangement had both at once, and a single leg recreating it would have red both
+# signature cells and proved neither — the two are separated here precisely so the differential can
+# say which of the two placements a future edit broke.
+#
+# WHY U IS ONE LEG AND NOT TWO. The digest half and the restore half of WR-04 are the SAME decode,
+# and they are not independently reachable through this entry point: with a byte-true digest the
+# apply refuses a round-tripped target before it ever reaches the restore. So one leg reds both
+# byte-fidelity cells, which is the honest shape — a pair of legs contrived to separate them would
+# be measuring an arrangement the shipped code cannot be in.
 #
 # DISJOINTNESS IS THE POINT, and the script asserts it with `comm -12` over the sorted red sets. A
-# pair of mutations that red the same cells has measured one property twice; four that red four
-# sets have shown the corpus distinguishes four defects — which is what a gap round needs in order
+# pair of mutations that red the same cells has measured one property twice; six that red six
+# sets have shown the corpus distinguishes six defects — which is what a gap round needs in order
 # to say which of them was closed.
 #
 # A GREEN SUITE UNDER A MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS. So is a red naming a cell
@@ -79,6 +92,8 @@ T_SIGNATURE_CELL="leaves NO index entry behind when the commit fails and the tar
 V_SIGNATURE_CELL="does NOT revert a file whose commit already SUCCEEDED"
 N_SIGNATURE_CELL="names NOTHING-TO-COMMIT rather than reporting it as a git failure"
 P_SIGNATURE_CELL="refuses BYTE-UNCHANGED when the index capture fails, because the capture is above the write"
+W_SIGNATURE_CELL="restores the person's bytes when the WRITE ITSELF fails, because the write is inside the try"
+U_SIGNATURE_CELL="digests the target's RAW BYTES, so a target that is not valid UTF-8 still matches the proposal"
 
 # The cells allowed to be red under each mutation. Every entry is an assertion about the SAME
 # property as its signature cell, observed at a second place. Widening a list to quieten a surprise
@@ -96,6 +111,19 @@ ALLOWED_RED_CELLS_N=(
 ALLOWED_RED_CELLS_P=(
   "$P_SIGNATURE_CELL"
 )
+# W reds ONE cell and that is the claim: every other cell's write succeeds against a real
+# filesystem, so hoisting it out of the try is invisible to all of them. The one cell that drives a
+# failing write is the corpus's only witness to the placement, which is why it exists.
+ALLOWED_RED_CELLS_W=(
+  "$W_SIGNATURE_CELL"
+)
+# U's second cell is the SAME decode observed on the rollback side rather than the digest side. It
+# is here rather than in a leg of its own for the reason in this file's header: with a byte-true
+# digest the two are not independently reachable.
+ALLOWED_RED_CELLS_U=(
+  "$U_SIGNATURE_CELL"
+  "restores a non-UTF-8 target BYTE-IDENTICALLY, never through a decode round-trip"
+)
 
 T_ANCHOR="  restoreIndexEntry(exec, cwd, identityPath, indexBefore)"
 T_REPLACEMENT="  void indexBefore"
@@ -110,7 +138,9 @@ V_REPLACEMENT="  try {
       commit: runGitHeadHash(exec, configDir, identityPath),
     }
   } catch (error) {
-    restoreApplyFailure(exec, configDir, identityPath, absoluteTarget, existing, indexBefore)
+    restoreOrReportBoth(
+      exec, configDir, identityPath, absoluteTarget, existing, indexBefore, writeTarget, error,
+    )
     throw error
   }"
 
@@ -122,16 +152,47 @@ V_REPLACEMENT="  try {
 N_ANCHOR="  if (!stagedAtPath(exec, cwd, targetPath)) return { kind: 'nothing-to-commit' }"
 N_REPLACEMENT="  void stagedAtPath(exec, cwd, targetPath)"
 
-# THE ANCHOR IS THE THREE CODE LINES AND NOT THEIR COMMENT, so a reworded placement note cannot
-# drift the anchor to zero and hand this leg an unmutated build to measure.
+# THE ANCHORS ARE CODE LINES AND NEVER THEIR COMMENTS, so a reworded placement note cannot drift an
+# anchor to zero and hand a leg an unmutated build to measure. P and W anchor on overlapping text
+# and that is fine — each is applied to the PRISTINE snapshot, and each is asserted unique in it.
+#
+# P RE-ANCHORED IN 394-23. Its previous form moved the capture below a write that lived outside the
+# try; with the write inside the try, that same edit would have moved the capture out with it and
+# recreated W's arrangement as well, making the two legs red each other's cells. The capture now
+# moves INTO the try instead, which is the same defect — a rollback with no captured entry — stated
+# against the arrangement that actually ships.
 P_ANCHOR="  const indexBefore = captureIndexEntry(exec, configDir, identityPath)
-
   mkdirSync(dirname(absoluteTarget), { recursive: true })
-  writeFileSync(absoluteTarget, contents, 'utf8')"
-P_REPLACEMENT="  mkdirSync(dirname(absoluteTarget), { recursive: true })
-  writeFileSync(absoluteTarget, contents, 'utf8')
 
-  const indexBefore = captureIndexEntry(exec, configDir, identityPath)"
+  let committed: GitCommitOutcome
+  try {
+    writeTarget(absoluteTarget, contents)"
+P_REPLACEMENT="  let indexBefore: IndexEntry | undefined
+  mkdirSync(dirname(absoluteTarget), { recursive: true })
+
+  let committed: GitCommitOutcome
+  try {
+    writeTarget(absoluteTarget, contents)
+    indexBefore = captureIndexEntry(exec, configDir, identityPath)"
+
+# W — THE WRITE BACK OUT OF THE TRY. The implementation this plan's detector must red on, spelled
+# as itself: the shipped arrangement through 394-22, in which a mid-write failure returned to the
+# caller with a person's committed test truncated and the rollback never run.
+W_ANCHOR="  let committed: GitCommitOutcome
+  try {
+    writeTarget(absoluteTarget, contents)
+    runGitAdd(exec, configDir, identityPath)"
+W_REPLACEMENT="  writeTarget(absoluteTarget, contents)
+
+  let committed: GitCommitOutcome
+  try {
+    runGitAdd(exec, configDir, identityPath)"
+
+# U — THE UTF-8 ROUND-TRIP RESTORED, as a decode-and-re-encode rather than as a change of return
+# type. Keeping the signature intact is deliberate: the mutation has to be the DEFECT and not a
+# compile error, or the leg measures the type checker instead of the corpus.
+U_ANCHOR="    return readFileSync(absolutePath)"
+U_REPLACEMENT="    return Buffer.from(readFileSync(absolutePath).toString('utf8'), 'utf8')"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/394-apply-rollback-mutation.XXXXXX")"
 RESTORED=0
@@ -181,14 +242,14 @@ anchor_count() { # $1 = anchor
   printf '%s' "$count"
 }
 
-for pair in "T:$T_ANCHOR" "V:$V_ANCHOR" "N:$N_ANCHOR" "P:$P_ANCHOR"; do
+for pair in "T:$T_ANCHOR" "V:$V_ANCHOR" "N:$N_ANCHOR" "P:$P_ANCHOR" "W:$W_ANCHOR" "U:$U_ANCHOR"; do
   name="${pair%%:*}"
   anchor="${pair#*:}"
   count="$(anchor_count "$anchor")"
   [ "$count" = "1" ] \
     || fatal "the mutation-$name anchor appears $count time(s) in $HOST_REL, expected exactly 1 — a drifted anchor edits nothing and this lane would then measure the UNMUTATED build"
 done
-printf 'all four mutation anchors are unique\n'
+printf 'all six mutation anchors are unique\n'
 
 if [ "${APPLY_ROLLBACK_SKIP_BUILD:-0}" = "1" ]; then
   printf '!!! APPLY_ROLLBACK_SKIP_BUILD=1 — this lane may be measuring a STALE dist. Iteration only.\n'
@@ -359,23 +420,52 @@ banner "MUTATION N — the nothing-to-commit arm removed"
 run_leg N "$N_ANCHOR" "$N_REPLACEMENT" "$N_SIGNATURE_CELL" "${ALLOWED_RED_CELLS_N[@]}"
 
 # ------------------------------------------------------------------------------------------------
-# MUTATION P — the index capture hoisted back BELOW the write
+# MUTATION P — the index capture moved INSIDE the try, below the write
 # ------------------------------------------------------------------------------------------------
 #
-# CR-01, and the shipped placement until 394-20. `captureIndexEntry` throws four ways, and none of
-# them is inside the try that owns the rollback — so below the write each one returns to the caller
-# with the agent's bytes sitting in a person's working tree at a path the apply just said it did not
-# write. Their next `git commit -a` records those bytes under their name.
+# CR-01's index half, restated against the arrangement that ships since 394-23. `captureIndexEntry`
+# throws four ways, and it PRODUCES the value the rollback consumes — so inside the try each of
+# those four throws reaches a restore holding no captured entry, which puts the index back as
+# ABSENT and stages a deletion of a test the person has committed. Above the write it is an ordinary
+# refusal with the repository byte-unchanged, which is the posture every other check there has.
 
-banner "MUTATION P — the index capture moved back below the write"
+banner "MUTATION P — the index capture moved INSIDE the try, below the write"
 run_leg P "$P_ANCHOR" "$P_REPLACEMENT" "$P_SIGNATURE_CELL" "${ALLOWED_RED_CELLS_P[@]}"
 
 # ------------------------------------------------------------------------------------------------
-# NON-REDUNDANCY — the four red sets must be pairwise disjoint
+# MUTATION W — the target write hoisted back OUT of the try
+# ------------------------------------------------------------------------------------------------
+#
+# CR-01, and the arrangement this file shipped with through 394-22 — the third consecutive round in
+# which `applyTestDraftAsOneCommit` carried a narrower version of one hole. `writeFileSync`
+# TRUNCATES before it writes, so an ENOSPC, an EIO, an EDQUOT or a read-only remount part-way
+# through returned to the caller with a person's committed test emptied, the rollback never run, and
+# a doc block above it promising total restore.
+
+banner "MUTATION W — the target write moved back outside the try"
+run_leg W "$W_ANCHOR" "$W_REPLACEMENT" "$W_SIGNATURE_CELL" "${ALLOWED_RED_CELLS_W[@]}"
+
+# ------------------------------------------------------------------------------------------------
+# MUTATION U — the UTF-8 round-trip put back on the target read
+# ------------------------------------------------------------------------------------------------
+#
+# WR-04. The digest was taken over a DECODING of the person's test, so every byte sequence the
+# decoder could not read collapsed to the same replacement characters: a target that had not moved
+# at all was refused as changed, and the rollback wrote U+FFFD back where their bytes had been.
+
+banner "MUTATION U — readTargetIfPresent decodes and re-encodes as UTF-8"
+run_leg U "$U_ANCHOR" "$U_REPLACEMENT" "$U_SIGNATURE_CELL" "${ALLOWED_RED_CELLS_U[@]}"
+
+# ------------------------------------------------------------------------------------------------
+# NON-REDUNDANCY — the six red sets must be pairwise disjoint
 # ------------------------------------------------------------------------------------------------
 
 banner "NON-REDUNDANCY"
-for pair in "T V" "T N" "T P" "V N" "V P" "N P"; do
+for pair in "T V" "T N" "T P" "T W" "T U" \
+            "V N" "V P" "V W" "V U" \
+            "N P" "N W" "N U" \
+            "P W" "P U" \
+            "W U"; do
   set -- $pair
   comm -12 "$WORK/red-$1.txt" "$WORK/red-$2.txt" >"$WORK/overlap-$1$2.txt"
   if [ -s "$WORK/overlap-$1$2.txt" ]; then
@@ -383,11 +473,13 @@ for pair in "T V" "T N" "T P" "V N" "V P" "N P"; do
     fatal "mutations $1 and $2 red overlapping cells — the two are not measuring two properties"
   fi
 done
-printf 'the four red sets are pairwise disjoint:\n'
+printf 'the six red sets are pairwise disjoint across all fifteen pairs:\n'
 printf '  T: '; paste -sd', ' "$WORK/red-T.txt"
 printf '  V: '; paste -sd', ' "$WORK/red-V.txt"
 printf '  N: '; paste -sd', ' "$WORK/red-N.txt"
 printf '  P: '; paste -sd', ' "$WORK/red-P.txt"
+printf '  W: '; paste -sd', ' "$WORK/red-W.txt"
+printf '  U: '; paste -sd', ' "$WORK/red-U.txt"
 
 # ------------------------------------------------------------------------------------------------
 # receipt
@@ -402,5 +494,7 @@ printf '\n'
 printf 'MUTATION T  index restore removed       : %s (exit %s)\n' "${COUNTS_T:-}" "${RC_T:-}"
 printf 'MUTATION V  commit reverted on hash read: %s (exit %s)\n' "${COUNTS_V:-}" "${RC_V:-}"
 printf 'MUTATION N  nothing-to-commit collapsed : %s (exit %s)\n' "${COUNTS_N:-}" "${RC_N:-}"
-printf 'MUTATION P  capture moved below write   : %s (exit %s)\n' "${COUNTS_P:-}" "${RC_P:-}"
+printf 'MUTATION P  capture moved inside the try: %s (exit %s)\n' "${COUNTS_P:-}" "${RC_P:-}"
+printf 'MUTATION W  write moved outside the try : %s (exit %s)\n' "${COUNTS_W:-}" "${RC_W:-}"
+printf 'MUTATION U  target read round-trips UTF8: %s (exit %s)\n' "${COUNTS_U:-}" "${RC_U:-}"
 printf '\n394-apply-rollback-mutation: PASS\n'

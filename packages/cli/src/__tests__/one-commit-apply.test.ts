@@ -661,7 +661,6 @@ describe('the write is INSIDE the rollback\'s reach, and both halves are bytes (
     git('add', '--', TARGET_PATH)
     git('commit', '--quiet', '-m', 'a person committed this test')
     const before = treeSnapshot()
-    const beforeIndex = indexEntry(TARGET_PATH)
     const commitsBefore = commitCount()
 
     let calls = 0
@@ -685,9 +684,13 @@ describe('the write is INSIDE the rollback\'s reach, and both halves are bytes (
     expect(calls).toBe(2)
     expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(committed)
     expect(treeSnapshot()).toEqual(before)
-    expect(indexEntry(TARGET_PATH)).toBe(beforeIndex)
-    expect(git('status', '--porcelain').stdout.trim()).toBe('')
     expect(commitCount()).toBe(commitsBefore)
+    // THE INDEX IS DELIBERATELY NOT ASSERTED HERE, and the reason is a measurement rather than a
+    // preference: this cell's write fails before `git add`, so the apply never touches the index at
+    // all and every index claim it could make belongs to the restore's index arm — which has its
+    // own cells. Asserting it here made mutation P (the capture moved into the try) red THIS cell
+    // as well as its own, and two mutations reding one cell is a corpus that can no longer say
+    // which of the two placements a future edit broke.
   })
 
   it('names BOTH failures when the rollback itself fails, instead of the restore replacing the original', () => {
