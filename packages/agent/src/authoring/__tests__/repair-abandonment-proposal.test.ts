@@ -35,7 +35,7 @@ import { memberOutcome, runDocument } from './evidence-fixtures.js'
 import type { MemberFixture } from './evidence-fixtures.js'
 import { runAuthoringLoop } from '../loop.js'
 import { repairDraft, REPAIR_ITERATION_CAP } from '../repair.js'
-import { ROUTER_SIGNAL_CLASSES } from '../router.js'
+import { ROUTER_SIGNAL_CLASSES, routeRepairOrFinding } from '../router.js'
 import type { AuthoringLoopDeps, AuthoringLoopInput } from '../loop.js'
 import type { RepairRoute } from '../router.js'
 import type { DraftStageOutcome, ParsedDraftLike } from '../ports.js'
@@ -155,11 +155,27 @@ const OUTSIDE_PREFIX: TestEditPatchSet = TestEditPatchSetSchema.parse({
 
 const GATE_RUN_IDS = ['r_gate-0', 'r_gate-1', 'r_gate-2']
 
+/**
+ * The run stage 5 ROUTES ON: the LAST gate run the receipt names (`routingHandoff`).
+ *
+ * Derived from the same array the bench serves rather than typed as a literal, so a cell asserting
+ * "the failure point names the routed run" cannot pass against a run the loop never read.
+ */
+const ROUTED_RUN_ID = GATE_RUN_IDS.at(-1) as string
+
 const DRAFT: ParsedDraftLike = {
   testId: DRAFT_NAME,
   filePath: DRAFT_PATH,
   testName: DRAFT_NAME,
   steps: [...DRAFT_STEPS],
+  contentDigest: 'digest-0',
+}
+
+/** The draft's identity as the router keys on it — filePath and testName, never `testId`. */
+const DRAFT_REF = {
+  filePath: DRAFT_PATH,
+  testId: DRAFT_NAME,
+  testName: DRAFT_NAME,
   contentDigest: 'digest-0',
 }
 
@@ -372,5 +388,97 @@ describe('an abandoned repair produces a finding built from the route and typed 
       expect(proposal.schemaVersion).toBe(CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION)
       expect(FindingProposalV1Schema.safeParse(proposal).success).toBe(true)
     }
+  })
+})
+
+// ---- CR-02: the arm is built from the routed run's own facts ------------------------------------
+//
+// THE CELL THIS FILE WAS MISSING. 394-VERIFICATION's CR-02: the exhausted arm was assembled from an
+// empty literal — `failurePoint: null`, `evidenceRefs: []` — while `handoff`, the route's
+// `failingStepIndex` and `repaired.probeRunIds` were all in scope three lines above it. Every cell
+// above this line passed against that literal, because each of them asked what the arm does NOT
+// carry (a signal class outside the vocabulary, model bytes) and none asked what it DOES.
+//
+// A durable finding with no evidence and no failure point is unauditable by construction (T-394-90),
+// and the module's own `AuthoringLoopUnroutableEvidenceError` doc calls filing one "the cardinal
+// error pointed the other way". The evidence assertion sits at the HEAD of each cell so the RED a
+// pre-fix run reports is the missing evidence rather than a later field masking it.
+
+interface EvidenceRefRow {
+  readonly runId: string
+  readonly stepIndex: number
+  readonly channel: string
+}
+
+function evidenceRefsOf(proposal: Record<string, unknown>): readonly EvidenceRefRow[] {
+  return proposal.evidenceRefs as readonly EvidenceRefRow[]
+}
+
+/** The routed run's finding evidence as the ORDINARY arm derives it, for the same step of the same run. */
+function ordinaryArmEvidence(): { failurePoint: unknown; evidenceRefs: readonly EvidenceRefRow[] } {
+  const route = routeRepairOrFinding(
+    DRAFT_REF,
+    runAt(ROUTED_RUN_ID, 102, [definitiveAssertionFailMember()]),
+  )
+  if (route.kind !== 'finding') throw new Error(`the control must route to a finding, not ${route.kind}`)
+  return { failurePoint: route.failurePoint, evidenceRefs: route.evidenceRefs as readonly EvidenceRefRow[] }
+}
+
+describe('an abandoned repair files a finding a person can trace (CR-02)', () => {
+  it('EXHAUSTED: the finding carries evidence refs and a failure point naming the routed run', async () => {
+    const harness = bench({
+      emissions: [MODEL_DOCUMENT, REFUSAL_MARKER, REFUSAL_MARKER, REFUSAL_MARKER],
+    })
+    const proposal = await findingThrough(harness)
+
+    // FIRST, so the pre-fix RED is this one: `expected 0 to be greater than 0`.
+    expect(evidenceRefsOf(proposal).length).toBeGreaterThan(0)
+    const failurePoint = proposal.failurePoint as Record<string, unknown> | null
+    expect(failurePoint).not.toBeNull()
+    expect(failurePoint?.runId).toBe(ROUTED_RUN_ID)
+    // The step the ROUTE named — the mechanics member's third step, the one that could not be
+    // carried out — not a step chosen by this cell.
+    expect(failurePoint?.stepIndex).toBe(2)
+    for (const ref of evidenceRefsOf(proposal)) {
+      expect(ref.runId).toBe(ROUTED_RUN_ID)
+      expect(ref.stepIndex).toBe(2)
+    }
+  })
+
+  it('EXHAUSTED: that evidence is the ORDINARY arm\'s derivation, not a second walk', async () => {
+    // ONE DERIVATION, TWO CALLERS. The ordinary finding arm's `failurePoint`/`evidenceRefs` over the
+    // SAME run and the SAME step are computed here through the shipped router, and the exhausted
+    // arm's must equal them field for field. A copy of the construction into `loop.ts` drifts from
+    // this the first time either side is edited; a shared derivation cannot.
+    const control = ordinaryArmEvidence()
+    // Non-vacuity: two empty arrays would compare equal and certify nothing.
+    expect(control.evidenceRefs.length).toBeGreaterThan(0)
+
+    const harness = bench({
+      emissions: [MODEL_DOCUMENT, REFUSAL_MARKER, REFUSAL_MARKER, REFUSAL_MARKER],
+    })
+    const proposal = await findingThrough(harness)
+
+    expect(evidenceRefsOf(proposal)).toEqual(JSON.parse(JSON.stringify(control.evidenceRefs)))
+    // The control's member records a `verdictSource` and the mechanics member does not, so the two
+    // failure points agree on the coordinates rather than on the whole record.
+    const failurePoint = proposal.failurePoint as Record<string, unknown> | null
+    const controlPoint = control.failurePoint as Record<string, unknown>
+    expect(failurePoint?.runId).toBe(controlPoint.runId)
+    expect(failurePoint?.stepIndex).toBe(controlPoint.stepIndex)
+    expect(failurePoint?.stepText).toBe(controlPoint.stepText)
+  })
+
+  it('PREFIX-REGRESSED: that arm carries the routed run\'s evidence too', async () => {
+    const harness = bench({
+      emissions: [MODEL_DOCUMENT, JSON.stringify(OUTSIDE_PREFIX)],
+      probes: [[prefixRegressedMember()]],
+    })
+    const proposal = await findingThrough(harness)
+
+    expect(evidenceRefsOf(proposal).length).toBeGreaterThan(0)
+    const failurePoint = proposal.failurePoint as Record<string, unknown> | null
+    expect(failurePoint?.runId).toBe(ROUTED_RUN_ID)
+    expect(failurePoint?.stepIndex).toBe(2)
   })
 })
