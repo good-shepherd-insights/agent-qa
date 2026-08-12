@@ -168,6 +168,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // integers: it reaches nothing and decides nothing on its own.
   'MARK_UNHANDLED_CEILING',
   'MissingIdempotencyKeyError',
+  // 394-18: the accept verb's id, on the same footing as its `list` sibling below and for the same
+  // reason — a composed cell drives the human decision through the SHIPPED verb, and comparing
+  // against the DECLARED id rather than a string the cell spelled itself is 387 D-11's rule. The
+  // SPEC stays off this list: it carries the implementation, the apply routes and the grant mint.
+  'PROPOSALS_ACCEPT_FUNCTION_ID',
   // 392 plan 01: the id the tracer's one table entry resolves to, published so a cross-package
   // assertion compares against the DECLARED id rather than a string it spelled itself (387 D-11).
   'PROPOSALS_LIST_FUNCTION_ID',
