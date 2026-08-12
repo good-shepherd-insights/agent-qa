@@ -110,6 +110,24 @@ function idsCarryingTopLevelKey(key: string): ReadonlySet<string> {
   return carrying
 }
 
+/**
+ * The ids the derivation above cannot see — an input projection with no top-level `properties`.
+ *
+ * The walk `continue`s over such a declaration, so it contributes to NEITHER side of the
+ * equalities below and an op carrying `sessionRef` behind a union, a `$ref` or a record shape
+ * would leave every cell here green while going unstamped (394-22, WR-05). Naming those ids makes
+ * the skip a decision someone takes rather than one the walk takes silently.
+ */
+function opaqueDeclarationIds(): string[] {
+  return declarations()
+    .filter((declaration) => {
+      const properties = (declaration.input as { properties?: unknown }).properties
+      return typeof properties !== 'object' || properties === null || Array.isArray(properties)
+    })
+    .map((declaration) => declaration.id)
+    .sort()
+}
+
 function sorted(ids: Iterable<string>): string[] {
   return [...ids].sort()
 }
@@ -140,6 +158,15 @@ describe('the session facts the chat surface stamps are pinned to the ops that c
     // and a comparison that cannot reject is the state the guard's own doc block was already in.
     expect(idsCarryingTopLevelKey('sessionReff').size).toBe(0)
     expect(idsCarryingTopLevelKey('sessionRef').has('proposals.list')).toBe(false)
+  })
+
+  it('the derivation SEES the whole catalogue — an opaque input reds by id (WR-05)', () => {
+    // The skip is silent by construction: a declaration the walk cannot read contributes to
+    // neither side of the equalities above, so both stay green over an op nobody stamped. This
+    // cell turns that into a decision point NAMING the offending id — at which point either the
+    // op's input becomes a plain `.strict()` object like every current one, or an argued
+    // exception list is introduced THEN, with the argument written down.
+    expect(opaqueDeclarationIds()).toEqual([])
   })
 
   it('the two sets are DISJOINT — one op, one law, and the laws point opposite ways', () => {

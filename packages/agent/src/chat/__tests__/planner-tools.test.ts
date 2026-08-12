@@ -325,6 +325,29 @@ describe('projectPlannerTools: the model is not shown what the host stamps (394-
     }
   })
 
+  it('TRANSFORMS EXACTLY THE STAMPED UNION — the two sides cannot drift apart', async () => {
+    // THE TWO-SIDED PIN, in the shape `session-stamp-vocabulary.test.ts` uses one layer down: the
+    // derived side is read off the LIVE projection (which ids came back structurally different
+    // from their declaration), the pinned side is the union of the two constants the STAMP
+    // consults. A stamped op the transform misses reds by the omitted NAME; a transform that
+    // starts editing an unstamped op's schema reds by the extra one (T-394-86).
+    const walked = registry().list(PLANNER_CALLER)
+    const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
+
+    const transformed: string[] = []
+    for (const declaration of walked) {
+      const document = await schemaDocumentOf(tools[toToolName(declaration.id)]?.inputSchema)
+      if (canonical(document) !== canonical(declaration.input)) transformed.push(declaration.id)
+    }
+
+    const stamped = [...SESSION_STAMPED_FUNCTION_IDS, ...WINDOW_STAMPED_FUNCTION_IDS]
+    // The guard the equality leans on: an empty walk or an empty union satisfies it perfectly and
+    // measures nothing — the sibling file's own non-vacuity idiom.
+    expect(walked.length).toBeGreaterThan(0)
+    expect(stamped.length).toBeGreaterThan(0)
+    expect(transformed.slice().sort()).toEqual(stamped.slice().sort())
+  })
+
   it('CONTROL: an op in neither stamped set is handed its projection untouched', async () => {
     const walked = registry().list(PLANNER_CALLER)
     const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
@@ -363,6 +386,18 @@ function unionArms(
   return Array.isArray(arms)
     ? (arms as { properties?: Record<string, unknown>; required?: readonly string[] }[])
     : []
+}
+
+/** A key-order-independent rendering, so "structurally different" is not "serialised differently". */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (typeof value === 'object' && value !== null) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'undefined'
 }
 
 /**
