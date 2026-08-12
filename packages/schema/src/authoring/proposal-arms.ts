@@ -212,6 +212,21 @@ export const FindingProposalV1Schema = z.object({
    * field a model writes, and it is written downstream once the branch is already chosen.
    */
   repairAbandonment: z.enum(['exhausted', 'prefix-regressed']).optional(),
+  /**
+   * The repair spend the abandonment above refers to — present exactly when it is.
+   *
+   * The same field `TestDraftProposalV1` carries for a repair that SUCCEEDED, so the two arms state
+   * the cost of a repair in one vocabulary: a reader comparing a kept draft against an abandoned one
+   * is comparing the same number. It is `RepairOutcome.iterations` — the count the loop spent,
+   * including iterations a fence refused, which is why it is not derivable from the run ids the
+   * fan-out report counts.
+   *
+   * ADDITIVE AND OPTIONAL ON A `.strict()` SCHEMA, AND THE VERSION CONSTANT IS NOT BUMPED. The
+   * 394-21/394-19 precedent: every finding file retained on disk still parses, because a strict
+   * schema refuses UNKNOWN keys rather than requiring new ones, and a bump would invalidate records
+   * whose shape is unchanged in every field they carry.
+   */
+  repairIterations: z.number().int().min(0).optional(),
   /** `null` for a member-level failure with no step to point at. */
   failurePoint: FindingFailurePointSchema.nullable(),
   /** The exact trace and the a11y snapshots at the failure point, as coordinates. */

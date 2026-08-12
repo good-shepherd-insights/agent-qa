@@ -82,7 +82,7 @@ import type {
 import { refineDraft } from './refine.js'
 import type { RefinementOutcome } from './refine.js'
 import { REPAIR_ITERATION_CAP, repairDraft } from './repair.js'
-import type { RepairOutcome } from './repair.js'
+import type { RepairAbandonment, RepairOutcome } from './repair.js'
 import {
   AuthoringRouterUnroutableError,
   findingRouteForAbandonedRepair,
@@ -489,17 +489,28 @@ function testDraftProposal(
  * emitted refusal onto a durable field — both of the things the paragraph above forbids, arriving
  * through the one shape that cannot be forbidden at the type level. Taking the fact as an argument
  * keeps the arm built here, from the route and from typed facts.
+ *
+ * ITS KIND AND ITS SPEND ARE ONE PARAMETER, so `repairAbandonment` and `repairIterations` are
+ * present on exactly the same proposals. Two independent optionals could disagree — a kind with no
+ * spend, or a spend on a finding repair never touched, which reads as "repair was tried and cost
+ * nothing" — and neither is a state the loop can be in.
  */
 function findingProposal(
   draftRef: DraftRef,
   route: FindingRoute,
-  abandonment?: FindingProposalV1['repairAbandonment'],
+  abandonment?: {
+    readonly kind: NonNullable<FindingProposalV1['repairAbandonment']>
+    /** `RepairOutcome.iterations` — including iterations a fence refused, which started nothing. */
+    readonly iterations: number
+  },
 ): FindingProposalV1 {
   return {
     schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
     draftRef,
     signalClass: route.signalClass,
-    ...(abandonment === undefined ? {} : { repairAbandonment: abandonment }),
+    ...(abandonment === undefined
+      ? {}
+      : { repairAbandonment: abandonment.kind, repairIterations: abandonment.iterations }),
     failurePoint: route.failurePoint === null
       ? null
       : {
@@ -634,6 +645,46 @@ async function routingHandoff(
 }
 
 /**
+ * THE PRODUCTION READ of `abandonment.error`, and the only one: its typed coordinates.
+ *
+ * A prefix-regressed abandonment means a PROBE run showed a step that used to pass now failing, and
+ * `PassingPrefixRegressedError` carries which step and which run. That pair is an addressable,
+ * replayable coordinate into a durable record — the same thing every other `evidenceRefs` entry is
+ * — so the finding a person reads can reach the run that ended the repair instead of merely stating
+ * that one did. Appended BESIDE the routed run's own refs: the routed run says why the draft failed,
+ * this says why repair stopped, and they are different runs.
+ *
+ * WHAT IS DELIBERATELY NOT READ: `error.message`, and through it `RepairExhaustedError.lastRefusal`,
+ * which ends in the model's own bytes. Prose about a decision is `explanation`'s job and the model
+ * writes it downstream, once the branch is already chosen (WR-09's closure).
+ *
+ * The exhausted arm gets no such ref because it has no such coordinate — its last iteration may have
+ * been a fenced patch or an unparsable emission, neither of which started a run.
+ */
+function withRegressedProbeEvidence(
+  route: FindingRoute,
+  draftRef: DraftRef,
+  abandonment: RepairAbandonment,
+): FindingRoute {
+  if (abandonment.kind !== 'prefix-regressed') return route
+  return {
+    kind: 'finding',
+    signalClass: route.signalClass,
+    failurePoint: route.failurePoint,
+    evidenceRefs: [
+      ...route.evidenceRefs,
+      {
+        runId: abandonment.error.runId,
+        filePath: draftRef.filePath,
+        testName: draftRef.testName,
+        stepIndex: abandonment.error.stepIndex,
+        channel: 'step-trace',
+      },
+    ],
+  }
+}
+
+/**
  * Stage 5 — the receipt becomes an outcome, and both terminal outcomes carry their envelope arm.
  *
  * TWO DERIVATIONS, ASKED IN ORDER, NEITHER RE-IMPLEMENTED HERE. The first is
@@ -756,17 +807,20 @@ export async function routeAfterVerify(
   // exhausted repair and a first-pass finding are the same artifact class, and this function's own
   // header says so. `handoff` is defined for the reason given at the repair call above — the router
   // refuses `no-run-evidence` by name and that refusal was already converted.
-  const exhaustedRoute: FindingRoute = findingRouteForAbandonedRepair(
+  const exhaustedRoute: FindingRoute = withRegressedProbeEvidence(
+    findingRouteForAbandonedRepair(draftRef, handoff as CompletedRunHandoff, route.failingStepIndex),
     draftRef,
-    handoff as CompletedRunHandoff,
-    route.failingStepIndex,
+    repaired.abandonment,
   )
   return {
     outcome: {
       kind: 'finding',
       draftRef,
       receipt,
-      proposal: findingProposal(draftRef, exhaustedRoute, repaired.abandonment.kind),
+      proposal: findingProposal(draftRef, exhaustedRoute, {
+        kind: repaired.abandonment.kind,
+        iterations: repaired.iterations,
+      }),
     },
     fanOut: buildFanOutReport({ previewed, runs: [...gateRuns, ...probes] }),
   }
