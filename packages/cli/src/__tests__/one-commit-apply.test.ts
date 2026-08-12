@@ -25,10 +25,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   APPLY_GIT_TIMEOUT_MS,
+  ApplyCommitHashUnavailableError,
+  ApplyProducedNoChangeError,
   ApplyTargetChangedError,
   DirtyApplyTargetError,
   GitUnavailableForApplyError,
   applyTestDraftAsOneCommit,
+  captureIndexEntry,
+  restoreIndexEntry,
 } from '../composition/local-agent-host.js'
 import type { GitApplyExec, TestDraftApplyRequest } from '../composition/local-agent-host.js'
 
@@ -355,5 +359,163 @@ describe('applyTestDraftAsOneCommit', () => {
     expect(timeouts.length).toBeGreaterThan(0)
     expect([...new Set(timeouts)]).toEqual([APPLY_GIT_TIMEOUT_MS])
     expect(Number.isFinite(APPLY_GIT_TIMEOUT_MS)).toBe(true)
+  })
+})
+
+describe('a FAILED apply leaves the repository exactly as it found it (394-18, CR-05)', () => {
+  /**
+   * The real git binary for every command except one, which is answered as a failure.
+   *
+   * A passthrough rather than a scripted exec, for this file's own stated reason: the claim is
+   * about what `git status`, `git diff --cached` and `git log` say afterwards, and only a real
+   * repository can answer that. The single interception is the one thing a real binary will not do
+   * on demand — fail at a chosen point.
+   */
+  function failingAt(subcommand: string, status = 1, stderr = 'fixture failure'): GitApplyExec {
+    return (file, args, options) => {
+      if (args[0] === subcommand) {
+        return { status, signal: null, stdout: '', stderr, error: undefined } as ReturnType<GitApplyExec>
+      }
+      return spawnSync(file, [...args], options) as ReturnType<GitApplyExec>
+    }
+  }
+
+  /** What the INDEX holds for one path, in git's own words. Empty means no entry at all. */
+  function indexEntry(path: string): string {
+    return git('ls-files', '--stage', '--', path).stdout.trim()
+  }
+
+  it('leaves NO index entry behind when the commit fails and the target was untracked', () => {
+    // THE DEFECT, and the one that folds agent bytes into a person's next commit. The catch
+    // restored the worktree and left the agent's blob staged, so the very next `git commit` —
+    // which commits the INDEX — would have carried a file the apply told the caller it did not
+    // write.
+    const before = treeSnapshot()
+
+    expect(() => applyTestDraftAsOneCommit({
+      configPath,
+      request: request(),
+      exec: failingAt('commit'),
+    })).toThrow(/git commit exited/)
+
+    expect(indexEntry(TARGET_PATH)).toBe('')
+    expect(git('diff', '--cached', '--name-only').stdout.trim()).toBe('')
+    expect(git('status', '--porcelain').stdout.trim()).toBe('')
+    expect(treeSnapshot()).toEqual(before)
+  })
+
+  it('restores the pre-apply INDEX ENTRY, rather than blanket-unstaging the path', () => {
+    // A tracked target, committed and clean, so the apply is admitted. The pre-apply index entry
+    // for that path is HEAD's blob, and after a failed commit it has to be HEAD's blob again —
+    // not "absent", which is what an unconditional `git rm --cached` would leave and which would
+    // stage a DELETION of the person's own committed test.
+    const committed = 'name: the committed version\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), committed)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed this test')
+    const beforeIndex = indexEntry(TARGET_PATH)
+    expect(beforeIndex).not.toBe('')
+
+    expect(() => applyTestDraftAsOneCommit({
+      configPath,
+      request: request({ sourceDigest: createHash('sha256').update(committed).digest('hex') }),
+      exec: failingAt('commit'),
+    })).toThrow(/git commit exited/)
+
+    expect(indexEntry(TARGET_PATH)).toBe(beforeIndex)
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(committed)
+    expect(git('status', '--porcelain').stdout.trim()).toBe('')
+  })
+
+  it('does NOT revert a file whose commit already SUCCEEDED', () => {
+    // The second defect the verifier named. `runGitCommit` read HEAD after committing, and a
+    // failure of THAT read routed through the same catch — so a real commit was answered with a
+    // worktree reverted against it, leaving the person's checkout disagreeing with their own
+    // history at the file the agent had just written.
+    const before = commitCount()
+
+    let caught: unknown
+    try {
+      applyTestDraftAsOneCommit({ configPath, request: request(), exec: failingAt('rev-parse') })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(typeof ApplyCommitHashUnavailableError).toBe('function')
+    expect(caught).toBeInstanceOf(ApplyCommitHashUnavailableError)
+    // THE COMMIT STANDS, and the worktree matches it.
+    expect(commitCount()).toBe(before + 1)
+    expect(headStatPaths()).toEqual([TARGET_PATH])
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(DRAFT_BYTES)
+    expect(git('status', '--porcelain').stdout.trim()).toBe('')
+  })
+
+  it('names NOTHING-TO-COMMIT rather than reporting it as a git failure', () => {
+    // Reachable, and it is the accept of a draft whose bytes already ARE the target's: the digest
+    // re-check passes, the write is a no-op, and the add stages nothing. It answered
+    // `git commit exited 1` with an empty stderr, which is a real failure's sentence for a
+    // situation that is not one — and the distinction is drawn from the INDEX rather than from
+    // guessing at git's message, so a translated or reworded git cannot move it.
+    writeFileSync(join(root, TARGET_PATH), DRAFT_BYTES)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed exactly these bytes')
+    const before = commitCount()
+
+    expectRefusal(
+      () => applyTestDraftAsOneCommit({
+        configPath,
+        request: request({ sourceDigest: createHash('sha256').update(DRAFT_BYTES).digest('hex') }),
+      }),
+      ApplyProducedNoChangeError,
+      'ApplyProducedNoChangeError',
+    )
+
+    expect(commitCount()).toBe(before)
+    expect(git('status', '--porcelain').stdout.trim()).toBe('')
+  })
+
+  it('restores a PRE-STAGED blob exactly, at the mechanism that owns the index state', () => {
+    // THE THIRD DIRECTION, pinned where it is reachable. Through the shipped entry point a person
+    // with staged content at the target is refused by the dirty check BEFORE anything is written
+    // (`git status --porcelain -- <path>` reports a staged change), so this arrangement cannot
+    // reach the rollback today — measured, and recorded rather than arranged around by narrowing
+    // a shipped refusal. What CAN be driven is the mechanism itself, against a real index: it must
+    // put the person's own blob back, not HEAD's and not nothing.
+    const committed = 'name: the committed version\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), committed)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed this test')
+    const mine = 'name: MY staged edit\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), mine)
+    git('add', '--', TARGET_PATH)
+    const staged = indexEntry(TARGET_PATH)
+
+    const exec = spawnSync as unknown as GitApplyExec
+    const captured = captureIndexEntry(exec, root, TARGET_PATH)
+    // The agent's blob goes over the person's, exactly as the apply's own `git add` would.
+    writeFileSync(join(root, TARGET_PATH), DRAFT_BYTES)
+    git('add', '--', TARGET_PATH)
+    expect(indexEntry(TARGET_PATH)).not.toBe(staged)
+
+    restoreIndexEntry(exec, root, TARGET_PATH, captured)
+
+    expect(indexEntry(TARGET_PATH)).toBe(staged)
+  })
+
+  it('CONTROL: an absent pre-apply entry is restored as ABSENT, never as HEAD', () => {
+    // The other direction of the same mechanism, and the reason it is a capture rather than a
+    // `git reset HEAD -- <path>`: for an untracked target there is nothing at HEAD to reset to,
+    // and for a tracked one a reset would silently discard a staged blob that differs from HEAD.
+    const exec = spawnSync as unknown as GitApplyExec
+    const captured = captureIndexEntry(exec, root, TARGET_PATH)
+    expect(captured).toBeUndefined()
+
+    writeFileSync(join(root, TARGET_PATH), DRAFT_BYTES)
+    git('add', '--', TARGET_PATH)
+    expect(indexEntry(TARGET_PATH)).not.toBe('')
+
+    restoreIndexEntry(exec, root, TARGET_PATH, captured)
+
+    expect(indexEntry(TARGET_PATH)).toBe('')
   })
 })
