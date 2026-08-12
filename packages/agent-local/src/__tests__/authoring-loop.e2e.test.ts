@@ -423,6 +423,73 @@ function scriptedModel(document = MODEL_DOCUMENT): ScriptedModel {
   }
 }
 
+// ---- the zero-exemplar generator: it knows ONLY what the prompt teaches (394-27, WINDOWS 111) ---
+//
+// `scriptedModel` above returns a hand-written valid document whatever it is asked, which is why
+// no cell in this file could ever have caught WINDOWS 111: the schema arrived from the fixture, not
+// from the prompt. The generator below has no document of its own. It locates the stable block by
+// TITLE, lifts the canonical example out of it, adapts the two values the Intent and Scope blocks
+// supply, and returns that — and it THROWS when no such block exists, which is the live model's
+// position on a scope that serves no exemplars, stated as a hard failure instead of a bad guess.
+//
+// LITERALS, NOT IMPORTS. The title and the marker are spelled here as a model reads them. Importing
+// the constants would give this generator a channel to the schema that a model does not have.
+
+const FORMAT_BLOCK_TITLE = 'Test document format'
+const FORMAT_EXAMPLE_MARKER = 'A complete document looks exactly like this:'
+
+/** What the generator has left when the prompt teaches it nothing: nothing. */
+class FormatBlockMissingError extends Error {
+  constructor() {
+    super(`the prompt carries no "${FORMAT_BLOCK_TITLE}" block, and this generator knows no `
+      + 'document schema of its own')
+    this.name = 'FormatBlockMissingError'
+  }
+}
+
+/** One `## `-titled block's body, off the rendered markdown a model is handed. */
+function promptBlockBody(text: string, title: string): string | undefined {
+  for (const part of text.split(/^## /m).slice(1)) {
+    const split = part.indexOf('\n\n')
+    if (part.slice(0, split) === title) return part.slice(split + 2).replace(/\n+$/, '')
+  }
+  return undefined
+}
+
+function documentFromPrompt(request: JobModelRequest): string {
+  const format = promptBlockBody(request.system ?? '', FORMAT_BLOCK_TITLE)
+  if (format === undefined) throw new FormatBlockMissingError()
+  const marker = format.indexOf(FORMAT_EXAMPLE_MARKER)
+  if (marker < 0) throw new FormatBlockMissingError()
+
+  const example = `${format.slice(marker + FORMAT_EXAMPLE_MARKER.length).trim()}\n`
+  const intent = promptBlockBody(request.prompt, 'Intent') ?? ''
+  const scope = promptBlockBody(request.prompt, 'Scope') ?? ''
+
+  return example
+    .replace(/^name: .*$/m, `name: ${intent}`)
+    .replace(/^target: .*$/m, `target: ${scope.slice(scope.indexOf(':') + 1)}`)
+}
+
+function formatFollowingModel(): ScriptedModel {
+  const requests: JobModelRequest[] = []
+  return {
+    requests,
+    capability: () => ({
+      modelId: 'fixture:format-following',
+      generate(request) {
+        requests.push(request)
+        // The refinement round asks about an EXISTING draft and carries no format block; a
+        // generator with nothing to add says so. The compile call is the one under test.
+        if (!/^Agent context: authoring\.draft\.write — compile /.test(request.system ?? '')) {
+          return Promise.resolve({ text: 'no changes needed' })
+        }
+        return Promise.resolve({ text: documentFromPrompt(request) })
+      },
+    }),
+  }
+}
+
 const SHELF_DIR = 'tests/.agent-qa-drafts'
 
 /**
@@ -781,6 +848,62 @@ describe('authoring.draft.write end to end through the composition root', () => 
     // later run — or a later reader — to mistake for a draft.
     expect(readdirSync(workspace)).toEqual([])
     expect(executor.startInputs).toHaveLength(0)
+  })
+
+  it('authors from a ZERO-exemplar brief with the prompt as its only schema (WINDOWS 111)', async () => {
+    const model = formatFollowingModel()
+    // The draft's own name is what the generator derived from the intent, so the gate runs join on
+    // a name this cell did not choose — a fixed identity would have papered over a generator that
+    // ignored the Intent block entirely.
+    const executor = fixtureExecutor(agentQaRoot, () => ({
+      testName: INTENT,
+      elementName: 'local form',
+    }))
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: model.capability,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    // THE CONDITION, PRODUCED: this host's knowledge root is empty, so the compile prompt's
+    // exemplar block carries the empty answer. Every prior proof of stage 3 in this file ran a
+    // generator that already held a valid document; this one had only the prompt.
+    expect(model.requests[0]?.prompt).toContain('No exemplar tests were served for this scope.')
+
+    expect(result.outcome).toBe('drafted')
+    expect(result.receipt).toBeDefined()
+    expect(result.receipt?.draftRef.contentDigest).toBe(result.draftRef?.contentDigest)
+
+    // What reached the shelf: the four keys and nothing else, with the two free values taken from
+    // the Intent and Scope blocks rather than from anything this file wrote.
+    const staged = readdirSync(join(workspace, SHELF_DIR))
+    expect(staged).toHaveLength(1)
+    const document = parseYaml(
+      readFileSync(join(workspace, SHELF_DIR, staged[0] as string), 'utf8'),
+    ) as Record<string, unknown>
+    expect(Object.keys(document).sort()).toEqual(['name', 'steps', 'target', 'test-id'])
+    expect(document['name']).toBe(INTENT)
+    expect(document['target']).toBe(SCOPE.key)
+  })
+
+  it('has no schema of its own: the generator throws when the format block is absent', () => {
+    // THE GUARD'S OWN NON-VACUITY. Without this, the cell above could pass against a generator
+    // that quietly fell back to a document it was holding — which is exactly what `scriptedModel`
+    // does, and exactly why this file was blind to WINDOWS 111 for twenty-six plans.
+    const model = formatFollowingModel().capability()
+
+    expect(() => model.generate({
+      system: 'Agent context: authoring.draft.write — compile a whole test document\n\n## Role\n\n'
+        + 'You author agent-qa test documents.',
+      prompt: '## Intent\n\nanything\n\n## Scope\n\nproduct:local-form',
+    })).toThrow(FORMAT_BLOCK_TITLE)
   })
 
   it('refuses a near-duplicate intent BEFORE any model call, naming what it matched', async () => {
