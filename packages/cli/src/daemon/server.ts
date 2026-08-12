@@ -91,6 +91,19 @@ export const DAEMON_FUNCTION_CALLER: FunctionCaller = Object.freeze({
   // `__tests__/caller-scopes.test.ts` drives this caller at `local-headless` and asserts the error
   // is the gate's, by name, and is NOT the scope refusal's class. Withholding the scope was also
   // the reason 394-VERIFICATION found BOTH CLI routes blocked rather than one.
+  //
+  // 394-21 / CR-03: `test-write` has a SECOND holder, and that reach is decided here rather than
+  // inherited from the sentence above. `authoring.draft.edit` is `declaredTier: 'mutating-local'`
+  // and declares no `requiresHumanOrigin`, so unlike the write op the gate ALLOWS it in every
+  // execution context this daemon composes — the grant makes it agent-origin reachable, and that
+  // is INTENDED. The edit op takes one model call, starts zero runs, and writes only a
+  // proposal-with-diff to the gitignored shelf; per D-05 everything proposes, and nothing reaches
+  // the repository without a human accept in the inbox (391: an accept is a decision, never a
+  // grant). The consent point is therefore the accept, not the origin — refusing here would deny
+  // every unattended edit while protecting a decision the inbox already protects. That ALLOWANCE
+  // is PINNED the same way the refusal above is: `__tests__/caller-scopes.test.ts` drives
+  // `authoring.draft.edit` on this caller at `local-headless` and asserts the invocation passes
+  // both control points, so a later tier change or origin gate reds a cell by name.
   grantedScopes: [
     'read',
     'run',

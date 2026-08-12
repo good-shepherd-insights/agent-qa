@@ -8,22 +8,33 @@
 // The refusal that reached a person named a scope and said nothing about authoring at all.
 //
 // WHAT THE CELLS BELOW MEASURE, AND WHAT THEY DELIBERATELY DO NOT. They measure WHICH CALLERS
-// REACH THE GATE. They do not measure, and must never be read as, a widening of what the gate
-// permits: cells 3 and 4 drive the same op from the daemon's own composed context and assert it is
-// still refused — by the gate, by name, for its tier. The scope is the POWER's legibility; D-03's
-// two decision points (this confirm and 391's inbox accept) remain the only controls there are.
+// REACH THE GATE, and what the gate then answers — never a claim that a grant widened it. Cell 1
+// pins the CLI's grants set-equal to the vocabulary; cell 2 drives `authoring.draft.write` from the
+// CLI's interactive context to the confirm. Cell 3 pins LIST MEMBERSHIP on the daemon record (its
+// own comment argues why membership rather than set equality); cell 4 drives the write op from the
+// daemon's composed `local-headless` context and asserts the GATE refuses it, by name, for its
+// tier; cell 5 drives `authoring.draft.edit` from that same context and asserts the gate ALLOWS it
+// — the second holder of `test-write` is `mutating-local`, and server.ts argues why that allowance
+// is intended. The scope is the POWER's legibility; D-03's two decision points (that confirm and
+// 391's inbox accept) remain the only controls there are.
 
 import {
+  AUTHORING_DRAFT_EDIT_FUNCTION_ID,
   AUTHORING_DRAFT_WRITE_FUNCTION_ID,
   createFunctionRegistry,
   FunctionDeniedError,
+  FunctionNotBoundError,
   FunctionScopeError,
   invokeFunction,
 } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { NO_STANDING_APPROVALS } from '@vostride/agent-qa-safety'
 import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
-import type { AuthoringDraftWriteInput, ExecutionContext } from '@vostride/agent-qa-schema'
+import type {
+  AuthoringDraftEditInput,
+  AuthoringDraftWriteInput,
+  ExecutionContext,
+} from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
@@ -43,6 +54,15 @@ const BRIEF: AuthoringDraftWriteInput = {
 }
 
 /**
+ * The edit op's equivalent brief. Same posture as `BRIEF`: nothing here is resolved, because the
+ * edit cell reads the control points, not the edit.
+ */
+const EDIT_BRIEF: AuthoringDraftEditInput = {
+  testRef: 'tests/checkout.yaml::adds an item to the cart',
+  intent: 'also assert the cart badge reads 1',
+}
+
+/**
  * A registry over NO dependencies, at a chosen execution context.
  *
  * `confirm` is threaded so the interactive cell can drive the ask arm to a decision a person
@@ -59,17 +79,27 @@ function benchAt(ctx: ExecutionContext, confirm?: () => boolean) {
   })
 }
 
+async function errorFrom(
+  ctx: ExecutionContext,
+  caller: Parameters<typeof invokeFunction>[3],
+  functionId: string,
+  input: unknown,
+  confirm?: () => boolean,
+): Promise<unknown> {
+  try {
+    await invokeFunction(benchAt(ctx, confirm), functionId, input, caller)
+  } catch (error: unknown) {
+    return error
+  }
+  throw new Error('the invocation was expected to end in an error and did not')
+}
+
 async function refusalFrom(
   ctx: ExecutionContext,
   caller: Parameters<typeof invokeFunction>[3],
   confirm?: () => boolean,
 ): Promise<unknown> {
-  try {
-    await invokeFunction(benchAt(ctx, confirm), AUTHORING_DRAFT_WRITE_FUNCTION_ID, BRIEF, caller)
-  } catch (error: unknown) {
-    return error
-  }
-  throw new Error('the invocation was expected to be refused and was not')
+  return errorFrom(ctx, caller, AUTHORING_DRAFT_WRITE_FUNCTION_ID, BRIEF, confirm)
 }
 
 describe('CLI_FUNCTION_CALLER', () => {
@@ -120,5 +150,27 @@ describe('DAEMON_FUNCTION_CALLER', () => {
     expect((error as FunctionDeniedError).reason).toContain('fail-closed')
     expect((error as FunctionDeniedError).reason).toContain('declared tier: mutating-shared')
     expect((error as FunctionDeniedError).reason).toContain('--trust-session')
+  })
+
+  it('is ALLOWED past both control points for authoring.draft.edit — the second holder of test-write', async () => {
+    // THE PIN FOR THE ONE THING THE GRANT DID WIDEN. `test-write` has a second holder,
+    // `authoring.draft.edit`, and it is `mutating-local` — a tier `requiresFailClosed` does not
+    // refuse — so on this record the edit op became agent-origin reachable. server.ts argues why
+    // that is intended (the op only STAGES a proposal; per D-05 the human inbox accept is the
+    // consent point, and 391 fixed that an accept is a decision and never a grant). This cell is
+    // that decision's pin: it asserts PASSAGE by excluding both control points' error classes, and
+    // then names the outcome the op's own body produces on a registry with no `draftShelf` — so an
+    // unrelated crash cannot satisfy it. Raise the tier, or add `requiresHumanOrigin`, and this
+    // reds by name instead of the posture changing in silence.
+    const error = await errorFrom(
+      'local-headless',
+      DAEMON_FUNCTION_CALLER,
+      AUTHORING_DRAFT_EDIT_FUNCTION_ID,
+      EDIT_BRIEF,
+    )
+
+    expect(error).not.toBeInstanceOf(FunctionScopeError)
+    expect(error).not.toBeInstanceOf(FunctionDeniedError)
+    expect(error).toBeInstanceOf(FunctionNotBoundError)
   })
 })
