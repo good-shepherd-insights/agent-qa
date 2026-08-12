@@ -27,6 +27,7 @@ import {
   APPLY_GIT_TIMEOUT_MS,
   ApplyCommitHashUnavailableError,
   ApplyProducedNoChangeError,
+  ApplyRollbackFailedError,
   ApplyTargetChangedError,
   DirtyApplyTargetError,
   GitUnavailableForApplyError,
@@ -370,29 +371,29 @@ describe('applyTestDraftAsOneCommit', () => {
   })
 })
 
-describe('a FAILED apply leaves the repository exactly as it found it (394-18, CR-05)', () => {
-  /**
-   * The real git binary for every command except one, which is answered as a failure.
-   *
-   * A passthrough rather than a scripted exec, for this file's own stated reason: the claim is
-   * about what `git status`, `git diff --cached` and `git log` say afterwards, and only a real
-   * repository can answer that. The single interception is the one thing a real binary will not do
-   * on demand — fail at a chosen point.
-   */
-  function failingAt(subcommand: string, status = 1, stderr = 'fixture failure'): GitApplyExec {
-    return (file, args, options) => {
-      if (args[0] === subcommand) {
-        return { status, signal: null, stdout: '', stderr, error: undefined } as ReturnType<GitApplyExec>
-      }
-      return spawnSync(file, [...args], options) as ReturnType<GitApplyExec>
+/**
+ * The real git binary for every command except one, which is answered as a failure.
+ *
+ * A passthrough rather than a scripted exec, for this file's own stated reason: the claim is
+ * about what `git status`, `git diff --cached` and `git log` say afterwards, and only a real
+ * repository can answer that. The single interception is the one thing a real binary will not do
+ * on demand — fail at a chosen point.
+ */
+function failingAt(subcommand: string, status = 1, stderr = 'fixture failure'): GitApplyExec {
+  return (file, args, options) => {
+    if (args[0] === subcommand) {
+      return { status, signal: null, stdout: '', stderr, error: undefined } as ReturnType<GitApplyExec>
     }
+    return spawnSync(file, [...args], options) as ReturnType<GitApplyExec>
   }
+}
 
-  /** What the INDEX holds for one path, in git's own words. Empty means no entry at all. */
-  function indexEntry(path: string): string {
-    return git('ls-files', '--stage', '--', path).stdout.trim()
-  }
+/** What the INDEX holds for one path, in git's own words. Empty means no entry at all. */
+function indexEntry(path: string): string {
+  return git('ls-files', '--stage', '--', path).stdout.trim()
+}
 
+describe('a FAILED apply leaves the repository exactly as it found it (394-18, CR-05)', () => {
   it('leaves NO index entry behind when the commit fails and the target was untracked', () => {
     // THE DEFECT, and the one that folds agent bytes into a person's next commit. The catch
     // restored the worktree and left the agent's blob staged, so the very next `git commit` —
@@ -610,5 +611,175 @@ describe('a FAILED apply leaves the repository exactly as it found it (394-18, C
     expect(caught).toBeInstanceOf(Error)
     expect((caught as Error).message).toContain(TARGET_PATH)
     expect((caught as Error).message).toContain('stage 1')
+  })
+})
+
+/**
+ * A person's committed test whose bytes are NOT valid UTF-8, built byte-wise on purpose.
+ *
+ * THE FIXTURE IS CONSTRUCTED, NEVER LITERAL. Three plans in this repository have shipped raw
+ * control bytes into a source file and made `grep` answer nothing over hundreds of readable lines;
+ * assembling the sequence from numbers keeps THIS file pure ASCII while the bytes under test are
+ * not. `0xC3 0x28` is a truncated two-byte sequence and `0xFF 0xFE` is not a UTF-8 lead pair at
+ * all — every one of them decodes to U+FFFD, which is exactly the loss WR-04 is about.
+ */
+const NON_UTF8_TARGET_BYTES = Buffer.concat([
+  Buffer.from('name: a person\'s committed test\nsteps:\n  - Open the cart # ', 'ascii'),
+  Buffer.from([0xc3, 0x28, 0xff, 0xfe]),
+  Buffer.from('\n', 'ascii'),
+])
+
+function sha256File(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
+
+/**
+ * The integrity half of every byte-fidelity cell, and without it they are vacuous.
+ *
+ * An assertion about bytes that never reached the subject unaltered passes for a reason that has
+ * nothing to do with the subject. So before any of the WR-04 cells asks what the apply did, this
+ * asks two things of the harness itself: the bytes on disk after `git add`/`git commit` are still
+ * the bytes the fixture wrote (nothing between here and the subject re-encoded them), and they are
+ * genuinely a UTF-8 hazard (a decode/re-encode round-trip CHANGES them). If the second ever stops
+ * holding, the cells below would pass against the very round-trip they exist to forbid.
+ */
+function assertNonUtf8BytesSurviveTheHarness(absolutePath: string, expected: Buffer): void {
+  const onDisk = readFileSync(absolutePath)
+  expect(onDisk.equals(expected)).toBe(true)
+  expect(Buffer.from(onDisk.toString('utf8'), 'utf8').equals(onDisk)).toBe(false)
+}
+
+describe('the write is INSIDE the rollback\'s reach, and both halves are bytes (394-23)', () => {
+  it('restores the person\'s bytes when the WRITE ITSELF fails, because the write is inside the try', () => {
+    // CR-01, THE THIRD AND LAST NARROWING. `writeFileSync` at the target truncates before it
+    // writes, and it sat OUTSIDE the try whose catch owns the restore — so ENOSPC, EIO, EDQUOT or a
+    // read-only remount mid-write left a person's committed test truncated, with the rollback never
+    // running, under a doc block promising total restore. The seam is the only way to make a real
+    // filesystem fail halfway on demand.
+    const committed = 'name: the committed version\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), committed)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed this test')
+    const before = treeSnapshot()
+    const beforeIndex = indexEntry(TARGET_PATH)
+    const commitsBefore = commitCount()
+
+    let calls = 0
+    const truncateThenFail = (absolutePath: string, bytes: Buffer): void => {
+      calls += 1
+      if (calls === 1) {
+        writeFileSync(absolutePath, '')
+        throw new Error('fixture: the target write failed mid-flight')
+      }
+      writeFileSync(absolutePath, bytes)
+    }
+
+    expect(() => applyTestDraftAsOneCommit({
+      configPath,
+      request: request({ sourceDigest: createHash('sha256').update(committed).digest('hex') }),
+      writeTarget: truncateThenFail,
+    })).toThrow(/the target write failed mid-flight/)
+
+    // TWO calls: the apply's write and the rollback's restore, through the SAME primitive. One
+    // call means the restore never ran, which is the defect stated as a number.
+    expect(calls).toBe(2)
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(committed)
+    expect(treeSnapshot()).toEqual(before)
+    expect(indexEntry(TARGET_PATH)).toBe(beforeIndex)
+    expect(git('status', '--porcelain').stdout.trim()).toBe('')
+    expect(commitCount()).toBe(commitsBefore)
+  })
+
+  it('names BOTH failures when the rollback itself fails, instead of the restore replacing the original', () => {
+    // WR-03. `restoreApplyFailure` was called bare inside the catch, so a restore that threw
+    // replaced the error explaining why the apply failed with its own — and the caller was left
+    // holding the second fact with no way to reach the first, at the one moment both matter.
+    const committed = 'name: the committed version\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), committed)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed this test')
+
+    let calls = 0
+    const writeThenFailTheRestore = (absolutePath: string, bytes: Buffer): void => {
+      calls += 1
+      if (calls === 1) {
+        writeFileSync(absolutePath, bytes)
+        return
+      }
+      throw new Error('fixture: the rollback could not put the bytes back')
+    }
+
+    let caught: unknown
+    try {
+      applyTestDraftAsOneCommit({
+        configPath,
+        request: request({ sourceDigest: createHash('sha256').update(committed).digest('hex') }),
+        exec: failingAt('commit'),
+        writeTarget: writeThenFailTheRestore,
+      })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(typeof ApplyRollbackFailedError).toBe('function')
+    expect(caught).toBeInstanceOf(ApplyRollbackFailedError)
+    expect((caught as Error).name).toBe('ApplyRollbackFailedError')
+    // ONE error carrying BOTH facts, each readable in the message a person actually sees.
+    expect((caught as Error).message).toContain('git commit exited 1')
+    expect((caught as Error).message).toContain('the rollback could not put the bytes back')
+    expect((caught as Error).message).toContain(TARGET_PATH)
+    // And carried structurally too, so a caller can re-raise either without parsing prose.
+    const composite = caught as { applyError?: unknown; restoreError?: unknown }
+    expect((composite.applyError as Error).message).toContain('git commit exited 1')
+    expect((composite.restoreError as Error).message)
+      .toContain('the rollback could not put the bytes back')
+    expect(calls).toBe(2)
+  })
+
+  it('digests the target\'s RAW BYTES, so a target that is not valid UTF-8 still matches the proposal', () => {
+    // WR-04, the overwrite direction. `readTargetIfPresent` decoded as UTF-8 and the digest hashed
+    // the decoded STRING, so every byte sequence that is not valid UTF-8 collapsed to the same
+    // replacement characters — a target that had not moved at all was refused as changed, and two
+    // genuinely different targets hashed alike.
+    writeFileSync(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed a test whose bytes are not UTF-8')
+    assertNonUtf8BytesSurviveTheHarness(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
+
+    const result = applyTestDraftAsOneCommit({
+      configPath,
+      request: request({
+        sourceDigest: createHash('sha256').update(NON_UTF8_TARGET_BYTES).digest('hex'),
+      }),
+    })
+
+    expect(result.filePath).toBe(TARGET_PATH)
+    expect(headStatPaths()).toEqual([TARGET_PATH])
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(DRAFT_BYTES)
+  })
+
+  it('restores a non-UTF-8 target BYTE-IDENTICALLY, never through a decode round-trip', () => {
+    // WR-04, the rollback direction, and the one that destroys a person's file rather than
+    // refusing: the restore wrote back a decoded string, so putting the bytes "back" replaced every
+    // sequence the decoder could not read with U+FFFD. The INDEX half is deliberately not asserted
+    // here — that is the index restore's own property, measured by its own cells, and asserting it
+    // in both places would make two mutations red one cell and stop the differential distinguishing
+    // them.
+    writeFileSync(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed a test whose bytes are not UTF-8')
+    assertNonUtf8BytesSurviveTheHarness(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
+    const beforeSha = sha256File(join(root, TARGET_PATH))
+
+    expect(() => applyTestDraftAsOneCommit({
+      configPath,
+      request: request({
+        sourceDigest: createHash('sha256').update(NON_UTF8_TARGET_BYTES).digest('hex'),
+      }),
+      exec: failingAt('commit'),
+    })).toThrow(/git commit exited/)
+
+    expect(sha256File(join(root, TARGET_PATH))).toBe(beforeSha)
+    expect(readFileSync(join(root, TARGET_PATH)).equals(NON_UTF8_TARGET_BYTES)).toBe(true)
   })
 })
