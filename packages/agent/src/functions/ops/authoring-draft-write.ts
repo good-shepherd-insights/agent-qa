@@ -159,10 +159,19 @@ export const authoringDraftWriteSpec: FunctionSpec<
     // it. Reading it here is what makes D-04's refuse-and-LINK reach a caller at all: a chat
     // surface told `refused` with no `refusal` could report that something matched but never say
     // what, and re-invoking is the only continuation this stateless design offers.
+    //
+    // THE FAN-OUT REPORT RIDES OUT; THE PROPOSAL DOES NOT (394-14 · WTST-08). `outcome.proposal`
+    // reaches people through 391's inbox and putting it here would mint a second place to read one
+    // artifact — the prohibition the output schema's own header states. The report is the recorded
+    // exception to that paragraph and the argument is written there: it is counts and run refs
+    // about the run budget, and WTST-08's owner decision made the honest report the second half of
+    // the only control this op has. It is carried on EVERY arm the loop answers with a routing,
+    // refusals included, because "this invocation ran nothing" is a number a caller is entitled to.
     const outcome = result.outcome
     const dedup = result.dedup
     return {
       outcome: outcome.kind,
+      fanOut: result.fanOut,
       ...(outcome.draftRef === undefined ? {} : { draftRef: outcome.draftRef }),
       ...(outcome.receipt === undefined ? {} : { receipt: outcome.receipt }),
       ...(dedup.kind === 'duplicate'

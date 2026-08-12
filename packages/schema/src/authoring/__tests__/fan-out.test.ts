@@ -354,3 +354,70 @@ describe('the rendered preview, which is the thing a person actually consents on
       .toEqual([])
   })
 })
+
+// ---- the wire mirror: the schemas accept what the functions PRODUCE (394-14) ------------------
+//
+// `authoring.draft.write` now carries the report on its `.strict()` output contract, so these
+// shapes are validated at a trust boundary rather than merely described. Every cell here parses a
+// value the shipped FUNCTION produced — never a hand-typed literal — because a literal fixture can
+// pin a shape the producer would not answer with, and the mirror would then certify a schema that
+// refuses real reports and accepts impossible ones.
+
+describe('the zod mirrors parse what the fan-out functions actually produce', () => {
+  it('FanOutReportSchema parses a PRODUCED report, run refs and all', async () => {
+    const { FanOutReportSchema, buildFanOutReport, computeFanOutBound } = await loadFanOut()
+
+    const report = buildFanOutReport({
+      previewed: computeFanOutBound({ initialN: DRAFT_STABILITY_RUNS_N, probeK: K, finalN: 1 }),
+      runs: [
+        { runId: 'r_gate-1', purpose: 'gate', completedAt: 2 },
+        // No `completedAt` at all: a run whose record could not be read still COUNTS, so the
+        // schema has to accept the absence rather than the interface merely permitting it.
+        { runId: 'r_probe-1', purpose: 'probe' },
+      ],
+    })
+
+    const parsed = FanOutReportSchema.parse(report)
+
+    expect(parsed).toEqual(report)
+    expect(parsed.consumed.map((run) => run.runId)).toEqual(['r_gate-1', 'r_probe-1'])
+    expect(parsed.previewed.total).toBe(DRAFT_STABILITY_RUNS_N + K + 1)
+  })
+
+  it('FanOutReportSchema parses the ZERO report a stage-2 refusal answers with', async () => {
+    const { FanOutReportSchema, NO_RUNS_FAN_OUT_BOUND, buildFanOutReport } = await loadFanOut()
+
+    const report = buildFanOutReport({ previewed: NO_RUNS_FAN_OUT_BOUND, runs: [] })
+
+    // The cheap arm has to round-trip too: it is the one every dedup refusal carries, and a schema
+    // that only accepted reports with runs on them would refuse the most common answer of all.
+    expect(FanOutReportSchema.parse(report)).toEqual(report)
+    expect(report.consumedTotal).toBe(0)
+  })
+
+  it('FanOutBoundSchema parses a PRODUCED bound and refuses a term that subtracts', async () => {
+    const { FanOutBoundSchema, computeFanOutBound } = await loadFanOut()
+
+    const bound = computeFanOutBound({ initialN: 1, probeK: K, finalN: DRAFT_STABILITY_RUNS_N })
+    expect(FanOutBoundSchema.parse(bound)).toEqual(bound)
+
+    // The one arithmetic error the number may never make is refused at the wire too, so a bound
+    // arriving from outside this process cannot say what `computeFanOutBound` would have thrown on.
+    expect(FanOutBoundSchema.safeParse({ ...bound, probeK: -1 }).success).toBe(false)
+  })
+
+  it('the mirrors are STRICT — an unknown key is refused, not silently stripped', async () => {
+    const { FanOutReportSchema, buildFanOutReport, computeFanOutBound } = await loadFanOut()
+
+    const report = buildFanOutReport({
+      previewed: computeFanOutBound({ initialN: 1, probeK: 0, finalN: 1 }),
+      runs: [{ runId: 'r_1', purpose: 'gate', completedAt: 1 }],
+    })
+
+    // The report is rendered onto a surface a person reads. A stripping parse would let a
+    // malformed result carry an extra field past validation and leave the render's inputs
+    // ambiguous; a refusal is what makes "only these fields reach the renderer" structural.
+    expect(FanOutReportSchema.safeParse({ ...report, draftBody: 'steps:\n  - a\n' }).success)
+      .toBe(false)
+  })
+})

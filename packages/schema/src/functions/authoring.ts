@@ -15,6 +15,7 @@ import { z } from 'zod'
 
 import { AuthoringFunnelSchema } from '../authoring/funnel'
 import { DraftReceiptSchema, DraftRefSchema } from '../authoring/draft-receipt'
+import { FanOutReportSchema } from '../authoring/fan-out'
 import { PatchOpSchema } from '../authoring/patch-ops'
 import { TestDraftProposalV1Schema } from '../authoring/proposal-arms'
 import type { ScopeTier } from '../identity/scope-key'
@@ -187,6 +188,23 @@ export type AuthoringDraftWriteInput = z.infer<typeof AuthoringDraftWriteInputSc
  * envelope into the inbox (D-05/D-11), so widening this contract with them would mint a second
  * place the same artifact could be read from.
  *
+ * `fanOut` IS THE ONE RECORDED EXCEPTION, AND IT IS AN EXCEPTION TO THAT PARAGRAPH ON PURPOSE
+ * (394-14 · WTST-08). WTST-08's owner decision was preview plus honest reporting with NO enforced
+ * budget, which moves the entire mitigation for an unbounded fan-out onto DISCLOSURE: the number a
+ * person is shown at the dispatch confirm is the control, and the number they are shown afterwards
+ * is what makes that control falsifiable. A number nobody can read after the fact is a disclosure
+ * with no second half — the person approved nine runs and has no way to learn that eleven were
+ * taken. Until this field existed the loop computed the report correctly and `invoke()` discarded
+ * it, so `renderFanOutReport` had zero production callers and `exceedsPreview` was a flag nothing
+ * could surface (394-VERIFICATION, SC-5).
+ *
+ * IT IS A MAP AND NEVER A TERRITORY, which is exactly what keeps it inside the prohibition's
+ * reasoning rather than beside it. The prohibition exists so one artifact is not readable from two
+ * places; `FanOutReport` is not an artifact at all. It is counts, run REFERENCES and one boolean
+ * about the disclosure — no draft body, no receipt payload, no step evidence, nothing a person
+ * would read instead of the inbox copy. A field carrying `outcome.proposal` would be the defect
+ * the paragraph above rules out and stays ruled out; this one is the disclosure's other half.
+ *
  * BOTH ARE OPTIONAL, AND `outcome` SAYS WHICH TO EXPECT — the `KnowledgeApplyOutcome.forgetReceipt`
  * idiom. A `drafted`, `repaired` or `finding` invocation carries both; a `refused` one ends at
  * stage 2 with no draft compiled and therefore no receipt to mint (D-04, plan 04). Requiring them
@@ -204,6 +222,17 @@ export const AuthoringDraftWriteOutputSchema = z.object({
    * for why this one payload arm exists where the paragraph above rules the others out.
    */
   refusal: AuthoringDedupRefusalSchema.optional(),
+  /**
+   * What was previewed at the confirm, beside what this invocation actually spent.
+   *
+   * REQUIRED ON EVERY ARM, unlike `draftRef` and `receipt`. Those two are absent because a stage-2
+   * refusal genuinely has neither. Cost is different in kind: "this invocation ran nothing" is a
+   * true and useful answer, and `buildFanOutReport({ previewed: NO_RUNS_FAN_OUT_BOUND, runs: [] })`
+   * is what the loop already answers with on that arm. An OPTIONAL field would make absent and
+   * zero indistinguishable at a caller — "nobody counted" and "nothing ran" read the same — which
+   * is the one ambiguity a disclosure may not have.
+   */
+  fanOut: FanOutReportSchema,
 }).strict()
 
 export type AuthoringDraftWriteOutput = z.infer<typeof AuthoringDraftWriteOutputSchema>

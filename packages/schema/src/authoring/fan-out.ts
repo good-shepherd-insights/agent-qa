@@ -34,20 +34,47 @@
 // type pins the key set by equality, and the runtime cells that catch a collapse are the ones that
 // use draft mode, where the two terms differ.
 
+// THE SHAPES ARE ZOD SCHEMAS AND THE TYPES ARE DERIVED FROM THEM (394-14). Until this plan the
+// shapes here were hand-written interfaces, which was correct while nothing crossed a wire: the
+// report was an in-process value the loop handed its own caller. `authoring.draft.write` now
+// CARRIES the report on its `.strict()` output contract, so the shape is validated at a boundary —
+// and a validator written beside an interface is two declarations of one shape, free to drift in
+// the direction where the schema accepts a report the type forbids or strips one the type requires.
+// Deriving is what makes the mirror structural rather than a habit. `.readonly()` is on every one
+// of them because the interfaces it replaces were readonly throughout, and a derived type that
+// quietly dropped the modifier would be a widening nobody asked for.
+
+import { z } from 'zod'
+
 /** The three terms, as the caller that knows all three supplies them. */
-export interface FanOutBoundInput {
+const fanOutBoundTerms = {
   /** The first stability gate's run count — `DRAFT_STABILITY_RUNS_N`, or 1 in draft mode. */
-  readonly initialN: number
+  initialN: z.number().int().min(0),
   /** One probe per repair iteration — `REPAIR_ITERATION_CAP`. */
-  readonly probeK: number
+  probeK: z.number().int().min(0),
   /** The final stability gate on the repaired candidate — `DRAFT_STABILITY_RUNS_N`. */
-  readonly finalN: number
+  finalN: z.number().int().min(0),
 }
 
-/** The three terms and their total, all four separately readable. */
-export interface FanOutBound extends FanOutBoundInput {
-  readonly total: number
-}
+export const FanOutBoundInputSchema = z.object(fanOutBoundTerms).strict().readonly()
+
+export type FanOutBoundInput = z.infer<typeof FanOutBoundInputSchema>
+
+/**
+ * The three terms and their total, all four separately readable.
+ *
+ * `total` IS NOT RE-DERIVED BY A REFINEMENT HERE, and the omission is deliberate. A
+ * `.refine(b => b.total === b.initialN + b.probeK + b.finalN)` would be a SECOND assembly of the
+ * three terms living one file away from `computeFanOutBound`, which is precisely the second
+ * arithmetic this file's header forbids and `scripts/394-fan-out-mutation.sh` mutation I exists to
+ * catch. The schema's job is the shape; the sum has exactly one site.
+ */
+export const FanOutBoundSchema = z.object({
+  ...fanOutBoundTerms,
+  total: z.number().int().min(0),
+}).strict().readonly()
+
+export type FanOutBound = z.infer<typeof FanOutBoundSchema>
 
 /**
  * A term that would SUBTRACT from the disclosure.
@@ -111,12 +138,14 @@ export type FanOutRunPurpose = (typeof FAN_OUT_RUN_PURPOSES)[number]
  * happened and must be counted, and pretending to know when it finished would fabricate a position
  * in the sequence. See the ordering rule below for where such an entry lands.
  */
-export interface ConsumedRun {
-  readonly runId: string
-  readonly purpose: FanOutRunPurpose
+export const ConsumedRunSchema = z.object({
+  runId: z.string().min(1),
+  purpose: z.enum(FAN_OUT_RUN_PURPOSES),
   /** Epoch milliseconds, when the run's record says so. */
-  readonly completedAt?: number
-}
+  completedAt: z.number().optional(),
+}).strict().readonly()
+
+export type ConsumedRun = z.infer<typeof ConsumedRunSchema>
 
 /**
  * What was previewed, beside what was actually consumed.
@@ -124,11 +153,11 @@ export interface ConsumedRun {
  * Both numbers ride ONE object so a reader cannot be handed either alone. The actual alone leaves
  * the disclosure unfalsifiable; the preview alone is the defect WTST-08 exists to prevent.
  */
-export interface FanOutReport {
-  readonly previewed: FanOutBound
+export const FanOutReportSchema = z.object({
+  previewed: FanOutBoundSchema,
   /** Distinct runs, in the order they finished, ties broken by run id. */
-  readonly consumed: readonly ConsumedRun[]
-  readonly consumedTotal: number
+  consumed: z.array(ConsumedRunSchema).readonly(),
+  consumedTotal: z.number().int().min(0),
   /**
    * The actual figure exceeded the previewed bound.
    *
@@ -137,9 +166,15 @@ export interface FanOutReport {
    * number that was spent — and a throw would destroy the receipt that holds the evidence for it.
    * The flag is a disclosure of the same kind the report itself is, and every path this phase
    * exercises asserts it is false.
+   *
+   * IT IS NOT RE-DERIVED HERE EITHER. `consumedTotal > previewed.total` spelled as a refinement
+   * would be a second answer to the question `buildFanOutReport` already answered, and the two
+   * could disagree only in the direction that hides an excess.
    */
-  readonly exceedsPreview: boolean
-}
+  exceedsPreview: z.boolean(),
+}).strict().readonly()
+
+export type FanOutReport = z.infer<typeof FanOutReportSchema>
 
 /**
  * Order the consumed runs into a sequence two renders of one report cannot disagree about.

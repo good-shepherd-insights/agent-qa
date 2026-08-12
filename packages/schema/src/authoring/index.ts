@@ -92,9 +92,13 @@ export type {
 // report both read it, so the number a person consents on and the number they are shown afterwards
 // cannot be two answers.
 export {
+  ConsumedRunSchema,
   FAN_OUT_PHRASES,
   FAN_OUT_RUN_PURPOSES,
   FanOutBoundError,
+  FanOutBoundInputSchema,
+  FanOutBoundSchema,
+  FanOutReportSchema,
   NO_RUNS_FAN_OUT_BOUND,
   buildFanOutReport,
   computeFanOutBound,

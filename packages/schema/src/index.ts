@@ -897,9 +897,13 @@ export type {
 // proposal reports against it, so a preview that understated what the loop would spend cannot be
 // produced by one surface disagreeing with the other.
 export {
+  ConsumedRunSchema,
   FAN_OUT_PHRASES,
   FAN_OUT_RUN_PURPOSES,
   FanOutBoundError,
+  FanOutBoundInputSchema,
+  FanOutBoundSchema,
+  FanOutReportSchema,
   NO_RUNS_FAN_OUT_BOUND,
   buildFanOutReport,
   computeFanOutBound,
