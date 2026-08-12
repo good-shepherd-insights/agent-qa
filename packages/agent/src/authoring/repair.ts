@@ -56,6 +56,12 @@ import type {
   TestEditPatchSet,
 } from '@vostride/agent-qa-schema'
 
+// THE ONE CREDENTIAL GATE, reached rather than re-implemented. `loop.ts` imports this module for
+// `repairDraft`, so the pair is an intra-directory cycle — resolved the way ESM resolves one: the
+// screen is a hoisted function declaration and the error class is only ever touched inside a call,
+// long after both modules have finished evaluating. A second detector here would be a second answer
+// to "is this a credential", which is the thing `CREDENTIAL_DETECTOR_FAMILIES` exists to have one of.
+import { DraftSecretRefusedError, screenDraftForCredentials } from './loop.js'
 import type { DraftRunPortLike, DraftShelfPortLike, ParsedDraftLike } from './ports.js'
 import { ROUTER_EVIDENCE_CHANNELS } from './router.js'
 import type { RepairRoute } from './router.js'
@@ -465,6 +471,23 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
     const staged = await deps.shelf.applyPatches(candidate, parsed)
     if (staged.kind === 'unparsable') {
       lastRefusal = `the patched document did not parse: ${staged.reason}`
+      continue
+    }
+
+    // T-394-43 ON THE REPAIR PATH. `staged.draft` holds model-emitted text that the next line would
+    // type into a live application through a child run, and that `verifyDraft` would then persist
+    // verbatim in `stepTable[].stepText`.
+    //
+    // THE REFUSAL IS ITERATION-SCOPED WHERE THE LOOP'S IS INVOCATION-SCOPED, and the difference is
+    // what is still possible rather than what has happened: at both sites nothing has been probed
+    // and nothing persisted, but here a clean retry remains available inside K. So the iteration is
+    // spent, `candidate` is NOT advanced to the poisoned draft, and a run of them exits through the
+    // ordinary exhausted arm.
+    try {
+      screenDraftForCredentials(staged.draft)
+    } catch (error) {
+      if (!(error instanceof DraftSecretRefusedError)) throw error
+      lastRefusal = error.message
       continue
     }
 

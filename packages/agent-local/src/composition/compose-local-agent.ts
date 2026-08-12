@@ -895,6 +895,12 @@ export interface ParsedDraftDescriptor {
   readonly filePath: string
   readonly testName: string
   readonly steps: readonly string[]
+  /**
+   * The parsed test's `context` block — an EDITABLE root, and therefore one the credential gate
+   * scans. Structurally identical to `ParsedDraftLike.context`; a mirror that dropped it would
+   * hand `packages/agent` a draft whose context can no longer be screened.
+   */
+  readonly context?: string
   readonly contentDigest: string
 }
 

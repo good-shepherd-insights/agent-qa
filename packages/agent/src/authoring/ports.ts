@@ -53,6 +53,15 @@ export interface ParsedDraftLike {
   readonly testName: string
   /** Pre-interpolation NL step text. Post-interpolation text can carry resolved secrets (D-19). */
   readonly steps: readonly string[]
+  /**
+   * The parsed test's `context` block, pre-interpolation, optional exactly as
+   * `TestDefinitionSchema.context` is — post-interpolation text can carry resolved secrets (D-19).
+   *
+   * IT IS HERE BECAUSE IT IS EDITABLE. `context` is one of the three `EDITABLE_POINTER_ROOTS`, so
+   * a patch can write it; a mirror that omitted it made the credential gate blind to a whole root
+   * by TYPE SHAPE rather than by a missed entry in a locations array.
+   */
+  readonly context?: string
   /** Digest of the draft bytes evaluated, so a later edit cannot inherit this receipt. */
   readonly contentDigest: string
 }

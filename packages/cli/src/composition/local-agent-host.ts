@@ -644,6 +644,8 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
           filePath: identityPath,
           testName: test.name,
           steps: draftStepTexts(test),
+          // An EDITABLE root, so it is carried rather than dropped: the credential gate scans it.
+          ...(test.context === undefined ? {} : { context: test.context }),
           // Over the FILE'S BYTES, so a receipt cannot be inherited by an edited draft — which is
           // the whole of what `DraftRefSchema.contentDigest` promises.
           contentDigest: createHash('sha256').update(content).digest('hex'),
@@ -692,6 +694,9 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
           filePath: writtenPath,
           testName: test.name,
           steps: draftStepTexts(test),
+          // As above: an editable root the gate scans. A stage that dropped it would re-open the
+          // blind spot for every patched draft, which is the path a repair patch takes.
+          ...(test.context === undefined ? {} : { context: test.context }),
           contentDigest,
         },
       }

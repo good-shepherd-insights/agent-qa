@@ -350,8 +350,15 @@ export class DraftSecretRefusedError extends Error {
  * asked to accept such a draft; screening here satisfies it AND closes the two earlier exposures a
  * later screen cannot.
  *
- * IT SCANS THE DRAFT AS PARSED, not the model's raw emission, so a credential introduced by D-18's
- * refinement round or by a repair patch is caught on the same path as one the first compile wrote.
+ * IT SCANS THE DRAFT AS PARSED, not the model's raw emission, and it scans THREE LOCATIONS: the
+ * test name, the `context` block, and every step. Those are the three `EDITABLE_POINTER_ROOTS`, so
+ * no root a patch is allowed to write is outside the scan.
+ *
+ * TWO CALL SITES, TWO SCOPES, AND NEITHER COVERS THE OTHER. `runAuthoringLoop` calls it once per
+ * invocation, after D-18's refinement round and before stage 4 — so the compile's own emission and
+ * the refinement round's patches are screened there. `repairDraft` calls it once per iteration, on
+ * the draft the patches were applied to, before that iteration's probe starts. A repair patch is
+ * screened at the repair site and nowhere else.
  *
  * ONE POLICY PER CALL, built from `defaultGuardrailPolicyInput` — the same input
  * `createGuardrailProviderRequestHook` composes its policy from.
@@ -359,10 +366,14 @@ export class DraftSecretRefusedError extends Error {
 export function screenDraftForCredentials(draft: {
   readonly testName: string
   readonly steps: readonly string[]
+  readonly context?: string
 }): void {
   const policy = loadGuardrailPolicy(defaultGuardrailPolicyInput)
   const locations: readonly { text: string; label: string; stepIndex?: number }[] = [
     { text: draft.testName, label: 'the test name' },
+    // No `stepIndex`: the context is not a step, and a location that borrowed a step's index would
+    // point a reader at a line that holds nothing.
+    ...(draft.context === undefined ? [] : [{ text: draft.context, label: 'the test context' }]),
     ...draft.steps.map((text, index) => ({
       text,
       label: `step ${index + 1}`,
@@ -771,10 +782,11 @@ export async function runAuthoringLoop(
   const draft = refinement.draft
 
   // T-394-43, AND IT SITS HERE FOR A MEASURED REASON — see `screenDraftForCredentials`. It is after
-  // the refinement round so a credential a patch introduced is screened on the same path as one the
+  // the refinement round so a credential D-18's patches introduced is screened as well as one the
   // compile wrote, and before stage 4 so no gate run types the value into a live application and no
   // receipt records it on disk. Nothing has been proposed at this point and nothing will be: the
-  // throw ends the invocation with no receipt, no envelope and no human asked.
+  // throw ends the invocation with no receipt, no envelope and no human asked. THIS SITE DOES NOT
+  // COVER REPAIR — `repairDraft` screens each patched candidate at its own site, per iteration.
   screenDraftForCredentials(draft)
 
   stages.push('verify')
