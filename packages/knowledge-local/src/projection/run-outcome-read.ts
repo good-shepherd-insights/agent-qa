@@ -104,6 +104,33 @@ export function readTestOutcomeHistory(
 }
 
 /**
+ * Every identity the projection has counted inside ONE file, in one product (394-17 · WTST-05).
+ *
+ * The neighbours side of D-14's stability read: "which tests does this suite file already have run
+ * evidence for". Keyed on the projection's own primary key, so `product` is REQUIRED for the same
+ * reason `readTestOutcomeHistory` requires it — a query that dropped it would serve every
+ * product's rows under one file path and report another application's tests as this target's.
+ *
+ * `test_name` ORDER, so a caller's message names its neighbours in a stable order across runs. An
+ * empty array is the honest answer for a file the projection has never counted; the caller turns
+ * that into a `no-history` posture rather than into a clean bill of health.
+ */
+export function listTestsInFile(
+  db: DatabaseSync,
+  scope: { product: string; filePath: string },
+): string[] {
+  return db
+    .prepare(`
+      SELECT test_name
+      FROM run_test_outcomes
+      WHERE product = ? AND file_path = ?
+      ORDER BY test_name
+    `)
+    .all(scope.product, scope.filePath)
+    .map((row) => String((row as { test_name: unknown }).test_name))
+}
+
+/**
  * D-02's forced discriminator channel: did the same step pass on the previous build?
  * Answers the entry with the greatest buildOrdinal STRICTLY below `currentBuildOrdinal`,
  * or `undefined` when no prior build is in the window (empty history, a single

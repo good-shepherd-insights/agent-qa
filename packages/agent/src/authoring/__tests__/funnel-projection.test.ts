@@ -343,11 +343,15 @@ describe('projectAuthoringFunnel', () => {
 })
 
 describe('gatherSuiteStability', () => {
+  /** The partition the outcome projection is keyed on — `slugBranch` of the run's own scope. */
+  const PRODUCT = 'local-form'
+  // The port's two verbs LEAD WITH `product` (394-17, step a): the projection they mirror is keyed
+  // (product, filePath, testName), and a shape without it could only be bound by guessing.
   const outcomes = (rows: Readonly<Record<string, readonly string[]>>) => ({
-    async testsIn(filePath: string) {
+    async testsIn(_product: string, filePath: string) {
       return Object.keys(rows).map((testName) => ({ filePath, testName }))
     },
-    async outcomesFor(_filePath: string, testName: string) {
+    async outcomesFor(_product: string, _filePath: string, testName: string) {
       return rows[testName] ?? []
     },
   })
@@ -355,7 +359,7 @@ describe('gatherSuiteStability', () => {
   it('names the flaky neighbours and starts ZERO runs', async () => {
     const runs = countingRunPort()
     const assessment = await gatherSuiteStability(
-      { targetFilePath: TARGET, draftTestName: 'draft under evaluation' },
+      { product: PRODUCT, targetFilePath: TARGET, draftTestName: 'draft under evaluation' },
       port({
         outcomes: outcomes({
           'submits the form': ['passed', 'passed'],
@@ -375,7 +379,7 @@ describe('gatherSuiteStability', () => {
 
   it('names a quarantined neighbour, reading the ledger rather than re-running it', async () => {
     const assessment = await gatherSuiteStability(
-      { targetFilePath: TARGET },
+      { product: PRODUCT, targetFilePath: TARGET },
       port({
         outcomes: outcomes({ 'retries the upload': ['passed'] }),
         quarantine: {
@@ -404,7 +408,7 @@ describe('gatherSuiteStability', () => {
 
   it('answers `stable` when the neighbours were read and none is flaky', async () => {
     const assessment = await gatherSuiteStability(
-      { targetFilePath: TARGET },
+      { product: PRODUCT, targetFilePath: TARGET },
       port({ outcomes: outcomes({ 'submits the form': ['passed', 'passed'] }) }),
     )
 
@@ -412,7 +416,7 @@ describe('gatherSuiteStability', () => {
   })
 
   it('answers `no-history` — not `stable` — when the outcome port is UNBOUND', async () => {
-    const assessment = await gatherSuiteStability({ targetFilePath: TARGET }, port())
+    const assessment = await gatherSuiteStability({ product: PRODUCT, targetFilePath: TARGET }, port())
 
     expect(assessment.posture).toBe('no-history')
     expect(assessment.message).toContain('not a clean bill of health')
@@ -422,7 +426,7 @@ describe('gatherSuiteStability', () => {
     // A draft under evaluation is not evidence about the suite it is trying to join; counting
     // its own flip would let every mixed verdict explain itself.
     const assessment = await gatherSuiteStability(
-      { targetFilePath: TARGET, draftTestName: 'the flipping draft' },
+      { product: PRODUCT, targetFilePath: TARGET, draftTestName: 'the flipping draft' },
       port({
         outcomes: outcomes({
           'the flipping draft': ['passed', 'failed'],

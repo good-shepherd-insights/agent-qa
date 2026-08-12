@@ -323,6 +323,7 @@ export type {
 // (D-02 prior-build discriminator channel; D-08 live kth-failure recurrence join).
 export {
   failureRecurrence,
+  listTestsInFile,
   priorBuildOutcome,
   readTestOutcomeHistory,
 } from './projection/run-outcome-read.js'

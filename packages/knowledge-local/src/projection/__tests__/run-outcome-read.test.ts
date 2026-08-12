@@ -8,11 +8,13 @@ import { describe, expect, it } from 'vitest'
 import { ensureRunOutcomeTables } from '../../index-open.js'
 import {
   failureRecurrence as barrelFailureRecurrence,
+  listTestsInFile as barrelListTestsInFile,
   priorBuildOutcome as barrelPriorBuildOutcome,
   readTestOutcomeHistory as barrelReadTestOutcomeHistory,
 } from '../../index.js'
 import {
   failureRecurrence,
+  listTestsInFile,
   priorBuildOutcome,
   readTestOutcomeHistory,
   type TestOutcomeEntry,
@@ -292,5 +294,57 @@ describe('knowledge-local barrel export', () => {
     expect(barrelReadTestOutcomeHistory).toBe(readTestOutcomeHistory)
     expect(barrelPriorBuildOutcome).toBe(priorBuildOutcome)
     expect(barrelFailureRecurrence).toBe(failureRecurrence)
+  })
+})
+
+// ---- listTestsInFile (394-17 · WTST-05) --------------------------------------------------------
+//
+// The neighbours side of D-14's stability read. The cross-product cell is the one that matters:
+// a query that dropped `product` would answer every application's tests under one file path, and
+// the gate-2 message would name another app's flaky test as this target's (T-394-68).
+
+function insertRow(
+  db: DatabaseSync,
+  row: { product: string; filePath: string; testName: string },
+): void {
+  db.prepare(`
+    INSERT INTO run_test_outcomes (
+      product, scope_tier, scope_key, file_path, test_name, passes, failures, heals,
+      flake_count, last_outcomes_json, last_build_ordinal
+    ) VALUES (?, ?, ?, ?, ?, 1, 0, 0, 0, '[]', 1)
+  `).run(row.product, 'product', row.product, row.filePath, row.testName)
+}
+
+describe('listTestsInFile (394-17)', () => {
+  it('answers the file\'s counted identities in test_name order', () => {
+    const db = openDb()
+    insertRow(db, { product: PRODUCT, filePath: FILE_PATH, testName: 'zeta checkout' })
+    insertRow(db, { product: PRODUCT, filePath: FILE_PATH, testName: 'alpha checkout' })
+
+    expect(listTestsInFile(db, { product: PRODUCT, filePath: FILE_PATH }))
+      .toEqual(['alpha checkout', 'zeta checkout'])
+  })
+
+  it('never serves ANOTHER product\'s rows under the same file path', () => {
+    const db = openDb()
+    insertRow(db, { product: PRODUCT, filePath: FILE_PATH, testName: 'ours' })
+    insertRow(db, { product: 'other-app', filePath: FILE_PATH, testName: 'theirs' })
+
+    expect(listTestsInFile(db, { product: PRODUCT, filePath: FILE_PATH })).toEqual(['ours'])
+    // And the fixture really did put a row there under the other key, so the cell above is an
+    // exclusion rather than an empty table.
+    expect(listTestsInFile(db, { product: 'other-app', filePath: FILE_PATH })).toEqual(['theirs'])
+  })
+
+  it('answers [] for a file the projection has never counted', () => {
+    const db = openDb()
+    fold(db, { runId: 'run-b1', buildOrdinal: 1, outcome: 'passed' })
+
+    expect(listTestsInFile(db, { product: PRODUCT, filePath: 'suite/never-run.test.ts' }))
+      .toEqual([])
+  })
+
+  it('is published on the barrel as the same symbol', () => {
+    expect(barrelListTestsInFile).toBe(listTestsInFile)
   })
 })

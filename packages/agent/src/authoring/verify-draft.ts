@@ -29,10 +29,16 @@ import {
   DraftReceiptSchema,
   testFingerprintElements,
 } from '@vostride/agent-qa-schema'
-import type { DraftReceipt, PerTestOutcome } from '@vostride/agent-qa-schema'
+import type {
+  DraftReceipt,
+  PerTestOutcome,
+  SuiteStabilityAssessment,
+} from '@vostride/agent-qa-schema'
 
 import { addsValueGate } from './adds-value.js'
 import { assertionStrengthGate } from './assertion-strength.js'
+import { gatherSuiteStability } from './funnel.js'
+import type { AuthoringFunnelPortLike } from './funnel.js'
 import type {
   DraftReceiptsStoreLike,
   DraftRunPortLike,
@@ -85,6 +91,24 @@ export interface EvaluateDraftPorts {
   readonly receipts: DraftReceiptsStoreLike
   /** Injected so a receipt's `evaluatedAt` is pinnable in a test. Defaults to the wall clock. */
   readonly now?: () => number
+  /**
+   * D-14's read side, consulted ONLY when gate 2 flips (394-17 · WTST-05).
+   *
+   * ONE BUNDLE OF TWO HALVES that are useless apart, on the `AuthoringFunnelPortLike` reasoning
+   * one level down. `port` is the funnel's read bundle — which carries NO run capability at all,
+   * so the zero-runs law is structural rather than remembered. `product` is the partition the
+   * projection is keyed on, and it is a THUNK because the answer is OBSERVED rather than derived:
+   * a composition learns it from the first gate-run acknowledgement, and D-04 forbids
+   * short-circuiting, so by the time gate 2 can flip at least one run has been acknowledged. It
+   * answers `undefined` when nothing was observed, and the consultation is then SKIPPED —
+   * deriving a product from configuration instead would be a second rule for a fact the write
+   * side already decides, and the first time the two disagreed this message would report another
+   * application's flakiness as this target's (T-394-68).
+   */
+  readonly suiteStability?: {
+    readonly port: AuthoringFunnelPortLike
+    product(): string | undefined
+  }
 }
 
 /**
@@ -137,6 +161,13 @@ export async function evaluateDraft(
     runsRequested: stabilityRunsRequested,
   })
 
+  // D-14'S LIVE ARM, ON THE FLIP PATH AND NOWHERE ELSE. A mixed verdict rejects the draft, and
+  // the naive answer — discard it silently — is wrong often enough to matter: a target whose
+  // EXISTING tests already flip or sit in quarantine is a target where the APPLICATION is
+  // unstable, and an author can only act on that if somebody says it. The read is over records
+  // that already exist and starts nothing.
+  const suiteStability = await consultSuiteStability(input.draft, stability.distinctOutcomes, ports)
+
   // Gate 3, over the draft's own execution evidence.
   const draftElements = draftFingerprintElements(stability.draftMembers)
   const addsValue = addsValueGate({
@@ -172,7 +203,11 @@ export async function evaluateDraft(
         runRefs,
         distinctOutcomes: stability.distinctOutcomes,
         earlyStopped: stability.earlyStopped,
-        reason: stabilityGateTwoReason(stability.distinctOutcomes, stability.earlyStopped),
+        reason: stabilityGateTwoReason(
+          stability.distinctOutcomes,
+          stability.earlyStopped,
+          suiteStability,
+        ),
       },
       addsValue: {
         pass: addsValue.pass,
@@ -216,10 +251,58 @@ function stabilityGateOneReason(pass: boolean, runCount: number): string {
     : `${runCount} gate-run(s) taken; at least one reached no final verdict — see gateRuns[].reason`
 }
 
-function stabilityGateTwoReason(distinctOutcomes: readonly string[], earlyStopped: boolean): string {
+/**
+ * Read the target's recorded stability, on a FLIP and only on a flip (D-14, 394-17).
+ *
+ * THREE WAYS TO GET NOTHING, and all three are the honest answer rather than a degraded guess: the
+ * verdict did not flip (there is nothing to explain), the composition bound no consultation, or no
+ * product was observed. In the last case the posture is stated by NOTHING — the reason string
+ * stays exactly what it has always been — because a fabricated product would read another
+ * application's history and say so with names.
+ *
+ * The gather itself carries no run capability, so "zero extra runs" is a property of the port's
+ * shape rather than a rule this call site has to keep.
+ */
+async function consultSuiteStability(
+  draft: ParsedDraftLike,
+  distinctOutcomes: readonly string[],
+  ports: EvaluateDraftPorts,
+): Promise<SuiteStabilityAssessment | undefined> {
+  if (distinctOutcomes.length <= 1) return undefined
+  const consultation = ports.suiteStability
+  if (consultation === undefined) return undefined
+  const product = consultation.product()
+  if (product === undefined) return undefined
+
+  return await gatherSuiteStability(
+    {
+      product,
+      targetFilePath: draft.filePath,
+      // The draft's OWN identity is not evidence about the suite it is trying to join; counting
+      // its own flip as a neighbour's would let every mixed verdict explain itself.
+      draftTestName: draft.testName,
+    },
+    consultation.port,
+  )
+}
+
+/**
+ * Gate 2's reason, composed HERE and nowhere else.
+ *
+ * The assessment is APPENDED to the draft's own verdict rather than replacing it: "your test
+ * flipped" and "your app is unstable here" are two different sentences and an author needs both —
+ * told only the second, they would not know their draft was rejected; told only the first, they
+ * would go and debug a test the application broke.
+ */
+function stabilityGateTwoReason(
+  distinctOutcomes: readonly string[],
+  earlyStopped: boolean,
+  suiteStability?: SuiteStabilityAssessment,
+): string {
   if (distinctOutcomes.length <= 1) {
     return `one verdict across the completed runs: ${distinctOutcomes[0] ?? 'none observed'}`
   }
   return `the verdict flipped across runs (${distinctOutcomes.join(' -> ')})`
     + (earlyStopped ? ' — remaining runs skipped, the flip is already proven (D-17)' : '')
+    + (suiteStability === undefined ? '' : ` — ${suiteStability.message}`)
 }

@@ -40,6 +40,7 @@ import {
 } from '@vostride/agent-qa-agent'
 import type {
   AgentJobQueue,
+  AuthoringFunnelPortLike,
   ChatConfigState,
   ChatDirectiveHandlers,
   ChatLanguageModel,
@@ -94,6 +95,7 @@ import {
   enqueueCurationCandidateProjection,
   failureRecurrence,
   fingerprintRecurrence,
+  listTestsInFile,
   foldQuarantineLedgerState,
   foldRunOutcomes,
   createDraftReceiptsStore,
@@ -1066,6 +1068,14 @@ interface DraftEvaluationBindingInput {
   readonly readRun: (runId: string) => Promise<CompletedRunHandoff | undefined>
   /** Dispatch one gate-run through the REAL `runs.start` op (D-02, op-calls-op). */
   readonly startGateRun: (request: RunsStartInput) => Promise<RunStartAcknowledgement>
+  /**
+   * The funnel's read bundle, handed straight through for D-14's gate-2 consultation (394-17).
+   *
+   * THE SAME OBJECT the `authoring.funnel.get` op binds. This evaluation does not read a second
+   * projection: it asks the one this composition already answers "what does this project know
+   * about this suite" with.
+   */
+  readonly authoringFunnel: AuthoringFunnelPortLike
 }
 
 /**
@@ -1144,6 +1154,16 @@ function createDraftEvaluation(input: DraftEvaluationBindingInput) {
         // proposals inbox and for its reason — a receipt is machine-local working state under the
         // runtime root, not a committed artifact a pull request has any business showing.
         receipts: createDraftReceiptsStore({ resolveAgentQaRoot: () => input.agentQaRoot }),
+        // D-14's live arm (394-17, step c). `product` is the SAME `observedProduct` gate 3's index
+        // is opened against — read off the first gate-run acknowledgment, never derived from
+        // configuration — so the stability read and the suite index can never be asking about two
+        // different applications. Before any run is acknowledged it is `undefined` and the
+        // consultation is skipped; D-04 forbids short-circuiting, so a flip cannot be observed
+        // until at least one run has been.
+        suiteStability: {
+          port: input.authoringFunnel,
+          product: () => observedProduct,
+        },
       }
     },
   }
@@ -2399,6 +2419,65 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     },
   })
 
+  // 394-07 D-12/D-14 · WTST-05: the honesty funnel's reads, assembled ONCE and handed to both
+  // consumers — the `authoring.funnel.get` op below, and the gate-2 flip consultation the draft
+  // evaluator makes (394-17). Two bindings would be two answers to what this project knows about
+  // one suite, which is the 385 D-15 rule this whole file is under.
+  const authoringFunnel: AuthoringFunnelPortLike = {
+    receipts: createDraftReceiptsStore({ resolveAgentQaRoot: () => input.agentQaRoot }),
+    proposals: async () => (await createProposalsInbox({
+      resolveAgentQaRoot: () => input.agentQaRoot,
+      now: () => Date.parse(clock.now()),
+    }).list()).map((entry) => entry.envelope),
+    quarantine: {
+      list: async () => (await createQuarantineOperations({
+        resolveKnowledgeRoot: input.knowledgeRoot,
+        auditBaseDir: input.agentQaRoot,
+        now: () => clock.now(),
+        mintIdentityPath: input.mintQuarantineIdentityPath,
+        ...(input.resolveWriterAuthority === undefined
+          ? {}
+          : { resolveWriterAuthority: input.resolveWriterAuthority }),
+      }).list()),
+    },
+    // D-14's history half, over the run-outcome projection's own read side (394-17, step b).
+    //
+    // ONE CONNECTION PER VERB, opened read-only and closed in `finally`, on the shape
+    // `readProjectedTestHistory` above already takes. An absent database, a store predating the
+    // projection tables and an identity nothing has counted all answer EMPTY — which
+    // `assessSuiteStability` turns into the honest `no-history` posture rather than into a clean
+    // bill of health. Any other read failure propagates: a corrupt store is not "no history".
+    //
+    // THE OUTCOME WORDS. The durable window keeps one boolean per build (`last_outcomes_json`),
+    // which is what the fold reduced each member's outcome to, so this spells it back with the two
+    // words it was reduced FROM. Nothing downstream compares those strings against a member list —
+    // `assessSuiteStability` counts DISTINCT values — so a flip in the window is a flip here, and
+    // no vocabulary is invented beyond what the projection actually kept.
+    outcomes: {
+      testsIn: async (product: string, filePath: string) => {
+        const knowledgeRoot = await input.knowledgeRoot()
+        const path = indexDbPath(knowledgeRoot)
+        if (!existsSync(path)) return []
+        const db = new DatabaseSync(path, { readOnly: true })
+        try {
+          return listTestsInFile(db, { product, filePath })
+            .map((testName) => ({ filePath, testName }))
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('no such table')) return []
+          throw error
+        } finally {
+          db.close()
+        }
+      },
+      outcomesFor: async (product: string, filePath: string, testName: string) => {
+        const knowledgeRoot = await input.knowledgeRoot()
+        const history = readProjectedTestHistory(knowledgeRoot, { product, filePath, testName })
+        if (history === undefined) return []
+        return history.lastOutcomes.map((entry) => (entry.passed ? 'passed' : 'failed'))
+      },
+    },
+  }
+
   const registry = createFunctionRegistry({
     deps: {
       runs: {
@@ -2508,32 +2587,14 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // in-flight apply is not one yet. Dropping it here rather than teaching the projection to
       // ignore it keeps the funnel's input the envelopes it actually reasons about.
       //
-      // `outcomes` IS DELIBERATELY NOT BOUND, and the absence is measured rather than forgotten.
-      // D-14's stability read keys on the run-outcome projection, whose identity is
-      // (product, filePath, testName) — and `product` is `slugBranch(scope.key)`, a fact that
-      // arrives on the LOOP's input and on no read this op serves. So the honest binding site is
-      // the loop's gate-2 flip path, where the scope is in hand, and it lands with that caller
-      // (394-08/09). Until then `gatherSuiteStability` answers the `no-history` posture it was
-      // designed to answer for a host with no projection — a degraded read STATED, never a clean
-      // bill of health, which is exactly the arm the vocabulary exists to make sayable.
-      authoringFunnel: {
-        receipts: createDraftReceiptsStore({ resolveAgentQaRoot: () => input.agentQaRoot }),
-        proposals: async () => (await createProposalsInbox({
-          resolveAgentQaRoot: () => input.agentQaRoot,
-          now: () => Date.parse(clock.now()),
-        }).list()).map((entry) => entry.envelope),
-        quarantine: {
-          list: async () => (await createQuarantineOperations({
-            resolveKnowledgeRoot: input.knowledgeRoot,
-            auditBaseDir: input.agentQaRoot,
-            now: () => clock.now(),
-            mintIdentityPath: input.mintQuarantineIdentityPath,
-            ...(input.resolveWriterAuthority === undefined
-              ? {}
-              : { resolveWriterAuthority: input.resolveWriterAuthority }),
-          }).list()),
-        },
-      },
+      // `outcomes` IS BOUND (394-17, step b): the port's two verbs now LEAD with `product`, so the
+      // binding reads the run-outcome projection on its own primary key instead of guessing a
+      // partition or serving every product's history under one file path.
+      //
+      // ASSEMBLED ABOVE rather than inline, because the gate-2 flip path is handed the SAME
+      // bundle: one composition-level answer to "what does this project know about this suite",
+      // reached by the funnel read op and by the evaluator's consultation alike.
+      authoringFunnel,
       // 391 PROP-03 / D-15: the enumerable inbox, bound HERE and therefore on BOTH hosts — the
       // CLI and 386's daemon compose the same root, which is the whole point of 385 D-15 (a
       // second binding site would be a second answer to "what is waiting on you").
@@ -2608,6 +2669,7 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           authoring: input.draftAuthoring,
           agentQaRoot: input.agentQaRoot,
           knowledgeRoot: input.knowledgeRoot,
+          authoringFunnel,
           readRun: (runId) => runsReader.get(runId as RunId),
           startGateRun: async (request) => {
             if (composedRegistry === undefined) {

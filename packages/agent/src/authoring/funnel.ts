@@ -51,10 +51,18 @@ import type { DraftReceiptsReadPortLike, SuiteTestIdentity } from './ports.js'
  * that into the honest `no-history` posture rather than into a clean bill of health.
  */
 export interface SuiteOutcomeHistoryPortLike {
-  /** The stable identities the target suite file has run evidence for. */
-  testsIn(filePath: string): Promise<readonly SuiteTestIdentity[]>
+  /**
+   * The stable identities the target suite file has run evidence for, in ONE product.
+   *
+   * `product` LEADS BOTH VERBS because the projection these read is keyed
+   * (product, filePath, testName) and nothing else is a stable identity there. A port shaped
+   * without it could only be bound by guessing a product or by serving every product's history
+   * under one file path — and the second would report another application's flakiness as this
+   * target's, which is the whole failure the message exists to avoid (T-394-68).
+   */
+  testsIn(product: string, filePath: string): Promise<readonly SuiteTestIdentity[]>
   /** One identity's recorded member outcomes, newest last. */
-  outcomesFor(filePath: string, testName: string): Promise<readonly string[]>
+  outcomesFor(product: string, filePath: string, testName: string): Promise<readonly string[]>
 }
 
 /**
@@ -159,7 +167,16 @@ export async function projectAuthoringFunnel(
  * projection genuinely has no history to report, and saying so is the honest answer.
  */
 export async function gatherSuiteStability(
-  input: { readonly targetFilePath: string; readonly draftTestName?: string },
+  input: {
+    /**
+     * The partition the outcome projection keys on — `slugBranch` of the run's own scope, as the
+     * fold wrote it. REQUIRED and never defaulted: there is no correct product to fall back to,
+     * and a caller that does not know one must not ask at all.
+     */
+    readonly product: string
+    readonly targetFilePath: string
+    readonly draftTestName?: string
+  },
   port: AuthoringFunnelPortLike,
 ): Promise<SuiteStabilityAssessment> {
   if (port.outcomes === undefined) {
@@ -172,7 +189,7 @@ export async function gatherSuiteStability(
       .map((entry) => entry.testName),
   )
 
-  const identities = (await port.outcomes.testsIn(input.targetFilePath))
+  const identities = (await port.outcomes.testsIn(input.product, input.targetFilePath))
     .filter((identity) => identity.testName !== input.draftTestName)
 
   const neighbours: SuiteNeighbourRow[] = []
@@ -180,7 +197,11 @@ export async function gatherSuiteStability(
     neighbours.push({
       filePath: identity.filePath,
       testName: identity.testName,
-      outcomes: await port.outcomes.outcomesFor(identity.filePath, identity.testName),
+      outcomes: await port.outcomes.outcomesFor(
+        input.product,
+        identity.filePath,
+        identity.testName,
+      ),
       quarantined: quarantined.has(identity.testName),
     })
   }
