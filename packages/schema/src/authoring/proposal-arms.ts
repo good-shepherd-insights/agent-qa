@@ -203,6 +203,15 @@ export const FindingProposalV1Schema = z.object({
   draftRef: DraftRefSchema,
   /** The router's own class, so a reader knows whether this was definitive or ambiguous. */
   signalClass: z.string().min(1),
+  /**
+   * Set only when BOUNDED REPAIR ABANDONED this draft, and carrying which of its two ways out.
+   *
+   * The kind is the router-independent fact — repair either spent its cap without a passing probe
+   * or broke a step that already passed — so it is a typed closed enum rather than a sentence.
+   * Prose stays out of it per D-11's evidence-linked-explanation law: `explanation` is the one
+   * field a model writes, and it is written downstream once the branch is already chosen.
+   */
+  repairAbandonment: z.enum(['exhausted', 'prefix-regressed']).optional(),
   /** `null` for a member-level failure with no step to point at. */
   failurePoint: FindingFailurePointSchema.nullable(),
   /** The exact trace and the a11y snapshots at the failure point, as coordinates. */

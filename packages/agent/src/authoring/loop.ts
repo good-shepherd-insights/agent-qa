@@ -478,12 +478,24 @@ function testDraftProposal(
  * chosen. That ordering is the whole of "the LLM writes the finding's evidence-linked explanation;
  * it never makes the routing decision" — a prose field populated before the arm is picked would be
  * a channel through which model output could reach a branch it may not influence.
+ *
+ * `abandonment` is a PARAMETER rather than something a caller spreads over the result (394-21,
+ * WR-09). The exhausted route used to be assembled by spreading `{ signalClass, explanation }` on
+ * top of this call, which put a repair-prefixed string outside `ROUTER_SIGNAL_CLASSES` and a model-
+ * emitted refusal onto a durable field — both of the things the paragraph above forbids, arriving
+ * through the one shape that cannot be forbidden at the type level. Taking the fact as an argument
+ * keeps the arm built here, from the route and from typed facts.
  */
-function findingProposal(draftRef: DraftRef, route: FindingRoute): FindingProposalV1 {
+function findingProposal(
+  draftRef: DraftRef,
+  route: FindingRoute,
+  abandonment?: FindingProposalV1['repairAbandonment'],
+): FindingProposalV1 {
   return {
     schemaVersion: CURRENT_AUTHORING_PROPOSAL_SCHEMA_VERSION,
     draftRef,
     signalClass: route.signalClass,
+    ...(abandonment === undefined ? {} : { repairAbandonment: abandonment }),
     failurePoint: route.failurePoint === null
       ? null
       : {
@@ -744,11 +756,7 @@ export async function routeAfterVerify(
       kind: 'finding',
       draftRef,
       receipt,
-      proposal: {
-        ...findingProposal(draftRef, exhaustedRoute),
-        signalClass: `repair-${repaired.abandonment.kind}`,
-        explanation: repaired.abandonment.error.message,
-      },
+      proposal: findingProposal(draftRef, exhaustedRoute, repaired.abandonment.kind),
     },
     fanOut: buildFanOutReport({ previewed, runs: [...gateRuns, ...probes] }),
   }
