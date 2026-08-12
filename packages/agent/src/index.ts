@@ -167,6 +167,16 @@ export { AUTHORING_DRAFT_EDIT_FUNCTION_ID } from './functions/ops/authoring-draf
 // rather than against a literal: a hard-coded 9 in a test would pass just as happily against a
 // second, drifting arithmetic, which is the exact failure the single source exists to prevent.
 export { AUTHORING_LOOP_STAGES, authoringFanOutBound, runAuthoringLoop } from './authoring/loop.js'
+// 394-27 · WINDOWS 111: the stable-tier format block and the canonical example composed into it.
+// Published because the example's parsability is a fact about `parseTestFile`, which lives in a
+// package this one may not name — so the cell that stages it through the real shelf can only run
+// in `packages/cli`, and it must stage THESE bytes rather than a copy of them.
+export {
+  TEST_DOCUMENT_FORMAT_BLOCK_TITLE,
+  TEST_DOCUMENT_FORMAT_EXAMPLE,
+  TEST_DOCUMENT_FORMAT_EXAMPLE_MARKER,
+  TEST_DOCUMENT_FORMAT_INSTRUCTION,
+} from './authoring/brief-blocks.js'
 export type {
   AuthoringLoopDeps,
   AuthoringLoopInput,

@@ -34,6 +34,51 @@ export const PROCEDURE_BY_REFERENCE_INSTRUCTION =
   + 'invent a special syntax: the test file stays plain prose, and the flow is recognised when the '
   + 'test runs. A step that matches no listed flow is simply written as you would write any other.'
 
+/** The title of the stable block {@link TEST_DOCUMENT_FORMAT_INSTRUCTION} renders under. */
+export const TEST_DOCUMENT_FORMAT_BLOCK_TITLE = 'Test document format'
+
+/** The line the canonical example follows, and the last prose in the block. */
+export const TEST_DOCUMENT_FORMAT_EXAMPLE_MARKER = 'A complete document looks exactly like this:'
+
+/**
+ * The canonical minimal document, in neutral values.
+ *
+ * Composed INTO {@link TEST_DOCUMENT_FORMAT_INSTRUCTION} rather than typed twice, so the bytes a
+ * test stages through the real parser are the bytes the model is shown.
+ */
+export const TEST_DOCUMENT_FORMAT_EXAMPLE = `name: Confirm the sign-in page shows its heading
+test-id: t_amber-cotton-ledger-marble-quartz-signal-timber-violet-walnut-yellow
+target: sign-in
+steps:
+  - Open the sign-in page
+  - Verify the page heading says "Sign in"
+`
+
+/**
+ * The document SCHEMA, served through a channel that does not depend on memory (WINDOWS 111).
+ *
+ * Pinned as a constant and landed in the stable tier for the reason
+ * {@link PROCEDURE_BY_REFERENCE_INSTRUCTION} is: it is a standing rule about how any document is
+ * written rather than a fact about this intent, so it belongs where the byte prefix is shared.
+ *
+ * A zero-exemplar brief is the bootstrap case — a fresh project has no memory by definition — and
+ * `exemplarBlockBody` answers the empty string of prose there. A format rule carried only by the
+ * exemplar block is therefore a format rule the first authored test never sees.
+ */
+export const TEST_DOCUMENT_FORMAT_INSTRUCTION =
+  'A test document has exactly these four top-level keys, and all four are required:\n'
+  + '- `name`: the test\'s display name, one line of plain English.\n'
+  + '- `test-id`: a stable identifier — the letters `t_` followed by exactly ten lowercase words '
+  + 'joined by hyphens. Choose ten words of your own rather than copying the example\'s.\n'
+  + '- `target`: the configured target this test runs against. When the Scope block names a '
+  + 'product that IS a configured target, use its key.\n'
+  + '- `steps`: a YAML list of natural-language step strings, at least one of which asserts '
+  + 'concrete expected content.\n'
+  + 'NO other top-level key is accepted. A document carrying one is rejected without being read.\n'
+  + 'When the Exemplar tests block carries tests, it shows this project\'s house style and takes '
+  + 'precedence on every question of style; this block is the floor beneath it, not a rival.\n\n'
+  + `${TEST_DOCUMENT_FORMAT_EXAMPLE_MARKER}\n\n${TEST_DOCUMENT_FORMAT_EXAMPLE}`
+
 /** The brief's exemplars, as the context block a model reads them as. */
 export function exemplarBlockBody(brief: AuthoringBrief): string {
   if (brief.exemplars.length === 0) {

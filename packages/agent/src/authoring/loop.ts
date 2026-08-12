@@ -68,6 +68,8 @@ import type {
 
 import {
   PROCEDURE_BY_REFERENCE_INSTRUCTION,
+  TEST_DOCUMENT_FORMAT_BLOCK_TITLE,
+  TEST_DOCUMENT_FORMAT_INSTRUCTION,
   exemplarBlockBody,
   knowledgeBlockBody,
 } from './brief-blocks.js'
@@ -550,6 +552,12 @@ async function compileDraft(
         body: 'You author agent-qa test documents. Emit ONE complete YAML test document and '
           + 'nothing else — no prose, no fences, no partial edit. Steps are natural language, one '
           + 'per line, and at least one of them must assert concrete expected content.',
+      },
+      // The document schema, on the same placement argument and for WINDOWS 111's reason: a brief
+      // serving no exemplars must still teach the format. See the constant's own header.
+      {
+        title: TEST_DOCUMENT_FORMAT_BLOCK_TITLE,
+        body: TEST_DOCUMENT_FORMAT_INSTRUCTION,
       },
       // D-17's syntactic half, in the STABLE tier beside the role it qualifies. It is a standing
       // rule about how any step is written rather than a fact about this intent, so it belongs
