@@ -568,4 +568,47 @@ describe('a FAILED apply leaves the repository exactly as it found it (394-18, C
 
     expect(indexEntry(TARGET_PATH)).toBe('')
   })
+
+  it('refuses a CONFLICTED index entry by name rather than collapsing it to stage 0', () => {
+    // THE ONE UNREPRESENTABLE CASE (394-20, WR-02). A path in an unresolved merge holds entries at
+    // stages 1/2/3 and no stage-0 entry, and `--cacheinfo` can only put back a stage-0 one — so a
+    // capture that returned the first line would restore a resolved entry over a conflict the
+    // person has not settled. The stage was parsed and required by a throw and then never read;
+    // this is the read that makes it a precondition of the mechanism.
+    const base = 'name: the base version\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), base)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'the base version of this test')
+    const trunk = git('rev-parse', '--abbrev-ref', 'HEAD').stdout.trim()
+
+    git('checkout', '--quiet', '-b', 'theirs')
+    writeFileSync(join(root, TARGET_PATH), 'name: THEIR version\nsteps:\n  - Open\n')
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'their edit')
+
+    git('checkout', '--quiet', trunk)
+    writeFileSync(join(root, TARGET_PATH), 'name: MY version\nsteps:\n  - Close\n')
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'my edit')
+
+    const merged = git('merge', 'theirs')
+    expect(merged.status).not.toBe(0)
+
+    // The fixture's own precondition: real stages 1/2/3 and NO stage-0 entry, read out of git.
+    const stages = git('ls-files', '--stage', '--', TARGET_PATH).stdout
+      .split('\n').filter((line) => line.trim() !== '')
+      .map((line) => line.split('\t')[0]?.split(' ')[2])
+    expect(stages).toEqual(['1', '2', '3'])
+
+    const exec = spawnSync as unknown as GitApplyExec
+    let caught: unknown
+    try {
+      captureIndexEntry(exec, root, TARGET_PATH)
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toContain(TARGET_PATH)
+    expect((caught as Error).message).toContain('stage 1')
+  })
 })

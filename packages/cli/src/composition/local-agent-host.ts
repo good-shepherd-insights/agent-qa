@@ -1299,9 +1299,10 @@ export function runGitHeadHash(exec: GitApplyExec, cwd: string, targetPath: stri
  * unconditional `git rm --cached` gets the other direction wrong — for a tracked target it would
  * stage a DELETION of a test the person has committed.
  *
- * `ls-files --stage` answers `<mode> <sha> <stage>\t<path>`, which is exactly the triple
- * `update-index --cacheinfo` takes back. Both are path-scoped plumbing: nothing here can touch a
- * second path, and there is no repo-wide operation on this file at all.
+ * `ls-files --stage` answers `<mode> <object> <stage>\t<path>`; `update-index --cacheinfo` takes
+ * `<mode>,<object>,<path>` — so the stage is parsed to be CHECKED (stage 0 only), not to be
+ * restored. Both are path-scoped plumbing: nothing here can touch a second path, and there is no
+ * repo-wide operation on this file at all.
  */
 export function captureIndexEntry(
   exec: GitApplyExec,
@@ -1322,6 +1323,13 @@ export function captureIndexEntry(
   const [mode, object, stage] = line.split('\t')[0]?.split(' ') ?? []
   if (mode === undefined || object === undefined || stage === undefined) {
     throw new Error(`git ls-files answered an unparsable index entry: ${JSON.stringify(line)}`)
+  }
+  if (stage !== '0') {
+    throw new Error(
+      `git ls-files answered ${JSON.stringify(targetPath)} at stage ${stage}: a conflicted index `
+      + `entry cannot be captured for restore, because putting it back at stage 0 would collapse `
+      + `an unresolved conflict into a resolved entry`,
+    )
   }
   return { mode, object, stage }
 }
