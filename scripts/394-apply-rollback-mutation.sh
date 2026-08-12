@@ -102,8 +102,13 @@ V_REPLACEMENT="  try {
     throw error
   }"
 
+# THE MUTATION KEEPS THE CALL AND DISCARDS ITS ANSWER, which is a deliberate narrowing rather than
+# the obvious edit. Deleting the call outright ALSO removes `git diff --cached` from the happy
+# path's argv, so the two census cells — the `--` separator law and the subcommand allow-list — red
+# as collateral and the differential stops being about the nothing-to-commit distinction at all.
+# Measured: that form red 3 cells and the script refused it. This form reds exactly 1.
 N_ANCHOR="  if (!stagedAtPath(exec, cwd, targetPath)) return { kind: 'nothing-to-commit' }"
-N_REPLACEMENT="  void stagedAtPath"
+N_REPLACEMENT="  void stagedAtPath(exec, cwd, targetPath)"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/394-apply-rollback-mutation.XXXXXX")"
 RESTORED=0
