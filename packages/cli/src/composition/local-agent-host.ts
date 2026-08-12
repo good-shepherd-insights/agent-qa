@@ -905,7 +905,7 @@ function fsyncPath(path: string): void {
   }
 }
 
-function fsyncShelfDirectory(path: string): void {
+function fsyncDirectory(path: string): void {
   try {
     fsyncPath(path)
   } catch (error) {
@@ -921,14 +921,35 @@ function fsyncShelfDirectory(path: string): void {
  * detail — a shared temp name would make the rename's atomicity irrelevant, because the bytes
  * being renamed could be half of another process's draft. Two concurrent `authoring.draft.write`
  * calls in one workspace therefore never collide and never expose a half-written draft to a run.
+ *
+ * ONE PRIMITIVE, TWO CALLERS (394-23). The draft shelf and the one-commit apply's target write are
+ * the same obligation — the bytes appear whole or they do not appear — and a second implementation
+ * of it beside this one is the shape every other header in this file argues against. `string |
+ * Buffer` because the apply is byte-true end to end (WR-04) while the shelf writes text; the
+ * encoding argument is gone, so a Buffer is written as itself and a string as UTF-8.
+ *
+ * THE TEMP IS REMOVED ON EVERY FAILURE PATH, and it matters more for the apply than for the shelf.
+ * The shelf lives in a gitignored directory; the target's sibling temp would sit UNTRACKED next to
+ * a person's committed test suite, showing up in their `git status` as litter this product left
+ * behind immediately after telling them nothing had been written. Best-effort, because a cleanup
+ * that threw would replace the error that says why the write failed with one about the tidying up.
  */
-function writeShelfFileAtomically(path: string, contents: string): void {
+function writeFileAtomically(path: string, contents: string | Buffer): void {
   const temp = `${path}.${process.pid}${DRAFT_TEMP_SUFFIX}`
-  writeFileSync(temp, contents, 'utf8')
-  fsyncPath(temp)
-  fsyncShelfDirectory(dirname(temp))
-  renameSync(temp, path)
-  fsyncShelfDirectory(dirname(path))
+  try {
+    writeFileSync(temp, contents)
+    fsyncPath(temp)
+    fsyncDirectory(dirname(temp))
+    renameSync(temp, path)
+  } catch (error) {
+    try {
+      rmSync(temp, { force: true })
+    } catch {
+      // Best effort, and deliberately silent: see the header.
+    }
+    throw error
+  }
+  fsyncDirectory(dirname(path))
 }
 
 export interface DraftShelf {
@@ -952,7 +973,7 @@ export function createDraftShelf(configDir: string): DraftShelf {
     write(contentDigest: string, contents: string): string {
       const path = shelfPathFor(configDir, contentDigest)
       mkdirSync(directory, { recursive: true })
-      writeShelfFileAtomically(path, contents)
+      writeFileAtomically(path, contents)
       return `${DRAFT_SHELF_PARENT}/${DRAFT_SHELF_DIR_NAME}/${contentDigest}${DRAFT_SUFFIX}`
     },
 
@@ -1152,6 +1173,41 @@ export class ApplyProducedNoChangeError extends Error {
     )
     this.name = 'ApplyProducedNoChangeError'
   }
+}
+
+/**
+ * The apply failed AND the rollback failed (394-23, WR-03).
+ *
+ * TWO FACTS, ONE ERROR, AND NEITHER MAY REPLACE THE OTHER. A bare `restoreApplyFailure(...)` inside
+ * the catch lets a throwing restore unwind over the error that says why the apply failed, so a
+ * caller is handed the second fact with no route to the first — at the one moment both matter,
+ * because "the commit was refused" and "your file may not be back" are different things to do next.
+ *
+ * The message names both and the two errors are carried structurally as well, so a caller can
+ * re-raise or log either without parsing prose. The worktree/index state after this is UNKNOWN by
+ * construction: that is exactly what it is reporting, and a class that implied otherwise would be
+ * the same lie in the other direction.
+ */
+export class ApplyRollbackFailedError extends Error {
+  constructor(
+    readonly targetPath: string,
+    readonly applyError: unknown,
+    readonly restoreError: unknown,
+  ) {
+    super(
+      `the apply of ${JSON.stringify(targetPath)} failed AND its rollback did not complete. `
+      + `The apply failed because: ${errorText(applyError)}. `
+      + `The rollback then failed because: ${errorText(restoreError)}. `
+      + `The state of ${JSON.stringify(targetPath)} in your working tree and index is therefore `
+      + 'NOT known to this apply — check it with `git status` and `git diff` before committing.',
+    )
+    this.name = 'ApplyRollbackFailedError'
+  }
+}
+
+/** An unknown throw as one readable sentence, for the composite above. */
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function runApplyGit(
@@ -1392,6 +1448,17 @@ export interface ApplyTestDraftInput {
   readonly request: TestDraftApplyRequest
   /** Injected for tests; defaults to `spawnSync`. */
   readonly exec?: GitApplyExec
+  /**
+   * Every byte that reaches the target path — the apply's write AND the rollback's restore — goes
+   * through this one call. Injected for tests; defaults to {@link writeFileAtomically}.
+   *
+   * The `exec` seam's twin, and admitted for the same reason: a write that fails MID-FLIGHT is the
+   * one thing a real filesystem will not do on demand, and the property CR-01 closes is stated
+   * entirely in terms of what happens when it does. Routing the restore through it too is what
+   * makes "the write reaches disk only through the atomic writer" a fact about both directions
+   * rather than about the happy path.
+   */
+  readonly writeTarget?: (absolutePath: string, bytes: Buffer) => void
 }
 
 /**
@@ -1399,6 +1466,31 @@ export interface ApplyTestDraftInput {
  *
  * THE ORDER IS THE CONTRACT. Identity, then the dirty check, then the digest re-check, then write,
  * then add, then commit — and every refusal above the write leaves the working tree byte-unchanged.
+ *
+ * THE WRITE, THE ADD AND THE COMMIT ARE ONE `try` (394-23, CR-01), which ends a class rather than
+ * narrowing it once more. Three rounds each moved one further statement into the rollback's reach
+ * and each left the next one out, so this states the region instead of adjudicating a statement.
+ * Everything between the digest re-check and the commit is one of four things, and each is here for
+ * a reason that is written down:
+ *
+ *   the draft read and the identity mint — pure reads, no effect to roll back;
+ *   {@link captureIndexEntry}          — a read, and it PRODUCES the rollback's own input, so it
+ *                                        cannot be inside the region that consumes it;
+ *   `mkdirSync(..., recursive)`        — the ONE remaining effect outside the try, deliberately.
+ *                                        git records no directories, so an empty directory left by
+ *                                        a failed apply changes nothing this function restores or
+ *                                        that `git status` reports; and removing it would not be
+ *                                        safe to do — a recursive create may have made several
+ *                                        levels and a concurrent writer may already be inside one,
+ *                                        which is precisely the "undo work that was never the
+ *                                        agent's" that {@link restoreApplyFailure} forbids;
+ *   the write, the add and the commit  — inside, all three.
+ *
+ * And the write itself is TEMP-THEN-RENAME, so a failure part-way through it cannot leave partial
+ * bytes at the target path at all: what used to truncate a person's committed test before writing
+ * now touches that path only as one durable rename.
+ *
+ * THE HASH READ IS BELOW ALL OF IT AND STAYS THERE — see the note above the return.
  *
  * DIRTY BEFORE DIGEST, and the ordering is a decision rather than a sequence. The two overlap: a
  * target a person has edited is usually BOTH dirty and no longer what the proposal read, so
@@ -1415,13 +1507,22 @@ export interface ApplyTestDraftInput {
  * WHAT A FAILED APPLY LEAVES BEHIND, STATED AS WHAT THE CELLS PROVE (394-18, CR-05). Two states are
  * restored for the ONE target path and for nothing else:
  *
- *   the WORKTREE — the bytes that were there, or no file at all if there was none;
+ *   the WORKTREE — the exact BYTES that were there, or no file at all if there was none;
  *   the INDEX    — the entry that was there, or no entry at all if there was none.
  *
  * Both directions, per path, and never a repo-wide operation: no `reset`, no `checkout .`, no
  * `clean`. The index half is what stops the agent's blob from folding into the person's next
  * commit, and it is a CAPTURE rather than a reset because a person may have staged content that
  * differs from HEAD — resetting would discard their own work at the file the agent touched.
+ *
+ * BYTES, NOT TEXT (394-23, WR-04). The target is read, digested and written back as raw bytes.
+ * Under the UTF-8 round-trip this shipped with, a test file whose bytes are not valid UTF-8 hashed
+ * to what its DECODING hashed to — so a target that had not moved at all was refused as changed,
+ * and a rollback "restoring" it wrote U+FFFD over every sequence the decoder could not read.
+ *
+ * A ROLLBACK THAT ITSELF FAILS IS REPORTED AS BOTH FACTS (394-23, WR-03), as
+ * {@link ApplyRollbackFailedError} — never as the restore's own error unwinding over the one that
+ * says why the apply failed.
  *
  * WHAT IS NOT RESTORED, and must not be: a commit that SUCCEEDED. Reading its hash is a separate
  * question asked after it exists, and a failure of that read surfaces as
@@ -1438,6 +1539,7 @@ export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraft
   const { request } = input
   const configDir = dirname(resolve(input.configPath))
   const exec = input.exec ?? (spawnSync as unknown as GitApplyExec)
+  const writeTarget = input.writeTarget ?? writeFileAtomically
 
   // THE BOUNDARY CHECK IS `workspaceRelativeIdentityPath` AND NOTHING ELSE (T-394-41). The refusal
   // and the identity are the same computation, so there is no second rule to drift from this one —
@@ -1458,31 +1560,36 @@ export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraft
   }
 
   const draftIdentity = workspaceRelativeIdentityPath(configDir, request.draftPath)
-  const contents = readFileSync(resolve(configDir, draftIdentity), 'utf8')
+  const contents = readFileSync(resolve(configDir, draftIdentity))
 
   // CAPTURED BEFORE THE WRITE, so a capture FAILURE is a refusal with the tree byte-unchanged
   // rather than a hole: none of this read's four throw paths is inside the try that owns the
   // rollback, and the entry it reads is a fact about the repository that does not depend on the
   // write having happened. See {@link captureIndexEntry} for why this is a capture, not a reset.
+  //
+  // The `mkdirSync` beside it is the one effect left outside the try, and the reason is enumerated
+  // in this function's header rather than decided here: git records no directories, so nothing this
+  // rollback restores can be affected by one, and undoing a recursive create is not safe.
   const indexBefore = captureIndexEntry(exec, configDir, identityPath)
-
   mkdirSync(dirname(absoluteTarget), { recursive: true })
-  writeFileSync(absoluteTarget, contents, 'utf8')
 
   let committed: GitCommitOutcome
   try {
+    writeTarget(absoluteTarget, contents)
     runGitAdd(exec, configDir, identityPath)
     committed = runGitCommit(exec, configDir, identityPath, applyCommitMessage(request))
   } catch (error) {
-    // A GIT FAILURE AFTER THE WRITE PUTS THE FILE BACK — AND PUTS THE INDEX BACK.
+    // A FAILURE ANYWHERE IN WRITE -> ADD -> COMMIT PUTS THE FILE BACK — AND PUTS THE INDEX BACK.
     //
-    // Everything above the write refuses with the tree untouched; below it, a bare throw would
-    // leave bytes on a person's disk that no commit explains and that this apply already told the
-    // caller it did not make. The INDEX half was missing until 394-18 and was the worse of the
-    // two: the worktree was restored and the agent's blob stayed staged, so the person's very next
-    // `git commit` — which commits the index — carried a file they never wrote and were told was
-    // not written.
-    restoreApplyFailure(exec, configDir, identityPath, absoluteTarget, existing, indexBefore)
+    // Everything above refuses with the tree untouched; from here on a bare throw would leave bytes
+    // on a person's disk that no commit explains and that this apply already told the caller it did
+    // not make. The INDEX half was missing until 394-18 and was the worse of the two: the worktree
+    // was restored and the agent's blob stayed staged, so the person's very next `git commit` —
+    // which commits the index — carried a file they never wrote and were told was not written. The
+    // WRITE itself was outside this try until 394-23, which was the same hole one statement wider.
+    restoreOrReportBoth(
+      exec, configDir, identityPath, absoluteTarget, existing, indexBefore, writeTarget, error,
+    )
     throw error
   }
 
@@ -1490,8 +1597,11 @@ export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraft
     // Reachable, and it is not a failure of git: a draft whose bytes already ARE the target's
     // passes the digest re-check, writes the same bytes, and stages nothing. Refused BY NAME with
     // the repository put back, rather than reported as `git commit exited 1` with an empty stderr.
-    restoreApplyFailure(exec, configDir, identityPath, absoluteTarget, existing, indexBefore)
-    throw new ApplyProducedNoChangeError(identityPath)
+    const noChange = new ApplyProducedNoChangeError(identityPath)
+    restoreOrReportBoth(
+      exec, configDir, identityPath, absoluteTarget, existing, indexBefore, writeTarget, noChange,
+    )
+    throw noChange
   }
 
   // BELOW THIS LINE NOTHING IS RESTORED. The commit exists, so it is the new truth, and reverting
@@ -1504,6 +1614,31 @@ export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraft
 }
 
 /**
+ * Roll back, and if the rollback ITSELF fails say both things at once (394-23, WR-03).
+ *
+ * The wrapper exists because the alternative is silent: a bare call in a catch lets the restore's
+ * own error unwind over the error being handled, and the caller is then told why the rollback
+ * failed with no way to learn why the apply did. Both restore sites go through here, so neither
+ * arm can drift into the masking form on its own.
+ */
+function restoreOrReportBoth(
+  exec: GitApplyExec,
+  cwd: string,
+  identityPath: string,
+  absoluteTarget: string,
+  existing: Buffer | undefined,
+  indexBefore: IndexEntry | undefined,
+  writeTarget: (absolutePath: string, bytes: Buffer) => void,
+  applyError: unknown,
+): void {
+  try {
+    restoreApplyFailure(exec, cwd, identityPath, absoluteTarget, existing, indexBefore, writeTarget)
+  } catch (restoreError) {
+    throw new ApplyRollbackFailedError(identityPath, applyError, restoreError)
+  }
+}
+
+/**
  * Put the working tree AND the index back where the apply found them, for this ONE path.
  *
  * Worktree first, then the index, and both scoped to the target: the previous worktree state is
@@ -1511,17 +1646,23 @@ export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraft
  * whatever {@link captureIndexEntry} recorded before the add. Nothing here is repo-wide — no
  * `reset`, no `checkout .`, no `clean` — because the one thing this rollback must not do is undo
  * work that was never the agent's.
+ *
+ * THE BYTES GO BACK AS BYTES, through the SAME writer the apply used. A `Buffer` in, a `Buffer`
+ * out, with no encoding named anywhere on the path: the round-trip this shipped with turned every
+ * sequence the UTF-8 decoder could not read into U+FFFD, so "restored" meant a file the person had
+ * committed and could no longer recover from their own working tree.
  */
 function restoreApplyFailure(
   exec: GitApplyExec,
   cwd: string,
   identityPath: string,
   absoluteTarget: string,
-  existing: string | undefined,
+  existing: Buffer | undefined,
   indexBefore: IndexEntry | undefined,
+  writeTarget: (absolutePath: string, bytes: Buffer) => void,
 ): void {
   if (existing === undefined) rmSync(absoluteTarget, { force: true })
-  else writeFileSync(absoluteTarget, existing, 'utf8')
+  else writeTarget(absoluteTarget, existing)
   restoreIndexEntry(exec, cwd, identityPath, indexBefore)
 }
 
@@ -1541,9 +1682,17 @@ export function createTestDraftApplyPort(configPath: string): DraftApplyPortLike
   }
 }
 
-function readTargetIfPresent(absolutePath: string): string | undefined {
+/**
+ * The target's RAW BYTES, or `undefined` for no such file (394-23, WR-04).
+ *
+ * NO ENCODING, and that is the whole content of this function beyond the ENOENT triage. The digest
+ * taken over this value is compared against one the proposal took over a file's bytes, and the
+ * rollback writes this value back verbatim — a decode here would make both a claim about a
+ * DECODING of the person's test rather than about the test.
+ */
+function readTargetIfPresent(absolutePath: string): Buffer | undefined {
   try {
-    return readFileSync(absolutePath, 'utf8')
+    return readFileSync(absolutePath)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
