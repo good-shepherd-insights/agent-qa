@@ -482,3 +482,64 @@ describe('an abandoned repair files a finding a person can trace (CR-02)', () =>
     expect(failurePoint?.stepIndex).toBe(2)
   })
 })
+
+// ---- abandonment.error is READ, through its typed fields only -----------------------------------
+//
+// `repaired.abandonment.error` is the only statement of WHY repair stopped, and until this plan it
+// was written by `repair.ts` and read by nothing in production — a value the loop carried to the
+// arm and dropped. Two of its typed facts now travel: the iterations the spend cost, and (on the
+// regressed arm) the probe run and step that showed the regression, as an addressable coordinate.
+//
+// ITS PROSE DOES NOT TRAVEL AND MUST NOT. `RepairExhaustedError.lastRefusal` and therefore
+// `error.message` end in the model's own bytes — that is WR-09's closure, and the marker cells
+// above are what keep it. So the fields read here are `iterations`, `stepIndex` and `runId`, all
+// three minted by this package, and never a sentence.
+
+describe('the abandonment\'s typed facts reach the durable arm', () => {
+  it('EXHAUSTED: repairIterations equals the iterations the harness drove', async () => {
+    const harness = bench({
+      emissions: [MODEL_DOCUMENT, REFUSAL_MARKER, REFUSAL_MARKER, REFUSAL_MARKER],
+    })
+    const proposal = await findingThrough(harness)
+
+    // Every iteration was spent on an unparsable emission, so the sequence reached K.
+    expect(proposal.repairIterations).toBe(REPAIR_ITERATION_CAP)
+    expect(proposal.repairAbandonment).toBe('exhausted')
+  })
+
+  it('PREFIX-REGRESSED: the probe that showed the regression rides evidenceRefs as a coordinate', async () => {
+    const harness = bench({
+      emissions: [MODEL_DOCUMENT, JSON.stringify(OUTSIDE_PREFIX)],
+      probes: [[prefixRegressedMember()]],
+    })
+    const proposal = await findingThrough(harness)
+
+    // The probe the loop actually started — read off the harness, not typed as a literal here.
+    const probeRunId = harness.startedRunIds[0]
+    expect(probeRunId).toBeDefined()
+    // Step 1 is the regression: it passed in the gate run and fails in this probe. `stepIndex` and
+    // `runId` are `PassingPrefixRegressedError`'s own typed fields, which is the whole read.
+    const probeRef = evidenceRefsOf(proposal)
+      .find((ref) => ref.runId === probeRunId)
+    expect(probeRef).toBeDefined()
+    expect(probeRef?.stepIndex).toBe(1)
+    expect(probeRef?.channel).toBe('step-trace')
+    // Beside the routed run's own refs rather than instead of them.
+    expect(evidenceRefsOf(proposal).some((ref) => ref.runId === ROUTED_RUN_ID)).toBe(true)
+    expect(proposal.repairIterations).toBe(1)
+  })
+
+  it('the ORDINARY routed finding carries NEITHER key — absent, not defaulted', async () => {
+    const harness = bench({
+      emissions: [MODEL_DOCUMENT],
+      gateMember: definitiveAssertionFailMember,
+    })
+    const proposal = await findingThrough(harness)
+
+    expect(Object.keys(proposal)).not.toContain('repairIterations')
+    expect(Object.keys(proposal)).not.toContain('repairAbandonment')
+    // Not a finding that skipped repair for want of a route: this one WAS routed, to the app-broken
+    // arm, so a zero here would read as "repair was tried and spent nothing".
+    expect(proposal.signalClass).toBe('clean-definitive-assertion-fail')
+  })
+})
