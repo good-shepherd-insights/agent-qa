@@ -96,13 +96,30 @@ import { buildMaskedResolvedConfig } from './masked-config.js'
  * and in the audit row, not to withhold it from the person who owns the machine. Grant ISSUANCE — who may mint which
  * scopes, and how a remote caller proves them — is the M5 run-invocation / cloud-auth model's job;
  * this constant is the local composition's minting site.
+ *
+ * 394-13 / WINDOWS 101: `test-write` was ABSENT here from 394-01 until this plan, and it was an
+ * omission rather than a decision — 394-01 minted the sixth capability scope and recorded in the
+ * same breath that what constrains its power is D-03's two decision points (the fan-out confirm
+ * and 391's inbox accept), not a withheld grant. So the full-local-grants rule this header already
+ * states covered it all along, and the list simply had not been extended. The list is now pinned
+ * SET-EQUAL to `FunctionScopeSchema.options` (`__tests__/caller-scopes.test.ts`), which is that
+ * rule made mechanical: a seventh scope minted by a later phase cannot be silently omitted, it
+ * reds. Do not replace the equality with a membership check — a hand-extended list is exactly what
+ * rotted here, and it rotted invisibly because every op-level suite mints its own caller.
  */
 export const CLI_FUNCTION_CALLER: FunctionCaller = {
   surface: 'cli',
   // 391 D-06: `approval-write` joins because the CLI is where a person accepts a proposal and
   // revokes a standing grant. The scope is the POWER; the origin below is who may exercise it,
   // and this host is the only one that mints both.
-  grantedScopes: ['read', 'run', 'config-write', 'knowledge-write', 'approval-write'],
+  grantedScopes: [
+    'read',
+    'run',
+    'config-write',
+    'knowledge-write',
+    'approval-write',
+    'test-write',
+  ],
   safeMode: false,
   // A person typed the command. This is the mint the whole self-grant rule turns on, so it is
   // stated here rather than defaulted anywhere: the origin is a property of the composition,
