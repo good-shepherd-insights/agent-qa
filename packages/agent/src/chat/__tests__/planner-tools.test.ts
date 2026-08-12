@@ -274,8 +274,16 @@ describe('projectPlannerTools: the model is not shown what the host stamps (394-
         id,
         keys: Object.keys(declared.properties ?? {}).filter((key) => key !== 'sessionRef').sort(),
       })
-      expect({ id, required: [...(document.required ?? [])].sort() })
-        .toEqual({ id, required: [...(declared.required ?? [])].sort() })
+      // THE RULE, NOT TODAY'S ACCIDENT (WR-05). This pinned the projected `required` list EQUAL to
+      // the declared one, which is true only because `sessionRef` is optional on both stamped ops
+      // — so `dropRequired` cannot currently fire and the cell certified a no-op. What the
+      // transform promises is a SUBTRACTION: the day a sibling op declares the ref required, this
+      // stays green on the correct behaviour instead of redding on it, and a transform that
+      // stopped subtracting reds by the id it left behind.
+      expect({ id, required: [...(document.required ?? [])].sort() }).toEqual({
+        id,
+        required: [...(declared.required ?? [])].filter((key) => key !== 'sessionRef').sort(),
+      })
 
       // T-394-85: the declaration's projection is the registry's SHARED inert view — the same one
       // 396's MCP listing reads — so the transform must have cloned before editing.
@@ -441,6 +449,30 @@ describe('projectPlannerTools: the model is not shown what the host stamps (394-
       }
       expect(armsChecked).toBeGreaterThan(0)
     })
+
+  it('ANNOTATES EXACTLY THE DESCRIPTION-BEARING UNION — the two sides cannot drift apart', () => {
+    // The 394-22 two-sided pin, applied to the DESCRIPTION channel rather than the schema one. The
+    // derived side is read off the live projection — which ids came back with a description that
+    // is not their catalogue summary — and the pinned side is the union of the two constants that
+    // OWN a sentence. An op that gains a sentence without joining a set reds by its extra name; an
+    // op in a set whose sentence never got appended reds by its omitted one.
+    const walked = registry().list(PLANNER_CALLER)
+    const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
+
+    const annotatedIds = walked
+      .filter((declaration) =>
+        (tools[toToolName(declaration.id)]?.description ?? '') !== declaration.summary)
+      .map((declaration) => declaration.id)
+
+    const described = [...WINDOW_STAMPED_FUNCTION_IDS, ...HOST_DERIVED_SCOPE_FUNCTION_IDS]
+    // The guards the equality leans on, in the sibling cells' idiom: an empty walk or an empty
+    // union satisfies it perfectly and measures nothing. Both sets are asserted non-empty
+    // separately, so one of them emptying cannot hide behind the other.
+    expect(walked.length).toBeGreaterThan(0)
+    expect(WINDOW_STAMPED_FUNCTION_IDS.size).toBeGreaterThan(0)
+    expect(HOST_DERIVED_SCOPE_FUNCTION_IDS.size).toBeGreaterThan(0)
+    expect(annotatedIds.slice().sort()).toEqual(described.slice().sort())
+  })
 
   it('CONTROL: an op in neither stamped set is handed its projection untouched', async () => {
     const walked = registry().list(PLANNER_CALLER)
