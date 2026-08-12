@@ -65,14 +65,17 @@ import {
   asRunId,
   authoredSuiteTargetPath,
   computeDraftDisposition,
+  exercisedAnchors,
   renderFanOutPreview,
 } from '@vostride/agent-qa-schema'
-import { listProposalEnvelopes } from '@vostride/agent-qa-knowledge-local'
+import { foldRunOutcomes, listProposalEnvelopes } from '@vostride/agent-qa-knowledge-local'
 import type {
   Action,
   AuthoringDraftWriteOutput,
   AuthoringFunnelGetOutput,
   CompletedRunHandoff,
+  DraftReceipt,
+  MemberTestOutcome,
   ProposalsAcceptOutput,
   RunDigest,
   ElementInfo,
@@ -262,6 +265,14 @@ function gateRunHandoff(
   runId: string,
   filePath: string,
   identity: DraftRunIdentity = FIXED_RUN_IDENTITY,
+  /**
+   * What the draft's member DID on this run — `passed` for every cell that predates 394-19.
+   *
+   * Parameterised so a cell can produce a gate-2 FLIP, which is the only state D-14's stability
+   * consultation is reachable from. A fixture that could only pass made the flip arm unreachable
+   * from this composed host, which is half of why mutation M3 red nothing.
+   */
+  outcome: MemberTestOutcome = 'passed',
 ): CompletedRunHandoff {
   return {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -271,7 +282,7 @@ function gateRunHandoff(
     gateRun: true,
     excludedFromOutcomes: true,
     executionContext: 'local-headless',
-    aggregateVerdict: 'passed',
+    aggregateVerdict: outcome === 'failed' ? 'failed' : 'passed',
     configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
     startedAt: 1,
     endedAt: 2,
@@ -281,12 +292,68 @@ function gateRunHandoff(
         testName: identity.testName,
         filePath,
         testIndex: 0,
-        outcome: 'passed',
+        outcome,
         steps: DRAFT_SUBACTIONS
           .map((subActions) => subActions.map((fixture) => (
             fixture.role === 'heading' ? { ...fixture, name: identity.elementName } : fixture
           )))
           .map((subActions, index) => stepEvidence(index, subActions)),
+      },
+    ],
+  } as unknown as CompletedRunHandoff
+}
+
+/**
+ * The suite the draft PROPOSES TO JOIN, and the two tests already living in it (394-19).
+ *
+ * Computed through `authoredSuiteTargetPath` rather than spelled, so this fixture names the same
+ * file the accept arm would write to — a literal would drift the day the recipe moves, which is
+ * exactly when the claim stops being about the right suite.
+ */
+const JOIN_TARGET = authoredSuiteTargetPath('tests/.agent-qa-drafts/any.yaml', DRAFT_TEST_NAME)
+const FLAKY_NEIGHBOUR = 'Show the account banner'
+const STABLE_NEIGHBOUR = 'Submit the local account form'
+
+/**
+ * An ORDINARY completed run over the JOIN TARGET — neither durable marker, so it FOLDS.
+ *
+ * Two members, and the pair is what makes the assertion a filter rather than a wildcard: one
+ * neighbour whose outcome moves across builds, one that does not. `buildOrdinal` is a parameter
+ * because a flip is a fact about two builds — the projection keeps `{buildOrdinal, passed}`
+ * entries, and two folds at the same ordinal are one entry, which is a stable neighbour wearing a
+ * flaky one's clothes.
+ */
+function neighbourSuiteHandoff(
+  runId: string,
+  buildOrdinal: number,
+  flakyOutcome: MemberTestOutcome,
+): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: asRunId(runId),
+    scope: { tier: 'product', key: 'local-form' },
+    buildOrdinal,
+    executionContext: 'local-headless',
+    aggregateVerdict: flakyOutcome === 'failed' ? 'failed' : 'passed',
+    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+    startedAt: 1,
+    endedAt: 2,
+    tests: [
+      {
+        testId: 't_flaky-neighbour',
+        testName: FLAKY_NEIGHBOUR,
+        filePath: JOIN_TARGET,
+        testIndex: 0,
+        outcome: flakyOutcome,
+        steps: [stepEvidence(0, [{ type: 'click', ref: 'e3', role: 'button', name: 'banner' }])],
+      },
+      {
+        testId: 't_stable-neighbour',
+        testName: STABLE_NEIGHBOUR,
+        filePath: JOIN_TARGET,
+        testIndex: 1,
+        outcome: 'passed',
+        steps: [stepEvidence(0, [{ type: 'click', ref: 'e4', role: 'button', name: 'submit' }])],
       },
     ],
   } as unknown as CompletedRunHandoff
@@ -300,6 +367,8 @@ interface FixtureExecutor {
 function fixtureExecutor(
   agentQaRoot: string,
   resolveIdentity: (filePath: string) => DraftRunIdentity = () => FIXED_RUN_IDENTITY,
+  /** Per-run member outcomes, in start order. Absent means every run passes (the default). */
+  outcomes: readonly MemberTestOutcome[] = [],
 ): FixtureExecutor {
   const startInputs: RunsStartInput[] = []
   return {
@@ -324,6 +393,7 @@ function fixtureExecutor(
             runId,
             request.patterns?.[0] ?? 'tests/missing.yaml',
             resolveIdentity(request.patterns?.[0] ?? 'tests/missing.yaml'),
+            outcomes[index] ?? 'passed',
           ))}\n`,
           'utf8',
         )
@@ -1125,5 +1195,66 @@ describe('authoring.draft.write end to end through the composition root', () => 
     expect(failure).toBeInstanceOf(FunctionNotBoundError)
     expect(executor.startInputs).toHaveLength(0)
     expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
+  })
+
+  // ---- the composed stability read (394-19 · WINDOWS 107) ------------------------------------
+  //
+  // WHAT WAS UNMEASURED. 394-17 wired D-14's history half — `authoringFunnel.outcomes`, over the
+  // run-outcome projection's own read side — and mutation M3 recorded the wire itself as reachable
+  // by NO cell: deleting the whole `outcomes:` binding from `compose-local-agent.ts` left the
+  // monorepo fully green (0 of ~1576). Both ENDS were pinned; only the line joining them was not,
+  // because the bundle lives in a private `WeakMap` and `openEvaluation` is module-private, so
+  // nothing could reach the composed port without driving `authoring.draft.verify` end to end.
+  //
+  // This is that drive. No fake outcomes port is interposed: the rows arrive through
+  // `foldRunOutcomes` — knowledge-local's own fold, over ordinary handoffs carrying NEITHER
+  // durable marker, which is what a real run writes — and the only way a neighbour's name can
+  // reach this receipt is the real binding serving the real read.
+  it('names the TARGET suite\'s flaky neighbours through the COMPOSED outcomes binding', async () => {
+    const knowledgeRoot = join(root, 'agent-qa-knowledge')
+    mkdirSync(knowledgeRoot, { recursive: true })
+    // TWO BUILDS, because a flip is a fact about two of them. The projection keeps one
+    // `{buildOrdinal, passed}` entry per build, so a single fold — however it read — could only
+    // ever produce a one-valued history, which `assessSuiteStability` calls stable.
+    foldRunOutcomes({
+      knowledgeRoot,
+      handoff: neighbourSuiteHandoff('RUN-SUITE-1', 1, 'passed'),
+      extractAnchors: exercisedAnchors,
+    })
+    foldRunOutcomes({
+      knowledgeRoot,
+      handoff: neighbourSuiteHandoff('RUN-SUITE-2', 2, 'failed'),
+      extractAnchors: exercisedAnchors,
+    })
+
+    // The draft on its one-test shelf, written to the real workspace so the composed parse reads
+    // it back off disk exactly as it does for a loop-authored one.
+    const draftPath = `${SHELF_DIR}/composed-stability.yaml`
+    const absolute = join(workspace, draftPath)
+    mkdirSync(dirname(absolute), { recursive: true })
+    writeFileSync(absolute, MODEL_DOCUMENT, 'utf8')
+
+    // The gate-2 FLIP: run 1 passed, run 2 failed. D-17 early-stops there, and the flip is the
+    // only state from which the consultation is reachable at all.
+    const executor = fixtureExecutor(agentQaRoot, () => FIXED_RUN_IDENTITY, ['passed', 'failed'])
+    const host = compose({ executor: executor.port, authoring: draftAuthoring(workspace) })
+
+    const receipt = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
+      { draftPath, targetSuitePath: JOIN_TARGET },
+      HUMAN,
+    )) as DraftReceipt
+
+    expect(receipt.gates.stableVerdict.pass).toBe(false)
+    expect(receipt.gates.stableVerdict.reason).toContain('the verdict flipped across runs')
+    // THE EVIDENCE THE BINDING SERVED THE READ. This name exists in exactly one place on this
+    // host — the rows the fold wrote — and it can only have reached a receipt through the bound
+    // `outcomes` port. Deleting that binding degrades the same reason to the no-history line.
+    expect(receipt.gates.stableVerdict.reason).toContain('Your app is unstable')
+    expect(receipt.gates.stableVerdict.reason).toContain(`${JOIN_TARGET}::${FLAKY_NEIGHBOUR}`)
+    // …and not the neighbour whose history did not move: a message naming everything names
+    // nothing, and would also pass over a port that answered a constant.
+    expect(receipt.gates.stableVerdict.reason).not.toContain(STABLE_NEIGHBOUR)
   })
 })
