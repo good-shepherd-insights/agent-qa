@@ -510,6 +510,48 @@ describe('a FAILED apply leaves the repository exactly as it found it (394-18, C
     expect(indexEntry(TARGET_PATH)).toBe(staged)
   })
 
+  it('refuses BYTE-UNCHANGED when the index capture fails, because the capture is above the write', () => {
+    // THE PLACEMENT IS THE PROPERTY (394-20, CR-01). `captureIndexEntry` has four throw paths — a
+    // non-zero `ls-files` status, an unparsable entry, an ENOENT/EACCES rethrow and the timeout —
+    // and none of them is inside the try that owns the rollback. Below the write that is a hole:
+    // the agent's bytes are already at the person's path when the capture throws, and the caller
+    // was told nothing was written. Above the write it is an ordinary refusal, the posture every
+    // other check before the write already has.
+    const committed = 'name: the committed version\nsteps:\n  - Open\n'
+    writeFileSync(join(root, TARGET_PATH), committed)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed this test')
+    const before = treeSnapshot()
+    const beforeIndex = indexEntry(TARGET_PATH)
+    const commitsBefore = commitCount()
+
+    // The real binary for everything EXCEPT the capture's exact argv. Matching the whole line
+    // rather than the subcommand keeps the cell about the capture read specifically.
+    const failingCapture: GitApplyExec = (file, args, options) => {
+      const line = args.join(' ')
+      if (line === `ls-files --stage -- ${TARGET_PATH}`) {
+        return {
+          status: 128, signal: null, stdout: '', stderr: 'fixture: ls-files refused',
+          error: undefined,
+        } as ReturnType<GitApplyExec>
+      }
+      return spawnSync(file, [...args], options) as ReturnType<GitApplyExec>
+    }
+
+    expect(() => applyTestDraftAsOneCommit({
+      configPath,
+      request: request({ sourceDigest: createHash('sha256').update(committed).digest('hex') }),
+      exec: failingCapture,
+    })).toThrow(/git ls-files exited 128/)
+
+    // The person's bytes, not the agent's — compared as CONTENT, and read back out of the tree.
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(committed)
+    expect(treeSnapshot()).toEqual(before)
+    expect(indexEntry(TARGET_PATH)).toBe(beforeIndex)
+    expect(git('status', '--porcelain').stdout.trim()).toBe('')
+    expect(commitCount()).toBe(commitsBefore)
+  })
+
   it('CONTROL: an absent pre-apply entry is restored as ABSENT, never as HEAD', () => {
     // The other direction of the same mechanism, and the reason it is a capture rather than a
     // `git reset HEAD -- <path>`: for an untracked target there is nothing at HEAD to reset to,

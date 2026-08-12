@@ -1452,12 +1452,14 @@ export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraft
   const draftIdentity = workspaceRelativeIdentityPath(configDir, request.draftPath)
   const contents = readFileSync(resolve(configDir, draftIdentity), 'utf8')
 
+  // CAPTURED BEFORE THE WRITE, so a capture FAILURE is a refusal with the tree byte-unchanged
+  // rather than a hole: none of this read's four throw paths is inside the try that owns the
+  // rollback, and the entry it reads is a fact about the repository that does not depend on the
+  // write having happened. See {@link captureIndexEntry} for why this is a capture, not a reset.
+  const indexBefore = captureIndexEntry(exec, configDir, identityPath)
+
   mkdirSync(dirname(absoluteTarget), { recursive: true })
   writeFileSync(absoluteTarget, contents, 'utf8')
-
-  // CAPTURED BEFORE THE ADD, because after it the person's own index state is gone. See
-  // {@link captureIndexEntry} for why this is a capture rather than a reset.
-  const indexBefore = captureIndexEntry(exec, configDir, identityPath)
 
   let committed: GitCommitOutcome
   try {
