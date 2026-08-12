@@ -372,9 +372,19 @@ function failureBlockBody(route: RepairRoute, member: PerTestOutcome | undefined
   return lines.join('\n')
 }
 
+/**
+ * The repair prompt: two drafts, and the parameter names carry which is which.
+ *
+ * `originalDraft` is the draft the handoff's run EXECUTED, and the failure block joins on it. The
+ * host mints a shelf path from the content digest, so `candidate` lives at a new `filePath` from
+ * iteration 2 onward and joining the handoff on it returns no member at all — a block that
+ * collapses to the mechanics-signals line with no arm and no counter. Two names rather than one
+ * parameter and a comment, so the stability is visible in the signature.
+ */
 function repairPromptFor(
   route: RepairRoute,
-  draft: ParsedDraftLike,
+  originalDraft: ParsedDraftLike,
+  candidate: ParsedDraftLike,
   handoff: CompletedRunHandoff,
   lastRefusal: string | undefined,
 ): ReturnType<typeof buildTieredPrompt> {
@@ -391,13 +401,16 @@ function repairPromptFor(
       },
     ],
     context: [
+      // The two titles carry the two numberings. An index in the block below addresses the run's
+      // draft; an index in the block above addresses the candidate the next patch will be applied
+      // to. They diverge as soon as a patch adds or removes a step.
       {
-        title: 'The draft as it stands',
-        body: draft.steps.map((step, index) => `${index}: ${step}`).join('\n'),
+        title: 'The draft as it stands (numbered against the current candidate)',
+        body: candidate.steps.map((step, index) => `${index}: ${step}`).join('\n'),
       },
       {
-        title: `What happened in run ${handoff.runId}`,
-        body: failureBlockBody(route, draftMember(draft, handoff)),
+        title: `What happened in run ${handoff.runId} (steps numbered against the draft that run executed)`,
+        body: failureBlockBody(route, draftMember(originalDraft, handoff)),
       },
     ],
     volatile: lastRefusal === undefined
@@ -447,7 +460,13 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
 
   for (let iteration = 1; iteration <= REPAIR_ITERATION_CAP; iteration += 1) {
     const emitted = await model.generate(
-      repairPromptFor(route, candidate, deps.handoff, iteration === 1 ? undefined : lastRefusal),
+      repairPromptFor(
+        route,
+        deps.draft,
+        candidate,
+        deps.handoff,
+        iteration === 1 ? undefined : lastRefusal,
+      ),
     )
 
     const parsed = parsePatchSet(emitted.text)
