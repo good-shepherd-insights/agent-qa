@@ -10,7 +10,7 @@
 // below is handed to the composition and counts every `start`; a claim asserted against a port
 // nothing could call is a claim about the test, not about the code.
 
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 import {
   CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
@@ -24,16 +24,75 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import {
+  ACCEPT_CONTROL_DRAFT,
+  acceptControlMember,
+  fakeFingerprintIndex,
+  fakeRunPort,
+} from './evidence-fixtures.js'
+import {
   gatherSuiteStability,
   projectAuthoringFunnel,
   scopeReceiptsToWindow,
 } from '../funnel.js'
 import type { AuthoringFunnelPortLike } from '../funnel.js'
+import { evaluateDraft } from '../verify-draft.js'
 import type { DraftRunPortLike } from '../ports.js'
 
 const TARGET = 'tests/local-form.yaml'
 
-function receipt(digest: string, sessionRef?: string, evaluatedAt = 1_700_000_000_000): DraftReceipt {
+// ---- the PRODUCED corpus ----------------------------------------------------------------------
+//
+// THE JOIN CELLS RUN OVER RECEIPTS PRODUCTION CAN ACTUALLY EMIT (394-17, gap round 1). Until the
+// sessionRef write path landed, the only code constructing a session window was this file and one
+// sibling, both building receipts as TYPE LITERALS — a corpus that pinned an input no host could
+// mint, so every session cell was green while `built` was structurally 0 on every real projection
+// (394-VERIFICATION, SC-3). A literal that diverges from the producer is exactly the shape that
+// cannot tell a vacuous closure from a real one.
+//
+// So every receipt the session arm is exercised over comes out of `evaluateDraft` — the ONE mint —
+// and `assertProduced` below is the mechanical self-check: identity against the producer's own
+// ledger, so a literal spliced into a join cell later reds by name rather than passing quietly.
+
+const producedReceipts: DraftReceipt[] = []
+
+async function mintReceipt(
+  digest: string,
+  sessionRef: string | undefined,
+  evaluatedAt: number,
+): Promise<DraftReceipt> {
+  const minted = await evaluateDraft(
+    {
+      draft: { ...ACCEPT_CONTROL_DRAFT, contentDigest: digest },
+      ...(sessionRef === undefined ? {} : { sessionRef }),
+    },
+    {
+      runs: fakeRunPort({
+        runs: [[acceptControlMember()], [acceptControlMember()], [acceptControlMember()]],
+      }),
+      fingerprints: fakeFingerprintIndex([]),
+      textCorpus: [],
+      receipts: { put: async () => {} },
+      now: () => evaluatedAt,
+    },
+  )
+  producedReceipts.push(minted)
+  return minted
+}
+
+/** Every row came out of the mint above — by IDENTITY, which a literal cannot fake. */
+function assertProduced(rows: readonly DraftReceipt[]): void {
+  const foreign = rows.filter((row) => !producedReceipts.includes(row))
+  expect(foreign).toEqual([])
+}
+
+/**
+ * A receipt for the ARITHMETIC cells only — the stages, the side counters, the empty-store posture.
+ *
+ * IT CANNOT CARRY A SESSION REF, and the omission is structural rather than an oversight: the
+ * session join is the one thing in this file a literal must never pin, so the only way to get an
+ * attributed receipt here is `mintReceipt`, which runs the real mint. See the corpus header.
+ */
+function receipt(digest: string, evaluatedAt = 1_700_000_000_000): DraftReceipt {
   return DraftReceiptSchema.parse({
     schemaVersion: 1,
     draftRef: {
@@ -60,7 +119,6 @@ function receipt(digest: string, sessionRef?: string, evaluatedAt = 1_700_000_00
     stabilityRunsCompleted: 3,
     disposition: 'keep-eligible',
     evaluatedAt,
-    ...(sessionRef === undefined ? {} : { sessionRef }),
   })
 }
 
@@ -150,17 +208,28 @@ function port(overrides: PortFixture = {}): AuthoringFunnelPortLike {
   }
 }
 
-describe('the window scope', () => {
-  const population = [
-    receipt('a', 'sess-alpha', 3),
-    receipt('b', 'sess-beta', 1),
-    receipt('c', undefined, 2),
-  ]
+describe('the window scope, over a PRODUCED population', () => {
+  // Three sessions' worth of real mints: `sess-alpha` twice, `sess-beta` once, and one invocation
+  // that supplied no ref at all — the CLI shape, which the session arm must leave out.
+  let population: DraftReceipt[] = []
+
+  beforeAll(async () => {
+    population = [
+      await mintReceipt('a', 'sess-alpha', 3),
+      await mintReceipt('b', 'sess-beta', 1),
+      await mintReceipt('c', undefined, 2),
+      await mintReceipt('d', 'sess-alpha', 4),
+    ]
+  })
 
   it('admits only the EXACT session ref, and excludes a receipt carrying none', async () => {
+    assertProduced(population)
     const scoped = scopeReceiptsToWindow(population, { scope: 'session', sessionRef: 'sess-alpha' })
 
-    expect(scoped.map((row) => row.draftRef.contentDigest)).toEqual(['a'])
+    expect(scoped.map((row) => row.draftRef.contentDigest)).toEqual(['a', 'd'])
+    // NON-EMPTY, which is the whole property that was structurally unreachable before 394-17: the
+    // join's left side was undefined for every receipt any host could mint.
+    expect(scoped.length).toBeGreaterThan(0)
   })
 
   it('admits nothing for a session ref nothing carries — never everything', async () => {
@@ -171,33 +240,64 @@ describe('the window scope', () => {
     expect(scoped).toEqual([])
   })
 
+  it('excludes the PRODUCED unattributed receipt from every session window', async () => {
+    const unattributed = population.filter((row) => row.sessionRef === undefined)
+
+    // The producer really did emit one with no key — absence reaching the store is the fact the
+    // exclusion rule is about, and a mint that defaulted a ref in would empty this list.
+    expect(unattributed.map((row) => row.draftRef.contentDigest)).toEqual(['c'])
+    for (const sessionRef of ['sess-alpha', 'sess-beta']) {
+      const scoped = scopeReceiptsToWindow(population, { scope: 'session', sessionRef })
+      expect(scoped).not.toContain(unattributed[0])
+    }
+  })
+
   it('admits the whole population for `all-time`, INCLUDING the unattributed receipt', async () => {
     const scoped = scopeReceiptsToWindow(population, { scope: 'all-time' })
 
-    expect(scoped.map((row) => row.draftRef.contentDigest)).toEqual(['a', 'b', 'c'])
+    expect(scoped.map((row) => row.draftRef.contentDigest)).toEqual(['a', 'b', 'c', 'd'])
   })
 
   it('takes `last-n` by evaluatedAt, not by the store\'s digest ordering', async () => {
     const scoped = scopeReceiptsToWindow(population, { scope: 'last-n', n: 2 })
 
-    // Newest first: `a` at 3, then `c` at 2. The store lists a, b, c — the digest order — so a
+    // Newest first: `d` at 4, then `a` at 3. The store lists a, b, c, d — the digest order — so a
     // projection that inherited it would have answered a, b.
-    expect(scoped.map((row) => row.draftRef.contentDigest)).toEqual(['a', 'c'])
+    expect(scoped.map((row) => row.draftRef.contentDigest)).toEqual(['d', 'a'])
   })
 })
 
 describe('projectAuthoringFunnel', () => {
-  it('scopes the DENOMINATOR to the session, not just the accepted stage', async () => {
+  it('scopes the DENOMINATOR to the session over PRODUCED receipts — `built` is not 0', async () => {
+    // The corpus is minted, not written: two of this session's drafts, one of another's, one
+    // unattributed. Before 394-17 no host could emit any of the three attributed shapes, so this
+    // stage was 0 for every real projection while a literal corpus reported otherwise.
+    const alpha = [
+      await mintReceipt('p-alpha-1', 'sess-alpha', 10),
+      await mintReceipt('p-alpha-2', 'sess-alpha', 11),
+    ]
+    const others = [
+      await mintReceipt('p-beta-1', 'sess-beta', 12),
+      await mintReceipt('p-none-1', undefined, 13),
+    ]
+    const receipts = [...alpha, ...others]
+    assertProduced(receipts)
+
     const funnel = await projectAuthoringFunnel(
       { scope: 'session', sessionRef: 'sess-alpha' },
       port({
-        receipts: [receipt('a', 'sess-alpha'), receipt('b', 'sess-beta'), receipt('c')],
-        envelopes: [testDraftEnvelope('a', 'applied'), testDraftEnvelope('b', 'applied')],
+        receipts,
+        envelopes: [
+          testDraftEnvelope('p-alpha-1', 'applied'),
+          testDraftEnvelope('p-beta-1', 'applied'),
+        ],
       }),
     )
 
-    expect(funnel.stages.built).toBe(1)
-    // `b` was applied and is NOT in this window, so it cannot reach `accepted` either.
+    // Against the PRODUCER'S OWN TALLY, never a restated integer: if the mint stopped attributing,
+    // `alpha.length` and `built` move apart rather than both matching a hard-coded 2.
+    expect(funnel.stages.built).toBe(alpha.length)
+    // `p-beta-1` was applied and is NOT in this window, so it cannot reach `accepted` either.
     expect(funnel.stages.accepted).toBe(1)
   })
 

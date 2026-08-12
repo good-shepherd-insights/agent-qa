@@ -851,7 +851,7 @@ export type {
 
 // 394-07 (WTST-05, D-13/D-15): the honesty funnel. `computeAuthoringFunnel` is the ONE
 // derivation of the four frozen stages, the keep rate and the acceptance-failure flag —
-// chat, the CLI and the per-run digest all render what it returns and derive nothing.
+// every caller renders what it returns and derives nothing. Today that is `authoring.funnel.get`.
 // `successFramingViolations` is the prohibition made mechanical: it is exported so a surface
 // composing a BLOCK around the funnel's line screens its own wording through the same words.
 export {

@@ -3,9 +3,10 @@
 // A PROJECTION AND NOTHING ELSE. Everything here reads durable records this project already keeps
 // — the draft receipts, the proposals inbox, the run-outcome projection, the quarantine ledger —
 // scopes them to a window, and hands them to `computeAuthoringFunnel`, which owns every number.
-// NOTHING NEW IS PERSISTED (D-12): the receipts ARE the funnel's truth, so chat, the CLI and the
-// per-run digest render the same numbers by construction rather than by three consumers agreeing
-// to. This module re-derives nothing and re-sorts nothing that the computation owns.
+// NOTHING NEW IS PERSISTED (D-12): the receipts ARE the funnel's truth, so every caller of the one
+// read op — today, a read-scoped function caller; there is no CLI funnel command and no per-run
+// digest section — reads the same numbers by construction rather than by consumers agreeing to.
+// This module re-derives nothing and re-sorts nothing that the computation owns.
 //
 // THE WINDOW IS A SCOPE, NOT A FILTER. It selects which invocations the projection is over — the
 // denominator — rather than which rows survive a projection already taken. The `session` arm

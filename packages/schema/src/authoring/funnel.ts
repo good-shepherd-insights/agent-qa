@@ -297,9 +297,10 @@ export function renderFunnelLine(parts: FunnelRenderParts): string {
 /**
  * THE ONE funnel computation (388 D-14's one-read-op law applied to the derivation).
  *
- * Pure and total. Every surface — chat, the CLI, the per-run digest — renders what this returns
- * rather than deriving a number of its own, which is what makes "how many drafts did this session
- * keep" a question with one answer.
+ * Pure and total. Every caller renders what this returns rather than deriving a number of its own,
+ * which is what makes "how many drafts did this session keep" a question with one answer. What
+ * calls it today is `authoring.funnel.get`, through the agent's projection; no surface computes a
+ * funnel any other way, and none is permitted to.
  */
 export function computeAuthoringFunnel(input: AuthoringFunnelInput): AuthoringFunnel {
   const digests = new Set(input.receipts.map((receipt) => receipt.draftRef.contentDigest))

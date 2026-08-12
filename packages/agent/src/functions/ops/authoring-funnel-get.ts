@@ -1,9 +1,11 @@
 // `authoring.funnel.get` — the honesty funnel as a catalogued capability (394-07, D-12 · WTST-05).
 //
-// ONE READ OP, AND EVERY SURFACE RENDERS ITS ANSWER (388 D-14's one-read-op law). Chat, the CLI
-// and the per-run digest are thin clients of this one projection, so "how many drafts did this
-// session keep, and did the loop actually filter any of them" has ONE answer by construction
-// rather than by three renderers agreeing to compute the same thing. The op derives nothing:
+// ONE READ OP, AND ITS CALLERS RENDER ITS ANSWER (388 D-14's one-read-op law). What consumes it
+// TODAY is a read-scoped function caller — the chat/MCP tool surface, and the CLI's generic `fn`
+// dispatch, which reaches the registered op rather than a render of its own. There is no CLI
+// funnel command and no per-run-digest funnel section; when one is written it is a client of this
+// projection, so "how many drafts did this session keep, and did the loop actually filter any of
+// them" has ONE answer by construction rather than by renderers agreeing. The op derives nothing:
 // `computeAuthoringFunnel` in `schema` owns every number, including the acceptance-failure flag,
 // and this file is the envelope.
 //
@@ -28,7 +30,8 @@
 // rather than discover the exposure later. The disposition is ACCEPT, and the argument is: the
 // funnel reads a gitignored local store scoped to the caller's own project, the `read` scope
 // already reaches run history and the quarantine ledger, and a narrower scope would make the
-// funnel unreachable from the per-run digest — which is precisely where D-12 requires it.
+// funnel unreachable from the read-scoped caller asking "how is this session doing" — which is
+// precisely where D-12 puts it.
 
 import {
   AuthoringFunnelGetInputSchema,

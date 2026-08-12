@@ -185,8 +185,8 @@ export type {
 } from './authoring/ports.js'
 // 394-07 D-12/D-13 · WTST-05: the funnel read's id, on the exact footing of the op-id constants
 // above — a name a surface puts on the wire, never a dispatch handle. Published because
-// `composeLocalAgent()` and the CLI's funnel render both have to name it, and 387 D-11 forbids the
-// literal each would otherwise spell. The SPEC stays inside `functions/`.
+// `composeLocalAgent()` has to name it when it binds the capability, and 387 D-11 forbids the
+// literal it would otherwise spell. The SPEC stays inside `functions/`.
 export { AUTHORING_FUNNEL_GET_FUNCTION_ID } from './functions/ops/authoring-funnel-get.js'
 // 394-07 D-12/D-14: the projection and the mixed-verdict stability gather, plus the port bundle a
 // composition root fills. Both functions are PURE over injected reads — they reach no host API,

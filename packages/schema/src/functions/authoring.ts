@@ -267,10 +267,14 @@ export type AuthoringDraftWriteOutput = z.infer<typeof AuthoringDraftWriteOutput
  *
  * THE SESSION ARM CARRIES THE REF, because the op cannot know it. `FunctionSpec.invoke` receives
  * `(input, deps)` and nothing else — no caller — and `FunctionDeps` holds no session. D-12's
- * "default scope = current session" is therefore a SURFACE default honoured where the session is
- * actually known (chat mints one; the CLI has none and asks for all-time), never a schema default
- * that would have to guess. A defaulted session ref is the one shape that could quietly report a
- * different session's drafts as this one's.
+ * "default scope = current session" is therefore a SURFACE default, honoured where the session is
+ * actually known, never a schema default that would have to guess. A defaulted session ref is the
+ * one shape that could quietly report a different session's drafts as this one's.
+ *
+ * NO SURFACE CONSTRUCTS A SESSION WINDOW YET. What 394-17 landed is the other half: the chat
+ * surface stamps its own session onto `authoring.draft.write`, so receipts are ATTRIBUTED and a
+ * session-scoped ask returns that session's drafts once a surface supplies its ref. A caller that
+ * supplies none asks all-time, which is the honest answer for a caller that has no session.
  *
  * `sessionRef` is compared by EXACT STRING EQUALITY and is opaque here: this package mints no
  * session ids and parses none, so any host's spelling round-trips unexamined.
