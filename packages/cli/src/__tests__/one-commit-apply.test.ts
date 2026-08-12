@@ -315,8 +315,11 @@ describe('applyTestDraftAsOneCommit', () => {
     // THE PROPERTY IS POSITIONAL, not "the token appears somewhere". Every argv line carrying the
     // caller-controlled target must have `--` IMMEDIATELY before it, which is the only arrangement
     // that stops a target beginning with a dash from being parsed as one of git's own options.
+    // FIVE lines carry it as of 394-18: status, ls-files (the index capture), diff --cached (the
+    // nothing-to-commit question), add and commit. Each new line is a read the rollback needs, and
+    // each is under the same separator law as the two writes.
     const carrying = argv.filter((line) => line.includes(TARGET_PATH))
-    expect(carrying.length).toBe(3)
+    expect(carrying.length).toBe(5)
     for (const line of carrying) {
       expect(line[line.indexOf(TARGET_PATH) - 1]).toBe('--')
     }
@@ -335,8 +338,13 @@ describe('applyTestDraftAsOneCommit', () => {
 
     applyTestDraftAsOneCommit({ configPath, request: request(), exec: recording })
 
+    // 394-18 adds two READS to the happy path — `ls-files` captures the index state the rollback
+    // restores, `diff` asks whether anything is staged — and nothing else. `update-index` is the
+    // rollback's own write and is absent here BECAUSE this cell drives a successful apply, which
+    // is the evidence that the restore does not run when nothing failed.
     const subcommands = argv.map((line) => line[1])
-    expect([...new Set(subcommands)].sort()).toEqual(['add', 'commit', 'rev-parse', 'status'])
+    expect([...new Set(subcommands)].sort())
+      .toEqual(['add', 'commit', 'diff', 'ls-files', 'rev-parse', 'status'])
     for (const line of argv) {
       expect(line).not.toContain('--amend')
       expect(line).not.toContain('-a')

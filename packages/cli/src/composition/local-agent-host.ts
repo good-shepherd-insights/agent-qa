@@ -1116,6 +1116,44 @@ export class ApplyTargetChangedError extends Error {
   }
 }
 
+/**
+ * The commit was MADE and its hash could not be read (394-18, CR-05).
+ *
+ * A class of its own because the two facts it carries pull in opposite directions and a caller has
+ * to be told both: the write succeeded and is in the person's history, and this apply cannot say
+ * which commit it is. The alternative shipped until now was to route the failed read through the
+ * restore, which reverted a file the repository had already recorded.
+ */
+export class ApplyCommitHashUnavailableError extends Error {
+  constructor(readonly targetPath: string, readonly status: number, readonly stderr: string) {
+    super(
+      `the commit for ${JSON.stringify(targetPath)} was made, but reading its hash failed `
+      + `(git rev-parse exited ${status}${stderr === '' ? '' : `: ${stderr}`}). `
+      + 'The commit stands — look for it at HEAD. Nothing has been reverted.',
+    )
+    this.name = 'ApplyCommitHashUnavailableError'
+  }
+}
+
+/**
+ * The apply staged nothing, so there was nothing to commit (394-18, CR-05).
+ *
+ * The reachable arrangement is an accept of a draft whose bytes already ARE the target's: the
+ * digest re-check passes, the write is a no-op and the add stages nothing. Named rather than
+ * reported as a git failure, and decided on the INDEX rather than on git's English — a message
+ * match would move under a translated or reworded git.
+ */
+export class ApplyProducedNoChangeError extends Error {
+  constructor(readonly targetPath: string) {
+    super(
+      `refusing to report a commit for ${JSON.stringify(targetPath)}: the draft's bytes are `
+      + 'already what the target holds, so the apply staged nothing and made no commit. '
+      + 'The proposal needs no apply.',
+    )
+    this.name = 'ApplyProducedNoChangeError'
+  }
+}
+
 function runApplyGit(
   exec: GitApplyExec,
   cwd: string,
@@ -1173,6 +1211,43 @@ export function runGitAdd(exec: GitApplyExec, cwd: string, targetPath: string): 
 }
 
 /**
+ * What one pathspec commit did, or why it did nothing (394-18).
+ *
+ * A RESULT ARM rather than a message match at the call site. `git commit` exits non-zero for
+ * "nothing to commit" exactly as it does for a hook refusal or a broken index, and the only thing
+ * distinguishing them in git's own answer is English prose on stdout — which a translated,
+ * reworded or newer git is free to change. The arm below is decided on the INDEX instead: if
+ * nothing is staged at the path after the add, there is nothing to commit, and that is a fact this
+ * function can check before it asks git to do anything at all.
+ *
+ * The commit HASH is deliberately not here. Reading HEAD is a separate question asked after the
+ * commit exists — see {@link applyTestDraftAsOneCommit}, where keeping it separate is what stops a
+ * failed read from routing through the restore and reverting a commit that succeeded.
+ */
+export type GitCommitOutcome =
+  | { readonly kind: 'committed' }
+  | { readonly kind: 'nothing-to-commit' }
+
+/** Is anything staged at this ONE path, right now? Read from `git diff --cached`'s exit code. */
+function stagedAtPath(exec: GitApplyExec, cwd: string, targetPath: string): boolean {
+  const result = runApplyGit(
+    exec,
+    cwd,
+    targetPath,
+    ['diff', '--cached', '--quiet', '--', targetPath],
+  )
+  // 0 = no staged difference, 1 = there is one. Anything else is git failing to answer, which is
+  // not "nothing is staged" and must not be read as it.
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(
+      `git diff --cached exited ${result.status} for ${JSON.stringify(targetPath)}: `
+      + `${result.stderr.trim()}`,
+    )
+  }
+  return result.status === 1
+}
+
+/**
  * Commit exactly one path.
  *
  * THE PATHSPEC ON THE COMMIT IS A SECOND, INDEPENDENT CONTROL and not a restatement of the add's.
@@ -1188,7 +1263,8 @@ export function runGitCommit(
   cwd: string,
   targetPath: string,
   message: string,
-): string {
+): GitCommitOutcome {
+  if (!stagedAtPath(exec, cwd, targetPath)) return { kind: 'nothing-to-commit' }
   const committed = runApplyGit(
     exec,
     cwd,
@@ -1201,11 +1277,90 @@ export function runGitCommit(
       + `${committed.stderr.trim()}`,
     )
   }
+  return { kind: 'committed' }
+}
+
+/** The short hash at HEAD. Asked only where a commit is known to exist. */
+export function runGitHeadHash(exec: GitApplyExec, cwd: string, targetPath: string): string {
   const head = runApplyGit(exec, cwd, targetPath, ['rev-parse', '--short', 'HEAD'])
   if (head.status !== 0) {
-    throw new Error(`git rev-parse exited ${head.status} after the apply's commit`)
+    throw new ApplyCommitHashUnavailableError(targetPath, head.status, head.stderr.trim())
   }
   return head.stdout.trim()
+}
+
+/**
+ * The INDEX state for ONE path, as git's own plumbing spells it — or `undefined` for no entry.
+ *
+ * Captured BEFORE the apply stages anything, and restored verbatim if the apply fails. The pair is
+ * the CR-05 fix, and the reason it is a capture rather than `git reset HEAD -- <path>` is the
+ * arrangement a reset gets wrong: a person may have staged content that differs from HEAD, and
+ * resetting would silently discard their own staged work at the very file the agent touched. An
+ * unconditional `git rm --cached` gets the other direction wrong — for a tracked target it would
+ * stage a DELETION of a test the person has committed.
+ *
+ * `ls-files --stage` answers `<mode> <sha> <stage>\t<path>`, which is exactly the triple
+ * `update-index --cacheinfo` takes back. Both are path-scoped plumbing: nothing here can touch a
+ * second path, and there is no repo-wide operation on this file at all.
+ */
+export function captureIndexEntry(
+  exec: GitApplyExec,
+  cwd: string,
+  targetPath: string,
+): IndexEntry | undefined {
+  const result = runApplyGit(exec, cwd, targetPath, ['ls-files', '--stage', '--', targetPath])
+  if (result.status !== 0) {
+    throw new Error(
+      `git ls-files exited ${result.status} for ${JSON.stringify(targetPath)}: `
+      + `${result.stderr.trim()}`,
+    )
+  }
+  const line = result.stdout.split('\n')[0]?.trim() ?? ''
+  if (line === '') return undefined
+  // `<mode> <object> <stage>\t<path>`. The path half is dropped: it is the path we asked about,
+  // and re-reading it here would make a quoted or escaped filename a second parsing problem.
+  const [mode, object, stage] = line.split('\t')[0]?.split(' ') ?? []
+  if (mode === undefined || object === undefined || stage === undefined) {
+    throw new Error(`git ls-files answered an unparsable index entry: ${JSON.stringify(line)}`)
+  }
+  return { mode, object, stage }
+}
+
+/** One path's index entry, as `ls-files --stage` reports it and `update-index` takes it back. */
+export interface IndexEntry {
+  readonly mode: string
+  readonly object: string
+  readonly stage: string
+}
+
+/**
+ * Put the captured index state back — BOTH directions, and never a repo-wide reset.
+ *
+ * An entry that existed is restored to the exact blob it named; an entry that did not exist is
+ * removed. `--force-remove` is used for the second because it is unconditional: the path may or
+ * may not be in the index by the time the restore runs, and a variant that failed on "not there"
+ * would turn a successful rollback into a second error on top of the first.
+ */
+export function restoreIndexEntry(
+  exec: GitApplyExec,
+  cwd: string,
+  targetPath: string,
+  captured: IndexEntry | undefined,
+): void {
+  const args = captured === undefined
+    ? ['update-index', '--force-remove', '--', targetPath]
+    // NO TRAILING PATH OPERAND on the cacheinfo form, and the omission is load-bearing: the path
+    // rides INSIDE the `<mode>,<object>,<path>` triple, and repeating it after `--` would make
+    // `update-index` also read the WORKTREE copy — re-staging the agent's blob immediately after
+    // the person's was restored. Measured: with the operand present this restore is a no-op.
+    : ['update-index', '--add', '--cacheinfo', `${captured.mode},${captured.object},${targetPath}`]
+  const result = runApplyGit(exec, cwd, targetPath, args)
+  if (result.status !== 0) {
+    throw new Error(
+      `git update-index exited ${result.status} restoring ${JSON.stringify(targetPath)}: `
+      + `${result.stderr.trim()}`,
+    )
+  }
 }
 
 /**
@@ -1248,6 +1403,28 @@ export interface ApplyTestDraftInput {
  * THE DIGEST RE-CHECK IS IMMEDIATELY BEFORE THE WRITE, and that placement is the mitigation rather
  * than a detail: the window it closes is the one between the proposal's read and this accept, and a
  * check performed anywhere earlier leaves a window of its own.
+ *
+ * WHAT A FAILED APPLY LEAVES BEHIND, STATED AS WHAT THE CELLS PROVE (394-18, CR-05). Two states are
+ * restored for the ONE target path and for nothing else:
+ *
+ *   the WORKTREE — the bytes that were there, or no file at all if there was none;
+ *   the INDEX    — the entry that was there, or no entry at all if there was none.
+ *
+ * Both directions, per path, and never a repo-wide operation: no `reset`, no `checkout .`, no
+ * `clean`. The index half is what stops the agent's blob from folding into the person's next
+ * commit, and it is a CAPTURE rather than a reset because a person may have staged content that
+ * differs from HEAD — resetting would discard their own work at the file the agent touched.
+ *
+ * WHAT IS NOT RESTORED, and must not be: a commit that SUCCEEDED. Reading its hash is a separate
+ * question asked after it exists, and a failure of that read surfaces as
+ * {@link ApplyCommitHashUnavailableError} with the commit standing and the worktree matching it.
+ *
+ * WHAT IS NOT CLAIMED. The restore is exact for what this function did; it is not a general undo,
+ * and it cannot speak for a concurrent writer — the previous state is bytes read moments ago and an
+ * index entry read moments ago, under the same lock-free assumption the digest re-check makes. Nor
+ * is the pre-staged-blob direction reachable through this entry point today: the dirty check
+ * refuses a target with staged content before anything is written, so the capture's staged arm is
+ * pinned at its own mechanism rather than through an apply.
  */
 export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraftApplyResult {
   const { request } = input
@@ -1278,22 +1455,64 @@ export function applyTestDraftAsOneCommit(input: ApplyTestDraftInput): TestDraft
   mkdirSync(dirname(absoluteTarget), { recursive: true })
   writeFileSync(absoluteTarget, contents, 'utf8')
 
+  // CAPTURED BEFORE THE ADD, because after it the person's own index state is gone. See
+  // {@link captureIndexEntry} for why this is a capture rather than a reset.
+  const indexBefore = captureIndexEntry(exec, configDir, identityPath)
+
+  let committed: GitCommitOutcome
   try {
     runGitAdd(exec, configDir, identityPath)
-    return {
-      filePath: identityPath,
-      commit: runGitCommit(exec, configDir, identityPath, applyCommitMessage(request)),
-    }
+    committed = runGitCommit(exec, configDir, identityPath, applyCommitMessage(request))
   } catch (error) {
-    // A GIT FAILURE AFTER THE WRITE PUTS THE FILE BACK. Everything above this line refuses with the
-    // tree untouched; below it, a bare throw would leave bytes on a person's disk that no commit
-    // explains and that this apply already told the caller it did not make. Restoring is exact
-    // rather than best-effort: the previous state is either "no such file" or bytes this function
-    // read moments ago under the same lock-free assumption the digest re-check makes.
-    if (existing === undefined) rmSync(absoluteTarget, { force: true })
-    else writeFileSync(absoluteTarget, existing, 'utf8')
+    // A GIT FAILURE AFTER THE WRITE PUTS THE FILE BACK — AND PUTS THE INDEX BACK.
+    //
+    // Everything above the write refuses with the tree untouched; below it, a bare throw would
+    // leave bytes on a person's disk that no commit explains and that this apply already told the
+    // caller it did not make. The INDEX half was missing until 394-18 and was the worse of the
+    // two: the worktree was restored and the agent's blob stayed staged, so the person's very next
+    // `git commit` — which commits the index — carried a file they never wrote and were told was
+    // not written.
+    restoreApplyFailure(exec, configDir, identityPath, absoluteTarget, existing, indexBefore)
     throw error
   }
+
+  if (committed.kind === 'nothing-to-commit') {
+    // Reachable, and it is not a failure of git: a draft whose bytes already ARE the target's
+    // passes the digest re-check, writes the same bytes, and stages nothing. Refused BY NAME with
+    // the repository put back, rather than reported as `git commit exited 1` with an empty stderr.
+    restoreApplyFailure(exec, configDir, identityPath, absoluteTarget, existing, indexBefore)
+    throw new ApplyProducedNoChangeError(identityPath)
+  }
+
+  // BELOW THIS LINE NOTHING IS RESTORED. The commit exists, so it is the new truth, and reverting
+  // the worktree against it is the second defect CR-05 named: a checkout disagreeing with its own
+  // history at the file the agent just wrote. A failure to READ the hash is surfaced as itself.
+  return {
+    filePath: identityPath,
+    commit: runGitHeadHash(exec, configDir, identityPath),
+  }
+}
+
+/**
+ * Put the working tree AND the index back where the apply found them, for this ONE path.
+ *
+ * Worktree first, then the index, and both scoped to the target: the previous worktree state is
+ * either "no such file" or bytes this function read moments ago, and the previous index state is
+ * whatever {@link captureIndexEntry} recorded before the add. Nothing here is repo-wide — no
+ * `reset`, no `checkout .`, no `clean` — because the one thing this rollback must not do is undo
+ * work that was never the agent's.
+ */
+function restoreApplyFailure(
+  exec: GitApplyExec,
+  cwd: string,
+  identityPath: string,
+  absoluteTarget: string,
+  existing: string | undefined,
+  indexBefore: IndexEntry | undefined,
+): void {
+  if (existing === undefined) rmSync(absoluteTarget, { force: true })
+  else writeFileSync(absoluteTarget, existing, 'utf8')
+  restoreIndexEntry(exec, cwd, identityPath, indexBefore)
 }
 
 /**
