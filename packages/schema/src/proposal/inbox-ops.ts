@@ -363,4 +363,48 @@ export interface ProposalsInboxPort {
   list(): Promise<readonly ProposalInboxEntryDto[]>
   show(input: ProposalsShowInput): Promise<ProposalsShowOutput>
   reject(input: ProposalsRejectInput): Promise<ProposalsRejectOutput>
+  recordApplied(input: ProposalsRecordAppliedInput): Promise<ProposalsRecordAppliedOutput>
+}
+
+/**
+ * The APPLIED half of the decision trail, for the kinds whose apply is not itself a commit
+ * (394-18).
+ *
+ * IT IS THE SYMMETRIC HALF OF `reject`, and its absence was the reason `accepted` could not be a
+ * real number. A knowledge accept commits deltas and `publishAppliedProposal` records the decision
+ * as part of committing them, so the knowledge arm needs nothing here. The two kinds 394 mints have
+ * no such commit: a `test-draft` writes a file through a port that is not this store, and a
+ * `finding` is an acknowledgement with no side effect at all — so without a verb that says "a
+ * person decided this", both would sit `pending` forever and the funnel's `accepted` stage would be
+ * structurally 0 on every host, which is exactly the state WINDOWS 102 recorded.
+ *
+ * A PORT VERB RATHER THAN A SECOND PORT, on this port's own stated reasoning: the read/write
+ * asymmetry is declared where it is ENFORCED — `proposals.accept` carries `approval-write`,
+ * `readOnly: false` and `requiresHumanOrigin` — so a separate writer port would restate at the
+ * composition root a distinction the gate already makes at every call.
+ *
+ * NOT AN OP INPUT, which is why these are interfaces rather than zod schemas. Nothing parses one
+ * off a wire: the caller is `proposals.accept`'s own route, one package away, and a schema here
+ * would invite somebody to expose recording a decision as a verb of its own — a way to mark a
+ * proposal applied without applying it.
+ */
+export interface ProposalsRecordAppliedInput {
+  readonly proposalId: string
+}
+
+/**
+ * What recording found, in the store's own vocabulary. Every arm is a RESULT; none is a throw.
+ *
+ * The four non-`recorded` arms are the same four `reject` answers, and they are here for the same
+ * reason: a retrying surface, two people on two machines, a race with an in-flight apply and a
+ * mistyped id are all ordinary. `already-applied` in particular is what a second accept of the same
+ * proposal must say, and it must not overwrite the first decision's instant.
+ */
+export interface ProposalsRecordAppliedOutput {
+  readonly outcome:
+    | 'recorded'
+    | 'already-applied'
+    | 'already-rejected'
+    | 'apply-in-flight'
+    | 'not-found'
 }

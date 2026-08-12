@@ -39,6 +39,9 @@ import { dirname, join } from 'node:path'
 import {
   AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
   AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+  AUTHORING_FUNNEL_GET_FUNCTION_ID,
+  PROPOSALS_ACCEPT_FUNCTION_ID,
+  RUNS_DIGEST_FUNCTION_ID,
   FunctionDeniedError,
   FunctionNotBoundError,
   FunctionScopeError,
@@ -64,10 +67,14 @@ import {
   computeDraftDisposition,
   renderFanOutPreview,
 } from '@vostride/agent-qa-schema'
+import { listProposalEnvelopes } from '@vostride/agent-qa-knowledge-local'
 import type {
   Action,
   AuthoringDraftWriteOutput,
+  AuthoringFunnelGetOutput,
   CompletedRunHandoff,
+  ProposalsAcceptOutput,
+  RunDigest,
   ElementInfo,
   FunctionCaller,
   MaskedResolvedConfig,
@@ -81,12 +88,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type {
+  ComposeLocalAgentInput,
   DraftAuthoringPort,
   DraftParseOutcome,
   DraftStageOutcome,
   LocalAgentHost,
   RunExecutionPort,
 } from '../composition/compose-local-agent.js'
+import type { TestDraftApplyRequestLike } from '@vostride/agent-qa-agent'
 
 const MASKED_CONFIG: MaskedResolvedConfig = {
   schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -230,7 +239,30 @@ function stepEvidence(index: number, subActions: readonly SubActionFixture[]): S
  * and handed exactly that path to `runs.start`, and gates 1-2 find the draft's member by comparing
  * against these bytes. A hard-coded path would make the join pass no matter what the shelf minted.
  */
-function gateRunHandoff(runId: string, filePath: string): CompletedRunHandoff {
+/**
+ * WHOSE test the gate-run reports on, and which element it exercised.
+ *
+ * DEFAULTED to the one fixed draft every cell above authors, and overridable for the 394-18 corpus
+ * cells, which author TWELVE distinct drafts through the same host. Gate 1 finds the draft's own
+ * member by `testName` and gate 3 asks whether the draft touched an element the suite index has
+ * never seen, so a fixture that reported one name and one element for every draft would make the
+ * second draft onwards fail `addsValue` — measuring the fixture's sameness rather than the loop.
+ */
+interface DraftRunIdentity {
+  readonly testName: string
+  readonly elementName: string
+}
+
+const FIXED_RUN_IDENTITY: DraftRunIdentity = {
+  testName: DRAFT_TEST_NAME,
+  elementName: 'local form',
+}
+
+function gateRunHandoff(
+  runId: string,
+  filePath: string,
+  identity: DraftRunIdentity = FIXED_RUN_IDENTITY,
+): CompletedRunHandoff {
   return {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
@@ -245,12 +277,16 @@ function gateRunHandoff(runId: string, filePath: string): CompletedRunHandoff {
     endedAt: 2,
     tests: [
       {
-        testId: DRAFT_TEST_NAME,
-        testName: DRAFT_TEST_NAME,
+        testId: identity.testName,
+        testName: identity.testName,
         filePath,
         testIndex: 0,
         outcome: 'passed',
-        steps: DRAFT_SUBACTIONS.map((subActions, index) => stepEvidence(index, subActions)),
+        steps: DRAFT_SUBACTIONS
+          .map((subActions) => subActions.map((fixture) => (
+            fixture.role === 'heading' ? { ...fixture, name: identity.elementName } : fixture
+          )))
+          .map((subActions, index) => stepEvidence(index, subActions)),
       },
     ],
   } as unknown as CompletedRunHandoff
@@ -261,7 +297,10 @@ interface FixtureExecutor {
   readonly startInputs: RunsStartInput[]
 }
 
-function fixtureExecutor(agentQaRoot: string): FixtureExecutor {
+function fixtureExecutor(
+  agentQaRoot: string,
+  resolveIdentity: (filePath: string) => DraftRunIdentity = () => FIXED_RUN_IDENTITY,
+): FixtureExecutor {
   const startInputs: RunsStartInput[] = []
   return {
     startInputs,
@@ -281,7 +320,11 @@ function fixtureExecutor(agentQaRoot: string): FixtureExecutor {
         mkdirSync(runDir, { recursive: true })
         writeFileSync(
           join(runDir, HANDOFF_FILE),
-          `${JSON.stringify(gateRunHandoff(runId, request.patterns?.[0] ?? 'tests/missing.yaml'))}\n`,
+          `${JSON.stringify(gateRunHandoff(
+            runId,
+            request.patterns?.[0] ?? 'tests/missing.yaml',
+            resolveIdentity(request.patterns?.[0] ?? 'tests/missing.yaml'),
+          ))}\n`,
           'utf8',
         )
         return Promise.resolve({ runId: asRunId(runId) })
@@ -448,12 +491,14 @@ describe('authoring.draft.write end to end through the composition root', () => 
     readonly authoring?: DraftAuthoringPort
     readonly model?: () => JobModelCapability
     readonly confirm?: (action: RiskActionDescriptor) => boolean
+    readonly draftApply?: ComposeLocalAgentInput['draftApply']
   }): LocalAgentHost {
     const host = composeLocalAgent({
       agentQaRoot,
       mintQuarantineIdentityPath: (filePath: string) => filePath,
       config: { getMasked: () => Promise.resolve(MASKED_CONFIG) },
       knowledgeRoot: () => join(root, 'agent-qa-knowledge'),
+      ...(input.draftApply === undefined ? {} : { draftApply: input.draftApply }),
       model: input.model ?? (() => scriptedModel().capability()),
       // An APPROVING confirm by default, so every case that is not about the gate keeps measuring
       // what it was written to measure. The decline arm is a cell of its own, and it supplies its
@@ -869,5 +914,216 @@ describe('authoring.draft.write end to end through the composition root', () => 
       HUMAN,
     )).rejects.toThrow()
     expect(model.requests).toHaveLength(0)
+  })
+
+  // ---- 394-18: the outcome becomes a proposal, the proposal becomes a decision, the decision
+  // becomes a NUMBER (WINDOWS 99 / 102 · WTST-05) ------------------------------------------------
+  //
+  // EVERY ENVELOPE BELOW IS MINTED THROUGH THE PRODUCTION WRITE PATH. Not one is a type literal:
+  // `authoring.draft.write` runs on the composed host, its bound proposals port is the real
+  // `writePendingProposalRecord`, and what these cells read back comes out of the real store's own
+  // listing. That is the whole point — the funnel's `accepted` stage was structurally 0 because
+  // nothing could mint one, so a corpus of hand-written envelopes would have measured a population
+  // production is incapable of producing, which is exactly the defect being closed.
+
+  /** A model that answers a DIFFERENT valid document per call, so each draft is its own digest. */
+  function varyingModel(): { capability: () => JobModelCapability; count: () => number } {
+    let calls = 0
+    return {
+      count: () => calls,
+      capability: () => ({
+        modelId: 'fixture:authoring-corpus',
+        generate: () => {
+          calls += 1
+          return Promise.resolve({
+            text: `name: ${DRAFT_TEST_NAME} ${calls}\n`
+              + 'steps:\n'
+              + '  - Open the local account form\n'
+              + `  - Verify the page heading says "Local account ${calls}"\n`,
+          })
+        },
+      }),
+    }
+  }
+
+  /** Records what an accept asked the host to commit; answers as the real one-commit apply does. */
+  function recordingApply(): {
+    port: NonNullable<ComposeLocalAgentInput['draftApply']>
+    calls: TestDraftApplyRequestLike[]
+  } {
+    const calls: TestDraftApplyRequestLike[] = []
+    return {
+      calls,
+      port: {
+        apply: (request: TestDraftApplyRequestLike) => {
+          calls.push(request)
+          return Promise.resolve({ filePath: request.targetPath, commit: `c0ffee${calls.length}` })
+        },
+      },
+    }
+  }
+
+  it('files the drafted outcome as a test-draft envelope a person can read out of the store', async () => {
+    const executor = fixtureExecutor(agentQaRoot)
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: scriptedModel().capability,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    expect(result.outcome).toBe('drafted')
+    // READ BACK THROUGH THE STORE'S OWN LISTING, not off the op's answer — which deliberately does
+    // not carry the proposal at all.
+    const entries = listProposalEnvelopes(agentQaRoot, { now: Date.now() })
+    expect(entries).toHaveLength(1)
+    const envelope = entries[0]?.envelope
+    expect(envelope?.kind).toBe('test-draft')
+    expect(envelope?.status).toBe('pending')
+    expect(envelope?.origin?.emittedBy).toBe(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+    if (envelope?.kind !== 'test-draft') throw new Error('unreachable')
+    // The payload joins the receipt the same invocation answered with: one artifact, two readers.
+    expect(envelope.payload.draftRef.contentDigest).toBe(result.receipt?.draftRef.contentDigest)
+    expect(envelope.payload.runsPreviewed).toBe(result.fanOut?.previewed.total)
+    expect(envelope.payload.runsConsumed).toBe(result.fanOut?.consumedTotal)
+    // ATTRIBUTED TO A RUN THIS HOST REALLY RECORDED — the receipt's last gate run.
+    expect(envelope.origin?.runId).toBe(result.receipt?.gateRuns.at(-1)?.runId)
+  })
+
+  it("renders the digest's test-draft line off that persisted envelope", async () => {
+    const executor = fixtureExecutor(agentQaRoot)
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: scriptedModel().capability,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+    const runId = result.receipt?.gateRuns.at(-1)?.runId
+
+    const digest = (await invokeFunction(
+      host.registry,
+      RUNS_DIGEST_FUNCTION_ID,
+      { runId },
+      HUMAN,
+    )) as RunDigest
+
+    // SC-5 artifact 3. The line existed since 394-06 and had never rendered on any host, because
+    // `proposalsMintedThisRun` attributes rows by `origin.runId` and nothing could write an
+    // envelope carrying one. BOTH figures, which is the pairing WTST-08 exists for.
+    expect(digest.proposalsMintedThisRun).toHaveLength(1)
+    const row = digest.proposalsMintedThisRun[0]
+    expect(row?.summaryLine).toContain('test draft')
+    expect(row?.summaryLine).toContain(
+      `${result.fanOut?.consumedTotal} run(s) of up to ${result.fanOut?.previewed.total} previewed`,
+    )
+    // A PENDING proposal is owed a decision, and the digest says which one.
+    expect(row?.requiredDecision).not.toBe('pending')
+    expect(digest.pendingProposalCount).toBe(1)
+  })
+
+  it('counts an ACCEPTED draft through the shipped projection, and raises the acceptance flag', async () => {
+    // The gate-run fixture reports on whichever draft the run was actually handed, read off the
+    // staged bytes — so twelve distinct drafts are twelve distinct members and twelve distinct
+    // novel elements, and gate 3 is being asked a real question rather than a rigged one.
+    const executor = fixtureExecutor(agentQaRoot, (filePath) => {
+      const staged = parseYaml(readFileSync(join(workspace, filePath), 'utf8')) as { name: string }
+      return { testName: staged.name, elementName: `heading ${staged.name}` }
+    })
+    const model = varyingModel()
+    const applied = recordingApply()
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: model.capability,
+      draftApply: applied.port,
+    })
+
+    // TWELVE drafts, each authored through the registered op against a distinct document, so the
+    // population the funnel reports on is one this host really produced.
+    for (let index = 0; index < 12; index += 1) {
+      const result = (await invokeFunction(
+        host.registry,
+        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+        { intent: `${INTENT} (${index})`, scope: SCOPE },
+        HUMAN,
+      )) as AuthoringDraftWriteOutput
+      expect(result.outcome).toBe('drafted')
+    }
+
+    const pending = listProposalEnvelopes(agentQaRoot, { now: Date.now() })
+    expect(pending).toHaveLength(12)
+
+    // ELEVEN human decisions, each through the SHIPPED accept — the protected, human-origin verb
+    // with its own confirm, not a store write this cell performs.
+    for (const entry of pending.slice(0, 11)) {
+      const answer = (await invokeFunction(
+        host.registry,
+        PROPOSALS_ACCEPT_FUNCTION_ID,
+        { proposalId: entry.envelope.id },
+        HUMAN,
+      )) as ProposalsAcceptOutput
+      expect(answer.apply.outcome).toBe('applied')
+    }
+    expect(applied.calls).toHaveLength(11)
+
+    const funnel = (await invokeFunction(
+      host.registry,
+      AUTHORING_FUNNEL_GET_FUNCTION_ID,
+      { window: { scope: 'all-time' } },
+      HUMAN,
+    )) as AuthoringFunnelGetOutput
+
+    // 394-12 leg B's frozen expectation, now answerable: `built` was already real, and `accepted`
+    // was the stage that could not move off 0 on any host.
+    expect(funnel.stages.built).toBe(12)
+    expect(funnel.stages.accepted).toBe(11)
+    // THE FLAG REACHES A SURFACE THROUGH THE SHIPPED PROJECTION (D-13). 11 of 12 is 91.7%, strictly
+    // above the 9/10 ceiling, over a population at or above the 10-draft floor.
+    expect(funnel.acceptanceFailure).toBe(true)
+    expect(funnel.line).toContain('ACCEPTANCE FAILURE')
+    expect(funnel.line).toContain('11 accepted')
+
+    // THE TWO-SIDED CONTROL, over the SAME produced population: a window of five is below the
+    // draft floor, so the flag stays silent and the line says why. A flag that fired here would be
+    // one that fires on every high-keep-rate answer rather than on a judgeable one.
+    const narrow = (await invokeFunction(
+      host.registry,
+      AUTHORING_FUNNEL_GET_FUNCTION_ID,
+      { window: { scope: 'last-n', n: 5 } },
+      HUMAN,
+    )) as AuthoringFunnelGetOutput
+    expect(narrow.stages.built).toBe(5)
+    expect(narrow.acceptanceFailure).toBe(false)
+  })
+
+  it('refuses to author at all on a host that cannot FILE what it authors', async () => {
+    // The composition binds the proposals port with the loop's two halves, so this is the same
+    // conditional-spread absence every other optional capability answers with — and it is checked
+    // BEFORE any run is spent, which the executor's empty record is the evidence for.
+    const executor = fixtureExecutor(agentQaRoot)
+    const host = compose({ executor: executor.port, model: scriptedModel().capability })
+
+    const failure = await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    ).then(() => undefined, (error: unknown) => error as FunctionNotBoundError)
+
+    expect(failure).toBeInstanceOf(FunctionNotBoundError)
+    expect(executor.startInputs).toHaveLength(0)
+    expect(listProposalEnvelopes(agentQaRoot, { now: Date.now() })).toEqual([])
   })
 })

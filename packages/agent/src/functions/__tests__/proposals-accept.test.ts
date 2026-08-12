@@ -140,6 +140,40 @@ function testDraftEntry(
   }
 }
 
+/**
+ * The FINDING arm (D-11), for the acknowledge-only route.
+ *
+ * Narrowed the same way its two siblings are: the payload is correlated with the kind, so a route
+ * that read this envelope as a test-draft's would not typecheck rather than render the wrong line.
+ */
+function findingEntry(
+  overrides: Partial<Extract<ProposalInboxEntryDto['envelope'], { kind: 'finding' }>> = {},
+): ProposalInboxEntryDto {
+  return {
+    applyInFlight: false,
+    envelope: {
+      id: PROPOSAL_ID,
+      kind: 'finding',
+      status: 'pending',
+      evidenceRefs: [],
+      payload: {
+        schemaVersion: 1,
+        draftRef: {
+          filePath: 'tests/.agent-qa-drafts/def456.yaml',
+          testId: 't_expired_coupon',
+          testName: 'Applying an expired coupon shows an error',
+          contentDigest: 'def456',
+        },
+        signalClass: 'definitive-failure',
+        failurePoint: null,
+        evidenceRefs: [],
+        explanation: 'the application accepted an expired coupon',
+      },
+      ...overrides,
+    },
+  }
+}
+
 /** Records every one-commit apply, so "the write really happened" is observable. */
 function recordingDraftApply(): { port: DraftApplyPortLike; calls: TestDraftApplyRequestLike[] } {
   const calls: TestDraftApplyRequestLike[] = []
@@ -205,6 +239,8 @@ interface Host {
   review: ReturnType<typeof recordingReview>
   draftApply: ReturnType<typeof recordingDraftApply>
   confirmed: RiskActionDescriptor[]
+  /** The proposal ids the accept asked the inbox to CLOSE (394-18). */
+  recordedApplied: string[]
 }
 
 function host(options: {
@@ -220,6 +256,7 @@ function host(options: {
   const review = recordingReview()
   const draftApply = recordingDraftApply()
   const confirmed: RiskActionDescriptor[] = []
+  const recordedApplied: string[] = []
   const entry = options.entry ?? inboxEntry()
 
   const deps: FunctionDeps = {
@@ -255,6 +292,12 @@ function host(options: {
           ? { kind: 'not-found' as const, proposalId }
           : { kind: 'found' as const, entry },
       ),
+      // 394-18: the decision half, recorded so a later cell can assert the two authoring routes
+      // close the proposal's lifecycle and the knowledge route does not.
+      recordApplied: ({ proposalId }) => {
+        recordedApplied.push(proposalId)
+        return Promise.resolve({ outcome: 'recorded' as const })
+      },
     },
     knowledgeReview: review.port,
     standingGrants: grants.port,
@@ -266,6 +309,7 @@ function host(options: {
     review,
     draftApply,
     confirmed,
+    recordedApplied,
     registry: createFunctionRegistry({
       deps,
       auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
@@ -441,6 +485,55 @@ describe('proposals.accept — the door, and what happens without it', () => {
     // The prompt was never reached: fail-closed fires ahead of it, which is the arm every
     // non-interactive host lands on.
     expect(built.confirmed).toEqual([])
+  })
+})
+
+describe('the decision is RECORDED where the apply is not itself a commit (394-18)', () => {
+  it('closes a test-draft proposal in the store after the commit succeeds', async () => {
+    const built = host({ entry: testDraftEntry() })
+
+    const answer = await accept(built, { proposalId: PROPOSAL_ID })
+
+    expect(answer.apply.outcome).toBe('applied')
+    // WITHOUT THIS the envelope stays `pending` forever, the inbox keeps asking for a decision a
+    // person already made, and `projectAuthoringFunnel` reads no `decision` — which is exactly why
+    // `accepted` was structurally 0 on every host (WINDOWS 102).
+    expect(built.recordedApplied).toEqual([PROPOSAL_ID])
+  })
+
+  it('closes a FINDING proposal too — the acknowledgement is the whole of what accepting does', async () => {
+    const built = host({ entry: findingEntry() })
+
+    const answer = await accept(built, { proposalId: PROPOSAL_ID })
+
+    expect(answer.apply).toMatchObject({
+      applied: { kind: 'finding', outcome: { acknowledged: true } },
+    })
+    expect(built.recordedApplied).toEqual([PROPOSAL_ID])
+    // No file and no commit: D-11's record-and-surface, with the record being the whole effect.
+    expect(built.draftApply.calls).toEqual([])
+  })
+
+  it('does NOT record for a KNOWLEDGE accept — that apply publishes its own decision', async () => {
+    // THE TWO-SIDED CONTROL, and the one that makes the two cells above mean something. A recorder
+    // called on every route would write a second, differently-timed answer to when a knowledge
+    // proposal was decided, one rename away from the record `publishAppliedProposal` already wrote.
+    const built = host()
+
+    const answer = await accept(built, { proposalId: PROPOSAL_ID })
+
+    expect(answer.apply.outcome).toBe('applied')
+    expect(built.review.applied).toEqual([PROPOSAL_ID])
+    expect(built.recordedApplied).toEqual([])
+  })
+
+  it('files nothing to record when the apply itself refused', async () => {
+    const built = host({ entry: testDraftEntry({ status: 'expired' }) })
+
+    const answer = await accept(built, { proposalId: PROPOSAL_ID })
+
+    expect(answer.apply.outcome).toBe('expired')
+    expect(built.recordedApplied).toEqual([])
   })
 })
 

@@ -125,11 +125,13 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
   // is an individual human decision. An entry naming a class no registered op carries is a red
   // build: `__tests__/apply-action-classes.test.ts` ranges this table against the live registry.
   //
-  // THE PAYLOAD TRAVELS TO THE PORT, and it has to: the shipped `KnowledgeReviewPort.apply` takes
-  // an id because `knowledge-local`'s store holds knowledge records and reads them back, and
-  // NOTHING on any host in this build persists a `test-draft` record — `writePendingProposal` takes
-  // a `KnowledgeProposalV1` and `extractStoredProposal` refuses every other kind by name. A port
-  // taking an id alone would be asking a host to look up something no store can hold.
+  // THE PAYLOAD TRAVELS TO THE PORT. It was minted that way because nothing on any host persisted
+  // a `test-draft` record, so a port taking an id alone would have been asking a host to look up
+  // something no store could hold; 394-18 landed that store and the shape is KEPT on its own
+  // merits. This op has ALREADY read the envelope — that is how it knows which route to dispatch —
+  // so handing the payload it is holding to the route it chose is one read. An id would make the
+  // host read the same record again, with a window in between in which the two reads can disagree
+  // about the very `sourceDigest` the apply re-checks.
   'test-draft': {
     actionClass: PROPOSALS_ACCEPT_ACTION_CLASS,
     async apply(
@@ -155,6 +157,15 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
         ...(payload.sourceDigest === undefined ? {} : { sourceDigest: payload.sourceDigest }),
         summaryLine: payload.summaryLine,
       })
+      // THE DECISION IS RECORDED AFTER THE COMMIT, and the ORDER is the decision (394-18).
+      //
+      // Recording first would mark a proposal applied for a write that may then refuse — a dirty
+      // target, a target that moved, git absent — and the inbox would show a decision the
+      // repository never received. Recording after leaves exactly one narrow window: a commit that
+      // succeeded and a store write that did not, which surfaces as a throw carrying the caller's
+      // own error rather than a silent success, and leaves the proposal PENDING beside a real
+      // commit. That is the recoverable direction of the two: the person can see both.
+      await recordDecision(deps, proposalId)
       return {
         kind: 'test-draft',
         outcome: { filePath: written.filePath, commit: written.commit },
@@ -174,11 +185,40 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
   // refuses as DATA beside a successful apply, so the decision is still recorded.
   finding: {
     actionClass: PROPOSALS_ACCEPT_ACTION_CLASS,
-    async apply(): Promise<ProposalsAcceptApplied> {
-      return await Promise.resolve({ kind: 'finding', outcome: { acknowledged: true } })
+    async apply(deps: FunctionDeps, proposalId: string): Promise<ProposalsAcceptApplied> {
+      // THE RECORDING IS THE WHOLE EFFECT HERE (394-18). Acknowledging a finding writes no file
+      // and makes no commit, so if this call did nothing the acknowledgement would leave no trace
+      // anywhere and the inbox would keep asking for a decision a person had already made. The arm
+      // that "needs no port at all" needed exactly this one.
+      await recordDecision(deps, proposalId)
+      return { kind: 'finding', outcome: { acknowledged: true } }
     },
   },
 })
+
+/**
+ * Close the proposal's own lifecycle after a route committed (394-18 · WINDOWS 99 / 102).
+ *
+ * ONE HELPER FOR THE TWO ARMS THAT NEED IT, and the knowledge arm deliberately does not call it:
+ * `KnowledgeReviewPort.apply` publishes the applied record as part of committing the deltas, so a
+ * second write here would be a second answer to when that proposal was decided.
+ *
+ * A NON-`recorded` ANSWER IS A REFUSAL, not a shrug. Every other arm means the store found the
+ * proposal in a state a decision cannot be taken from — already decided, mid-apply, or absent — and
+ * the apply that just ran did so against an envelope the accept had already read. Reporting
+ * `applied` over it would produce a funnel whose `accepted` stage disagrees with its own store.
+ */
+async function recordDecision(deps: FunctionDeps, proposalId: string): Promise<void> {
+  const inbox = deps.proposalsInbox
+  if (inbox === undefined) throw new FunctionNotBoundError(PROPOSALS_ACCEPT_FUNCTION_ID)
+  const recorded = await inbox.recordApplied({ proposalId })
+  if (recorded.outcome !== 'recorded') {
+    throw new TypeError(
+      `proposals.accept applied ${proposalId} but the decision could not be recorded: `
+        + `the store answered ${recorded.outcome}`,
+    )
+  }
+}
 
 /**
  * Dispatch one envelope to its own route, with its own payload.

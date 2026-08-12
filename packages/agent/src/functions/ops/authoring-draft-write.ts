@@ -132,11 +132,17 @@ export const authoringDraftWriteSpec: FunctionSpec<
     // either way (384, D-09).
     const shelf = deps.draftShelf
     const read = deps.authoringRead
-    // BOTH halves, by the SAME name. `boundThrough` names one key, and a host missing the read
+    const proposals = deps.authoringProposals
+    // ALL THREE halves, by the SAME name. `boundThrough` names one key, and a host missing the read
     // half would otherwise list this op `bound` and then serve an EMPTY brief — a draft compiled
     // against nothing this project knows, indistinguishable at the caller from one compiled
     // against everything it knows. That is the answer this check exists to make impossible.
-    if (shelf === undefined || read === undefined) {
+    //
+    // THE FILE HALF IS CHECKED HERE, BEFORE ANY RUN IS SPENT (394-18). An invocation that authored
+    // a draft, spent up to nine child processes verifying it and only then discovered it had
+    // nowhere to file the result would have answered `drafted` about an artifact nobody can ever
+    // decide on — 394-12's C2 red re-created, and paid for at full price. Fail-closed at the top.
+    if (shelf === undefined || read === undefined || proposals === undefined) {
       throw new FunctionNotBoundError(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
     }
 
@@ -174,6 +180,39 @@ export const authoringDraftWriteSpec: FunctionSpec<
     // refusals included, because "this invocation ran nothing" is a number a caller is entitled to.
     const outcome = result.outcome
     const dedup = result.dedup
+
+    // THE PROPOSAL IS PERSISTED BEFORE THIS OP ANSWERS (394-18, closing WINDOWS 99).
+    //
+    // D-05 says every draft earns a human decision and D-11 says a correctly-failing one does too,
+    // and until this line the loop built both artifacts and dropped them on the floor: the funnel's
+    // `accepted` stage was structurally 0 on every host because nothing ever put an envelope where
+    // a person could decide on it. The refused arm has no proposal and persists nothing, which is
+    // the honest answer rather than an omission — a stage-2 refusal ends the invocation with no
+    // draft, no receipt and no gate-run (D-04).
+    //
+    // A FAILURE HERE LEAVES THIS INVOCATION, and that is the fail-closed direction. Answering
+    // `drafted` while the artifact reached no store would tell a person to go and look in an inbox
+    // that will never hold it, which is the wrong answer wearing a correct one's clothes.
+    //
+    // THE ATTRIBUTION IS THIS OP'S ID AND THE RUN THE RECEIPT ALREADY NAMES. `origin.at` is stamped
+    // by the host, which owns the clock (nothing in this package reads one). `runId` is the LAST
+    // gate run on the receipt — the SAME run stage 5 routes on, borrowed rather than chosen afresh,
+    // because an invocation spends up to nine and picking a different one here would make the
+    // proposal's attribution and the routing's evidence two answers to one question. It is absent
+    // when the receipt names no run at all, which `runs.digest` reads as what it is.
+    if (outcome.kind !== 'refused') {
+      const runId = outcome.receipt.gateRuns.at(-1)?.runId
+      const attribution = {
+        emittedBy: AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+        ...(runId === undefined ? {} : { runId }),
+      }
+      await proposals.put(
+        outcome.kind === 'finding'
+          ? { kind: 'finding', ...attribution, payload: outcome.proposal }
+          : { kind: 'test-draft', ...attribution, payload: outcome.proposal },
+      )
+    }
+
     return {
       outcome: outcome.kind,
       fanOut: result.fanOut,

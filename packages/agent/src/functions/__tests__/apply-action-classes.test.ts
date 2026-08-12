@@ -297,6 +297,9 @@ describe('accept-with-always over a test-draft — the refusal is the protected 
           list: () => Promise.resolve([]),
           reject: ({ proposalId }) => Promise.resolve({ outcome: 'not-found', proposalId }),
           show: () => Promise.resolve({ kind: 'found' as const, entry }),
+          // 394-18: the decision half. A route that applies without recording leaves the proposal
+          // pending forever, which is what made the funnel's `accepted` stage structurally 0.
+          recordApplied: () => Promise.resolve({ outcome: 'recorded' as const }),
         },
         knowledgeReview: NEVER_PROPOSES,
         standingGrants: grants.port,

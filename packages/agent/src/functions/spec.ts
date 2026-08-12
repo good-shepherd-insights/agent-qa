@@ -48,6 +48,7 @@ import type {
 import type { AuthoringFunnelPortLike } from '../authoring/funnel.js'
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
 import type {
+  AuthoringProposalsWritePortLike,
   AuthoringReadPortLike,
   DraftApplyPortLike,
   DraftShelfPortLike,
@@ -119,6 +120,7 @@ export type OptionalFunctionDepKey =
   | 'draftShelf'
   | 'authoringFunnel'
   | 'draftApply'
+  | 'authoringProposals'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -868,6 +870,20 @@ export interface FunctionDeps {
    * still hold a person's accept.
    */
   draftApply?: DraftApplyPortLike
+  /**
+   * 394-18 D-05/D-11 · WTST-05: where a finished loop outcome BECOMES a proposal a person can find.
+   *
+   * OPTIONAL as a type and REQUIRED in practice for the one op that holds it, which is the same
+   * arrangement `authoringRead` is under and for the same reason: `authoring.draft.write` refuses
+   * at the invoke if this is absent, because an invocation that spent up to nine child runs and
+   * then discarded the artifact it produced would answer `drafted` about a draft nobody can ever
+   * decide on. `composeLocalAgent()` binds it beside the shelf, so a host that can author can file.
+   *
+   * SEPARATE FROM `authoringFunnel`, which reads the same store. That bundle is structurally unable
+   * to write — the property D-12's nothing-new-is-persisted claim rests on — and folding a write
+   * verb into it would hand the projection a capability to overwrite the records it reports on.
+   */
+  authoringProposals?: AuthoringProposalsWritePortLike
 }
 
 /**

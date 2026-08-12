@@ -1091,6 +1091,8 @@ export type {
   ProposalsListInput,
   ProposalsListOutput,
   ProposalsRejectInput,
+  ProposalsRecordAppliedInput,
+  ProposalsRecordAppliedOutput,
   ProposalsRejectOutput,
   ProposalsShowInput,
   ProposalsShowOutput,

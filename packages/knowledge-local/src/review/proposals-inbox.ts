@@ -15,6 +15,8 @@
 import type {
   ProposalInboxEntryDto,
   ProposalsInboxPort,
+  ProposalsRecordAppliedInput,
+  ProposalsRecordAppliedOutput,
   ProposalsRejectInput,
   ProposalsRejectOutput,
   ProposalsShowInput,
@@ -22,6 +24,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import {
+  decidePendingProposal,
   listProposalEnvelopes,
   rejectPendingProposal,
   showProposalEnvelope,
@@ -40,7 +43,7 @@ export interface ProposalsInboxOptions {
 }
 
 /**
- * Bind the three inbox verbs over one agent-qa runtime root.
+ * Bind the four inbox verbs over one agent-qa runtime root.
  *
  * Nothing opens here. The first byte is read when a verb is invoked, which is what lets a
  * composition bind this unconditionally without deciding whether a proposals directory exists —
@@ -93,6 +96,24 @@ export function createProposalsInbox(options: ProposalsInboxOptions): ProposalsI
         outcome: outcome.kind === 'rejected' ? 'rejected' : outcome.kind,
         entry: toDto(entry),
       }
+    },
+    async recordApplied(
+      input: ProposalsRecordAppliedInput,
+    ): Promise<ProposalsRecordAppliedOutput> {
+      // THE DECISION IS RECORDED, NOT THE APPLY PERFORMED (394-18). What accepting a `test-draft`
+      // DOES is a git commit through a different port entirely, and what accepting a `finding` does
+      // is nothing at all (D-11). This verb closes the proposal's own lifecycle so the inbox stops
+      // asking for a decision somebody already made — and so the funnel can count it.
+      //
+      // The store refuses a knowledge APPLY here by name, which is the boundary this thin adapter
+      // deliberately does not restate: applying a knowledge proposal commits deltas and produces a
+      // forget receipt, and a second way to mark one applied is the half-applied state the two-step
+      // exists to prevent. That rule lives with the bytes.
+      const outcome = decidePendingProposal(await root(), input.proposalId, {
+        decision: 'applied',
+        at: options.now(),
+      })
+      return { outcome: outcome.kind === 'decided' ? 'recorded' : outcome.kind }
     },
   }
 }

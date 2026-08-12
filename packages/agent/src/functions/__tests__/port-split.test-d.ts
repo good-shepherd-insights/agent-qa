@@ -97,6 +97,16 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // need not be able to author anything at all. It is also the first key in this union bound WITHOUT
 // its neighbour's condition — the shelf requires a run executor, and committing an
 // already-decided draft requires a checkout root and nothing else.
+// 394-18 D-05/D-11/WTST-05 extends it a thirteenth time, by name again: `authoringProposals` —
+// where a finished loop outcome becomes a proposal a person can find. It rides the SAME conditional
+// spread as `authoringRead`/`draftShelf` rather than a condition of its own, and that is the
+// opposite call from `draftApply` one paragraph up, taken on the evidence: filing is what the loop
+// DOES with what it produced, and a host that could author a draft and not file it would spend up
+// to nine child runs on an artifact nobody can ever decide on. It is a separate KEY from the shelf
+// for the funnel's reason read the other way — the shelf's members are all capabilities that make a
+// draft, and this one disposes of the result. The pin fired on this one too, and once more only
+// under `tsc --noEmit` (vitest printed `Type Errors  no errors` for the same tree — the
+// dual-witness rule, hit for the eleventh consecutive plan).
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -113,6 +123,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'draftShelf'
     | 'authoringFunnel'
     | 'draftApply'
+    | 'authoringProposals'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

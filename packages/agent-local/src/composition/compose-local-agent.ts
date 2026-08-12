@@ -79,6 +79,8 @@ import {
   createGrantOperations,
   createProposalsInbox,
   createQuarantineOperations,
+  mintProposalId,
+  writePendingProposalRecord,
   createStandingApprovalReader,
   QUARANTINE_FLAG_FLOOR,
   describeAllEntities,
@@ -170,6 +172,7 @@ import {
   admitAnalysisArtifactForRun,
   ANALYSIS_FILE,
   asJobId,
+  CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
   DEFAULT_EMBEDDING_PROFILE,
   guardRunAnalysisArtifact,
   sha256hex16,
@@ -185,6 +188,7 @@ import type {
   FunctionScope,
   GrantRecordOutcome,
   JobKind,
+  ProposalRecord,
   QuarantineEntryStateName,
   QuarantineLadderState,
   RunEventEnvelope,
@@ -2772,6 +2776,41 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
               verifyInput,
               AUTHORING_LOOP_VERIFY_CALLER,
             ) as DraftReceipt
+          },
+        },
+        // 394-18 D-05/D-11 · WTST-05: where a finished loop outcome becomes something a person can
+        // find. Inside the SAME conditional spread as the two loop halves, on their own stated
+        // reasoning: a host that can author a draft and cannot file it is not a degraded author, it
+        // is a host whose `authoring.draft.write` must say `unbound` by name — and the op refuses on
+        // this key at the invoke exactly as it refuses on the other two.
+        //
+        // THE HOST MINTS THE ID AND STAMPS THE INSTANT, because both are facts this composition
+        // owns and `agent` does not. The id goes through the store's own `mintProposalId` — one
+        // recipe for a value that becomes a filename — and `at` is read off the SAME `clock` the
+        // inbox's expiry is computed against, converted at the one place the two representations
+        // meet. `Date.now()` here would have given the mint a second clock, so a host that pinned
+        // its clock for a test would still stamp real wall time on the proposals it wrote.
+        //
+        // `origin.runId` IS CONDITIONALLY SPREAD, never defaulted: the op supplies the run its
+        // receipt already names and omits the field when the receipt names none, and an absent
+        // `runId` has to stay ABSENT rather than become a second spelling of it — `runs.digest`
+        // attributes its rows by `origin?.runId !== undefined`, so a present-`undefined` would be
+        // a proposal claiming a run called nothing.
+        authoringProposals: {
+          put: async (record) => {
+            const proposalId = mintProposalId(() => randomUUID())
+            writePendingProposalRecord(input.agentQaRoot, {
+              schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+              id: proposalId,
+              kind: record.kind,
+              origin: {
+                emittedBy: record.emittedBy,
+                ...(record.runId === undefined ? {} : { runId: record.runId }),
+                at: Date.parse(clock.now()),
+              },
+              payload: record.payload,
+            } as ProposalRecord)
+            return await Promise.resolve({ proposalId })
           },
         },
       }),

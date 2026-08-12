@@ -188,6 +188,10 @@ export type {
 // `composeLocalAgent()` has to name it when it binds the capability, and 387 D-11 forbids the
 // literal it would otherwise spell. The SPEC stays inside `functions/`.
 export { AUTHORING_FUNNEL_GET_FUNCTION_ID } from './functions/ops/authoring-funnel-get.js'
+// 394-18: published so a composed cell can drive the human decision through the SHIPPED verb
+// rather than writing a decision into the store itself — the difference between measuring the
+// accept flow and measuring a test's own arrangement of it.
+export { PROPOSALS_ACCEPT_FUNCTION_ID } from './functions/ops/proposals-accept.js'
 // 394-07 D-12/D-14: the projection and the mixed-verdict stability gather, plus the port bundle a
 // composition root fills. Both functions are PURE over injected reads — they reach no host API,
 // no registry and no run capability, which is D-14's zero-runs claim expressed as an absence in

@@ -21,6 +21,7 @@ import type {
   AuthoringVerifyDraftInput,
   CompletedRunHandoff,
   DraftReceipt,
+  ProposalRecord,
   RunStartAcknowledgement,
   RunsStartInput,
   ScopeKey,
@@ -272,6 +273,61 @@ export interface DraftShelfPortLike {
 }
 
 /**
+ * Where a loop outcome BECOMES something a person can find (394-18, D-05/D-11 · WTST-05).
+ *
+ * THE PORT EXISTS BECAUSE THE STORE IS ONE PACKAGE AWAY. Persisting a proposal is
+ * `knowledge-local`'s `writePendingProposalRecord`, and `agent` may not depend on it — the FUNC-02
+ * firewall stated at the top of this file. `composeLocalAgent()` binds that verb here, exactly as
+ * it binds the receipts store and the draft applier.
+ *
+ * WHY THE HOST MINTS THE ID AND STAMPS THE INSTANT. `ProposalRecordSchema` requires an id whose
+ * shape is `ProposalIdSchema`'s, which the durable store owns along with `mintProposalId` — an id
+ * minted in this package would be a second recipe for a value that becomes a filename in another.
+ * And `origin.at` is a CLOCK READ: nothing in `agent` reads one (`grep -rn 'Date.now()'` over
+ * `packages/agent/src` outside `__tests__` returns nothing, measured at this plan), because a
+ * composition that pinned its clock for a test would otherwise still have its proposals expire
+ * against real wall time. The caller supplies what only IT knows — the kind, the payload, and which
+ * op emitted it — and is told which id the store filed it under.
+ *
+ * The payload types are read off the SHIPPED `ProposalRecord` rather than mirrored, on this file's
+ * own stated discipline: they live in `schema`, which this package already depends on, so there is
+ * no dependency to invert and a mirror would be a second spelling of the envelope's own arms.
+ */
+export interface AuthoringProposalsWritePortLike {
+  put(record: AuthoringProposalWrite): Promise<{ readonly proposalId: string }>
+}
+
+/**
+ * One proposal to persist: its kind, its correlated payload, and its attribution.
+ *
+ * DISCRIMINATED AND CORRELATED, following {@link ProposalRecord}'s own mapped-type idiom, so a
+ * binder that narrowed on `kind` learns what `payload` is. `knowledge` is deliberately NOT a member
+ * — a knowledge proposal is minted by the review verbs with their own targets and deltas, and a
+ * second door into that store from the authoring loop would be a second answer to what a knowledge
+ * proposal is.
+ */
+export type AuthoringProposalWrite = {
+  [K in 'test-draft' | 'finding']: {
+    readonly kind: K
+    /** The emitting op's bare id — provenance for a person reading an inbox, never a match key. */
+    readonly emittedBy: string
+    /**
+     * The run this proposal is attributable to, if the caller can name ONE (394-18).
+     *
+     * An authoring invocation spends up to nine child runs, so "which run produced this" is a real
+     * question with a wrong answer available. The rule is BORROWED rather than invented: stage 5
+     * already routes on the LAST gate run the receipt names — gate 2 early-stops on a verdict flip,
+     * so the run that stopped it is the one carrying what the gates ultimately reported — and this
+     * is that same run. Absent when the receipt names none, which is the honest answer rather than
+     * a gap: `runs.digest` attributes rows by exactly this field, so a fabricated id would put a
+     * proposal in a stranger's digest.
+     */
+    readonly runId?: string
+    readonly payload: Extract<ProposalRecord, { kind: K }>['payload']
+  }
+}['test-draft' | 'finding']
+
+/**
  * The one-commit apply (394-10, D-06 · WTST-01), as a host capability this package cannot name.
  *
  * A STRUCTURAL MIRROR on this file's stated discipline: writing a file and making a git commit
@@ -285,12 +341,13 @@ export interface DraftShelfPortLike {
  * still hold a person's accept). Bundling it would have made "can this host run the loop" and "can
  * this host commit an accepted draft" one question with one answer, which they are not.
  *
- * THE REQUEST CARRIES THE PAYLOAD RATHER THAN ONLY AN ID, and that is measured rather than
- * stylistic: the shipped `KnowledgeReviewPort.apply(proposalId)` can take an id because
- * `knowledge-local`'s proposals store holds knowledge records and reads them back. NOTHING persists
- * a `test-draft` record on any host in this build — `writePendingProposal` takes a
- * `KnowledgeProposalV1` and `extractStoredProposal` refuses every other kind BY NAME — so a port
- * taking an id would be asking a host to look up something no store can hold.
+ * THE REQUEST CARRIES THE PAYLOAD RATHER THAN ONLY AN ID. It was minted that way because nothing
+ * persisted a `test-draft` record on any host, so a port taking an id alone would have been asking
+ * a host to look up something no store could hold. 394-18 landed that store, and the shape is KEPT
+ * on its own merits rather than by inertia: the accept has already read the envelope to learn which
+ * kind it is dispatching, so handing the payload it is holding to the route it chose is one read,
+ * and an id would make the host read the same record a second time — with a window in between in
+ * which the two reads can disagree about the very digest the apply re-checks.
  */
 export interface DraftApplyPortLike {
   apply(request: TestDraftApplyRequestLike): Promise<TestDraftApplyResultLike>

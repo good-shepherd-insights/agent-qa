@@ -140,6 +140,9 @@ function registryFor(entry: ProposalInboxEntryDto, options: { bindApply?: boolea
         rejected.push(proposalId)
         return Promise.resolve({ outcome: 'rejected' as const, entry })
       },
+      // 394-18: the decision half. The real inbox records it in the durable store; this fake only
+      // has to be total over the port, and the composed cells below assert the commit itself.
+      recordApplied: () => Promise.resolve({ outcome: 'recorded' as const }),
     },
     // THE REAL ONE, over the real workspace and the real repository.
     ...(options.bindApply === false ? {} : { draftApply: createTestDraftApplyPort(configPath) }),
