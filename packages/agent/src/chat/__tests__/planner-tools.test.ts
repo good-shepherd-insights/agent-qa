@@ -22,7 +22,13 @@ import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
 import { createFunctionRegistry } from '../../functions/registry.js'
-import type { FunctionDeps } from '../../functions/spec.js'
+import type { FunctionDeclaration, FunctionDeps } from '../../functions/spec.js'
+// Read from the module the STAMP lives in, on purpose: the claim under test is that the projection
+// withholds exactly what `stampSessionFacts` writes, so the two sides must read one value (394-22).
+import {
+  SESSION_STAMPED_FUNCTION_IDS,
+  WINDOW_STAMPED_FUNCTION_IDS,
+} from '../turn-engine.js'
 import {
   ANSWER_ONLY_TOOL_NAME,
   CHAT_META_TOOL_NAMES,
@@ -224,6 +230,131 @@ describe('projectPlannerTools: the registry walk IS the toolset (D-07)', () => {
     )
   })
 })
+
+describe('projectPlannerTools: the model is not shown what the host stamps (394-22, G-1)', () => {
+  it('WITHHOLDS sessionRef from every op the host stamps it onto, and nothing else', async () => {
+    // The declaration objects the transform actually sees, so the last assertion is about the
+    // shared projection rather than about a second listing that would hide an in-place edit.
+    const walked = registry().list(PLANNER_CALLER)
+    const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
+    expect(SESSION_STAMPED_FUNCTION_IDS.size).toBeGreaterThan(0)
+
+    for (const id of SESSION_STAMPED_FUNCTION_IDS) {
+      const declaration = walked.find((entry) => entry.id === id)
+      expect({ id, listed: declaration !== undefined }).toEqual({ id, listed: true })
+      const declared = schemaOf(declaration!)
+
+      // NON-VACUITY, first: the declaration DOES carry the field, so the absence below is a
+      // removal that happened rather than a key that was never in this contract.
+      expect({ id, declares: Object.hasOwn(declared.properties ?? {}, 'sessionRef') })
+        .toEqual({ id, declares: true })
+
+      const document = await schemaDocumentOf(tools[toToolName(id)]?.inputSchema)
+      // EXACTLY one key gone, named by id on failure. `not.toHaveProperty` alone would be
+      // satisfied by a transform that emptied the schema entirely.
+      expect({ id, keys: Object.keys(document.properties ?? {}).sort() }).toEqual({
+        id,
+        keys: Object.keys(declared.properties ?? {}).filter((key) => key !== 'sessionRef').sort(),
+      })
+      expect({ id, required: [...(document.required ?? [])].sort() })
+        .toEqual({ id, required: [...(declared.required ?? [])].sort() })
+
+      // T-394-85: the declaration's projection is the registry's SHARED inert view — the same one
+      // 396's MCP listing reads — so the transform must have cloned before editing.
+      expect({ id, stillDeclares: Object.hasOwn(schemaOf(declaration!).properties ?? {}, 'sessionRef') })
+        .toEqual({ id, stillDeclares: true })
+    }
+  })
+
+  it('makes window OPTIONAL, keeps the wider arms, and says the host supplies it (D-12)', async () => {
+    const walked = registry().list(PLANNER_CALLER)
+    const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
+    expect(WINDOW_STAMPED_FUNCTION_IDS.size).toBeGreaterThan(0)
+
+    for (const id of WINDOW_STAMPED_FUNCTION_IDS) {
+      const declaration = walked.find((entry) => entry.id === id)
+      expect({ id, listed: declaration !== undefined }).toEqual({ id, listed: true })
+      const declared = schemaOf(declaration!)
+
+      // NON-VACUITY: the contract as declared REQUIRES the window, which is what a live planner
+      // refused over — it cannot know a session ref, so a required session-shaped window is a
+      // field it can only guess at (UAT item 1).
+      expect({ id, declaredRequired: [...(declared.required ?? [])] })
+        .toEqual({ id, declaredRequired: ['window'] })
+
+      const document = await schemaDocumentOf(tools[toToolName(id)]?.inputSchema)
+      expect({ id, required: document.required }).toEqual({ id, required: undefined })
+      // The PROPERTY stays: a model may legitimately ask all-time or last-n (D-12).
+      expect({ id, keeps: Object.hasOwn(document.properties ?? {}, 'window') })
+        .toEqual({ id, keeps: true })
+
+      const arms = unionArms(document.properties?.window)
+      const declaredArms = unionArms(declared.properties?.window)
+      expect({ id, arms: arms.length }).toEqual({ id, arms: 3 })
+      expect({ id, arms: arms.length }).toEqual({ id, arms: declaredArms.length })
+      for (const [index, arm] of arms.entries()) {
+        const declaredArm = declaredArms[index]!
+        if (!Object.hasOwn(declaredArm.properties ?? {}, 'sessionRef')) {
+          // The wider arms pass through structurally untouched.
+          expect({ id, index, arm }).toEqual({ id, index, arm: declaredArm })
+          continue
+        }
+        expect({ id, was: [...(declaredArm.required ?? [])].sort() })
+          .toEqual({ id, was: ['scope', 'sessionRef'] })
+        expect({ id, now: [...(arm.required ?? [])] }).toEqual({ id, now: ['scope'] })
+        expect({ id, arm: { ...arm, required: null } })
+          .toEqual({ id, arm: { ...declaredArm, required: null } })
+      }
+
+      const description = tools[toToolName(id)]?.description ?? ''
+      // The catalogue text is still the catalogue's — the sentence is APPENDED, never a rewrite,
+      // because `declaration.summary` is what 396's MCP listing renders.
+      expect({ id, startsWithSummary: description.startsWith(declaration!.summary) })
+        .toEqual({ id, startsWithSummary: true })
+      expect(description).toContain('The host supplies a session-scoped')
+      expect(description).toContain('omit it to ask about the current session')
+    }
+  })
+
+  it('CONTROL: an op in neither stamped set is handed its projection untouched', async () => {
+    const walked = registry().list(PLANNER_CALLER)
+    const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
+    const control = walked.find((entry) => entry.id === 'proposals.list')
+    expect(control).toBeDefined()
+    expect(SESSION_STAMPED_FUNCTION_IDS.has('proposals.list')).toBe(false)
+    expect(WINDOW_STAMPED_FUNCTION_IDS.has('proposals.list')).toBe(false)
+
+    const projected = tools[toToolName('proposals.list')]
+    expect(await schemaDocumentOf(projected?.inputSchema)).toEqual(control!.input)
+    expect(projected?.description).toBe(control!.summary)
+  })
+
+})
+
+/** A declaration's input projection, read as the object-schema shape every current op projects. */
+function schemaOf(declaration: FunctionDeclaration): {
+  properties?: Record<string, unknown>
+  required?: readonly string[]
+} {
+  return declaration.input as { properties?: Record<string, unknown>; required?: readonly string[] }
+}
+
+/**
+ * The arms of a projected union, under whichever keyword zod emitted.
+ *
+ * Discriminated unions project as `oneOf` today and plain ones as `anyOf`; which keyword carries
+ * the arms is a library detail rather than a contract, so both are read and a union that carried
+ * neither answers empty — which the arm-count assertion above then reds on.
+ */
+function unionArms(
+  node: unknown,
+): readonly { properties?: Record<string, unknown>; required?: readonly string[] }[] {
+  const union = node as { oneOf?: unknown; anyOf?: unknown } | null | undefined
+  const arms = Array.isArray(union?.oneOf) ? union.oneOf : union?.anyOf
+  return Array.isArray(arms)
+    ? (arms as { properties?: Record<string, unknown>; required?: readonly string[] }[])
+    : []
+}
 
 /**
  * The JSON-Schema document behind whatever flexible schema a tool was given.
