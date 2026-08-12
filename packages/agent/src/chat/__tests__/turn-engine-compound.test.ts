@@ -803,3 +803,66 @@ describe('D-18 exception — the authoring receipt carries the fan-out report (3
     expect(result.receipts[0]?.outcome).toBe(`${AUTHORING_DRAFT_WRITE_FUNCTION_ID} completed`)
   })
 })
+
+// ---- the sessionRef stamp (394-17, D-12 · WTST-05 · T-394-66) -----------------------------------
+//
+// The session is a fact about THIS COMPOSITION, and the receipt the loop mints is attributed with
+// it so the per-session funnel window has anything to select. The stamp is an OVERWRITE and never
+// a default-if-absent: a planner-emitted `sessionRef` is a value a MODEL wrote, and honouring it
+// would let a model claim another author's session — T-392-23's shape, one op over.
+
+const SESSION_ID = 'chat-test-session'
+
+describe('the authoring sessionRef stamp (394-17)', () => {
+  it('stamps the session\'s OWN id into the write op\'s args', async () => {
+    const run = harness({
+      planned: {
+        toolCalls: [{
+          toolName: AUTHORING_TOOL,
+          input: { intent: 'two factor auth', scope: { tier: 'product', key: 'app' } },
+        }],
+      },
+      results: { [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: { outcome: 'drafted' } },
+    })
+
+    await run.runTurn({ message: AUTHORING_UTTERANCE })
+
+    expect(run.invocations).toHaveLength(1)
+    expect((run.invocations[0]?.input as { sessionRef?: string }).sessionRef).toBe(SESSION_ID)
+  })
+
+  it('OVERWRITES a planner-emitted ref rather than honouring it', async () => {
+    // The spoofing direction. A model that wrote `sessionRef: 'sess-victim'` into its tool call
+    // must not have that value reach the registry — the receipt it would mint would report this
+    // draft under somebody else's keep rate, which is exactly the inflation D-12 forbids.
+    const run = harness({
+      planned: {
+        toolCalls: [{
+          toolName: AUTHORING_TOOL,
+          input: {
+            intent: 'two factor auth',
+            scope: { tier: 'product', key: 'app' },
+            sessionRef: 'sess-victim',
+          },
+        }],
+      },
+      results: { [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: { outcome: 'drafted' } },
+    })
+
+    await run.runTurn({ message: AUTHORING_UTTERANCE })
+
+    expect((run.invocations[0]?.input as { sessionRef?: string }).sessionRef).toBe(SESSION_ID)
+    expect(JSON.stringify(run.invocations[0]?.input)).not.toContain('sess-victim')
+  })
+
+  it('stamps NO other op — one field, on one op', async () => {
+    // The blast radius, measured on the same reasoning as the fan-out line's own sibling cell: a
+    // stamp applied to every invocation would pass both cells above and red this one.
+    const run = harness({ results: { [PROPOSALS_LIST]: { ok: true } } })
+
+    await run.runTurn({ message: 'proposals' })
+
+    expect(run.invocations[0]?.functionId).toBe(PROPOSALS_LIST)
+    expect(run.invocations[0]?.input).not.toHaveProperty('sessionRef')
+  })
+})
