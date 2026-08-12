@@ -26,6 +26,14 @@ import type {
   SessionLogPort,
 } from '@vostride/agent-qa-schema'
 
+import {
+  FAN_OUT_PHRASES,
+  buildFanOutReport,
+  computeFanOutBound,
+  renderFanOutReport,
+} from '@vostride/agent-qa-schema'
+
+import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../../functions/ops/authoring-draft-write.js'
 import { CHAT_RESOLVER_TABLE } from '../resolver-table.js'
 import { deterministicOverrideStrategy } from '../reconcile.js'
 import { splitClauses } from '../clause-split.js'
@@ -154,6 +162,15 @@ interface HarnessOptions {
    * applied in, and a batch needs a second directive that says no.
    */
   readonly unpinnable?: string
+  /**
+   * What the invoke seat ANSWERS, per function id (394-14).
+   *
+   * The spy resolved a fixed `{ ok: true }` for every op while nothing on this surface read an op
+   * RESULT — D-18's map-not-territory rule meant the receipt line was a function of the id alone.
+   * The fan-out report is that rule's one recorded exception, so the seat now has to be able to
+   * answer with a real result for the one op whose result reaches a rendered line.
+   */
+  readonly results?: Readonly<Record<string, unknown>>
 }
 
 function harness(options: HarnessOptions = {}): Harness {
@@ -199,7 +216,7 @@ function harness(options: HarnessOptions = {}): Harness {
       ordering.push(`invoke:${functionId}`)
       invocations.push({ functionId, input, caller })
       if (functionId === options.failOn) return Promise.reject(new FunctionDeniedError('denied'))
-      return Promise.resolve({ ok: true })
+      return Promise.resolve(options.results?.[functionId] ?? { ok: true })
     },
     ...(planner === undefined ? {} : { planner }),
     ...(options.directives === true
@@ -654,5 +671,135 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       expect(kindsOf(run.log.events).at(-1)).toBe('turn_complete')
       expect(run.log.boundaries).toBe(1)
     })
+  })
+})
+
+// ---- D-18's one recorded exception: the fan-out report on the receipt (394-14 · WTST-08) -------
+//
+// WHY A RECEIPT LINE IS THE RIGHT SURFACE FOR IT, and why that is not a hole in D-18. The receipt's
+// charter is "which op ran and how it went"; for `authoring.draft.write` the cost IS how it went,
+// and the same surface asked this person to approve a number before the loop spent anything. A
+// disclosure whose second half never reaches a screen is a control with nothing behind it: they
+// approved nine runs and had no way to learn eleven were taken. What the exception admits is one
+// typed field on one op — counts, run refs and a boolean, read through `FanOutReportSchema` — and
+// never a payload body.
+//
+// THE LINE IS RENDERED, NEVER RECOMPUTED. Every fixture below is PRODUCED by `buildFanOutReport`
+// and every expectation is composed by `renderFanOutReport`, so a surface that copied the sentence
+// instead of calling the renderer is invisible here while both agree — which is exactly why
+// `scripts/394-fan-out-report-mutation.sh` mutation R makes them disagree and requires these cells
+// to red. A cell pinning a restated string literal would stay green through that mutation and
+// would be measuring its own copy of the wording.
+
+/** The report a nine-run preview and a three-run happy path produce. Built, never typed. */
+const HAPPY_REPORT = buildFanOutReport({
+  previewed: computeFanOutBound({ initialN: 3, probeK: 3, finalN: 3 }),
+  runs: [
+    { runId: 'r_gate-0', purpose: 'gate', completedAt: 1 },
+    { runId: 'r_gate-1', purpose: 'gate', completedAt: 2 },
+    { runId: 'r_gate-2', purpose: 'gate', completedAt: 3 },
+  ],
+})
+
+/**
+ * A report that OUTSPENT its preview — the flag `exceedsPreview` exists for.
+ *
+ * Produced by handing `buildFanOutReport` more runs than the bound allows, which is the same way a
+ * real under-counted bound would produce one. A literal `exceedsPreview: true` would pin a shape
+ * the builder need never have answered with, and the whole point of the flag is that it is derived
+ * rather than declared.
+ */
+const EXCEEDED_REPORT = buildFanOutReport({
+  previewed: computeFanOutBound({ initialN: 1, probeK: 0, finalN: 1 }),
+  runs: [
+    { runId: 'r_gate-0', purpose: 'gate', completedAt: 1 },
+    { runId: 'r_gate-1', purpose: 'gate', completedAt: 2 },
+    { runId: 'r_probe-0', purpose: 'probe', completedAt: 3 },
+  ],
+})
+
+const AUTHORING_TOOL = toToolName(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+const AUTHORING_UTTERANCE = 'write a test for two factor auth'
+
+function authoringHarness(report: unknown): Harness {
+  return harness({
+    planned: {
+      toolCalls: [{
+        toolName: AUTHORING_TOOL,
+        input: { intent: 'two factor auth', scope: { tier: 'product', key: 'app' } },
+      }],
+    },
+    results: { [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: { outcome: 'drafted', fanOut: report } },
+  })
+}
+
+describe('D-18 exception — the authoring receipt carries the fan-out report (394-14)', () => {
+  it('extends the outcome line with the RENDERER’s own sentence', async () => {
+    const run = authoringHarness(HAPPY_REPORT)
+    const result = await run.runTurn({ message: AUTHORING_UTTERANCE })
+
+    expect(result.status).toBe('completed')
+    expect(run.invocations.map((call) => call.functionId))
+      .toEqual([AUTHORING_DRAFT_WRITE_FUNCTION_ID])
+    // Composed from the renderer, not from a restated literal — this is the equality mutation R
+    // breaks when a surface hand-formats the sentence instead of calling the one render.
+    expect(result.receipts[0]?.outcome).toBe(
+      `${AUTHORING_DRAFT_WRITE_FUNCTION_ID} completed — ${renderFanOutReport(HAPPY_REPORT)}`,
+    )
+  })
+
+  it('puts the same rendered line on the LOG, which is what a person actually reads', async () => {
+    const run = authoringHarness(HAPPY_REPORT)
+    await run.runTurn({ message: AUTHORING_UTTERANCE })
+
+    const receipt = run.log.events.find((event) => event.kind === 'clause_receipt')
+    // The return value is what one caller sees; the append-only log is the triage report several
+    // surfaces render. A report that reached the first and not the second would leave the
+    // disclosure unreadable exactly where it is looked for after the fact.
+    expect(receipt?.kind === 'clause_receipt' ? receipt.outcome : '').toBe(
+      `${AUTHORING_DRAFT_WRITE_FUNCTION_ID} completed — ${renderFanOutReport(HAPPY_REPORT)}`,
+    )
+  })
+
+  it('surfaces the EXCEEDED phrase verbatim when the loop outspent its preview', async () => {
+    const run = authoringHarness(EXCEEDED_REPORT)
+    const result = await run.runTurn({ message: AUTHORING_UTTERANCE })
+
+    // Until this line existed, `exceedsPreview` was a flag nothing could surface and
+    // FAN_OUT_PHRASES.exceeded had no path to a screen at all (394-VERIFICATION, fan-out.ts:228).
+    expect(EXCEEDED_REPORT.exceedsPreview).toBe(true)
+    // Asserted against the CONSTANT, never a restated copy of the sentence: a literal here would
+    // be a second place this project's words live, which is what the phrase table exists to stop.
+    expect(result.receipts[0]?.outcome).toContain(FAN_OUT_PHRASES.exceeded)
+  })
+
+  it('leaves every OTHER op’s line untouched — one field, on one op', async () => {
+    // The D-18 blast radius, measured. The exception is a named branch, not "render whatever the
+    // result carried": a fix that appended a report to every receipt would pass all three cells
+    // above and red this one, which is what makes them a subset rather than restatements.
+    const run = harness({ results: { [PROPOSALS_LIST]: { fanOut: HAPPY_REPORT } } })
+    const result = await run.runTurn({ message: 'proposals' })
+
+    expect(result.receipts[0]?.outcome).toBe(`${PROPOSALS_LIST} completed`)
+    expect(result.receipts[0]?.outcome).not.toContain(FAN_OUT_PHRASES.reportLead)
+  })
+
+  it('renders NOTHING extra when the result carries no parsable report', async () => {
+    // A malformed or absent `fanOut` must not produce a fabricated line and must not throw the
+    // turn away. The receipt falls back to the plain one-liner: the honest answer when the field
+    // the exception admits is not there is to say only what D-18 always said.
+    const run = harness({
+      planned: {
+        toolCalls: [{
+          toolName: AUTHORING_TOOL,
+          input: { intent: 'two factor auth', scope: { tier: 'product', key: 'app' } },
+        }],
+      },
+      results: { [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: { outcome: 'drafted', fanOut: 'nine runs' } },
+    })
+    const result = await run.runTurn({ message: AUTHORING_UTTERANCE })
+
+    expect(result.status).toBe('completed')
+    expect(result.receipts[0]?.outcome).toBe(`${AUTHORING_DRAFT_WRITE_FUNCTION_ID} completed`)
   })
 })
