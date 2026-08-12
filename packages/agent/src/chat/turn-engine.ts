@@ -33,6 +33,7 @@
 // and it is the thing the function layer exists to abolish; what varies per stage here is the
 // ORIGIN the composition minted, which is a fact about who is acting, not about where from.
 
+import { FanOutReportSchema, renderFanOutReport } from '@vostride/agent-qa-schema'
 import type {
   AgentAskInput,
   AgentAskResult,
@@ -42,6 +43,8 @@ import type {
   ChatTurnStatus,
   SessionLogPort,
 } from '@vostride/agent-qa-schema'
+
+import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../functions/ops/authoring-draft-write.js'
 
 import type {
   CallerMint,
@@ -129,9 +132,47 @@ export interface TurnEngine {
  * The log and the receipt are a MAP: they say which op ran and how it went, and the result itself
  * stays wherever the op put it. `JSON.stringify(result)` here would be the single easiest way to
  * put a knowledge record, a config value or a masked secret into a file several surfaces render.
+ *
+ * THE ONE EXCEPTION, AND IT IS RECORDED HERE RATHER THAN DISCOVERED (394-14 · WTST-08). For
+ * `authoring.draft.write` the receipt line carries the invocation's FAN-OUT REPORT, read off the
+ * result. Four things make that the charter rather than a hole in it:
+ *
+ *   1. THE COST IS "HOW IT WENT" FOR THIS OP. WTST-08's owner decision was preview plus honest
+ *      reporting with no enforced budget, so the number a person is shown is the entire control.
+ *      This same surface rendered the dispatch confirm they approved; a receipt that omitted what
+ *      was actually spent would be the half of the disclosure that makes the other half checkable,
+ *      missing. They agreed to nine runs and had no way to learn that eleven were taken.
+ *   2. IT IS A MAP, NOT A TERRITORY. `FanOutReport` is counts, run REFERENCES and one boolean — no
+ *      draft body, no receipt payload, no step evidence. The proposal itself rides 391's envelope
+ *      into the inbox and does not appear here, which is the prohibition above still holding.
+ *   3. IT IS PARSED, NEVER CAST. `FanOutReportSchema` is `.strict()`, so a malformed result cannot
+ *      smuggle prose into a file several surfaces render — the exact risk the paragraph above
+ *      names. An unparsable field renders NOTHING extra rather than anything invented.
+ *   4. IT IS ONE FIELD ON ONE OP, by an explicit id comparison. No other op's line is touched and
+ *      no other field of this op's result is read.
+ *
+ * THE SENTENCE IS `renderFanOutReport`'S AND NOTHING ELSE. A line composed here would be a second
+ * prose form of one report, free to drift from the confirm's own wording the moment a phrase moves
+ * — and `scripts/394-fan-out-report-mutation.sh` mutation R is the differential that catches it.
  */
 function summarise(functionId: string): string {
   return `${functionId} completed`
+}
+
+/**
+ * The receipt's outcome line, plus the fan-out report when this op is the one that carries one.
+ *
+ * `safeParse` and a silent fall-back to the plain line, deliberately: the receipt exists to record
+ * that the op RAN, and throwing here would destroy the record over a field that is a disclosure
+ * rather than the verdict. Saying only what D-18 always said is the honest answer to a field that
+ * did not arrive; inventing a number would be the defect the whole disclosure exists to prevent.
+ */
+function summariseOutcome(functionId: string, result: unknown): string {
+  const line = summarise(functionId)
+  if (functionId !== AUTHORING_DRAFT_WRITE_FUNCTION_ID) return line
+  const carried = (result as { readonly fanOut?: unknown } | null | undefined)?.fanOut
+  const report = FanOutReportSchema.safeParse(carried)
+  return report.success ? `${line} — ${renderFanOutReport(report.data)}` : line
 }
 
 /**
@@ -626,13 +667,15 @@ async function runTurnThrough(
       }
     } else {
       try {
-        await deps.invoke(step.functionId, step.args, caller)
+        // The result is CAPTURED rather than discarded (394-14). It reaches exactly one reader —
+        // `summariseOutcome`, which looks at one field of one op and parses it before rendering.
+        const answered = await deps.invoke(step.functionId, step.args, caller)
         receipt = {
           clause: step.clause.text,
           functionId: step.functionId,
           origin: caller.origin,
           status: 'executed',
-          outcome: summarise(step.functionId),
+          outcome: summariseOutcome(step.functionId, answered),
         }
       } catch (error) {
         failed = true
