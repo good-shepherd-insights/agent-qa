@@ -34,6 +34,7 @@ import {
   DRAFT_STABILITY_RUNS_N,
   DraftReceiptSchema,
   TestEditPatchSetSchema,
+  authoredSuiteTargetPath,
   computeDraftDisposition,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -134,10 +135,19 @@ const OUTSIDE_PREFIX = patchSet('name the submit control the way the page labels
   { op: 'replace', path: '/steps/2', value: 'Click the "Save account" button' },
 ])
 
-/** Names no step at all. Editing what the test says about itself cannot touch a step position. */
+/**
+ * Names no step at all — and RENAMES THE TEST, which is the identity fence's rejected case.
+ *
+ * Two fences read this one patch set and they answer differently, which is the point. The prefix
+ * fence ADMITS it, correctly: its contract is step positions, and `/name` addresses none. The
+ * identity fence refuses it, because `/name` is what the test IS, and repair's grant is mechanics.
+ */
 const NON_STEP = patchSet('retitle', [
   { op: 'replace', path: '/name', value: 'Submit the local account form and confirm' },
 ])
+
+/** What {@link NON_STEP} renames the test to — read by the applier-integrity cell. */
+const RENAMED_TO = 'Submit the local account form and confirm'
 
 /** An `add` at index 0 shifts every later step, so it addresses the prefix even though it names it once. */
 const PREFIX_SHIFTING = patchSet('open the page first', [
@@ -231,16 +241,28 @@ function gateBooleans(receipt: DraftReceipt) {
 }
 
 /**
- * A fake CST applier over `ParsedDraftLike.steps`.
+ * A fake CST applier over `ParsedDraftLike`'s steps AND its name.
  *
  * `agent` may not import `core` (the FUNC-02 firewall), so the real `applyPatchSetToTestDoc` is
  * reached through the shelf's mirror verb and bound at the host. What this stands in for is the
- * EFFECT on step positions, which is the only thing the fence and the prefix re-check read.
+ * EFFECT on step positions, which is what the prefix fence and the prefix re-check read.
+ *
+ * IT HONOURS `/name`, and that is load-bearing rather than completeness for its own sake. `name` is
+ * one of the three `EDITABLE_POINTER_ROOTS`, so the REAL applier renames the test when a patch says
+ * to; a stand-in that silently dropped the op would make every identity cell below vacuous — they
+ * would pass against an implementation with no fence at all, because nothing could rename anything.
+ * The integrity cell asserts the rename really happens here before any cell relies on it not
+ * happening through repair.
  */
-function applyToSteps(draft: ParsedDraftLike, set: TestEditPatchSet): ParsedDraftLike {
+function applyPatchesToDraft(draft: ParsedDraftLike, set: TestEditPatchSet): ParsedDraftLike {
   const steps = [...draft.steps]
+  let testName = draft.testName
   for (const op of set.patches) {
     const segments = op.path.split('/').slice(1)
+    if (segments[0] === 'name' && op.op === 'replace') {
+      testName = op.value
+      continue
+    }
     if (segments[0] !== 'steps') continue
     const index = Number(segments[1])
     if (!Number.isInteger(index)) continue
@@ -248,7 +270,12 @@ function applyToSteps(draft: ParsedDraftLike, set: TestEditPatchSet): ParsedDraf
     if (op.op === 'add') steps.splice(index, 0, op.value)
     if (op.op === 'remove') steps.splice(index, 1)
   }
-  return { ...draft, steps, contentDigest: `${draft.contentDigest}+${set.patches.length}` }
+  return {
+    ...draft,
+    steps,
+    testName,
+    contentDigest: `${draft.contentDigest}+${set.patches.length}`,
+  }
 }
 
 function harness(
@@ -313,7 +340,7 @@ function harness(
     write: () => Promise.resolve({ kind: 'unparsable', reason: 'unused' } as DraftStageOutcome),
     applyPatches(draft: ParsedDraftLike, set: TestEditPatchSet): Promise<DraftStageOutcome> {
       appliedSets.push(set)
-      return Promise.resolve({ kind: 'staged', draft: applyToSteps(draft, set) })
+      return Promise.resolve({ kind: 'staged', draft: applyPatchesToDraft(draft, set) })
     },
     verifyDraft(input: { draftPath: string; draftMode?: true }): Promise<DraftReceipt> {
       verifyCalls.push(input.draftMode === true ? 1 : 0)
@@ -380,6 +407,90 @@ describe('the patch corpus is producible', () => {
     const member = memberOutcome(BEST_PRIOR_MEMBER)
     expect(member.steps.map((step) => step.verifierVerdict.pass)).toEqual([true, true, false])
   })
+
+  it('the stand-in applier really can rename — the identity cells are not vacuous', () => {
+    // Without this, "repair did not rename the test" would pass against a build with no fence,
+    // because the instrument itself would be incapable of the thing the fence exists to prevent.
+    expect(applyPatchesToDraft(DRAFT, NON_STEP).testName).toBe(RENAMED_TO)
+    expect(applyPatchesToDraft(DRAFT, OUTSIDE_PREFIX).testName).toBe(DRAFT.testName)
+  })
+})
+
+// ---- WR-01: repair may fix mechanics, never identity -------------------------------------------
+//
+// `EDITABLE_POINTER_ROOTS` admits `/name` — correctly, because `authoring.draft.edit` serves a
+// USER who asked for a rename (D-21) — and `fencePatchAgainstPassingPrefix` inspects only `/steps`
+// pointers. So a repair patch could rename the test, and `loop.ts:827-841` claims exactly what a
+// rename breaks: the stability target is derived ONCE from the PRE-repair draft, while the accept
+// target is recomputed from the REPAIRED ref through `testDraftProposal`. A rename desyncs them,
+// which is the disagreement the single derivation is documented to prevent.
+//
+// A renamed test is a different test. Repair's grant is mechanics under anchors that forbid
+// changing what the test claims, and the name is the loudest thing a test claims about itself.
+
+describe('identity-fence: repair cannot change what the test IS', () => {
+  it('identity-fence REFUSES a patch that renames the test, naming the offending path', async () => {
+    const { fencePatchAgainstDraftIdentity } = await loadRepair()
+
+    const refusal = fencePatchAgainstDraftIdentity(NON_STEP)
+    expect(refusal?.name).toBe('RepairIdentityViolationError')
+    expect(refusal?.path).toBe('/name')
+  })
+
+  it('identity-fence spends the iteration and starts NOTHING when a patch renames', async () => {
+    const { repairDraft, REPAIR_ITERATION_CAP } = await loadRepair()
+    // Nothing but renames, forever: the fence is the only thing that can end this, and the
+    // consequence is the prefix fence's exactly — the iteration is spent, no child process runs.
+    const bench = harness([emit(NON_STEP)], { probes: [] })
+
+    const outcome = await repairDraft(repairRoute(), bench.deps as never)
+
+    expect(bench.startInputs).toEqual([])
+    expect(bench.appliedSets).toEqual([])
+    expect(outcome.kind).toBe('abandoned')
+    expect(outcome.iterations).toBe(REPAIR_ITERATION_CAP)
+    expect(bench.promptsSeen).toHaveLength(REPAIR_ITERATION_CAP)
+  }, ADVERSARIAL_CELL_TIMEOUT_MS)
+
+  it('identity-fence ADMITS a step patch beyond the prefix — the case it must let through', async () => {
+    const { fencePatchAgainstDraftIdentity, fencePatchAgainstPassingPrefix, derivePassingPrefix, repairDraft }
+      = await loadRepair()
+    const prefix = derivePassingPrefix(DRAFT_REF, BEST_PRIOR_RUN)
+
+    // A real `/steps` patch beyond the prefix, not a near-miss shaped to pass: BOTH fences answer
+    // and it goes on to reach a run and repair the draft.
+    expect(fencePatchAgainstDraftIdentity(OUTSIDE_PREFIX)).toBeNull()
+    expect(fencePatchAgainstPassingPrefix(OUTSIDE_PREFIX, prefix)).toBeNull()
+
+    const bench = harness([emit(OUTSIDE_PREFIX)], { probes: [passingProbe()] })
+    const outcome = await repairDraft(repairRoute(), bench.deps as never)
+    expect(bench.startInputs).toHaveLength(1)
+    expect(outcome.kind).toBe('repaired')
+  })
+
+  it('identity-fence makes the single-derivation claim TRUE: the repaired pair equals the draft\'s', async () => {
+    const { repairDraft } = await loadRepair()
+    // Iteration 1 renames — refused, spent, nothing runs. Iteration 2 fixes a step beyond the
+    // prefix and the probe passes. WITHOUT the fence the rename lands on the candidate, the probe's
+    // member no longer joins on (filePath, testName) at all, and repair cannot even recognise its
+    // own success — which is what the pre-fix RED shows.
+    const bench = harness(
+      [emit(NON_STEP), emit(OUTSIDE_PREFIX)],
+      { probes: [passingProbe(), passingProbe()] },
+    )
+
+    const outcome = await repairDraft(repairRoute(), bench.deps as never)
+
+    expect(outcome.kind).toBe('repaired')
+    const repaired = outcome.kind === 'repaired' ? outcome.draft : DRAFT
+    // THE PAIR `authoredSuiteTargetPath` READS. The stability target was derived from the
+    // pre-repair draft and the accept target is recomputed from this ref; they cannot disagree if
+    // both inputs are equal.
+    expect(repaired.filePath).toBe(DRAFT.filePath)
+    expect(repaired.testName).toBe(DRAFT.testName)
+    expect(authoredSuiteTargetPath(repaired.filePath, repaired.testName))
+      .toBe(authoredSuiteTargetPath(DRAFT.filePath, DRAFT.testName))
+  }, ADVERSARIAL_CELL_TIMEOUT_MS)
 })
 
 // ---- the five named cells ---------------------------------------------------------------------
