@@ -193,61 +193,102 @@ const PASSING_PROBE: readonly MemberFixture[] = [{
   steps: BEST_PRIOR_MEMBER.steps,
 }]
 
+/**
+ * One repair through the shipped arm, reporting WHAT THE FINAL STABILITY GATE WAS ASKED.
+ *
+ * The verify seat records its input rather than answering from it, because every claim in this
+ * describe is about what repair HANDS ON — a receipt literal would be the fixture asserting
+ * against itself.
+ */
+async function repairCarrying(
+  carried: { readonly sessionRef?: string; readonly targetSuitePath?: string },
+): Promise<{ readonly outcome: { kind: string }; readonly verifyInputs: readonly unknown[] }> {
+  const verifyInputs: unknown[] = []
+  const documents = new Map<string, CompletedRunHandoff | undefined>()
+  const runs: DraftRunPortLike = {
+    async start() {
+      documents.set('r_probe-0', runDocument('r_probe-0', PASSING_PROBE))
+      return {
+        runId: 'r_probe-0',
+        scope: { tier: 'product', key: 'local-form' },
+        executionContext: 'local-headless',
+        buildOrdinal: 1,
+        startedAt: 0,
+        testCount: 1,
+        gateRun: true,
+        excludedFromOutcomes: true,
+      } as never
+    },
+    async get(runId: string) {
+      return documents.get(runId)
+    },
+  }
+  const patch = JSON.stringify({
+    thoughts: 'name the submit control the way the page labels it',
+    patches: [{ op: 'replace', path: '/steps/2', value: 'Click the "Save account" button' }],
+  })
+  const { receipt } = await mint({
+    ...(carried.sessionRef === undefined ? {} : { sessionRef: carried.sessionRef }),
+    contentDigest: 'digest-repaired',
+  })
+
+  const outcome = await repairDraft(repairRoute(), {
+    draft: REPAIR_DRAFT,
+    handoff: BEST_PRIOR_RUN,
+    runs,
+    ...(carried.sessionRef === undefined ? {} : { sessionRef: carried.sessionRef }),
+    ...(carried.targetSuitePath === undefined
+      ? {}
+      : { targetSuitePath: carried.targetSuitePath }),
+    shelf: {
+      runs,
+      model: () => Promise.resolve({
+        modelId: 'fixture:repair',
+        generate: () => Promise.resolve({ text: patch }),
+      }),
+      write: () => Promise.resolve({ kind: 'unparsable', reason: 'unused' } as DraftStageOutcome),
+      applyPatches: (draft: ParsedDraftLike) => Promise.resolve({
+        kind: 'staged',
+        draft: { ...draft, steps: [...draft.steps.slice(0, 2), 'Click the "Save account" button'] },
+      } as DraftStageOutcome),
+      verifyDraft: (input: unknown) => {
+        verifyInputs.push(input)
+        return Promise.resolve(receipt)
+      },
+    },
+  } as never)
+
+  return { outcome, verifyInputs }
+}
+
 describe('the sessionRef write path — through repair', () => {
   it('attributes the REPAIRED draft\'s receipt to the session the loop was entered with', async () => {
-    const verifyInputs: unknown[] = []
-    const documents = new Map<string, CompletedRunHandoff | undefined>()
-    const runs: DraftRunPortLike = {
-      async start() {
-        documents.set('r_probe-0', runDocument('r_probe-0', PASSING_PROBE))
-        return {
-          runId: 'r_probe-0',
-          scope: { tier: 'product', key: 'local-form' },
-          executionContext: 'local-headless',
-          buildOrdinal: 1,
-          startedAt: 0,
-          testCount: 1,
-          gateRun: true,
-          excludedFromOutcomes: true,
-        } as never
-      },
-      async get(runId: string) {
-        return documents.get(runId)
-      },
-    }
-    const patch = JSON.stringify({
-      thoughts: 'name the submit control the way the page labels it',
-      patches: [{ op: 'replace', path: '/steps/2', value: 'Click the "Save account" button' }],
-    })
-    const { receipt } = await mint({ sessionRef: 'sess-alpha', contentDigest: 'digest-repaired' })
-
-    const outcome = await repairDraft(repairRoute(), {
-      draft: REPAIR_DRAFT,
-      handoff: BEST_PRIOR_RUN,
-      runs,
-      sessionRef: 'sess-alpha',
-      shelf: {
-        runs,
-        model: () => Promise.resolve({
-          modelId: 'fixture:repair',
-          generate: () => Promise.resolve({ text: patch }),
-        }),
-        write: () => Promise.resolve({ kind: 'unparsable', reason: 'unused' } as DraftStageOutcome),
-        applyPatches: (draft: ParsedDraftLike) => Promise.resolve({
-          kind: 'staged',
-          draft: { ...draft, steps: [...draft.steps.slice(0, 2), 'Click the "Save account" button'] },
-        } as DraftStageOutcome),
-        verifyDraft: (input: unknown) => {
-          verifyInputs.push(input)
-          return Promise.resolve(receipt)
-        },
-      },
-    } as never)
+    const { outcome, verifyInputs } = await repairCarrying({ sessionRef: 'sess-alpha' })
 
     expect(outcome.kind).toBe('repaired')
     // The FINAL stability gate's input, not a receipt literal: what is under test is that the
     // repair arm hands the session on, and only its call carries the answer.
     expect(verifyInputs).toHaveLength(1)
     expect((verifyInputs[0] as { sessionRef?: string }).sessionRef).toBe('sess-alpha')
+  })
+
+  it('carries the JOIN TARGET to the final stability gate too (394-19)', async () => {
+    // The same thread, one field over. A repaired candidate is the SAME draft with patched steps,
+    // so it joins the same suite — a target that stopped at stage 4 would leave every repaired
+    // draft judged against its own one-test shelf file, which is the arm 394-19 exists to close.
+    const { outcome, verifyInputs } = await repairCarrying({
+      sessionRef: 'sess-alpha',
+      targetSuitePath: 'tests/confirm-the-local-account-form-page-heading.yaml',
+    })
+
+    expect(outcome.kind).toBe('repaired')
+    expect((verifyInputs[0] as { targetSuitePath?: string }).targetSuitePath)
+      .toBe('tests/confirm-the-local-account-form-page-heading.yaml')
+  })
+
+  it('leaves the target ABSENT when the invocation named none — the standalone fallback', async () => {
+    const { verifyInputs } = await repairCarrying({ sessionRef: 'sess-alpha' })
+
+    expect(verifyInputs[0]).not.toHaveProperty('targetSuitePath')
   })
 })

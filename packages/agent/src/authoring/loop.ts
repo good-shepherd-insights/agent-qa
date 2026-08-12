@@ -643,6 +643,15 @@ export async function routeAfterVerify(
   receipt: DraftReceipt,
   deps: AuthoringLoopDeps,
   previewed: FanOutBound = NO_RUNS_FAN_OUT_BOUND,
+  /**
+   * The suite the draft proposes to JOIN, threaded to repair's final stability gate (394-19).
+   *
+   * HANDED IN rather than re-derived here, on the `sessionRef` posture one field over: the caller
+   * computed it once for stage 4's own verify, and a second `authoredSuiteTargetPath` call at this
+   * site would be a second answer to a question the invocation already answered. Absent — every
+   * caller that is not the loop — leaves the repaired draft on the standalone fallback.
+   */
+  targetSuitePath?: string,
 ): Promise<AuthoringLoopRouting> {
   const draftRef = draftRefOf(draft)
   // The runs the EVALUATION already spent, read off the receipt's own record of them. It is the
@@ -692,6 +701,9 @@ export async function routeAfterVerify(
     shelf: deps.shelf,
     runs: deps.shelf.runs,
     ...(receipt.sessionRef === undefined ? {} : { sessionRef: receipt.sessionRef }),
+    // The repaired candidate joins the SAME suite the draft proposed to join, so the final
+    // stability gate reads the same target — one source for the whole invocation.
+    ...(targetSuitePath === undefined ? {} : { targetSuitePath }),
   })
 
   // EVERY RUN THIS INVOCATION SPENT, in one list: the evaluation's gate runs, repair's probes, and
@@ -804,14 +816,21 @@ export async function runAuthoringLoop(
   screenDraftForCredentials(draft)
 
   stages.push('verify')
+  // WHERE ACCEPTING WOULD WRITE IT, computed ONCE for the whole invocation through the SAME
+  // exported recipe the proposal arm uses (`testDraftProposal`'s `targetPath`) — so the suite the
+  // stability read consults and the suite an accept would join cannot disagree (394-19, D-14).
+  // Without it the read targets `draft.filePath`, a one-test shelf artifact whose only member is
+  // the draft itself, and `neighbours-flaky` is unreachable from this entry point for any app.
+  const targetSuitePath = authoredSuiteTargetPath(draft.filePath, draft.testName)
   const receipt = await deps.shelf.verifyDraft({
     draftPath: draft.filePath,
+    targetSuitePath,
     ...(input.draftMode === undefined ? {} : { draftMode: input.draftMode }),
     ...(input.sessionRef === undefined ? {} : { sessionRef: input.sessionRef }),
   })
 
   stages.push('route')
-  const routed = await routeAfterVerify(draft, receipt, deps, previewed)
+  const routed = await routeAfterVerify(draft, receipt, deps, previewed, targetSuitePath)
 
   stages.push('compound')
 

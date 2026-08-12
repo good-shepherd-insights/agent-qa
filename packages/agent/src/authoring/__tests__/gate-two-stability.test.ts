@@ -23,6 +23,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { authoredSuiteTargetPath } from '@vostride/agent-qa-schema'
 import type { DraftReceipt, MemberTestOutcome } from '@vostride/agent-qa-schema'
 
 import {
@@ -34,9 +35,35 @@ import {
 import type { MemberFixture } from './evidence-fixtures.js'
 import { evaluateDraft } from '../verify-draft.js'
 import type { AuthoringFunnelPortLike, SuiteOutcomeHistoryPortLike } from '../funnel.js'
+import type { ParsedDraftLike } from '../ports.js'
 
 const PRODUCT = 'local-form'
 const TARGET = ACCEPT_CONTROL_DRAFT.filePath
+
+/**
+ * A LOOP-SHAPED draft: staged on the one-test-per-file shelf, not committed to a suite (394-19).
+ *
+ * This is the shape `authoring.draft.write` actually evaluates. Its `filePath` is a digest-named
+ * file under `tests/.agent-qa-drafts/` holding exactly one test — so a stability read targeted at
+ * it can only ever find the draft itself, which the neighbour exclusion then removes, and
+ * `neighbours-flaky` was structurally unreachable from the loop for that reason alone.
+ */
+const LOOP_SHELF_DRAFT: ParsedDraftLike = {
+  ...ACCEPT_CONTROL_DRAFT,
+  filePath: 'tests/.agent-qa-drafts/2b7f4c1e9a.yaml',
+}
+
+/**
+ * The suite the shelf draft PROPOSES TO JOIN, through the loop's own one derivation.
+ *
+ * `authoredSuiteTargetPath` and not a spelled path: the accept arm computes the target with this
+ * exact call (`loop.ts:465`), and a literal here would go on passing the day the recipe moved —
+ * which is precisely when the claim stops being about the right file.
+ */
+const JOIN_TARGET = authoredSuiteTargetPath(
+  LOOP_SHELF_DRAFT.filePath,
+  LOOP_SHELF_DRAFT.testName,
+)
 
 /** What the port was ASKED — every argument, so a guessed product is visible rather than implied. */
 interface OutcomeCalls {
@@ -63,6 +90,38 @@ function recordingOutcomes(
   }
 }
 
+/**
+ * A projection that answers ONLY for the file it actually has rows for (394-19).
+ *
+ * `recordingOutcomes` above echoes back whatever path it is asked about, which is right for cells
+ * whose subject is the message and wrong for a cell whose subject is WHICH FILE was asked about:
+ * an echoing double reports neighbours for the shelf path too, so a target that never moved would
+ * look exactly like one that did. Keying on the path is also what the real projection does — the
+ * shelf file is written by the staging step and never runs outside gate runs, which are
+ * `excludedFromOutcomes`, so it genuinely has no rows.
+ */
+function outcomesForFileOnly(
+  targetPath: string,
+  rows: Readonly<Record<string, readonly string[]>>,
+): { port: SuiteOutcomeHistoryPortLike; calls: OutcomeCalls } {
+  const calls: OutcomeCalls = { testsIn: [], outcomesFor: [] }
+  return {
+    calls,
+    port: {
+      async testsIn(product: string, filePath: string) {
+        calls.testsIn.push({ product, filePath })
+        if (filePath !== targetPath) return []
+        return Object.keys(rows).map((testName) => ({ filePath, testName }))
+      },
+      async outcomesFor(product: string, filePath: string, testName: string) {
+        calls.outcomesFor.push({ product, filePath, testName })
+        if (filePath !== targetPath) return []
+        return rows[testName] ?? []
+      },
+    },
+  }
+}
+
 function funnelPort(outcomes?: SuiteOutcomeHistoryPortLike): AuthoringFunnelPortLike {
   return {
     receipts: { async list() { return [] } },
@@ -81,8 +140,23 @@ const FLIPPING_RUNS = [[member('passed')], [member('failed')], [member('passed')
 /** One verdict across every run — the arm that must NOT consult anything. */
 const STABLE_RUNS = [[member('passed')], [member('passed')], [member('passed')]]
 
+/** The same flip, on the SHELF path — the member identity the loop's gate runs report. */
+function shelfMember(outcome: MemberTestOutcome): MemberFixture {
+  return { ...acceptControlMember(outcome), filePath: LOOP_SHELF_DRAFT.filePath }
+}
+
+const LOOP_FLIPPING_RUNS = [
+  [shelfMember('passed')],
+  [shelfMember('failed')],
+  [shelfMember('passed')],
+]
+
 interface EvaluationFixture {
   readonly runs: readonly (readonly MemberFixture[])[]
+  /** Absent means the standalone posture: the draft's own file IS its target (394-19). */
+  readonly draft?: ParsedDraftLike
+  /** The suite the draft proposes to JOIN. Absent means the fallback is under test. */
+  readonly targetSuitePath?: string
   /** Absent means the consultation half is UNBOUND — the pre-394-17 posture. */
   readonly stability?: {
     readonly outcomes?: SuiteOutcomeHistoryPortLike
@@ -96,7 +170,12 @@ async function evaluate(
 ): Promise<{ receipt: DraftReceipt; startCount: number }> {
   const runs = fakeRunPort({ runs: [...fixture.runs] })
   const receipt = await evaluateDraft(
-    { draft: ACCEPT_CONTROL_DRAFT },
+    {
+      draft: fixture.draft ?? ACCEPT_CONTROL_DRAFT,
+      ...(fixture.targetSuitePath === undefined
+        ? {}
+        : { targetSuitePath: fixture.targetSuitePath }),
+    },
     {
       runs,
       fingerprints: fakeFingerprintIndex([]),
@@ -203,5 +282,96 @@ describe('the gate-2 flip consults the suite\'s recorded stability', () => {
     // this pins is that the consultation adds nothing to it.
     expect(consulted.startCount).toBe(unconsulted.startCount)
     expect(consulted.receipt.gates.stableVerdict.reason).toContain('Your app is unstable')
+  })
+})
+
+// ---- the stability read's target is CHOSEN, not derived (394-19 · SC-3 residual B) -------------
+//
+// WHAT WAS STRUCTURALLY UNREACHABLE. `consultSuiteStability` passed `draft.filePath`, and on the
+// LOOP path that is a digest-named file under `tests/.agent-qa-drafts/` holding exactly one test —
+// the draft itself, which the neighbour exclusion then removes. So `neighbours-flaky` could not be
+// produced from `authoring.draft.write` for any application, however unstable: the read always ran
+// against a file with no neighbours and answered `no-history`.
+//
+// THE TARGET IS THEREFORE A CONTRACT, not a derivation. D-14 asks about the suite the draft would
+// JOIN, and only the caller knows which that is; the loop computes it through the SAME
+// `authoredSuiteTargetPath` its accept arm uses, so the stability target and the accept target
+// cannot disagree. The standalone posture is unchanged — a committed suite file IS its own target
+// — and that half is pinned below so the change is a widening rather than a move.
+
+describe('the stability read consults the suite the draft proposes to JOIN', () => {
+  it('reaches neighbours-flaky from a LOOP-shaped draft and names the neighbours', async () => {
+    const { port } = outcomesForFileOnly(JOIN_TARGET, {
+      'submits the form': ['passed', 'passed'],
+      'shows the banner': ['passed', 'failed'],
+    })
+    const { receipt } = await evaluate({
+      draft: LOOP_SHELF_DRAFT,
+      runs: LOOP_FLIPPING_RUNS,
+      targetSuitePath: JOIN_TARGET,
+      stability: { outcomes: port, product: PRODUCT },
+    })
+
+    expect(receipt.gates.stableVerdict.pass).toBe(false)
+    expect(receipt.gates.stableVerdict.reason).toContain('the verdict flipped across runs')
+    // D-14's message, produced from the loop path for the first time — on the CONCRETE name, and
+    // naming the TARGET file rather than the shelf artifact the draft is staged in.
+    expect(receipt.gates.stableVerdict.reason).toContain('Your app is unstable')
+    expect(receipt.gates.stableVerdict.reason).toContain(`${JOIN_TARGET}::shows the banner`)
+    expect(receipt.gates.stableVerdict.reason).not.toContain(LOOP_SHELF_DRAFT.filePath)
+    expect(receipt.gates.stableVerdict.reason).not.toContain('submits the form')
+  })
+
+  it('asks the projection about the TARGET, never about the shelf file', async () => {
+    const { port, calls } = outcomesForFileOnly(JOIN_TARGET, {
+      'shows the banner': ['passed', 'failed'],
+    })
+    await evaluate({
+      draft: LOOP_SHELF_DRAFT,
+      runs: LOOP_FLIPPING_RUNS,
+      targetSuitePath: JOIN_TARGET,
+      stability: { outcomes: port, product: PRODUCT },
+    })
+
+    // The asked-with arguments, so a target that silently reverted is visible as an argument
+    // rather than only as a message that got shorter.
+    expect(calls.testsIn).toEqual([{ product: PRODUCT, filePath: JOIN_TARGET }])
+    expect(calls.outcomesFor)
+      .toEqual([{ product: PRODUCT, filePath: JOIN_TARGET, testName: 'shows the banner' }])
+  })
+
+  it('FALLS BACK to the draft\'s own file when no target is named — the standalone posture', async () => {
+    // A committed suite file IS its own target, and this is the whole of what the standalone
+    // caller (the CLI's `authoring.draft.verify`, which knows of no join) still gets. The
+    // revert-mutation leaves this cell green, which is what makes it the control.
+    const { port, calls } = outcomesForFileOnly(TARGET, {
+      'shows the banner': ['passed', 'failed'],
+    })
+    const { receipt } = await evaluate({
+      runs: FLIPPING_RUNS,
+      stability: { outcomes: port, product: PRODUCT },
+    })
+
+    expect(calls.testsIn).toEqual([{ product: PRODUCT, filePath: TARGET }])
+    expect(receipt.gates.stableVerdict.reason).toContain(`${TARGET}::shows the banner`)
+  })
+
+  it('still excludes the draft\'s OWN name from the neighbours under a chosen target', async () => {
+    // The exclusion is about IDENTITY, not about the file it came from — a draft whose name
+    // already appears in the target's history (a re-authoring of the same test) must not be
+    // allowed to explain its own flip.
+    const { port } = outcomesForFileOnly(JOIN_TARGET, {
+      [LOOP_SHELF_DRAFT.testName]: ['passed', 'failed'],
+      'shows the banner': ['passed', 'passed'],
+    })
+    const { receipt } = await evaluate({
+      draft: LOOP_SHELF_DRAFT,
+      runs: LOOP_FLIPPING_RUNS,
+      targetSuitePath: JOIN_TARGET,
+      stability: { outcomes: port, product: PRODUCT },
+    })
+
+    expect(receipt.gates.stableVerdict.reason).not.toContain('Your app is unstable')
+    expect(receipt.gates.stableVerdict.reason).not.toContain(LOOP_SHELF_DRAFT.testName)
   })
 })

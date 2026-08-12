@@ -81,6 +81,16 @@ export interface EvaluateDraftInput {
    * a session window then leaves out rather than folding into whoever is asking.
    */
   readonly sessionRef?: string
+  /**
+   * The suite file this draft proposes to JOIN — the stability read's target (394-19, D-14).
+   *
+   * CHOSEN BY THE CALLER, with the draft's own file as the fallback. The shelf path a loop-staged
+   * draft carries is a STAGING fact, not a membership fact: it names a digest-named file holding
+   * exactly one test, so a stability read pointed at it finds only the draft itself, which the
+   * neighbour exclusion then removes. D-14 asks about the suite the draft would join, and only the
+   * caller knows which that is.
+   */
+  readonly targetSuitePath?: string
 }
 
 export interface EvaluateDraftPorts {
@@ -166,7 +176,12 @@ export async function evaluateDraft(
   // EXISTING tests already flip or sit in quarantine is a target where the APPLICATION is
   // unstable, and an author can only act on that if somebody says it. The read is over records
   // that already exist and starts nothing.
-  const suiteStability = await consultSuiteStability(input.draft, stability.distinctOutcomes, ports)
+  const suiteStability = await consultSuiteStability(
+    input.draft,
+    input.targetSuitePath,
+    stability.distinctOutcomes,
+    ports,
+  )
 
   // Gate 3, over the draft's own execution evidence.
   const draftElements = draftFingerprintElements(stability.draftMembers)
@@ -265,6 +280,7 @@ function stabilityGateOneReason(pass: boolean, runCount: number): string {
  */
 async function consultSuiteStability(
   draft: ParsedDraftLike,
+  targetSuitePath: string | undefined,
   distinctOutcomes: readonly string[],
   ports: EvaluateDraftPorts,
 ): Promise<SuiteStabilityAssessment | undefined> {
@@ -277,7 +293,10 @@ async function consultSuiteStability(
   return await gatherSuiteStability(
     {
       product,
-      targetFilePath: draft.filePath,
+      // THE CHOSEN TARGET, falling back to the draft's own file. A standalone verify names no
+      // join, and a committed suite file is its own target; a loop-staged draft names the suite
+      // it proposes to join, because its own path is a one-test shelf artifact.
+      targetFilePath: targetSuitePath ?? draft.filePath,
       // The draft's OWN identity is not evidence about the suite it is trying to join; counting
       // its own flip as a neighbour's would let every mixed verdict explain itself.
       draftTestName: draft.testName,

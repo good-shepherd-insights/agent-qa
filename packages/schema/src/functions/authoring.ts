@@ -40,6 +40,17 @@ export const AuthoringVerifyDraftInputSchema = z.object({
    * — see the field's doc there for why a defaulted ref is the one shape that misattributes.
    */
   sessionRef: z.string().min(1).optional(),
+  /**
+   * The suite file this draft proposes to JOIN — the stability read's target (394-19, D-14).
+   *
+   * ABSENT MEANS THE DRAFT'S OWN FILE, which is the right answer for a standalone verify: a
+   * committed suite file IS its own target. It is a CHOSEN contract rather than a derivation
+   * because on the loop path the draft sits on a one-test-per-file shelf, so a target derived from
+   * `draftPath` can never have neighbours and D-14's `neighbours-flaky` arm was unreachable from
+   * `authoring.draft.write` for that reason alone. Only the caller knows which suite a draft would
+   * join; the loop computes it through the same `authoredSuiteTargetPath` its accept arm uses.
+   */
+  targetSuitePath: z.string().min(1).optional(),
 }).strict()
 
 export type AuthoringVerifyDraftInput = z.infer<typeof AuthoringVerifyDraftInputSchema>

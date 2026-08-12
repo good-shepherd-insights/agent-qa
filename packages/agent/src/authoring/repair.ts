@@ -224,6 +224,14 @@ export interface RepairDeps {
    * it off the receipt stage 4 already minted, so there is one source for the whole invocation.
    */
   readonly sessionRef?: string
+  /**
+   * The suite the draft proposes to JOIN, carried to the final stability gate (394-19, D-14).
+   *
+   * Handed in rather than re-derived for `sessionRef`'s reason exactly: the repaired candidate is
+   * the SAME draft with patched steps, so it joins the same suite, and a second derivation here
+   * would be a second answer to a question the invocation already answered.
+   */
+  readonly targetSuitePath?: string
 }
 
 // ---- the prefix ------------------------------------------------------------------------------
@@ -538,6 +546,9 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
       const receipt = await deps.shelf.verifyDraft({
         draftPath: staged.draft.filePath,
         ...(deps.sessionRef === undefined ? {} : { sessionRef: deps.sessionRef }),
+        ...(deps.targetSuitePath === undefined
+          ? {}
+          : { targetSuitePath: deps.targetSuitePath }),
       })
       return {
         kind: 'repaired',

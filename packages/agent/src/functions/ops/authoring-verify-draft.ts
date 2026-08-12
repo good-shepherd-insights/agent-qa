@@ -195,6 +195,11 @@ export const authoringVerifyDraftSpec: FunctionSpec<AuthoringVerifyDraftInput, D
         draft: resolution.draft,
         ...(input.draftMode === undefined ? {} : { draftMode: input.draftMode }),
         ...(input.sessionRef === undefined ? {} : { sessionRef: input.sessionRef }),
+        // Same spread idiom, same reason: the evaluator reads ABSENCE as "the draft's own file is
+        // the target", and a present `undefined` would be a second spelling of it.
+        ...(input.targetSuitePath === undefined
+          ? {}
+          : { targetSuitePath: input.targetSuitePath }),
       },
       ports,
     )
