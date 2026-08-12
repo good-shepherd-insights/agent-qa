@@ -44,6 +44,7 @@ import {
 } from './evidence-fixtures.js'
 import { AUTHORING_LOOP_STAGES, runAuthoringLoop } from '../loop.js'
 import type { AuthoringLoopStage } from '../loop.js'
+import type { JobModelRequest } from '../../jobs/record-llm-authorship.js'
 import { AUTHORING_REFINE_AGENT_CONTEXT } from '../refine.js'
 import { evaluateDraft } from '../verify-draft.js'
 import type {
@@ -112,6 +113,7 @@ function observedLoop() {
 
   const modelCalls: string[] = []
   const refineCalls: string[] = []
+  const compileRequests: JobModelRequest[] = []
   const written: string[] = []
 
   const shelf: DraftShelfPortLike = {
@@ -130,6 +132,7 @@ function observedLoop() {
         }
         observed.push('compile')
         modelCalls.push(request.prompt)
+        compileRequests.push(request)
         return Promise.resolve({ text: 'name: whatever the fixture parses to\nsteps: []\n' })
       },
     }),
@@ -179,7 +182,15 @@ function observedLoop() {
     },
   }
 
-  return { observed, modelCalls, refineCalls, refineQueries, written, deps: { read, shelf } }
+  return {
+    observed,
+    modelCalls,
+    refineCalls,
+    refineQueries,
+    compileRequests,
+    written,
+    deps: { read, shelf },
+  }
 }
 
 /** The stages that touch an injected dep — the ones an observer outside the loop can witness. */
@@ -282,6 +293,80 @@ describe('the six-stage order is structural, not a habit of the code', () => {
     // The round RAN and is reported, even though this fixture's emission is not a patch set — an
     // invocation that entered stage 3 always carries an arm saying what its refinement did.
     expect(result.refinement?.kind).toBe('not-applied')
+  })
+})
+
+// ---- the schema channel: which TIER carries the document format --------------------------------
+//
+// WINDOWS 111. On 5/5 live gate-allowed invocations the compile stage emitted a document missing
+// `test-id` and `target` and carrying an unrecognized `product` key. The prompt's blocks were Role,
+// Procedures, Intent, Scope, What this project knows and Exemplar tests, and the required document
+// schema was named in NONE of them — `exemplarBlockBody` answers "No exemplar tests were served for
+// this scope" when the brief carries none, which is every brief in a fresh project.
+//
+// THE TIER IS THE CLAIM, not the presence. A format rule served from the volatile tier is served
+// only when memory has something to say; the cells below read the STABLE tier — the shared byte
+// prefix — off a brief carrying ZERO exemplars, which is the bootstrap condition itself.
+
+/** The block title a model reads, spelled as a model reads it: a literal, not an import. */
+const FORMAT_BLOCK_TITLE = 'Test document format'
+
+interface RenderedBlock {
+  readonly title: string
+  readonly body: string
+}
+
+/** `buildTieredPrompt`'s output read back as blocks — the markdown a model is actually handed. */
+function renderedBlocks(text: string): readonly RenderedBlock[] {
+  return text.split(/^## /m).slice(1).map((part) => {
+    const split = part.indexOf('\n\n')
+    return {
+      title: part.slice(0, split),
+      body: part.slice(split + 2).replace(/\n+$/, ''),
+    }
+  })
+}
+
+describe('the document schema rides the stable tier, not the exemplar block (WINDOWS 111)', () => {
+  it('names the required keys in a STABLE block, on a brief carrying ZERO exemplars', async () => {
+    const loop = observedLoop()
+
+    await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // The condition, stated rather than assumed: this brief serves no exemplars at all.
+    expect(EMPTY_BRIEF.exemplars).toHaveLength(0)
+
+    const stable = renderedBlocks(loop.compileRequests[0]?.system ?? '')
+    const format = stable.find((block) => block.title === FORMAT_BLOCK_TITLE)
+    expect(format).toBeDefined()
+    // The three keys the live emission was missing or wrong about, by name.
+    expect(format?.body).toContain('test-id')
+    expect(format?.body).toContain('target')
+    expect(format?.body).toContain('steps')
+
+    // THE NON-VACUITY GUARD. The only other block that could have carried a schema is the exemplar
+    // block, and on this brief it carries the empty answer — so the assertions above cannot be
+    // satisfied by prose that arrived through memory.
+    const served = renderedBlocks(loop.compileRequests[0]?.prompt ?? '')
+    const exemplars = served.find((block) => block.title === 'Exemplar tests')
+    expect(exemplars?.body).toBe(
+      'No exemplar tests were served for this scope. Follow the house YAML test style.',
+    )
+    expect(exemplars?.body).not.toContain('test-id')
+  })
+
+  it('ADDS a block rather than rearranging: every prior block keeps its title and its tier', async () => {
+    const loop = observedLoop()
+
+    await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // Ordered title equality per tier, not membership: a fix that demoted the exemplar block, moved
+    // Procedures out of stable, or reordered Intent and Scope fails here even though every block
+    // still exists somewhere.
+    expect(renderedBlocks(loop.compileRequests[0]?.system ?? '').map((block) => block.title))
+      .toEqual(['Role', FORMAT_BLOCK_TITLE, 'Procedures'])
+    expect(renderedBlocks(loop.compileRequests[0]?.prompt ?? '').map((block) => block.title))
+      .toEqual(['Intent', 'Scope', 'What this project knows', 'Exemplar tests'])
   })
 })
 
