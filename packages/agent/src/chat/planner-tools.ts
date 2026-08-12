@@ -28,7 +28,11 @@ import { z } from 'zod'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
 import type { FunctionDeclaration, FunctionSchemaProjection } from '../functions/spec.js'
-import { SESSION_STAMPED_FUNCTION_IDS, WINDOW_STAMPED_FUNCTION_IDS } from './session-stamps.js'
+import {
+  HOST_DERIVED_SCOPE_FUNCTION_IDS,
+  SESSION_STAMPED_FUNCTION_IDS,
+  WINDOW_STAMPED_FUNCTION_IDS,
+} from './session-stamps.js'
 import {
   ANSWER_ONLY_TOOL_NAME,
   ChatToolNameError,
@@ -104,6 +108,10 @@ const HOST_SUPPLIES_WINDOW =
   'The host supplies a session-scoped `window` when this field is omitted — omit it to ask about '
   + 'the current session; pass `window` only to widen to all-time or last-n.'
 
+const HOST_DERIVES_SCOPE =
+  "The host derives the target test scope from this project's configured targets when `scope` is "
+  + 'omitted — pass `scope` only to author for a different target.'
+
 /** A projected JSON-Schema node, as the shape this transform edits it through. */
 type SchemaNode = Record<string, unknown>
 
@@ -165,22 +173,36 @@ function modelFacingInput(declaration: FunctionDeclaration): FunctionSchemaProje
   }
 
   if (optionalisesWindow) {
-    // The PROPERTY stays — a model may legitimately widen to all-time or last-n (D-12). Only its
-    // requiredness goes, plus the session arm's ref, which the model cannot know.
+    // THE `window` PROPERTY STAYS — a model may legitimately widen to all-time or last-n (D-12);
+    // only its requiredness goes. THE SESSION ARM'S `sessionRef` DOES NOT: it is host-owned end to
+    // end exactly as the top-level field is, so it is removed from the arm rather than merely made
+    // optional there (WR-02). The wider arms carry no ref and pass through untouched.
     dropRequired(projected, 'window')
     for (const arm of unionArms(properties.window)) {
-      if (Object.hasOwn(objectNode(arm.properties) ?? {}, 'sessionRef')) dropRequired(arm, 'sessionRef')
+      const armProperties = objectNode(arm.properties)
+      if (armProperties === undefined || !Object.hasOwn(armProperties, 'sessionRef')) continue
+      delete armProperties.sessionRef
+      dropRequired(arm, 'sessionRef')
     }
   }
 
   return projected
 }
 
-/** The catalogue's own summary, plus the one sentence a withheld default has to say out loud. */
+/**
+ * The catalogue's own summary, plus each sentence a host-filled field has to say out loud.
+ *
+ * APPENDED IN SET ORDER, never a rewrite: `declaration.summary` is what 396's MCP listing renders,
+ * so a description built by replacing it would publish two catalogues. An id in both sets would
+ * carry both sentences — no id is in both today, and the arrangement is deliberate rather than
+ * lucky: nothing forbids it, and the day one arrives it needs both facts told rather than one.
+ */
 function modelFacingDescription(declaration: FunctionDeclaration): string {
-  return WINDOW_STAMPED_FUNCTION_IDS.has(declaration.id)
-    ? `${declaration.summary} ${HOST_SUPPLIES_WINDOW}`
-    : declaration.summary
+  const sentences = [
+    ...(WINDOW_STAMPED_FUNCTION_IDS.has(declaration.id) ? [HOST_SUPPLIES_WINDOW] : []),
+    ...(HOST_DERIVED_SCOPE_FUNCTION_IDS.has(declaration.id) ? [HOST_DERIVES_SCOPE] : []),
+  ]
+  return [declaration.summary, ...sentences].join(' ')
 }
 
 /**

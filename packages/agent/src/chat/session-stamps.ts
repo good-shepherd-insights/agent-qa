@@ -30,3 +30,23 @@ export const SESSION_STAMPED_FUNCTION_IDS: ReadonlySet<string> = new Set([
 export const WINDOW_STAMPED_FUNCTION_IDS: ReadonlySet<string> = new Set([
   AUTHORING_FUNNEL_GET_FUNCTION_ID,
 ])
+
+/**
+ * The ops whose `scope` the COMPOSITION derives when the caller supplies none (394-26, WINDOWS 110).
+ *
+ * NOT A STAMP, and the difference is why it is a third set rather than a member of either above.
+ * Nothing is written at the invoke here: `authoring.draft.write` declares `scope` OPTIONAL at the
+ * registry — the `runs.start` law — and the host resolves it inside the op when it is absent, so a
+ * supplied scope reaches the loop untouched and the deriver is never consulted. What membership
+ * buys is the model-facing half: an id here gets the one sentence saying who fills the field, and
+ * `planner-tools.test.ts` pins the description-bearing ids SET-EQUAL to this set unioned with the
+ * window-stamped one. A field the model may omit but is never told it may omit is a field it
+ * invents a value for, or refuses the call over — which is the defect this set exists to close.
+ *
+ * It lives HERE beside the two stamp sets because it answers the same question they do — which
+ * fields is the model NOT the source of — and the projection reads all three from one leaf module
+ * rather than acquiring a second import graph for the third law.
+ */
+export const HOST_DERIVED_SCOPE_FUNCTION_IDS: ReadonlySet<string> = new Set([
+  AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+])

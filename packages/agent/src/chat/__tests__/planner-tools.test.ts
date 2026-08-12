@@ -29,6 +29,11 @@ import {
   SESSION_STAMPED_FUNCTION_IDS,
   WINDOW_STAMPED_FUNCTION_IDS,
 } from '../turn-engine.js'
+// The THIRD projection set, read from the leaf module the other two live in. It is not a stamp —
+// nothing is written at the invoke — so it is not re-exported from `turn-engine.js`: what it
+// declares is that the COMPOSITION resolves the field, and the sentence the model is shown says so
+// (394-26, WINDOWS 110).
+import { HOST_DERIVED_SCOPE_FUNCTION_IDS } from '../session-stamps.js'
 import {
   ANSWER_ONLY_TOOL_NAME,
   CHAT_META_TOOL_NAMES,
@@ -184,9 +189,13 @@ describe('projectPlannerTools: the registry walk IS the toolset (D-07)', () => {
     const tools = projectPlannerTools(registry(), PLANNER_CALLER)
     for (const declaration of walked) {
       const projected = tools[toToolName(declaration.id)]
-      // A window-stamped op's description is its summary PLUS the host-supply sentence, and the
-      // describe below owns that claim; here the summary is still the whole of it (394-22).
-      if (WINDOW_STAMPED_FUNCTION_IDS.has(declaration.id)) continue
+      // A description-bearing op's description is its summary PLUS the sentence its set owns, and
+      // the describe below owns those claims; here the summary is still the whole of it (394-22,
+      // 394-26). The set-equality cell is what keeps this skip list from growing silently.
+      if (
+        WINDOW_STAMPED_FUNCTION_IDS.has(declaration.id)
+        || HOST_DERIVED_SCOPE_FUNCTION_IDS.has(declaration.id)
+      ) continue
       expect(projected?.description).toBe(declaration.summary)
     }
   })
@@ -311,8 +320,14 @@ describe('projectPlannerTools: the model is not shown what the host stamps (394-
         expect({ id, was: [...(declaredArm.required ?? [])].sort() })
           .toEqual({ id, was: ['scope', 'sessionRef'] })
         expect({ id, now: [...(arm.required ?? [])] }).toEqual({ id, now: ['scope'] })
-        expect({ id, arm: { ...arm, required: null } })
-          .toEqual({ id, arm: { ...declaredArm, required: null } })
+        // The session arm, minus exactly the ref (WR-02) — the arm is otherwise structurally the
+        // declaration's. Comparing against the declared arm UNCHANGED is what certified the
+        // property staying, which is the accident WR-02 named.
+        const { sessionRef: _withheld, ...expectedArmProperties } = declaredArm.properties ?? {}
+        expect({ id, arm: { ...arm, required: null } }).toEqual({
+          id,
+          arm: { ...declaredArm, properties: expectedArmProperties, required: null },
+        })
       }
 
       const description = tools[toToolName(id)]?.description ?? ''
@@ -347,6 +362,85 @@ describe('projectPlannerTools: the model is not shown what the host stamps (394-
     expect(stamped.length).toBeGreaterThan(0)
     expect(transformed.slice().sort()).toEqual(stamped.slice().sort())
   })
+
+  it('SAYS the host derives the target scope, on exactly the ops that declare it so', async () => {
+    // WINDOWS 110's projection half. A live planner refused `authoring.draft.write` by name over a
+    // required `{tier, key}` it could not know. 394-26 made the field optional at the registry and
+    // gave the host the derivation; what remains is TELLING the model — a field it may now omit is
+    // still a field it will invent a value for unless the description says who fills it.
+    const walked = registry().list(PLANNER_CALLER)
+    const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
+    expect(HOST_DERIVED_SCOPE_FUNCTION_IDS.size).toBeGreaterThan(0)
+
+    for (const id of HOST_DERIVED_SCOPE_FUNCTION_IDS) {
+      const declaration = walked.find((entry) => entry.id === id)
+      expect({ id, listed: declaration !== undefined }).toEqual({ id, listed: true })
+
+      // NON-VACUITY: the contract must actually CARRY a scope the sentence can be about, and it
+      // must be OPTIONAL — a required one would make the sentence a promise the schema refuses.
+      const declared = schemaOf(declaration!)
+      expect({ id, declares: Object.hasOwn(declared.properties ?? {}, 'scope') })
+        .toEqual({ id, declares: true })
+      expect({ id, requiresScope: [...(declared.required ?? [])].includes('scope') })
+        .toEqual({ id, requiresScope: false })
+
+      const description = tools[toToolName(id)]?.description ?? ''
+      // APPENDED, never a rewrite: `declaration.summary` is what 396's MCP listing renders.
+      expect({ id, startsWithSummary: description.startsWith(declaration!.summary) })
+        .toEqual({ id, startsWithSummary: true })
+      expect(description).toContain('derives the target test scope')
+      expect(description).toContain('pass `scope` only to author for a different target')
+    }
+  })
+
+  it('shows NO sessionRef in a window arm either — the not-shown law has no exception (WR-02)',
+    async () => {
+      // WR-02. `modelFacingInput`'s window branch dropped the session arm's REQUIREDNESS and left
+      // the property in place, while its own comment claimed the ref was gone — so the model was
+      // still shown a field the host overwrites unconditionally, one level down from where the
+      // top-level withhold removes it. The law at the module's head is "not shown at all"; this
+      // cell is that law read at the arm.
+      const walked = registry().list(PLANNER_CALLER)
+      const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
+      expect(WINDOW_STAMPED_FUNCTION_IDS.size).toBeGreaterThan(0)
+
+      let armsChecked = 0
+      for (const id of WINDOW_STAMPED_FUNCTION_IDS) {
+        const declaration = walked.find((entry) => entry.id === id)
+        expect({ id, listed: declaration !== undefined }).toEqual({ id, listed: true })
+        const declared = schemaOf(declaration!)
+        const declaredArms = unionArms(declared.properties?.window)
+        const arms = unionArms((await schemaDocumentOf(
+          tools[toToolName(id)]?.inputSchema,
+        )).properties?.window)
+        expect({ id, arms: arms.length }).toEqual({ id, arms: declaredArms.length })
+
+        for (const [index, declaredArm] of declaredArms.entries()) {
+          // NON-VACUITY, per arm: only the arm that DECLARES the ref can have it removed, so the
+          // counter below is what separates "the property is gone" from "there was no such arm".
+          if (!Object.hasOwn(declaredArm.properties ?? {}, 'sessionRef')) continue
+          armsChecked += 1
+          const arm = arms[index]!
+          expect({ id, index, shows: Object.hasOwn(arm.properties ?? {}, 'sessionRef') })
+            .toEqual({ id, index, shows: false })
+          // EXACTLY that key gone, named on failure: an arm emptied entirely would satisfy a bare
+          // absence claim.
+          expect({ id, index, keys: Object.keys(arm.properties ?? {}).sort() }).toEqual({
+            id,
+            index,
+            keys: Object.keys(declaredArm.properties ?? {})
+              .filter((key) => key !== 'sessionRef')
+              .sort(),
+          })
+          // T-394-85 at the arm: the shared inert declaration still carries it.
+          expect({ id, index, stillDeclares: Object.hasOwn(
+            unionArms(schemaOf(declaration!).properties?.window)[index]?.properties ?? {},
+            'sessionRef',
+          ) }).toEqual({ id, index, stillDeclares: true })
+        }
+      }
+      expect(armsChecked).toBeGreaterThan(0)
+    })
 
   it('CONTROL: an op in neither stamped set is handed its projection untouched', async () => {
     const walked = registry().list(PLANNER_CALLER)
