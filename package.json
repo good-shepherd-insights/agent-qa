@@ -29,6 +29,7 @@
     "validate:arch": "pnpm --filter @vostride/agent-qa-arch exec vitest run src/__tests__/validate-arch.test.ts",
     "validate:safety": "pnpm --filter @vostride/agent-qa-safety exec vitest run src/__tests__/validate-safety.test.ts",
     "validate:router-mutation": "bash scripts/394-router-mutation.sh",
+    "validate:repair-screen-mutation": "bash scripts/394-repair-screen-mutation.sh",
     "release:docker": "node scripts/release/docker.mjs",
     "release:docker:check": "node scripts/release/docker.mjs --check-local",
     "release:dry-run": "node scripts/release/dry-run.mjs",
