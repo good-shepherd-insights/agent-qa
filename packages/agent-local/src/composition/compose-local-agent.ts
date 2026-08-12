@@ -2716,12 +2716,12 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // 394-10 D-05/D-06: the ONE write to a user's git history this product makes, bound as the
       // host handed it and spread on its OWN condition rather than the loop's.
       //
-      // D-05's two halves, recorded where the binding is. FIRST: accept-with-always over a
-      // `test-draft` is the lights-out path, and it is reachable — the kind is deliberately absent
-      // from the closed protected set, so a person may decide once that accepted drafts commit
-      // without a further prompt. The protected-class rules apply to it unchanged: the grant covers
-      // `fn:authoring.draft.apply` and nothing else, and `finding` beside it stays protected
-      // because nobody may pre-approve acknowledging an application defect. SECOND: keep-eligible
+      // D-05's two halves, recorded where the binding is. FIRST: every test-draft accept is an
+      // individual human decision. The write reaches this port with no gate evaluation of its own,
+      // so the class an accept-with-always asks the mint for is `fn:proposals.accept` — a member of
+      // the closed protected set — and the mint refuses it as `protected-class` beside the
+      // successful apply (394-16, resolving CR-04). No standing-approval path over draft accepts
+      // exists until a registered apply op carrying its own class lands. SECOND: keep-eligible
       // NEVER auto-writes. Every draft proposes, keep-eligible included; it renders as
       // recommended-accept with its receipt, and the funnel's accepted stage IS the human decision.
       // A route that wrote on keep-eligible would make that stage meaningless and would be exactly

@@ -1981,10 +1981,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       // compose the same root. Conditionally spread, so a daemon with no workspace lists the
       // capability `unbound` BY NAME rather than binding one that cannot resolve a draft path.
       ...(draftAuthoring === undefined ? {} : { draftAuthoring }),
-      // 394-10 D-06: bound on its OWN condition. A daemon binds no ConfirmPort, so an accept
-      // reaching this port has already been satisfied by a credential or a standing grant — which
-      // is precisely D-05's lights-out path, and the reason it is bound here rather than left to
-      // the interactive host alone.
+      // 394-10 D-06 / 394-16: bound on its OWN condition, and bound here so both hosts compose the
+      // same root rather than because a daemon accept can reach it. `DAEMON_FUNCTION_CALLER` is
+      // `origin: 'agent'` (server.ts:105) and `proposals.accept` declares `requiresHumanOrigin`, so
+      // a via-daemon accept is refused pre-dispatch, before any grant is consulted — and the class
+      // an accept-with-always would ask for is `fn:proposals.accept`, which is protected, so no
+      // standing approval can satisfy it either. The binding is kept rather than dropped: an op
+      // listed `unbound` on one host and bound on the other would be a second answer to what this
+      // composition owns, which is the 385 D-15 rule the root exists to hold.
       ...(draftApply === undefined ? {} : { draftApply }),
       // 387-08 D-18 / D-5: this process IS the writer-lease holder, so an apply it performs hands
       // in the authority it already owns rather than asking for a lease it cannot be granted

@@ -340,29 +340,9 @@ describe('proposals.accept — plain applies, always escalates (D-01)', () => {
     // TOTAL over the kind vocabulary rather than over the one kind this file drives, so 393-396's
     // arms cannot arrive without an answer here.
     expect(Object.keys(APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND).sort()).toEqual([...PROPOSAL_KINDS].sort())
-  })
-
-  it('partitions the kinds by whether their apply class is protected — the decision, not a default', () => {
-    // THIS CELL USED TO SAY "none of them", and its own comment said it would go RED the day a
-    // later phase protected a kind's apply verb, forcing somebody to decide what an accept of that
-    // kind should do. 394-06 was that day, and this is the decision.
-    //
-    // `finding` is PROTECTED, deliberately. Accepting one is an acknowledgement — D-11's
-    // record-and-surface: no file, no commit, no issue filed — so there is no committing op to
-    // read a class off, and the only honest answer to "what would a standing approval over this
-    // cover" is the accept verb itself, which is in the closed protected set. The consequence is
-    // the intended one: nobody may pre-approve acknowledging what the loop says is an application
-    // defect, because an acknowledgement is a person having looked and a standing one is a person
-    // having stopped looking. The mint refuses as DATA beside a successful apply, so the decision
-    // is still recorded — which is exactly the arm the next case exercises, now reachable.
-    //
-    // `test-draft` is NOT protected. Its apply is a real write plus one commit (D-06) landing with
-    // `authoring.draft.apply`, and D-05 names accept-with-always on that op as the lights-out path
-    // — so protecting it would close a door the phase deliberately leaves open.
-    const protectedKinds = Object.entries(APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND)
-      .filter(([, actionClass]) => isProtectedActionClass(actionClass))
-      .map(([kind]) => kind)
-    expect(protectedKinds).toEqual(['finding'])
+    // The table's other two claims — that EVERY entry is a class the live registry carries, and
+    // which entries are protected — are ranged in `apply-action-classes.test.ts` (394-16). They
+    // live in one place so a second copy cannot answer differently.
   })
 
   it('reports a mint refusal BESIDE a successful apply, never instead of it', async () => {
@@ -519,7 +499,7 @@ describe('proposals.accept — the test-draft route (394-10, D-05/D-06)', () => 
     expect(built.grants.calls).toEqual([])
   })
 
-  it('mints a standing grant over the WRITING class on the always form — D-05 lights-out', async () => {
+  it('asks the mint for THIS verb’s own class on the always form — 394-16, CR-04', async () => {
     const built = host({ entry: testDraftEntry() })
 
     const answer = await accept(built, { proposalId: PROPOSAL_ID, always: true })
@@ -527,11 +507,12 @@ describe('proposals.accept — the test-draft route (394-10, D-05/D-06)', () => 
     expect(answer.apply.outcome).toBe('applied')
     expect(built.grants.calls.map((call) => call.actionClass))
       .toEqual([APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND['test-draft']])
-    // NOT the accept verb's own class. A grant recorded under `fn:proposals.accept` would cover
-    // accepting ANYTHING, which is a different and much larger permission than the one a person
-    // meant to give — and it is the one the `finding` arm deliberately makes unmintable.
-    expect(built.grants.calls[0]?.actionClass).not.toBe(`fn:${PROPOSALS_ACCEPT_FUNCTION_ID}`)
-    expect(answer.grant.kind).toBe('recorded')
+    // The write rides the `draftApply` PORT, which carries no class of its own for a gate to
+    // evaluate, so the class asked for is the accept's — and it is protected. The refusal that
+    // follows from that is driven end to end in `apply-action-classes.test.ts`; the fake mint here
+    // does not carry the protection rule, so this cell asserts only what it can see.
+    expect(built.grants.calls[0]?.actionClass).toBe(`fn:${PROPOSALS_ACCEPT_FUNCTION_ID}`)
+    expect(isProtectedActionClass(built.grants.calls[0]?.actionClass)).toBe(true)
   })
 
   it('rejects rather than applies when the envelope is already rejected — nothing is written', async () => {

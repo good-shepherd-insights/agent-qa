@@ -78,22 +78,6 @@ export const PROPOSALS_ACCEPT_FUNCTION_ID = 'proposals.accept'
 const PROPOSALS_ACCEPT_ACTION_CLASS = `fn:${PROPOSALS_ACCEPT_FUNCTION_ID}`
 
 /**
- * The class a standing approval over an accepted `test-draft` covers (394-10, D-06).
- *
- * IT IS THE WRITING VERB'S NAME AND NOT THIS ONE'S, which is the whole of what the produced-class
- * rule buys here: accepting a draft commits a file, so what a person pre-approves is the WRITE, and
- * a grant recorded under `fn:proposals.accept` would cover accepting anything at all.
- *
- * There is deliberately no registered op behind this id. 394-06 named it expecting one, and the
- * apply is reached through the bound {@link FunctionDeps.draftApply} port instead — the SAME
- * port-level reuse the knowledge arm takes, and for the same reason its own header gives:
- * op-calling-op would put a second gate evaluation and a second audit row in front of one human
- * decision. The id survives as the CLASS NAME because the class is what a grant matches, and it is
- * the honest spelling of "may agent-qa commit an accepted draft without asking again".
- */
-const AUTHORING_DRAFT_APPLY_ACTION_CLASS = 'fn:authoring.draft.apply'
-
-/**
  * How one proposal kind is committed, and therefore what a standing approval over it covers.
  *
  * A TOTAL `Record` over {@link PROPOSAL_KINDS} rather than a switch with a default: 393's test
@@ -131,10 +115,15 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
     },
   },
   // 394 D-05/D-06: accepting a verified draft WRITES it into the suite and makes ONE git commit
-  // containing exactly that file. This is the lights-out path D-05 names — the kind is deliberately
-  // NOT in the protected set, so accept-with-always over it is a decision a person is allowed to
-  // make once. The `finding` arm below is the opposite call, and the two sit here together so the
-  // difference is readable rather than inferred.
+  // containing exactly that file.
+  //
+  // ITS COVERED CLASS IS THIS VERB'S OWN (394-16, resolving CR-04). The write goes through the
+  // bound {@link FunctionDeps.draftApply} port, and a port is not a gated op: no `evaluate()` ever
+  // runs with a class of its own, so the only class a grant over this kind can truthfully cover is
+  // the accept's. `fn:proposals.accept` is in the closed protected set, so accept-with-always over
+  // a test-draft is refused as `protected-class` beside a successful apply, and every draft accept
+  // is an individual human decision. An entry naming a class no registered op carries is a red
+  // build: `__tests__/apply-action-classes.test.ts` ranges this table against the live registry.
   //
   // THE PAYLOAD TRAVELS TO THE PORT, and it has to: the shipped `KnowledgeReviewPort.apply` takes
   // an id because `knowledge-local`'s store holds knowledge records and reads them back, and
@@ -142,7 +131,7 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
   // a `KnowledgeProposalV1` and `extractStoredProposal` refuses every other kind by name. A port
   // taking an id alone would be asking a host to look up something no store can hold.
   'test-draft': {
-    actionClass: AUTHORING_DRAFT_APPLY_ACTION_CLASS,
+    actionClass: PROPOSALS_ACCEPT_ACTION_CLASS,
     async apply(
       deps: FunctionDeps,
       proposalId: string,
@@ -226,15 +215,18 @@ function applyEnvelope(
 /**
  * The class a standing approval over each kind covers — the PRODUCED spelling, published.
  *
- * Exported so a differential can range it rather than restate it. Two properties are worth
- * measuring and neither is visible from inside this module: that each entry equals the registered
- * apply op's `risk.name` (the produced-not-literal rule, machine-checked), and WHICH entries are
- * members of the closed protected set.
+ * Exported so a differential can range it rather than restate it, and
+ * `__tests__/apply-action-classes.test.ts` is that differential. What it checks, stated as what it
+ * checks rather than as a property this module asserts about itself: every entry is the `risk.name`
+ * of EXACTLY ONE op in the live registry listing, so an entry naming a class nothing evaluates —
+ * the state the `test-draft` row shipped in until 394-16 — is a red build rather than a grant that
+ * matches nothing forever. It also pins WHICH entries are members of the closed protected set.
  *
- * 394-06 made the second question interesting. It used to have one answer for every kind — none —
- * which made the accept's `protected-class` arm a documented-unreachable path. The `finding` arm
- * is now deliberately protected, because acknowledging an application defect is precisely the
- * thing nobody may pre-approve, so the partition is per kind and the corpus pins it that way.
+ * The partition is per kind and it is a decision at each row. `knowledge` reads its class off the
+ * registered apply op and is grantable. `finding` and `test-draft` both carry this verb's own
+ * class — the first because acknowledging an application defect has no committing op at all, the
+ * second because its write rides a port that is never gate-evaluated — and both are therefore
+ * protected, so neither can be pre-approved.
  */
 export const APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND: Readonly<Record<ProposalKind, string>> =
   Object.freeze(
