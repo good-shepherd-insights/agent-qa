@@ -11,7 +11,7 @@
 # could not be read routed through the same catch, so a real commit was answered with a worktree
 # reverted against it.
 #
-# THREE MUTATIONS, THREE PROPERTIES, AND THE RED SETS MUST BE PAIRWISE DISJOINT:
+# FOUR MUTATIONS, FOUR PROPERTIES, AND THE RED SETS MUST BE PAIRWISE DISJOINT:
 #
 #   MUTATION T  the INDEX half of the restore is removed, leaving the worktree-only restore this
 #               file shipped with. A failed apply then leaves the agent's blob staged.
@@ -19,10 +19,18 @@
 #               A commit that exists is then answered with the file reverted against it.
 #   MUTATION N  the nothing-to-commit arm is removed, so an apply that staged nothing reports a
 #               generic `git commit exited 1` instead of refusing by name.
+#   MUTATION P  the index capture is hoisted back BELOW the write, which is where 394-18 left it
+#               and what CR-01 named. The capture's four throw paths then sit outside the try that
+#               owns the rollback with the agent's bytes already on the person's disk.
+#
+# WHY P IS A LEG AND NOT A COMMENT (394-20). The other three mutate what the rollback DOES; P
+# mutates WHERE a read happens, and nothing in the first three could tell the two placements apart —
+# the verifier found three legs and no coverage of the placement at all, so a hoist back down would
+# have returned in silence.
 #
 # DISJOINTNESS IS THE POINT, and the script asserts it with `comm -12` over the sorted red sets. A
-# pair of mutations that red the same cells has measured one property twice; three that red three
-# sets have shown the corpus distinguishes three defects — which is what a gap round needs in order
+# pair of mutations that red the same cells has measured one property twice; four that red four
+# sets have shown the corpus distinguishes four defects — which is what a gap round needs in order
 # to say which of them was closed.
 #
 # A GREEN SUITE UNDER A MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS. So is a red naming a cell
@@ -70,6 +78,7 @@ CORE_FILTER="@vostride/agent-qa-core"
 T_SIGNATURE_CELL="leaves NO index entry behind when the commit fails and the target was untracked"
 V_SIGNATURE_CELL="does NOT revert a file whose commit already SUCCEEDED"
 N_SIGNATURE_CELL="names NOTHING-TO-COMMIT rather than reporting it as a git failure"
+P_SIGNATURE_CELL="refuses BYTE-UNCHANGED when the index capture fails, because the capture is above the write"
 
 # The cells allowed to be red under each mutation. Every entry is an assertion about the SAME
 # property as its signature cell, observed at a second place. Widening a list to quieten a surprise
@@ -83,6 +92,9 @@ ALLOWED_RED_CELLS_V=(
 )
 ALLOWED_RED_CELLS_N=(
   "$N_SIGNATURE_CELL"
+)
+ALLOWED_RED_CELLS_P=(
+  "$P_SIGNATURE_CELL"
 )
 
 T_ANCHOR="  restoreIndexEntry(exec, cwd, identityPath, indexBefore)"
@@ -109,6 +121,17 @@ V_REPLACEMENT="  try {
 # Measured: that form red 3 cells and the script refused it. This form reds exactly 1.
 N_ANCHOR="  if (!stagedAtPath(exec, cwd, targetPath)) return { kind: 'nothing-to-commit' }"
 N_REPLACEMENT="  void stagedAtPath(exec, cwd, targetPath)"
+
+# THE ANCHOR IS THE THREE CODE LINES AND NOT THEIR COMMENT, so a reworded placement note cannot
+# drift the anchor to zero and hand this leg an unmutated build to measure.
+P_ANCHOR="  const indexBefore = captureIndexEntry(exec, configDir, identityPath)
+
+  mkdirSync(dirname(absoluteTarget), { recursive: true })
+  writeFileSync(absoluteTarget, contents, 'utf8')"
+P_REPLACEMENT="  mkdirSync(dirname(absoluteTarget), { recursive: true })
+  writeFileSync(absoluteTarget, contents, 'utf8')
+
+  const indexBefore = captureIndexEntry(exec, configDir, identityPath)"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/394-apply-rollback-mutation.XXXXXX")"
 RESTORED=0
@@ -158,14 +181,14 @@ anchor_count() { # $1 = anchor
   printf '%s' "$count"
 }
 
-for pair in "T:$T_ANCHOR" "V:$V_ANCHOR" "N:$N_ANCHOR"; do
+for pair in "T:$T_ANCHOR" "V:$V_ANCHOR" "N:$N_ANCHOR" "P:$P_ANCHOR"; do
   name="${pair%%:*}"
   anchor="${pair#*:}"
   count="$(anchor_count "$anchor")"
   [ "$count" = "1" ] \
     || fatal "the mutation-$name anchor appears $count time(s) in $HOST_REL, expected exactly 1 — a drifted anchor edits nothing and this lane would then measure the UNMUTATED build"
 done
-printf 'all three mutation anchors are unique\n'
+printf 'all four mutation anchors are unique\n'
 
 if [ "${APPLY_ROLLBACK_SKIP_BUILD:-0}" = "1" ]; then
   printf '!!! APPLY_ROLLBACK_SKIP_BUILD=1 — this lane may be measuring a STALE dist. Iteration only.\n'
@@ -336,11 +359,23 @@ banner "MUTATION N — the nothing-to-commit arm removed"
 run_leg N "$N_ANCHOR" "$N_REPLACEMENT" "$N_SIGNATURE_CELL" "${ALLOWED_RED_CELLS_N[@]}"
 
 # ------------------------------------------------------------------------------------------------
-# NON-REDUNDANCY — the three red sets must be pairwise disjoint
+# MUTATION P — the index capture hoisted back BELOW the write
+# ------------------------------------------------------------------------------------------------
+#
+# CR-01, and the shipped placement until 394-20. `captureIndexEntry` throws four ways, and none of
+# them is inside the try that owns the rollback — so below the write each one returns to the caller
+# with the agent's bytes sitting in a person's working tree at a path the apply just said it did not
+# write. Their next `git commit -a` records those bytes under their name.
+
+banner "MUTATION P — the index capture moved back below the write"
+run_leg P "$P_ANCHOR" "$P_REPLACEMENT" "$P_SIGNATURE_CELL" "${ALLOWED_RED_CELLS_P[@]}"
+
+# ------------------------------------------------------------------------------------------------
+# NON-REDUNDANCY — the four red sets must be pairwise disjoint
 # ------------------------------------------------------------------------------------------------
 
 banner "NON-REDUNDANCY"
-for pair in "T V" "T N" "V N"; do
+for pair in "T V" "T N" "T P" "V N" "V P" "N P"; do
   set -- $pair
   comm -12 "$WORK/red-$1.txt" "$WORK/red-$2.txt" >"$WORK/overlap-$1$2.txt"
   if [ -s "$WORK/overlap-$1$2.txt" ]; then
@@ -348,10 +383,11 @@ for pair in "T V" "T N" "V N"; do
     fatal "mutations $1 and $2 red overlapping cells — the two are not measuring two properties"
   fi
 done
-printf 'the three red sets are pairwise disjoint:\n'
+printf 'the four red sets are pairwise disjoint:\n'
 printf '  T: '; paste -sd', ' "$WORK/red-T.txt"
 printf '  V: '; paste -sd', ' "$WORK/red-V.txt"
 printf '  N: '; paste -sd', ' "$WORK/red-N.txt"
+printf '  P: '; paste -sd', ' "$WORK/red-P.txt"
 
 # ------------------------------------------------------------------------------------------------
 # receipt
@@ -366,4 +402,5 @@ printf '\n'
 printf 'MUTATION T  index restore removed       : %s (exit %s)\n' "${COUNTS_T:-}" "${RC_T:-}"
 printf 'MUTATION V  commit reverted on hash read: %s (exit %s)\n' "${COUNTS_V:-}" "${RC_V:-}"
 printf 'MUTATION N  nothing-to-commit collapsed : %s (exit %s)\n' "${COUNTS_N:-}" "${RC_N:-}"
+printf 'MUTATION P  capture moved below write   : %s (exit %s)\n' "${COUNTS_P:-}" "${RC_P:-}"
 printf '\n394-apply-rollback-mutation: PASS\n'
