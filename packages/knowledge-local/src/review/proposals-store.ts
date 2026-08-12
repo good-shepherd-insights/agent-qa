@@ -19,6 +19,17 @@
 // The store is therefore append-only in effect, and there is deliberately NO listing verb here:
 // D-17 scopes the proposals INBOX to Phase 391, which owns enumeration, reaping and the standing
 // grants that make an inbox meaningful. 391 is the owner; this module is the substrate.
+//
+// ONE DIRECTORY, KIND-DISCRIMINATED (394-18, closing WINDOWS 99). Until this plan the module said
+// a non-knowledge record was "stored elsewhere", and there was no elsewhere: `ProposalRecordSchema`
+// had carried `test-draft` and `finding` since 394-06 and nothing on any host could persist one, so
+// the loop's two terminal artifacts were things it could produce and no inbox could hold. Every
+// kind the envelope discriminates now lives HERE, under the same five durable name shapes, read
+// back through the same classifier. What did NOT change is the retention contract: the arms are
+// parsed through the envelope's own schema per kind, 387-era bare `KnowledgeProposalV1` documents
+// are still absorbed AS DATA and left byte-identical, and the only refusal the widening leaves
+// standing is for a kind NO schema in this build knows — which stays a named `TypeError`, because
+// a document nothing can parse is not a proposal and guessing at it is how an inbox loses one.
 
 import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -32,15 +43,19 @@ import {
   ProposalOriginSchema,
   ProposalRecordSchema,
   computeProposalEnvelopeStatus,
+  isProposalKind,
 } from '@vostride/agent-qa-schema'
 import type {
   ForgetReceiptV1,
   KnowledgeProposalV1,
+  ProposalDecision,
   ProposalDecisionRecord,
   ProposalDurableState,
   ProposalEnvelope,
   ProposalEvidenceRef,
+  ProposalKind,
   ProposalOrigin,
+  ProposalRecord,
 } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
@@ -131,6 +146,35 @@ export const RejectedProposalRecordSchema = z.object({
 
 export type RejectedProposalRecord = z.infer<typeof RejectedProposalRecordSchema>
 
+/**
+ * The KIND-GENERIC decided record: the whole envelope record, and the decision that closed it
+ * (394-18).
+ *
+ * ONE WRAPPER FOR BOTH DECISIONS, and a THIRD wrapper beside the two above rather than a widening
+ * of either. The reason is retention: `AppliedProposalRecordSchema` and
+ * `RejectedProposalRecordSchema` describe files that are already on real machines and are retained
+ * forever, and both are `.strict()` with a `proposal` field typed as `KnowledgeProposalV1Schema`.
+ * Widening `proposal` to the payload union would have made every one of those files parse against a
+ * looser contract than the one they were written under; adding a second optional field would have
+ * made "which field holds the proposal" a question with two answers. This schema carries `record` —
+ * a name neither older wrapper can have, since both are strict — so the discriminant between the
+ * old shapes and this one is structural and no file has to be migrated or re-read to tell them
+ * apart.
+ *
+ * It holds the RECORD rather than the payload because a decided draft still has to answer who
+ * emitted it and which kind it is; 387's wrappers keep `origin` as a sibling field precisely
+ * because their `proposal` cannot carry one.
+ *
+ * NOTHING IS DELETED. The record rides inside the wrapper on 387's retention law, which is what
+ * gives a correctly-failing draft its second life as the regression test for the defect it found.
+ */
+export const DecidedProposalRecordSchema = z.object({
+  record: ProposalRecordSchema,
+  decision: ProposalDecisionRecordSchema,
+}).strict()
+
+export type DecidedProposalRecord = z.infer<typeof DecidedProposalRecordSchema>
+
 /** Thrown when a proposal id names nothing this store has ever written. */
 export class ProposalNotFoundError extends Error {
   constructor(readonly proposalId: string) {
@@ -156,48 +200,94 @@ function rejectedPath(agentQaRoot: string, proposalId: string): string {
 }
 
 /**
- * A proposal as it was STORED: the payload, and the attribution if the file carried any.
+ * A proposal as it was STORED: the kind, its own payload, and the attribution the file carried.
  *
- * Two on-disk shapes reach this type and both are legitimate. 387 wrote a bare
+ * Three on-disk shapes reach this type and all three are legitimate. 387 wrote a bare
  * `KnowledgeProposalV1` document; 391 writes the envelope's `ProposalRecord` around it when the
- * mint knows who emitted it. `origin` absent means the file is one of the former — a fact about
- * the file, never a value this module invents.
+ * mint knows who emitted it; 394-18 writes that same wrapper for the two authoring kinds. `origin`
+ * absent means the file is one of the first — a fact about the file, never a value this module
+ * invents. A bare document is `knowledge` because that is the only kind 387 could write.
+ *
+ * DISCRIMINATED ON `kind` WITH THE PAYLOAD CORRELATED, following {@link ProposalEnvelope}'s own
+ * mapped-type idiom rather than minting a parallel shape: a reader that narrows on `kind` learns
+ * what `payload` is, so no consumer has to re-classify the value off the payload's own fields —
+ * the second classification the envelope's correlation exists to abolish.
  */
-export interface StoredProposal {
-  readonly payload: KnowledgeProposalV1
-  readonly origin?: ProposalOrigin
-}
+export type StoredProposal = {
+  [K in ProposalKind]: {
+    /** The proposal's durable id — the wrapper's `id`, or the bare document's `proposalId`. */
+    readonly id: string
+    readonly kind: K
+    readonly payload: Extract<ProposalRecord, { kind: K }>['payload']
+    readonly origin?: ProposalOrigin
+  }
+}[ProposalKind]
+
+/** The knowledge arm, which is the only one the 387-era apply and reject paths can commit. */
+export type StoredKnowledgeProposal = Extract<StoredProposal, { kind: 'knowledge' }>
 
 /**
- * THE ONE PLACE either on-disk shape becomes a proposal (D-08, absorb-as-data).
+ * THE ONE PLACE any on-disk shape becomes a proposal (D-08, absorb-as-data · 394-18).
  *
  * A migration was the obvious alternative and it is the wrong one twice over: rewriting files
  * this store's whole contract says are retained forever is a destructive answer to a
  * non-problem, and it would have to run somewhere — at read, where it turns a listing into a
  * write, or at startup, where a crash halfway leaves a directory in two formats anyway. Reading
- * both shapes costs one discriminant and leaves 387-era files byte-identical for good.
+ * every shape costs one discriminant and leaves 387-era files byte-identical for good.
  *
- * The discriminant is `payload`, which is the wrapper's own field and cannot appear on a bare
- * `KnowledgeProposalV1` — that schema is `.strict()`, so a document carrying one would have been
- * refused at the boundary that wrote it.
+ * The wrapper discriminant is `payload`, which is the wrapper's own field and cannot appear on a
+ * bare `KnowledgeProposalV1` — that schema is `.strict()`, so a document carrying one would have
+ * been refused at the boundary that wrote it.
+ *
+ * EACH KIND IS PARSED THROUGH ITS OWN ARM, never cast. `ProposalRecordSchema` is the discriminated
+ * union, so `parse` selects the arm from `kind` and refuses a malformed payload AT that arm — the
+ * store's own narrow-not-cast rule, now once per kind rather than once for knowledge and a refusal
+ * for everything else.
  */
 export function extractStoredProposal(raw: unknown): StoredProposal {
   if (typeof raw === 'object' && raw !== null && 'payload' in raw) {
-    const record = ProposalRecordSchema.parse(raw)
-    // THIS STORE HOLDS KNOWLEDGE PROPOSALS. 394 gave the envelope two more kinds, and the wrapper
-    // is generic over all three — so a record of another kind is a well-formed document in the
-    // wrong directory, and refusing it by name is the only answer that does not silently read a
-    // finding as a knowledge proposal. The narrow is a `parse` on the arm rather than a cast: a
-    // cast would have compiled and then failed at whichever field was read first.
-    if (record.kind !== 'knowledge') {
+    // THE UNKNOWN-KIND REFUSAL, ASKED BEFORE THE PARSE AND KEPT AS A NAMED `TypeError`. A kind no
+    // schema in this build knows would otherwise surface as a `ZodError` about a discriminator,
+    // which reads as a malformed document rather than as the one thing it actually is: a file
+    // written by a newer build. Asked first so the message can NAME the kind it does not know.
+    const kind: unknown = (raw as { kind?: unknown }).kind
+    if (!isProposalKind(kind)) {
       throw new TypeError(
-        `the knowledge proposals store was handed a ${record.kind} proposal (${record.id}); `
-          + 'that kind is stored elsewhere and is not readable here',
+        `the proposals store was handed a proposal of unknown kind ${JSON.stringify(kind)}; `
+          + 'no schema in this build can read it, and guessing at its payload is how an inbox '
+          + 'loses a proposal',
       )
     }
-    return { payload: record.payload, origin: record.origin }
+    const record = ProposalRecordSchema.parse(raw)
+    return {
+      id: record.id,
+      kind: record.kind,
+      payload: record.payload,
+      ...(record.origin === undefined ? {} : { origin: record.origin }),
+    } as StoredProposal
   }
-  return { payload: KnowledgeProposalV1Schema.parse(raw) }
+  const payload = KnowledgeProposalV1Schema.parse(raw)
+  return { id: payload.proposalId, kind: 'knowledge', payload }
+}
+
+/**
+ * The same extraction, narrowed to the KNOWLEDGE arm — for the paths that commit one.
+ *
+ * The refusal that lives here is about the PATH rather than about the store: `claimPendingProposal`
+ * and the 387-era apply publish an `AppliedProposalRecord`, whose `proposal` field IS
+ * `KnowledgeProposalV1Schema`, so handing that machinery a draft would produce a document the next
+ * reader could not parse. Accepting a `test-draft` or a `finding` goes through `proposals.accept`'s
+ * own routes and {@link decidePendingProposal} below, which is what the message names.
+ */
+export function extractStoredKnowledgeProposal(raw: unknown): StoredKnowledgeProposal {
+  const stored = extractStoredProposal(raw)
+  if (stored.kind !== 'knowledge') {
+    throw new TypeError(
+      `the knowledge commit path was handed a ${stored.kind} proposal (${stored.id}); `
+        + 'that kind is decided through proposals.accept and recorded by decidePendingProposal',
+    )
+  }
+  return stored
 }
 
 function readJsonIfPresent(path: string): unknown | undefined {
@@ -250,28 +340,79 @@ export function writePendingProposal(
   // refinement — and kept because the redundancy is a fact about a neighbouring schema rather
   // than about this module. The id becomes a path on the line below either way.
   ProposalIdSchema.parse(validated.proposalId)
-  const document = origin === undefined
-    ? validated
-    : ProposalRecordSchema.parse({
-        schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
-        id: validated.proposalId,
-        kind: 'knowledge',
-        origin,
-        payload: validated,
-      })
+  if (origin === undefined) {
+    // The BARE 387 document, written exactly as 387 wrote it. It cannot go through
+    // `writePendingProposalRecord` below, because the wrapper REQUIRES an origin and there is no
+    // honest value for a caller that does not know one — which is the whole of the optionality.
+    writeFileAtomically(
+      pendingPath(agentQaRoot, validated.proposalId),
+      `${JSON.stringify(validated, undefined, 2)}\n`,
+    )
+    fsyncDirectory(directory)
+    return
+  }
+  writePendingProposalRecord(agentQaRoot, ProposalRecordSchema.parse({
+    schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+    id: validated.proposalId,
+    kind: 'knowledge',
+    origin,
+    payload: validated,
+  }))
+}
+
+/**
+ * Persist a freshly minted proposal of ANY kind, in its `pending` state (394-18).
+ *
+ * THE KIND-GENERIC WRITE, and the one place a wrapper document is produced. It exists beside
+ * {@link writePendingProposal} rather than replacing it because that verb carries a contract this
+ * one cannot: an ABSENT origin means the bare 387 document, and only `knowledge` has such a shape.
+ * Everything else — the directory, the suffix, the atomic write, the validate-on-the-way-out rule —
+ * is shared, so there is exactly one recipe for what a pending proposal file is.
+ *
+ * Validated on the way OUT as well as on the way in, for the reason its knowledge sibling states:
+ * a proposal is read back by a different process, so the boundary that matters is the file.
+ */
+export function writePendingProposalRecord(agentQaRoot: string, record: ProposalRecord): void {
+  const directory = proposalsDir(agentQaRoot)
+  mkdirSync(directory, { recursive: true })
+  const validated = ProposalRecordSchema.parse(record)
+  // IN-03. The id becomes a path on the line below, so the shape check lives where the joining
+  // happens — the same law `claimPendingProposal` and `rejectPendingProposal` are under.
+  ProposalIdSchema.parse(validated.id)
   writeFileAtomically(
-    pendingPath(agentQaRoot, validated.proposalId),
-    `${JSON.stringify(document, undefined, 2)}\n`,
+    pendingPath(agentQaRoot, validated.id),
+    `${JSON.stringify(validated, undefined, 2)}\n`,
   )
   fsyncDirectory(directory)
 }
 
-/** The pending proposal under this id, or `undefined` if it is absent or already applied. */
+/**
+ * The pending KNOWLEDGE proposal under this id, or `undefined` if it is absent or already applied.
+ *
+ * Narrowed rather than widened: every caller of this verb commits through the knowledge apply, and
+ * a signature answering the payload union would have made each of them re-narrow — or, worse, read
+ * a draft's fields off a value typed as a knowledge proposal. A pending proposal of another kind
+ * refuses BY NAME here. {@link pendingProposalExists} is the kind-agnostic presence question.
+ */
 export function readPendingProposal(
   agentQaRoot: string,
   proposalId: string,
 ): KnowledgeProposalV1 | undefined {
-  return readPendingStoredProposal(agentQaRoot, proposalId)?.payload
+  const raw = readJsonIfPresent(pendingPath(agentQaRoot, proposalId))
+  if (raw === undefined) return undefined
+  return extractStoredKnowledgeProposal(raw).payload
+}
+
+/**
+ * Is a pending file on disk under this id, whatever kind it holds?
+ *
+ * The presence question, separated from the read (394-18). `resolveClaim`'s restored-pending arm
+ * asks whether a name came BACK — it does not read the document — and answering that through a
+ * knowledge-narrowed read would have made the claim resolution throw on a directory that holds a
+ * draft, which is a listing failure wearing a race's clothes.
+ */
+export function pendingProposalExists(agentQaRoot: string, proposalId: string): boolean {
+  return readJsonIfPresent(pendingPath(agentQaRoot, proposalId)) !== undefined
 }
 
 /** As {@link readPendingProposal}, keeping the attribution the file carried. */
@@ -555,7 +696,7 @@ function resolveClaim(
     // and this proposal is applicable again. Answering `apply-in-flight` hands it to the caller's
     // existing bounded retry loop, which re-asks and takes the claim on its next poll — rather
     // than growing a second recovery mechanism in here beside the one that already works.
-    if (readPendingProposal(agentQaRoot, proposalId) !== undefined) {
+    if (pendingProposalExists(agentQaRoot, proposalId)) {
       return { kind: 'apply-in-flight' }
     }
     return { kind: 'not-found' }
@@ -566,7 +707,10 @@ function resolveClaim(
     // guessing what the proposal said is exactly the thing propose+apply exists to prevent.
     throw new ProposalNotFoundError(proposalId)
   }
-  const stored = extractStoredProposal(raw)
+  // THE KNOWLEDGE NARROW, and it is the claim PATH's rule rather than the store's: what this
+  // resolution hands back is committed by `publishAppliedProposal`, whose record schema carries a
+  // `KnowledgeProposalV1`. A draft claimed here would produce an applied file nothing can read.
+  const stored = extractStoredKnowledgeProposal(raw)
   return {
     kind: 'consumed',
     proposal: stored.payload,
@@ -651,9 +795,9 @@ export function mintProposalId(randomUuid: () => string): string {
 
 /** What a reject did, or why it did nothing. Every arm is a RESULT; none is a throw. */
 export type RejectProposalOutcome =
-  | { kind: 'rejected'; record: RejectedProposalRecord }
-  | { kind: 'already-applied'; record: AppliedProposalRecord }
-  | { kind: 'already-rejected'; record: RejectedProposalRecord }
+  | { kind: 'rejected'; record: RejectedProposalRecord | DecidedProposalRecord }
+  | { kind: 'already-applied'; record: AppliedProposalRecord | DecidedProposalRecord }
+  | { kind: 'already-rejected'; record: RejectedProposalRecord | DecidedProposalRecord }
   | { kind: 'apply-in-flight'; claimPath?: string }
   | { kind: 'not-found' }
 
@@ -680,44 +824,164 @@ export function rejectPendingProposal(
   proposalId: string,
   decision: { readonly at: number; readonly reason?: string },
 ): RejectProposalOutcome {
+  const outcome = decidePendingProposal(agentQaRoot, proposalId, {
+    decision: 'rejected',
+    at: decision.at,
+    ...(decision.reason === undefined ? {} : { reason: decision.reason }),
+  })
+  // The two vocabularies differ by ONE word and the rename happens here rather than in the generic
+  // verb, because `rejected` is what 391's port, op and surfaces have always called this arm and
+  // renaming it would have been a wire change for an internal refactor.
+  return outcome.kind === 'decided' ? { kind: 'rejected', record: outcome.record } : outcome
+}
+
+/** What a decision did, or why it did nothing. Every arm is a RESULT; none is a throw. */
+export type DecideProposalOutcome =
+  | { kind: 'decided'; record: RejectedProposalRecord | DecidedProposalRecord }
+  | { kind: 'already-applied'; record: AppliedProposalRecord | DecidedProposalRecord }
+  | { kind: 'already-rejected'; record: RejectedProposalRecord | DecidedProposalRecord }
+  | { kind: 'apply-in-flight'; claimPath?: string }
+  | { kind: 'not-found' }
+
+/**
+ * Close a pending proposal of ANY kind with a human's decision (394-18 · D-05 / D-11 / D-12).
+ *
+ * THE ONE DECISION PATH FOR THE TWO KINDS 394 MINTS, and the generalisation of 391's reject rather
+ * than a second mechanism beside it: the same claim rename resolves the race, the same durable name
+ * shapes record the answer, and the durable file lands BEFORE the claim marker is retired, so this
+ * verb inherits `resolveClaim`'s single-retirement-totality property instead of needing a new
+ * argument for it.
+ *
+ * WHY THE KNOWLEDGE APPLY IS REFUSED HERE BY NAME. Applying a knowledge proposal is not a decision
+ * this module can record on its own: it commits deltas and produces a forget receipt, which is what
+ * `AppliedProposalRecordSchema` carries and what `apply-review.ts` claims and publishes. A second
+ * way to mark a knowledge proposal applied — one that recorded the decision and committed nothing —
+ * is exactly the half-applied state the two-step design exists to prevent. Rejecting a knowledge
+ * proposal is unaffected, because a rejection commits nothing by definition.
+ *
+ * THE KNOWLEDGE REJECTION KEEPS ITS 391 SHAPE, byte for byte. A `test-draft` or a `finding` has no
+ * `KnowledgeProposalV1` to put in that wrapper's `proposal` field, so those land as
+ * {@link DecidedProposalRecordSchema} — and the classifier tells the two apart structurally.
+ */
+export function decidePendingProposal(
+  agentQaRoot: string,
+  proposalId: string,
+  decision: {
+    readonly decision: ProposalDecision
+    readonly at: number
+    readonly reason?: string
+  },
+): DecideProposalOutcome {
   // IN-03, extended to the new verb: the shape check lives where the joining happens, and the
-  // joining is two lines below. Before any syscall, so a refused id leaves no probe behind.
+  // joining is a few lines below. Before any syscall, so a refused id leaves no probe behind.
   ProposalIdSchema.parse(proposalId)
+
+  // Asked BEFORE the claim, so a refused decision leaves the proposal exactly as applicable as it
+  // was. The read is non-destructive and the answer cannot go stale in the wrong direction: a kind
+  // is a fact about a file that no rename changes.
+  if (decision.decision === 'applied') {
+    const pending = readJsonIfPresent(pendingPath(agentQaRoot, proposalId))
+    if (pending !== undefined && extractStoredProposal(pending).kind === 'knowledge') {
+      throw new TypeError(
+        `proposal ${proposalId} is a knowledge proposal: applying one commits deltas and produces `
+          + 'a forget receipt, so it is claimed and published through the knowledge apply rather '
+          + 'than recorded here',
+      )
+    }
+  }
 
   const claimed = claimedProposalPath(agentQaRoot, proposalId)
   try {
     renameSync(pendingPath(agentQaRoot, proposalId), claimed)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    const decided = readDecidedProposal(agentQaRoot, proposalId)
-    if (decided?.kind === 'already-applied') return decided
-    if (decided?.kind === 'already-rejected') return decided
+    const decided = readAnyDecidedProposal(agentQaRoot, proposalId)
+    if (decided !== undefined) return decided
     const marker = findClaimMarker(agentQaRoot, proposalId)
     if (marker !== undefined) return { kind: 'apply-in-flight', claimPath: marker }
     return { kind: 'not-found' }
   }
 
   const stored = extractStoredProposal(readJsonIfPresent(claimed))
-  const record = RejectedProposalRecordSchema.parse({
-    proposal: stored.payload,
-    decision: {
-      decision: 'rejected',
-      at: decision.at,
-      ...(decision.reason === undefined ? {} : { reason: decision.reason }),
-    },
-    ...(stored.origin === undefined ? {} : { origin: stored.origin }),
-  })
-  writeFileAtomically(
-    rejectedPath(agentQaRoot, proposalId),
-    `${JSON.stringify(record, undefined, 2)}\n`,
-  )
+  const decisionRecord = {
+    decision: decision.decision,
+    at: decision.at,
+    ...(decision.reason === undefined ? {} : { reason: decision.reason }),
+  }
+  const record: RejectedProposalRecord | DecidedProposalRecord =
+    stored.kind === 'knowledge' && decision.decision === 'rejected'
+      ? RejectedProposalRecordSchema.parse({
+          proposal: stored.payload,
+          decision: decisionRecord,
+          ...(stored.origin === undefined ? {} : { origin: stored.origin }),
+        })
+      : DecidedProposalRecordSchema.parse({
+          record: {
+            schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+            id: stored.id,
+            kind: stored.kind,
+            origin: stored.origin,
+            payload: stored.payload,
+          },
+          decision: decisionRecord,
+        })
+  const durablePath = decision.decision === 'applied'
+    ? appliedPath(agentQaRoot, proposalId)
+    : rejectedPath(agentQaRoot, proposalId)
+  writeFileAtomically(durablePath, `${JSON.stringify(record, undefined, 2)}\n`)
   try {
-    renameSync(claimed, `${rejectedPath(agentQaRoot, proposalId)}${RETIRED_CLAIM_SUFFIX}`)
+    renameSync(claimed, `${durablePath}${RETIRED_CLAIM_SUFFIX}`)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
   fsyncDirectory(proposalsDir(agentQaRoot))
-  return { kind: 'rejected', record }
+  return { kind: 'decided', record }
+}
+
+/**
+ * EITHER decided name under this id, in EITHER wrapper shape — the kind-generic loser read.
+ *
+ * `readDecidedProposal` above stays knowledge-typed because the claim resolution it serves hands
+ * its record to a knowledge commit. This one serves the decision path, which is reachable for every
+ * kind, so it must be able to read a decided draft without a parse failure that would report a
+ * perfectly readable file as a proposal nobody can find.
+ */
+function readAnyDecidedProposal(
+  agentQaRoot: string,
+  proposalId: string,
+): DecideProposalOutcome | undefined {
+  const applied = readJsonIfPresent(appliedPath(agentQaRoot, proposalId))
+  if (applied !== undefined) {
+    return { kind: 'already-applied', record: parseAppliedFile(applied) }
+  }
+  const rejected = readJsonIfPresent(rejectedPath(agentQaRoot, proposalId))
+  if (rejected !== undefined) {
+    return { kind: 'already-rejected', record: parseRejectedFile(rejected) }
+  }
+  return undefined
+}
+
+/**
+ * THE DISCRIMINANT BETWEEN THE WRAPPERS is the field name `record`, which neither 387/391 wrapper
+ * can carry — both are `.strict()` — so telling the shapes apart needs no version field, no
+ * migration and no re-read of a single retained file.
+ */
+function isGenericDecidedFile(raw: unknown): boolean {
+  return typeof raw === 'object' && raw !== null && 'record' in raw
+}
+
+/** One `.applied.json` file, in whichever wrapper wrote it. */
+function parseAppliedFile(raw: unknown): AppliedProposalRecord | DecidedProposalRecord {
+  return isGenericDecidedFile(raw)
+    ? DecidedProposalRecordSchema.parse(raw)
+    : AppliedProposalRecordSchema.parse(raw)
+}
+
+/** One `.rejected.json` file, in whichever wrapper wrote it. */
+function parseRejectedFile(raw: unknown): RejectedProposalRecord | DecidedProposalRecord {
+  return isGenericDecidedFile(raw)
+    ? DecidedProposalRecordSchema.parse(raw)
+    : RejectedProposalRecordSchema.parse(raw)
 }
 
 /**
@@ -856,11 +1120,11 @@ export function listProposalEnvelopes(
     }
   }
 
-  // Narrowed to the knowledge arm rather than to the generic entry: every envelope here came out
-  // of `envelopeAt`, which reads THIS store's files, and the ordering key below is a field only
-  // that arm has. Widening the local type would have needed a cast at the sort, which is the
-  // shape of edit that later reads a finding's payload as a knowledge proposal's.
-  const entries: { envelope: KnowledgeProposalEnvelope; applyInFlight: boolean }[] = []
+  // EVERY KIND, as the generic entry (394-18). It was narrowed to the knowledge arm while that was
+  // the only arm this store's files could hold and the ordering key was a field only that arm has;
+  // the ordering key is now {@link mintedAtOf}, which answers for all three, so the narrow — and
+  // the cast it would otherwise have needed at the sort — is gone rather than widened around.
+  const entries: ProposalInboxEntry[] = []
   for (const [id, located] of durable) {
     const envelope = envelopeAt(located.path, located.state, options.now)
     if (envelope === undefined) continue
@@ -871,9 +1135,22 @@ export function listProposalEnvelopes(
   // filesystem fact and differs between machines and between two calls after a rename, so a
   // listing that inherited it would render two different tables from one store.
   return entries.sort((left, right) =>
-    left.envelope.payload.proposedAt - right.envelope.payload.proposedAt
+    mintedAtOf(left.envelope) - mintedAtOf(right.envelope)
     || (left.envelope.id < right.envelope.id ? -1 : left.envelope.id > right.envelope.id ? 1 : 0),
   )
+}
+
+/**
+ * WHEN a proposal was made, for every kind — the ordering key AND the expiry input, spelled once.
+ *
+ * A knowledge proposal records its own `proposedAt` and has since 387, including in the bare files
+ * that carry no origin at all; the two kinds 394 mints record theirs on the envelope's `origin.at`,
+ * which their durable record REQUIRES. One function so the sort and the lifecycle rule cannot come
+ * to different conclusions about the same file — the failure the envelope's own `status` note
+ * describes, arriving through the ordering instead.
+ */
+function mintedAtOf(envelope: ProposalEnvelope): number {
+  return envelope.kind === 'knowledge' ? envelope.payload.proposedAt : envelope.origin?.at ?? 0
 }
 
 /**
@@ -898,35 +1175,34 @@ export function showProposalEnvelope(
 }
 
 /** Read one durable file and project it into the read-time envelope its state implies. */
-/** The knowledge arm, which is the only one this store's files can hold. */
-type KnowledgeProposalEnvelope = Extract<ProposalEnvelope, { kind: 'knowledge' }>
-
 function envelopeAt(
   path: string,
   state: ProposalDurableState,
   now: number,
-): KnowledgeProposalEnvelope | undefined {
+): ProposalEnvelope | undefined {
   const raw = readJsonIfPresent(path)
   if (raw === undefined) return undefined
-  if (state === 'applied') {
-    const record = AppliedProposalRecordSchema.parse(raw)
+  if (state === 'pending') return envelopeOf(extractStoredProposal(raw), 'pending', undefined, now)
+  const record = state === 'applied' ? parseAppliedFile(raw) : parseRejectedFile(raw)
+  if ('record' in record) {
     return envelopeOf(
-      { payload: record.proposal, origin: record.origin },
-      'applied',
+      extractStoredProposal(record.record),
+      state,
       record.decision,
       now,
     )
   }
-  if (state === 'rejected') {
-    const record = RejectedProposalRecordSchema.parse(raw)
-    return envelopeOf(
-      { payload: record.proposal, origin: record.origin },
-      'rejected',
-      record.decision,
-      now,
-    )
-  }
-  return envelopeOf(extractStoredProposal(raw), 'pending', undefined, now)
+  return envelopeOf(
+    {
+      id: record.proposal.proposalId,
+      kind: 'knowledge',
+      payload: record.proposal,
+      ...(record.origin === undefined ? {} : { origin: record.origin }),
+    },
+    state,
+    record.decision,
+    now,
+  )
 }
 
 function envelopeOf(
@@ -934,23 +1210,32 @@ function envelopeOf(
   durableState: ProposalDurableState,
   decision: ProposalDecisionRecord | undefined,
   now: number,
-): KnowledgeProposalEnvelope {
-  return {
-    id: stored.payload.proposalId,
-    kind: 'knowledge',
+): ProposalEnvelope {
+  const common = {
+    id: stored.id,
     // The ONE lifecycle rule, computed by the schema's own function rather than re-derived from
     // the suffix this module happened to classify. A second spelling of "what does 30 days mean"
-    // is how the inbox and the digest start disagreeing about the same file.
+    // is how the inbox and the digest start disagreeing about the same file. `proposedAt` is
+    // {@link mintedAtOf}'s answer, so the expiry and the ordering read one fact.
     status: computeProposalEnvelopeStatus({
       durableState,
-      proposedAt: stored.payload.proposedAt,
+      proposedAt: proposedAtOf(stored),
       now,
     }),
     ...(stored.origin === undefined ? {} : { origin: stored.origin }),
     evidenceRefs: evidenceRefsFor(stored),
     ...(decision === undefined ? {} : { decision }),
-    payload: stored.payload,
   }
+  // The cast is on the CORRELATION rather than on the payload: `stored` is already discriminated
+  // and its payload already parsed at its own arm, and TypeScript cannot see that spreading a
+  // discriminated pair back into an object literal preserves the pairing. Every field above is
+  // kind-independent by construction.
+  return { ...common, kind: stored.kind, payload: stored.payload } as ProposalEnvelope
+}
+
+/** When the proposal was made — the same answer {@link mintedAtOf} gives, off the stored record. */
+function proposedAtOf(stored: StoredProposal): number {
+  return stored.kind === 'knowledge' ? stored.payload.proposedAt : stored.origin?.at ?? 0
 }
 
 /**
@@ -961,15 +1246,32 @@ function envelopeOf(
  * recorded one. The grains are the envelope's own three, and `record`/`bundle` are deliberately
  * the same two words `KnowledgeTargetRef` discriminates on, so a surface resolving a ref out of
  * the inbox resolves it the same way it resolves one out of the verb that proposed it.
+ *
+ * THE TWO AUTHORING KINDS ADDRESS RUNS AND NOTHING ELSE (394-18), which is a fact about the grain
+ * vocabulary rather than a gap: a draft's evidence is the runs the gates took and the finding's own
+ * coordinates, and neither a shelf file nor a step index is a `record`, a `bundle` or a `run`.
+ * Inventing a fourth grain so these arms could have more refs would put an address in an inbox that
+ * no surface in this build can resolve. The draft's bytes stay one `proposals.show` away, which is
+ * the arms' own map-not-territory posture.
  */
 function evidenceRefsFor(stored: StoredProposal): readonly ProposalEvidenceRef[] {
-  const refs: ProposalEvidenceRef[] = [
-    stored.payload.targetRef.grain === 'record'
-      ? { grain: 'record', ref: stored.payload.targetRef.recordId }
-      : { grain: 'bundle', ref: stored.payload.targetRef.shortId },
-  ]
-  if (stored.origin?.runId !== undefined) {
-    refs.push({ grain: 'run', ref: stored.origin.runId })
+  if (stored.kind === 'knowledge') {
+    const refs: ProposalEvidenceRef[] = [
+      stored.payload.targetRef.grain === 'record'
+        ? { grain: 'record', ref: stored.payload.targetRef.recordId }
+        : { grain: 'bundle', ref: stored.payload.targetRef.shortId },
+    ]
+    if (stored.origin?.runId !== undefined) refs.push({ grain: 'run', ref: stored.origin.runId })
+    return refs
   }
-  return refs
+  // DISTINCT run ids, in the order they were recorded. A finding's evidence refs address several
+  // channels of ONE step, so the same run id appears repeatedly; listing it once per channel would
+  // hand a reader the same thing to go and look at three times.
+  const runIds = new Set<string>()
+  if (stored.origin?.runId !== undefined) runIds.add(stored.origin.runId)
+  if (stored.kind === 'finding') {
+    if (stored.payload.failurePoint !== null) runIds.add(stored.payload.failurePoint.runId)
+    for (const ref of stored.payload.evidenceRefs) runIds.add(ref.runId)
+  }
+  return [...runIds].map((ref) => ({ grain: 'run', ref }))
 }

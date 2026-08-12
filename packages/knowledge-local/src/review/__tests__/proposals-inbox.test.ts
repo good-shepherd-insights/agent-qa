@@ -153,6 +153,11 @@ describe('the proposals inbox (PROP-03, D-10/D-12)', () => {
 
       expect(outcome.kind).toBe('rejected')
       if (outcome.kind !== 'rejected') throw new Error('unreachable')
+      // A KNOWLEDGE rejection still lands in the 391 wrapper, byte for byte (394-18). The narrow
+      // is the assertion: the kind-generic decision path writes `record` instead of `proposal`,
+      // so a knowledge rejection that started using it would fail HERE rather than silently
+      // changing the shape of files this store retains forever.
+      if (!('proposal' in outcome.record)) throw new Error('expected the 391 rejection wrapper')
       expect(outcome.record.proposal.proposalId).toBe(id)
       expect(outcome.record.decision).toEqual({ decision: 'rejected', at: 1_000, reason: 'not now' })
 
@@ -178,6 +183,7 @@ describe('the proposals inbox (PROP-03, D-10/D-12)', () => {
 
       expect(outcome.kind).toBe('already-applied')
       if (outcome.kind !== 'already-applied') throw new Error('unreachable')
+      if (!('proposal' in outcome.record)) throw new Error('expected the 387 applied wrapper')
       expect(outcome.record.proposal.proposalId).toBe(id)
       expect(existsSync(join(proposalsDir(agentQaRoot), `${id}.rejected.json`))).toBe(false)
       expect(names()).toEqual(before)
@@ -439,12 +445,22 @@ describe('the proposals inbox (PROP-03, D-10/D-12)', () => {
       expect(raw.kind).toBe('knowledge')
       expect(raw.payload).toEqual(wrapped)
 
+      // `id` and `kind` joined the extraction in 394-18, when the store learned the envelope's
+      // other two kinds. A bare 387-era document answers `knowledge` because that is the only
+      // kind 387 could write — read off the shape, never defaulted for the convenience of a
+      // reader.
       expect(extractStoredProposal(raw)).toEqual({
+        id: wrapped.proposalId,
+        kind: 'knowledge',
         payload: wrapped,
         origin: { emittedBy: 'knowledge.forget.propose', at: wrapped.proposedAt },
       })
       // …and the legacy shape through the SAME extractor, which is what "no migration" means.
-      expect(extractStoredProposal(wrapped)).toEqual({ payload: wrapped })
+      expect(extractStoredProposal(wrapped)).toEqual({
+        id: wrapped.proposalId,
+        kind: 'knowledge',
+        payload: wrapped,
+      })
       // The ordinary read path is indifferent to which shape it found.
       expect(readPendingProposal(agentQaRoot, wrapped.proposalId)).toEqual(wrapped)
     })

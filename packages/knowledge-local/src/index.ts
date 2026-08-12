@@ -730,9 +730,15 @@ export type {
 export {
   PROPOSALS_DIR_NAME,
   ProposalNotFoundError,
+  // 394-18: the kind-generic half — the write verb every kind rides, the decision verb the two
+  // authoring kinds are closed by, and the extraction narrowed to the knowledge commit path.
+  decidePendingProposal,
+  extractStoredKnowledgeProposal,
   extractStoredProposal,
   isProcessAlive,
   listProposalEnvelopes,
+  mintProposalId,
+  pendingProposalExists,
   proposalsDir,
   readAppliedProposal,
   readPendingProposal,
@@ -740,6 +746,7 @@ export {
   readRejectedProposal,
   rejectPendingProposal,
   showProposalEnvelope,
+  writePendingProposalRecord,
 } from './review/proposals-store.js'
 // 391 PROP-03: the inbox port the composition root binds. The port TYPE lives in schema (both
 // `agent` and this package consume it and neither may import the other); what is published here
@@ -762,10 +769,13 @@ export type {
 } from './authoring/draft-receipts-store.js'
 export type {
   AppliedProposalRecord,
+  DecideProposalOutcome,
+  DecidedProposalRecord,
   ProposalInboxEntry,
   ProposalInboxReadOptions,
   RejectProposalOutcome,
   RejectedProposalRecord,
+  StoredKnowledgeProposal,
   StoredProposal,
 } from './review/proposals-store.js'
 export { KnowledgeMaintenanceScanError } from './maintenance-scan.js'

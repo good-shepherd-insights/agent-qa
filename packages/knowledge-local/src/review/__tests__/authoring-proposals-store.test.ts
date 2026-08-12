@@ -17,6 +17,10 @@
 // can invent a draft: the end-to-end mint through `authoring.draft.write` lives in `agent-local`,
 // which is the one package that may name both this store and that op.
 
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import {
   FindingProposalV1Schema,
   KnowledgeProposalV1Schema,
@@ -29,9 +33,33 @@ import type {
   ProposalRecord,
   TestDraftProposalV1,
 } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { extractStoredProposal } from '../proposals-store.js'
+import { createProposalsInbox } from '../proposals-inbox.js'
+import {
+  decidePendingProposal,
+  extractStoredProposal,
+  listProposalEnvelopes,
+  proposalsDir,
+  showProposalEnvelope,
+  writePendingProposal,
+  writePendingProposalRecord,
+} from '../proposals-store.js'
+
+let agentQaRoot: string
+
+beforeEach(() => {
+  agentQaRoot = mkdtempSync(join(tmpdir(), 'authoring-proposals-store-'))
+})
+
+afterEach(() => {
+  rmSync(agentQaRoot, { recursive: true, force: true })
+})
+
+/** The bytes of one durable file — the instrument for "387-era files are byte-untouched". */
+function bytesOf(name: string): string {
+  return readFileSync(join(proposalsDir(agentQaRoot), name), 'utf8')
+}
 
 const TEST_DRAFT_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9a'
 const FINDING_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9b'
@@ -193,5 +221,154 @@ describe('the store extracts every kind the envelope discriminates (394-18)', ()
       origin: { emittedBy: 'authoring.draft.write', at: 2_000 },
       payload: incomplete,
     })).toThrow()
+  })
+})
+
+describe('the two authoring kinds PERSIST and read back through the shipped inbox (394-18)', () => {
+  it('round-trips a test-draft record: written by the store verb, read by the store listing', () => {
+    writePendingProposalRecord(agentQaRoot, testDraftRecord())
+
+    const entries = listProposalEnvelopes(agentQaRoot, { now: 2_100 })
+
+    expect(entries.length).toBe(1)
+    const envelope = entries[0]?.envelope
+    expect(envelope?.kind).toBe('test-draft')
+    expect(envelope?.id).toBe(TEST_DRAFT_ID)
+    expect(envelope?.status).toBe('pending')
+    expect(envelope?.payload).toEqual(testDraftPayload())
+    expect(envelope?.origin).toEqual({
+      emittedBy: 'authoring.draft.write',
+      runId: 'run_gate_3',
+      at: 2_000,
+    })
+    // The run the gates took IS what a person goes and looks at before deciding.
+    expect(envelope?.evidenceRefs).toEqual([{ grain: 'run', ref: 'run_gate_3' }])
+  })
+
+  it('round-trips a finding record, addressing every DISTINCT run its evidence names', () => {
+    writePendingProposalRecord(agentQaRoot, findingRecord())
+
+    const entry = showProposalEnvelope(agentQaRoot, FINDING_ID, { now: 3_100 })
+
+    expect(entry?.envelope.kind).toBe('finding')
+    expect(entry?.envelope.payload).toEqual(findingPayload())
+    // The failure point and the evidence ref name the SAME run; it is offered once.
+    expect(entry?.envelope.evidenceRefs).toEqual([{ grain: 'run', ref: 'run_finding_1' }])
+  })
+
+  it('lists all THREE kinds out of one directory, in minted-at order', () => {
+    // Every document here is written through a store verb; not one is assembled as JSON.
+    writePendingProposalRecord(agentQaRoot, findingRecord())
+    writePendingProposalRecord(agentQaRoot, testDraftRecord())
+    writePendingProposal(agentQaRoot, knowledgePayload())
+
+    const entries = listProposalEnvelopes(agentQaRoot, { now: 4_000 })
+
+    expect(entries.map((entry) => entry.envelope.kind)).toEqual([
+      'knowledge', // proposedAt 1_000
+      'test-draft', // origin.at 2_000
+      'finding', // origin.at 3_000
+    ])
+    expect(entries.every((entry) => entry.envelope.status === 'pending')).toBe(true)
+  })
+
+  it('leaves a 387-era BARE document byte-identical after a listing that reads it', () => {
+    const legacy = knowledgePayload()
+    // The 387 writer's own shape: `writePendingProposal` with NO origin writes the bare payload
+    // document, which is what every proposal already on a real machine looks like.
+    writePendingProposal(agentQaRoot, legacy)
+    const raw = JSON.parse(bytesOf(`${legacy.proposalId}.json`)) as Record<string, unknown>
+    expect(raw.payload).toBeUndefined()
+    expect(raw.kind).toBeUndefined()
+    const before = bytesOf(`${legacy.proposalId}.json`)
+
+    writePendingProposalRecord(agentQaRoot, testDraftRecord())
+    const entries = listProposalEnvelopes(agentQaRoot, { now: 4_000 })
+
+    expect(entries.map((entry) => entry.envelope.kind)).toEqual(['knowledge', 'test-draft'])
+    expect(entries[0]?.envelope.origin).toBeUndefined()
+    // ABSORB AS DATA: reading a mixed directory rewrites nothing.
+    expect(bytesOf(`${legacy.proposalId}.json`)).toBe(before)
+  })
+
+  it("the inbox DTO is already total over the widened kinds — proved, not assumed", () => {
+    // The plan's own instruction: if `toDto` maps envelope-generically, prove it with a cell
+    // rather than asserting it. This drives the SHIPPED port, not the store.
+    writePendingProposalRecord(agentQaRoot, testDraftRecord())
+    writePendingProposalRecord(agentQaRoot, findingRecord())
+    const inbox = createProposalsInbox({
+      resolveAgentQaRoot: () => agentQaRoot,
+      now: () => 4_000,
+    })
+
+    return inbox.list().then((rows) => {
+      expect(rows.map((row) => row.envelope.kind)).toEqual(['test-draft', 'finding'])
+      expect(rows.every((row) => row.applyInFlight === false)).toBe(true)
+    })
+  })
+})
+
+describe('a decision on an authoring proposal is durable (394-18)', () => {
+  it('records an APPLIED decision the listing reads back, and refuses a second one', () => {
+    writePendingProposalRecord(agentQaRoot, testDraftRecord())
+
+    const decided = decidePendingProposal(agentQaRoot, TEST_DRAFT_ID, {
+      decision: 'applied',
+      at: 5_000,
+    })
+
+    expect(decided.kind).toBe('decided')
+    const entry = showProposalEnvelope(agentQaRoot, TEST_DRAFT_ID, { now: 5_100 })
+    expect(entry?.envelope.status).toBe('applied')
+    expect(entry?.envelope.decision).toEqual({ decision: 'applied', at: 5_000 })
+    // …and the payload survived the decision, because rejection and apply are both retention.
+    expect(entry?.envelope.payload).toEqual(testDraftPayload())
+
+    const second = decidePendingProposal(agentQaRoot, TEST_DRAFT_ID, {
+      decision: 'applied',
+      at: 6_000,
+    })
+    expect(second.kind).toBe('already-applied')
+    expect(showProposalEnvelope(agentQaRoot, TEST_DRAFT_ID, { now: 6_100 })?.envelope.decision)
+      .toEqual({ decision: 'applied', at: 5_000 })
+  })
+
+  it('records a REJECTED decision on a finding, through the same durable name shapes', () => {
+    writePendingProposalRecord(agentQaRoot, findingRecord())
+
+    const decided = decidePendingProposal(agentQaRoot, FINDING_ID, {
+      decision: 'rejected',
+      at: 5_000,
+      reason: 'known issue',
+    })
+
+    expect(decided.kind).toBe('decided')
+    const entry = showProposalEnvelope(agentQaRoot, FINDING_ID, { now: 5_100 })
+    expect(entry?.envelope.status).toBe('rejected')
+    expect(entry?.envelope.decision)
+      .toEqual({ decision: 'rejected', at: 5_000, reason: 'known issue' })
+  })
+
+  it('refuses to record a knowledge APPLY here by name — that path commits deltas', () => {
+    const payload = knowledgePayload()
+    writePendingProposal(agentQaRoot, payload)
+
+    let caught: unknown
+    try {
+      decidePendingProposal(agentQaRoot, payload.proposalId, { decision: 'applied', at: 5_000 })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(TypeError)
+    expect((caught as Error).message).toContain('knowledge proposal')
+    // AND THE PROPOSAL IS UNTOUCHED: a refused decision leaves it exactly as applicable as it was.
+    expect(showProposalEnvelope(agentQaRoot, payload.proposalId, { now: 5_100 })?.envelope.status)
+      .toBe('pending')
+  })
+
+  it('answers not-found for an id nothing was ever written under', () => {
+    expect(decidePendingProposal(agentQaRoot, TEST_DRAFT_ID, { decision: 'applied', at: 1 }).kind)
+      .toBe('not-found')
   })
 })
