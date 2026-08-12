@@ -83,7 +83,11 @@ import { refineDraft } from './refine.js'
 import type { RefinementOutcome } from './refine.js'
 import { REPAIR_ITERATION_CAP, repairDraft } from './repair.js'
 import type { RepairOutcome } from './repair.js'
-import { AuthoringRouterUnroutableError, routeRepairOrFinding } from './router.js'
+import {
+  AuthoringRouterUnroutableError,
+  findingRouteForAbandonedRepair,
+  routeRepairOrFinding,
+} from './router.js'
 import type { FindingRoute } from './router.js'
 import { buildTieredPrompt } from '../prompt/tiered-prompt-builder.js'
 
@@ -745,12 +749,18 @@ export async function routeAfterVerify(
     }
   }
 
-  const exhaustedRoute: FindingRoute = {
-    kind: 'finding',
-    signalClass: 'indefinitive-failure',
-    failurePoint: null,
-    evidenceRefs: [],
-  }
+  // THE ABANDONED ARM READS THE RUN IT WAS ROUTED ON (CR-02). It used to be an empty literal —
+  // `failurePoint: null`, `evidenceRefs: []` — built with `handoff` and `route.failingStepIndex`
+  // both in scope, so a person was handed a durable finding naming no step, no run and no trace. The
+  // derivation is the router's, shared with the ordinary finding arm rather than repeated here: an
+  // exhausted repair and a first-pass finding are the same artifact class, and this function's own
+  // header says so. `handoff` is defined for the reason given at the repair call above — the router
+  // refuses `no-run-evidence` by name and that refusal was already converted.
+  const exhaustedRoute: FindingRoute = findingRouteForAbandonedRepair(
+    draftRef,
+    handoff as CompletedRunHandoff,
+    route.failingStepIndex,
+  )
   return {
     outcome: {
       kind: 'finding',

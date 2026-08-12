@@ -327,6 +327,83 @@ function evidenceRefsFor(
 }
 
 /**
+ * THE finding arm's evidence, from ONE step of ONE member. One derivation, two callers.
+ *
+ * Both callers below build the same two fields from the same walk: `routeRepairOrFinding`'s finding
+ * arm, and {@link findingRouteForAbandonedRepair} for a repair that was abandoned. They are one
+ * function rather than two similar blocks because the alternative was measured — the exhausted arm
+ * shipped an empty literal (`failurePoint: null`, `evidenceRefs: []`) beside a routed handoff it
+ * never read, and every cell over that arm passed (394-VERIFICATION, CR-02). A construction copied
+ * into a second module drifts from this one the first time either side is edited.
+ *
+ * `undefined` in means the member has no step to point at, which is the ONLY case that yields a
+ * null point and no refs — the nullability rule the finding arm has always documented.
+ */
+function findingEvidenceFor(
+  runId: string,
+  member: PerTestOutcome,
+  point: StepEvidence | undefined,
+): Pick<FindingRoute, 'failurePoint' | 'evidenceRefs'> {
+  if (point === undefined) return { failurePoint: null, evidenceRefs: [] }
+  return {
+    failurePoint: {
+      runId,
+      stepIndex: point.stepIndex,
+      stepText: point.stepText,
+      reasoning: point.verifierVerdict.reasoning,
+      ...(point.verdictSource === undefined ? {} : { verdictSource: point.verdictSource }),
+    },
+    evidenceRefs: evidenceRefsFor(runId, member, point),
+  }
+}
+
+/**
+ * The finding arm for a repair the loop ABANDONED, over the run the router already read (CR-02).
+ *
+ * WHY IT LIVES HERE AND NOT AT THE CALL SITE. An exhausted or prefix-regressed repair produces the
+ * same artifact class as a first-pass finding — `routeAfterVerify`'s own header says so — and that
+ * class's evidence is derived in exactly one place. Building it in `loop.ts` would be a second
+ * answer to "which step does this finding point at", assembled from the same fields, free to
+ * disagree; building it from a literal is what shipped, and a durable finding with no failure point
+ * and no refs is unauditable by construction (T-394-90).
+ *
+ * `signalClass` is `indefinitive-failure` and nothing else: the classification the run's own
+ * evidence carried belonged to the REPAIR arm (`execution-mechanics`), and repair having failed is
+ * a fact about the loop rather than a new reading of the run. A repair-prefixed class would be a
+ * string outside {@link ROUTER_SIGNAL_CLASSES}, which is the WR-09 defect this file already closed.
+ *
+ * `failingStepIndex` is the repair route's own — the step the loop tried to fix — so the finding
+ * points where the repair was aimed. `null` (a member-level signal) falls back to the first step
+ * the verifier rejected, and a member with neither yields a null point rather than a fabricated one.
+ */
+export function findingRouteForAbandonedRepair(
+  draftRef: DraftRef,
+  handoff: CompletedRunHandoff,
+  failingStepIndex: number | null,
+): FindingRoute {
+  const member = memberFor(draftRef, handoff)
+  if (member === undefined) {
+    // Unreachable through the loop — reaching a repair arm at all means this member was found —
+    // and answered rather than thrown, because repair has already been spent by the time this is
+    // called and a throw here would lose the abandonment the caller is filing.
+    return {
+      kind: 'finding',
+      signalClass: 'indefinitive-failure',
+      failurePoint: null,
+      evidenceRefs: [],
+    }
+  }
+  const named = failingStepIndex === null
+    ? undefined
+    : member.steps.find((step) => step.stepIndex === failingStepIndex)
+  return {
+    kind: 'finding',
+    signalClass: 'indefinitive-failure',
+    ...findingEvidenceFor(handoff.runId, member, named ?? member.steps.find(isFailedVerdict)),
+  }
+}
+
+/**
  * The one deterministic repair-versus-finding derivation (D-08).
  *
  * Pure: it reads the run document and mutates nothing. Total over every classification the table
@@ -366,15 +443,6 @@ export function routeRepairOrFinding(
   return {
     kind: 'finding',
     signalClass: signalClass as RouterFindingSignalClass,
-    failurePoint: point === undefined
-      ? null
-      : {
-          runId: handoff.runId,
-          stepIndex: point.stepIndex,
-          stepText: point.stepText,
-          reasoning: point.verifierVerdict.reasoning,
-          ...(point.verdictSource === undefined ? {} : { verdictSource: point.verdictSource }),
-        },
-    evidenceRefs: point === undefined ? [] : evidenceRefsFor(handoff.runId, member, point),
+    ...findingEvidenceFor(handoff.runId, member, point),
   }
 }
