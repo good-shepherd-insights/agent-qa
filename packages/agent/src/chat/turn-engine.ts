@@ -45,8 +45,6 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../functions/ops/authoring-draft-write.js'
-import { AUTHORING_DRAFT_VERIFY_FUNCTION_ID } from '../functions/ops/authoring-verify-draft.js'
-import { AUTHORING_FUNNEL_GET_FUNCTION_ID } from '../functions/ops/authoring-funnel-get.js'
 
 import type {
   CallerMint,
@@ -66,6 +64,7 @@ import type { ChatConfigState } from './config-drift.js'
 import { replayToModelMessages } from './compaction.js'
 import { directiveNotBoundReason, resolveClause } from './resolver-table.js'
 import { replaySession } from './session-repair.js'
+import { SESSION_STAMPED_FUNCTION_IDS, WINDOW_STAMPED_FUNCTION_IDS } from './session-stamps.js'
 import type { ChatDirectiveName, ChatResolverTable } from './resolver-table.js'
 
 export interface TurnEngineDeps {
@@ -177,27 +176,10 @@ function summariseOutcome(functionId: string, result: unknown): string {
   return report.success ? `${line} — ${renderFanOutReport(report.data)}` : line
 }
 
-/**
- * The ops whose `sessionRef` this surface OWNS (394-17 / 394-19, D-12 · T-394-66 · T-394-74).
- *
- * A SET RATHER THAN AN ID, and that is CR-02's adjudicated fix rather than a generalisation for
- * its own sake. `authoring.draft.verify` carries the same field, spreads it onto the receipt it
- * persists, and is planner-reachable like every registered op — so a guard naming only the write
- * op left the identical forgery open one function id over. Membership makes the guarded vocabulary
- * a value `session-stamp-vocabulary.test.ts` can compare SET-EQUAL against the registry ops that
- * actually carry the field, so a future sibling gaining it reds a cell by the omitted name instead
- * of shipping unguarded. Dropping the field from the verify schema is NOT the alternative fix:
- * `shelf.verifyDraft` needs it to thread the loop's own ref.
- */
-export const SESSION_STAMPED_FUNCTION_IDS: ReadonlySet<string> = new Set([
-  AUTHORING_DRAFT_WRITE_FUNCTION_ID,
-  AUTHORING_DRAFT_VERIFY_FUNCTION_ID,
-])
-
-/** The ops whose `window` this surface may scope to the session it knows (394-19, D-12). */
-export const WINDOW_STAMPED_FUNCTION_IDS: ReadonlySet<string> = new Set([
-  AUTHORING_FUNNEL_GET_FUNCTION_ID,
-])
+// The stamped vocabulary now lives in `session-stamps.ts`, because the model-facing projection in
+// `planner-tools.ts` must withhold exactly what the stamp below writes (394-22, G-1). Re-exported
+// here so the sets stay readable from the module that acts on them.
+export { SESSION_STAMPED_FUNCTION_IDS, WINDOW_STAMPED_FUNCTION_IDS }
 
 /**
  * Stamp the chat session onto the args of the ops this surface owns the session facts for.

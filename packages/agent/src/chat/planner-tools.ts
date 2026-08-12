@@ -27,7 +27,8 @@ import { z } from 'zod'
 
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
-import type { FunctionDeclaration } from '../functions/spec.js'
+import type { FunctionDeclaration, FunctionSchemaProjection } from '../functions/spec.js'
+import { SESSION_STAMPED_FUNCTION_IDS, WINDOW_STAMPED_FUNCTION_IDS } from './session-stamps.js'
 import {
   ANSWER_ONLY_TOOL_NAME,
   ChatToolNameError,
@@ -99,6 +100,89 @@ const MARK_UNHANDLED_DESCRIPTION =
   + 'here refuses the whole turn without performing any of it, which is the correct outcome — '
   + 'never substitute a different tool that looks close.'
 
+const HOST_SUPPLIES_WINDOW =
+  'The host supplies a session-scoped `window` when this field is omitted — omit it to ask about '
+  + 'the current session; pass `window` only to widen to all-time or last-n.'
+
+/** A projected JSON-Schema node, as the shape this transform edits it through. */
+type SchemaNode = Record<string, unknown>
+
+function objectNode(value: unknown): SchemaNode | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as SchemaNode)
+    : undefined
+}
+
+/** Drop `key` from a node's `required`, and the empty list with it. */
+function dropRequired(node: SchemaNode, key: string): void {
+  const required = node.required
+  if (!Array.isArray(required)) return
+  const kept = required.filter((entry) => entry !== key)
+  if (kept.length === 0) delete node.required
+  else node.required = kept
+}
+
+/**
+ * The arms of a projected union, under whichever keyword zod emitted for it.
+ *
+ * Discriminated unions project as `oneOf` and plain ones as `anyOf`; which keyword carries the
+ * arms is a library detail rather than a contract this file may pin.
+ */
+function unionArms(node: unknown): SchemaNode[] {
+  const union = objectNode(node)
+  const arms = Array.isArray(union?.oneOf) ? union.oneOf : union?.anyOf
+  if (!Array.isArray(arms)) return []
+  return arms.map(objectNode).filter((arm): arm is SchemaNode => arm !== undefined)
+}
+
+/**
+ * The model-facing view of a declaration's input: the contract, minus what the host stamps.
+ *
+ * THE SET IS THE STAMP'S OWN. Both sides read `session-stamps.ts`, so the fields withheld here and
+ * the fields `stampSessionFacts` writes at the invoke cannot drift; `planner-tools.test.ts` pins
+ * the transformed ids SET-EQUAL to the union of the two sets. Showing the model a field the host
+ * overwrites unconditionally is what talked a live planner into refusing the call instead of
+ * emitting the field-absent step the stamp exists to complete (394-22, G-1).
+ *
+ * EVERY EDIT IS ON A CLONE. `declaration.input` is the registry's shared inert projection — the
+ * same view 396's MCP listing consumes — so an in-place edit here would rewrite what every other
+ * surface publishes (T-394-85).
+ */
+function modelFacingInput(declaration: FunctionDeclaration): FunctionSchemaProjection {
+  const withholdsRef = SESSION_STAMPED_FUNCTION_IDS.has(declaration.id)
+  const optionalisesWindow = WINDOW_STAMPED_FUNCTION_IDS.has(declaration.id)
+  if (!withholdsRef && !optionalisesWindow) return declaration.input
+
+  const projected = structuredClone(declaration.input) as SchemaNode
+  const properties = objectNode(projected.properties)
+  if (properties === undefined) return projected
+
+  if (withholdsRef) {
+    // Host-owned end to end: the stamp is an overwrite and never a default, so the model is not
+    // shown the field at all rather than shown one its value would be discarded from.
+    delete properties.sessionRef
+    dropRequired(projected, 'sessionRef')
+  }
+
+  if (optionalisesWindow) {
+    // The PROPERTY stays — a model may legitimately widen to all-time or last-n (D-12). Only its
+    // requiredness goes, plus the session arm's ref, which the model cannot know.
+    dropRequired(projected, 'window')
+    for (const arm of unionArms(properties.window)) {
+      if (Object.hasOwn(objectNode(arm.properties) ?? {}, 'sessionRef')) dropRequired(arm, 'sessionRef')
+    }
+  }
+
+  return projected
+}
+
+/** The catalogue's own summary, plus the one sentence a withheld default has to say out loud. */
+function modelFacingDescription(declaration: FunctionDeclaration): string {
+  return WINDOW_STAMPED_FUNCTION_IDS.has(declaration.id)
+    ? `${declaration.summary} ${HOST_SUPPLIES_WINDOW}`
+    : declaration.summary
+}
+
 /**
  * Build the model's entire action vocabulary from the capabilities this host declares.
  *
@@ -127,11 +211,12 @@ export function projectPlannerTools(source: PlannerToolSource, caller: FunctionC
       // module is written. It also makes the read-back uniform — every action call comes back with
       // an unknown input the reconciler validates through the function layer's real contract.
       type: 'dynamic',
-      description: declaration.summary,
-      // The declaration's own inert projection, handed over as-is. Deriving a second schema here
-      // would be a second description of a contract the layer already publishes, free to disagree
-      // with the validator `invokeFunction` actually enforces with.
-      inputSchema: jsonSchema(declaration.input as never),
+      description: modelFacingDescription(declaration),
+      // The declaration's own inert projection, minus the fields the host stamps at the invoke.
+      // Deriving a second schema here would be a second description of a contract the layer
+      // already publishes, free to disagree with the validator `invokeFunction` enforces with —
+      // so the transform SUBTRACTS from that projection and never restates it.
+      inputSchema: jsonSchema(modelFacingInput(declaration) as never),
       // NO `execute`. See the file header — this absence is the mechanism, not an oversight.
     })
   }

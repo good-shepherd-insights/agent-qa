@@ -184,6 +184,9 @@ describe('projectPlannerTools: the registry walk IS the toolset (D-07)', () => {
     const tools = projectPlannerTools(registry(), PLANNER_CALLER)
     for (const declaration of walked) {
       const projected = tools[toToolName(declaration.id)]
+      // A window-stamped op's description is its summary PLUS the host-supply sentence, and the
+      // describe below owns that claim; here the summary is still the whole of it (394-22).
+      if (WINDOW_STAMPED_FUNCTION_IDS.has(declaration.id)) continue
       expect(projected?.description).toBe(declaration.summary)
     }
   })
@@ -194,6 +197,12 @@ describe('projectPlannerTools: the registry walk IS the toolset (D-07)', () => {
     for (const declaration of walked) {
       const projected = tools[toToolName(declaration.id)]
       expect(projected).toBeDefined()
+      // The stamped ops' projections are the declaration's MINUS what the host writes at the
+      // invoke; the describe below pins that subtraction field by field (394-22, G-1).
+      if (
+        SESSION_STAMPED_FUNCTION_IDS.has(declaration.id)
+        || WINDOW_STAMPED_FUNCTION_IDS.has(declaration.id)
+      ) continue
       // Compared as a DOCUMENT rather than by identity: `jsonSchema()` normalises what it is
       // handed, so object identity would be an assertion about the SDK's internals. What matters
       // is that the tool's schema is the declaration's published projection — the same view 396's
