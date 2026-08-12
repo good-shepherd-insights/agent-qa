@@ -321,6 +321,57 @@ export function fencePatchAgainstPassingPrefix(
 }
 
 /**
+ * A repair patch tried to change what the test IS. A VALUE, never thrown (WR-01).
+ *
+ * Returned rather than raised for {@link PassingPrefixViolationError}'s reason exactly: the caller
+ * counts the refusal against K, so a model that emits nothing but renames still terminates.
+ */
+export class RepairIdentityViolationError extends Error {
+  constructor(readonly path: string) {
+    super(
+      `repair: the patch path ${path} changes the test's identity rather than its mechanics; `
+        + 'a renamed test is a different test, so the whole patch set is refused before anything runs',
+    )
+    this.name = 'RepairIdentityViolationError'
+  }
+}
+
+/**
+ * THE IDENTITY FENCE: no repair patch may rename the test. Pure, total, refuses the WHOLE set.
+ *
+ * WHY REPAIR CANNOT RENAME. The loop derives the suite an accepted draft would JOIN exactly once,
+ * from the PRE-repair draft (`loop.ts`'s `targetSuitePath`), and the finished proposal recomputes
+ * that same target from the REPAIRED ref through `testDraftProposal`. Both readings go through
+ * `authoredSuiteTargetPath(filePath, testName)`, so a rename in between makes the suite the
+ * stability gate consulted and the suite an accept would write to disagree — the disagreement the
+ * single derivation is documented to prevent. Repair's grant is fixing MECHANICS under anchors that
+ * forbid changing what the test claims, and the name is the loudest of those claims.
+ *
+ * A THIRD CONTROL, AND NONE OF THE THREE SUBSTITUTES FOR ANOTHER. `EDITABLE_POINTER_ROOTS` bounds
+ * which part of the DOCUMENT any patch may touch, and it admits `name` deliberately — a user asking
+ * `authoring.draft.edit` for a rename is asking for something legitimate (D-21), and narrowing that
+ * shared control would take the power away from the caller that is entitled to it.
+ * `fencePatchAgainstPassingPrefix` bounds which STEPS a repair may touch and cannot express a rule
+ * about a root that addresses no step. This one bounds what the REPAIR LANE may do, which is why it
+ * lives beside that fence's call site rather than inside it.
+ *
+ * IT READS THE POINTER THROUGH `parseJsonPointer`, never by string prefix: `/named` starts with
+ * `/name` as text and addresses a different root, and `~1` / `~0` escapes mean the decoded first
+ * token is the only thing that says what a pointer addresses. One decoder, shared with the position
+ * check above and with the applier in `core`.
+ */
+export function fencePatchAgainstDraftIdentity(
+  patchSet: TestEditPatchSet,
+): RepairIdentityViolationError | null {
+  for (const op of patchSet.patches) {
+    if (parseJsonPointer(op.path)[0] === 'name') {
+      return new RepairIdentityViolationError(op.path)
+    }
+  }
+  return null
+}
+
+/**
  * The dynamic half of D-09: a prefix step that used to pass and now does not.
  *
  * An ABSENT prefix step is not a regression. A probe that stopped before reaching it recorded no
@@ -499,6 +550,16 @@ export async function repairDraft(route: RepairRoute, deps: RepairDeps): Promise
       // patch costs no child process; and the iteration is spent, so a model emitting only fenced
       // patches still terminates.
       lastRefusal = violation.message
+      continue
+    }
+
+    // WR-01, the same consequence one line up: a rename is refused, the iteration is spent, and no
+    // child process runs. Beside the prefix fence rather than inside it — that function's contract
+    // is step positions and its own cells pin it — and the two are asked in either order, since a
+    // set violating both is refused whole by whichever answers first.
+    const identityViolation = fencePatchAgainstDraftIdentity(parsed)
+    if (identityViolation !== null) {
+      lastRefusal = identityViolation.message
       continue
     }
 
