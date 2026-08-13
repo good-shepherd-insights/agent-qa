@@ -137,12 +137,24 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'CHAT_MINIMUM_CONTEXT',
   'CHAT_RESOLVER_TABLE',
   'COMPACTION_RATIO',
+  // 395-01, D-01/D-03: the config editor's two op ids, on the exact footing of the
+  // `AUTHORING_*_FUNCTION_ID` constants above and for the identical reason — `composeLocalAgent()`
+  // and this phase's composed proof both put these names on the wire, and 387 D-11 forbids the
+  // literals each would otherwise spell. The SPECS stay inside `functions/`, so this opens no
+  // dispatch path.
+  'CONFIG_FIELD_SET_FUNCTION_ID',
+  'CONFIG_PROPOSAL_APPLY_FUNCTION_ID',
   // 392 plan 05, D-21: the `/pin` refusal a REPL catches to say which class matched nothing. An
   // error CLASS on the footing of its siblings below — holding it runs nothing — and it is here
   // rather than local to the chat subtree because the surface that renders the refusal is in
   // another package. In SORT position, like `FunctionOriginError` below: this list is compared
   // against the barrel's sorted export set by exact positional equality.
   'ChatPinError',
+  // 395-01, CFGM-03: the refusal a surface catches when an id names a proposal of another kind.
+  // An error CLASS on `ChatPinError`'s footing — holding it runs nothing — and it is here rather
+  // than local because the surface that renders the refusal is in another package. In SORT
+  // position: this list is compared against the barrel's sorted export set by exact equality.
+  'ConfigProposalNotApplicableError',
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
   'EntityNotFoundError',
@@ -590,7 +602,24 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // expressed as a type rather than as a promise.
   'CompactionPass',
   'CompactionPassInput',
+  // 395-01, D-01/D-03/D-17 · CFGM-01/03/04: the config editor's host-port vocabulary. TYPES only —
+  // shapes a composition root fills — and they are four ports rather than one bundle because
+  // reading committed bytes, validating a whole candidate config, committing to a person's history
+  // and writing a proposal record are capabilities a host can genuinely hold independently.
+  //
+  // `ConfigFilesPortLike` carries the field EDIT beside the read, and that pairing is the part
+  // worth pinning: `packages/agent`'s ownership contract admits exactly `['ai', 'zod']`, so the
+  // `yaml` Document API the comment-preserving mutation needs cannot live in-layer. The edit is a
+  // fact about the file FORMAT, and it rides the port that already owns reading it.
+  'ConfigApplyPortLike',
+  'ConfigFieldValue',
+  'ConfigFileBytes',
+  'ConfigFileSet',
+  'ConfigFilesPortLike',
+  'ConfigProposalsWritePortLike',
   'ConfigReaderPort',
+  'ConfigValidatePortLike',
+  'ConfigValidation',
   'CreateAgentJobQueueOptions',
   // 392 plan 08: what a chat state container opens under. A TYPE, one member, and it is the model
   // the session DECLARES — which is the value `/model` overrides and the per-turn config re-read

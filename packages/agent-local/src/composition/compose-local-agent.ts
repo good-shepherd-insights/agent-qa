@@ -53,7 +53,10 @@ import type {
   ReconcileStrategy,
   AnalysisArtifactReaderPort,
   ClockPort,
+  ConfigApplyPortLike,
+  ConfigFilesPortLike,
   ConfigReaderPort,
+  ConfigValidatePortLike,
   EntityDirectoryPort,
   FunctionRegistry,
   JobIdSource,
@@ -1451,6 +1454,30 @@ export interface ComposeLocalAgentInput {
    * accept refuse on a host that is perfectly able to honour it.
    */
   readonly draftApply?: DraftApplyPortLike
+  /**
+   * 395-01 D-03/D-17 · CFGM-01/04: the committed config file SET as RAW BYTES, plus the
+   * comment-preserving field edit over them.
+   *
+   * Host-supplied for `draftApply`'s reason and one more of its own: the edit is `yaml`'s Document
+   * API, and neither this package nor `agent` may name that dependency under their ownership
+   * contracts. The CLI host already depends on it and already owns the file format.
+   */
+  readonly configFiles?: ConfigFilesPortLike
+  /**
+   * 395-01 CFGM-01: whole-config validation, run BEFORE a proposal surfaces.
+   *
+   * Host-supplied because `AgentQaConfigSchema` lives in `@vostride/agent-qa-core`, which neither
+   * this package nor `agent` may name — the `mintQuarantineIdentityPath` arrangement exactly.
+   */
+  readonly configValidate?: ConfigValidatePortLike
+  /**
+   * 395-01 CFGM-03: the ONE commit an accepted config proposal makes in a person's own history.
+   *
+   * Host-supplied for `draftApply`'s reason, and NOT gated on anything beside it for the same
+   * reason that one is not gated on `runExecution`: committing a change somebody already decided
+   * about needs a checkout root and nothing else.
+   */
+  readonly configApply?: ConfigApplyPortLike
   /**
    * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
    *
@@ -2879,6 +2906,36 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // the private write power the L10 posture abolishes — which is why this port is reached from
       // `proposals.accept` and from no path the loop can take.
       ...(input.draftApply === undefined ? {} : { draftApply: input.draftApply }),
+      // 395-01 D-01/D-03/D-17 · CFGM-01/03/04: the config editor's host half, each spread on its
+      // OWN condition rather than as one bundle. A host that can read config files and cannot
+      // commit is a real host — the daemon before it holds a checkout root is one — and reporting
+      // the whole config story absent because one of four is missing is exactly the state
+      // `unbound` exists to distinguish from a capability that never existed.
+      ...(input.configFiles === undefined ? {} : { configFiles: input.configFiles }),
+      ...(input.configValidate === undefined ? {} : { configValidate: input.configValidate }),
+      ...(input.configApply === undefined ? {} : { configApply: input.configApply }),
+      // THE PROPOSAL WRITE IS BOUND HERE AND NOT HANDED IN, unlike its three neighbours, because
+      // this composition already owns the durable proposals store — the same `mintProposalId` and
+      // `writePendingProposalRecord` the authoring arm above uses, over the same `agentQaRoot`. A
+      // host-supplied writer would have been a SECOND door into one store, free to mint an id by a
+      // second recipe for a value that becomes a filename.
+      //
+      // The host mints nothing and stamps nothing: `at` is read off the SAME `clock` the inbox's
+      // expiry is computed against, so a composition that pinned its clock for a test does not
+      // still stamp real wall time on the proposals it writes.
+      configProposals: {
+        put: async (record) => {
+          const proposalId = mintProposalId(() => randomUUID())
+          writePendingProposalRecord(input.agentQaRoot, {
+            schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
+            id: proposalId,
+            kind: record.kind,
+            origin: { emittedBy: record.emittedBy, at: Date.parse(clock.now()) },
+            payload: record.payload,
+          } as ProposalRecord)
+          return await Promise.resolve({ proposalId })
+        },
+      },
     },
     auditSink: new JsonlAuditSink(input.agentQaRoot),
     // 391 PROP-01 / D-11: the real standing-approval reader, over the SAME committed knowledge root

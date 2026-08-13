@@ -44,6 +44,7 @@ import type {
 import type { AuditSink } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
 
+import { CONFIG_PROPOSAL_APPLY_FUNCTION_ID } from '../ops/config-proposal-apply.js'
 import { invokeFunction } from '../invoke.js'
 import {
   APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND,
@@ -183,6 +184,29 @@ describe('the published apply-class table is evaluable — every entry is a clas
       expect({ kind, actionClass, matchedOps: matched.map((declaration) => declaration.id) })
         .toEqual({ kind, actionClass, matchedOps: [matched[0]?.id ?? '<no registered op>'] })
     }
+  })
+
+  it('the config route reads its class off the REGISTERED apply op, and that op is listed', () => {
+    // 395-01. The three cells above already range `config` — it is a member of `PROPOSAL_KINDS`,
+    // so it is inside every one of them — and this one states the phase-specific half they leave
+    // implicit: the class the config route publishes is the class the registered committing op
+    // carries, produced on BOTH sides of the comparison.
+    //
+    // WHAT MAKES IT RED, measured rather than claimed (395-01): replacing
+    // `configProposalApplySpec.risk.name` in the route with the hand-typed literal
+    // `'fn:config.apply'` was applied and observed — it reds THIS cell and three of the four
+    // above, each naming the kind and the class. The mutation was reverted from a byte-compared
+    // snapshot.
+    const apply = declarations().find(
+      (declaration) => declaration.id === CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
+    )
+    expect(apply?.risk.name).toBe(`fn:${CONFIG_PROPOSAL_APPLY_FUNCTION_ID}`)
+    expect(APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND.config).toBe(apply?.risk.name)
+    // GRANTABLE, and that is the D-02 decision rather than an oversight. Unlike the two 394 arms,
+    // the config apply IS a registered op a gate evaluates, so a standing approval over it can
+    // match something. What protects a boundary-crossing change is the per-proposal `crossBoundary`
+    // flag (395-04's two-sided enforcement), not a blanket refusal of the class.
+    expect(isProtectedActionClass(APPLY_ACTION_CLASS_FOR_PROPOSAL_KIND.config)).toBe(false)
   })
 
   it('partitions the kinds by whether their apply class is protected — the decision, not a default', () => {

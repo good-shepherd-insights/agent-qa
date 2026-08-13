@@ -138,6 +138,12 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // optional `recurrence` dep never gates this binding; only `analysis` does.
   'analysis.get': 'unbound',
   'config.get': 'bound',
+  // 395 D-01/D-03 · CFGM-01/03: the config editor's write half, UNBOUND here for the 387-08
+  // reason — this fixture supplies no config-file, validation, apply or proposal-write port, which
+  // is a TRUE statement about it. Both are listed by name and refused by name, which is exactly
+  // what `unbound` exists to say and what omitting them would have made unsayable.
+  'config.field.set': 'unbound',
+  'config.proposal.apply': 'unbound',
   // 387 D-09. Both BOUND everywhere: the entity directory is a required dep, so unlike
   // `runs.start` there is no composition that can list these and then refuse them.
   'entities.get': 'bound',
@@ -261,6 +267,11 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // what makes it the honest sample for a fixture that has no session and no receipts.
   'authoring.funnel.get': { window: { scope: 'all-time' } },
   'config.get': {},
+  // 395 D-03: PARSING inputs for two capabilities this composition cannot run, on the rows above
+  // reasoning — `invokeFunction` validates before it consults the binding, so a sample that did
+  // not parse would make the unbound-refusal leg report an input error and certify nothing.
+  'config.field.set': { path: 'use.timeout', value: '45s' },
+  'config.proposal.apply': { proposalId: 'prop_0123456789ab' },
   // 387: `resolve` takes any reference at all, so the sample is free text that matches
   // nothing — the fixture directory is empty and the honest answer is the none arm. `get`
   // takes an exact address, and the fixture port below is what stands behind it.

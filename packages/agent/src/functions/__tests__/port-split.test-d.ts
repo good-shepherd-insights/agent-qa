@@ -116,6 +116,15 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // absent. The pin fired on this one too, and once more only under `tsc --noEmit` (vitest printed
 // `Type Errors  no errors` for the same tree — the dual-witness rule, hit for the twelfth
 // consecutive plan).
+// 395-01 D-01/D-03/D-17 extends it FOUR MORE TIMES, by name each: `configFiles`, `configValidate`,
+// `configApply` and `configProposals` — the config editor's host half. Four keys rather than one
+// bundle, and the split is the funnel's argument on this phase's axis: reading committed config
+// bytes, validating a whole candidate config against `core`'s schema, committing to a person's git
+// history and writing a proposal record are four capabilities a host can genuinely hold
+// independently, and three of the four are already held independently by hosts that hold their
+// 394 analogues. Bundling them would make a composition that can read config but cannot commit
+// report the whole config story absent — which is exactly the state `unbound` exists to
+// distinguish from a capability that never existed.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -134,6 +143,10 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'authoringFunnel'
     | 'draftApply'
     | 'authoringProposals'
+    | 'configFiles'
+    | 'configValidate'
+    | 'configApply'
+    | 'configProposals'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

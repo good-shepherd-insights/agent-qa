@@ -90,6 +90,10 @@ const REQUIRED_DECISION: Record<ProposalKind, string> = {
   // finding files nothing and fixes nothing; it records that a person looked at what the loop
   // found. A line reading "accept or reject" here would imply an apply that does not exist.
   finding: 'acknowledge this application finding, or reject it',
+  // 395 CFGM-03: accepting COMMITS the change to the repository, so the line says commit rather
+  // than "accept or reject" — the same distinction the test-draft row above draws, and for the same
+  // reason: two decisions with very different consequences would otherwise read identically.
+  config: 'apply this configuration change as a commit, or reject it',
 }
 
 /** A target ref as a REF — the id or short-ID it addresses, never the record's content. */
@@ -142,6 +146,15 @@ function summaryLineFor(envelope: ProposalEnvelope): string {
     case 'finding':
       return `finding on ${envelope.payload.draftRef.testName}, `
         + `${envelope.payload.signalClass}, ${envelope.payload.evidenceRefs.length} evidence ref(s)`
+    case 'config':
+      // THE ONE-LINER AND THE FILE COUNT, AND NOTHING FROM INSIDE THE PAYLOAD. This arm is the one
+      // that could most easily leak: the config payload carries the rendered diff's bytes and the
+      // new file content, and a digest line that reached for either would print a person's
+      // configuration into a report three surfaces render. `summaryLine` is what the construction
+      // wrote for exactly this slot (391 D-18's refs-and-counts law), and the count is a count.
+      return `config ${envelope.payload.summaryLine}, `
+        + `${envelope.payload.files.length} file(s)`
+        + `${envelope.payload.crossBoundary ? ', cross-boundary' : ''}`
     default:
       return envelope satisfies never
   }

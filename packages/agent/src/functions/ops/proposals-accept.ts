@@ -64,8 +64,10 @@ import type {
   ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
 
+import { applyablePayload } from '../../config-mutation/construct.js'
 import { FunctionNotBoundError } from '../spec.js'
 import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import { configProposalApplySpec } from './config-proposal-apply.js'
 import { knowledgeProposalApplySpec } from './knowledge-proposal-apply.js'
 
 /** The literal appears here once; every surface names the constant (384 D-15). */
@@ -183,6 +185,45 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
   // pre-approve acknowledging what the loop says is an application defect: an acknowledgement is
   // a person having looked, and a standing one is a person having stopped looking. The mint
   // refuses as DATA beside a successful apply, so the decision is still recorded.
+  // 395 D-01/D-02 · CFGM-03: accepting a config proposal makes ONE commit in the person's own
+  // repository containing exactly the files the proposal names.
+  //
+  // ITS COVERED CLASS IS THE COMMITTING OP'S, READ OFF `risk.name` — the KNOWLEDGE shape rather than
+  // the two 394 arms', and the difference is a decision. `config.proposal.apply` is a REGISTERED op
+  // carrying its own class, so a gate really does evaluate that name, so a standing approval over it
+  // is a grant that can match something. `fn:config.proposal.apply` is deliberately NOT in the
+  // closed protected set: D-02 puts the protection on the PROPOSAL — the per-value `crossBoundary`
+  // flag — rather than on the class, because cross-boundary-ness is a fact about a base URL pointing
+  // somewhere new, which no per-op map can see. The two-sided enforcement of that flag is 395-04's.
+  //
+  // THE PAYLOAD TRAVELS TO THE PORT, on the test-draft arm's stated reasoning: this op has ALREADY
+  // read the envelope — that is how it knows which route to dispatch — so handing the payload it is
+  // holding to the route it chose is ONE read. An id would make the host read the same record again
+  // with a window in between in which the two reads can disagree about the very `baseDigest` the
+  // apply re-checks. `config.proposal.apply` reaches the SAME port after doing that one read itself.
+  config: {
+    actionClass: configProposalApplySpec.risk.name,
+    async apply(
+      deps: FunctionDeps,
+      proposalId: string,
+      payload: ProposalPayloadFor<'config'>,
+    ): Promise<ProposalsAcceptApplied> {
+      const configApply = deps.configApply
+      if (configApply === undefined) throw new FunctionNotBoundError(PROPOSALS_ACCEPT_FUNCTION_ID)
+      const outcome = await configApply.apply({
+        proposalId,
+        payload: applyablePayload(payload),
+      })
+      // THE DECISION IS RECORDED AFTER THE COMMIT, and only when a commit was MADE. CFGM-03's
+      // idempotency edge is why the second half is a condition rather than an unconditional call:
+      // an `already-applied` answer means the store recorded this decision the first time, and
+      // `recordApplied` refuses a proposal it has already decided — so recording again would turn
+      // the honest idempotent answer into a thrown error about a commit that is exactly where the
+      // person left it.
+      if (outcome.outcome === 'applied') await recordDecision(deps, proposalId)
+      return { kind: 'config', outcome }
+    },
+  },
   finding: {
     actionClass: PROPOSALS_ACCEPT_ACTION_CLASS,
     async apply(deps: FunctionDeps, proposalId: string): Promise<ProposalsAcceptApplied> {
@@ -245,6 +286,8 @@ function applyEnvelope(
       return ROUTE_FOR_KIND['test-draft'].apply(deps, proposalId, envelope.payload)
     case 'finding':
       return ROUTE_FOR_KIND.finding.apply(deps, proposalId, envelope.payload)
+    case 'config':
+      return ROUTE_FOR_KIND.config.apply(deps, proposalId, envelope.payload)
     default: {
       const unhandled: never = envelope
       throw new TypeError(`proposals.accept: unhandled proposal kind ${JSON.stringify(unhandled)}`)

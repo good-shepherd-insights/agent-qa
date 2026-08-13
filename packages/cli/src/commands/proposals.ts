@@ -106,7 +106,7 @@ function reportError(verb: string, error: unknown): void {
 /**
  * The one-line headline per kind — a fourth exhaustive site over the kind vocabulary (394-06).
  *
- * The row used to read `payload.verb`, which was total while the envelope had one arm. With three
+ * The row used to read `payload.verb`, which was total while the envelope had one arm. With four
  * it is a compile error, and the `satisfies never` below keeps it one: a kind added without a
  * headline cannot fall through to a knowledge proposal's verb.
  *
@@ -121,6 +121,12 @@ function payloadHeadline(envelope: ProposalInboxEntryDto['envelope']): string {
       return `${envelope.payload.draftRef.testName} (${envelope.payload.disposition})`
     case 'finding':
       return `${envelope.payload.draftRef.testName} (${envelope.payload.signalClass})`
+    case 'config':
+      // 395-01. REFS AND COUNTS, and this arm is the one where that rule earns its keep: the config
+      // payload carries the rendered diff's bytes and the new file content, so a headline that
+      // reached for either would print a person's configuration into an inbox listing. The
+      // one-liner is what the construction wrote for exactly this slot.
+      return `${envelope.payload.summaryLine} (${envelope.payload.files.length} file(s))`
     default:
       return envelope satisfies never
   }

@@ -183,6 +183,26 @@ export type {
   TestDraftApplyRequestLike,
   TestDraftApplyResultLike,
 } from './authoring/ports.js'
+// 395 D-01/D-03/D-17 · CFGM-01/03/04: the config editor's four host ports, published for the
+// reason the authoring ports above are — `composeLocalAgent()` and the CLI host implement them
+// and neither may name a type that lives only inside `functions/`.
+export type {
+  ConfigApplyPortLike,
+  ConfigFieldValue,
+  ConfigFileBytes,
+  ConfigFileSet,
+  ConfigFilesPortLike,
+  ConfigProposalsWritePortLike,
+  ConfigValidatePortLike,
+  ConfigValidation,
+} from './config-mutation/ports.js'
+export {
+  CONFIG_FIELD_SET_FUNCTION_ID,
+} from './functions/ops/config-field-set.js'
+export {
+  CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
+  ConfigProposalNotApplicableError,
+} from './functions/ops/config-proposal-apply.js'
 // 394-07 D-12/D-13 · WTST-05: the funnel read's id, on the exact footing of the op-id constants
 // above — a name a surface puts on the wire, never a dispatch handle. Published because
 // `composeLocalAgent()` has to name it when it binds the capability, and 387 D-11 forbids the

@@ -36,8 +36,15 @@ import {
 import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { Document as YamlDocument, parseDocument, parse as parseYaml } from 'yaml'
+
 import type {
+  ConfigApplyPortLike,
+  ConfigFileSet,
+  ConfigFilesPortLike,
   ConfigReaderPort,
+  ConfigValidatePortLike,
+  ConfigValidation,
   DraftApplyPortLike,
   JobModelCapability,
   StartedRun,
@@ -70,8 +77,10 @@ import {
 } from '@vostride/agent-qa-core'
 import type { TestDefinition } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
-import { KnowledgeApplyOutcomeSchema } from '@vostride/agent-qa-schema'
+import { KnowledgeApplyOutcomeSchema, base64Decode, renderConfigDiff, sha256hexBytes } from '@vostride/agent-qa-schema'
 import type {
+  ConfigApplyOutcome,
+  ConfigProposalApplyableV1,
   FunctionCaller,
   GrantRecordOutcome,
   RiskActionDescriptor,
@@ -1818,6 +1827,452 @@ export function createTestDraftApplyPort(configPath: string): DraftApplyPortLike
   }
 }
 
+// THE CONFIG APPLY (395-01, D-05/D-17/D-19 · CFGM-03/CFGM-04). The second write this product makes
+// to a person's own git history, and the first that touches more than one file.
+//
+// IT GENERALIZES `applyTestDraftAsOneCommit` DIRECTLY ABOVE and does not re-derive it: the same
+// exec seam, the same atomic writer, the same index capture/restore, the same
+// `restoreOrReportBoth`, the same "the hash read is below everything and is never rolled back". The
+// deltas are a pinned file SET rather than one path, the D-19 byte comparison before any write, the
+// spec §4.3 author string, the D-06 trailer, and CFGM-03's idempotency answer.
+//
+// WHAT THIS PLAN DOES NOT SHIP, NAMED SO IT IS NOT MISTAKEN FOR THE END STATE. D-05's dirty-tree
+// discipline — a human-first commit carrying the person's bytes, THEN the agent commit — is plan
+// 395-06's, and until it lands a dirty config file refuses through the shipped
+// {@link DirtyApplyTargetError} posture. That refusal is a TEMPORARY disposition, not the decided
+// one: D-08 records that config apply commits human-first while the test-draft apply keeps
+// refusing, and the two are deliberately different. Whoever implements 395-06 replaces the refusal
+// below and nothing else on this path.
+//
+// THE ORDER IS THE CONTRACT, and it differs from its analog by one step at the front:
+//
+//   0. ALREADY-APPLIED? Asked FIRST, before any freshness check, and the ordering is the whole of
+//      CFGM-03's idempotency edge. After a successful apply the file on disk is the NEW content, so
+//      every digest re-check below would fail — reporting `ApplyTargetChangedError` to a person
+//      whose change is exactly where they left it. The question is answered from the person's own
+//      git history rather than from a ledger this port keeps: the D-06 trailer IS the record, so
+//      there is no second copy of "what has this applied" to fall out of step with the repository.
+//   1. identity, per file, through `workspaceRelativeIdentityPath` and nothing else;
+//   2. the dirty check, per file (see the temporary posture above);
+//   3. the digest re-check, per file, IMMEDIATELY before the write — the window it closes is the
+//      one between the proposal's read and this accept, and a check performed earlier leaves a
+//      window of its own;
+//   4. THE BYTE COMPARISON (D-19): recompute the diff from the bytes on disk RIGHT NOW to the
+//      proposal's new content, through the SAME `renderConfigDiff` the construction called, and
+//      compare against the bytes the proposal stored. Inequality refuses BEFORE anything is
+//      written. This is what makes "what you saw is what was committed" a measurement rather than
+//      an assertion, and it is why the proposal stores the rendered bytes at all;
+//   5. write, add, commit — all three inside ONE try, with both the worktree and the index
+//      restored per path on any failure;
+//   6. the hash read, below all of it, never restored.
+
+/** The machine-readable marker every agent config commit carries (D-06). */
+export const AGENT_CONFIG_PROPOSAL_TRAILER_KEY = 'Agent-QA-Proposal'
+
+/**
+ * The author every agent config commit is written under (spec §4.3).
+ *
+ * ATTRIBUTION IS THE POINT rather than tidiness. A commit presenting agent-authored configuration
+ * as a person's own work would make the repository's own history the wrong place to find out where
+ * a change came from, and the person whose name is on the commit would be the last to know. It is
+ * an `--author` and not only a message line because `git log --author` and every review tool that
+ * reads authorship are what a person actually filters on.
+ */
+export const AGENT_CONFIG_COMMIT_AUTHOR = 'agent-qa (proposed by chat) <agent-qa@local>'
+
+/** What an accepted `config` proposal asks this host to do. */
+export interface ConfigApplyRequest {
+  readonly proposalId: string
+  readonly payload: ConfigProposalApplyableV1
+}
+
+/**
+ * The bytes about to be committed are not the bytes the person reviewed (D-19).
+ *
+ * THE REFUSAL IS THE MEASUREMENT. Everything else about this contract is a claim; this class is
+ * what happens when the claim is false, and it fires BEFORE any write, so a payload doctored
+ * between the render and the accept changes nothing on disk. The digests are named rather than the
+ * diffs themselves: a message carrying the widened diff would print the very bytes it is refusing
+ * to commit.
+ */
+export class ConfigApplyDiffMismatchError extends Error {
+  constructor(readonly expectedDigest: string, readonly foundDigest: string) {
+    super(
+      'refusing to apply this configuration change: the diff it would commit is not the diff the '
+      + `proposal recorded showing you (recorded ${expectedDigest}, recomputed ${foundDigest}). `
+      + 'Nothing has been written. Re-propose the change against the configuration as it stands.',
+    )
+    this.name = 'ConfigApplyDiffMismatchError'
+  }
+}
+
+/** The commit message: subject from the one-liner, the proposal named, the D-06 trailer last. */
+function configApplyCommitMessage(request: ConfigApplyRequest): string {
+  return `config: ${request.payload.summaryLine}\n\n`
+    + `Proposed by agent-qa and accepted from proposal ${request.proposalId}.\n\n`
+    // EMBEDDED IN THE MESSAGE rather than passed as `--trailer`, deliberately: the flag's
+    // availability and its exact placement behaviour vary across git versions, and this value is
+    // byte-asserted by the composed case. A marker a test cannot pin is not a contract.
+    + `${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: ${request.proposalId}\n`
+}
+
+/** Does this repository have any commit at all? Asked before anything reads history. */
+function repositoryHasCommits(exec: GitApplyExec, cwd: string, targetPath: string): boolean {
+  const head = runApplyGit(exec, cwd, targetPath, ['rev-parse', '--verify', '--quiet', 'HEAD'])
+  return head.status === 0 && head.stdout.trim() !== ''
+}
+
+/**
+ * The commit this proposal already made, if it made one — CFGM-03's idempotency answer.
+ *
+ * READ OFF THE PERSON'S OWN HISTORY, which is the decision this function is. The alternative was a
+ * durable "applied proposals" ledger beside the repository, and it would be a second answer to a
+ * question git already answers — free to say `applied` about a commit somebody has since rebased
+ * away, or to have lost a record of a commit that is plainly there. The trailer is the record.
+ *
+ * `--fixed-strings` because the proposal id is data: a `--grep` treating it as a regular expression
+ * would be a search whose meaning depends on the characters an id mint happens to produce.
+ */
+function findAppliedCommit(
+  exec: GitApplyExec,
+  cwd: string,
+  targetPath: string,
+  proposalId: string,
+): string | undefined {
+  if (!repositoryHasCommits(exec, cwd, targetPath)) return undefined
+  const marker = `${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: ${proposalId}`
+  const found = runApplyGit(exec, cwd, targetPath, [
+    'log', '--format=%h', '--fixed-strings', `--grep=${marker}`, '--max-count=1',
+  ])
+  if (found.status !== 0) {
+    throw new Error(
+      `git log exited ${found.status} looking for proposal ${JSON.stringify(proposalId)}: `
+      + `${found.stderr.trim()}`,
+    )
+  }
+  const hash = found.stdout.trim()
+  return hash === '' ? undefined : hash
+}
+
+/**
+ * Commit exactly these paths, as ONE commit, authored as the agent.
+ *
+ * `runGitCommit`'s multi-path twin rather than a widening of it, because its single-path form is
+ * corpus-pinned by 394 and this phase may not move it. Everything load-bearing is carried over
+ * verbatim: nothing-to-commit is decided on the INDEX rather than on git's English prose, the
+ * pathspec on the commit is a SECOND independent control that keeps anything a person had already
+ * staged out of this commit, and there is no `-a`, no `--amend` and no ref-moving subcommand
+ * anywhere on this path.
+ */
+function runGitCommitPaths(
+  exec: GitApplyExec,
+  cwd: string,
+  paths: readonly string[],
+  message: string,
+): GitCommitOutcome {
+  if (!paths.some((path) => stagedAtPath(exec, cwd, path))) return { kind: 'nothing-to-commit' }
+  const committed = runApplyGit(exec, cwd, paths[0] ?? '.', [
+    'commit', '--quiet', '-m', message, `--author=${AGENT_CONFIG_COMMIT_AUTHOR}`, '--', ...paths,
+  ])
+  if (committed.status !== 0) {
+    throw new Error(
+      `git commit exited ${committed.status} for ${JSON.stringify(paths)}: `
+      + `${committed.stderr.trim()}`,
+    )
+  }
+  return { kind: 'committed' }
+}
+
+export interface ApplyConfigProposalInput {
+  readonly configPath: string
+  readonly request: ConfigApplyRequest
+  /** Injected for tests; defaults to `spawnSync`. */
+  readonly exec?: GitApplyExec
+  /** Injected for tests; defaults to {@link writeFileAtomically}. See its analog's reasoning. */
+  readonly writeTarget?: (absolutePath: string, bytes: Buffer) => void
+}
+
+/** One file's state as this apply found it, carried to the write and to the rollback. */
+interface ConfigApplyFile {
+  readonly identityPath: string
+  readonly absolutePath: string
+  readonly existing: Buffer | undefined
+  readonly newBytes: Buffer
+  readonly indexBefore: IndexEntry | undefined
+}
+
+export function applyConfigProposalAsOneCommit(
+  input: ApplyConfigProposalInput,
+): ConfigApplyOutcome {
+  const { request } = input
+  const configDir = dirname(resolve(input.configPath))
+  const exec = input.exec ?? (spawnSync as unknown as GitApplyExec)
+  const writeTarget = input.writeTarget ?? writeFileAtomically
+
+  // SORTED BY PATH, matching the diff primitive's own ordering. The commit's pathspec list, the
+  // receipt's file list and the recomputed diff then all speak about the set in one order, so the
+  // D-19 comparison cannot fail for a reason that is about enumeration rather than about content.
+  const payloadFiles = [...request.payload.files].sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+  if (payloadFiles.length === 0) {
+    throw new TypeError('a config proposal reached the apply carrying no files')
+  }
+
+  const identityPaths = payloadFiles.map((file) =>
+    workspaceRelativeIdentityPath(configDir, file.path))
+
+  // (0) CFGM-03: asked before any freshness check. See this section's header for why the order is
+  // the whole of the idempotency answer rather than an optimisation.
+  const alreadyApplied = findAppliedCommit(exec, configDir, identityPaths[0]!, request.proposalId)
+  if (alreadyApplied !== undefined) {
+    return {
+      outcome: 'already-applied',
+      commits: [{ role: 'agent', hash: alreadyApplied }],
+      files: identityPaths,
+    }
+  }
+
+  const files: ConfigApplyFile[] = []
+  for (const [index, file] of payloadFiles.entries()) {
+    const identityPath = identityPaths[index]!
+    const absolutePath = resolve(configDir, identityPath)
+
+    // (2) TEMPORARY POSTURE — 395-06 replaces this refusal with D-05's human-first commit.
+    const porcelain = runGitStatusPorcelain(exec, configDir, identityPath)
+    if (porcelain !== '') throw new DirtyApplyTargetError(identityPath, porcelain)
+
+    // (3) RAW BYTES on both sides, through the SAME recipe the construction used: the schema's
+    // `sha256hexBytes`, not this file's `createHash`. Two recipes for one digest contract is
+    // exactly 394's CR-02 class, and D-17 exists because it cost a phase to find.
+    const existing = readTargetIfPresent(absolutePath)
+    const foundDigest = existing === undefined ? undefined : sha256hexBytes(existing)
+    if (foundDigest !== file.baseDigest) {
+      throw new ApplyTargetChangedError(identityPath, file.baseDigest, foundDigest)
+    }
+
+    files.push({
+      identityPath,
+      absolutePath,
+      existing,
+      newBytes: Buffer.from(base64Decode(file.newContentBase64)),
+      indexBefore: captureIndexEntry(exec, configDir, identityPath),
+    })
+  }
+
+  // (4) D-19, AND IT IS THE MEASUREMENT. Recomputed from the bytes on disk right now — not from
+  // the proposal's own record of what they were — so a payload whose `newContent` was widened
+  // between the render and this accept produces different diff bytes and refuses here, before
+  // anything is written.
+  const recomputed = renderConfigDiff(files.map((file, index) => ({
+    path: payloadFiles[index]!.path,
+    ...(file.existing === undefined ? {} : { oldBytes: Uint8Array.from(file.existing) }),
+    newBytes: Uint8Array.from(file.newBytes),
+  })))
+  if (recomputed.diffDigest !== request.payload.shownDiffDigest) {
+    throw new ConfigApplyDiffMismatchError(
+      request.payload.shownDiffDigest,
+      recomputed.diffDigest,
+    )
+  }
+
+  for (const file of files) mkdirSync(dirname(file.absolutePath), { recursive: true })
+
+  let committed: GitCommitOutcome
+  try {
+    for (const file of files) {
+      writeTarget(file.absolutePath, file.newBytes)
+      runGitAdd(exec, configDir, file.identityPath)
+    }
+    committed = runGitCommitPaths(
+      exec,
+      configDir,
+      files.map((file) => file.identityPath),
+      configApplyCommitMessage(request),
+    )
+  } catch (error) {
+    restoreConfigApplyFailure(exec, configDir, files, writeTarget, error)
+    throw error
+  }
+
+  if (committed.kind === 'nothing-to-commit') {
+    const noChange = new ApplyProducedNoChangeError(files.map((file) => file.identityPath).join(', '))
+    restoreConfigApplyFailure(exec, configDir, files, writeTarget, noChange)
+    throw noChange
+  }
+
+  // BELOW THIS LINE NOTHING IS RESTORED — the commit exists, so it is the new truth.
+  return {
+    outcome: 'applied',
+    commits: [{ role: 'agent', hash: runGitHeadHash(exec, configDir, files[0]!.identityPath) }],
+    files: files.map((file) => file.identityPath),
+  }
+}
+
+/**
+ * Put every touched path back, worktree and index, and report BOTH facts if a restore fails.
+ *
+ * PER PATH AND NEVER REPO-WIDE — no `reset`, no `checkout .`, no `clean` — for the reason its
+ * single-path analog states: the one thing a rollback must not do is undo work that was never the
+ * agent's. Restores run in REVERSE order so the file this apply touched last is the first put back,
+ * which keeps the sequence a mirror of the writes rather than a second traversal with its own
+ * ordering assumptions.
+ */
+function restoreConfigApplyFailure(
+  exec: GitApplyExec,
+  cwd: string,
+  files: readonly ConfigApplyFile[],
+  writeTarget: (absolutePath: string, bytes: Buffer) => void,
+  applyError: unknown,
+): void {
+  for (const file of [...files].reverse()) {
+    restoreOrReportBoth(
+      exec,
+      cwd,
+      file.identityPath,
+      file.absolutePath,
+      file.existing,
+      file.indexBefore,
+      writeTarget,
+      applyError,
+    )
+  }
+}
+
+/**
+ * The pinned config file SET, enumerated from the config itself (RESEARCH Pitfall 5, 394-39).
+ *
+ * A SET AND NOT A GLOB, and the difference is what this constant is. `*.yaml` would answer
+ * differently on the first repository whose layout nobody anticipated — silently, and in the
+ * direction that matters, because the set is what a porcelain check scopes to, what an out-of-set
+ * classifier compares against and what a commit's pathspec names. Every member here is a file the
+ * CONFIG itself names: the config yaml, the hooks file `workspace.hooksFile` points at, and the
+ * `.gitignore` whose managed block `init` maintains.
+ *
+ * RETUNE: add a member here when the config grows a new file it OWNS — not when a project happens
+ * to keep another yaml beside it. The test is authorship: this product writes these files.
+ */
+const CONFIG_SET_GITIGNORE = '.gitignore'
+const CONFIG_SET_DEFAULT_HOOKS_FILE = 'hooks.yaml'
+
+/**
+ * Read the committed config set as RAW BYTES, and perform the comment-preserving field edit.
+ *
+ * THE READ IS BYTES AND NEVER TEXT (D-17). A decode between the file and the digest taken over it
+ * is 394's CR-02 defect class in its original form.
+ *
+ * THE EDIT LIVES HERE rather than in the construction pipeline because the `yaml` Document API is
+ * an external dependency `packages/agent`'s ownership contract does not admit — its
+ * `externalDependencies` are exactly `['ai', 'zod']`, reconciled against package.json by
+ * `validate:arch`. Admitting one so the edit could move in-layer would have widened a boundary
+ * rather than respected it, and the edit is a fact about the FILE FORMAT, which this host already
+ * owns.
+ *
+ * `parseDocument` → `setIn` → `toString` is the shipped `agent-qa config set` idiom
+ * (`commands/config.ts:71-82`) and it is load-bearing rather than stylistic: a
+ * parse→object→stringify round trip destroys every comment in the comment-dense house config and
+ * widens the rendered diff past the point a person can review it — which is the whole of what
+ * CFGM-01 asks a proposal to be.
+ */
+export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
+  const configDir = dirname(resolve(configPath))
+  const configIdentity = workspaceRelativeIdentityPath(configDir, configPath)
+
+  return {
+    async read(): Promise<ConfigFileSet> {
+      const fileConfig = await loadConfigFile(configPath) as { workspace?: { hooksFile?: unknown } }
+      const hooksFile = typeof fileConfig.workspace?.hooksFile === 'string'
+        ? fileConfig.workspace.hooksFile
+        : CONFIG_SET_DEFAULT_HOOKS_FILE
+
+      // Deduplicated and sorted, so two reads of one project answer in one order. A `Set` rather
+      // than a filter because a project whose `hooksFile` IS the config file would otherwise be
+      // enumerated twice and digested twice under one path.
+      const members = [...new Set([configIdentity, hooksFile, CONFIG_SET_GITIGNORE])].sort()
+
+      return {
+        configFile: configIdentity,
+        files: members.map((path) => {
+          const bytes = readTargetIfPresent(resolve(configDir, path))
+          // ABSENT MEANS ABSENT. A zero-length stand-in would make "there is no hooks file" and
+          // "there is an empty hooks file" the same fact, and the apply's `baseDigest` re-check
+          // reads exactly that distinction.
+          return bytes === undefined ? { path } : { path, bytes: Uint8Array.from(bytes) }
+        }),
+      }
+    },
+
+    setField({ bytes, path, value }): Promise<Uint8Array> {
+      const document = bytes === undefined
+        ? new YamlDocument({})
+        : parseDocument(Buffer.from(bytes).toString('utf8'))
+      document.setIn(path.split('.'), value)
+      return Promise.resolve(Uint8Array.from(Buffer.from(document.toString(), 'utf8')))
+    },
+  }
+}
+
+/**
+ * Whole-config validation, run BEFORE a proposal surfaces (CFGM-01).
+ *
+ * IT VALIDATES THE ENTIRE CANDIDATE, not the changed field, and that is D-03's other half: the
+ * settable-field whitelist was refused because a rule that can only refuse what it can NAME cannot
+ * be driven to zero by naming more things, so the guard has to be whole-input by construction. This
+ * one is: `AgentQaConfigSchema` is the project's own schema including its cross-field refinements,
+ * so a mutation that is locally plausible and globally wrong — a `use.llm` naming a registry entry
+ * that does not exist — is refused here rather than at the next run.
+ *
+ * A PORT because the schema lives in `@vostride/agent-qa-core` and `packages/agent` does not depend
+ * on it; `validate:arch` reds that edge with no legal repair. The `draftApply` idiom exactly.
+ */
+export function createConfigValidatePort(): ConfigValidatePortLike {
+  return {
+    validate({ bytes }): Promise<ConfigValidation> {
+      let parsed: unknown
+      try {
+        parsed = parseYaml(Buffer.from(bytes).toString('utf8'))
+      } catch (error) {
+        // A yaml the parser cannot read is a validation failure and not a crash: the candidate
+        // came from a mutation this product made, so the person is owed the reason rather than a
+        // stack trace out of a library.
+        return Promise.resolve({
+          ok: false,
+          issues: [`the configuration is not readable as YAML: ${errorText(error)}`],
+        })
+      }
+      const result = AgentQaConfigSchema.safeParse(parsed ?? {})
+      if (result.success) return Promise.resolve({ ok: true })
+      return Promise.resolve({
+        ok: false,
+        // The validator's OWN words, joined to a path. This layer reports issues; it does not
+        // classify them, because a closed issue vocabulary here would be a second, weaker copy of
+        // core's refinements, out of date the first time one is added.
+        issues: result.error.issues.map((issue) =>
+          `${issue.path.join('.') || '<root>'}: ${issue.message}`),
+      })
+    },
+  }
+}
+
+/**
+ * The port `proposals.accept` and `config.proposal.apply` both reach, pre-bound to one workspace.
+ *
+ * ONE PORT, TWO CALLERS, and neither calls the other. The accept has already read the envelope and
+ * hands its payload straight here; the apply verb was given an id and does that read itself. Both
+ * arrive at this same function, which is what keeps exactly one place where committed configuration
+ * changes — op-calling-op would have put a second gate evaluation and a second audit row in front
+ * of one human decision.
+ */
+export function createConfigApplyPort(configPath: string): ConfigApplyPortLike {
+  return {
+    apply(request) {
+      return Promise.resolve(applyConfigProposalAsOneCommit({
+        configPath,
+        request: { proposalId: request.proposalId, payload: request.payload },
+      }))
+    },
+  }
+}
+
 /**
  * The target's RAW BYTES, or `undefined` for no such file (394-23, WR-04).
  *
@@ -2112,6 +2567,16 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // rather than a member of the port above because the two answer different questions: that one
     // is "can this host author a draft", this one is "can this host commit one a person accepted".
     draftApply: createTestDraftApplyPort(input.configPath),
+    // 395-01 D-01/D-03/D-17 · CFGM-01/03/04: the config editor's three host ports, bound
+    // unconditionally for the reason the two lines above are — a CLI always has a config path and
+    // therefore a checkout root. They are three SEPARATE bindings rather than one bundle because
+    // they answer three different questions: what bytes are committed, whether a candidate config
+    // is valid at all, and whether this host can commit one a person accepted. The fourth port
+    // (`configProposals`) is bound inside `composeLocalAgent` itself, over the durable store that
+    // composition already owns — a host-supplied writer would be a second door into one store.
+    configFiles: createConfigFilesPort(input.configPath),
+    configValidate: createConfigValidatePort(),
+    configApply: createConfigApplyPort(input.configPath),
     config: createMaskedConfigReader(input.configPath),
     knowledgeRoot,
     // D-18: when a live daemon holds the writer lease, this host hands it the SAME

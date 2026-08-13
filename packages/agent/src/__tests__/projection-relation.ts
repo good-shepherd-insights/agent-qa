@@ -28,7 +28,9 @@ import { authoringDraftEditSpec } from '../functions/ops/authoring-draft-edit.js
 import { authoringDraftWriteSpec } from '../functions/ops/authoring-draft-write.js'
 import { authoringFunnelGetSpec } from '../functions/ops/authoring-funnel-get.js'
 import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draft.js'
+import { configFieldSetSpec } from '../functions/ops/config-field-set.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
+import { configProposalApplySpec } from '../functions/ops/config-proposal-apply.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { grantsListSpec } from '../functions/ops/grants-list.js'
 import { proposalsAcceptSpec } from '../functions/ops/proposals-accept.js'
@@ -101,7 +103,16 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // list, so an unchecked projection would be where a `sentences` member could quietly stop
   // appearing in a published catalogue.
   'analysis.get': analysisGetSpec,
+  // 395 D-01/D-03 · CFGM-01/03. Paired the day they are registered (the growth seam working as
+  // designed). `config.field.set`'s OUTPUT is a three-arm discriminated union — proposed, invalid,
+  // no-change — and the arms are exactly what a careless projection flattens: a catalogue that
+  // published the union as one object would tell 396's consumers that every propose call yields a
+  // proposal id, which is the one claim CFGM-01's validate-before-surfacing law denies.
+  // `config.proposal.apply`'s OUTPUT is the two-arm apply outcome, and the `already-applied` arm
+  // flattened away would erase CFGM-03's idempotency answer from every projected surface.
+  'config.field.set': configFieldSetSpec,
   'config.get': configGetSpec,
+  'config.proposal.apply': configProposalApplySpec,
   'entities.get': entitiesGetSpec,
   'entities.resolve': entitiesResolveSpec,
   // 391 PROP-01 / D-03. Paired the day they are registered. `grants.list`'s output is the first

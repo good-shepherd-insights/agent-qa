@@ -225,7 +225,15 @@ const ALL_FUNCTION_IDS = [
   // drop-out set below is unchanged — which is what keeps the filter assertion a claim about the
   // RULE rather than about a frozen list.
   'authoring.funnel.get',
+  // 395 D-01/D-03: in SORT position — `config.field.set` and `config.proposal.apply` fall on
+  // either side of `config.get` lexicographically (`field` < `get` < `proposal`), and this list is
+  // compared against the registry's lexicographic listing, so an appended pair would fail on ORDER
+  // while every member was present. Both declare `config-write` and NOT `read`, so both DROP OUT
+  // of the safe-mode listing with the other non-read verbs — which is what keeps the filter
+  // assertion below a claim about the RULE rather than about a frozen list.
+  'config.field.set',
   'config.get',
+  'config.proposal.apply',
   // 387 D-09: both read-tier, so both survive safe-mode filtering — which is what makes the
   // filter assertion below sharper rather than merely longer. `runs.start` is still the only
   // id that drops out, and it now drops out of a set two entries larger.

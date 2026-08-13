@@ -46,6 +46,12 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import type { AuthoringFunnelPortLike } from '../authoring/funnel.js'
+import type {
+  ConfigApplyPortLike,
+  ConfigFilesPortLike,
+  ConfigProposalsWritePortLike,
+  ConfigValidatePortLike,
+} from '../config-mutation/ports.js'
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
 import type {
   AuthoringProposalsWritePortLike,
@@ -123,6 +129,10 @@ export type OptionalFunctionDepKey =
   | 'authoringFunnel'
   | 'draftApply'
   | 'authoringProposals'
+  | 'configFiles'
+  | 'configValidate'
+  | 'configApply'
+  | 'configProposals'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -898,6 +908,47 @@ export interface FunctionDeps {
    * verb into it would hand the projection a capability to overwrite the records it reports on.
    */
   authoringProposals?: AuthoringProposalsWritePortLike
+  /**
+   * 395 D-03/D-17 · CFGM-01/04: the pinned config file SET as RAW BYTES, plus the comment-preserving
+   * field edit over them.
+   *
+   * DELIBERATELY NOT A WIDENING OF {@link ConfigReaderPort}, which is masked-only by contract and
+   * must stay so — a capability that could ask it for unmasked values would make masking optional,
+   * and optional masking is not masking. This port answers a different question: what bytes are
+   * COMMITTED in the person's repository. Those carry no resolved secrets, because D-11 makes
+   * committed config refs-only by law.
+   *
+   * The EDIT rides the same port as the read because both are host facts. `yaml`'s Document API is
+   * an external dependency `packages/agent`'s ownership contract does not admit, and admitting one
+   * to bring the edit in-layer would widen a boundary rather than respect it.
+   */
+  configFiles?: ConfigFilesPortLike
+  /**
+   * 395 CFGM-01: whole-config validation, which runs BEFORE a proposal surfaces.
+   *
+   * A PORT because `AgentQaConfigSchema` and `validateProject` live in `@vostride/agent-qa-core`
+   * and this package does not depend on it — `validate:arch` reds that edge with no legal repair.
+   * The `draftApply` idiom exactly: the capability is declared here and bound in `cli`.
+   */
+  configValidate?: ConfigValidatePortLike
+  /**
+   * 395 CFGM-03: the ONE commit an accepted config proposal makes in a person's own history.
+   *
+   * OPTIONAL for the reason `draftApply` is, and the stakes are the same. A host with no checkout
+   * root genuinely cannot commit, and the alternative to saying so BY NAME is an apply that answers
+   * `applied` for a commit that does not exist — a receipt for history the repository never
+   * received.
+   */
+  configApply?: ConfigApplyPortLike
+  /**
+   * 395 CFGM-01: where a constructed config proposal becomes something a person can find.
+   *
+   * SEPARATE FROM `authoringProposals`, which writes the same store, and the separation is not
+   * ceremony: that member is bound inside the authoring bundle's own conditional spread, so folding
+   * config writes into it would make a host that cannot author a test unable to propose a config
+   * change — two unrelated capabilities failing together for no reason either of them names.
+   */
+  configProposals?: ConfigProposalsWritePortLike
 }
 
 /**

@@ -583,7 +583,23 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 395-01 D-01/D-03 · CFGM-01/03: both BOUND on this composition — the CLI host binds the
+      // config-file, validation and apply ports unconditionally, because a CLI always has a config
+      // path and therefore a checkout root. Both declare `config-write` and NOT `read`, which is
+      // what a listing shows a person who asks what editing their configuration costs them: the
+      // propose op carries the write scope because the scope describes what the CAPABILITY is
+      // about, not what one call happens to reach.
+      'config.field.set': {
+        requiredScopes: ['config-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       'config.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      'config.proposal.apply': {
+        requiredScopes: ['config-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.
       'entities.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },

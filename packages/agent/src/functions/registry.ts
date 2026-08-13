@@ -23,7 +23,9 @@ import { authoringDraftEditSpec } from './ops/authoring-draft-edit.js'
 import { authoringDraftWriteSpec } from './ops/authoring-draft-write.js'
 import { authoringFunnelGetSpec } from './ops/authoring-funnel-get.js'
 import { authoringVerifyDraftSpec } from './ops/authoring-verify-draft.js'
+import { configFieldSetSpec } from './ops/config-field-set.js'
 import { configGetSpec } from './ops/config-get.js'
+import { configProposalApplySpec } from './ops/config-proposal-apply.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
 import { grantsListSpec } from './ops/grants-list.js'
@@ -127,6 +129,22 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   knowledgeForgetProposeSpec as FunctionSpec,
   knowledgeProposalApplySpec as FunctionSpec,
   configGetSpec as FunctionSpec,
+  // 395 D-01/D-03 · CFGM-01/CFGM-03: the config editor's first action and the ONE verb through
+  // which committed configuration changes. Registered as SIBLINGS of `config.get` rather than in a
+  // family of their own, because they are the write half of a story whose read half already ships
+  // here — and registering them is what makes them instantly chat-reachable (392 D-07), projectable
+  // over MCP (396) and walkable by the parity suite (397) with no harness change anywhere.
+  //
+  // The propose op stays at the recognized-mutating floor: it commits nothing, so gating it would
+  // be asking about the request rather than the act. The apply carries `mutating-shared` — the
+  // person's git history is not this machine's business alone — and its class is GRANTABLE, which
+  // is D-02's design: the per-proposal `crossBoundary` flag is what protects a boundary-crossing
+  // change, not a blanket refusal of the class.
+  //
+  // Both bind through OPTIONAL deps, so a host with no config files lists them `unbound` BY NAME
+  // rather than answering an empty proposal about a project it cannot read.
+  configFieldSetSpec as FunctionSpec,
+  configProposalApplySpec as FunctionSpec,
   // 390 D-12/D-13: a new `quarantine.` domain — a taxonomy extension exactly as `entities.`
   // was, because quarantine state is neither a run, a memory nor an analysis. All three bind
   // through the OPTIONAL `quarantine` dep, so a host with no knowledge root lists them

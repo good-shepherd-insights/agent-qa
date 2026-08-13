@@ -22,12 +22,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  ConfigProposalApplyableV1Schema,
   FindingProposalV1Schema,
   KnowledgeProposalV1Schema,
   ProposalRecordSchema,
   TestDraftProposalV1Schema,
+  base64Encode,
+  renderConfigDiff,
+  utf8Encode,
 } from '@vostride/agent-qa-schema'
 import type {
+  ConfigProposalApplyableV1,
   FindingProposalV1,
   KnowledgeProposalV1,
   ProposalRecord,
@@ -64,6 +69,7 @@ function bytesOf(name: string): string {
 const TEST_DRAFT_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9a'
 const FINDING_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9b'
 const KNOWLEDGE_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9c'
+const CONFIG_ID = 'prop_01j9zzkq7x8q4m6n2r5t3v7w9d'
 
 /** A draft proposal payload, parsed through the SHIPPED arm rather than cast into place. */
 function testDraftPayload(overrides: Partial<TestDraftProposalV1> = {}): TestDraftProposalV1 {
@@ -115,6 +121,35 @@ function findingPayload(overrides: Partial<FindingProposalV1> = {}): FindingProp
   })
 }
 
+/**
+ * A config proposal payload, PRODUCED rather than written (395-01).
+ *
+ * The diff bytes and the digest come out of `renderConfigDiff` — the same export the construction
+ * pipeline and the apply both call — so this fixture cannot pin a payload the producer is incapable
+ * of making, which is exactly the produced-not-literal law this file's header states.
+ */
+function configPayload(): ConfigProposalApplyableV1 {
+  const oldBytes = utf8Encode('use:\n  timeout: 30s\n')
+  const newBytes = utf8Encode('use:\n  timeout: 45s\n')
+  const rendered = renderConfigDiff([{ path: 'agent-qa.config.yaml', oldBytes, newBytes }])
+  return ConfigProposalApplyableV1Schema.parse({
+    schemaVersion: 1,
+    payloadKind: 'applyable',
+    action: 'config.field.set',
+    summaryLine: 'set use.timeout to 45s',
+    files: [{
+      path: 'agent-qa.config.yaml',
+      changeKind: 'modify',
+      baseDigest: rendered.perFileDigests[0]?.oldDigest,
+      newContentBase64: base64Encode(newBytes),
+    }],
+    shownDiffBase64: base64Encode(rendered.diffBytes),
+    shownDiffDigest: rendered.diffDigest,
+    crossBoundary: false,
+    crossBoundaryReasons: [],
+  })
+}
+
 function knowledgePayload(proposalId = KNOWLEDGE_ID, proposedAt = 1_000): KnowledgeProposalV1 {
   return KnowledgeProposalV1Schema.parse({
     schemaVersion: 1,
@@ -135,6 +170,16 @@ function testDraftRecord(id = TEST_DRAFT_ID, at = 2_000): ProposalRecord {
     kind: 'test-draft',
     origin: { emittedBy: 'authoring.draft.write', runId: 'run_gate_3', at },
     payload: testDraftPayload(),
+  })
+}
+
+function configRecord(id = CONFIG_ID, at = 4_000): ProposalRecord {
+  return ProposalRecordSchema.parse({
+    schemaVersion: 1,
+    id,
+    kind: 'config',
+    origin: { emittedBy: 'config.field.set', at },
+    payload: configPayload(),
   })
 }
 
@@ -198,15 +243,33 @@ describe('the store extracts every kind the envelope discriminates (394-18)', ()
     })
   })
 
+  it('reads a config record back as a config proposal (395-01)', () => {
+    // 395-01's designed landing. This cell is where the previous plan's `config` fixture went: the
+    // unknown-kind case below used `'config'` as its stand-in for "a kind no build knows", which
+    // was true at 394 and stopped being true the moment `PROPOSAL_KINDS` grew its fourth member.
+    // The store learns nothing new — it parses the arm the envelope discriminates — and that is
+    // exactly the 391 header's promise being kept rather than a change to this store.
+    const stored = extractStoredProposal(configRecord())
+
+    expect(stored.kind).toBe('config')
+    expect(stored.id).toBe(CONFIG_ID)
+    expect(stored.payload).toEqual(configPayload())
+  })
+
   it('refuses an UNKNOWN kind by name — the only refusal the widening leaves standing', () => {
+    // THE FIXTURE MOVED WHEN THE VOCABULARY GREW, and it has to keep moving: this cell needs a
+    // kind NO build knows, so it can only ever be spelled as a value the closed set does not carry.
+    // `'scaffold'` is such a value today — 395's scaffold action mints a `config` proposal, not a
+    // kind of its own — and the day it stops being one, this cell reds and whoever added the kind
+    // picks the next non-member. That is the cell working, not the cell breaking.
     let caught: unknown
     try {
-      extractStoredProposal({ schemaVersion: 1, id: TEST_DRAFT_ID, kind: 'config', payload: {} })
+      extractStoredProposal({ schemaVersion: 1, id: TEST_DRAFT_ID, kind: 'scaffold', payload: {} })
     } catch (error) {
       caught = error
     }
     expect(caught).toBeInstanceOf(TypeError)
-    expect((caught as Error).message).toContain('config')
+    expect((caught as Error).message).toContain('scaffold')
   })
 
   it('refuses a MALFORMED record of a KNOWN kind at its own arm, rather than casting it through', () => {

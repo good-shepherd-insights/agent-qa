@@ -149,6 +149,12 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // its contract and turns an unbound refusal into an input error — which the parity case below
   // reads as `dispatched`. `grants.list` genuinely takes the empty query and needs no row here.
   'grants.revoke': { grantId: 'grant_0123456789abcdef' },
+  // 395 D-03: a PARSING input on its siblings' reasoning — the contract requires a non-empty path
+  // and a scalar value, so the `{}` default would fail validation and turn an unbound refusal into
+  // an input error, which the parity case below reads as `dispatched`. The path names a real
+  // config key so the row stays aimed at the BINDING check and nothing else.
+  'config.field.set': { path: 'use.timeout', value: '45s' },
+  'config.proposal.apply': { proposalId: 'prop_0123456789ab' },
 }
 
 /**
