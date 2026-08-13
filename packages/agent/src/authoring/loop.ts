@@ -67,9 +67,11 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import {
+  CONFIGURED_TARGETS_BLOCK_TITLE,
   PROCEDURE_BY_REFERENCE_INSTRUCTION,
   TEST_DOCUMENT_FORMAT_BLOCK_TITLE,
   TEST_DOCUMENT_FORMAT_INSTRUCTION,
+  configuredTargetsBlockBody,
   exemplarBlockBody,
   knowledgeBlockBody,
 } from './brief-blocks.js'
@@ -543,7 +545,14 @@ async function compileDraft(
   input: AuthoringLoopInput,
   brief: AuthoringBrief,
   shelf: DraftShelfPortLike,
+  read: AuthoringReadPortLike,
 ): Promise<ParsedDraftLike> {
+  // WR-07: the `target` vocabulary, read HERE rather than threaded in from the caller. It is
+  // needed by exactly one prompt and nothing else in the invocation consults it, so a value
+  // fetched at the top of `runAuthoringLoop` would be a read the dedup refusal path pays for and
+  // never uses — and one more argument that could be edited in transit.
+  const targetNames = await read.configuredTargetNames()
+
   const request = buildTieredPrompt({
     agent_context: AUTHORING_COMPILE_AGENT_CONTEXT,
     stable: [
@@ -567,6 +576,16 @@ async function compileDraft(
     context: [
       { title: 'Intent', body: input.intent },
       { title: 'Scope', body: `${input.scope.tier}:${input.scope.key}` },
+      // WR-07, AND IT RIDES BESIDE THE BLOCK IT CORRECTS. `Scope` renders `${tier}:${key}` and
+      // that key is a PRODUCT — `deriveDefaultAuthoringScope` answers `target.product ??
+      // targetName` — so a stage asked for a `target` while served only the Scope block was being
+      // asked to guess on every project where the two differ. CONTEXT tier and not stable: these
+      // names are per-project facts, and the stable tier's shared byte prefix must stay
+      // project-independent for the prompt cache the tier law exists to enable.
+      {
+        title: CONFIGURED_TARGETS_BLOCK_TITLE,
+        body: configuredTargetsBlockBody(targetNames),
+      },
       { title: 'What this project knows', body: knowledgeBlockBody(brief) },
     ],
     volatile: [{ title: 'Exemplar tests', body: exemplarBlockBody(brief) }],
@@ -884,7 +903,7 @@ export async function runAuthoringLoop(
   }
 
   stages.push('compile')
-  const compiled = await compileDraft(input, brief, deps.shelf)
+  const compiled = await compileDraft(input, brief, deps.shelf, deps.read)
   // THE ROUND IS UNCONDITIONAL AND IT IS INSIDE STAGE 3 (D-18). Unconditional: there is no `if`
   // above this line and no argument that could turn it off — see `refine.ts` for why a trigger
   // heuristic is the thing D-18 rules out rather than the thing it configures. Inside stage 3

@@ -37,6 +37,36 @@ export const PROCEDURE_BY_REFERENCE_INSTRUCTION =
 /** The title of the stable block {@link TEST_DOCUMENT_FORMAT_INSTRUCTION} renders under. */
 export const TEST_DOCUMENT_FORMAT_BLOCK_TITLE = 'Test document format'
 
+/**
+ * The title of the CONTEXT block serving this project's `target` vocabulary (394-33, WR-07).
+ *
+ * CONTEXT AND NOT STABLE, unlike its neighbour above. Target names are per-project facts, and the
+ * stable tier is the byte prefix a provider's prompt cache keys on — a project-dependent body
+ * there would defeat the sharing the tier law exists to enable. It rides beside the Scope block,
+ * which is the block it corrects: `Scope` names a PRODUCT and a `target` is a TARGET NAME, and
+ * until this constant existed nothing in the prompt said the two were different kinds of value.
+ *
+ * The title is referenced BY NAME from {@link TEST_DOCUMENT_FORMAT_INSTRUCTION}'s `target` bullet,
+ * so the vocabulary is not merely present in the prompt but is where the instruction sends a
+ * reader. A served-but-unreferenced block is a block a model may never look at.
+ */
+export const CONFIGURED_TARGETS_BLOCK_TITLE = 'Configured targets'
+
+/**
+ * The served names, one per line — or the honest answer when a project declares none.
+ *
+ * ONE NAME PER LINE AND NOTHING ELSE around them: no bullets, no quoting, no count. Anything
+ * rendered beside a name is something a model can mistake FOR a name, and this is the one block
+ * whose whole purpose is that the value it produces is copied out of it verbatim.
+ */
+export function configuredTargetsBlockBody(names: readonly string[]): string {
+  if (names.length === 0) {
+    return 'This project declares no targets. Ask which target this test should run against '
+      + 'rather than inventing one.'
+  }
+  return names.join('\n')
+}
+
 /** The line the canonical example follows, and the last prose in the block. */
 export const TEST_DOCUMENT_FORMAT_EXAMPLE_MARKER = 'A complete document looks exactly like this:'
 
@@ -86,8 +116,8 @@ export const TEST_DOCUMENT_FORMAT_INSTRUCTION =
   + '- `name`: the test\'s display name, one line of plain English.\n'
   + '- `test-id`: a stable identifier — the letters `t_` followed by exactly ten lowercase words '
   + 'joined by hyphens. Choose ten words of your own rather than copying the example\'s.\n'
-  + '- `target`: the configured target this test runs against. When the Scope block names a '
-  + 'product that IS a configured target, use its key.\n'
+  + '- `target`: the test\'s target, chosen from the names in the Configured targets block — '
+  + 'never invented. The Scope block names a PRODUCT, which is not always one of those names.\n'
   + '- `steps`: a YAML list of natural-language step strings, at least one of which asserts '
   + 'concrete expected content.\n'
   + '`context` is optional: one paragraph of standing background the whole test assumes.\n'
