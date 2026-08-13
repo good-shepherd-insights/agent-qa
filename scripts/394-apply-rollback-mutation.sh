@@ -25,9 +25,11 @@
 #   MUTATION W  the target write is hoisted back OUT of the try, which is the arrangement 394-23
 #               closed and the third consecutive narrowing of one hole. A write that fails
 #               mid-flight then leaves a person's committed test truncated with no restore at all.
-#   MUTATION U  `readTargetIfPresent` decodes and re-encodes as UTF-8 — the round-trip this file
-#               shipped with. The digest is then over a DECODING of the target rather than over the
-#               target, and the rollback puts U+FFFD back where bytes were.
+#   MUTATION U  `readTargetIfPresent` decodes and re-encodes as UTF-8, putting the round-trip back
+#               on the CONSUMER side only. With a byte-true producer (`parseDraft`, 394-29) the two
+#               halves of the digest contract then DISAGREE about a non-UTF-8 target nobody touched,
+#               so a clean file is refused as changed — and the rollback puts U+FFFD back where
+#               bytes were.
 #
 # WHY P AND W ARE TWO LEGS AND NOT ONE. Both are about placement, and they are placements of
 # DIFFERENT statements relative to the same try: P moves the capture in, W moves the write out. The
@@ -40,6 +42,13 @@
 # apply refuses a round-tripped target before it ever reaches the restore. So one leg reds both
 # byte-fidelity cells, which is the honest shape — a pair of legs contrived to separate them would
 # be measuring an arrangement the shipped code cannot be in.
+#
+# WHAT LEG U MEASURES AFTER 394-29, AND WHY IT NOW MEASURES ANYTHING AT ALL. Its cells used to mint
+# their `sourceDigest` as a literal hash of the non-UTF-8 fixture — a value the product's only
+# producer did not emit, so this leg red exclusively on an impossible input and could not tell a
+# vacuous corpus from a real closure (WR-03). Those digests now arrive through `parseDraft`, which
+# hashes the target's raw bytes since 394-29, so U reds the two halves of a contract the product can
+# actually be in: the producer over bytes, the consumer over a decoding.
 #
 # DISJOINTNESS IS THE POINT, and the script asserts it with `comm -12` over the sorted red sets. A
 # pair of mutations that red the same cells has measured one property twice; six that red six
@@ -119,10 +128,17 @@ ALLOWED_RED_CELLS_W=(
 )
 # U's second cell is the SAME decode observed on the rollback side rather than the digest side. It
 # is here rather than in a leg of its own for the reason in this file's header: with a byte-true
-# digest the two are not independently reachable.
+# digest the two are not independently reachable. The third is 394-29's producer/consumer agreement
+# stated directly — the same property as the signature cell, observed at the seam where the two
+# recipes meet rather than at the apply's outcome.
+#
+# THE REFUSAL CELL IS NOT HERE AND MUST NOT BE. `REFUSES by name when the target's bytes really
+# changed` stays GREEN under U, and that is the point: a mutation that breaks the accept arm must
+# not be able to hide behind a corpus that only ever asserts refusals.
 ALLOWED_RED_CELLS_U=(
   "$U_SIGNATURE_CELL"
   "restores a non-UTF-8 target BYTE-IDENTICALLY, never through a decode round-trip"
+  "ACCEPTS an untouched non-UTF-8 target whose sourceDigest came through parseDraft"
 )
 
 T_ANCHOR="  restoreIndexEntry(exec, cwd, identityPath, indexBefore)"

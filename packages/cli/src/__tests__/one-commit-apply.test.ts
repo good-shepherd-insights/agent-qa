@@ -775,11 +775,16 @@ describe('the write is INSIDE the rollback\'s reach, and both halves are bytes (
     expect(calls).toBe(2)
   })
 
-  it('digests the target\'s RAW BYTES, so a target that is not valid UTF-8 still matches the proposal', () => {
+  it('digests the target\'s RAW BYTES, so a target that is not valid UTF-8 still matches the proposal', async () => {
     // WR-04, the overwrite direction. `readTargetIfPresent` decoded as UTF-8 and the digest hashed
     // the decoded STRING, so every byte sequence that is not valid UTF-8 collapsed to the same
-    // replacement characters — a target that had not moved at all was refused as changed, and two
-    // genuinely different targets hashed alike.
+    // replacement characters — two genuinely different targets hashed alike, and once 394-23 moved
+    // this half alone, a target that had not moved at all was refused as changed.
+    //
+    // THE DIGEST ARRIVES THROUGH THE PRODUCER (394-29, WR-03). It used to be minted here as
+    // `createHash(...).update(NON_UTF8_TARGET_BYTES)` — a value no producer emitted at the time,
+    // so this cell's fixture was one the product could not put on a proposal and the mutation leg
+    // beside it red only on the impossible input.
     writeFileSync(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
     git('add', '--', TARGET_PATH)
     git('commit', '--quiet', '-m', 'a person committed a test whose bytes are not UTF-8')
@@ -787,9 +792,7 @@ describe('the write is INSIDE the rollback\'s reach, and both halves are bytes (
 
     const result = applyTestDraftAsOneCommit({
       configPath,
-      request: request({
-        sourceDigest: createHash('sha256').update(NON_UTF8_TARGET_BYTES).digest('hex'),
-      }),
+      request: request({ sourceDigest: await sourceDigestThroughTheProducer() }),
     })
 
     expect(result.filePath).toBe(TARGET_PATH)
@@ -797,7 +800,7 @@ describe('the write is INSIDE the rollback\'s reach, and both halves are bytes (
     expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(DRAFT_BYTES)
   })
 
-  it('restores a non-UTF-8 target BYTE-IDENTICALLY, never through a decode round-trip', () => {
+  it('restores a non-UTF-8 target BYTE-IDENTICALLY, never through a decode round-trip', async () => {
     // WR-04, the rollback direction, and the one that destroys a person's file rather than
     // refusing: the restore wrote back a decoded string, so putting the bytes "back" replaced every
     // sequence the decoder could not read with U+FFFD. The INDEX half is deliberately not asserted
@@ -809,12 +812,12 @@ describe('the write is INSIDE the rollback\'s reach, and both halves are bytes (
     git('commit', '--quiet', '-m', 'a person committed a test whose bytes are not UTF-8')
     assertNonUtf8BytesSurviveTheHarness(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
     const beforeSha = sha256File(join(root, TARGET_PATH))
+    // Produced, not minted — see the cell above and `sourceDigestThroughTheProducer` (WR-03).
+    const sourceDigest = await sourceDigestThroughTheProducer()
 
     expect(() => applyTestDraftAsOneCommit({
       configPath,
-      request: request({
-        sourceDigest: createHash('sha256').update(NON_UTF8_TARGET_BYTES).digest('hex'),
-      }),
+      request: request({ sourceDigest }),
       exec: failingAt('commit'),
     })).toThrow(/git commit exited/)
 
