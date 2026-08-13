@@ -3,7 +3,8 @@
 // WHAT THIS LANE DOES, in order:
 //
 //   1. Score the caller's INTENT against every test in the authored suite, through the shipped
-//      `textOverlap` and no other recipe.
+//      `textOverlap` and no other recipe, on the two axes an intent and a test can actually be
+//      COMPARED on — the test's whole document, and the test's name alone — keeping the larger.
 //   2. Keep the highest-scoring member, breaking a tie on the lexicographically smallest
 //      workspace-relative identity path.
 //   3. Refuse when that score is at or above the pinned threshold, naming the member, the score,
@@ -46,24 +47,40 @@ import type { SuiteTestIdentity, SuiteTextCorpusEntryLike } from './ports.js'
  * and which nothing downstream will remove.
  *
  * RETUNE, AND IT IS A MEASUREMENT RATHER THAN A PREFERENCE. Before moving this number, re-run the
- * frozen corpus at `__tests__/fixtures/dedup-corpus/expectations.json` and report three things:
- *   (a) WHICH ROWS MOVE. The corpus carries a boundary triple — 0.4482758621, 0.4500000000 and
- *       0.4516129032 — so the immediate neighbourhood is already instrumented. The value is
+ * frozen corpus at `__tests__/fixtures/dedup-corpus/expectations.json` and report three things.
+ * ALL THREE WERE RE-MEASURED 2026-08-13 on the producible input distribution; the numbers this
+ * comment carried until then were taken over whole test DOCUMENTS, which no caller can send, and
+ * so described a lane nobody was ever running (394-31, WINDOWS 118).
+ *   (a) WHICH ROWS MOVE. The corpus carries a boundary triple — 0.4444444444, 0.4500000000 and
+ *       0.4545454545 — so the immediate neighbourhood is already instrumented. The value is
  *       0.45 rather than a rounder number because 0.45 is the value the corpus can sit EXACTLY
- *       on: the at-threshold document's nine tokens are all `uat-381-ladder` tokens, so its
+ *       on: the at-threshold utterance's nine tokens are all `uat-381-ladder` tokens, so its
  *       Jaccard is 9/20, which is the same IEEE-754 double as the literal here. A pin no row can
  *       land on to the digit makes the `>=` direction a coin flip with a constant next to it.
+ *       Re-measured against the fixed recipe, EVERY row moved up or stayed where it was — max is
+ *       monotone, so it cannot do anything else — and the pin was not touched. That is what "no
+ *       retune was required" means here: not that nothing moved, but that nothing crossed.
  *   (b) THE FALSE-REFUSAL RATE ON THE ACCEPT CONTROLS. The corpus's accept control tops out at
  *       0.4166666667 against the suite, so there is 0.0333 of headroom below and it is the
- *       narrowest margin in the table. Note that this number MOVES with the comparison universe:
+ *       narrowest margin among the rows standing for genuinely new intents. The boundary rows sit
+ *       closer — below-threshold is 0.0056 under — but they are instrumentation aimed at the pin,
+ *       not controls, and reading them as controls would report a false-refusal risk the corpus
+ *       deliberately manufactured. Note that this number MOVES with the comparison universe:
  *       393 measured the same text at 0.4074 by scoring it against one file, and reading the whole
  *       suite raised it. A threshold inherited from a narrower universe is measured on a different
- *       instrument.
+ *       instrument. It also moves with the AXIS: the same control scores 0.1724 on the whole
+ *       document and 0.4167 on the name, and the name axis is the one that decides it — so the
+ *       margin this clause reports is a margin on the axis that actually binds.
  *   (c) THE WALL-CLOCK COST PER REFUSED INVOCATION. A refusal here is strictly cheaper than the
- *       alternative — one token-set intersection per suite member against one model call plus N
- *       gate-runs at roughly 22s each — which is why over-flagging is affordable at all. Report it
- *       rather than assuming it, because it is the number that stops being true first if the lane
- *       ever grows a per-comparison cost.
+ *       alternative — TWO token-set intersections per suite member against one model call plus N
+ *       gate-runs at roughly 22s each — which is why over-flagging is affordable at all. The
+ *       second axis was expected to double the per-comparison work and MEASURED 1.30×, because
+ *       the name axis re-tokenizes only a name where the document axis tokenizes every step:
+ *       0.0179ms → 0.0232ms per invocation over 6 members, and 0.0369ms over the 10-member demo
+ *       suite, each the mean of 100000 invocations, measured 2026-08-13. That is roughly six
+ *       hundred thousand times cheaper than one gate-run it can avoid. Report it rather than
+ *       assuming it — including the factor, which was assumed 2× and is not — because it is the
+ *       number that stops being true first if the lane ever grows a per-comparison cost.
  *
  * A retune that only argues from intuition is the failure this comment exists to prevent.
  */
@@ -144,13 +161,58 @@ export function dedupMatchRef(identity: SuiteTestIdentity): string {
 }
 
 /**
+ * How alike are an INTENT and a committed test — on the two axes the two can be compared on.
+ *
+ * WHY TWO. `textOverlap` is a token-set Jaccard, so the denominator is the UNION. An intent is one
+ * sentence and has no steps; a suite entry is a name plus every step it runs. Scoring the intent
+ * against the entry's whole document therefore puts tokens in the denominator the intent
+ * structurally cannot supply, and the resulting score is bounded far below 1 no matter how exactly
+ * the two agree. That is not a tuning problem, it is a comparison between things of different
+ * kinds, and it made this lane's refusal arm arithmetically unreachable: an intent that was a
+ * committed test's name VERBATIM — the strongest duplicate signal that can exist — scored 0.2917
+ * against a 0.45 pin, and across the whole shipping demo suite the best such score was 0.40. Ten
+ * of ten committed tests were un-refusable, measured live and then generalised (394-30 leg D,
+ * 394-VERIFICATION round 4, WINDOWS 118).
+ *
+ * So the entry is also read on the axis an intent CAN saturate: its name alone. A name and a
+ * sentence are both one line of description, and their union carries nothing neither side could
+ * have said.
+ *
+ * THE LARGER WINS, and the direction is the safe one twice over. Max is monotone upward, so no
+ * pair the whole-document axis already refused can flip to admit — the change can only add
+ * refusals, which is the direction this threshold's own comment spends forty lines arguing for.
+ * And a duplicate is a duplicate on EITHER reading: an utterance reciting a procedure a test
+ * already performs is caught on the document axis, an utterance naming a test that already exists
+ * is caught on the name axis, and neither catches the other's case.
+ *
+ * BOTH AXES GO THROUGH THE ONE SHIPPED `textOverlap`. Two axes are not two recipes — what differs
+ * is which text is compared, never how. A second tokenizer or a second notion of similarity is
+ * what D-16 forbids, and nothing here defines either.
+ */
+function scoreIntentAgainst(
+  intent: string,
+  entry: SuiteTextCorpusEntryLike,
+): { readonly score: number; readonly sharedTokens: number } {
+  const wholeDocument = textOverlap({ testName: intent, steps: [] }, entry)
+  const nameOnly = textOverlap(
+    { testName: intent, steps: [] },
+    { filePath: entry.filePath, testName: entry.testName, stepsText: [] },
+  )
+  // Strictly greater, so the whole-document axis keeps the reading on a tie. It is the axis this
+  // lane shipped with and the one gate 3 screens on, so the evidence a refusal names stays the
+  // evidence the post-run gate would name for the same pair whenever the two axes agree.
+  return nameOnly.score > wholeDocument.score ? nameOnly : wholeDocument
+}
+
+/**
  * Stage 2 — screen the intent against the authored suite, BEFORE anything is authored.
  *
  * The intent stands in for the draft's text because at this point there IS no draft, which is what
  * makes the screen worth doing at all. It is scored through `textOverlap`, the shipped comparison
  * gate 3's degraded lane already screens with (393 D-16), rather than through a second recipe: two
  * notions of "how alike are these two tests" would let the pre-authoring screen and the post-run
- * gate disagree about the same pair.
+ * gate disagree about the same pair. Which TEXTS that recipe is pointed at is
+ * {@link scoreIntentAgainst}'s subject.
  *
  * THE TIE-BREAK IS PART OF THE CONTRACT, not an implementation detail. Two suite tests can score
  * identically — most easily when a suite carries the same test at two paths — and a lane that took
@@ -166,7 +228,7 @@ export function dedupBeforeAuthor(
   let best: { readonly entry: SuiteTextCorpusEntryLike; readonly overlap: { score: number; sharedTokens: number } } | undefined
 
   for (const entry of corpus) {
-    const overlap = textOverlap({ testName: intent, steps: [] }, entry)
+    const overlap = scoreIntentAgainst(intent, entry)
     if (
       best === undefined
       || overlap.score > best.overlap.score
