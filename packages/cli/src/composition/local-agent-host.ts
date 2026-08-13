@@ -712,7 +712,13 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
       }
       if (!stats.isFile()) return Promise.resolve({ kind: 'not-a-file' })
 
-      const content = readFileSync(absolutePath, 'utf8')
+      // READ ONCE, AS BYTES (394-29, CR-02). The digest below is the ONE value the apply's own
+      // re-check is compared against, and that re-check hashes the target's raw bytes — so this
+      // side reads bytes too and the decoding is derived FROM them for the parse alone. Reading the
+      // file twice (once decoded, once raw) would be a second read of a file that can change
+      // between them; deriving the string from these bytes cannot disagree with them.
+      const bytes = readFileSync(absolutePath)
+      const content = bytes.toString('utf8')
       // Parsed under the IDENTITY path, so any position a parse error names is the path the author
       // typed rather than an absolute one only this machine can produce.
       const parsed = parseTestFile(content, identityPath)
@@ -737,9 +743,13 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
           steps: draftStepTexts(test),
           // An EDITABLE root, so it is carried rather than dropped: the credential gate scans it.
           ...(test.context === undefined ? {} : { context: test.context }),
-          // Over the FILE'S BYTES, so a receipt cannot be inherited by an edited draft — which is
-          // the whole of what `DraftRefSchema.contentDigest` promises.
-          contentDigest: createHash('sha256').update(content).digest('hex'),
+          // Over the FILE'S BYTES — the bytes themselves, never their decoding — so a receipt
+          // cannot be inherited by an edited draft (the whole of what `DraftRefSchema.contentDigest`
+          // promises) AND so this value means the same thing as the digest the apply recomputes at
+          // the accept. Every byte sequence that is not valid UTF-8 decodes to the same replacement
+          // characters, so a digest over the decoding both collapses genuinely different targets
+          // together and disagrees with the consumer about a target nobody touched.
+          contentDigest: createHash('sha256').update(bytes).digest('hex'),
         },
       })
     },
@@ -1606,10 +1616,14 @@ export interface ApplyTestDraftInput {
  * commit, and it is a CAPTURE rather than a reset because a person may have staged content that
  * differs from HEAD — resetting would discard their own work at the file the agent touched.
  *
- * BYTES, NOT TEXT (394-23, WR-04). The target is read, digested and written back as raw bytes.
- * Under the UTF-8 round-trip this shipped with, a test file whose bytes are not valid UTF-8 hashed
- * to what its DECODING hashed to — so a target that had not moved at all was refused as changed,
- * and a rollback "restoring" it wrote U+FFFD over every sequence the decoder could not read.
+ * BYTES, NOT TEXT — ON BOTH SIDES (394-23 WR-04, completed by 394-29 CR-02). The target is read,
+ * digested and written back as raw bytes here, and `parseDraft` — the ONE producer of the
+ * `sourceDigest` this compares against — hashes raw bytes too. The history is worth stating
+ * exactly, because a one-sided version of it justified a defect: at the base BOTH halves hashed the
+ * UTF-8 decoding and therefore AGREED, so a stable non-UTF-8 target matched; what the round-trip
+ * genuinely destroyed was the rollback, which wrote U+FFFD back over every sequence the decoder
+ * could not read. 394-23 moved this half alone, which made the two halves disagree and refused a
+ * clean non-UTF-8 target as changed; 394-29 moved the producer, so one recipe holds end to end.
  *
  * A ROLLBACK THAT ITSELF FAILS IS REPORTED AS BOTH FACTS (394-23, WR-03), as
  * {@link ApplyRollbackFailedError} — never as the restore's own error unwinding over the one that
