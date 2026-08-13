@@ -350,10 +350,14 @@ export class RepairIdentityViolationError extends Error {
  * WHY REPAIR CANNOT RENAME. The loop derives the suite an accepted draft would JOIN exactly once,
  * from the PRE-repair draft (`loop.ts`'s `targetSuitePath`), and the finished proposal recomputes
  * that same target from the REPAIRED ref through `testDraftProposal`. Both readings go through
- * `authoredSuiteTargetPath(filePath, testName)`, so a rename in between makes the suite the
- * stability gate consulted and the suite an accept would write to disagree — the disagreement the
- * single derivation is documented to prevent. Repair's grant is fixing MECHANICS under anchors that
- * forbid changing what the test claims, and the name is the loudest of those claims.
+ * `authoredSuiteTargetPath(filePath, testName)`, whose answer is the suite DIRECTORY plus a slug of
+ * the NAME: the shelf filename is the segment it drops, which is exactly why re-staging the patched
+ * draft under a new digest — which every applied set does — moves the path without moving the
+ * target. The NAME is the input the answer turns on, so a rename in between is the one thing that
+ * makes the suite the stability gate consulted and the suite an accept would write disagree — the
+ * disagreement the single derivation is documented to prevent. Repair's grant is fixing MECHANICS
+ * under anchors that forbid changing what the test claims, and the name is the loudest of those
+ * claims.
  *
  * A THIRD CONTROL, AND NONE OF THE THREE SUBSTITUTES FOR ANOTHER. `EDITABLE_POINTER_ROOTS` bounds
  * which part of the DOCUMENT any patch may touch, and it admits `name` deliberately — a user asking

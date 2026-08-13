@@ -906,11 +906,13 @@ export async function runAuthoringLoop(
   // WHERE ACCEPTING WOULD WRITE IT, computed ONCE for the whole invocation through the SAME
   // exported recipe the proposal arm uses (`testDraftProposal`'s `targetPath`) — so the suite the
   // stability read consults and the suite an accept would join cannot disagree (394-19, D-14).
-  // ONE DERIVATION IS ONLY ENOUGH BECAUSE ITS INPUTS CANNOT MOVE UNDER IT: this value is derived
-  // here from the PRE-repair draft and recomputed at the proposal from the REPAIRED ref, so a repair
-  // that renamed the test would make the two readings disagree while both looked derived. That is
-  // now ENFORCED rather than assumed — `fencePatchAgainstDraftIdentity` refuses a repair patch that
-  // addresses `/name` (WR-01), so the pair this recipe reads is the same pair at both ends.
+  // ONE DERIVATION IS ONLY ENOUGH BECAUSE THE INPUT THAT MOVES DOES NOT REACH THE ANSWER: this value
+  // is derived here from the PRE-repair draft and recomputed at the proposal from the REPAIRED ref,
+  // whose shelf path is a DIFFERENT file — repair re-stages every patched candidate under its new
+  // digest — and `authoredSuiteTargetPath` drops that filename, keeping only the suite directory and
+  // a slug of the test NAME. The name is therefore the one input a repair could move the target
+  // with, and that is now ENFORCED rather than assumed — `fencePatchAgainstDraftIdentity` refuses a
+  // repair patch addressing `/name` (WR-01), so both ends of the recipe read the same name.
   // Without it the read targets `draft.filePath`, a one-test shelf artifact whose only member is
   // the draft itself, and `neighbours-flaky` is unreachable from this entry point for any app.
   const targetSuitePath = authoredSuiteTargetPath(draft.filePath, draft.testName)

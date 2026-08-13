@@ -224,7 +224,10 @@ export const FindingProposalV1Schema = z.object({
    * ADDITIVE AND OPTIONAL ON A `.strict()` SCHEMA, AND THE VERSION CONSTANT IS NOT BUMPED. The
    * 394-21/394-19 precedent: every finding file retained on disk still parses, because a strict
    * schema refuses UNKNOWN keys rather than requiring new ones, and a bump would invalidate records
-   * whose shape is unchanged in every field they carry.
+   * whose shape is unchanged in every field they carry. THE REVERSE DIRECTION — an OLDER reader
+   * meeting a record carrying this key — is unreachable rather than tolerated: no earlier reader is
+   * deployed anywhere, because the v2 rewrite ships nothing between milestones, so the only readers
+   * that will ever see a finding file are built from this schema (WR-06).
    */
   repairIterations: z.number().int().min(0).optional(),
   /** `null` for a member-level failure with no step to point at. */
