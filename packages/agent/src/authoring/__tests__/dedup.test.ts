@@ -143,6 +143,30 @@ function inputsFor(row: CorpusRow): {
   return { intent: intentOf(row), corpus: (row.suite ?? []).map(suiteEntry) }
 }
 
+/**
+ * The row's top NAME-AXIS score — `scoreIntentAgainst`'s name-only half, mirrored exactly.
+ *
+ * `dedup.ts` scores an intent on two comparable axes and keeps the larger. The name-only half is
+ * `textOverlap({ testName: intent, steps: [] }, { filePath, testName, stepsText: [] })`, and that
+ * construction is reproduced here CHARACTER FOR CHARACTER through the imported `textSimilarity`
+ * rather than approximated: a second recipe for "how alike are these two texts" is what D-16
+ * forbids, and a cell that invented one would measure its own arithmetic instead of the lane's.
+ * Maximised over the row's OWN suite members, because that is the set `dedupBeforeAuthor` reduces
+ * over when it produces the score this reading is compared against.
+ */
+function nameAxisTop(row: CorpusRow): number {
+  const members = row.suite ?? []
+  if (members.length === 0) throw new Error(`row ${row.id} has no suite to read an axis over`)
+  const utterance = intentOf(row)
+  return Math.max(...members.map((key) => {
+    const entry = suiteEntry(key)
+    return textSimilarity(
+      { testName: utterance, steps: [] },
+      { filePath: entry.filePath, testName: entry.testName, stepsText: [] },
+    )
+  }))
+}
+
 function rowNamed(id: string): CorpusRow {
   const row = EXPECTATIONS.rows.find((candidate) => candidate.id === id)
   if (row === undefined) throw new Error(`no frozen row named ${id}`)
@@ -231,16 +255,33 @@ describe('the frozen dedup corpus is intact', () => {
     expect(refuse.expected).toBe('duplicate')
     expect(admit.expected).toBe('no-duplicate')
     for (const row of [refuse, admit]) {
-      const utterance = intentOf(row)
-      // Longer than any suite member's NAME, so neither row can be satisfied on the name axis
-      // alone -- which is what "outside the assumption" has to mean arithmetically.
-      const longestName = Math.max(
-        ...Object.keys(EXPECTATIONS.suiteMembers).map((key) => suiteEntry(key).testName.length),
-      )
-      expect(utterance.length, `${row.id} is step-detailed, not name-shaped`)
-        .toBeGreaterThan(longestName)
+      // THE DECIDING AXIS, ASSERTED DIRECTLY. Until 2026-08-13 this cell compared the utterance's
+      // CHARACTER LENGTH against the longest suite name -- a proxy for an axis, and a proxy of the
+      // wrong kind: `textOverlap` is a token-set Jaccard, so a re-mint that shortened a suite name
+      // (or lengthened an utterance without moving its overlap) left this cell green with both
+      // rows back INSIDE the assumption it exists to place them outside of (394-VERIFICATION
+      // round 5, WR-06). What "outside the name-axis assumption" means arithmetically is that the
+      // name axis alone CANNOT reach the row's verdict -- so that is what is measured.
+      expect(nameAxisTop(row), `${row.id} must be decided on the DOCUMENT axis: the name axis `
+        + 'alone cannot reach its frozen score, which is what places it outside the assumption')
+        .toBeLessThan(row.score ?? 0)
     }
   })
+
+  it('discrimination control: the SAME axis computation reads a name-decided row the other way',
+    () => {
+      // THE MUTATION BAR FOR THE CELL ABOVE, in-suite and permanent rather than a session
+      // observation. `unfingerprinted-duplicate`'s frozen 0.8000000000 IS its name-axis reading
+      // (8 shared of 10+8, measured 2026-08-13 on the producible universe) -- it is a name-decided
+      // row. If `nameAxisTop` ever stops distinguishing a name-decided row from a document-decided
+      // one -- a mirrored construction that drifted from `scoreIntentAgainst`, a maximisation over
+      // the wrong members, an axis that collapsed onto the whole-document reading -- this control
+      // reds BEFORE the cell above goes silently vacuous by passing for everything.
+      const nameDecided = rowNamed('unfingerprinted-duplicate')
+      expect(nameAxisTop(nameDecided), 'the name axis DECIDES this row, so it must reach the '
+        + 'frozen score rather than fall short of it')
+        .toBeGreaterThanOrEqual(nameDecided.score ?? 0)
+    })
 })
 
 /**
