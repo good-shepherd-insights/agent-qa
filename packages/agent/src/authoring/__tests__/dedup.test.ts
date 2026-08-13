@@ -243,12 +243,35 @@ describe('the frozen dedup corpus is intact', () => {
   })
 })
 
+/**
+ * The `test-id` rule the SCHEMA asserts, spelled locally.
+ *
+ * `TestDefinitionSchema` refines `test-id` on `isCanonicalTestId`, which is `t_` followed by
+ * exactly `CANONICAL_ID_WORDS = 10` id-agent words. `packages/agent` may not import
+ * `@vostride/agent-qa-ids` any more than it may import the parser, so the rule is spelled here --
+ * but it is spelled AT ITS OWN STRENGTH. The predecessor of this constant was `/^t_[a-z0-9-]+$/u`,
+ * which accepts any hyphenated lowercase string, and it waved through a SEVEN-word id for the life
+ * of the corpus: `dedup-unfingerprinted.yaml` was a document `parseTestFile` refuses outright, and
+ * therefore a document `suiteTextCorpus()` can never yield (`local-agent-host.ts` does
+ * `if (parsed.errors.length > 0) continue`), sitting inside the row that pins "the comparison
+ * universe is EVERY test in the suite". A stand-in weaker than the rule it stands in for is not a
+ * check (394-VERIFICATION round 5, CR-01).
+ *
+ * This is the CHEAP half of the guard and it is deliberately not the only half: the real parser
+ * walk lives in `packages/cli/src/authoring/__tests__/dedup-corpus-producibility.test.ts`, in the
+ * one package permitted to import `@vostride/agent-qa-core`, because the only assertion that
+ * cannot be weaker than the parser is the parser.
+ */
+const CANONICAL_TEST_ID = /^t_[a-z0-9]+(-[a-z0-9]+){9}$/u
+
 describe('every corpus fixture is what its side of the comparison actually receives', () => {
   // The producer check, per side. The SUITE side is a house-style test document, because a corpus
   // entry is a committed test. The INTENT side is a bare utterance, because that is what the op
   // is handed. `parseTestFile` itself lives in `@vostride/agent-qa-core`, which the FUNC-02
   // firewall forbids this package to import, so what is asserted here is that the suite documents
-  // parse as YAML and carry the four fields the house format requires.
+  // parse as YAML and carry the four fields the house format requires -- with `test-id` held to
+  // the schema's own rule, and the shipped parser itself driven over these same six files by the
+  // cli-side producibility cell named on CANONICAL_TEST_ID above.
   const suiteDocuments = [...new Set(
     Object.values(EXPECTATIONS.suiteMembers).map((member) => member.document),
   )]
@@ -257,7 +280,11 @@ describe('every corpus fixture is what its side of the comparison actually recei
     const document = readDocument(relativePath)
     expect(typeof document.name).toBe('string')
     expect(document.name.length).toBeGreaterThan(0)
-    expect(document['test-id']).toMatch(/^t_[a-z0-9-]+$/u)
+    expect(
+      document['test-id'],
+      `${relativePath}'s test-id must be t_ + exactly ten id-agent words -- a document `
+      + 'parseTestFile refuses is a document suiteTextCorpus() can never yield',
+    ).toMatch(CANONICAL_TEST_ID)
     expect(document.target).toBe('local-form')
     expect(Array.isArray(document.steps)).toBe(true)
     expect(document.steps.length).toBeGreaterThan(0)
