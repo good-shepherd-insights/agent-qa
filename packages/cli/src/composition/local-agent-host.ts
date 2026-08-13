@@ -77,6 +77,10 @@ import {
   HooksFileSchema,
   applyPatchSetToTestDoc,
   discoverWorkspaceFiles,
+  // 395-05: the canonical hook-id mint, through `core`'s re-export beside `generateRunId` rather
+  // than from the ids package directly — `packages/cli`'s ownership contract was deliberately
+  // emptied of that dependency by 394-11 and this needs no reopening of it.
+  generateHookId,
   generateRunId,
   parseTestFile,
   parseTestFileWithTokens,
@@ -88,7 +92,7 @@ import {
 import type { TestDefinition } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
 import {
-  CONFIG_SET_GITIGNORE,
+  CONFIG_SET_DEFAULT_HOOKS_FILE,
   KnowledgeApplyOutcomeSchema,
   base64Decode,
   enumerateConfigFileSet,
@@ -2230,6 +2234,12 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
 
       return {
         configFile: configIdentity,
+        // NAMED, NOT MATCHED (395-05). `config.hook.add` writes this member and the validator picks
+        // its schema by it. The default is read from the SAME enumeration, so a project that names
+        // no hooks file and one that names `hooks.yaml` explicitly answer identically here.
+        hooksFile: hooksFile === undefined || hooksFile === ''
+          ? CONFIG_SET_DEFAULT_HOOKS_FILE
+          : hooksFile,
         files: members.map((path) => {
           const bytes = readTargetIfPresent(resolve(configDir, path))
           // ABSENT MEANS ABSENT. A zero-length stand-in would make "there is no hooks file" and
@@ -2269,6 +2279,18 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
         }
         return { path, present: true, kind: 'scalar' as const }
       }))
+    },
+
+    /**
+     * A fresh canonical hook id, from the ONE mint `isCanonicalHookId` accepts (395-05).
+     *
+     * A HOST FACT because `@vostride/agent-qa-ids` is not among `packages/agent`'s internal
+     * dependencies and because the mint draws randomness, which nothing in that package may read.
+     * Calling `generateHookId` rather than formatting `h_` plus ten words here is the difference
+     * between an id the hooks schema accepts and one it refuses at the next run.
+     */
+    mintHookId(): string {
+      return generateHookId()
     },
 
     setField({ bytes, path, value }): Promise<ConfigFieldSetResult> {
@@ -2327,7 +2349,7 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
  */
 export function createConfigValidatePort(): ConfigValidatePortLike {
   return {
-    validate({ configFile, files }): Promise<ConfigValidation> {
+    validate({ configFile, hooksFile, files }): Promise<ConfigValidation> {
       const issues: string[] = []
 
       for (const member of files) {
@@ -2336,7 +2358,7 @@ export function createConfigValidatePort(): ConfigValidatePortLike {
         // rather than matched by extension: a project whose config is `agent-qa.yml` is still that
         // project's config, and the hooks file is whatever `workspace.hooksFile` said it was.
         const isConfig = member.path === configFile
-        const isHooks = !isConfig && member.path !== CONFIG_SET_GITIGNORE
+        const isHooks = !isConfig && member.path === hooksFile
         if (!isConfig && !isHooks) continue
 
         let parsed: unknown

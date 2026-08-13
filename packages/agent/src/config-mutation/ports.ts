@@ -111,6 +111,16 @@ export interface ConfigFileBytes {
 export interface ConfigFileSet {
   /** Which member of {@link ConfigFileSet.files} is the config yaml a field edit addresses. */
   readonly configFile: string
+  /**
+   * Which member is the hooks file (395-05).
+   *
+   * NAMED RATHER THAN GUESSED. `config.hook.add` writes this member and no other, and the two ways
+   * to find it without being told are both wrong: matching on `hooks.yaml` ignores the fact that
+   * `workspace.hooksFile` can name anything, and "the yaml that is not the config" breaks the day
+   * the set grows a third yaml. The host reads the name from the config it just parsed, which is the
+   * same read `enumerateConfigFileSet` was given.
+   */
+  readonly hooksFile: string
   readonly files: readonly ConfigFileBytes[]
 }
 
@@ -164,6 +174,18 @@ export interface ConfigFilesPortLike {
     readonly bytes?: Uint8Array
     readonly paths: readonly string[]
   }): Promise<readonly ConfigPathFacts[]>
+  /**
+   * A fresh canonical hook id (395-05).
+   *
+   * A HOST FACT FOR THE REASON `mintProposalId` IS ONE. `core`'s `HookDefinitionSchema` refuses any
+   * id `isCanonicalHookId` does not accept — `h_` followed by ten id-agent words — and that mint
+   * lives in `@vostride/agent-qa-ids`, which is not among this package's internal dependencies. It
+   * also draws randomness, and nothing in `packages/agent` reads a clock or an entropy source. A
+   * hand-formatted id would be the "don't hand-roll" row of this phase's research arriving as a
+   * defect: it would parse as a string, be written into a person's repository, and be refused by
+   * the hooks schema at the next run rather than at the proposal.
+   */
+  mintHookId(): string
 }
 
 /**
@@ -216,6 +238,8 @@ export interface ConfigValidatePortLike {
    */
   validate(input: {
     readonly configFile: string
+    /** The hooks file member, so the validator picks a schema by NAME rather than by extension. */
+    readonly hooksFile: string
     /** Every member of the pinned set, with the bytes it would hold if this proposal applied. */
     readonly files: readonly ConfigFileBytes[]
   }): Promise<ConfigValidation>

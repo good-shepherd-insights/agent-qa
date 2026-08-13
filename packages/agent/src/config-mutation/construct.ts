@@ -63,7 +63,9 @@ import {
   utf8Decode,
 } from '@vostride/agent-qa-schema'
 import type {
+  ConfigAuthSetInput,
   ConfigDiffFileInput,
+  ConfigHookAddInput,
   ConfigProposalApplyableV1,
   ConfigProposalBlockedV1,
   ConfigProposalFile,
@@ -95,6 +97,12 @@ export const AUTH_STATE_CONFIG_PATH = 'use.authState'
 
 /** The registry map every target op addresses. */
 const TARGETS_PATH = 'registry.targets'
+
+/** The auth plugin declaration list `config.auth.set` appends a package to. */
+const AUTH_PLUGINS_PATH = 'plugins.auth'
+
+/** The hooks file's top-level sequence. Read in the HOOKS file, never in the config yaml. */
+const HOOKS_PATH = 'hooks'
 
 export interface ConstructConfigFieldSetInput {
   /** The emitting op's bare id — becomes the payload's `action` and the envelope's `emittedBy`. */
@@ -370,6 +378,200 @@ export async function constructConfigTargetEditProposal(
 }
 
 /**
+ * Construct a `config.auth.set` proposal — references only, refused on the INPUT (D-11).
+ *
+ * WHAT IT WRITES, AND WHERE, IS A FACT ABOUT THIS PRODUCT'S CONFIGURATION SCHEMA RATHER THAN A
+ * CHOICE. The committed configuration has exactly one place that binds a stored auth state and it is
+ * `use.authState` (`AuthStateUseSchema`: a name, or `{ name, load, capture }`). It has exactly one
+ * place that declares an auth plugin and it is the `plugins.auth` sequence
+ * (`AuthPluginDeclarationSchema`: `{ package }` or `{ path }`, `.strict()`). It has NO place at all
+ * for an environment variable's name, which is why `envVarName` is refused rather than written —
+ * see the `unsupported-reference` arm below.
+ *
+ * THE `target` IS RESOLVED, NEVER WRITTEN, and that is deliberate. A stored auth state is captured
+ * FOR a target (`AuthStateMetadata` carries both `target` and `name`), so which identity a run acts
+ * as is the pair (the target the run uses, the name this configuration binds). Naming the target
+ * here is what lets the op refuse a binding for a target nobody configured — a typed not-found with
+ * the configured names, rather than a proposal that would bind an identity to nothing.
+ */
+export async function constructConfigAuthSetProposal(
+  input: ConfigAuthSetInput & { readonly action: string },
+  deps: ConstructConfigProposalDeps,
+): Promise<ConfigProposeOutput> {
+  const set = await deps.configFiles.read()
+  const target = requireConfigFile(set)
+
+  // D-11 FIRST, OVER EVERY SUPPLIED REFERENCE, BEFORE THE DOCUMENT IS TOUCHED. `target` is not in
+  // this list because it is never written: a credential arriving there resolves against the registry
+  // and produces `target-not-found`, which discloses nothing and says something true.
+  const refusal = refuseNonReferences(deps, input.action, [
+    ...(input.authStateName === undefined
+      ? []
+      : [{ field: 'authStateName', kind: 'auth-state-name' as const, value: input.authStateName }]),
+    ...(input.pluginPackage === undefined
+      ? []
+      : [{ field: 'pluginPackage', kind: 'plugin-package' as const, value: input.pluginPackage }]),
+    ...(input.envVarName === undefined
+      ? []
+      : [{ field: 'envVarName', kind: 'env-var-name' as const, value: input.envVarName }]),
+  ])
+  if (refusal !== undefined) return refusal
+
+  const entryPath = `${TARGETS_PATH}.${input.target}`
+  const facts = await deps.configFiles.inspect({
+    ...(target.bytes === undefined ? {} : { bytes: target.bytes }),
+    paths: [entryPath, TARGETS_PATH, AUTH_PLUGINS_PATH],
+  })
+  if (!factsFor(facts, entryPath).present) {
+    return {
+      outcome: 'refused',
+      reason: 'target-not-found',
+      detail:
+        `no target named ${input.target} is configured at ${TARGETS_PATH}, so there is nothing to `
+        + 'bind an auth state to. Use config.target.create to add one first.',
+      candidates: [...(factsFor(facts, TARGETS_PATH).keys ?? [])],
+    }
+  }
+
+  // AFTER THE SECRET CHECK, DELIBERATELY. A value that is both credential-shaped and unwritable is
+  // reported as a credential, because that is the fact the person needs; the same precedence the
+  // pipeline takes when a guardrail hit and a schema failure both apply.
+  if (input.envVarName !== undefined) {
+    return {
+      outcome: 'refused',
+      reason: 'unsupported-reference',
+      detail:
+        'this configuration schema has no field that records an environment variable\'s name: an '
+        + 'auth plugin declaration is a package or a path and nothing else. The variable belongs in '
+        + `the environment file the configuration names at ${ENV_FILE_CONFIG_PATH}, where the `
+        + 'plugin already reads it, and no config change is needed to point at it.',
+    }
+  }
+
+  let bytes = target.bytes
+  const fieldEdits: CrossBoundaryFieldEdit[] = []
+
+  if (input.authStateName !== undefined) {
+    const bound = await deps.configFiles.setField({
+      ...(bytes === undefined ? {} : { bytes }),
+      path: AUTH_STATE_CONFIG_PATH,
+      value: input.authStateName,
+    })
+    bytes = bound.bytes
+    fieldEdits.push({
+      configPath: AUTH_STATE_CONFIG_PATH,
+      ...(bound.previousValue === undefined ? {} : { oldValue: bound.previousValue }),
+      newValue: input.authStateName,
+    })
+  }
+
+  if (input.pluginPackage !== undefined) {
+    // APPENDED PAST THE END, AT A LENGTH THE DOCUMENT ITSELF REPORTED. Writing at a fixed index
+    // would overwrite a declaration that is already there; writing the whole sequence back would
+    // discard the ones this call did not mention.
+    const declaration: ConfigStructuredValue = { package: input.pluginPackage }
+    const existing = factsFor(facts, AUTH_PLUGINS_PATH)
+    const at = existing.length ?? 0
+    const appended = await deps.configFiles.setField({
+      ...(bytes === undefined ? {} : { bytes }),
+      path: existing.present ? `${AUTH_PLUGINS_PATH}.${at}` : AUTH_PLUGINS_PATH,
+      value: existing.present ? declaration : [declaration],
+    })
+    bytes = appended.bytes
+    fieldEdits.push(...flattenScalarEdits(`${AUTH_PLUGINS_PATH}.${at}`, declaration, undefined))
+  }
+
+  if (bytes === undefined) throw new TypeError('the config file has no bytes to edit')
+
+  return await fileConfigProposal({
+    action: input.action,
+    subject: `bind auth for target ${input.target}`,
+    summaryLine: `bind auth for target ${input.target}: ${fieldEdits.map((edit) =>
+      `${edit.configPath} to ${String(edit.newValue)}`).join(', ')}`,
+    fieldEdits,
+    addsHook: false,
+    candidate: candidateSet(set, [{ path: target.path, bytes }]),
+  }, set, deps)
+}
+
+/**
+ * Construct a `config.hook.add` proposal — the one action that writes a file other than the config.
+ *
+ * A HOOK IS CODE THIS PROJECT WILL RUN, which is why `addsHook` is STATED here rather than inferred
+ * from a path (D-02) and why every hook addition is cross-boundary regardless of what it contains.
+ * A standing approval covering configuration edits may not silently cover "and also run this
+ * script"; the flag is what the grant machinery refuses on.
+ *
+ * THE ID IS MINTED BY THE HOST, NEVER FORMATTED HERE. `core`'s `HookDefinitionSchema` refuses any id
+ * `isCanonicalHookId` does not accept, and that mint lives in a package this layer may not import
+ * and draws randomness this layer may not read. A hand-built `h_`-prefixed string would parse as a
+ * string, reach a person's repository, and be refused at the next run rather than at the proposal.
+ *
+ * THE APPEND IS PAST THE END OF WHAT THE DOCUMENT REPORTS, and a project with no hooks file at all
+ * gets one created — which is the whole-new-file case the scan already handles, arriving before
+ * 395-08's scaffold needs it.
+ */
+export async function constructConfigHookAddProposal(
+  input: ConfigHookAddInput & { readonly action: string },
+  deps: ConstructConfigProposalDeps,
+): Promise<ConfigProposeOutput> {
+  const set = await deps.configFiles.read()
+  const hooksMember = set.files.find((file) => file.path === set.hooksFile)
+  if (hooksMember === undefined) {
+    throw new TypeError(
+      `the config file set names ${JSON.stringify(set.hooksFile)} as its hooks file, but the set `
+      + 'does not contain it — a set that cannot see its own hooks file cannot declare a hook',
+    )
+  }
+
+  const facts = await deps.configFiles.inspect({
+    ...(hooksMember.bytes === undefined ? {} : { bytes: hooksMember.bytes }),
+    paths: [HOOKS_PATH],
+  })
+  const existing = factsFor(facts, HOOKS_PATH)
+  const at = existing.length ?? 0
+
+  const entry: ConfigStructuredValue = {
+    id: deps.configFiles.mintHookId(),
+    name: input.name,
+    runtime: input.runtime,
+    file: input.file,
+    timeout: input.timeout ?? DEFAULT_HOOK_TIMEOUT,
+    ...(input.network === undefined ? {} : { network: input.network }),
+  }
+  const written = await deps.configFiles.setField({
+    ...(hooksMember.bytes === undefined ? {} : { bytes: hooksMember.bytes }),
+    path: existing.present ? `${HOOKS_PATH}.${at}` : HOOKS_PATH,
+    value: existing.present ? entry : [entry],
+  })
+
+  return await fileConfigProposal({
+    action: input.action,
+    subject: `add hook ${input.name}`,
+    summaryLine: `add ${input.runtime} hook ${input.name} running ${input.file}`,
+    fieldEdits: flattenScalarEdits(`${HOOKS_PATH}.${at}`, entry, undefined),
+    // STATED, NOT INFERRED (D-02). This is the op that adds hooks; nothing has to guess.
+    addsHook: true,
+    candidate: candidateSet(set, [{ path: hooksMember.path, bytes: written.bytes }]),
+  }, set, deps)
+}
+
+/**
+ * What a hook's timeout is when the caller does not say.
+ *
+ * PINNED, WITH A RETUNE NOTE (386 D-15). `HookDefinitionSchema` makes `timeout` REQUIRED — there is
+ * no schema default to inherit — so an op whose DTO marks it optional must supply one, and the
+ * alternative to a pinned value is refusing every hook whose duration the caller did not think
+ * about. `30s` is what `demo/init/hooks.yaml` writes. RETUNE: owned by whoever owns the hooks
+ * vocabulary; a person who wants a different one writes it in the action, and a person who disagrees
+ * with the default edits their hooks file, which is one reviewable diff away either way.
+ */
+const DEFAULT_HOOK_TIMEOUT = '30s'
+
+/** Where the environment values a plugin reads are declared. Named by refusals, never written. */
+const ENV_FILE_CONFIG_PATH = 'workspace.envFile'
+
+/**
  * D-11's refusal, fired on the INPUT and before anything is mutated (395-05).
  *
  * THE FAILURE IS THE VALUE ARRIVING, NOT THE VALUE BEING WRITTEN. D-11 ratified `set_auth` as
@@ -521,6 +723,7 @@ async function fileConfigProposal(
   // scan above has already cleared, which is what makes them safe to persist.
   const validation = await deps.configValidate.validate({
     configFile: set.configFile,
+    hooksFile: set.hooksFile,
     files: plan.candidate,
   })
   if (!validation.ok) {

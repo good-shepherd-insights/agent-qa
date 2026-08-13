@@ -142,7 +142,9 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // and this phase's composed proof both put these names on the wire, and 387 D-11 forbids the
   // literals each would otherwise spell. The SPECS stay inside `functions/`, so this opens no
   // dispatch path.
+  'CONFIG_AUTH_SET_FUNCTION_ID',
   'CONFIG_FIELD_SET_FUNCTION_ID',
+  'CONFIG_HOOK_ADD_FUNCTION_ID',
   'CONFIG_PROPOSAL_APPLY_FUNCTION_ID',
   // 395-05, D-01: the rest of the closed action class's op ids, in SORT position beside the two
   // above and published for the identical reason — `composeLocalAgent()` and this phase's composed

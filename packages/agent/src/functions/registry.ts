@@ -23,7 +23,9 @@ import { authoringDraftEditSpec } from './ops/authoring-draft-edit.js'
 import { authoringDraftWriteSpec } from './ops/authoring-draft-write.js'
 import { authoringFunnelGetSpec } from './ops/authoring-funnel-get.js'
 import { authoringVerifyDraftSpec } from './ops/authoring-verify-draft.js'
+import { configAuthSetSpec } from './ops/config-auth-set.js'
 import { configFieldSetSpec } from './ops/config-field-set.js'
+import { configHookAddSpec } from './ops/config-hook-add.js'
 import { configGetSpec } from './ops/config-get.js'
 import { configProposalApplySpec } from './ops/config-proposal-apply.js'
 import { configTargetCreateSpec } from './ops/config-target-create.js'
@@ -152,6 +154,8 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // picks an action by tool name, 396 projects each one as its own MCP tool, and 397's parity walk
   // enumerates them — where a single union op carrying a mode string would have projected as one
   // tool whose real vocabulary lives inside a field nothing validates.
+  configAuthSetSpec as FunctionSpec,
+  configHookAddSpec as FunctionSpec,
   configTargetCreateSpec as FunctionSpec,
   configTargetEditSpec as FunctionSpec,
   // 390 D-12/D-13: a new `quarantine.` domain — a taxonomy extension exactly as `entities.`

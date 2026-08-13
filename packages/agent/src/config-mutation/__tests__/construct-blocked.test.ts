@@ -168,6 +168,7 @@ function harness(options: {
       configFiles: {
         read: () => Promise.resolve({
           configFile: CONFIG_FILE,
+          hooksFile: 'hooks.yaml',
           files: [
             { path: CONFIG_FILE, bytes: utf8Encode(options.config) },
             { path: 'hooks.yaml' },
@@ -180,6 +181,9 @@ function harness(options: {
         // would fail here by name instead of quietly passing on a fabricated answer.
         inspect: () => {
           throw new Error('config.field.set must not inspect the document')
+        },
+        mintHookId: () => {
+          throw new Error('config.field.set must not mint a hook id')
         },
         setField: ({ bytes, path, value }) => {
           const text = bytes === undefined ? '' : utf8Decode(bytes)

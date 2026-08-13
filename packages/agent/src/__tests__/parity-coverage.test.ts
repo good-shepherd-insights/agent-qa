@@ -142,7 +142,9 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // reason — this fixture supplies no config-file, validation, apply or proposal-write port, which
   // is a TRUE statement about it. Both are listed by name and refused by name, which is exactly
   // what `unbound` exists to say and what omitting them would have made unsayable.
+  'config.auth.set': 'unbound',
   'config.field.set': 'unbound',
+  'config.hook.add': 'unbound',
   'config.proposal.apply': 'unbound',
   // 395-05 D-01: the rest of the closed action class, UNBOUND here for the identical reason — this
   // fixture supplies no config ports at all. Listed by name and refused by name.
@@ -274,7 +276,9 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // 395 D-03: PARSING inputs for two capabilities this composition cannot run, on the rows above
   // reasoning — `invokeFunction` validates before it consults the binding, so a sample that did
   // not parse would make the unbound-refusal leg report an input error and certify nothing.
+  'config.auth.set': { target: 'shop', authStateName: 'shop-default' },
   'config.field.set': { path: 'use.timeout', value: '45s' },
+  'config.hook.add': { name: 'seed', runtime: 'node', file: 'scripts/seed.mjs' },
   'config.proposal.apply': { proposalId: 'prop_0123456789ab' },
   // 395-05 D-01: PARSING inputs on the rows above reasoning — `invokeFunction` validates before it
   // consults the binding, so a sample that did not parse would make the unbound-refusal leg report

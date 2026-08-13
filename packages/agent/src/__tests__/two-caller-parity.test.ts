@@ -231,8 +231,10 @@ const ALL_FUNCTION_IDS = [
   // while every member was present. Both declare `config-write` and NOT `read`, so both DROP OUT
   // of the safe-mode listing with the other non-read verbs — which is what keeps the filter
   // assertion below a claim about the RULE rather than about a frozen list.
+  'config.auth.set',
   'config.field.set',
   'config.get',
+  'config.hook.add',
   'config.proposal.apply',
   // 395-05 D-01: two more ids in SORT position — `target` follows `proposal` lexicographically, and
   // this list is compared against the registry's lexicographic listing, so a misplaced pair would

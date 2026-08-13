@@ -589,7 +589,17 @@ describe('agent-qa fn (generic function invoker)', () => {
       // what a listing shows a person who asks what editing their configuration costs them: the
       // propose op carries the write scope because the scope describes what the CAPABILITY is
       // about, not what one call happens to reach.
+      'config.auth.set': {
+        requiredScopes: ['config-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       'config.field.set': {
+        requiredScopes: ['config-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
+      'config.hook.add': {
         requiredScopes: ['config-write'],
         resultKind: 'unary',
         bindingStatus: 'bound',

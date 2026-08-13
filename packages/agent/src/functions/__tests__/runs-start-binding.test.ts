@@ -153,7 +153,9 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // and a scalar value, so the `{}` default would fail validation and turn an unbound refusal into
   // an input error, which the parity case below reads as `dispatched`. The path names a real
   // config key so the row stays aimed at the BINDING check and nothing else.
+  'config.auth.set': { target: 'shop', authStateName: 'shop-default' },
   'config.field.set': { path: 'use.timeout', value: '45s' },
+  'config.hook.add': { name: 'seed', runtime: 'node', file: 'scripts/seed.mjs' },
   // 395-05 D-01: PARSING inputs for the rest of the closed action class, on the row above reasoning.
   'config.target.create': { name: 'shop', platform: 'web', url: 'https://shop.example.com' },
   'config.target.edit': { name: 'shop', changes: { url: 'https://shop.example.com/basket' } },
