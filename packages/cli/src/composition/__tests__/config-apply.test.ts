@@ -419,8 +419,12 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
     const beforeAccept = commitCount()
     expect(git('status', '--porcelain').stdout.trim()).toBe('')
 
+    // 395-06: the class MOVED from the shared `ApplyTargetChangedError` to the config path's own
+    // `ConfigApplyStaleError`, which is D-18's refusal — the same guard, with a recovery sentence
+    // that names the proposing action instead of the test-draft authoring loop. The claim this cell
+    // protects is unchanged: the digest re-check is what refuses, and it refuses on a CLEAN tree.
     await expect(invokeFunction(registry, 'proposals.accept', { proposalId: id }, HUMAN))
-      .rejects.toMatchObject({ name: 'ApplyTargetChangedError' })
+      .rejects.toMatchObject({ name: 'ConfigApplyStaleError' })
 
     // THE HUMAN'S EDIT IS INTACT, nothing was written, and no commit was made.
     expect(readFileSync(configPath, 'utf8')).toBe(humanEdit)
