@@ -60,11 +60,31 @@ export function unhandledReason(clause: string): string {
   )
 }
 
-/** The refusal sentence a turn carries when the MODEL said the clause cannot be done (D-08). */
+/**
+ * The refusal sentence a turn carries when the MODEL said the clause cannot be done (D-08).
+ *
+ * D-08's clause-naming law holds, and this adds the ATTRIBUTION law beside it: model prose reaches
+ * the person only as the planner's quoted claim, never as a fact this host asserts.
+ *
+ * The reason is not a defensive one. `reason` is untrusted model output — `modelMarkedUnhandled`
+ * reads it off a tool call exactly as it reads the clause — and until this round it was spliced
+ * bare after an em-dash, immediately behind a clause the host composed. The two halves then read as
+ * one host statement with nothing marking where the host stopped speaking. 394-30 measured what
+ * that costs on a real turn: a live planner refused an authoring request with "it requires a target
+ * scope identifier and none was supplied", a phrase in no source file in this repo, describing a
+ * requirement the op's own contract denies (`required: ["intent"]`). The person was told a false
+ * fact about this build, in this build's voice, and had no way to tell the host had not said it.
+ *
+ * The host can only assert what it can check. It cannot check the planner's prose; what it CAN
+ * check is that the planner said it — so saying so is the whole of the claim it makes about it.
+ * The tail is still shown in full rather than dropped, because the planner's stated reason is
+ * often the only thing that tells a person what to try next.
+ */
 export function modelUnhandledReason(clause: string, reason: string): string {
   return (
-    `No capability in this build handles: "${clause}" — ${reason} The turn was refused before `
-    + 'anything ran, so nothing in the request was carried out.'
+    `No capability in this build handles: "${clause}". The planner's stated reason, `
+    + `unverified by this build: "${reason}". The turn was refused before anything ran, so nothing `
+    + 'in the request was carried out.'
   )
 }
 
