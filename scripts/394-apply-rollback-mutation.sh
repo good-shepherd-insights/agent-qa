@@ -579,13 +579,27 @@ for pair in "T V" "T N" "T P" "T W" "T U" "T U2" \
     [ -s "$WORK/only-U2.txt" ] \
       || fatal "mutation U2 red nothing mutation U did not — the producer half has no witness of its own in this corpus, so U2 is measuring U's property a second time"
     # CONDITION 2 — the overlap is EXACTLY the named agreement cells, never merely non-empty.
+    #
+    # `comm -3`, NOT `comm -23` (394-39 / WR-05). The containment form was unfireable by construction
+    # and this file's own banner forbids a detector that cannot RED. `run_leg U` has already run
+    # `assert_red_set U`, which fatals on any red cell of U outside ALLOWED_RED_CELLS_U; AGREEMENT_CELLS
+    # is byte-identical to that list; so `red-U ⊆ AGREEMENT_CELLS` was already guaranteed here, and
+    # `overlap = red-U ∩ red-U2 ⊆ red-U` made `comm -23 overlap agreement` empty under EVERY possible
+    # mutation of the code under test. The only edit that could red it was an edit to these two bash
+    # arrays — a check on the checker's own spelling, not on the subject.
+    #
+    # `comm -3` states the EQUALITY the header sentence has always claimed, and it is the second
+    # direction that carries the force: `assert_red_set`'s allowed list is an UPPER bound and nothing
+    # in this file is a lower one, so an agreement cell that quietly stops reding under U or U2 — a
+    # pin the corpus lost — is invisible to every other check here. Both directions are fatal and the
+    # message names both, because the output alone cannot say which side a line came from.
     printf '%s\n' "${AGREEMENT_CELLS[@]}" | sort -u >"$WORK/agreement-cells.txt"
-    comm -23 "$WORK/overlap-UU2.txt" "$WORK/agreement-cells.txt" >"$WORK/overlap-unexplained.txt"
-    if [ -s "$WORK/overlap-unexplained.txt" ]; then
-      sed 's/^/  - /' "$WORK/overlap-unexplained.txt" >&2
-      fatal "mutations U and U2 red overlapping cells that are NOT agreement cells — the overlap is collateral, not the contract"
+    comm -3 "$WORK/overlap-UU2.txt" "$WORK/agreement-cells.txt" >"$WORK/overlap-mismatch.txt"
+    if [ -s "$WORK/overlap-mismatch.txt" ]; then
+      sed 's/^/  - /' "$WORK/overlap-mismatch.txt" >&2
+      fatal "U ∩ U2 is not EXACTLY the named agreement cells — either an agreement cell stopped reding under one half (a LOST PIN: the cell is in the right column, present in AGREEMENT_CELLS and absent from the overlap) or a non-agreement cell drifted into the overlap (COLLATERAL: the cell is in the left column). Both are failures of this corpus, not of the run"
     fi
-    printf 'U ∩ U2 is exactly the %s named agreement cell(s); U2 additionally reds:\n' \
+    printf 'U ∩ U2 is exactly the %s named agreement cell(s), checked as an EQUALITY in both directions; U2 additionally reds:\n' \
       "$(grep -c . "$WORK/agreement-cells.txt")"
     sed 's/^/  - /' "$WORK/only-U2.txt"
     continue
