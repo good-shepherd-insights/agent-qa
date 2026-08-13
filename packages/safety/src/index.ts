@@ -3,6 +3,12 @@ export {
   assertCommittedEgressSafe,
   CommittedEgressBlockedError,
 } from './guardrail/committed-egress'
+export {
+  CONSTRUCTION_SCAN_DETECTORS,
+  CONSTRUCTION_SCAN_EXCLUDED_DETECTORS,
+  SEEDED_SECRET_DETECTOR,
+  scanConstructedArtifact,
+} from './guardrail/construction-scan'
 export { createGuardrailProviderRequestHook, GuardrailBlockError } from './guardrail/egress-hook'
 export {
   defaultGuardrailPolicyInput,
@@ -43,6 +49,12 @@ export type {
   CommittedEgressOptions,
   CommittedEgressPart,
 } from './guardrail/committed-egress'
+export type {
+  ConstructionScanDetector,
+  ConstructionScanFinding,
+  ConstructionScanPart,
+  ConstructionScanReport,
+} from './guardrail/construction-scan'
 export type {
   AsyncToolCallHook,
   ContextHook,

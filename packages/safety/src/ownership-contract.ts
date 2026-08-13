@@ -13,6 +13,7 @@ export const AGENT_QA_SAFETY_ALLOWED_RESPONSIBILITIES = [
   'guardrail policy load boundary (parse-or-throw, fail closed)',
   'buffering streaming egress guardrail scan with block-to-redact promotion',
   'reusable fail-closed committed-egress pre-write checkpoint with audited user-authored override',
+  'pure construction-time secret scan over surfaced artifact bytes, seeded from the masking sources',
   'neutral execution-context resolver seam and fail-closed policy function',
   'deterministic static risk-tier classifier and destructive lexicon',
   'deterministic allow/ask/deny execution-policy gate with scoped trust and standing-approval read seam',
