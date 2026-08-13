@@ -89,6 +89,7 @@ import type {
   ConfigProposalsWritePortLike,
   ConfigScanPortLike,
   ConfigStructuredValue,
+  ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
 } from './ports.js'
 
@@ -554,6 +555,137 @@ export async function constructConfigHookAddProposal(
     addsHook: true,
     candidate: candidateSet(set, [{ path: hooksMember.path, bytes: written.bytes }]),
   }, set, deps)
+}
+
+/**
+ * Everything `config.undo.propose` needs beyond what every other action needs (395-06, D-07).
+ *
+ * A SEPARATE TYPE RATHER THAN A SIXTH MEMBER OF `ConstructConfigProposalDeps`. The undo is the only
+ * action that reads git history; widening the shared bundle would have made the other five ops bind
+ * a port none of them can reach, and a required dep nobody supplies is a refusal by name at five
+ * call sites for a capability four of them never wanted.
+ */
+export interface ConstructConfigUndoDeps extends ConstructConfigProposalDeps {
+  readonly configUndoSource: ConfigUndoSourcePortLike
+}
+
+/**
+ * Construct the reverse of the last agent configuration commit, as an ORDINARY proposal (D-07).
+ *
+ * UNDO IS A PROPOSAL, AND THAT IS L10 RATHER THAN A STYLE CHOICE. There is no `config.undo.apply`
+ * and there must not be: a direct-revert verb would be a SECOND channel through which committed
+ * configuration changes, and every argument this phase makes about review, freshness, scanning and
+ * attribution would have to be made again for it, or silently not made. What this op emits is a
+ * `ConfigProposal` like any other — freshness-bound, scanned, classified, filed, and applied through
+ * `config.proposal.apply`. Undo-of-undo therefore needs no special case at all: this op's own apply
+ * commit carries the trailer, so it becomes the next undo's source by construction.
+ *
+ * THE DIFF IS CURRENT → PARENT, NOT COMMIT → PARENT, and the difference is the whole of D-07's
+ * concurrency claim. `fileConfigProposal` diffs the candidate against the files as they stand RIGHT
+ * NOW (CFGM-04's proposal-time re-read), so a human commit that landed after the agent's SURFACES
+ * inside the revert diff — the person sees their own line in the change they are being asked to
+ * approve — instead of the undo colliding with it blind or quietly reverting it too.
+ *
+ * `addsHook` IS MEASURED, NOT ASSUMED. Reverting a `config.hook.add` removes a hook and reverting an
+ * undo of one puts it back, so "an undo never adds a hook" is false in exactly the case that
+ * matters. The fact is read STRUCTURALLY through the same `inspect` port `config.hook.add` uses —
+ * the length of the hooks sequence on each side — because that is a shape question, which is the
+ * only kind this layer may ask about a document it cannot parse.
+ *
+ * WHAT THE CLASSIFIER CANNOT SEE HERE, STATED RATHER THAN PAPERED OVER. `fieldEdits` is EMPTY: D-02's
+ * per-value rules — secret-adjacent fields, new origins — compare the scalar an edit writes against
+ * the one it replaced, and an undo writes whole FILES whose scalars this package cannot enumerate
+ * (`packages/agent` may not parse yaml, and `inspect` answers shape and deliberately never content).
+ * So an undo that restores an auth binding or an older base URL is not flagged for those two
+ * reasons. What still holds unconditionally: the guardrail scan runs over the whole reverted
+ * artifact, whole-config validation runs over the whole candidate set, `hook-added` is measured
+ * above, and `out-of-set-path` is computed from the files touched. The residue is recorded as a
+ * known bound and belongs to 395-07, which owns two-sided grant enforcement and is where the
+ * question "may a standing grant cover this?" is actually answered.
+ */
+export async function constructConfigUndoProposal(
+  input: { readonly action: string },
+  deps: ConstructConfigUndoDeps,
+): Promise<ConfigProposeOutput> {
+  const source = await deps.configUndoSource.read()
+  if (source.kind === 'none') {
+    return {
+      outcome: 'refused',
+      reason: 'no-agent-commit',
+      detail:
+        'there is no agent-qa configuration commit in this repository to undo. Every commit this '
+        + 'product makes to your configuration carries a machine-readable marker, and history '
+        + 'carries none — so there is nothing to reverse.',
+    }
+  }
+
+  // A FILE THE AGENT COMMIT CREATED CANNOT BE UNDONE BY THIS WRITE PATH. Refused whole rather than
+  // applied by halves: a proposal that reverted three files and left a fourth behind would report
+  // an undo that did not happen, and the file left behind is the one a person is least likely to
+  // notice — the hooks file a `config.hook.add` created on a project that had none.
+  const created = source.files.filter((file) => file.parentBytes === undefined)
+  if (created.length > 0) {
+    return {
+      outcome: 'refused',
+      reason: 'undo-needs-delete',
+      detail:
+        `undoing ${source.commit} would delete ${created.map((file) => file.path).join(', ')}, `
+        + 'which agent-qa created in that commit. This write path proposes file CONTENT and has no '
+        + 'way to propose a deletion, so the undo is refused whole rather than applied in part. '
+        + 'Delete the file yourself if that is what you want.',
+    }
+  }
+
+  // (1) CFGM-04: the re-read, exactly as every other action does it. The bytes below are the ones
+  // the digests will be taken over and the ones the apply will re-check.
+  const set = await deps.configFiles.read()
+
+  const reverted = source.files.flatMap((file) =>
+    file.parentBytes === undefined ? [] : [{ path: file.path, bytes: file.parentBytes }])
+  const candidate = candidateSet(set, reverted)
+
+  const addsHook = await revertAddsHook(deps, set, candidate)
+
+  return await fileConfigProposal({
+    action: input.action,
+    subject: `undo ${source.commit}`,
+    // THE SOURCE COMMIT'S SUBJECT, QUOTED. It is a line this product wrote — `config: <the
+    // proposal's own one-liner>` — so quoting it here discloses nothing that is not already in the
+    // person's `git log`, and it is the one fact that makes an inbox row say WHICH change is being
+    // taken back.
+    summaryLine: `revert agent-qa configuration commit ${source.commit} — ${source.subject}`,
+    fieldEdits: [],
+    addsHook,
+    candidate,
+  }, set, deps)
+}
+
+/**
+ * Does reverting to this candidate ADD a hook? A SHAPE question, asked of the shape port (D-02).
+ *
+ * TWO INSPECTS OF THE HOOKS FILE, one per side, compared on sequence LENGTH. Length is the most
+ * this layer can honestly read: `inspect` answers `keys` and `length` and never values, because a
+ * port that answered "what is at this path" would be the unmasked config reader the ownership
+ * contract forbids, reached through a mutation helper. A longer sequence on the candidate side is a
+ * hook this proposal would put back, which is code the project would then run — exactly what the
+ * `hook-added` flag exists to make a person re-approve.
+ */
+async function revertAddsHook(
+  deps: ConstructConfigProposalDeps,
+  set: ConfigFileSet,
+  candidate: readonly ConfigFileBytes[],
+): Promise<boolean> {
+  const before = set.files.find((file) => file.path === set.hooksFile)
+  const after = candidate.find((file) => file.path === set.hooksFile)
+  if (after === undefined) return false
+
+  const lengthOf = async (member: ConfigFileBytes | undefined): Promise<number> => {
+    if (member?.bytes === undefined) return 0
+    const facts = await deps.configFiles.inspect({ bytes: member.bytes, paths: [HOOKS_PATH] })
+    return factsFor(facts, HOOKS_PATH).length ?? 0
+  }
+
+  return await lengthOf(after) > await lengthOf(before)
 }
 
 /**

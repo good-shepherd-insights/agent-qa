@@ -29,6 +29,7 @@ import { configHookAddSpec } from './ops/config-hook-add.js'
 import { configGetSpec } from './ops/config-get.js'
 import { configProposalApplySpec } from './ops/config-proposal-apply.js'
 import { configTargetCreateSpec } from './ops/config-target-create.js'
+import { configUndoProposeSpec } from './ops/config-undo-propose.js'
 import { configTargetEditSpec } from './ops/config-target-edit.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
@@ -158,6 +159,14 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   configHookAddSpec as FunctionSpec,
   configTargetCreateSpec as FunctionSpec,
   configTargetEditSpec as FunctionSpec,
+  // 395-06 D-07: the SEVENTH propose op, and its being an op at all is the decision. Undo could
+  // have been an apply-side verb that reverted a commit directly; that would have been a second
+  // channel through which committed configuration changes, so it is a propose op on exactly the
+  // footing of the six above and reaches the same `config.proposal.apply`. Registering it here is
+  // what makes it chat-reachable (392 D-07), projectable over MCP (396) and walkable by the parity
+  // suite (397) with no harness change — and what makes "there is no revert verb" checkable by
+  // reading the registry rather than by trusting a sentence.
+  configUndoProposeSpec as FunctionSpec,
   // 390 D-12/D-13: a new `quarantine.` domain — a taxonomy extension exactly as `entities.`
   // was, because quarantine state is neither a run, a memory nor an analysis. All three bind
   // through the OPTIONAL `quarantine` dep, so a host with no knowledge root lists them

@@ -150,6 +150,10 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // fixture supplies no config ports at all. Listed by name and refused by name.
   'config.target.create': 'unbound',
   'config.target.edit': 'unbound',
+  // 395-06 D-07: unbound here for the identical reason, and for one more of its own — this
+  // fixture supplies no `configUndoSource` either, which is the dep whose absence makes THIS op
+  // specifically unavailable.
+  'config.undo.propose': 'unbound',
   // 387 D-09. Both BOUND everywhere: the entity directory is a required dep, so unlike
   // `runs.start` there is no composition that can list these and then refuse them.
   'entities.get': 'bound',
@@ -285,6 +289,9 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // an input error and certify nothing about binding.
   'config.target.create': { name: 'shop', platform: 'web', url: 'https://shop.example.com' },
   'config.target.edit': { name: 'shop', changes: { url: 'https://shop.example.com/basket' } },
+  // 395-06 D-07: the EMPTY object really is the whole input, and it parses. Which commit to
+  // reverse is read from git history, so there is no field here for a sample to fill.
+  'config.undo.propose': {},
   // 387: `resolve` takes any reference at all, so the sample is free text that matches
   // nothing — the fixture directory is empty and the honest answer is the none arm. `get`
   // takes an exact address, and the fixture port below is what stands behind it.

@@ -91,6 +91,7 @@ import {
 } from '@vostride/agent-qa-core'
 import type { TestDefinition } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
+import type { ConfigUndoSource, ConfigUndoSourcePortLike } from '@vostride/agent-qa-agent'
 import {
   CONFIG_SET_DEFAULT_HOOKS_FILE,
   KnowledgeApplyOutcomeSchema,
@@ -2800,6 +2801,118 @@ export function createConfigApplyPort(configPath: string): ConfigApplyPortLike {
 }
 
 /**
+ * One committed blob's RAW BYTES, or `undefined` if that revision has no such path (395-06, D-17).
+ *
+ * IT DOES NOT GO THROUGH `runApplyGit`, AND THE REASON IS THE ONE D-17 EXISTS FOR. That helper
+ * pins `encoding: 'utf8'` on its exec seam, so every byte it returns has been through a decoder —
+ * and a decoder maps every sequence it cannot read onto U+FFFD, many-to-one. These bytes become a
+ * proposal's `newContentBase64` and are digested and re-checked against a file on disk, so reading
+ * them decoded would mean proposing a lossy rewrite of a person's configuration and then comparing
+ * it against a digest taken over the real thing. 394's CR-02 cost a phase to find in exactly this
+ * shape; this is the same contract's third caller, so it reads bytes.
+ *
+ * `--` BEFORE NOTHING, DELIBERATELY: the argument is a `<rev>:<path>` object name and not a
+ * pathspec, so there is nothing here for a pathspec separator to disambiguate. The revision string
+ * is built from a hash this function was handed and a path git itself listed, never from caller
+ * text.
+ */
+function readBlobBytes(cwd: string, objectName: string): Uint8Array | undefined {
+  const result = spawnSync('git', ['show', objectName], {
+    cwd,
+    encoding: 'buffer',
+    timeout: APPLY_GIT_TIMEOUT_MS,
+  })
+  if (result.error !== undefined) throw result.error
+  if (result.status !== 0) return undefined
+  return Uint8Array.from(result.stdout)
+}
+
+/**
+ * The repository's own account of the last agent configuration commit (395-06, D-07).
+ *
+ * EVERY ANSWER IS READ FROM GIT'S PLUMBING AND EXIT CODES, NEVER FROM ITS PROSE. The commit is found
+ * by the SAME `Agent-QA-Proposal` marker `findAppliedCommit` reads, with `--fixed-strings` because
+ * the id is data, and with a PATHSPEC restricting it to the pinned config set — so a commit this
+ * product made to something other than configuration (394's test-draft applies carry no such
+ * trailer today, but a future one might) cannot be mistaken for a config commit.
+ *
+ * THE FILE LIST IS ALSO PATHSPEC-SCOPED, so a commit that somehow touched both config and
+ * non-config paths yields only the config half, and the undo cannot propose a change to a file this
+ * product does not own.
+ *
+ * THE BYTES COME FROM `git show <commit>^:<path>`, WHICH IS THE PARENT SIDE AND NOTHING ELSE. See
+ * `ConfigUndoSourceFile`'s header for why the applied side and the current side are deliberately
+ * not carried: the construction re-reads current for itself, and the applied side never enters a
+ * `current → parent` diff.
+ */
+export function createConfigUndoSourcePort(configPath: string): ConfigUndoSourcePortLike {
+  const configDir = dirname(resolve(configPath))
+  const exec = spawnSync as unknown as GitApplyExec
+
+  return {
+    async read(): Promise<ConfigUndoSource> {
+      const { members } = await resolvePinnedConfigSet(configPath)
+      const anchor = members[0] ?? '.'
+      if (!repositoryHasCommits(exec, configDir, anchor)) return { kind: 'none' }
+
+      const found = runApplyGit(exec, configDir, anchor, [
+        'log', '--format=%h%x00%s%x00%B%x00', '--max-count=1',
+        '--fixed-strings', `--grep=${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: `,
+        '--', ...members,
+      ])
+      if (found.status !== 0) {
+        throw new Error(
+          `git log exited ${found.status} looking for the last agent config commit: `
+          + `${found.stderr.trim()}`,
+        )
+      }
+      const [commit, subject, body] = found.stdout.split('\0')
+      if (commit === undefined || commit.trim() === '' || subject === undefined) {
+        return { kind: 'none' }
+      }
+
+      // THE ID IS READ OFF THE TRAILER LINE, not off the subject and not off a position in the
+      // message. The trailer is the machine-readable half D-06 exists to provide; a body whose
+      // shape somebody reworded still yields the id, and a body that does not carry one is not an
+      // agent commit no matter what its subject says.
+      const trailer = (body ?? '').split('\n')
+        .map((line) => line.trim())
+        .find((line) => line.startsWith(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: `))
+      if (trailer === undefined) return { kind: 'none' }
+      const proposalId = trailer.slice(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: `.length).trim()
+      if (proposalId === '') return { kind: 'none' }
+
+      const touched = runApplyGit(exec, configDir, anchor, [
+        'show', '--name-only', '--format=', commit.trim(), '--', ...members,
+      ])
+      if (touched.status !== 0) {
+        throw new Error(
+          `git show exited ${touched.status} listing ${JSON.stringify(commit.trim())}: `
+          + `${touched.stderr.trim()}`,
+        )
+      }
+      const paths = [...new Set(
+        touched.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== ''),
+      )].sort()
+
+      return {
+        kind: 'found',
+        commit: commit.trim(),
+        proposalId,
+        subject: subject.trim(),
+        files: paths.map((path) => {
+          const parentBytes = readBlobBytes(configDir, `${commit.trim()}^:${path}`)
+          // ABSENT IS "THE PARENT HAD NO SUCH FILE", which is the fact that makes this an
+          // undo-needs-delete rather than an empty payload. `git show` distinguishes that from a
+          // present EMPTY file by its exit status, which is why the status is what is read.
+          return parentBytes === undefined ? { path } : { path, parentBytes }
+        }),
+      }
+    },
+  }
+}
+
+/**
  * The target's RAW BYTES, or `undefined` for no such file (394-23, WR-04).
  *
  * NO ENCODING, and that is the whole content of this function beyond the ENOENT triage. The digest
@@ -3103,6 +3216,12 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     configFiles: createConfigFilesPort(input.configPath),
     configValidate: createConfigValidatePort(),
     configApply: createConfigApplyPort(input.configPath),
+    // 395-06 D-07: the undo's source read, bound unconditionally on the same footing — a CLI always
+    // has a config path and therefore a repository. It is a SEPARATE binding from `configApply`
+    // because the two answer opposite questions (that one writes a commit a person accepted, this
+    // one reads a commit somebody already made), and folding a read into the one port through
+    // which committed configuration changes would enlarge that write surface for no reason.
+    configUndoSource: createConfigUndoSourcePort(input.configPath),
     // 395-04 D-09 · CFGM-02: the construction scan's seeds, supplied by the HOST because the
     // environment is a host fact — `composeLocalAgent` is host-neutral and its own D-16 artifact
     // guard reds on a `process.env` read in that package.

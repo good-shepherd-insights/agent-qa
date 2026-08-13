@@ -779,6 +779,7 @@ const EXPECTED_CONFIG_FAMILY = [
   'config.proposal.apply',
   'config.target.create',
   'config.target.edit',
+  'config.undo.propose',
 ] as const
 
 describe('the config action class is CLOSED, and the registry is where that is legible (D-01)', () => {

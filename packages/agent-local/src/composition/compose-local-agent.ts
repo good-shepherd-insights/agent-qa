@@ -56,6 +56,7 @@ import type {
   ConfigApplyPortLike,
   ConfigFilesPortLike,
   ConfigReaderPort,
+  ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
   EntityDirectoryPort,
   FunctionRegistry,
@@ -1483,6 +1484,14 @@ export interface ComposeLocalAgentInput {
    * about needs a checkout root and nothing else.
    */
   readonly configApply?: ConfigApplyPortLike
+  /**
+   * 395-06 D-07 · CFGM-03: the repository's own account of the last agent configuration commit.
+   *
+   * A SEPARATE OPTIONAL BINDING, not a verb on `configApply`. Its absence leaves
+   * `config.undo.propose` — and only that op — unbound, which is the honest catalogue answer for a
+   * host that can commit configuration but cannot read what it committed.
+   */
+  readonly configUndoSource?: ConfigUndoSourcePortLike
   /**
    * 395-04 D-09 · CFGM-02: where the construction scan's seed values come from.
    *
@@ -2938,6 +2947,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       ...(input.configFiles === undefined ? {} : { configFiles: input.configFiles }),
       ...(input.configValidate === undefined ? {} : { configValidate: input.configValidate }),
       ...(input.configApply === undefined ? {} : { configApply: input.configApply }),
+      ...(input.configUndoSource === undefined
+        ? {}
+        : { configUndoSource: input.configUndoSource }),
       // THE PROPOSAL WRITE IS BOUND HERE AND NOT HANDED IN, unlike its three neighbours, because
       // this composition already owns the durable proposals store — the same `mintProposalId` and
       // `writePendingProposalRecord` the authoring arm above uses, over the same `agentQaRoot`. A

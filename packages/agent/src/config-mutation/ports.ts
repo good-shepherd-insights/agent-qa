@@ -283,3 +283,63 @@ export interface ConfigProposalsWritePortLike {
     readonly payload: ConfigProposalV1
   }): Promise<{ readonly proposalId: string }>
 }
+
+/**
+ * One config file the located agent commit touched, and the bytes an undo would restore (D-07).
+ *
+ * `parentBytes` IS THE ONLY CONTENT HERE, AND ITS SIBLINGS' ABSENCE IS THE DESIGN. The plan for
+ * this port named three byte payloads per file — the bytes at the agent commit, the bytes at its
+ * parent, and the file's current committed bytes. Two of the three are answers to questions this
+ * pipeline already has answers for and would then hold twice: the CURRENT bytes are exactly what
+ * `ConfigFilesPortLike.read` returns, and CFGM-04's proposal-time law says the construction re-reads
+ * them for itself, so a second copy arriving on this port is a second value free to disagree with
+ * the one the digests are taken over. The bytes AT the agent commit never enter the undo at all —
+ * the reverse diff is CURRENT → PARENT, whatever current happens to be, which is precisely what
+ * makes an intervening human commit surface inside the diff instead of colliding with it.
+ *
+ * ABSENT `parentBytes` MEANS THE AGENT COMMIT CREATED THIS FILE, and it is a fact rather than an
+ * empty payload: reversing that commit would DELETE the file, which this write path cannot express
+ * (see `CONFIG_REFUSAL_REASONS`' `undo-needs-delete`).
+ */
+export interface ConfigUndoSourceFile {
+  /** Workspace-relative, as the host's own identity mint spells it. */
+  readonly path: string
+  /** The file's bytes at the located commit's PARENT — what reversing it would restore. */
+  readonly parentBytes?: Uint8Array
+}
+
+/**
+ * What history says about the last agent configuration commit (D-07).
+ *
+ * LOCATED BY THE TRAILER AND BY PATHSPEC, NEVER BY PROSE. The commit this describes is the most
+ * recent one carrying `Agent-QA-Proposal` whose paths lie inside the pinned config set — the same
+ * marker `findAppliedCommit` reads for CFGM-03's idempotency answer, so "which commits are ours"
+ * has one definition in this product and the undo cannot drift from it.
+ */
+export type ConfigUndoSource =
+  | {
+    readonly kind: 'none'
+  }
+  | {
+    readonly kind: 'found'
+    /** The commit being reversed, abbreviated as git prints it. */
+    readonly commit: string
+    /** The proposal that commit applied, read out of its own trailer. */
+    readonly proposalId: string
+    /** That commit's subject line, so the undo can say what it is undoing. */
+    readonly subject: string
+    readonly files: readonly ConfigUndoSourceFile[]
+  }
+
+/**
+ * The repository's own account of what this product last changed (D-07).
+ *
+ * A HOST PORT FOR THE REASON `configApply` IS ONE: it is git, and git is a host fact. It is a
+ * separate port rather than a verb on `configApply` because the two answer opposite questions — one
+ * writes a commit a person accepted, the other reads a commit somebody already made — and folding
+ * a read into the one port through which committed configuration changes would make the write
+ * surface larger for no reason.
+ */
+export interface ConfigUndoSourcePortLike {
+  read(): Promise<ConfigUndoSource>
+}

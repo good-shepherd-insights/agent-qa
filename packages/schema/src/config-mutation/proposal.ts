@@ -147,6 +147,15 @@ export type ConfigBlockedReason = (typeof CONFIG_BLOCKED_REASONS)[number]
  *   unsupported-reference — the reference is legal and this configuration schema has nowhere to put
  *                           it. An honest "not here" naming where the value belongs, rather than a
  *                           write whole-config validation would refuse a step later.
+ *   no-agent-commit       — 395-06/D-07: `config.undo.propose` against a history that carries no
+ *                           agent configuration commit. There is nothing to reverse, which is a
+ *                           fact about the repository the caller asked about and not a refusal a
+ *                           person needs to find in an inbox later.
+ *   undo-needs-delete     — the reverse of the located commit would DELETE a config file it
+ *                           created, and this write path has no delete: the proposal payload
+ *                           carries file CONTENT, and an apply that wrote empty bytes where a
+ *                           deletion belongs would leave a file behind while reporting the undo
+ *                           done. Refused whole rather than applied by halves.
  *
  * RETUNE: owned by whoever owns D-01's action class. A member is added when an op learns to refuse a
  * REQUEST for a reason a person can act on without opening an inbox.
@@ -156,6 +165,8 @@ export const CONFIG_REFUSAL_REASONS = [
   'target-not-found',
   'refs-only',
   'unsupported-reference',
+  'no-agent-commit',
+  'undo-needs-delete',
 ] as const
 
 export type ConfigRefusalReason = (typeof CONFIG_REFUSAL_REASONS)[number]

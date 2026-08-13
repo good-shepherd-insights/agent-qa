@@ -197,6 +197,9 @@ export type {
   ConfigProposalsWritePortLike,
   ConfigScanPortLike,
   ConfigStructuredValue,
+  ConfigUndoSource,
+  ConfigUndoSourceFile,
+  ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
   ConfigValidation,
 } from './config-mutation/ports.js'
@@ -209,6 +212,8 @@ export { CONFIG_AUTH_SET_FUNCTION_ID } from './functions/ops/config-auth-set.js'
 export { CONFIG_HOOK_ADD_FUNCTION_ID } from './functions/ops/config-hook-add.js'
 export { CONFIG_TARGET_CREATE_FUNCTION_ID } from './functions/ops/config-target-create.js'
 export { CONFIG_TARGET_EDIT_FUNCTION_ID } from './functions/ops/config-target-edit.js'
+// 395-06 D-07: the undo's id, on the same footing — a name a surface puts on the wire.
+export { CONFIG_UNDO_PROPOSE_FUNCTION_ID } from './functions/ops/config-undo-propose.js'
 export {
   CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
   ConfigProposalNotApplicableError,

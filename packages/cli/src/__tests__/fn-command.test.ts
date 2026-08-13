@@ -624,6 +624,14 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 395-06 D-07: BOUND, because the CLI host binds `configUndoSource` unconditionally beside
+      // the other config ports. Its being LISTED at all is the checkable half of "undo rides the
+      // one write path" — a person reading this catalogue sees a propose verb and no revert verb.
+      'config.undo.propose': {
+        requiredScopes: ['config-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.
       'entities.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },

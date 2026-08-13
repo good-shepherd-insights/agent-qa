@@ -35,6 +35,7 @@ import { configAuthSetSpec } from '../functions/ops/config-auth-set.js'
 import { configHookAddSpec } from '../functions/ops/config-hook-add.js'
 import { configTargetCreateSpec } from '../functions/ops/config-target-create.js'
 import { configTargetEditSpec } from '../functions/ops/config-target-edit.js'
+import { configUndoProposeSpec } from '../functions/ops/config-undo-propose.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { grantsListSpec } from '../functions/ops/grants-list.js'
 import { proposalsAcceptSpec } from '../functions/ops/proposals-accept.js'
@@ -125,6 +126,10 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // consumers that a create against an existing target answers with a proposal id.
   'config.target.create': configTargetCreateSpec,
   'config.target.edit': configTargetEditSpec,
+  // 395-06 D-07. The undo projects the SAME four-arm propose union as its six siblings, which is
+  // the point: a catalogue consumer needs no undo-shaped arm, because the undo is not a new kind
+  // of answer — it is the same proposal a person decides on, built from a different set of bytes.
+  'config.undo.propose': configUndoProposeSpec,
   'entities.get': entitiesGetSpec,
   'entities.resolve': entitiesResolveSpec,
   // 391 PROP-01 / D-03. Paired the day they are registered. `grants.list`'s output is the first

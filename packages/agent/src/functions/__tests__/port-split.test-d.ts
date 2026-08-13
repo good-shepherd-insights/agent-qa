@@ -131,6 +131,14 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // FUNCTION is pure and lives in `packages/safety`, and what a host supplies is its SEEDS. Folding it
 // into the files port would make "this host can read config bytes" and "this host knows which
 // values are secret" one claim, and the second is the one CFGM-02 turns on.
+// 395-06 D-07 extends it a TWENTIETH time, by name: `configUndoSource` — the repository's own
+// account of the last agent configuration commit. It is a key of its own rather than a verb on
+// `configApply`, and the split is the funnel's argument read on the read/write axis this phase is
+// entirely about: that port WRITES a commit a person accepted, this one READS a commit somebody
+// already made. Folding a read into the one port through which committed configuration changes
+// would enlarge the write surface for no reason and make "this host can commit config" and "this
+// host can see what it committed" one claim — and only the second is what `config.undo.propose`
+// needs, which is why its absence makes exactly that op unavailable and nothing else.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -154,6 +162,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'configApply'
     | 'configProposals'
     | 'configScan'
+    | 'configUndoSource'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

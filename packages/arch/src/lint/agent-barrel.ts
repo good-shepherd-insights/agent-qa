@@ -151,6 +151,8 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // proofs put these names on the wire, and 387 D-11 forbids the literals each would spell.
   'CONFIG_TARGET_CREATE_FUNCTION_ID',
   'CONFIG_TARGET_EDIT_FUNCTION_ID',
+  // 395-06, D-07: the undo's id, in SORT position and published for the identical reason.
+  'CONFIG_UNDO_PROPOSE_FUNCTION_ID',
   // 392 plan 05, D-21: the `/pin` refusal a REPL catches to say which class matched nothing. An
   // error CLASS on the footing of its siblings below — holding it runs nothing — and it is here
   // rather than local to the chat subtree because the surface that renders the refusal is in
@@ -640,6 +642,12 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // 395-05: the yaml FORMAT's value vocabulary — scalars, sequences and maps. A target entry and a
   // hook entry are written as one block each, so the port that writes them cannot be scalar-only.
   'ConfigStructuredValue',
+  // 395-06, D-07: the undo's source read — the repository's own account of the last agent config
+  // commit. A PORT plus its two payload types, published because `composeLocalAgent()` and the CLI
+  // host implement it and neither may name a type that lives only inside `functions/`.
+  'ConfigUndoSource',
+  'ConfigUndoSourceFile',
+  'ConfigUndoSourcePortLike',
   'ConfigValidatePortLike',
   'ConfigValidation',
   'CreateAgentJobQueueOptions',

@@ -159,6 +159,7 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // 395-05 D-01: PARSING inputs for the rest of the closed action class, on the row above reasoning.
   'config.target.create': { name: 'shop', platform: 'web', url: 'https://shop.example.com' },
   'config.target.edit': { name: 'shop', changes: { url: 'https://shop.example.com/basket' } },
+  'config.undo.propose': {},
   'config.proposal.apply': { proposalId: 'prop_0123456789ab' },
 }
 

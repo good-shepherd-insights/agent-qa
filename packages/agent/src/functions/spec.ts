@@ -51,6 +51,7 @@ import type {
   ConfigFilesPortLike,
   ConfigProposalsWritePortLike,
   ConfigScanPortLike,
+  ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
 } from '../config-mutation/ports.js'
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
@@ -135,6 +136,7 @@ export type OptionalFunctionDepKey =
   | 'configApply'
   | 'configProposals'
   | 'configScan'
+  | 'configUndoSource'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -967,6 +969,16 @@ export interface FunctionDeps {
    * must not surface a diff.
    */
   configScan?: ConfigScanPortLike
+  /**
+   * 395-06 D-07 · CFGM-03: the repository's own account of the last agent configuration commit.
+   *
+   * THE ONE DEP `config.undo.propose` HAS AND THE OTHER SIX PROPOSE OPS DO NOT. It is git — a host
+   * fact by definition — and it is a port of its own rather than a verb on `configApply` because
+   * the two answer opposite questions: that one writes a commit a person accepted, this one reads a
+   * commit somebody already made. Its absence makes exactly one op unavailable, and it says so by
+   * name.
+   */
+  configUndoSource?: ConfigUndoSourcePortLike
 }
 
 /**

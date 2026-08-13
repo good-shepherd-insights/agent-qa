@@ -242,6 +242,10 @@ const ALL_FUNCTION_IDS = [
   // both join the derived drop-out set and the filter assertion stays a claim about the RULE.
   'config.target.create',
   'config.target.edit',
+  // 395-06 D-07: one more id in SORT position — `undo` follows `target` lexicographically. It
+  // declares `config-write` and NOT `read`, so it joins the derived drop-out set with its six
+  // siblings and the filter assertion stays a claim about the RULE.
+  'config.undo.propose',
   // 387 D-09: both read-tier, so both survive safe-mode filtering — which is what makes the
   // filter assertion below sharper rather than merely longer. `runs.start` is still the only
   // id that drops out, and it now drops out of a set two entries larger.
