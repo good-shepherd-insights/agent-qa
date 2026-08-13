@@ -33,6 +33,7 @@ import {
   GitUnavailableForApplyError,
   applyTestDraftAsOneCommit,
   captureIndexEntry,
+  createDraftAuthoringPort,
   restoreIndexEntry,
 } from '../composition/local-agent-host.js'
 import type { GitApplyExec, TestDraftApplyRequest } from '../composition/local-agent-host.js'
@@ -622,15 +623,50 @@ describe('a FAILED apply leaves the repository exactly as it found it (394-18, C
  * assembling the sequence from numbers keeps THIS file pure ASCII while the bytes under test are
  * not. `0xC3 0x28` is a truncated two-byte sequence and `0xFF 0xFE` is not a UTF-8 lead pair at
  * all — every one of them decodes to U+FFFD, which is exactly the loss WR-04 is about.
+ *
+ * AND IT IS A DOCUMENT THE PARSER ACCEPTS (394-29, WR-03). The digests below are no longer minted
+ * here — they arrive through `parseDraft`, the only producer of `TestDraftApplyRequest.sourceDigest`
+ * — and a producer refuses a file it cannot parse, so a fixture that was merely a `name` and
+ * `steps` could pin only a digest no producer emits. `test-id` and `target` are required by
+ * `TestDefinitionSchema`, so they are here; the hazard bytes sit in a trailing comment, which is
+ * what makes the decoding parse while the bytes stay a UTF-8 hazard.
  */
 const NON_UTF8_TARGET_BYTES = Buffer.concat([
-  Buffer.from('name: a person\'s committed test\nsteps:\n  - Open the cart # ', 'ascii'),
+  Buffer.from(
+    'test-id: t_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle\n'
+    + 'name: a person\'s committed test\n'
+    + 'target: local-form\n'
+    + 'steps:\n'
+    + '  - Open the cart # ',
+    'ascii',
+  ),
   Buffer.from([0xc3, 0x28, 0xff, 0xfe]),
   Buffer.from('\n', 'ascii'),
 ])
 
 function sha256File(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
+
+/**
+ * The digest as the PRODUCT produces it — `parseDraft`, and nothing hand-minted beside it.
+ *
+ * WHY EVERY NON-UTF-8 CELL BELOW GOES THROUGH HERE (394-29, WR-03). `createHash(...).update(bytes)`
+ * spelled in a test is a claim about a value, not about the system: it can pin an input no producer
+ * emits, and a mutation differential over such a fixture reds only on the impossible one — it
+ * cannot tell a vacuous corpus from a real closure. `parseDraft`'s `contentDigest` is the ONE
+ * producer of `TestDraftApplyRequest.sourceDigest` (it reaches the request through
+ * `authoring-draft-edit.ts`), so a digest obtained here is a digest the product can actually put on
+ * a proposal.
+ *
+ * The `kind` is asserted before the digest is read, because a refused parse would otherwise hand
+ * every caller `undefined` and let the cell pass for a reason that has nothing to do with its
+ * subject.
+ */
+async function sourceDigestThroughTheProducer(): Promise<string> {
+  const outcome = await createDraftAuthoringPort(configPath).parseDraft(TARGET_PATH)
+  expect(outcome.kind).toBe('parsed')
+  return (outcome as { draft: { contentDigest: string } }).draft.contentDigest
 }
 
 /**
@@ -784,5 +820,86 @@ describe('the write is INSIDE the rollback\'s reach, and both halves are bytes (
 
     expect(sha256File(join(root, TARGET_PATH))).toBe(beforeSha)
     expect(readFileSync(join(root, TARGET_PATH)).equals(NON_UTF8_TARGET_BYTES)).toBe(true)
+  })
+})
+
+/**
+ * ONE DIGEST RECIPE, BOTH SIDES (394-29, CR-02).
+ *
+ * 394-23 moved the apply's half to raw bytes and left the PRODUCER hashing the UTF-8 decoding, so
+ * the two halves of one contract stopped agreeing on the day one of them was hardened — the fourth
+ * recorded instance of the one-sided-hardening class in this phase. At the base both halves hashed
+ * the decoding and therefore agreed; the disagreement was created by the fix, and it made a clean
+ * non-UTF-8 target permanently unapplicable (T-394-104, an availability failure of the accept path).
+ *
+ * These two cells are the pin, and they are a PAIR on purpose: the first says the gate accepts what
+ * nobody touched, the second says it still refuses what somebody did. A closure measured only by
+ * the accept arm cannot tell a byte-true digest from no digest check at all.
+ */
+describe('the digest the producer emits is the digest the apply computes (394-29)', () => {
+  it('ACCEPTS an untouched non-UTF-8 target whose sourceDigest came through parseDraft', async () => {
+    writeFileSync(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed a test whose bytes are not UTF-8')
+    assertNonUtf8BytesSurviveTheHarness(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
+
+    const produced = await sourceDigestThroughTheProducer()
+
+    // THE TWO RECIPES NAMED SIDE BY SIDE, with the non-vacuity guard first: if the decoding ever
+    // hashed to the same value as the bytes, the assertion below would hold under both recipes and
+    // this cell would certify nothing.
+    const overTheBytes = createHash('sha256').update(NON_UTF8_TARGET_BYTES).digest('hex')
+    const overTheDecoding = createHash('sha256')
+      .update(NON_UTF8_TARGET_BYTES.toString('utf8')).digest('hex')
+    expect(overTheDecoding).not.toBe(overTheBytes)
+    expect(produced).toBe(overTheBytes)
+
+    // And the agreement stated where it matters — the apply proceeds rather than refusing a file
+    // nobody moved.
+    const result = applyTestDraftAsOneCommit({
+      configPath,
+      request: request({ sourceDigest: produced }),
+    })
+    expect(result.filePath).toBe(TARGET_PATH)
+    expect(headStatPaths()).toEqual([TARGET_PATH])
+    expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(DRAFT_BYTES)
+  })
+
+  it('REFUSES by name when the target\'s bytes really changed between the parse and the apply', async () => {
+    writeFileSync(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'a person committed a test whose bytes are not UTF-8')
+
+    const produced = await sourceDigestThroughTheProducer()
+
+    // COMMITTED, NOT LEFT DIRTY, and the distinction is what makes this cell reach the digest gate
+    // at all: `applyTestDraftAsOneCommit` asks the porcelain question FIRST, so a target edited and
+    // left uncommitted refuses as dirty and the digest is never compared. A change somebody else
+    // COMMITTED is perfectly clean and completely different from what the proposal read — the one
+    // case only this gate can see.
+    const movedUnderTheProposal = Buffer.concat([
+      NON_UTF8_TARGET_BYTES,
+      Buffer.from('  - Apply the coupon FREESHIP\n', 'ascii'),
+    ])
+    writeFileSync(join(root, TARGET_PATH), movedUnderTheProposal)
+    git('add', '--', TARGET_PATH)
+    git('commit', '--quiet', '-m', 'somebody else edited the same test')
+    expect(readFileSync(join(root, TARGET_PATH)).equals(NON_UTF8_TARGET_BYTES)).toBe(false)
+
+    const before = treeSnapshot()
+    const commitsBefore = commitCount()
+    let caught: unknown
+    try {
+      applyTestDraftAsOneCommit({ configPath, request: request({ sourceDigest: produced }) })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(typeof ApplyTargetChangedError).toBe('function')
+    expect(caught).toBeInstanceOf(ApplyTargetChangedError)
+    expect((caught as Error).name).toBe('ApplyTargetChangedError')
+    expect((caught as Error).message).toContain(TARGET_PATH)
+    expect(treeSnapshot()).toEqual(before)
+    expect(commitCount()).toBe(commitsBefore)
   })
 })
