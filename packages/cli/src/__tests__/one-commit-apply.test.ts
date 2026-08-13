@@ -868,6 +868,30 @@ describe('the digest the producer emits is the digest the apply computes (394-29
     expect(readFileSync(join(root, TARGET_PATH), 'utf8')).toBe(DRAFT_BYTES)
   })
 
+  it('mints the digest over the file\'s RAW BYTES in the PRODUCER, with no apply in the reading', async () => {
+    // THE PRODUCER'S HALF PINNED ALONE (394-34 / WR-10), and it is the corpus's only cell that can
+    // tell the two halves of this contract apart.
+    //
+    // Every other byte-fidelity cell states the AGREEMENT, so it is red whichever half breaks it: a
+    // mutation of `parseDraft`'s recipe and a mutation of `readTargetIfPresent`'s read produce the
+    // IDENTICAL red set through them — measured, three cells each, the same three. A corpus that
+    // cannot distinguish which half moved cannot say a producer-side regression was caught, only
+    // that something disagreed. This cell asks the producer a question the apply is not part of, so
+    // the consumer mutation leaves it green and only the producer mutation reds it.
+    writeFileSync(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
+    assertNonUtf8BytesSurviveTheHarness(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
+
+    const produced = await sourceDigestThroughTheProducer()
+
+    // NON-VACUITY FIRST, on the same rule as the cell above: if the two recipes ever hashed this
+    // fixture alike, the assertion below would hold under both and certify nothing.
+    const overTheBytes = createHash('sha256').update(NON_UTF8_TARGET_BYTES).digest('hex')
+    const overTheDecoding = createHash('sha256')
+      .update(NON_UTF8_TARGET_BYTES.toString('utf8')).digest('hex')
+    expect(overTheDecoding).not.toBe(overTheBytes)
+    expect(produced).toBe(overTheBytes)
+  })
+
   it('REFUSES by name when the target\'s bytes really changed between the parse and the apply', async () => {
     writeFileSync(join(root, TARGET_PATH), NON_UTF8_TARGET_BYTES)
     git('add', '--', TARGET_PATH)

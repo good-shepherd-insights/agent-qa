@@ -11,7 +11,7 @@
 # could not be read routed through the same catch, so a real commit was answered with a worktree
 # reverted against it.
 #
-# SIX MUTATIONS, SIX PROPERTIES, AND THE RED SETS MUST BE PAIRWISE DISJOINT:
+# SEVEN MUTATIONS, SEVEN PROPERTIES, AND THE RED SETS MUST BE PAIRWISE DISJOINT:
 #
 #   MUTATION T  the INDEX half of the restore is removed, leaving the worktree-only restore this
 #               file shipped with. A failed apply then leaves the agent's blob staged.
@@ -30,6 +30,11 @@
 #               halves of the digest contract then DISAGREE about a non-UTF-8 target nobody touched,
 #               so a clean file is refused as changed — and the rollback puts U+FFFD back where
 #               bytes were.
+#   MUTATION U2 the PRODUCER's half of the same contract: `parseDraft` hashes the decoding instead
+#               of the bytes, which is the arrangement 394-29 actually left behind. Until this leg
+#               existed the differential red on 394-23's arrangement and said nothing about the one
+#               the fix replaced — a fix with no mutation leg, under this phase's own bar that a
+#               detector's bar is the implementation it must RED on.
 #
 # WHY P AND W ARE TWO LEGS AND NOT ONE. Both are about placement, and they are placements of
 # DIFFERENT statements relative to the same try: P moves the capture in, W moves the write out. The
@@ -51,9 +56,39 @@
 # actually be in: the producer over bytes, the consumer over a decoding.
 #
 # DISJOINTNESS IS THE POINT, and the script asserts it with `comm -12` over the sorted red sets. A
-# pair of mutations that red the same cells has measured one property twice; six that red six
-# sets have shown the corpus distinguishes six defects — which is what a gap round needs in order
+# pair of mutations that red the same cells has measured one property twice; seven that red seven
+# sets have shown the corpus distinguishes seven defects — which is what a gap round needs in order
 # to say which of them was closed.
+#
+# AND THE ONE PAIR WHERE DISJOINTNESS IS THE WRONG LAW — U AND U2, STATED IN FULL BECAUSE AN
+# EXEMPTION NOBODY JUSTIFIED IS HOW A DIFFERENTIAL STOPS BEING ONE.
+#
+# U and U2 are the two halves of ONE agreement, and every cell that states an agreement is red
+# whichever half breaks it. That is not a weakness of the corpus, it is what an agreement means, and
+# it was MEASURED here rather than assumed: the consumer mutation reds three cells, and the producer
+# mutation red exactly the same three. Strict disjointness between the two is therefore unreachable —
+# the only way to buy it would be to mint the apply-side fixtures' digests as literals again, which is
+# precisely the vacuous-corpus defect 394-29 closed (WR-03). A leg pair cannot be made non-redundant
+# by re-breaking the corpus.
+#
+# So this pair is checked against the property disjointness exists to enforce, rather than against
+# disjointness itself, and the check is STRICTER than an exemption in the direction that matters:
+#
+#   1. U2 must red at least one cell U CANNOT. That witness is
+#      `mints the digest over the file's RAW BYTES in the PRODUCER, with no apply in the reading`,
+#      added to the suite by 394-34 for this purpose: it asks the producer a question the apply is
+#      not part of, so the consumer mutation leaves it green. Without it U2 would red the same three
+#      cells as U and would be measuring one property twice — which is what the first measurement
+#      showed, and why the cell exists.
+#   2. The overlap must be EXACTLY the named agreement cells and nothing else. A cell drifting into
+#      the overlap that is not one of them is still a fatal, on the same rule as every other pair.
+#
+# The residual is stated rather than hidden: U's red set is a strict SUBSET of U2's, so this corpus
+# can witness a producer-side regression on its own and cannot witness a consumer-side one on its
+# own. A cell that pinned the consumer alone would have to drive the rollback with a digest matching
+# the consumer's own mutated reading, which no fixed corpus can arrange — with a byte-true digest the
+# apply refuses a round-tripped target before it ever reaches the restore, which is this file's own
+# reason for U being one leg and not two.
 #
 # A GREEN SUITE UNDER A MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS. So is a red naming a cell
 # the mutation does not forbid: a differential that reds on collateral has shown the corpus is
@@ -103,6 +138,9 @@ N_SIGNATURE_CELL="names NOTHING-TO-COMMIT rather than reporting it as a git fail
 P_SIGNATURE_CELL="refuses BYTE-UNCHANGED when the index capture fails, because the capture is above the write"
 W_SIGNATURE_CELL="restores the person's bytes when the WRITE ITSELF fails, because the write is inside the try"
 U_SIGNATURE_CELL="digests the target's RAW BYTES, so a target that is not valid UTF-8 still matches the proposal"
+# U2's signature is the one cell U CANNOT red — see the U/U2 paragraph in the header. Anchoring the
+# leg on a shared agreement cell would have let it pass while measuring nothing U had not.
+U2_SIGNATURE_CELL="mints the digest over the file's RAW BYTES in the PRODUCER, with no apply in the reading"
 
 # The cells allowed to be red under each mutation. Every entry is an assertion about the SAME
 # property as its signature cell, observed at a second place. Widening a list to quieten a surprise
@@ -136,6 +174,30 @@ ALLOWED_RED_CELLS_W=(
 # changed` stays GREEN under U, and that is the point: a mutation that breaks the accept arm must
 # not be able to hide behind a corpus that only ever asserts refusals.
 ALLOWED_RED_CELLS_U=(
+  "$U_SIGNATURE_CELL"
+  "restores a non-UTF-8 target BYTE-IDENTICALLY, never through a decode round-trip"
+  "ACCEPTS an untouched non-UTF-8 target whose sourceDigest came through parseDraft"
+)
+
+# THE AGREEMENT CELLS — the ones that state the contract rather than either half of it, and are
+# therefore red whichever half is mutated. They are named here as their own concept because the U/U2
+# overlap check below is written against this list, not against "whatever both happened to red": an
+# overlap defined by the measurement it is checking would accept any overlap at all.
+#
+# They coincide exactly with U's set today, and that is a measured fact rather than a definition —
+# every cell U reds is an agreement cell, which is why U alone cannot witness its own half.
+AGREEMENT_CELLS=(
+  "$U_SIGNATURE_CELL"
+  "restores a non-UTF-8 target BYTE-IDENTICALLY, never through a decode round-trip"
+  "ACCEPTS an untouched non-UTF-8 target whose sourceDigest came through parseDraft"
+)
+
+# U2's measured set: the three agreement cells plus its own witness. Recorded from the measurement,
+# not from the proposal — the fix sketch predicted U's set minus the rollback cell, and the rollback
+# cell reds under U2 too, because a producer digest over the decoding refuses the target before the
+# rollback is ever reached.
+ALLOWED_RED_CELLS_U2=(
+  "$U2_SIGNATURE_CELL"
   "$U_SIGNATURE_CELL"
   "restores a non-UTF-8 target BYTE-IDENTICALLY, never through a decode round-trip"
   "ACCEPTS an untouched non-UTF-8 target whose sourceDigest came through parseDraft"
@@ -210,6 +272,13 @@ W_REPLACEMENT="  writeTarget(absoluteTarget, contents)
 U_ANCHOR="    return readFileSync(absolutePath)"
 U_REPLACEMENT="    return Buffer.from(readFileSync(absolutePath).toString('utf8'), 'utf8')"
 
+# U2 — THE PRODUCER'S RECIPE, spelled as the arrangement 394-29 replaced. `parseDraft` reads the file
+# once as bytes and derives `content` from them for the parse alone; hashing `content` instead of
+# `bytes` is exactly the pre-394-29 producer, and it is a one-token edit that cannot be a compile
+# error — the mutation has to be the DEFECT, or the leg measures the type checker.
+U2_ANCHOR="          contentDigest: createHash('sha256').update(bytes).digest('hex'),"
+U2_REPLACEMENT="          contentDigest: createHash('sha256').update(content).digest('hex'),"
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/394-apply-rollback-mutation.XXXXXX")"
 RESTORED=0
 
@@ -258,14 +327,15 @@ anchor_count() { # $1 = anchor
   printf '%s' "$count"
 }
 
-for pair in "T:$T_ANCHOR" "V:$V_ANCHOR" "N:$N_ANCHOR" "P:$P_ANCHOR" "W:$W_ANCHOR" "U:$U_ANCHOR"; do
+for pair in "T:$T_ANCHOR" "V:$V_ANCHOR" "N:$N_ANCHOR" "P:$P_ANCHOR" "W:$W_ANCHOR" "U:$U_ANCHOR" \
+            "U2:$U2_ANCHOR"; do
   name="${pair%%:*}"
   anchor="${pair#*:}"
   count="$(anchor_count "$anchor")"
   [ "$count" = "1" ] \
     || fatal "the mutation-$name anchor appears $count time(s) in $HOST_REL, expected exactly 1 — a drifted anchor edits nothing and this lane would then measure the UNMUTATED build"
 done
-printf 'all six mutation anchors are unique\n'
+printf 'all seven mutation anchors are unique\n'
 
 if [ "${APPLY_ROLLBACK_SKIP_BUILD:-0}" = "1" ]; then
   printf '!!! APPLY_ROLLBACK_SKIP_BUILD=1 — this lane may be measuring a STALE dist. Iteration only.\n'
@@ -473,29 +543,67 @@ banner "MUTATION U — readTargetIfPresent decodes and re-encodes as UTF-8"
 run_leg U "$U_ANCHOR" "$U_REPLACEMENT" "$U_SIGNATURE_CELL" "${ALLOWED_RED_CELLS_U[@]}"
 
 # ------------------------------------------------------------------------------------------------
-# NON-REDUNDANCY — the six red sets must be pairwise disjoint
+# MUTATION U2 — the PRODUCER's digest recipe put back over the decoding
 # ------------------------------------------------------------------------------------------------
+#
+# WR-10. 394-29's fix moved `parseDraft` to hash the target's raw bytes, and until this leg the
+# differential mutated only `readTargetIfPresent` — so what it demonstrated was that the corpus reds
+# on 394-23's arrangement, not on the one 394-29 replaced. A fix whose implementation has no mutation
+# leg has not been shown to be detectable, which is this phase's own acceptance bar.
+
+banner "MUTATION U2 — parseDraft digests the DECODING instead of the bytes"
+run_leg U2 "$U2_ANCHOR" "$U2_REPLACEMENT" "$U2_SIGNATURE_CELL" "${ALLOWED_RED_CELLS_U2[@]}"
+
+# ------------------------------------------------------------------------------------------------
+# NON-REDUNDANCY — the seven red sets across all twenty-one pairs
+# ------------------------------------------------------------------------------------------------
+#
+# Twenty of the twenty-one are checked for strict disjointness. The twenty-first — U and U2 — is the
+# two halves of one agreement and is checked against the two conditions in this file's header, which
+# are stricter than an exemption in the direction that matters. Nothing is skipped: every pair is
+# named in the loop and every pair is asserted.
 
 banner "NON-REDUNDANCY"
-for pair in "T V" "T N" "T P" "T W" "T U" \
-            "V N" "V P" "V W" "V U" \
-            "N P" "N W" "N U" \
-            "P W" "P U" \
-            "W U"; do
+for pair in "T V" "T N" "T P" "T W" "T U" "T U2" \
+            "V N" "V P" "V W" "V U" "V U2" \
+            "N P" "N W" "N U" "N U2" \
+            "P W" "P U" "P U2" \
+            "W U" "W U2" \
+            "U U2"; do
   set -- $pair
   comm -12 "$WORK/red-$1.txt" "$WORK/red-$2.txt" >"$WORK/overlap-$1$2.txt"
+
+  if [ "$1 $2" = "U U2" ]; then
+    # CONDITION 1 — U2 reds a cell U cannot. Without it the leg is one property measured twice.
+    comm -13 "$WORK/red-U.txt" "$WORK/red-U2.txt" >"$WORK/only-U2.txt"
+    [ -s "$WORK/only-U2.txt" ] \
+      || fatal "mutation U2 red nothing mutation U did not — the producer half has no witness of its own in this corpus, so U2 is measuring U's property a second time"
+    # CONDITION 2 — the overlap is EXACTLY the named agreement cells, never merely non-empty.
+    printf '%s\n' "${AGREEMENT_CELLS[@]}" | sort -u >"$WORK/agreement-cells.txt"
+    comm -23 "$WORK/overlap-UU2.txt" "$WORK/agreement-cells.txt" >"$WORK/overlap-unexplained.txt"
+    if [ -s "$WORK/overlap-unexplained.txt" ]; then
+      sed 's/^/  - /' "$WORK/overlap-unexplained.txt" >&2
+      fatal "mutations U and U2 red overlapping cells that are NOT agreement cells — the overlap is collateral, not the contract"
+    fi
+    printf 'U ∩ U2 is exactly the %s named agreement cell(s); U2 additionally reds:\n' \
+      "$(grep -c . "$WORK/agreement-cells.txt")"
+    sed 's/^/  - /' "$WORK/only-U2.txt"
+    continue
+  fi
+
   if [ -s "$WORK/overlap-$1$2.txt" ]; then
     sed 's/^/  - /' "$WORK/overlap-$1$2.txt" >&2
     fatal "mutations $1 and $2 red overlapping cells — the two are not measuring two properties"
   fi
 done
-printf 'the six red sets are pairwise disjoint across all fifteen pairs:\n'
-printf '  T: '; paste -sd', ' "$WORK/red-T.txt"
-printf '  V: '; paste -sd', ' "$WORK/red-V.txt"
-printf '  N: '; paste -sd', ' "$WORK/red-N.txt"
-printf '  P: '; paste -sd', ' "$WORK/red-P.txt"
-printf '  W: '; paste -sd', ' "$WORK/red-W.txt"
-printf '  U: '; paste -sd', ' "$WORK/red-U.txt"
+printf 'the seven red sets are non-redundant across all twenty-one pairs (20 strictly disjoint, U/U2 by the two-sided-contract rule):\n'
+printf '  T:  '; paste -sd', ' "$WORK/red-T.txt"
+printf '  V:  '; paste -sd', ' "$WORK/red-V.txt"
+printf '  N:  '; paste -sd', ' "$WORK/red-N.txt"
+printf '  P:  '; paste -sd', ' "$WORK/red-P.txt"
+printf '  W:  '; paste -sd', ' "$WORK/red-W.txt"
+printf '  U:  '; paste -sd', ' "$WORK/red-U.txt"
+printf '  U2: '; paste -sd', ' "$WORK/red-U2.txt"
 
 # ------------------------------------------------------------------------------------------------
 # receipt
@@ -513,4 +621,5 @@ printf 'MUTATION N  nothing-to-commit collapsed : %s (exit %s)\n' "${COUNTS_N:-}
 printf 'MUTATION P  capture moved inside the try: %s (exit %s)\n' "${COUNTS_P:-}" "${RC_P:-}"
 printf 'MUTATION W  write moved outside the try : %s (exit %s)\n' "${COUNTS_W:-}" "${RC_W:-}"
 printf 'MUTATION U  target read round-trips UTF8: %s (exit %s)\n' "${COUNTS_U:-}" "${RC_U:-}"
+printf 'MUTATION U2 producer digests the decoding: %s (exit %s)\n' "${COUNTS_U2:-}" "${RC_U2:-}"
 printf '\n394-apply-rollback-mutation: PASS\n'
