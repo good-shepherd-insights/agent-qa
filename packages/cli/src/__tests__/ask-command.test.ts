@@ -94,6 +94,19 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     expect(result.stdout).toContain('executed')
   })
 
+  it('the rendered receipt line carries the receipt\'s own `outcome`', async () => {
+    // SC-5's REPORTING half (WINDOWS 124, WTST-08's remaining half), owner-ratified 2026-08-13:
+    // the RENDERED LINE governs. The scripted surface shares the REPL's receipt wording by design
+    // (D-01: one turn, two surfaces), so it shares the omission too — fixing one alone would leave
+    // a person's scripted run and their conversation disagreeing about what an invocation cost.
+    // `Runs consumed: N (previewed up to M)` rides `ClauseReceipt.outcome`; this pins that the
+    // field reaches stdout at all, on the deterministic turn (`${functionId} completed`).
+    const configPath = fixtureWorkspace(roots)
+    const result = await runAsk(configPath, ['proposals'])
+
+    expect(result.stdout).toContain('proposals.list completed')
+  })
+
   it('D-08: a fail-closed turn reports the clause and exits non-zero', async () => {
     const configPath = fixtureWorkspace(roots)
     const result = await runAsk(configPath, ['write a test for two factor auth'])

@@ -134,6 +134,21 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     expect(result.stdout).toContain('chat-')
   })
 
+  it('the rendered receipt line carries the receipt\'s own `outcome`', async () => {
+    // SC-5's REPORTING half (WINDOWS 124, WTST-08's remaining half), owner-ratified 2026-08-13:
+    // the RENDERED LINE governs, not the persisted artifact. `Runs consumed: N (previewed up to M)`
+    // is composed into `ClauseReceipt.outcome` at turn-engine.ts:176 and persisted verbatim — and a
+    // render that never reads `outcome` is a person told what an invocation MIGHT cost and never
+    // what it DID. The field is pinned here on the deterministic turn every other case drives, so
+    // the claim is about the render rather than about a fan-out fixture: for a non-authoring op the
+    // outcome is exactly `${functionId} completed`, and the shipped line renders the functionId and
+    // the clause as separate fields, so the contiguous string cannot appear unless `outcome` does.
+    const configPath = fixtureWorkspace(roots)
+    const result = await runChat(configPath, [], ['proposals', '/quit'])
+
+    expect(result.stdout).toContain('proposals.list completed')
+  })
+
   it('prints the banner at most once, on open', async () => {
     const configPath = fixtureWorkspace(roots)
     // A bare project has nothing pending, so D-23's answer is SILENCE — a REPL that greeted every
