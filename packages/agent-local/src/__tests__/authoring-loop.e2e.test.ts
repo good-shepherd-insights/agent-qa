@@ -492,19 +492,37 @@ function targetFromVocabulary(request: JobModelRequest, scopeKey: string): strin
     ?? (names[0] as string)
 }
 
-function documentFromPrompt(request: JobModelRequest): string {
+/** The block's own body, or the generator's refusal — the one lift both generators below share. */
+function formatBlockOrThrow(request: JobModelRequest): string {
   const format = promptBlockBody(request.system ?? '', FORMAT_BLOCK_TITLE)
   if (format === undefined) throw new FormatBlockMissingError()
-  const marker = format.indexOf(FORMAT_EXAMPLE_MARKER)
-  if (marker < 0) throw new FormatBlockMissingError()
+  if (format.indexOf(FORMAT_EXAMPLE_MARKER) < 0) throw new FormatBlockMissingError()
+  return format
+}
 
+/**
+ * The canonical example, lifted verbatim, with ONLY its `name` adapted to the Intent block.
+ *
+ * The `target` line is deliberately left as the block wrote it. Spelled apart from
+ * {@link documentFromPrompt} because the difference between the two IS the model behaviour WR-04
+ * is about: a generator that adapts `target` can only ever emit a member of the served list, and a
+ * generator that does not is a model reading the same block and skipping one of its bullets.
+ */
+function exampleWithIntentName(request: JobModelRequest): string {
+  const format = formatBlockOrThrow(request)
+  const marker = format.indexOf(FORMAT_EXAMPLE_MARKER)
   const example = `${format.slice(marker + FORMAT_EXAMPLE_MARKER.length).trim()}\n`
+  const intent = promptBlockBody(request.prompt, 'Intent') ?? ''
+  return example.replace(/^name: .*$/m, () => `name: ${intent}`)
+}
+
+function documentFromPrompt(request: JobModelRequest): string {
+  const format = formatBlockOrThrow(request)
   const intent = promptBlockBody(request.prompt, 'Intent') ?? ''
   const scope = promptBlockBody(request.prompt, 'Scope') ?? ''
   const target = targetFromVocabulary(request, scope.split(':')[1] ?? scope)
 
-  const document = example
-    .replace(/^name: .*$/m, () => `name: ${intent}`)
+  const document = exampleWithIntentName(request)
     .replace(/^target: .*$/m, () => `target: ${target}`)
 
   // A FIFTH KEY, EMITTED ONLY BECAUSE THE BLOCK TAUGHT IT, with its value derived from the Intent
@@ -530,6 +548,48 @@ function formatFollowingModel(): ScriptedModel {
           return Promise.resolve({ text: 'no changes needed' })
         }
         return Promise.resolve({ text: documentFromPrompt(request) })
+      },
+    }),
+  }
+}
+
+/**
+ * THE GENERATOR NEITHER HARD-BRANCH DOUBLE COULD BE (394-37, WR-04).
+ *
+ * `targetFromVocabulary` draws its answer FROM the served list — `names.find(…) ?? names[0]`, with
+ * a throw on the empty list — so every path it can take returns a member of that list, and every
+ * cell built on it asserts that the DOUBLE obeyed the block. The off-vocabulary case was
+ * unreachable by construction, which is the defect and not the proof.
+ *
+ * This one reads the SAME block by the same title and skips one of its bullets: it lifts the
+ * canonical example, adapts the `name` to the Intent, and copies the example's own `target` line
+ * verbatim. That is a real model behaviour — the block's example is the most imitable thing in the
+ * prompt — and it emits `target: sign-in` against a host declaring only `local-form`.
+ *
+ * IT RECORDS WHAT IT EMITTED. The off-vocabulary value has to be a PRODUCED fact for the cell
+ * below to be about the product rather than about this function's source, so the document text is
+ * kept and asserted rather than restated.
+ */
+function exampleTargetCopyingModel(): {
+  readonly capability: () => JobModelCapability
+  readonly requests: JobModelRequest[]
+  readonly documents: string[]
+} {
+  const requests: JobModelRequest[] = []
+  const documents: string[] = []
+  return {
+    requests,
+    documents,
+    capability: () => ({
+      modelId: 'fixture:example-target-copying',
+      generate(request) {
+        requests.push(request)
+        if (!/^Agent context: authoring\.draft\.write — compile /.test(request.system ?? '')) {
+          return Promise.resolve({ text: 'no changes needed' })
+        }
+        const text = exampleWithIntentName(request)
+        documents.push(text)
+        return Promise.resolve({ text })
       },
     }),
   }
@@ -1052,6 +1112,57 @@ describe('authoring.draft.write end to end through the composition root', () => 
     // ③ THE CONTROL: it is not the scope key. Every prior fixture in this file had product ==
     // target name, so no cell here could tell a served vocabulary from a scope-key slice.
     expect(document['target']).not.toBe(scope.key)
+  })
+
+  it('REFUSES an off-vocabulary `target` before the first gate run (394-37, WR-04)', async () => {
+    // THE CASE THE GUARD REJECTS, AND THE CORPUS DID NOT HAVE ONE. Round 5 served the vocabulary
+    // into the compile prompt and compared it against nothing: `configuredTargetNames()` sat in a
+    // local variable eight lines above `shelf.write`, and both new "hard branch" doubles picked
+    // their target OUT of that served list, so no cell in either file could express a model that
+    // ignored the block. This is that model, and it is a REALISTIC one — it copies the block's own
+    // canonical example, whose `target: sign-in` this host does not declare.
+    //
+    // WHY THE REFUSAL BELONGS HERE RATHER THAN AT THE RUN. `runs.start` spawns a real child
+    // `agent-qa run`, and `resolveTarget` throws inside it — so an unconfigured target is paid as
+    // up to `DRAFT_STABILITY_RUNS_N` real child processes (nine with repair), and no repair patch
+    // can correct it, because `target` is outside `EDITABLE_POINTER_ROOTS`.
+    const model = exampleTargetCopyingModel()
+    const executor = fixtureExecutor(agentQaRoot, () => ({
+      testName: INTENT,
+      elementName: 'local form',
+    }))
+    const host = compose({
+      executor: executor.port,
+      // The EASY-branch vocabulary, deliberately: one name, `local-form`, and the emitted value is
+      // not it. A two-target host would leave a reader wondering which name the guard compared.
+      authoring: draftAuthoring(workspace, [], CONFIGURED_TARGETS),
+      model: model.capability,
+    })
+
+    const failure = await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    ).then(() => undefined, (error: unknown) => error as Error)
+
+    // ① THE EMISSION IS PRODUCED, NOT ASSERTED. The generator really did emit an off-vocabulary
+    // target, and the vocabulary the loop served really did exclude it — both read off the
+    // invocation rather than restated from this file's constants.
+    expect(model.documents[0]).toContain('target: sign-in')
+    const servedBlock = promptBlockBody(model.requests[0]?.prompt ?? '', TARGETS_BLOCK_TITLE)
+    expect(servedBlock?.split('\n').map((line) => line.trim()).filter((line) => line !== ''))
+      .toEqual([...CONFIGURED_TARGETS])
+
+    // ② THE REFUSAL IS TYPED AND NAMES BOTH SIDES — what was emitted and what was configured, so a
+    // person reading it can see the whole comparison rather than being told one half of it.
+    expect(failure?.name).toBe('AuthoringDraftUnconfiguredTargetError')
+    expect(failure?.message).toContain('sign-in')
+    expect(failure?.message).toContain('local-form')
+
+    // ③ AND NOTHING RAN. This is the claim the guard exists for: the cost is one refusal, not nine
+    // child processes. `startInputs` is the executor's own ledger of gate runs.
+    expect(executor.startInputs).toEqual([])
   })
 
   it('will not invent a target: the generator throws when no vocabulary is served (WR-07)', () => {

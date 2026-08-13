@@ -96,20 +96,39 @@ function targetFromVocabulary(request: JobModelRequest, scopeKey: string): strin
   return names.find((name) => name.includes(scopeKey) || scopeKey.includes(name)) ?? (names[0] as string)
 }
 
-function documentFromPrompt(request: JobModelRequest): string {
+/** The block's own body, or the generator's refusal — the one lift both generators below share. */
+function formatBlockOrThrow(request: JobModelRequest): string {
   const format = promptBlockBody(request.system ?? '', FORMAT_BLOCK_TITLE)
   if (format === undefined || !format.includes(FORMAT_EXAMPLE_MARKER)) {
     throw new Error(`the prompt carries no usable "${FORMAT_BLOCK_TITLE}" block, and this `
       + 'generator knows no document schema of its own')
   }
+  return format
+}
+
+/**
+ * The canonical example, lifted verbatim, with ONLY its `name` adapted to the Intent block.
+ *
+ * The `target` line stays as the block wrote it, and that omission is the point (394-37, WR-04):
+ * a generator that adapts `target` from the served list can only ever emit a member of it, so no
+ * cell built on one can measure the product's refusal. This is the same block, read by title, with
+ * one bullet skipped — which is a model behaviour, not a contrivance.
+ */
+function exampleWithIntentName(request: JobModelRequest): string {
+  const format = formatBlockOrThrow(request)
   const marker = format.indexOf(FORMAT_EXAMPLE_MARKER)
   const example = `${format.slice(marker + FORMAT_EXAMPLE_MARKER.length).trim()}\n`
+  const intent = promptBlockBody(request.prompt, 'Intent') ?? ''
+  return example.replace(/^name: .*$/m, () => `name: ${intent}`)
+}
+
+function documentFromPrompt(request: JobModelRequest): string {
+  const format = formatBlockOrThrow(request)
   const intent = promptBlockBody(request.prompt, 'Intent') ?? ''
   const scope = promptBlockBody(request.prompt, 'Scope') ?? ''
   const target = targetFromVocabulary(request, scope.split(':')[1] ?? scope)
 
-  const document = example
-    .replace(/^name: .*$/m, () => `name: ${intent}`)
+  const document = exampleWithIntentName(request)
     .replace(/^target: .*$/m, () => `target: ${target}`)
 
   // A FIFTH KEY, EMITTED ONLY BECAUSE THE BLOCK TAUGHT IT. The value is derived from the Intent
@@ -133,16 +152,22 @@ const VERIFY_REACHED = 'the draft reached stage 4'
  * CONDITION under test, and two spellings of it would let one cell measure a setup the other
  * does not have.
  */
-async function driveZeroExemplarLoop(scope: ScopeKey = SCOPE): Promise<{
+async function driveZeroExemplarLoop(
+  scope: ScopeKey = SCOPE,
+  /** The generator under test. Parameterised for WR-04's off-vocabulary emission, nothing else. */
+  generate: (request: JobModelRequest) => string = documentFromPrompt,
+): Promise<{
   readonly authoring: ReturnType<typeof createDraftAuthoringPort>
   readonly failure: Error | undefined
   readonly compileRequests: readonly JobModelRequest[]
+  readonly emitted: readonly string[]
   readonly served: readonly string[]
   readonly staged: readonly DraftStageOutcome[]
   readonly verified: readonly string[]
 }> {
   const authoring = createDraftAuthoringPort(configPath)
   const compileRequests: JobModelRequest[] = []
+  const emitted: string[] = []
   const staged: DraftStageOutcome[] = []
   const verified: string[] = []
   const served: string[] = []
@@ -170,7 +195,9 @@ async function driveZeroExemplarLoop(scope: ScopeKey = SCOPE): Promise<{
           return Promise.resolve({ text: 'no changes needed' })
         }
         compileRequests.push(request)
-        return Promise.resolve({ text: documentFromPrompt(request) })
+        const text = generate(request)
+        emitted.push(text)
+        return Promise.resolve({ text })
       },
     }),
     // THE SHIPPED SHELF. `stageDraft` runs `parseTestFile` first and writes only bytes that
@@ -196,7 +223,7 @@ async function driveZeroExemplarLoop(scope: ScopeKey = SCOPE): Promise<{
   const failure = await runAuthoringLoop({ intent: INTENT, scope }, { read, shelf })
     .then(() => undefined, (error: unknown) => error as Error)
 
-  return { authoring, failure, compileRequests, served, staged, verified }
+  return { authoring, failure, compileRequests, emitted, served, staged, verified }
 }
 
 // The house config verbatim, on `authoring-draft-edit.e2e.test.ts`'s reason: the shelf and the
@@ -341,9 +368,16 @@ describe('a zero-exemplar scope compiles a document the SHIPPED parser accepts',
     expect(staging?.kind).toBe('staged')
     if (staging === undefined || staging.kind !== 'staged') return
 
-    // THE CLAIM: the staged target is a MEMBER of the served vocabulary. Not "equals
-    // storefront-web" — that would pin this generator's preference heuristic rather than the
-    // property, and the property is that stage 3 chose rather than guessed.
+    // THE CLAIM, STATED FOR WHAT IT IS (corrected 394-37, WR-04). The staged target is a MEMBER of
+    // the served vocabulary — which measures that THIS GENERATOR obeyed the block, and nothing
+    // about what the product does when a generator does not. It cannot be otherwise here:
+    // `targetFromVocabulary` draws its answer out of the served list on every path it can take, so
+    // membership holds by construction. The PRODUCT's refusal of a non-member is a different claim
+    // with its own cell — `refuses an off-vocabulary target` below, whose generator copies the
+    // example's target instead of choosing one.
+    //
+    // Not "equals storefront-web" either: that would pin this generator's preference heuristic
+    // rather than the property, which is that stage 3 chose rather than guessed.
     const parsedTarget = /^target: (.+)$/m.exec(
       readFileSync(join(root, staging.draft.filePath), 'utf8'),
     )?.[1]
@@ -352,6 +386,39 @@ describe('a zero-exemplar scope compiles a document the SHIPPED parser accepts',
     // AND THE CONTROL: it is not the scope key. Every fixture in this file before this one had
     // product == target name, which is why 35 plans of cells could not tell the two apart.
     expect(parsedTarget).not.toBe(scope.key)
+  })
+
+  it('refuses an off-vocabulary `target` before stage 4, through the SHIPPED parser (WR-04)', async () => {
+    // THE CASE THE GUARD REJECTS, PRODUCED BY THE REAL EMISSION PATH. The value compared here is
+    // `ParsedDraftLike.target` as `createDraftAuthoringPort.stageDraft` derived it — `parseTestFile`
+    // over the bytes the generator emitted — and the vocabulary is what the same host read out of
+    // this workspace's own config file. Neither side is a literal this file chose.
+    //
+    // The generator is a model that read the format block and skipped one bullet: it copies the
+    // canonical example's `target: sign-in`, and this config declares only `local-form`.
+    const { failure, emitted, served, staged, verified } =
+      await driveZeroExemplarLoop(SCOPE, exampleWithIntentName)
+
+    // ① THE CONDITION, PRODUCED: an off-vocabulary emission, against a vocabulary read from disk.
+    expect(emitted[0]).toContain('target: sign-in')
+    expect(served).toEqual(['local-form'])
+
+    // ② IT PARSED. The refusal is about the vocabulary and not about the document — the SHIPPED
+    // parser accepted these bytes, so a guard that never fired would have handed them to stage 4.
+    const [staging] = staged
+    expect(staging?.kind).toBe('staged')
+    if (staging === undefined || staging.kind !== 'staged') return
+    expect(staging.draft.target).toBe('sign-in')
+
+    // ③ THE REFUSAL, naming both halves of the comparison.
+    expect(failure?.name).toBe('AuthoringDraftUnconfiguredTargetError')
+    expect(failure?.message).toContain('sign-in')
+    expect(failure?.message).toContain('local-form')
+
+    // ④ AND STAGE 4 WAS NEVER REACHED. `verified` is the recording `verifyDraft`'s own ledger; on
+    // every other cell in this file reaching it is the SUCCESS signal, which is what makes an
+    // empty list here a claim about where the loop stopped rather than about how it failed.
+    expect(verified).toEqual([])
   })
 
   it('refuses the same document with its test-id removed — so the cell above is not vacuous', async () => {
