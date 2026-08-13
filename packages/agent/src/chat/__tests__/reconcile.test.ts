@@ -260,6 +260,62 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
       expect(verdict.reason).toContain('no authoring capability has shipped.')
     })
 
+    it('ATTRIBUTES the model tail rather than asserting it as a fact about this build', () => {
+      // 394-30's live refusal, verbatim from the session JSONL, and the reason this cell exists.
+      // The planner refused an authoring turn with a sentence that IS NOT IN THIS REPO — `grep -rn
+      // "requires a target scope identifier" packages/*/src` returns nothing — and the shipping
+      // format spliced it bare after an em-dash, immediately behind a clause the HOST composed
+      // ("No capability in this build handles: …"). The whole string then read as one host
+      // statement, so a person was told this build requires something it does not, in the build's
+      // own voice, with nothing in the sentence marking where the host stopped speaking.
+      //
+      // The host can assert what it can check. It cannot check the planner's prose, and what it
+      // CAN check is that the planner said it — so that is the only claim it makes about it.
+      const invented =
+        'A test-authoring capability is available, but it requires a target scope identifier and '
+        + 'none was supplied.'
+      const only = clause('write a test for the local form page', 0)
+      const verdict = deterministicOverrideStrategy(
+        inputOf(
+          [only],
+          [],
+          planned({
+            toolCalls: [
+              {
+                toolName: MARK_UNHANDLED_TOOL_NAME,
+                input: { clause: 'write a test for the local form page', reason: invented },
+              },
+            ],
+          }),
+        ),
+      )
+
+      expect(verdict.kind).toBe('unhandled')
+      if (verdict.kind !== 'unhandled') return
+      expect(verdict.reason).toBe(
+        'No capability in this build handles: "write a test for the local form page". The '
+        + `planner's stated reason, unverified by this build: "${invented}". The turn was refused `
+        + 'before anything ran, so nothing in the request was carried out.',
+      )
+
+      // THE LOAD-BEARING HALF: the model's prose reaches the person ONLY inside the attributed
+      // quotes. A format that added the attribution phrase and ALSO kept the bare splice would
+      // satisfy a containment check on either fragment while the false sentence still stood in the
+      // host's voice — which is the exact defect, plus a disclaimer next to it.
+      const attributed = `unverified by this build: "${invented}"`
+      expect(verdict.reason.split(invented)).toHaveLength(2)
+      expect(verdict.reason.replace(attributed, '')).not.toContain(invented)
+      // And specifically not the shape that shipped: the clause's closing quote running straight
+      // into the model's sentence.
+      expect(verdict.reason).not.toContain(`" — ${invented}`)
+
+      // D-08 still holds — the clause is NAMED — and the atomicity sentence still ends it, so the
+      // attribution was added to the refusal rather than substituted for its other two duties.
+      expect(verdict.clause.text).toBe('write a test for the local form page')
+      expect(verdict.reason).toContain('"write a test for the local form page"')
+      expect(verdict.reason.endsWith('nothing in the request was carried out.')).toBe(true)
+    })
+
     it('refuses by name when stage 2 could not be reached at all', () => {
       const only = clause('summarise the last failure', 0)
       const verdict = deterministicOverrideStrategy(
