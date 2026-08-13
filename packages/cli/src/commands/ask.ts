@@ -23,11 +23,12 @@ import {
   invokeFunction,
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-agent'
-import type { AgentAskResult, ClauseReceipt } from '@vostride/agent-qa-schema'
+import type { AgentAskResult } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
+import { receiptLine } from './receipt-line.js'
 
 type AskErrorCode = 'missing-message' | 'fail-closed' | 'clause-failed'
 
@@ -49,17 +50,6 @@ function globalOptions(command: Command): { config?: string } {
 function compositionInput(command: Command): { agentQaRoot: string; configPath: string } {
   const configPath = resolve(globalOptions(command).config ?? 'agent-qa.config.yaml')
   return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
-}
-
-/** One receipt line: what ran, how it went, and the op's own name — never its payload (D-18). */
-function receiptLine(receipt: ClauseReceipt): string {
-  const status =
-    receipt.status === 'executed'
-      ? pc.green(receipt.status)
-      : receipt.status === 'failed'
-        ? pc.red(receipt.status)
-        : pc.dim(receipt.status)
-  return `  ${status}  ${pc.bold(receipt.functionId)}  ${pc.dim(receipt.clause)}`
 }
 
 function renderTurn(result: AgentAskResult): string {

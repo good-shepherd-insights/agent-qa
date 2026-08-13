@@ -23,6 +23,7 @@ import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createChatCommand } from '../commands/chat.js'
+import { receiptLine } from '../commands/receipt-line.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -277,5 +278,50 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     // and an op result is exactly the kind of value a masked config read can put a credential into.
     expect(source).toContain('createMaskingContext')
     expect(source).toContain('finally')
+  })
+
+  it('renders the fan-out cost verbatim off `outcome` — the sentence a person approved', () => {
+    // The exact sentence the live run of 394-35 composed, persisted, and never printed (WINDOWS
+    // 124). Driven against the exported render directly rather than through a turn, because no
+    // hermetic surface case can reach a real fan-out — and what SC-5's reporting half asks is
+    // whether the field carrying the cost survives the render, which is answerable here.
+    const rendered = receiptLine({
+      clause: 'write a test that signs in on the local account form',
+      functionId: 'authoring.draft.write',
+      origin: 'agent',
+      status: 'executed',
+      outcome: 'authoring.draft.write completed — Runs consumed: 1 (previewed up to 7)',
+    })
+
+    expect(rendered).toContain('Runs consumed: 1 (previewed up to 7)')
+    // Unconditional, on every receipt — a render that carried the outcome only when it differed
+    // from the plain `${functionId} completed` summary would be a drop path with a condition on it.
+    expect(receiptLine({
+      clause: 'proposals',
+      functionId: 'proposals.list',
+      origin: 'agent',
+      status: 'executed',
+      outcome: 'proposals.list completed',
+    })).toContain('proposals.list completed')
+  })
+
+  it('both surfaces render ONE receipt line, and neither may re-grow a private copy', () => {
+    // A SOURCE PIN beside the one above, for the reason that one exists: the two behavioural cells
+    // would both stay green if `ask.ts` copied the render back into itself and the copies then
+    // drifted — which is exactly the history this module ends. Six times in this phase a contract
+    // has been hardened on one side only; the shared module plus this pin forecloses a seventh on
+    // the receipt line structurally rather than by convention (D-01: one turn, one wording).
+    const commands = join(__dirname, '..', 'commands')
+    for (const file of ['chat.ts', 'ask.ts']) {
+      const source = readFileSync(join(commands, file), 'utf8')
+      expect({ file, imports: source.includes("from './receipt-line.js'") })
+        .toEqual({ file, imports: true })
+      expect({ file, private: /function\s+receiptLine\s*\(/u.test(source) })
+        .toEqual({ file, private: false })
+    }
+    // The shared module reads the field, and reads it from the receipt — the non-vacuity guard on
+    // the two assertions above, which would both hold over a shared render that dropped `outcome`.
+    const shared = readFileSync(join(commands, 'receipt-line.ts'), 'utf8')
+    expect(shared).toContain('receipt.outcome')
   })
 })

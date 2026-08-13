@@ -37,7 +37,7 @@ import {
 } from '@vostride/agent-qa-agent'
 import { listSessions } from '@vostride/agent-qa-agent-local'
 import type { ChatSessionListing, LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import type { AgentAskResult, ClauseReceipt } from '@vostride/agent-qa-schema'
+import type { AgentAskResult } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
@@ -48,6 +48,7 @@ import {
 } from '../composition/local-agent-host.js'
 import { resolveCliChatCapabilities } from '../llm-utils.js'
 import type { CliChatCapabilities } from '../llm-utils.js'
+import { receiptLine } from './receipt-line.js'
 
 type ChatErrorCode = 'unknown-session' | 'no-session-to-continue'
 
@@ -101,23 +102,13 @@ function compositionInput(command: Command): { agentQaRoot: string; configPath: 
   return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
 }
 
-/** One receipt line: what ran, how it went, and the op's own name — never its payload (D-18). */
-function receiptLine(receipt: ClauseReceipt): string {
-  const status =
-    receipt.status === 'executed'
-      ? pc.green(receipt.status)
-      : receipt.status === 'failed'
-        ? pc.red(receipt.status)
-        : pc.dim(receipt.status)
-  return `  ${status}  ${pc.bold(receipt.functionId)}  ${pc.dim(receipt.clause)}`
-}
-
 /**
  * One turn, rendered.
  *
- * The SAME vocabulary `ask` prints, because they are the same turn (D-01) — the receipt line above
- * is shared and the shapes below are the shapes `ask` reports. A REPL with its own wording would
- * make a person's scripted run and their conversation disagree about what happened.
+ * The SAME vocabulary `ask` prints, because they are the same turn (D-01) — the receipt line is
+ * literally shared now (`receipt-line.ts`, imported by both surfaces) and the shapes below are the
+ * shapes `ask` reports. A REPL with its own wording would make a person's scripted run and their
+ * conversation disagree about what happened, and two copies of one line is how that starts.
  */
 function renderTurn(result: AgentAskResult): string {
   const lines: string[] = []
