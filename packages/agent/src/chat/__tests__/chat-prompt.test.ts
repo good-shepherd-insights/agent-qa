@@ -82,6 +82,34 @@ describe('buildChatPrompt: one builder, chat blocks (392-EXTENDS)', () => {
     expect(system.toLowerCase()).toContain('utterance order')
   })
 
+  it('says what a tool REQUIRES, so a clause cannot be refused over an optional field', () => {
+    // WINDOWS 110, the planner half. 394-30 drove a live turn against a dist proven to serve
+    // `authoring.draft.write` with `required: ["intent"]` and `scope` optional, and the planner
+    // refused it anyway — in words no source file in this repo contains: "it requires a target
+    // scope identifier and none was supplied". That is not a routing mistake and it is not a
+    // missing capability. It is the planner ASSERTING a requirement its own tool contract denies,
+    // and then spending the whole turn on it (D-10 refuses the turn whole).
+    //
+    // The prompt already told it to refuse rather than invent an identifier. What it never said is
+    // WHICH inputs a tool actually demands — so "needs an identifier" was left to the model's own
+    // judgement, and its judgement was wrong in the direction that costs the person the turn. The
+    // rule below puts that decision back in the schema's vocabulary, where it is checkable.
+    const system = buildChatPrompt(input()).system ?? ''
+    expect(system).toContain(
+      "A tool's required inputs are exactly the `required` list in its schema. Never mark a clause "
+      + 'unhandled because a field outside that list is missing: omit the field, or fill it from '
+      + "the person's own words when they name it.",
+    )
+    // ADJACENCY, asserted rather than assumed: the rule QUALIFIES the mark_unhandled guidance, so
+    // it has to be read with it. A rule that drifted into the volatile tier or to the far end of a
+    // long block would still satisfy the containment above while no longer being about the
+    // instruction it exists to bound.
+    const rule = system.indexOf("A tool's required inputs")
+    const guidance = system.indexOf('Use `mark_unhandled`')
+    expect(guidance).toBeGreaterThan(-1)
+    expect(rule).toBeGreaterThan(guidance)
+  })
+
   it('numbers the clause list by POSITION, so a hole-punched subset never starts at "2."', () => {
     // THE SHAPE THE ENGINE ACTUALLY PASSES (392-15, WR-02 / CR-01's reachability half). Stage 2 is
     // asked only about the clauses stage 1 could not bind, so `clauses` here is a SUBSET carrying
