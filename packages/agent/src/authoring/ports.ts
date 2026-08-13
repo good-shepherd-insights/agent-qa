@@ -183,6 +183,26 @@ export interface DraftReceiptsReadPortLike {
 export interface AuthoringReadPortLike {
   getAuthoringBrief(intent: string, scope: ScopeKey): Promise<AuthoringBrief>
   suiteTextCorpus(): Promise<readonly SuiteTextCorpusEntryLike[]>
+  /**
+   * The names a `target` may legally take in this project (394-33, WR-07).
+   *
+   * A VOCABULARY, NOT A DERIVATION, and that is the whole of what it fixes. `TestDefinitionSchema`
+   * requires a `target`, nothing validates one before `runs.start` types it into a live
+   * application, and `target` is outside `EDITABLE_POINTER_ROOTS` so no repair patch can correct
+   * it — yet stage 3's prompt asked for the value while serving no list to choose from. The Scope
+   * block is not that list: `deriveDefaultAuthoringScope` answers a PRODUCT
+   * (`target.product ?? targetName`), so on any project where a target declares a product under a
+   * different name, the scope key is not a configured target at all.
+   *
+   * A THIRD VERB ON THE READ HALF rather than a port of its own, on this interface's own stated
+   * reasoning: it is a READ of this project's own state through capabilities the composition root
+   * already holds, and a host that can serve the brief and the suite corpus but not the names its
+   * own config declares does not exist. It is deliberately NOT on `AuthoringScopePortLike` — that
+   * port answers WHICH SCOPE THIS PROJECT AUTHORS FOR and can legitimately refuse; this one
+   * enumerates and never refuses. An empty array is a legitimate answer (a config declaring no
+   * targets), and the block a reader is served says so in words rather than rendering nothing.
+   */
+  configuredTargetNames(): Promise<readonly string[]>
 }
 
 /**

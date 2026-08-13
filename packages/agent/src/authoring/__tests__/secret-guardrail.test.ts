@@ -167,6 +167,8 @@ function loopOver(steps: readonly string[], testName = TEST_NAME) {
   const verified: string[] = []
 
   const read: AuthoringReadPortLike = {
+    // 394-33 WR-07: the `target` vocabulary, present because the port requires it.
+    configuredTargetNames: () => Promise.resolve(['local-form']),
     getAuthoringBrief: () => Promise.resolve(EMPTY_BRIEF),
     suiteTextCorpus: () => Promise.resolve(SUITE_TEXT),
   }

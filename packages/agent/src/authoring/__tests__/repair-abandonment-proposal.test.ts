@@ -282,6 +282,8 @@ function bench(input: {
     startedPaths,
     deps: {
       read: {
+        // 394-33 WR-07: served for completeness; this bench's model is scripted and reads none.
+        configuredTargetNames: () => Promise.resolve(['local-form']),
         getAuthoringBrief: () => Promise.resolve({
           scope: { tier: 'product', key: 'local-form' },
           facts: [],

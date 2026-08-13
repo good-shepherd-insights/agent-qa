@@ -58,6 +58,16 @@ import type { FunctionDeps } from '../../functions/spec.js'
 const INTENT = 'Check that the local account form shows its heading'
 const SCOPE: ScopeKey = { tier: 'product', key: 'local-form' }
 
+/**
+ * The `target` vocabulary this host declares (394-33, WR-07).
+ *
+ * NEITHER NAME IS `SCOPE.key`, and that is deliberate. `deriveDefaultAuthoringScope` answers a
+ * PRODUCT, so the scope key and a configured target name are different kinds of value that only
+ * coincide by accident — a fixture whose names included the scope key would let a block that
+ * rendered the scope satisfy the pin below.
+ */
+const CONFIGURED_TARGET_NAMES: readonly string[] = ['local-form-web', 'storefront-web']
+
 /** The staged draft's shelf path, as `stageDraft` mints it — digest in, path out. */
 const STAGED_PATH = `tests/.agent-qa-drafts/${ACCEPT_CONTROL_DRAFT.contentDigest}.yaml`
 
@@ -109,6 +119,11 @@ function observedLoop() {
       observed.push('dedup')
       return Promise.resolve(SUITE_TEXT)
     },
+    // 394-33 WR-07: the `target` vocabulary the compile prompt serves. TWO names, and neither is
+    // the scope key — so a block that rendered the scope, or rendered one name because there was
+    // only one, cannot satisfy the pins below.
+    configuredTargetNames: (): Promise<readonly string[]> =>
+      Promise.resolve(CONFIGURED_TARGET_NAMES),
   }
 
   const modelCalls: string[] = []
@@ -310,6 +325,8 @@ describe('the six-stage order is structural, not a habit of the code', () => {
 
 /** The block title a model reads, spelled as a model reads it: a literal, not an import. */
 const FORMAT_BLOCK_TITLE = 'Test document format'
+/** The vocabulary block's title, as a MODEL reads it — a literal, never the exported constant. */
+const TARGETS_BLOCK_TITLE = 'Configured targets'
 
 interface RenderedBlock {
   readonly title: string
@@ -366,7 +383,42 @@ describe('the document schema rides the stable tier, not the exemplar block (WIN
     expect(renderedBlocks(loop.compileRequests[0]?.system ?? '').map((block) => block.title))
       .toEqual(['Role', FORMAT_BLOCK_TITLE, 'Procedures'])
     expect(renderedBlocks(loop.compileRequests[0]?.prompt ?? '').map((block) => block.title))
-      .toEqual(['Intent', 'Scope', 'What this project knows', 'Exemplar tests'])
+      .toEqual([
+        'Intent',
+        'Scope',
+        TARGETS_BLOCK_TITLE,
+        'What this project knows',
+        'Exemplar tests',
+      ])
+  })
+
+  it('serves the configured target names in the CONTEXT tier, beside Scope (394-33, WR-07)', async () => {
+    const loop = observedLoop()
+
+    await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // THE TIER IS THE DECISION. Target names are PER-PROJECT facts, and the stable tier is the
+    // byte prefix a provider's prompt cache keys on — a project-dependent block there would defeat
+    // the sharing the tier law exists to enable. So it rides the context tier, which is where the
+    // Scope block it corrects already lives.
+    const stable = renderedBlocks(loop.compileRequests[0]?.system ?? '')
+    expect(stable.find((block) => block.title === TARGETS_BLOCK_TITLE)).toBeUndefined()
+
+    const served = renderedBlocks(loop.compileRequests[0]?.prompt ?? '')
+    const targets = served.find((block) => block.title === TARGETS_BLOCK_TITLE)
+    expect(targets).toBeDefined()
+    // One name per line, verbatim — nothing rendered around them for a model to mistake for a name.
+    expect(targets?.body.split('\n')).toEqual([...CONFIGURED_TARGET_NAMES])
+
+    // AND THE FORMAT BLOCK POINTS AT IT. The bullet asking for `target` names the block by title,
+    // so the vocabulary is not merely present in the prompt but is what the instruction sends a
+    // reader to — the half a served-but-unreferenced block would silently miss.
+    const format = stable.find((block) => block.title === FORMAT_BLOCK_TITLE)
+    expect(format?.body).toContain(TARGETS_BLOCK_TITLE)
+
+    // THE NON-VACUITY GUARD: the scope key is not one of the served names, so a block that
+    // rendered the scope — the shipping derivation's own mistake — cannot satisfy the pin above.
+    expect(CONFIGURED_TARGET_NAMES).not.toContain(SCOPE.key)
   })
 })
 

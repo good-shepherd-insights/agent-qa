@@ -241,6 +241,9 @@ function bench(input: {
     },
     deps: {
       read: {
+        // 394-33 WR-07: the `target` vocabulary the compile prompt serves. This bench never
+        // inspects it — its model is scripted — so one name is the whole answer.
+        configuredTargetNames: () => Promise.resolve(['local-form']),
         getAuthoringBrief: () => Promise.resolve({
           scope: { tier: 'product', key: 'local-form' },
           facts: [],

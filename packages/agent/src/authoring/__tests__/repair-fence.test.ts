@@ -763,6 +763,9 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
       read: {
         getAuthoringBrief: () => { throw new Error('stage 5 does not read the brief') },
         suiteTextCorpus: () => { throw new Error('stage 5 does not screen the suite') },
+        // 394-33 WR-07: stage 5 compiles nothing, so a vocabulary read here would be a read
+        // nobody makes — it throws for the same reason its two neighbours do.
+        configuredTargetNames: () => { throw new Error('stage 5 serves no target vocabulary') },
       },
       shelf: bench.deps.shelf as never,
     })
@@ -787,6 +790,9 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
       read: {
         getAuthoringBrief: () => { throw new Error('stage 5 does not read the brief') },
         suiteTextCorpus: () => { throw new Error('stage 5 does not screen the suite') },
+        // 394-33 WR-07: stage 5 compiles nothing, so a vocabulary read here would be a read
+        // nobody makes — it throws for the same reason its two neighbours do.
+        configuredTargetNames: () => { throw new Error('stage 5 serves no target vocabulary') },
       },
       shelf: bench.deps.shelf as never,
     })

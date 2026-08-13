@@ -437,6 +437,7 @@ function scriptedModel(document = MODEL_DOCUMENT): ScriptedModel {
 
 const FORMAT_BLOCK_TITLE = 'Test document format'
 const FORMAT_EXAMPLE_MARKER = 'A complete document looks exactly like this:'
+const TARGETS_BLOCK_TITLE = 'Configured targets'
 
 /**
  * The one sentence that makes a fifth key emittable (394-33, WR-06).
@@ -456,6 +457,15 @@ class FormatBlockMissingError extends Error {
   }
 }
 
+/** The same posture one key over (394-33, WR-07): no served vocabulary, no invented target. */
+class TargetVocabularyMissingError extends Error {
+  constructor() {
+    super(`the prompt serves no "${TARGETS_BLOCK_TITLE}" block, and this generator will not `
+      + 'invent a target')
+    this.name = 'TargetVocabularyMissingError'
+  }
+}
+
 /** One `## `-titled block's body, off the rendered markdown a model is handed. */
 function promptBlockBody(text: string, title: string): string | undefined {
   for (const part of text.split(/^## /m).slice(1)) {
@@ -463,6 +473,23 @@ function promptBlockBody(text: string, title: string): string | undefined {
     if (part.slice(0, split) === title) return part.slice(split + 2).replace(/\n+$/, '')
   }
   return undefined
+}
+
+/**
+ * The `target` a prompt-driven generator picks: one of the SERVED names, or nothing (394-33, WR-07).
+ *
+ * The previous form sliced the scope key out of the Scope block. That is a PRODUCT — the host's
+ * derivation answers `target.product ?? targetName` — so it named a configured target only on the
+ * projects where the two coincide, which was every fixture in this file. The scope survives as a
+ * HINT for choosing among served names and never as the source of the value; what the cells assert
+ * is membership in the served list, never this heuristic's particular pick.
+ */
+function targetFromVocabulary(request: JobModelRequest, scopeKey: string): string {
+  const served = promptBlockBody(request.prompt, TARGETS_BLOCK_TITLE)
+  const names = (served ?? '').split('\n').map((line) => line.trim()).filter((line) => line !== '')
+  if (names.length === 0) throw new TargetVocabularyMissingError()
+  return names.find((name) => name.includes(scopeKey) || scopeKey.includes(name))
+    ?? (names[0] as string)
 }
 
 function documentFromPrompt(request: JobModelRequest): string {
@@ -474,10 +501,11 @@ function documentFromPrompt(request: JobModelRequest): string {
   const example = `${format.slice(marker + FORMAT_EXAMPLE_MARKER.length).trim()}\n`
   const intent = promptBlockBody(request.prompt, 'Intent') ?? ''
   const scope = promptBlockBody(request.prompt, 'Scope') ?? ''
+  const target = targetFromVocabulary(request, scope.split(':')[1] ?? scope)
 
   const document = example
     .replace(/^name: .*$/m, () => `name: ${intent}`)
-    .replace(/^target: .*$/m, () => `target: ${scope.slice(scope.indexOf(':') + 1)}`)
+    .replace(/^target: .*$/m, () => `target: ${target}`)
 
   // A FIFTH KEY, EMITTED ONLY BECAUSE THE BLOCK TAUGHT IT, with its value derived from the Intent
   // block rather than spelled here.
@@ -518,11 +546,26 @@ const SHELF_DIR = 'tests/.agent-qa-drafts'
  * `contentDigest` is a fact about bytes that survived a round trip rather than a value handed
  * along in memory.
  */
+/**
+ * The EASY branch this file's fixtures have always been on: one target whose product IS its name.
+ *
+ * Named rather than inlined so the HARD branch below reads as the deliberate contrast it is.
+ */
+const CONFIGURED_TARGETS: readonly string[] = ['local-form']
+
+/**
+ * The HARD branch (394-33, WR-07), borrowed from `cli/src/__tests__/authoring-scope-derivation`'s
+ * own fixture class: `storefront-web` declares `product: storefront`, so the scope the host derives
+ * for it is `product:storefront` — a value that is NOT a configured target. `local-form` rides
+ * along as a distractor so choosing from the list is a real choice.
+ */
+const TWO_CONFIGURED_TARGETS: readonly string[] = ['local-form', 'storefront-web']
+
 function draftAuthoring(workspace: string, suiteText: readonly {
   readonly filePath: string
   readonly testName: string
   readonly stepsText: readonly string[]
-}[] = []): DraftAuthoringPort {
+}[] = [], targetNames: readonly string[] = CONFIGURED_TARGETS): DraftAuthoringPort {
   function describe(contents: string, filePath: string): DraftStageOutcome {
     let document: unknown
     try {
@@ -588,6 +631,14 @@ function draftAuthoring(workspace: string, suiteText: readonly {
 
     suiteTextCorpus() {
       return Promise.resolve(suiteText)
+    },
+
+    // 394-33 · WR-07: the `target` vocabulary. The REAL host reads this off `registry.targets`
+    // through `listTargets`; this fake is handed the names, because what these cells measure is
+    // that the LOOP serves whatever the host answered — not how the CLI reads a config file, which
+    // is that package's own cell.
+    configuredTargetNames() {
+      return Promise.resolve(targetNames)
     },
   }
 }
@@ -953,6 +1004,68 @@ describe('authoring.draft.write end to end through the composition root', () => 
       readFileSync(join(workspace, SHELF_DIR, staged[0] as string), 'utf8'),
     ) as Record<string, unknown>
     expect(document['context']).toContain(INTENT)
+  })
+
+  it('chooses `target` from the served vocabulary when product ≠ target name (WR-07)', async () => {
+    // THE HARD BRANCH, THROUGH THE COMPOSED OP. This host declares `storefront-web` with
+    // `product: storefront`, so the scope an intent-only call would be authored at is
+    // `product:storefront` — which is not a configured target. `compileDraft` renders only
+    // `${tier}:${key}` and nothing validates `target` before `runs.start`, so a stage that read the
+    // scope key as a target would stage a test this project cannot run, with `target` outside
+    // `EDITABLE_POINTER_ROOTS` and therefore beyond repair.
+    const scope = { tier: 'product', key: 'storefront' } as const
+    const model = formatFollowingModel()
+    const executor = fixtureExecutor(agentQaRoot, () => ({
+      testName: INTENT,
+      elementName: 'storefront',
+    }))
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace, [], TWO_CONFIGURED_TARGETS),
+      model: model.capability,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    expect(result.outcome).toBe('drafted')
+
+    // ① THE VOCABULARY REACHED THE PROMPT, in the CONTEXT tier beside Scope — target names are
+    // per-project facts, and the stable tier's shared byte prefix must stay project-independent.
+    const servedBlock = promptBlockBody(model.requests[0]?.prompt ?? '', TARGETS_BLOCK_TITLE)
+    expect(servedBlock?.split('\n').map((line) => line.trim()).sort())
+      .toEqual([...TWO_CONFIGURED_TARGETS].sort())
+
+    // ② AND THE STAGED TARGET IS A MEMBER OF IT — not equal to a name this cell chose, which would
+    // pin the generator's preference heuristic rather than the property under test.
+    const staged = readdirSync(join(workspace, SHELF_DIR))
+    expect(staged).toHaveLength(1)
+    const document = parseYaml(
+      readFileSync(join(workspace, SHELF_DIR, staged[0] as string), 'utf8'),
+    ) as Record<string, unknown>
+    expect(TWO_CONFIGURED_TARGETS).toContain(document['target'])
+
+    // ③ THE CONTROL: it is not the scope key. Every prior fixture in this file had product ==
+    // target name, so no cell here could tell a served vocabulary from a scope-key slice.
+    expect(document['target']).not.toBe(scope.key)
+  })
+
+  it('will not invent a target: the generator throws when no vocabulary is served (WR-07)', () => {
+    // THE NON-VACUITY GUARD for the cell above, on the shape `FormatBlockMissingError`'s guard
+    // already established: without it, that cell would pass against a generator that quietly fell
+    // back to the scope key — which is exactly what this file's generator did until this plan.
+    const model = formatFollowingModel().capability()
+
+    expect(() => model.generate({
+      system: 'Agent context: authoring.draft.write — compile a whole test document\n\n'
+        + `## ${FORMAT_BLOCK_TITLE}\n\n${FORMAT_EXAMPLE_MARKER}\n\nname: x\ntest-id: y\n`
+        + 'target: z\nsteps:\n  - do a thing\n',
+      prompt: '## Intent\n\nanything\n\n## Scope\n\nproduct:local-form',
+    })).toThrow(TARGETS_BLOCK_TITLE)
   })
 
   it('has no schema of its own: the generator throws when the format block is absent', () => {

@@ -14,7 +14,7 @@
 // returns it — so an example that drifted from what `parseTestFile` accepts reds here rather than
 // teaching every model a schema the shelf refuses (T-394-99).
 
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -49,6 +49,7 @@ const ZERO_EXEMPLAR_BRIEF: AuthoringBrief = {
 // would give this generator a channel to the schema that a model does not have.
 const FORMAT_BLOCK_TITLE = 'Test document format'
 const FORMAT_EXAMPLE_MARKER = 'A complete document looks exactly like this:'
+const TARGETS_BLOCK_TITLE = 'Configured targets'
 
 /**
  * The one sentence that makes a fifth key emittable (394-33, WR-06).
@@ -70,6 +71,31 @@ function promptBlockBody(text: string, title: string): string | undefined {
   return undefined
 }
 
+/**
+ * The `target` a prompt-driven generator picks: one of the SERVED names, or nothing (394-33, WR-07).
+ *
+ * THE SCOPE KEY IS NOT AN ANSWER, and deleting the derivation that treated it as one is most of
+ * this function. `deriveDefaultAuthoringScope` supplies a PRODUCT (`target.product ?? targetName`),
+ * so slicing the scope key out of the Scope block yielded a configured target only on the projects
+ * where the two happen to coincide — which was every fixture this file had, which is why nothing
+ * could red on the branch where they do not. It survives here as a HINT for choosing among served
+ * names and never as a source of the value.
+ *
+ * THE PREFERENCE IS A MODEL'S, NOT A LOOKUP'S. Among the served names it prefers one that shares
+ * text with the scope key and otherwise takes the first, because that is what a reader of the
+ * prompt can do — it has no config, no product map, and no way to acquire one. What the cells
+ * assert is membership in the served list, never this heuristic's particular pick.
+ */
+function targetFromVocabulary(request: JobModelRequest, scopeKey: string): string {
+  const served = promptBlockBody(request.prompt, TARGETS_BLOCK_TITLE)
+  const names = (served ?? '').split('\n').map((line) => line.trim()).filter((line) => line !== '')
+  if (names.length === 0) {
+    throw new Error(`the prompt serves no "${TARGETS_BLOCK_TITLE}" block, and this generator will `
+      + 'not invent a target')
+  }
+  return names.find((name) => name.includes(scopeKey) || scopeKey.includes(name)) ?? (names[0] as string)
+}
+
 function documentFromPrompt(request: JobModelRequest): string {
   const format = promptBlockBody(request.system ?? '', FORMAT_BLOCK_TITLE)
   if (format === undefined || !format.includes(FORMAT_EXAMPLE_MARKER)) {
@@ -80,10 +106,11 @@ function documentFromPrompt(request: JobModelRequest): string {
   const example = `${format.slice(marker + FORMAT_EXAMPLE_MARKER.length).trim()}\n`
   const intent = promptBlockBody(request.prompt, 'Intent') ?? ''
   const scope = promptBlockBody(request.prompt, 'Scope') ?? ''
+  const target = targetFromVocabulary(request, scope.split(':')[1] ?? scope)
 
   const document = example
     .replace(/^name: .*$/m, () => `name: ${intent}`)
-    .replace(/^target: .*$/m, () => `target: ${scope.slice(scope.indexOf(':') + 1)}`)
+    .replace(/^target: .*$/m, () => `target: ${target}`)
 
   // A FIFTH KEY, EMITTED ONLY BECAUSE THE BLOCK TAUGHT IT. The value is derived from the Intent
   // block rather than spelled here, so a generator that ignored the prompt entirely could not
@@ -106,10 +133,11 @@ const VERIFY_REACHED = 'the draft reached stage 4'
  * CONDITION under test, and two spellings of it would let one cell measure a setup the other
  * does not have.
  */
-async function driveZeroExemplarLoop(): Promise<{
+async function driveZeroExemplarLoop(scope: ScopeKey = SCOPE): Promise<{
   readonly authoring: ReturnType<typeof createDraftAuthoringPort>
   readonly failure: Error | undefined
   readonly compileRequests: readonly JobModelRequest[]
+  readonly served: readonly string[]
   readonly staged: readonly DraftStageOutcome[]
   readonly verified: readonly string[]
 }> {
@@ -117,10 +145,19 @@ async function driveZeroExemplarLoop(): Promise<{
   const compileRequests: JobModelRequest[] = []
   const staged: DraftStageOutcome[] = []
   const verified: string[] = []
+  const served: string[] = []
 
   const read: AuthoringReadPortLike = {
     getAuthoringBrief: () => Promise.resolve(ZERO_EXEMPLAR_BRIEF),
     suiteTextCorpus: () => Promise.resolve([]),
+    // THE REAL HOST BINDING, not a fixture list. The vocabulary a cell asserts membership in is
+    // what `createDraftAuthoringPort` read out of this workspace's own config — so a binding that
+    // enumerated the wrong thing reds here rather than being papered over by a literal.
+    async configuredTargetNames() {
+      const names = await authoring.configuredTargetNames()
+      served.push(...names)
+      return names
+    },
   }
 
   const shelf: DraftShelfPortLike = {
@@ -156,24 +193,17 @@ async function driveZeroExemplarLoop(): Promise<{
     },
   } as unknown as DraftShelfPortLike
 
-  const failure = await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, { read, shelf })
+  const failure = await runAuthoringLoop({ intent: INTENT, scope }, { read, shelf })
     .then(() => undefined, (error: unknown) => error as Error)
 
-  return { authoring, failure, compileRequests, staged, verified }
+  return { authoring, failure, compileRequests, served, staged, verified }
 }
 
-let root: string
-let configPath: string
-
-beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'zero-exemplar-format-'))
-  configPath = join(root, 'agent-qa.config.yaml')
-  // The house config verbatim, on `authoring-draft-edit.e2e.test.ts`'s reason: the shelf and the
-  // workspace resolution exist to satisfy THIS pattern, and a bespoke one measures a workspace
-  // nobody has.
-  writeFileSync(
-    configPath,
-    `workspace:
+// The house config verbatim, on `authoring-draft-edit.e2e.test.ts`'s reason: the shelf and the
+// workspace resolution exist to satisfy THIS pattern, and a bespoke one measures a workspace
+// nobody has. `use.mobile.appState` is not decoration — `resolveConfig` REFUSES a config without
+// it, and `configuredTargetNames` resolves the config for real.
+const WORKSPACE_BLOCK = `workspace:
   testMatch:
     - tests/**/*.yaml
   suiteMatch:
@@ -181,8 +211,49 @@ beforeEach(() => {
   hooksFile: hooks.yaml
   envFile: .env
   secretsFile: .env.secrets.local
-`,
-  )
+use:
+  mobile:
+    appState: preserve
+`
+
+/** The EASY branch: one target whose product IS its name (`product` absent). */
+const ONE_TARGET = `registry:
+  targets:
+    local-form:
+      platform: web
+      url: http://127.0.0.1:8931
+`
+
+/**
+ * The HARD branch, verbatim from `authoring-scope-derivation.test.ts`'s own fixture class
+ * (394-33, WR-07): `storefront-web` declares `product: storefront`, so the scope
+ * `deriveDefaultAuthoringScope` supplies for it — `product:storefront` — is NOT a configured
+ * target. `local-form` rides along as a distractor, so choosing from the served list is a real
+ * choice rather than "there was only one".
+ */
+const TWO_TARGETS = `registry:
+  targets:
+    local-form:
+      platform: web
+      url: http://127.0.0.1:8931
+    storefront-web:
+      product: storefront
+      platform: web
+      url: https://storefront.example
+`
+
+let root: string
+let configPath: string
+
+/** Rewrite this workspace's config; the shelf and the vocabulary both re-read it per call. */
+function writeConfig(registryBlock: string): void {
+  writeFileSync(configPath, `${WORKSPACE_BLOCK}${registryBlock}`)
+}
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'zero-exemplar-format-'))
+  configPath = join(root, 'agent-qa.config.yaml')
+  writeConfig(ONE_TARGET)
   for (const name of ['hooks.yaml', '.env', '.env.secrets.local']) {
     writeFileSync(join(root, name), '')
   }
@@ -247,6 +318,40 @@ describe('a zero-exemplar scope compiles a document the SHIPPED parser accepts',
     expect(parsed.kind).toBe('parsed')
     if (parsed.kind !== 'parsed') return
     expect(parsed.draft.context).toBe(staging.draft.context)
+  })
+
+  it('chooses `target` from the served vocabulary when product ≠ target name (WR-07)', async () => {
+    // THE HARD BRANCH, AND IT IS REACHABLE BY CONSTRUCTION. `deriveDefaultAuthoringScope` answers
+    // a PRODUCT (`resolveTarget(...).product`, i.e. `target.product ?? targetName`), `compileDraft`
+    // renders only `${tier}:${key}`, nothing validates `target` before `runs.start`, and `target`
+    // is outside `EDITABLE_POINTER_ROOTS` so no repair patch can correct it. On this config the
+    // scope is `product:storefront` and `storefront` is NOT a configured target — the value the
+    // old scope-key derivation produced, and a test that could never run.
+    writeConfig(TWO_TARGETS)
+    const scope: ScopeKey = { tier: 'product', key: 'storefront' }
+
+    const { failure, served, staged } = await driveZeroExemplarLoop(scope)
+
+    expect(failure?.message).toBe(VERIFY_REACHED)
+
+    // The vocabulary the HOST read out of this config — both names, product-free.
+    expect([...served].sort()).toEqual(['local-form', 'storefront-web'])
+
+    const [staging] = staged
+    expect(staging?.kind).toBe('staged')
+    if (staging === undefined || staging.kind !== 'staged') return
+
+    // THE CLAIM: the staged target is a MEMBER of the served vocabulary. Not "equals
+    // storefront-web" — that would pin this generator's preference heuristic rather than the
+    // property, and the property is that stage 3 chose rather than guessed.
+    const parsedTarget = /^target: (.+)$/m.exec(
+      readFileSync(join(root, staging.draft.filePath), 'utf8'),
+    )?.[1]
+    expect(served).toContain(parsedTarget)
+
+    // AND THE CONTROL: it is not the scope key. Every fixture in this file before this one had
+    // product == target name, which is why 35 plans of cells could not tell the two apart.
+    expect(parsedTarget).not.toBe(scope.key)
   })
 
   it('refuses the same document with its test-id removed — so the cell above is not vacuous', async () => {

@@ -950,6 +950,20 @@ export interface DraftAuthoringPort {
   parseDraft(filePath: string): Promise<DraftParseOutcome>
   suiteTextCorpus(): Promise<readonly SuiteTextEntry[]>
   /**
+   * 394-33 · WR-07: the names a `target` may legally take in this project.
+   *
+   * ON THIS PORT for the reason `deriveDefaultScope` is: both hosts build their authoring
+   * capability from ONE factory, so a verb that lives here is reached by the CLI `fn` surface and
+   * the chat/daemon host without a second binding either could forget. A vocabulary served by only
+   * one of the two hosts would make "does stage 3 guess at `target`" depend on which surface a
+   * person happened to author from.
+   *
+   * IT ENUMERATES AND NEVER REFUSES — the opposite posture to `deriveDefaultScope` right below it,
+   * which throws when the answer is not unique. There is no such thing as an ambiguous list, and a
+   * project declaring no targets has an honest empty answer rather than a failure.
+   */
+  configuredTargetNames(): Promise<readonly string[]>
+  /**
    * 394-26 · WINDOWS 110: which scope this project authors for, when the caller named none.
    *
    * ON THIS PORT rather than beside it, and that placement is the guarantee. Both hosts build
@@ -2752,6 +2766,10 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             return createAuthoringReader({ knowledgeRoot }).getAuthoringBrief(intent, scope)
           },
           suiteTextCorpus: () => authoringLoopHost.suiteTextCorpus(),
+          // 394-33 · WR-07: the `target` vocabulary stage 3's compile prompt serves. Bound off the
+          // SAME port the brief and the corpus come from, so a host that can run the loop's read
+          // stages can name its own targets by construction — see the port's own doc.
+          configuredTargetNames: () => authoringLoopHost.configuredTargetNames(),
         },
         // 394-26 · WINDOWS 110: the scope an intent-only call is authored at, bound HERE and so on
         // BOTH hosts, off the same port the read and compile halves come from. Its own deps key

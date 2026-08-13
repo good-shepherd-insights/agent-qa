@@ -315,6 +315,12 @@ function draftAuthoring(options: {
     deriveDefaultScope(): Promise<never> {
       throw new Error('this file evaluates an existing draft, so no scope is derived')
     },
+    // 394-33 WR-07: the `target` vocabulary is served to the COMPILE prompt, and this file compiles
+    // nothing. Throwing for the same reason its neighbour does — an answer here would be a value no
+    // case in this suite can legitimately consume.
+    configuredTargetNames(): Promise<never> {
+      throw new Error('this file evaluates an existing draft, so no vocabulary is served')
+    },
     // 394: the same posture `JOB_MODEL` takes above, on the other half of the authoring seam.
     // Nothing in THIS file authors a draft — it evaluates one that already exists — so a host
     // that staged bytes here would be modelling a call this suite never makes.

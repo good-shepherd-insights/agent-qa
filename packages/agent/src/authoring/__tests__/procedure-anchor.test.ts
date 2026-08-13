@@ -92,6 +92,9 @@ async function driveCompile() {
   const written: string[] = []
 
   const read: AuthoringReadPortLike = {
+    // 394-33 WR-07: the `target` vocabulary. This file's claim is about PROCEDURE vocabulary,
+    // so the list is present and minimal.
+    configuredTargetNames: () => Promise.resolve(['local-form']),
     getAuthoringBrief: () => Promise.resolve(BRIEF_WITH_PROCEDURE),
     suiteTextCorpus: (): Promise<readonly SuiteTextCorpusEntryLike[]> => Promise.resolve([]),
   }

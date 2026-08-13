@@ -95,6 +95,9 @@ function harness(options: HarnessOptions): Harness {
   const wholeDocumentWrites: string[] = []
 
   const read: AuthoringReadPortLike = {
+    // 394-33 WR-07: the `target` vocabulary. The refinement round is the subject here and it
+    // carries no format block, so this is read by the compile call alone.
+    configuredTargetNames: (): Promise<readonly string[]> => Promise.resolve(['local-form']),
     getAuthoringBrief(query: string): Promise<AuthoringBrief> {
       briefQueries.push(query)
       return Promise.resolve(POPULATED_BRIEF)

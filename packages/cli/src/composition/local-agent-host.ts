@@ -82,7 +82,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { loadConfigFile, loadEnvOverrides, resolveConfig } from '../config.js'
-import { resolveTarget } from '../targets.js'
+import { listTargets, resolveTarget } from '../targets.js'
 import { invokeViaDaemon } from '../daemon/client.js'
 import { resolveCliAnalysisTokenBudget, resolveCliJobModel } from '../llm-utils.js'
 import { buildConfigVisibilityOracle } from './config-visibility.js'
@@ -891,6 +891,28 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
         }
       }
       return entries
+    },
+
+    /**
+     * The `target` vocabulary stage 3 chooses from (394-33, WR-07).
+     *
+     * `listTargets` AND NOT A SECOND ENUMERATION. It is the same read `agent-qa targets` prints
+     * and the same `registry.targets` map `resolveTarget` resolves against, so the names a model
+     * is offered are exactly the names a run can be started for. A second walk of the config here
+     * would be a second answer to "what may a `target` say", free to drift from the one the runner
+     * actually honours — and drift is precisely what WR-07 is about.
+     *
+     * NAMES, NOT PRODUCTS, and the distinction is the defect. `deriveDefaultAuthoringScope` above
+     * answers a PRODUCT (`resolveTarget(...).product`, i.e. `target.product ?? targetName`), and
+     * on a project where a target declares a product under a different name the two differ — so a
+     * stage that read the scope key as a target would emit a value this config does not declare.
+     *
+     * Resolved per call, on `suiteTextCorpus`'s stated reason one function up: authoring is rare
+     * and a cached target list would serve a vocabulary the config no longer has.
+     */
+    async configuredTargetNames(): Promise<readonly string[]> {
+      const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+      return listTargets(config).map((target) => target.name)
     },
   }
 }
