@@ -46,7 +46,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { memberOutcome, runDocument } from './evidence-fixtures.js'
+import { memberOutcome, runDocument, shelfPathForDigest } from './evidence-fixtures.js'
 import type { MemberFixture } from './evidence-fixtures.js'
 import { routeRepairOrFinding } from '../router.js'
 import type { RepairRoute } from '../router.js'
@@ -253,6 +253,12 @@ function gateBooleans(receipt: DraftReceipt) {
  * would pass against an implementation with no fence at all, because nothing could rename anything.
  * The integrity cell asserts the rename really happens here before any cell relies on it not
  * happening through repair.
+ *
+ * IT ALSO MOVES THE DRAFT'S PATH, for the same reason (WR-04). `applyPatches` re-stages the patched
+ * document, and staging addresses a draft by the digest of its new bytes — so the repaired draft
+ * lives at a new shelf file and the pre-patch one is not rewritten in place. A stand-in that spread
+ * `...draft` and changed only the digest certified an identity production does not have, and any
+ * cell reading a pre-repair path as the repaired one passed through it.
  */
 function applyPatchesToDraft(draft: ParsedDraftLike, set: TestEditPatchSet): ParsedDraftLike {
   const steps = [...draft.steps]
@@ -270,11 +276,13 @@ function applyPatchesToDraft(draft: ParsedDraftLike, set: TestEditPatchSet): Par
     if (op.op === 'add') steps.splice(index, 0, op.value)
     if (op.op === 'remove') steps.splice(index, 1)
   }
+  const contentDigest = `${draft.contentDigest}+${set.patches.length}`
   return {
     ...draft,
     steps,
     testName,
-    contentDigest: `${draft.contentDigest}+${set.patches.length}`,
+    contentDigest,
+    filePath: shelfPathForDigest(draft.filePath, contentDigest),
   }
 }
 
@@ -299,7 +307,17 @@ function harness(
       startInputs.push(input)
       const runId = `r_probe-${index}`
       const members = script.probes[index]
-      documents.set(runId, members === undefined ? undefined : runDocument(runId, members))
+      // A RUN'S MEMBERS CARRY THE PATH IT WAS POINTED AT. The probe runs the STAGED candidate, whose
+      // path moved with the patch above, so a scripted member keeping the pre-repair path would
+      // describe a file this run never opened — and `draftMember` joins on exactly that pair. The
+      // script says what the run FOUND; the harness supplies where it looked.
+      const probedPath = (input.patterns?.[0] as string | undefined) ?? DRAFT.filePath
+      documents.set(
+        runId,
+        members === undefined
+          ? undefined
+          : runDocument(runId, members.map((member) => ({ ...member, filePath: probedPath }))),
+      )
       return {
         runId,
         scope: { tier: 'product', key: 'local-form' },
@@ -468,7 +486,7 @@ describe('identity-fence: repair cannot change what the test IS', () => {
     expect(outcome.kind).toBe('repaired')
   })
 
-  it('identity-fence makes the single-derivation claim TRUE: the repaired pair equals the draft\'s', async () => {
+  it('identity-fence makes the single-derivation claim TRUE: the repaired SUITE TARGET equals the draft\'s', async () => {
     const { repairDraft } = await loadRepair()
     // Iteration 1 renames — refused, spent, nothing runs. Iteration 2 fixes a step beyond the
     // prefix and the probe passes. WITHOUT the fence the rename lands on the candidate, the probe's
@@ -483,11 +501,16 @@ describe('identity-fence: repair cannot change what the test IS', () => {
 
     expect(outcome.kind).toBe('repaired')
     const repaired = outcome.kind === 'repaired' ? outcome.draft : DRAFT
-    // THE PAIR `authoredSuiteTargetPath` READS. The stability target was derived from the
-    // pre-repair draft and the accept target is recomputed from this ref; they cannot disagree if
-    // both inputs are equal.
-    expect(repaired.filePath).toBe(DRAFT.filePath)
+    // WHAT THE FENCE ACTUALLY GUARANTEES: the NAME. It is the whole of the fence's grant, and it is
+    // the only one of the two inputs that survives a repair — the shelf path moves with the digest
+    // on every applied set, which this cell asserts rather than ignores (WR-04).
     expect(repaired.testName).toBe(DRAFT.testName)
+    expect(repaired.filePath).not.toBe(DRAFT.filePath)
+    // AND THE PROPERTY THE SINGLE DERIVATION NEEDS, which is not that both inputs are equal: the
+    // suite target is the suite DIRECTORY plus a slug of the test NAME, and the shelf filename that
+    // moved is the one segment the recipe drops. The stability read (pre-repair draft) and the
+    // accept target (repaired ref) therefore agree BECAUSE the name is pinned, not because nothing
+    // changed.
     expect(authoredSuiteTargetPath(repaired.filePath, repaired.testName))
       .toBe(authoredSuiteTargetPath(DRAFT.filePath, DRAFT.testName))
   }, ADVERSARIAL_CELL_TIMEOUT_MS)
