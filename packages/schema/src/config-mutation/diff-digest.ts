@@ -16,8 +16,20 @@
 // So a file whose bytes are not valid UTF-8 renders with replacement characters and still digests,
 // compares and applies as itself. The two claims stay separate, which is what CR-02 cost.
 //
-// SORTED BY PATH, ALWAYS. The rendered bytes are compared for equality across two processes and two
-// moments, so their order may not depend on the order a caller happened to enumerate a file set in.
+// SORTED BY PATH, ALWAYS, AND BY THE PATH'S UTF-8 BYTES. The rendered bytes are compared for
+// equality across two processes and two moments, so their order may not depend on the order a
+// caller happened to enumerate a file set in. The comparison is over the UTF-8 encoding rather than
+// over JavaScript's own string ordering because those two disagree: `<` compares UTF-16 code units,
+// which sorts every astral character BELOW U+E000–U+FFFF (its surrogates start at 0xD800) while its
+// UTF-8 encoding sorts ABOVE them (four-byte sequences start at 0xF0). One of those orders is a
+// property of a path; the other is a property of a language's string representation, and the thing
+// being compared here is a path.
+//
+// NOTHING CHANGED IS AN ANSWER, NOT AN EMPTY ONE (CFGM-01's empty edge). The result is discriminated
+// on `outcome`, and the `unchanged` arm structurally has no `diffBytes` — a caller cannot mistake
+// "there is nothing to propose" for "here is a diff that happens to be zero bytes long", because
+// there is no zero-length array to interpret. `unchanged` is decided from the BYTES, never from the
+// rendered line count, for the reason the refusal below exists.
 //
 // THE HUNK VOCABULARY IS `schema/src/patch/`'s (394 D-06 reserved it for this phase). The renderer
 // emits `FileChange`/`Hunk` values and then serializes THOSE, so the structure a surface can read
@@ -42,15 +54,38 @@ export interface ConfigFileDigest {
   readonly newDigest?: string
 }
 
-export interface ConfigDiffResult {
+/** What the primitive found: bytes that differ somewhere, or bytes that do not. */
+export const CONFIG_DIFF_OUTCOMES = ['changed', 'unchanged'] as const
+
+export type ConfigDiffOutcome = (typeof CONFIG_DIFF_OUTCOMES)[number]
+
+export interface ConfigDiffChanged {
+  readonly outcome: 'changed'
   /** The rendered unified diff, as the exact bytes a proposal stores and an apply compares. */
   readonly diffBytes: Uint8Array
-  /** sha256 over exactly {@link ConfigDiffResult.diffBytes}. */
+  /** sha256 over exactly {@link ConfigDiffChanged.diffBytes}. */
   readonly diffDigest: string
   readonly perFileDigests: readonly ConfigFileDigest[]
   /** The same change in the reserved `patch/` vocabulary, for surfaces that read structure. */
   readonly changes: readonly FileChange[]
 }
+
+/**
+ * Every file's two sides held the same bytes. There is nothing to show and nothing to decide.
+ *
+ * THE DIGESTS SURVIVE, THE DIFF DOES NOT. An apply that re-reads and finds no change still wants to
+ * know what the files hashed to — that is how it says which file it looked at — but there is no
+ * diff for it to compare against a stored one, and a zero-byte `diffBytes` here would be a value
+ * whose digest an unwary caller could compare against a real proposal's and find unequal, reporting
+ * a tampering refusal for a file nobody touched.
+ */
+export interface ConfigDiffUnchanged {
+  readonly outcome: 'unchanged'
+  readonly perFileDigests: readonly ConfigFileDigest[]
+  readonly changes: readonly FileChange[]
+}
+
+export type ConfigDiffResult = ConfigDiffChanged | ConfigDiffUnchanged
 
 /**
  * A file with no bytes on either side is not a change and must not be one.
@@ -67,6 +102,53 @@ export class EmptyConfigDiffFileError extends TypeError {
     )
     this.name = 'EmptyConfigDiffFileError'
   }
+}
+
+/**
+ * The bytes differ, but the diff renders as nothing. Refuse rather than show a person an empty page.
+ *
+ * THE HAZARD IS THE DECODE, AND IT IS THE ONE PLACE THE TWO CLAIMS THIS FILE KEEPS SEPARATE CAN
+ * COLLIDE. A unified diff is text, so rendering decodes; a decode maps every byte sequence it
+ * cannot read onto U+FFFD, and that map is many-to-one. Two files differing only in bytes no
+ * decoding round-trips — `0x80` against `0xFF` — therefore decode to the SAME text and produce zero
+ * hunks, while their digests differ and their content differs.
+ *
+ * Left alone, that is a proposal a person is shown as an empty diff and approves, which writes
+ * bytes they never saw; and D-19's shown==applied comparison would agree with itself the whole way,
+ * because both halves render the same nothing. So this is not a rendering nicety — it is the one
+ * gap through which the byte-level guarantee could be satisfied while the human-level one was not.
+ * The change is refused at construction, before any record of it can exist.
+ */
+export class UnrenderableConfigDiffError extends TypeError {
+  constructor(readonly paths: readonly string[]) {
+    super(
+      `refusing to render a change to ${paths.map((path) => JSON.stringify(path)).join(', ')}: the `
+      + 'bytes differ but the unified diff of them is empty, which means the difference is in byte '
+      + 'sequences that are not text and a person would be asked to approve a blank page. Nothing '
+      + 'has been proposed.',
+    )
+    this.name = 'UnrenderableConfigDiffError'
+  }
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
+}
+
+/** Byte-wise on the UTF-8 encoding of the path — see the file header for why not `<`. */
+function comparePaths(left: string, right: string): number {
+  const leftBytes = utf8Encode(left)
+  const rightBytes = utf8Encode(right)
+  const shared = Math.min(leftBytes.length, rightBytes.length)
+  for (let index = 0; index < shared; index++) {
+    const difference = leftBytes[index]! - rightBytes[index]!
+    if (difference !== 0) return difference
+  }
+  return leftBytes.length - rightBytes.length
 }
 
 function changeKindFor(file: ConfigDiffFileInput): FileChange['changeKind'] {
@@ -114,11 +196,15 @@ export function renderConfigDiff(
   options: { readonly context?: number } = {},
 ): ConfigDiffResult {
   const context = options.context ?? DIFF_CONTEXT_LINES
-  const ordered = [...files].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
+  const ordered = [...files].sort((left, right) => comparePaths(left.path, right.path))
 
   const changes: FileChange[] = []
   const perFileDigests: ConfigFileDigest[] = []
   const lines: string[] = []
+  // DECIDED FROM THE BYTES, ONE FILE AT A TIME, and collected rather than short-circuited so the
+  // refusal below can name every path it applies to instead of the first one it met.
+  const changedButUnrendered: string[] = []
+  let anyBytesDiffer = false
 
   for (const file of ordered) {
     const changeKind = changeKindFor(file)
@@ -132,6 +218,12 @@ export function renderConfigDiff(
       ...(file.newBytes === undefined ? {} : { newDigest: sha256hexBytes(file.newBytes) }),
     })
 
+    const bytesDiffer = file.oldBytes === undefined
+      || file.newBytes === undefined
+      || !bytesEqual(file.oldBytes, file.newBytes)
+    if (bytesDiffer) anyBytesDiffer = true
+    if (bytesDiffer && hunks.length === 0) changedButUnrendered.push(file.path)
+
     if (hunks.length === 0) continue
     lines.push(...fileHeaderLines(file, changeKind))
     for (const hunk of hunks) {
@@ -140,11 +232,17 @@ export function renderConfigDiff(
     }
   }
 
-  // A trailing newline exactly when there is anything at all, so an empty diff is zero bytes rather
-  // than one newline — the difference between "nothing changed" and "something rendered emptily".
-  const diffBytes = utf8Encode(lines.length === 0 ? '' : `${lines.join('\n')}\n`)
+  if (changedButUnrendered.length > 0) throw new UnrenderableConfigDiffError(changedButUnrendered)
+
+  if (!anyBytesDiffer) return { outcome: 'unchanged', perFileDigests, changes }
+
+  // A trailing newline closes the last line, which every line before it already has. The zero-line
+  // case cannot reach here: no byte differs (answered above) or the difference did not render
+  // (refused above), so an empty rendering is never something this function returns.
+  const diffBytes = utf8Encode(`${lines.join('\n')}\n`)
 
   return {
+    outcome: 'changed',
     diffBytes,
     diffDigest: sha256hexBytes(diffBytes),
     perFileDigests,

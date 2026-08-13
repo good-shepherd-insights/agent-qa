@@ -17,13 +17,26 @@
 //   the empty-input refusal   — a primitive that silently rendered a file with no bytes on either
 //                               side as an empty section, which is a proposal about nothing.
 
+// 395-02 SPLIT THE FILE'S SUBJECT, and the split is worth stating so nobody adds a second copy of
+// either half. THIS file is the vendored differ's round-trip corpus plus the primitive's basic
+// contract. `config-mutation/__tests__/diff-digest.test.ts` is the EDGES 395-02 pinned — ordering
+// under a byte-wise total order, the typed unchanged answer, the CRLF / non-NFC representation
+// corpus and the unrenderable-difference refusal. Neither restates the other.
+
 import { describe, expect, it } from 'vitest'
 
 import { base64Decode, base64Encode } from '../config-mutation/base64'
 import { EmptyConfigDiffFileError, renderConfigDiff } from '../config-mutation/diff-digest'
+import type { ConfigDiffChanged, ConfigDiffResult } from '../config-mutation/diff-digest'
 import { reconstructSides, toUnifiedHunks } from '../config-mutation/line-diff'
 import { utf8Decode, utf8Encode } from '../config-mutation/utf8'
 import { sha256hexBytes } from '../determinism/sha256'
+
+/** Narrow to the arm that has bytes, failing the cell rather than the type check if it is not. */
+function changed(result: ConfigDiffResult): ConfigDiffChanged {
+  expect(result.outcome).toBe('changed')
+  return result as ConfigDiffChanged
+}
 
 /**
  * The round trip, at FULL context so the hunks cover the whole file.
@@ -127,8 +140,8 @@ describe('renderConfigDiff — the ONE primitive both halves of a config proposa
       { path: 'hooks.yaml', oldBytes: utf8Encode('h: 1\n'), newBytes: utf8Encode('h: 2\n') },
       { path: 'agent-qa.config.yaml', oldBytes, newBytes },
     ]
-    const forwards = renderConfigDiff(files)
-    const backwards = renderConfigDiff([...files].reverse())
+    const forwards = changed(renderConfigDiff(files))
+    const backwards = changed(renderConfigDiff([...files].reverse()))
     expect(backwards.diffBytes).toEqual(forwards.diffBytes)
     expect(backwards.diffDigest).toBe(forwards.diffDigest)
     // And the order is the SORTED one rather than either enumeration.
@@ -137,7 +150,7 @@ describe('renderConfigDiff — the ONE primitive both halves of a config proposa
   })
 
   it('the stored digest is over exactly the stored bytes', () => {
-    const rendered = renderConfigDiff([{ path: 'agent-qa.config.yaml', oldBytes, newBytes }])
+    const rendered = changed(renderConfigDiff([{ path: 'agent-qa.config.yaml', oldBytes, newBytes }]))
     expect(rendered.diffDigest).toBe(sha256hexBytes(rendered.diffBytes))
   })
 
@@ -148,9 +161,9 @@ describe('renderConfigDiff — the ONE primitive both halves of a config proposa
   })
 
   it('an add renders /dev/null on the old side, a delete on the new side', () => {
-    expect(utf8Decode(renderConfigDiff([{ path: 'a', newBytes }]).diffBytes))
+    expect(utf8Decode(changed(renderConfigDiff([{ path: 'a', newBytes }])).diffBytes))
       .toContain('--- /dev/null')
-    expect(utf8Decode(renderConfigDiff([{ path: 'a', oldBytes }]).diffBytes))
+    expect(utf8Decode(changed(renderConfigDiff([{ path: 'a', oldBytes }])).diffBytes))
       .toContain('+++ /dev/null')
   })
 
@@ -159,9 +172,10 @@ describe('renderConfigDiff — the ONE primitive both halves of a config proposa
       .toThrow(EmptyConfigDiffFileError)
   })
 
-  it('an unchanged file contributes no section at all', () => {
-    expect(renderConfigDiff([{ path: 'a', oldBytes, newBytes: oldBytes }]).diffBytes)
-      .toEqual(utf8Encode(''))
+  it('an unchanged file answers `unchanged` and carries no diff bytes at all (395-02)', () => {
+    const rendered = renderConfigDiff([{ path: 'a', oldBytes, newBytes: oldBytes }])
+    expect(rendered.outcome).toBe('unchanged')
+    expect('diffBytes' in rendered).toBe(false)
   })
 })
 

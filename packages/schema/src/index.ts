@@ -453,6 +453,7 @@ export { asPatchId, patchSchema } from './patch/index'
 // the two halves agreeing byte for byte.
 export {
   CONFIG_BLOCKED_REASONS,
+  CONFIG_DIFF_OUTCOMES,
   CONFIG_FILE_CHANGE_KINDS,
   CONFIG_HOOK_RUNTIMES,
   CROSS_BOUNDARY_REASONS,
@@ -476,6 +477,7 @@ export {
   ConfigUndoProposeInputSchema,
   EmptyConfigDiffFileError,
   SECRET_ADJACENT_CONFIG_FIELDS,
+  UnrenderableConfigDiffError,
   base64Decode,
   base64Encode,
   isSecretAdjacentConfigField,
@@ -489,8 +491,11 @@ export type {
   ConfigApplyReceipts,
   ConfigAuthSetInput,
   ConfigBlockedReason,
+  ConfigDiffChanged,
   ConfigDiffFileInput,
+  ConfigDiffOutcome,
   ConfigDiffResult,
+  ConfigDiffUnchanged,
   ConfigFieldSetInput,
   ConfigFileChangeKind,
   ConfigFileDigest,

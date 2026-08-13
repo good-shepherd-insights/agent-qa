@@ -251,6 +251,7 @@ describe('a produced applyable payload round-trips through its own schema', () =
   const oldBytes = utf8Encode('use:\n  parallel: false\n')
   const newBytes = utf8Encode('use:\n  parallel: true\n')
   const rendered = renderConfigDiff([{ path: 'agent-qa.config.yaml', oldBytes, newBytes }])
+  if (rendered.outcome !== 'changed') throw new TypeError('the corpus produced no change')
   const digests = rendered.perFileDigests[0]!
 
   const payload = {

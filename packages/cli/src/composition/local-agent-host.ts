@@ -1901,6 +1901,14 @@ export interface ConfigApplyRequest {
  * diffs themselves: a message carrying the widened diff would print the very bytes it is refusing
  * to commit.
  */
+/**
+ * What the mismatch error reports where a digest would go, when there is no diff to have digested.
+ *
+ * A NAMED CONSTANT so a cell can pin the message rather than matching a sentence, and prose rather
+ * than a digest-shaped string so nobody reads it as a hash that failed to compare.
+ */
+export const NO_DIFF_RECOMPUTED = 'nothing — the files already hold the proposed bytes'
+
 export class ConfigApplyDiffMismatchError extends Error {
   constructor(readonly expectedDigest: string, readonly foundDigest: string) {
     super(
@@ -2074,6 +2082,19 @@ export function applyConfigProposalAsOneCommit(
     ...(file.existing === undefined ? {} : { oldBytes: Uint8Array.from(file.existing) }),
     newBytes: Uint8Array.from(file.newBytes),
   })))
+  // 395-02: `unchanged` NARROWS HERE, AND IT IS A REFUSAL RATHER THAN A NO-OP. A recompute that
+  // finds no difference means the files on disk already hold the bytes this proposal would write —
+  // somebody applied this change by hand, or applied an identical one. Committing anyway would
+  // produce an empty commit and a receipt claiming to have written something; skipping silently
+  // would answer `applied` for an apply that did nothing. The proposal recorded a NON-empty diff
+  // (an empty one cannot be minted — see the primitive's own refusals), so the honest reading is
+  // exactly the one this error already states: the diff on disk is not the diff you were shown.
+  if (recomputed.outcome === 'unchanged') {
+    throw new ConfigApplyDiffMismatchError(
+      request.payload.shownDiffDigest,
+      NO_DIFF_RECOMPUTED,
+    )
+  }
   if (recomputed.diffDigest !== request.payload.shownDiffDigest) {
     throw new ConfigApplyDiffMismatchError(
       request.payload.shownDiffDigest,

@@ -132,6 +132,10 @@ function configPayload(): ConfigProposalApplyableV1 {
   const oldBytes = utf8Encode('use:\n  timeout: 30s\n')
   const newBytes = utf8Encode('use:\n  timeout: 45s\n')
   const rendered = renderConfigDiff([{ path: 'agent-qa.config.yaml', oldBytes, newBytes }])
+  // 395-02: the primitive answers a discriminated result, and narrowing here is part of the
+  // produced-not-literal claim — a fixture that reached past the discriminant could be built from
+  // an `unchanged` answer, which is a payload no construction would ever mint.
+  if (rendered.outcome !== 'changed') throw new TypeError('the fixture produced no change')
   return ConfigProposalApplyableV1Schema.parse({
     schemaVersion: 1,
     payloadKind: 'applyable',

@@ -126,6 +126,13 @@ export async function constructConfigFieldSetProposal(
   }]
   const rendered = renderConfigDiff(diffInput)
 
+  // 395-02: THE PRIMITIVE IS THE AUTHORITY ON WHETHER ANYTHING CHANGED, and this narrowing is where
+  // that authority is taken. The byte comparison above answers the same question earlier and more
+  // cheaply — which is why it stays: it lets a set of a value the config already holds skip a whole
+  // validation pass — but the answer that reaches a person comes from the same function the apply
+  // will call, so the two halves cannot disagree about what "no change" means.
+  if (rendered.outcome === 'unchanged') return { outcome: 'no-change', path: input.path }
+
   const digests = rendered.perFileDigests[0]
   const change = rendered.changes[0]
   if (digests === undefined || change === undefined) {
