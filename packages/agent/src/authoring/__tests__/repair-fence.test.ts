@@ -67,6 +67,7 @@ const DRAFT: ParsedDraftLike = {
   testId: 't_repair-fixture',
   filePath: 'tests/.agent-qa-drafts/repair-fixture.yaml',
   testName: 'Submit the local account form',
+  target: 'local-form',
   steps: [
     'Open the local account form',
     'Type "alice" into the Username field',

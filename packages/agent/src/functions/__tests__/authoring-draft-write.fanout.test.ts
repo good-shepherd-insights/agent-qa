@@ -45,6 +45,8 @@ const DRAFT: ParsedDraftLike = {
   testId: DRAFT_NAME,
   filePath: DRAFT_PATH,
   testName: DRAFT_NAME,
+  // The name the read double below serves as this project's only configured target.
+  target: 'local-form',
   steps: [
     'Open the local account form',
     'Type "alice" into the Username field',

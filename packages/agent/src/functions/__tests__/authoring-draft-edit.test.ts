@@ -39,6 +39,7 @@ const TARGET: ParsedDraftLike = {
   testId: 't_committed-checkout',
   filePath: 'tests/checkout.yaml',
   testName: 'Checkout with a coupon',
+  target: 'checkout',
   steps: ['Open the cart', 'Apply the coupon FREESHIP', 'Verify the total is 0.00'],
   contentDigest: 'digest-committed',
 }

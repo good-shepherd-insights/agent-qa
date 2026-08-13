@@ -633,16 +633,24 @@ function draftAuthoring(workspace: string, suiteText: readonly {
     } catch (error) {
       return { kind: 'unparsable', reason: (error as Error).message }
     }
-    const test = document as { name?: unknown; steps?: unknown } | null
+    const test = document as { name?: unknown; target?: unknown; steps?: unknown } | null
     if (test === null || typeof test.name !== 'string' || !Array.isArray(test.steps)) {
       return { kind: 'unparsable', reason: 'the document is not a single test with name and steps' }
     }
+    // `target` is REQUIRED by `TestDefinitionSchema`, so the shipped parser can never answer
+    // `staged` without one; this fake mirrors that rather than defaulting, because a fake that
+    // supplied a value the document did not carry would make WR-04's guard measure the fake.
+    if (typeof test.target !== 'string') {
+      return { kind: 'unparsable', reason: 'the document carries no `target`' }
+    }
+    const target = test.target
     return {
       kind: 'staged',
       draft: {
         testId: test.name,
         filePath,
         testName: test.name,
+        target,
         steps: test.steps.map((step) => String(step)),
         contentDigest: createHash('sha256').update(contents).digest('hex'),
       },
@@ -1422,7 +1430,12 @@ describe('authoring.draft.write end to end through the composition root', () => 
         generate: () => {
           calls += 1
           return Promise.resolve({
+            // `target` joined the document in 394-37 (WR-04). It was absent until the fake shelf
+            // started requiring it — as the SHIPPED parser always has — so this corpus of twelve
+            // was twelve documents `parseTestFile` would have refused outright (WINDOWS 116's
+            // class, caught by tightening the fake rather than by a new claim).
             text: `name: ${DRAFT_TEST_NAME} ${calls}\n`
+              + `target: ${CONFIGURED_TARGETS[0] as string}\n`
               + 'steps:\n'
               + '  - Open the local account form\n'
               + `  - Verify the page heading says "Local account ${calls}"\n`,

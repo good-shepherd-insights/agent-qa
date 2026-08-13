@@ -124,6 +124,7 @@ function draftWithSteps(steps: readonly string[]): ParsedDraftLike {
     testId: 't_local_form',
     filePath: SHELF_PATH,
     testName: TEST_NAME,
+    target: 'local-form',
     steps,
     contentDigest: 'abc123',
   }

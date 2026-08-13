@@ -167,6 +167,7 @@ const DRAFT: ParsedDraftLike = {
   testId: DRAFT_NAME,
   filePath: DRAFT_PATH,
   testName: DRAFT_NAME,
+  target: 'local-form',
   steps: [...DRAFT_STEPS],
   contentDigest: 'digest-0',
 }

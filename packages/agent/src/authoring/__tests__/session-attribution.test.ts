@@ -148,6 +148,7 @@ const REPAIR_DRAFT: ParsedDraftLike = {
   testId: 't_repair-session',
   filePath: 'tests/.agent-qa-drafts/repair-session.yaml',
   testName: 'Submit the local account form',
+  target: 'local-form',
   steps: [
     'Open the local account form',
     'Type "alice" into the Username field',

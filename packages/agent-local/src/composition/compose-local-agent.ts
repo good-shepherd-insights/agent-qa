@@ -900,6 +900,16 @@ export interface ParsedDraftDescriptor {
   readonly testId: string
   readonly filePath: string
   readonly testName: string
+  /**
+   * The parsed test's `target`. REQUIRED, exactly as `ParsedDraftLike.target` and
+   * `TestDefinitionSchema` require it (394-37, WR-04).
+   *
+   * A mirror that dropped it would hand `packages/agent` a draft whose target the compile stage
+   * cannot check against the vocabulary it just served — and the cost of not checking is paid as
+   * real child gate runs on a name `resolveTarget` throws on, against a key no repair patch may
+   * edit.
+   */
+  readonly target: string
   readonly steps: readonly string[]
   /**
    * The parsed test's `context` block — an EDITABLE root, and therefore one the credential gate

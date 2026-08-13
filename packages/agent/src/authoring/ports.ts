@@ -52,6 +52,21 @@ export interface ParsedDraftLike {
   readonly filePath: string
   /** Identity half two: the parsed test's display name, as `PerTestOutcome.testName`. */
   readonly testName: string
+  /**
+   * The parsed test's `target` — the name `agent-qa run` resolves against the config.
+   *
+   * REQUIRED, exactly as `TestDefinitionSchema` requires the key: a document that carries none is
+   * not a parsed test at all, so an optional mirror here would be a second, weaker answer to what
+   * the parser already decided.
+   *
+   * IT IS HERE BECAUSE IT IS CHECKED, and unlike `context` it is checked precisely because it is
+   * NOT editable (394-37, WR-04). `runs.start` types this value into a live application:
+   * `resolveTarget` throws on a name the config does not declare, inside a real child process, up
+   * to `DRAFT_STABILITY_RUNS_N` times — and `target` is outside `EDITABLE_POINTER_ROOTS`, so no
+   * repair patch may correct it. The one place that can refuse it cheaply is the compile stage,
+   * which already holds the vocabulary it serves the prompt; this field is what lets it compare.
+   */
+  readonly target: string
   /** Pre-interpolation NL step text. Post-interpolation text can carry resolved secrets (D-19). */
   readonly steps: readonly string[]
   /**

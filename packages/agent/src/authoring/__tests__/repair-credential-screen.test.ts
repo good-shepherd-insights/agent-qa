@@ -69,6 +69,7 @@ const DRAFT: ParsedDraftLike = {
   testId: 't_repair-screen-fixture',
   filePath: `${SHELF_DIR}/repair-screen-fixture.yaml`,
   testName: 'Submit the local account form',
+  target: 'local-form',
   steps: [
     'Open the local account form',
     'Type "alice" into the Username field',
@@ -354,6 +355,7 @@ describe('the context root is inside the gate the doc block claims covers the dr
       testId: DRAFT.testId,
       filePath: DRAFT.filePath,
       testName: DRAFT.testName,
+      target: DRAFT.target,
       steps: DRAFT.steps,
       contentDigest: DRAFT.contentDigest,
       context: `Sign in as the operator using ${PLANTED_LITERAL}`,
@@ -382,6 +384,7 @@ describe('the context root is inside the gate the doc block claims covers the dr
       testId: 't_committed-checkout',
       filePath: 'tests/checkout.yaml',
       testName: 'Checkout with a coupon',
+      target: 'checkout',
       steps: ['Open the cart', 'Verify the total is 0.00'],
       contentDigest: 'digest-committed',
     }

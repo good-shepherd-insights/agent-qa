@@ -71,6 +71,22 @@ const CONFIGURED_TARGET_NAMES: readonly string[] = ['local-form-web', 'storefron
 /** The staged draft's shelf path, as `stageDraft` mints it — digest in, path out. */
 const STAGED_PATH = `tests/.agent-qa-drafts/${ACCEPT_CONTROL_DRAFT.contentDigest}.yaml`
 
+/**
+ * The draft this host's shelf answers with — the accept control, ON A TARGET THIS HOST DECLARES.
+ *
+ * The retarget is not cosmetic (394-37, WR-04). Until the compile stage compared the vocabulary it
+ * serves against the draft it stages, this file's shelf could answer a draft named `local-form`
+ * while its read port declared `local-form-web` and `storefront-web` — a host whose own fixture
+ * staged a test it could not have run. Nothing could see the disagreement, because nothing looked;
+ * the guard's first catch was this fixture. Read off `CONFIGURED_TARGET_NAMES` rather than spelled,
+ * so the two cannot drift apart again.
+ */
+const STAGED_DRAFT = {
+  ...ACCEPT_CONTROL_DRAFT,
+  filePath: STAGED_PATH,
+  target: CONFIGURED_TARGET_NAMES[0] as string,
+}
+
 const EMPTY_BRIEF: AuthoringBrief = {
   exemplars: [],
   procedures: [],
@@ -158,7 +174,7 @@ function observedLoop() {
       // observed by the time bytes arrive, which is what "compile then stage" means.
       expect(observed.at(-1)).toBe('compile')
       written.push(contents)
-      return Promise.resolve({ kind: 'staged' as const, draft: { ...ACCEPT_CONTROL_DRAFT, filePath: STAGED_PATH } })
+      return Promise.resolve({ kind: 'staged' as const, draft: STAGED_DRAFT })
     },
     // The accept control passes its gates, so stage 5 answers `drafted` without consulting a run —
     // but a shelf that could not run one would be a host that verifies drafts and cannot look at
@@ -175,7 +191,7 @@ function observedLoop() {
       expect(input.draftPath).toBe(STAGED_PATH)
       observed.push('verify')
       return await evaluateDraft(
-        { draft: { ...ACCEPT_CONTROL_DRAFT, filePath: STAGED_PATH } },
+        { draft: STAGED_DRAFT },
         {
           runs: fakeRunPort({
             runs: Array.from({ length: DRAFT_STABILITY_RUNS_N }, () => [

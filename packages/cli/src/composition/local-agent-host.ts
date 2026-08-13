@@ -654,9 +654,11 @@ export class AuthoringScopeUnresolvableError extends Error {
  */
 export async function deriveDefaultAuthoringScope(configPath: string): Promise<ScopeKey> {
   const config = await resolveConfig({ configPath, loadAuthPlugins: false })
-  const targetNames = Object.keys(
-    (config as { registry?: { targets?: Record<string, unknown> } }).registry?.targets ?? {},
-  )
+  // THROUGH THE SHIPPED ENUMERATION (394-37, IN-03). This read used to be an untyped cast of its
+  // own, which made three spellings of `registry.targets` in one file — and `configuredTargetNames`
+  // below already imports `listTargets` and argues, in its own doc block, that a second walk of the
+  // config is a second answer to what a target may be called.
+  const targetNames = listTargets(config).map((target) => target.name)
 
   const productOfTarget = new Map<string, string>()
   for (const name of targetNames) productOfTarget.set(name, resolveTarget(config, name).product)
@@ -740,6 +742,9 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
           testId: (test as { 'test-id'?: string })['test-id'] ?? test.name,
           filePath: identityPath,
           testName: test.name,
+          // Read here since 394-15 and DROPPED until 394-37: the compile stage's vocabulary check
+          // is the one consumer, and it can only exist if the parse carries the value out.
+          target: test.target,
           steps: draftStepTexts(test),
           // An EDITABLE root, so it is carried rather than dropped: the credential gate scans it.
           ...(test.context === undefined ? {} : { context: test.context }),
@@ -794,6 +799,10 @@ export function createDraftAuthoringPort(configPath: string): DraftAuthoringPort
           testId: (test as { 'test-id'?: string })['test-id'] ?? test.name,
           filePath: writtenPath,
           testName: test.name,
+          // The value WR-04's guard compares, off the same parse that decided these bytes are a
+          // test at all — so the check runs against what the shelf really wrote, not against what
+          // the model's text appeared to say.
+          target: test.target,
           steps: draftStepTexts(test),
           // As above: an editable root the gate scans. A stage that dropped it would re-open the
           // blind spot for every patched draft, which is the path a repair patch takes.

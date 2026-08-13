@@ -275,6 +275,35 @@ export class AuthoringDraftUnparsableError extends Error {
 }
 
 /**
+ * The model emitted a `target` this project does not declare (394-37, WR-04).
+ *
+ * A REFUSAL AND NOT A REPAIR, and the two halves of that are separate facts. It cannot be
+ * repaired: `target` is outside `EDITABLE_POINTER_ROOTS`, so no patch the repair loop may emit
+ * reaches the key. And it must not be run: `runs.start` spawns a real child `agent-qa run`, whose
+ * own `resolveTarget` throws on the name — so the cost of discovering this downstream is up to
+ * `DRAFT_STABILITY_RUNS_N` real child processes (nine across a repaired invocation), a receipt on
+ * disk, and a draft nothing can fix.
+ *
+ * IT NAMES BOTH SIDES OF THE COMPARISON. A message carrying only the emitted name would leave a
+ * person unable to tell whether the target was misspelled or the config was, which is the same
+ * D-19 posture `AuthoringScopeUnresolvableError` takes one file over: refuse, and hand over the
+ * evidence the refusal was made on.
+ */
+export class AuthoringDraftUnconfiguredTargetError extends Error {
+  constructor(
+    readonly target: string,
+    readonly configuredTargets: readonly string[],
+  ) {
+    super(
+      `authoring.draft.write: the compiled draft names target "${target}", which this project `
+        + `does not declare, so no gate run was started: configured targets are `
+        + `${configuredTargets.join(', ')}`,
+    )
+    this.name = 'AuthoringDraftUnconfiguredTargetError'
+  }
+}
+
+/**
  * The router could not place a rejected receipt's evidence.
  *
  * The honest answer for the one case stage 5 genuinely cannot decide: the gates said no, and the
@@ -595,6 +624,28 @@ async function compileDraft(
   const emitted = await model.generate(request)
   const staged = await shelf.write(emitted.text)
   if (staged.kind === 'unparsable') throw new AuthoringDraftUnparsableError(staged.reason)
+
+  // THE VOCABULARY IS SERVED AND THEN CHECKED (394-37, WR-04). Round 5 read `targetNames` for the
+  // prompt above and compared it against nothing, and a prompt is ADVICE: a model that skips the
+  // `target` bullet — copying the block's own example, say — emits a name this project does not
+  // declare, and the check that would have caught it is eight lines up in a local variable.
+  //
+  // THE REFUSAL BELONGS HERE, BEFORE THE FIRST GATE RUN, on two facts that hold together.
+  // `runs.start` types this value into a live application and `resolveTarget` THROWS on it inside
+  // a real child process, so the downstream cost is up to `DRAFT_STABILITY_RUNS_N` spawns (nine
+  // with repair) rather than one comparison. And `target` is outside `EDITABLE_POINTER_ROOTS`, so
+  // the repair loop those runs would feed cannot correct the value it discovers is wrong — the
+  // spend buys nothing at all. D-19's refuse-rather-than-guess posture, applied to the loop's own
+  // emission instead of to its inputs.
+  //
+  // THE EMPTY-VOCABULARY ARM STAYS PERMISSIVE, DELIBERATELY. A project that declares no targets
+  // has nothing for this to compare against, and refusing there would turn a derivation problem
+  // (`deriveDefaultAuthoringScope` already refuses such a project by name) into a compile-stage
+  // refusal that names the wrong cause. `configuredTargetsBlockBody` tells the model the same
+  // thing in the same case: ask, do not invent.
+  if (targetNames.length > 0 && !targetNames.includes(staged.draft.target)) {
+    throw new AuthoringDraftUnconfiguredTargetError(staged.draft.target, targetNames)
+  }
   return staged.draft
 }
 

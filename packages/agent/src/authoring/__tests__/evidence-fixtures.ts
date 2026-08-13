@@ -342,6 +342,8 @@ export const ACCEPT_CONTROL_DRAFT: ParsedDraftLike = {
   testId: 't_hong-lat-plot-noise-memory-common-binary-tol-liv-argent',
   filePath: 'tests/accept-control.yaml',
   testName: 'Confirm the local account form page heading',
+  // Required since 394-37 (WR-04): the compile stage compares this against the served vocabulary.
+  target: 'local-form',
   steps: [
     'Type "alice" into the Username field',
     'Verify the page heading says "Local Form"',

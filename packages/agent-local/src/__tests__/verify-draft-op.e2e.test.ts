@@ -99,6 +99,9 @@ const ACCEPT_CONTROL = {
   testId: 't_hong-lat-plot-noise-memory-common-binary-tol-liv-argent',
   filePath: 'tests/accept-control.yaml',
   testName: 'Confirm the local account form page heading',
+  // Required on the descriptor since 394-37 (WR-04). Nothing in this file compiles, so no
+  // vocabulary check reads it here — it is carried because the parse really does yield it.
+  target: 'local-form',
   steps: [
     'Type "alice" into the Username field',
     'Verify the page heading says "Local Form"',
