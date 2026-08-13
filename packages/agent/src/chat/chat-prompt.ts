@@ -82,6 +82,23 @@ const PLANNING_BLOCK: PromptTierBlock = {
     + 'nobody can satisfy and a request satisfied by the wrong action are not the same event, and '
     + 'the person can only recover from the first one.\n'
     + '\n'
+    // THE BOUND ON THE PARAGRAPH ABOVE, AND THE DEFINITION THE ONE BELOW LEANS ON (WINDOWS 110).
+    //
+    // It sits between them on purpose. The refusal instruction preceded it and "needs an
+    // identifier" follows it, and until this sentence existed nothing in the prompt said WHICH
+    // inputs a tool demands — so a model deciding whether a clause "needs" something was deciding
+    // it from its own reading rather than from the contract it was handed. 394-30 measured what
+    // that costs: on a dist serving `authoring.draft.write` with `required: ["intent"]`, a live
+    // planner refused the turn by name over "a target scope identifier", a requirement its own
+    // tool contract denies and a phrase no source file in this repo contains. D-10 then spent the
+    // whole turn on it.
+    //
+    // Stated in the SCHEMA's vocabulary rather than in prose about capabilities, because that is
+    // the one form of the rule the model can check against what it was actually sent.
+    + "A tool's required inputs are exactly the `required` list in its schema. Never mark a clause "
+    + 'unhandled because a field outside that list is missing: omit the field, or fill it from the '
+    + "person's own words when they name it.\n"
+    + '\n'
     + 'Bind arguments only from what the person actually supplied. If a clause needs an identifier '
     + 'and none was given, that clause is unhandled — do not invent one.',
 }
