@@ -110,7 +110,14 @@ export function mergeWithTestConfig(
   return deepMerge(deepMerge(globalConfig ?? {}, testConfig ?? {}), flagOverrides)
 }
 
-function normalizeConfigForValidation(config: unknown): unknown {
+/**
+ * The one shaping `resolveConfig` applies before validating (395-01: exported, not moved).
+ *
+ * EXPORTED so the config-mutation validate port can run the SAME three steps a real run runs —
+ * merge, normalize, parse. A port that skipped this would refuse a candidate whose only problem is
+ * a key `resolveConfig` deletes, which is a proposal blocked by a rule nothing enforces.
+ */
+export function normalizeConfigForValidation(config: unknown): unknown {
   if (!isPlainObject(config)) return config
   const normalized = deepMerge({}, config) as Record<string, unknown>
   const use = normalized.use

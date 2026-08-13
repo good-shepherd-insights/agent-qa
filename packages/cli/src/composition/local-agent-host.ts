@@ -90,7 +90,13 @@ import type {
   TestEditPatchSet,
 } from '@vostride/agent-qa-schema'
 
-import { loadConfigFile, loadEnvOverrides, resolveConfig } from '../config.js'
+import {
+  loadConfigFile,
+  loadEnvOverrides,
+  mergeConfigs,
+  normalizeConfigForValidation,
+  resolveConfig,
+} from '../config.js'
 import { listTargets, resolveTarget } from '../targets.js'
 import { invokeViaDaemon } from '../daemon/client.js'
 import { resolveCliAnalysisTokenBudget, resolveCliJobModel } from '../llm-utils.js'
@@ -2239,7 +2245,15 @@ export function createConfigValidatePort(): ConfigValidatePortLike {
           issues: [`the configuration is not readable as YAML: ${errorText(error)}`],
         })
       }
-      const result = AgentQaConfigSchema.safeParse(parsed ?? {})
+      // THE SAME THREE STEPS A REAL RUN TAKES — merge, normalize, parse (`resolveConfig`'s own
+      // sequence). Validating the raw file against the resolved schema instead was measured wrong
+      // during 395-01: `AgentQaConfigSchema` describes a COMPLETE configuration, so a candidate
+      // that omitted the env layer would be refused for keys a run supplies. The env overrides are
+      // included deliberately — "is this configuration valid" means valid for the process that
+      // will read it, and a proposal refused for a key the environment provides would be refusing
+      // a change that works.
+      const merged = mergeConfigs(parsed ?? {}, loadEnvOverrides(), {})
+      const result = AgentQaConfigSchema.safeParse(normalizeConfigForValidation(merged))
       if (result.success) return Promise.resolve({ ok: true })
       return Promise.resolve({
         ok: false,
