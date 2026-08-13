@@ -237,6 +237,24 @@ describe('projectPlannerTools: the registry walk IS the toolset (D-07)', () => {
     expect((answerSchema.required ?? []).slice().sort()).toEqual(['clause', 'text'])
   })
 
+  it('FORBIDS refusing over an optional field, in the tool description itself (WINDOWS 110)', () => {
+    // 394-30's live refusal, stated as a rule the model reads at the tool it misused. The planner
+    // called `mark_unhandled` on a turn whose only obstacle was an OMITTED OPTIONAL FIELD — a field
+    // its own contract lists outside `required` — so the refusal was not "no tool can do this" but
+    // "I decided a tool I have needs something it says it does not". The description below is the
+    // nearest surface to that decision: it is attached to the very call being made.
+    const tools = projectPlannerTools(registry(), PLANNER_CALLER)
+    const description = tools[MARK_UNHANDLED_TOOL_NAME]?.description ?? ''
+
+    // NON-VACUITY: the existing contract text is still there, so this cell reds on the ABSENCE of
+    // the new sentence rather than on any rewrite of the tool's meaning.
+    expect(description).toContain('cannot be carried out with the tools available')
+    expect(description).toContain(
+      'Do not use this because an optional field is missing — optional fields never make a request '
+      + 'unhandleable.',
+    )
+  })
+
   it('walks the registry it was handed, so a host with fewer ops gets fewer tools', () => {
     // The projection holds no catalogue of its own. Handing it a listing source that answers
     // with one declaration produces one action tool — which is the same statement as the walk
@@ -371,11 +389,16 @@ describe('projectPlannerTools: the model is not shown what the host stamps (394-
     expect(transformed.slice().sort()).toEqual(stamped.slice().sort())
   })
 
-  it('SAYS the host derives the target scope, on exactly the ops that declare it so', async () => {
-    // WINDOWS 110's projection half. A live planner refused `authoring.draft.write` by name over a
-    // required `{tier, key}` it could not know. 394-26 made the field optional at the registry and
-    // gave the host the derivation; what remains is TELLING the model — a field it may now omit is
-    // still a field it will invent a value for unless the description says who fills it.
+  it('TELLS the planner to pass a scope the person named, and states the refusal honestly', async () => {
+    // WINDOWS 110's projection half, ROUND 5. 394-26 made the field optional at the registry, gave
+    // the host the derivation, and said so in this sentence — and 394-30 measured a live planner
+    // refusing the turn anyway, on a scope requirement its own tool contract denies. The sentence
+    // that shipped closed with "pass `scope` only to author for a DIFFERENT target", which reads as
+    // an instruction NOT to supply a scope the person had already named, and it promised a host
+    // derivation that in fact refuses on any multi-product project (six candidates on the demo
+    // workspace → `AuthoringScopeUnresolvableError`). Both halves are re-pinned here: the planner is
+    // told to carry the person's own words into `scope`, and the multi-product refusal is stated as
+    // what it is rather than implied away.
     const walked = registry().list(PLANNER_CALLER)
     const tools = projectPlannerTools({ list: () => walked }, PLANNER_CALLER)
     expect(HOST_DERIVED_SCOPE_FUNCTION_IDS.size).toBeGreaterThan(0)
@@ -396,8 +419,19 @@ describe('projectPlannerTools: the model is not shown what the host stamps (394-
       // APPENDED, never a rewrite: `declaration.summary` is what 396's MCP listing renders.
       expect({ id, startsWithSummary: description.startsWith(declaration!.summary) })
         .toEqual({ id, startsWithSummary: true })
-      expect(description).toContain('derives the target test scope')
-      expect(description).toContain('pass `scope` only to author for a different target')
+      // Pinned VERBATIM and whole, not by fragment: the defect was a subordinate clause at the end
+      // of a sentence whose opening was unobjectionable, so a `toContain` on the opening would have
+      // stayed green across the exact edit this cell exists to force.
+      expect(description).toContain(
+        "When the person's request names the page, product or target it is for, pass `scope` with "
+        + 'that target\'s key. When `scope` is omitted the host derives it only when this project '
+        + 'has exactly one candidate product; otherwise the call returns a typed refusal naming '
+        + 'every candidate — it never guesses.',
+      )
+      // And the retired clause is GONE rather than merely outnumbered. A description carrying both
+      // sentences would satisfy the containment above while still telling the planner to withhold
+      // the scope the person named.
+      expect(description).not.toContain('only to author for a different target')
     }
   })
 
