@@ -7,11 +7,29 @@
     "treadmill law). A row that stops catching what its rationale claims is a finding",
     "about the lane, never a reason to move the row.",
     "",
-    "WHAT A ROW IS. Each row names an INTENT fixture and a suite. The intent is the",
-    "text projection of a house-style test document -- its name followed by its ordered",
-    "steps, joined by a space -- read out of intents/<file> at test time rather than",
-    "written here as a literal. A corpus assembled as a type literal can pin an input no",
-    "producer can emit, and a mutation differential then reds only impossible fixtures.",
+    "THE ONE ADJUDICATED SUSPENSION OF THAT LAW, 2026-08-13 (round 5). The freeze above",
+    "protects a table that measures the RIGHT INPUT. It did not. 394-VERIFICATION round",
+    "4, gap SC-1 stage 2, found that every row's 'intent' was a whole test DOCUMENT,",
+    "projected [name, ...steps].join(' '), while production hands dedupBeforeAuthor",
+    "input.intent -- a person's one-line utterance, with no steps at all (loop.ts:858).",
+    "There IS no document at stage 2; having none is the entire premise of",
+    "dedup-BEFORE-author. So the table pinned an input shape no caller can emit, and no",
+    "mutation of the lane could red on the distribution production actually sees: the",
+    "obvious-duplicate row reached 0.5 only because its 'intent' carried 21 tokens. The",
+    "verifier measured the consequence over the whole shipping suite -- an intent that is",
+    "a committed test's name VERBATIM scored 0.1818 / 0.2000 / 0.3077 / 0.1579 / 0.1500 /",
+    "0.2000 / 0.3810 / 0.4000 / 0.2917 / 0.3000, ten of ten ADMIT, ceiling 0.40 against a",
+    "0.45 pin (WINDOWS 118).",
+    "",
+    "WHAT THE RE-MINT CHANGED AND WHAT IT DID NOT. Changed: every row's intent side is",
+    "now a one-line utterance read out of intents/<file>'s single `intent:` key, and every",
+    "score/sharedTokens vector was re-measured on that real input shape. NOT changed: every",
+    "pre-existing row keeps its `id` and its SOLE CATCHER rationale, so the property each",
+    "row was minted to be the only catcher of is still the property it catches. Three rows",
+    "were added, and only the three the verification's own `missing:` list names --",
+    "exact-name-utterance (WINDOWS 118 itself, the live reading as a cell) and the two",
+    "outside-the-name-axis-assumption rows step-detailed-refuse / step-detailed-admit. No",
+    "further denominator was minted.",
     "",
     "WHY THE SUITE IS COPIED. suite/uat-381-*.yaml are VERBATIM copies of",
     "demo/init/tests/uat-381-*.yaml, which is the suite 393's frozen corpus scores",
@@ -19,7 +37,9 @@
     "the demo tree lives in the super-repository, outside this package's repository, so",
     "no test in packages/agent can read it. 393's corpus solved the same problem by",
     "copying the TEXTS into TypeScript; copying the documents is strictly stronger,",
-    "because what is copied is still in the producer's own format.",
+    "because what is copied is still in the producer's own format. The suite side is",
+    "STILL a document, and that is not an inconsistency: a corpus ENTRY is a committed",
+    "test, which has a name and steps, and only the INTENT side was ever wrong.",
     "",
     "SYNTHETIC SUITE IDENTITIES. dedup-tie-alpha, dedup-tie-beta and",
     "dedup-unfingerprinted carry demo-style workspace-relative identity paths for",
@@ -30,14 +50,20 @@
     "zero), and the real suite has no member standing for a test the derived",
     "fingerprint index has no rows for.",
     "",
-    "score/sharedTokens/comparedTests are what textSimilarity ACTUALLY produced over",
-    "these documents, measured 2026-08-11 by evaluating the shipped algorithm over the",
-    "files themselves. score is written to ten decimal places because the boundary",
-    "triple is decided in the fourth."
+    "score/sharedTokens/comparedTests are what the SHIPPED textOverlap ACTUALLY produced",
+    "over these files, and the vectors in this file are the PRE-FIX ones: measured",
+    "2026-08-13 against the recipe shipping at that moment, textOverlap({testName:",
+    "intent, steps: []}, entry). They are recorded before any fix exists so the RED is a",
+    "reading rather than a prediction; Task 2 of 394-31 re-measures them through the",
+    "fixed recipe. The expected VERDICT column is frozen NOW and is not re-measured --",
+    "it is what D-04 says the lane must answer. score is written to ten decimal places",
+    "because the boundary triple is decided in the fourth."
   ],
 
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "frozenAt": "2026-08-11",
+  "reMintedAt": "2026-08-13",
+  "vectorsMeasuredAgainst": "pre-fix recipe (full-document axis only)",
   "threshold": 0.45,
   "thresholdComparison": ">=",
 
@@ -77,11 +103,11 @@
       "suite": ["uat-381-local-form", "uat-381-ladder", "uat-381-ladder-current-target"],
       "expected": "duplicate",
       "matched": "uat-381-local-form",
-      "score": 0.5,
-      "sharedTokens": 15,
+      "score": 0.2962962963,
+      "sharedTokens": 8,
       "comparedTests": 3,
-      "rationale": "SOLE CATCHER for: a near-duplicate intent is refused at all. The document mirrors uat-381-local-form's anchors in cosmetically different wording (Enter/Press for Type/Click, literal values for the env and secret placeholders). If this row admits, the lane does not screen.",
-      "measured": "0.5000000000 against uat-381-local-form (15 shared of 21+24), then 0.3667 and 0.3548 against the two ladder members -- the same 0.5 393 measured for this text against this file, because stage 2 and gate 3 read the same rows through the same textSimilarity."
+      "rationale": "SOLE CATCHER for: a near-duplicate intent is refused at all. The utterance says what uat-381-local-form's name says and adds one detail the test already covers. If this row admits, the lane does not screen.",
+      "measured": "PRE-FIX, 2026-08-13: top score 0.2962962963 against uat-381-local-form (8 shared of 11+24), then 0.1481481481 and 0.1851851852 against the two ladder members. BELOW the pin, so the lane shipping today ADMITS it -- this row is part of the recorded RED. The re-minted utterance replaces a 21-token document projection that reached 0.5 only because it carried the test's whole step list."
     },
     {
       "id": "accept-control",
@@ -89,11 +115,11 @@
       "suite": ["uat-381-local-form", "uat-381-ladder", "uat-381-ladder-current-target"],
       "expected": "no-duplicate",
       "matched": null,
-      "score": 0.4166666667,
-      "sharedTokens": 10,
+      "score": 0.1724137931,
+      "sharedTokens": 5,
       "comparedTests": 3,
-      "rationale": "SOLE CATCHER for: the lane still ADMITS. A threshold that refuses everything passes a refuse-only corpus, so the exclusion leg needs a control leg beside it or 'it refused' is a reading from an instrument that cannot read. This is a genuine near-miss, not a stranger: 0.0333 below the pin.",
-      "measured": "top score 0.4166666667 against uat-381-ladder (10 shared of 14+20). NOTE the suite-wide reading MOVES this number: 393 measured the same text at 0.4074 because it scored against uat-381-local-form alone. Screening every suite member raises a draft's maximum, which is why the pin cannot be inherited from 393's."
+      "rationale": "SOLE CATCHER for: the lane still ADMITS. A threshold that refuses everything passes a refuse-only corpus, so the exclusion leg needs a control leg beside it or 'it refused' is a reading from an instrument that cannot read. The utterance is a genuinely new intent in the class the live lane's leg C authored -- a heading assertion no member of this suite makes.",
+      "measured": "PRE-FIX, 2026-08-13: top score 0.1724137931 against uat-381-local-form (5 shared of 10+24). Note what the pre-fix number says about the whole table: on the producible input distribution the strongest accept control in the corpus sits 0.2776 below the pin, so there is no near-miss anywhere and the headroom claim in dedup.ts's threshold comment was measured on documents no caller can send."
     },
     {
       "id": "at-threshold",
@@ -104,8 +130,8 @@
       "score": 0.45,
       "sharedTokens": 9,
       "comparedTests": 3,
-      "rationale": "SOLE CATCHER for: the >= direction. Its score equals the pin to the digit, so a lane written with > admits it and this row is the only one that says so. The document is deliberately minimal -- one name, one step -- because its nine tokens are exactly the nine that land the Jaccard on 9/20.",
-      "measured": "0.4500000000 against uat-381-ladder (9 shared of 9+20; all nine intent tokens are ladder tokens). 9/20 and the literal 0.45 are the same IEEE-754 double, so the equality is exact rather than approximate. 0.4285714286 and 0.2222222222 against the other two."
+      "rationale": "SOLE CATCHER for: the >= direction. Its score equals the pin to the digit, so a lane written with > admits it and this row is the only one that says so. The utterance carries exactly nine distinct tokens and every one of them is a uat-381-ladder token, which is what lands the Jaccard on 9/20.",
+      "measured": "PRE-FIX, 2026-08-13: 0.4500000000 against uat-381-ladder (9 shared of 9+20). 9/20 and the literal 0.45 are the same IEEE-754 double, so the equality is exact rather than approximate. 0.2222222222 against uat-381-local-form and 0.3636363636 against uat-381-ladder-current-target. Worth naming because it constrains any future recipe: current-target carries the ladder's NAME byte-for-byte at a lexicographically SMALLER path, so a recipe that ever scored these two equally would hand this row's refusal to current-target and the `matched` column would red before the verdict did."
     },
     {
       "id": "below-threshold",
@@ -113,11 +139,11 @@
       "suite": ["uat-381-local-form", "uat-381-ladder", "uat-381-ladder-current-target"],
       "expected": "no-duplicate",
       "matched": null,
-      "score": 0.4482758621,
-      "sharedTokens": 13,
+      "score": 0.1538461538,
+      "sharedTokens": 4,
       "comparedTests": 3,
       "rationale": "SOLE CATCHER for: the step immediately BELOW the pin admits. Pairs with at-threshold and above-threshold as the boundary triple; a lane that rounded, clamped or compared at reduced precision would fail here first.",
-      "measured": "0.4482758621 against uat-381-local-form (13 shared of 18+24 = 13/29). This is the largest score achievable below 0.45 from the local-form step vocabulary -- 0.0017 under the pin."
+      "measured": "PRE-FIX, 2026-08-13: 0.1538461538 against uat-381-local-form (4 shared of 6+24). Under the shipping recipe this row is nowhere near the boundary it is supposed to instrument -- the pre-fix table has no boundary triple on the producible distribution at all, which is the finding rather than a defect of the row."
     },
     {
       "id": "above-threshold",
@@ -125,11 +151,24 @@
       "suite": ["uat-381-local-form", "uat-381-ladder", "uat-381-ladder-current-target"],
       "expected": "duplicate",
       "matched": "uat-381-local-form",
-      "score": 0.4516129032,
-      "sharedTokens": 14,
+      "score": 0.2222222222,
+      "sharedTokens": 6,
       "comparedTests": 3,
-      "rationale": "SOLE CATCHER for: the step immediately ABOVE the pin refuses. The other half of the boundary triple. Below and above sit 0.0034 apart around the pin, so the triple pins a point rather than a region.",
-      "measured": "0.4516129032 against uat-381-local-form (14 shared of 21+24 = 14/31). Smallest score achievable above 0.45 from the same vocabulary -- 0.0016 over the pin."
+      "rationale": "SOLE CATCHER for: the step immediately ABOVE the pin refuses. The other half of the boundary triple. Below and above straddle the pin within a hundredth on each side, so the triple pins a point rather than a region.",
+      "measured": "PRE-FIX, 2026-08-13: 0.2222222222 against uat-381-local-form (6 shared of 9+24), 0.0740740741 and 0.1111111111 against the ladder pair. Below the pin, so today's lane admits it and this row is part of the recorded RED."
+    },
+    {
+      "id": "exact-name-utterance",
+      "intent": null,
+      "intentFromMemberName": "uat-381-local-form",
+      "suite": ["uat-381-local-form"],
+      "expected": "duplicate",
+      "matched": "uat-381-local-form",
+      "score": 0.2916666667,
+      "sharedTokens": 7,
+      "comparedTests": 1,
+      "rationale": "SOLE CATCHER for: WINDOWS 118, the strongest duplicate signal that can exist. The intent is not written anywhere -- it is READ OUT of the matched member's own name, so the row cannot drift from the suite it screens against. If a lane cannot refuse a test's name handed back to it verbatim, its refusal arm is unreachable for every real input, which is exactly what the live leg D of 394-30 measured and what the round-4 verification then generalised to ten of ten committed tests.",
+      "measured": "PRE-FIX, 2026-08-13: 0.2916666667 against uat-381-local-form (7 shared of 7+24) -- the verifier's 0.2917 reproduced to ten places through the shipped recipe. TOTAL CONTAINMENT and still an admit: all seven intent tokens are member tokens, and the Jaccard denominator carries the 17 step tokens the intent structurally cannot match. This row is the centre of the recorded RED."
     },
     {
       "id": "empty-suite",
@@ -141,11 +180,12 @@
       "sharedTokens": null,
       "comparedTests": 0,
       "rationale": "SOLE CATCHER for: an empty suite admits every intent and reports NO closest match. Deliberately driven by the obvious-duplicate intent, the strongest refusal candidate in the table, so the row says the empty corpus admits it rather than that some weak intent slipped through. The first test a project ever writes must not be refused for resembling nothing.",
-      "measured": "comparedTests 0, no closest reported, no-duplicate arm. There is no score to record because nothing was compared."
+      "measured": "comparedTests 0, no closest reported, no-duplicate arm. There is no score to record because nothing was compared. Unaffected by the round-5 re-mint in every respect except which utterance drives it."
     },
     {
       "id": "empty-texts",
       "intent": null,
+      "degenerate": true,
       "suite": null,
       "expected": "no-duplicate",
       "matched": null,
@@ -153,7 +193,7 @@
       "sharedTokens": 0,
       "comparedTests": 1,
       "rationale": "SOLE CATCHER for: the degenerate 0/0 is not an identity. An empty intent against a suite entry with an empty name and no steps scores 0, not 1. Reading it as 1 would let a single empty corpus entry cover every intent ever screened -- an over-flag so complete the safe direction becomes a lane that always refuses. The rule is INHERITED from textSimilarity's own early return rather than re-derived here; this row is the assertion that dedup did not add a second reading of it.",
-      "measured": "score 0, no-duplicate. This is the ONE row with no document behind it: the empty intent is not the projection of any test, because a document with no name does not parse. It is the degenerate input, and the corpus says so rather than pretending a fixture produced it."
+      "measured": "score 0, no-duplicate. This is the ONE row with no fixture behind it: the empty intent is not an utterance anybody types, it is the degenerate input, and the corpus says so rather than pretending a producer emitted it. Unchanged by the round-5 re-mint, and the only row for which that is true by construction."
     },
     {
       "id": "tie",
@@ -167,11 +207,11 @@
       ],
       "expected": "duplicate",
       "matched": "dedup-tie-alpha",
-      "score": 0.6363636364,
-      "sharedTokens": 14,
+      "score": 0.4210526316,
+      "sharedTokens": 8,
       "comparedTests": 5,
       "rationale": "SOLE CATCHER for: tie-break stability. Two suite members score identically, and the refusal must name the lexicographically smallest workspace-relative identity path so two invocations against the same suite report the same duplicate. beta is fed BEFORE alpha on purpose -- a lane that kept natural iteration order, or that used a strict > on the running best, names beta and this row is the only one that notices.",
-      "measured": "alpha and beta both 0.6363636364 (14 shared of 18+18 = 14/22), bit-identical because their documents carry identical text at different paths. The three real suite members trail at 0.3929/0.3548/0.3103. No intent can tie the two real ladder members -- see the $comment."
+      "measured": "PRE-FIX, 2026-08-13: alpha and beta both 0.4210526316 (8 shared of 9+18), bit-identical because their documents carry identical text at different paths, and BOTH BELOW the pin -- so under the shipping recipe this row admits and its tie-break is never reached. The three real members trail at 0.1785714286 / 0.1600000000 / 0.2500000000."
     },
     {
       "id": "unfingerprinted-duplicate",
@@ -184,11 +224,35 @@
       ],
       "expected": "duplicate",
       "matched": "dedup-unfingerprinted",
-      "score": 0.7,
-      "sharedTokens": 14,
+      "score": 0.5882352941,
+      "sharedTokens": 10,
       "comparedTests": 4,
       "rationale": "SOLE CATCHER for: the comparison universe is EVERY test in the suite. dedup-unfingerprinted stands for a member the derived fingerprint index has no rows for -- exactly the population gate 3's text lane keeps and gate 3's fingerprint lane drops, and exactly the population a corpus narrowed to the fingerprint-covered subset would lose. The row also pins comparedTests at the full suite size, so a lane that filtered its input reds here on the count before it reds on the match.",
-      "measured": "0.7000000000 against dedup-unfingerprinted (14 shared of 17+17), then 0.1935/0.1714/0.1515 against the three real members. comparedTests 4. An intent has no execution fingerprint, so the anchor-sequence recipe cannot fire pre-run -- this is why the pre-run screen must read the suite rather than the index."
+      "measured": "PRE-FIX, 2026-08-13: 0.5882352941 against dedup-unfingerprinted (10 shared of 10+17), then 0.0967741935 / 0.1111111111 / 0.1071428571 against the three real members. comparedTests 4. An intent has no execution fingerprint, so the anchor-sequence recipe cannot fire pre-run -- this is why the pre-run screen must read the suite rather than the index."
+    },
+    {
+      "id": "step-detailed-refuse",
+      "intent": "intents/step-detailed-refuse.yaml",
+      "suite": ["uat-381-local-form", "uat-381-ladder", "uat-381-ladder-current-target"],
+      "expected": "duplicate",
+      "matched": "uat-381-local-form",
+      "score": 0.5555555556,
+      "sharedTokens": 15,
+      "comparedTests": 3,
+      "rationale": "SOLE CATCHER for: a refusal reached from OUTSIDE the name-axis assumption. The utterance is long and step-detailed rather than name-shaped -- it names no test, it recites a procedure -- and it near-duplicates uat-381-local-form's whole document. A guard whose corpus cases are all drawn from inside its own assumption is tested only where it already believes; this row is the refuse-direction case drawn from outside it.",
+      "measured": "PRE-FIX, 2026-08-13: 0.5555555556 against uat-381-local-form (15 shared of 18+24), 0.4615384615 and 0.4444444444 against the ladder pair. ABOVE the pin already, so this row is GREEN before the fix -- and that is its second job: it is the witness that the round-5 recipe change is monotone upward and took no refusal away."
+    },
+    {
+      "id": "step-detailed-admit",
+      "intent": "intents/step-detailed-admit.yaml",
+      "suite": ["uat-381-local-form", "uat-381-ladder", "uat-381-ladder-current-target"],
+      "expected": "no-duplicate",
+      "matched": null,
+      "score": 0.2666666667,
+      "sharedTokens": 8,
+      "comparedTests": 3,
+      "rationale": "SOLE CATCHER for: an admit reached from OUTSIDE the name-axis assumption. A long, step-detailed utterance that recites a procedure no member of the suite performs -- a heading and a field LABEL, neither asserted anywhere in this suite. Without it, 'the lane still admits' is only ever demonstrated on short name-shaped utterances, and a recipe that refused every long sentence would pass the corpus.",
+      "measured": "PRE-FIX, 2026-08-13: top score 0.2666666667 against uat-381-local-form (8 shared of 14+24), then 0.2592592593 and 0.2500000000. Long and heavily overlapping in vocabulary with all three members and still comfortably admitting, which is the property: length alone must not refuse."
     }
   ]
 }

@@ -1,10 +1,7 @@
-name: Sign in on the local account form
-test-id: t_dedup-below-threshold-vise-series-table-rog-range-emu
-target: local-form
-use:
-  browser:
-    headless: true
-steps:
-  - Type "hunter2" into the Password field
-  - Enter "correct-horse" in the Password field
-  - Press the Submit button
+# A stage-2 INTENT fixture: one line of a person's speech, which is exactly what
+# `authoring.draft.write` receives as `input.intent` and hands to `dedupBeforeAuthor`
+# (loop.ts:858). There is no test DOCUMENT at stage 2 -- having none is the whole premise of
+# dedup-BEFORE-author -- so an intent fixture shaped as a document would pin an input shape no
+# caller can emit. Round 5 re-minted these through the right producer; see expectations.json's
+# $comment and 394-VERIFICATION round 4, gap SC-1 stage 2.
+intent: "Sign in to the checkout form"

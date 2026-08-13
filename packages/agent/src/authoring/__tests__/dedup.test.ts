@@ -1,15 +1,24 @@
 // Stage 2 — the frozen dedup denominator (Phase 394, D-04/D-16 · WTST-01).
 //
-// Nine rows, each the SOLE CATCHER for one property, and each one's rationale in
+// Twelve rows, each the SOLE CATCHER for one property, and each one's rationale in
 // `fixtures/dedup-corpus/expectations.json` says which. The table is frozen: a row that stops
 // catching what it claims is a finding about the lane, never a reason to move the row.
 //
-// THE INTENT IS PRODUCED, NOT WRITTEN HERE. Every row's intent is read at test time out of a
-// house-style YAML document under `fixtures/dedup-corpus/intents/` and projected the way the loop
-// projects one — the document's name followed by its ordered steps. A corpus assembled as a
-// TypeScript literal can pin an input no producer is able to emit, and a mutation differential
-// then reds only impossible fixtures, which cannot tell a vacuous corpus apart from a real
-// closure. The suite side is read the same way.
+// THE INTENT IS PRODUCED, NOT WRITTEN HERE — AND IT IS THE PRODUCER PRODUCTION ACTUALLY USES.
+// `loop.ts:858` calls `dedupBeforeAuthor(input.intent, …)`: the intent is the PERSON'S ONE-LINE
+// UTTERANCE, and there is no test document anywhere at stage 2 — having none is the entire premise
+// of dedup-BEFORE-author. So every row's intent is read at test time out of the single `intent:`
+// key of a fixture under `fixtures/dedup-corpus/intents/`, and what comes back is byte-identical
+// to the string the op receives. The suite side is still a DOCUMENT, and that is not an
+// inconsistency: a corpus entry is a committed test, which has a name and steps.
+//
+// UNTIL 2026-08-13 THIS FILE CLAIMED THAT AND DID THE OPPOSITE. Every intent was a whole house
+// document projected `[name, ...steps].join(' ')` — a 21-token input no caller can emit — so the
+// table could not red on the distribution production sees, and stage 2 shipped un-refusable for
+// the whole phase (394-VERIFICATION round 4, gap SC-1 stage 2; WINDOWS 118). A corpus assembled
+// through the WRONG producer fails exactly the way a corpus assembled as a type literal does: the
+// mutation differential reds only impossible fixtures, and cannot tell a vacuous corpus from a
+// real closure. The rows were re-minted; the row ids and their sole-catcher rationales were not.
 //
 // THE SUBJECT IS IMPORTED LAZILY, INSIDE EACH CELL, and that is the RED-first mechanism rather
 // than a style choice. A top-level import of a module that does not exist yet fails the whole FILE
@@ -37,7 +46,18 @@ interface SuiteMemberSpec {
 
 interface CorpusRow {
   readonly id: string
+  /** Path to a one-line utterance fixture, or null when the row's intent comes from elsewhere. */
   readonly intent: string | null
+  /**
+   * The row's intent is the named suite member's OWN NAME, read out of its document.
+   *
+   * Not a fixture and deliberately not a string literal: a retyped copy of a test's name is a
+   * second spelling that can drift from the suite it screens against, and the one row whose whole
+   * point is "the intent IS the test's name" is the row that must not be able to drift.
+   */
+  readonly intentFromMemberName?: string
+  /** The degenerate 0/0 row: an empty intent against an empty entry. No producer emits either. */
+  readonly degenerate?: boolean
   readonly suite: readonly string[] | null
   readonly expected: 'duplicate' | 'no-duplicate'
   readonly matched: string | null
@@ -52,6 +72,8 @@ interface Expectations {
   readonly $comment: readonly string[]
   readonly schemaVersion: number
   readonly frozenAt: string
+  readonly reMintedAt: string
+  readonly vectorsMeasuredAgainst: string
   readonly threshold: number
   readonly thresholdComparison: string
   readonly suiteMembers: Readonly<Record<string, SuiteMemberSpec>>
@@ -76,15 +98,19 @@ function readDocument(relativePath: string): HouseDocument {
 }
 
 /**
- * The text projection of a document, exactly as the loop projects an intent.
+ * The intent, as the op receives it: ONE LINE of a person's speech and nothing else.
  *
- * One string, because that is what an intent IS at stage 2 — there is no draft yet, which is the
- * whole reason the screen is worth doing. `textSimilarity` tokenizes over a set, so joining the
- * name and the steps yields the same token set the document's parts would.
+ * There is no projection step here and that absence is the point — `authoring.draft.write` hands
+ * `input.intent` straight to `dedupBeforeAuthor`, so any transformation applied on this side would
+ * make the corpus measure an input shape the caller cannot send. The fixture's job is transport,
+ * not shaping: it carries the utterance so the table's inputs are read from files rather than
+ * written as literals, and it yields the string unchanged.
  */
 function intentTextOf(relativePath: string): string {
-  const document = readDocument(relativePath)
-  return [document.name, ...document.steps].join(' ')
+  const fixture = parse(readFileSync(join(CORPUS_DIR, relativePath), 'utf8')) as {
+    readonly intent: string
+  }
+  return fixture.intent
 }
 
 function suiteEntry(key: string): SuiteTextCorpusEntryLike {
@@ -101,14 +127,20 @@ const EMPTY_TEXT_ENTRY: SuiteTextCorpusEntryLike = {
   stepsText: [],
 }
 
+function intentOf(row: CorpusRow): string {
+  if (row.intentFromMemberName !== undefined) {
+    return suiteEntry(row.intentFromMemberName).testName
+  }
+  if (row.intent === null) throw new Error(`row ${row.id} names no intent source`)
+  return intentTextOf(row.intent)
+}
+
 function inputsFor(row: CorpusRow): {
   readonly intent: string
   readonly corpus: readonly SuiteTextCorpusEntryLike[]
 } {
-  if (row.intent === null || row.suite === null) {
-    return { intent: '', corpus: [EMPTY_TEXT_ENTRY] }
-  }
-  return { intent: intentTextOf(row.intent), corpus: row.suite.map(suiteEntry) }
+  if (row.degenerate === true) return { intent: '', corpus: [EMPTY_TEXT_ENTRY] }
+  return { intent: intentOf(row), corpus: (row.suite ?? []).map(suiteEntry) }
 }
 
 function rowNamed(id: string): CorpusRow {
@@ -122,15 +154,43 @@ async function loadDedup() {
 }
 
 describe('the frozen dedup corpus is intact', () => {
-  it('carries the treadmill warning and nine sole-catcher rows', () => {
-    expect(EXPECTATIONS.$comment.join(' ')).toContain('MUST NOT mint new members')
-    expect(EXPECTATIONS.rows).toHaveLength(9)
+  it('carries the treadmill warning and twelve sole-catcher rows', () => {
+    const comment = EXPECTATIONS.$comment.join(' ')
+    expect(comment).toContain('MUST NOT mint new members')
+    // The one suspension of that law is CITED rather than asserted, so a reader can check the
+    // adjudication that authorised it instead of taking this file's word for it.
+    expect(comment).toContain('394-VERIFICATION round')
+    expect(EXPECTATIONS.rows).toHaveLength(12)
     for (const row of EXPECTATIONS.rows) {
       expect(row.rationale, `${row.id} states the property it is the sole catcher for`)
         .toContain('SOLE CATCHER for')
       expect(row.measured.length, `${row.id} records what was measured`).toBeGreaterThan(40)
     }
-    expect(new Set(EXPECTATIONS.rows.map((row) => row.id)).size).toBe(9)
+    expect(new Set(EXPECTATIONS.rows.map((row) => row.id)).size).toBe(12)
+  })
+
+  it('kept every pre-existing row id and its sole-catcher claim through the re-mint', () => {
+    // The re-mint replaced INPUTS and VECTORS. If it had also replaced the properties, the table
+    // would be a new denominator wearing the old one's name -- the treadmill this phase is named
+    // for. These nine ids are the pre-re-mint table, verbatim.
+    const preserved = [
+      'obvious-duplicate',
+      'accept-control',
+      'at-threshold',
+      'below-threshold',
+      'above-threshold',
+      'empty-suite',
+      'empty-texts',
+      'tie',
+      'unfingerprinted-duplicate',
+    ]
+    for (const id of preserved) expect(() => rowNamed(id)).not.toThrow()
+    // And exactly the three rows the verification's own `missing:` list named were added.
+    const added = EXPECTATIONS.rows
+      .map((row) => row.id)
+      .filter((id) => !preserved.includes(id))
+      .sort()
+    expect(added).toEqual(['exact-name-utterance', 'step-detailed-admit', 'step-detailed-refuse'])
   })
 
   it('is a boundary TRIPLE: one row exactly on the pin, one below, one above', () => {
@@ -160,20 +220,40 @@ describe('the frozen dedup corpus is intact', () => {
     const control = rowNamed('accept-control')
     expect(EXPECTATIONS.threshold - (control.score ?? 0)).toBeLessThan(0.05)
   })
+
+  it('carries refuse AND admit cases from OUTSIDE the name-axis assumption', () => {
+    // A guard whose corpus is drawn entirely from inside its own assumption is only ever tested
+    // where it already believes. These two utterances name no test at all -- they recite a
+    // procedure -- and the table needs one of each direction or "it refuses names" is the only
+    // thing the table can say.
+    const refuse = rowNamed('step-detailed-refuse')
+    const admit = rowNamed('step-detailed-admit')
+    expect(refuse.expected).toBe('duplicate')
+    expect(admit.expected).toBe('no-duplicate')
+    for (const row of [refuse, admit]) {
+      const utterance = intentOf(row)
+      // Longer than any suite member's NAME, so neither row can be satisfied on the name axis
+      // alone -- which is what "outside the assumption" has to mean arithmetically.
+      const longestName = Math.max(
+        ...Object.keys(EXPECTATIONS.suiteMembers).map((key) => suiteEntry(key).testName.length),
+      )
+      expect(utterance.length, `${row.id} is step-detailed, not name-shaped`)
+        .toBeGreaterThan(longestName)
+    }
+  })
 })
 
-describe('every corpus document is a parsable house-style test', () => {
-  // The producer check. `parseTestFile` itself lives in `@vostride/agent-qa-core`, which the
-  // FUNC-02 firewall forbids this package to import, so the acceptance asserted here is that the
-  // document parses as YAML and carries the four fields the house format requires. The REAL
-  // `parseTestFile` acceptance of these same files is asserted in `agent-local`, which may import
-  // it -- see `authoring-loop.e2e.test.ts`.
-  const documents = [
-    ...Object.values(EXPECTATIONS.suiteMembers).map((member) => member.document),
-    ...EXPECTATIONS.rows.map((row) => row.intent).filter((path) => path !== null),
-  ]
+describe('every corpus fixture is what its side of the comparison actually receives', () => {
+  // The producer check, per side. The SUITE side is a house-style test document, because a corpus
+  // entry is a committed test. The INTENT side is a bare utterance, because that is what the op
+  // is handed. `parseTestFile` itself lives in `@vostride/agent-qa-core`, which the FUNC-02
+  // firewall forbids this package to import, so what is asserted here is that the suite documents
+  // parse as YAML and carry the four fields the house format requires.
+  const suiteDocuments = [...new Set(
+    Object.values(EXPECTATIONS.suiteMembers).map((member) => member.document),
+  )]
 
-  it.each([...new Set(documents)])('%s parses and carries the house fields', (relativePath) => {
+  it.each(suiteDocuments)('%s parses and carries the house fields', (relativePath) => {
     const document = readDocument(relativePath)
     expect(typeof document.name).toBe('string')
     expect(document.name.length).toBeGreaterThan(0)
@@ -182,6 +262,25 @@ describe('every corpus document is a parsable house-style test', () => {
     expect(Array.isArray(document.steps)).toBe(true)
     expect(document.steps.length).toBeGreaterThan(0)
     for (const step of document.steps) expect(typeof step).toBe('string')
+  })
+
+  const intentFixtures = [...new Set(
+    EXPECTATIONS.rows.map((row) => row.intent).filter((path): path is string => path !== null),
+  )]
+
+  it.each(intentFixtures)('%s is ONE utterance and carries no document', (relativePath) => {
+    const raw = parse(readFileSync(join(CORPUS_DIR, relativePath), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    // Exactly one key, so a document cannot creep back in beside the utterance and be silently
+    // ignored -- the re-mint's failure mode in reverse.
+    expect(Object.keys(raw)).toEqual(['intent'])
+    const utterance = raw['intent']
+    expect(typeof utterance).toBe('string')
+    expect(utterance as string).not.toContain('\n')
+    expect((utterance as string).trim()).toBe(utterance)
+    expect((utterance as string).length).toBeGreaterThan(0)
   })
 
   it('copies the 393 suite VERBATIM, so the two denominators describe one world', () => {
@@ -248,6 +347,51 @@ describe('dedupBeforeAuthor against the frozen corpus', () => {
     },
   )
 
+  it('refuses EVERY suite member the member\'s own name handed back verbatim', async () => {
+    // WINDOWS 118, generalised, and driven through the REAL dedupBeforeAuthor rather than a
+    // re-implemented Jaccard -- a re-implementation would measure my arithmetic, not the lane's.
+    // A test's name handed back to the screen is the STRONGEST duplicate signal an intent can
+    // carry: there is no larger overlap available, because the intent IS the identity. A lane
+    // that admits this admits everything, which is exactly what round 4 measured across the ten
+    // committed tests of the shipping demo suite (ceiling 0.40 against a 0.45 pin).
+    const { dedupBeforeAuthor } = await loadDedup()
+    const members = Object.keys(EXPECTATIONS.suiteMembers)
+    // ONE assertion over the WHOLE sweep, deliberately. A per-member assertion inside the loop
+    // stops at the first member that misbehaves, and the reading this cell exists to produce is
+    // the shape of the failure ACROSS the suite -- how many admit, and at what scores.
+    const readings = members.map((key) => {
+      const entry = suiteEntry(key)
+      const screening = dedupBeforeAuthor(entry.testName, [entry])
+      const matchedRef = screening.kind === 'duplicate' ? screening.evidence.matchedRef : '-'
+      const score = screening.kind === 'duplicate'
+        ? screening.evidence.score
+        : (screening.closest?.similarity ?? 0)
+      return `${key}: ${screening.kind} score=${score.toFixed(10)} matched=${matchedRef}`
+    })
+    // An intent identical to a member's identity is a TOTAL match on the axis the two share, so
+    // the expected score is 1 exactly and the expected link is that member -- not merely "some
+    // refusal happened".
+    expect(readings).toEqual(members.map((key) => {
+      const entry = suiteEntry(key)
+      return `${key}: duplicate score=1.0000000000 matched=${entry.filePath}::${entry.testName}`
+    }))
+  })
+
+  it('still refuses a name-verbatim intent when the WHOLE suite is the comparison universe',
+    async () => {
+      // The sweep above screens each member alone. Production screens against everything, where a
+      // stronger match could in principle displace the member itself -- so the verdict is asserted
+      // over the full real suite too. Which member is named is NOT asserted here: two of the three
+      // carry byte-identical names, and the tie-break between them is `tie`'s property, not this
+      // row's.
+      const { dedupBeforeAuthor } = await loadDedup()
+      const corpus = EXPECTATIONS.the393Suite.map(suiteEntry)
+      for (const key of EXPECTATIONS.the393Suite) {
+        const screening = dedupBeforeAuthor(suiteEntry(key).testName, corpus)
+        expect(screening.kind, `${key}'s own name against the whole suite`).toBe('duplicate')
+      }
+    })
+
   it('names BOTH continuations on every refusal, out of one closed vocabulary', async () => {
     const { dedupBeforeAuthor } = await loadDedup()
     const row = rowNamed('obvious-duplicate')
@@ -294,18 +438,26 @@ describe('dedupBeforeAuthor against the frozen corpus', () => {
 })
 
 describe('one scorer, not two', () => {
-  it('reports the score adds-value.ts produces for the same pair, not a copy of it', async () => {
+  it('reports a score adds-value.ts produces for the same pair, not a copy of it', async () => {
     const { dedupBeforeAuthor } = await loadDedup()
     // The shared vector: the obvious duplicate against the member it duplicates. If dedup.ts ever
     // grows its own tokenizer or its own Jaccard, the two readings drift and this cell is what
     // notices -- the key link is an import, and an import is what this asserts the behaviour of.
+    //
+    // The lane scores an intent on TWO comparable axes and keeps the larger, so the reproduction
+    // here is over both. Both are `textSimilarity` calls: the axes differ in what is compared, not
+    // in how, and a second recipe is what D-16 forbids.
     const entry = suiteEntry('uat-381-local-form')
     const intent = intentTextOf('intents/duplicate.yaml')
-    const direct = textSimilarity({ testName: intent, steps: [] }, entry)
+    const wholeDocument = textSimilarity({ testName: intent, steps: [] }, entry)
+    const nameOnly = textSimilarity(
+      { testName: intent, steps: [] },
+      { filePath: entry.filePath, testName: entry.testName, stepsText: [] },
+    )
 
     const screening = dedupBeforeAuthor(intent, [entry])
     if (screening.kind !== 'duplicate') throw new Error('the obvious duplicate must refuse')
-    expect(screening.evidence.score).toBe(direct)
+    expect(screening.evidence.score).toBe(Math.max(wholeDocument, nameOnly))
   })
 
   it('inherits the two-empty-texts rule rather than re-deriving it', async () => {
