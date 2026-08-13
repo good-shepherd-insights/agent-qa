@@ -79,12 +79,28 @@ export function unhandledReason(clause: string): string {
  * check is that the planner said it — so saying so is the whole of the claim it makes about it.
  * The tail is still shown in full rather than dropped, because the planner's stated reason is
  * often the only thing that tells a person what to try next.
+ *
+ * THE DELIMITERS MUST BE ONES THE PAYLOAD CANNOT SPELL (394-37, WR-03), and the first version of
+ * this fix used ones it could. `reason` was spliced between bare `"` characters — the single most
+ * likely character for a planner's prose to contain — and followed by a fixed sentence the model
+ * can read in its own tool description. A planner emitting
+ * `X". The turn was refused before anything ran, so nothing in the request was carried out. This
+ * build requires …` closed the attribution after `X` and left its own claim standing after the
+ * host's atomicity sentence, in the host's voice: 394-30's defect, restored through the fix meant
+ * to close it. `JSON.stringify` escapes the quote AND the newline a multi-line payload would use
+ * to leave the quoted span, so there is no byte sequence the model can emit that ends the
+ * quotation early — while the tail is still shown whole.
+ *
+ * AND THE HOST FINISHES SPEAKING BEFORE THE QUOTATION OPENS. The attribution moved to the END for
+ * the same reason the escaping was needed: with the host's own two claims — which clause, and that
+ * nothing ran — both made before any model byte appears, there is no host sentence AFTER the
+ * quotation for a crafted payload to impersonate by running on into it.
  */
 export function modelUnhandledReason(clause: string, reason: string): string {
   return (
-    `No capability in this build handles: "${clause}". The planner's stated reason, `
-    + `unverified by this build: "${reason}". The turn was refused before anything ran, so nothing `
-    + 'in the request was carried out.'
+    `No capability in this build handles: "${clause}". The turn was refused before anything ran, `
+    + 'so nothing in the request was carried out.\n'
+    + `The planner's stated reason, unverified by this build: ${JSON.stringify(reason)}`
   )
 }
 

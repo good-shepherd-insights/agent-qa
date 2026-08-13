@@ -292,28 +292,35 @@ describe('deterministicOverrideStrategy: the table wins, and an unroutable claus
 
       expect(verdict.kind).toBe('unhandled')
       if (verdict.kind !== 'unhandled') return
+      // The layout MOVED in 394-37 (WR-03) and the wording did not: the host's two claims are made
+      // first and the attributed prose closes the message, bounded by `JSON.stringify` rather than
+      // by bare quotes the payload can spell. On a quote-free payload like this one the JSON
+      // literal is the same bytes plus its own delimiters, which is why this fixture could never
+      // tell the two formats apart — the sibling cell below carries the payload that can.
       expect(verdict.reason).toBe(
-        'No capability in this build handles: "write a test for the local form page". The '
-        + `planner's stated reason, unverified by this build: "${invented}". The turn was refused `
-        + 'before anything ran, so nothing in the request was carried out.',
+        'No capability in this build handles: "write a test for the local form page". The turn was '
+        + 'refused before anything ran, so nothing in the request was carried out.\n'
+        + `The planner's stated reason, unverified by this build: ${JSON.stringify(invented)}`,
       )
 
       // THE LOAD-BEARING HALF: the model's prose reaches the person ONLY inside the attributed
       // quotes. A format that added the attribution phrase and ALSO kept the bare splice would
       // satisfy a containment check on either fragment while the false sentence still stood in the
       // host's voice — which is the exact defect, plus a disclaimer next to it.
-      const attributed = `unverified by this build: "${invented}"`
+      const attributed = `unverified by this build: ${JSON.stringify(invented)}`
       expect(verdict.reason.split(invented)).toHaveLength(2)
       expect(verdict.reason.replace(attributed, '')).not.toContain(invented)
       // And specifically not the shape that shipped: the clause's closing quote running straight
       // into the model's sentence.
       expect(verdict.reason).not.toContain(`" — ${invented}`)
 
-      // D-08 still holds — the clause is NAMED — and the atomicity sentence still ends it, so the
-      // attribution was added to the refusal rather than substituted for its other two duties.
+      // D-08 still holds — the clause is NAMED — and the atomicity sentence is still there, so the
+      // attribution was added to the refusal rather than substituted for its other two duties. It
+      // no longer ENDS the message, deliberately: a host sentence after the quotation is a
+      // sentence a crafted payload can impersonate by running on into it.
       expect(verdict.clause.text).toBe('write a test for the local form page')
       expect(verdict.reason).toContain('"write a test for the local form page"')
-      expect(verdict.reason.endsWith('nothing in the request was carried out.')).toBe(true)
+      expect(verdict.reason).toContain('nothing in the request was carried out.')
     })
 
     it('BOUNDS an ESCAPING payload — the delimiter the model cannot close (394-37, WR-03)', () => {
