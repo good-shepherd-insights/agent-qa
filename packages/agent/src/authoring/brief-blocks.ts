@@ -64,9 +64,25 @@ steps:
  * A zero-exemplar brief is the bootstrap case — a fresh project has no memory by definition — and
  * `exemplarBlockBody` answers the empty string of prose there. A format rule carried only by the
  * exemplar block is therefore a format rule the first authored test never sees.
+ *
+ * EVERY SENTENCE HERE IS TRUE AGAINST `TestDefinitionSchema` (394-33, WR-06), AND THAT IS A
+ * STANDING OBLIGATION RATHER THAN A ONE-TIME EDIT. A prompt that pins a schema by enumeration is a
+ * SECOND SPELLING of that schema, free to drift from the first the moment either side is touched —
+ * the same hazard `TEST_DOCUMENT_FORMAT_EXAMPLE` is composed in rather than retyped to avoid. The
+ * first draft of this block claimed four keys were all a document may carry, and the cost was
+ * specific: `context` is one of the three `EDITABLE_POINTER_ROOTS` and the root `ParsedDraftLike`
+ * was widened for in 394-15 so `screenDraftForCredentials` could scan it — and a stage forbidden to
+ * emit it could never populate it. The accepted set is `name`, `test-id`, `target`, `steps`,
+ * `context`, `use`, `meta`, `setup`, `teardown`, and the schema is `.strict()`, which is the half
+ * of the old closing claim that was always true.
+ *
+ * WHAT IS NAMED BUT NOT TAUGHT. `use`, `meta`, `setup` and `teardown` are accepted by the parser
+ * and are stated here as accepted, because a rejection sentence that swept them up would be false
+ * again in the other direction. They are not TAUGHT — no shape, no example — because this stage
+ * authors a first draft and a hook id it invented would name a hook no project has.
  */
 export const TEST_DOCUMENT_FORMAT_INSTRUCTION =
-  'A test document has exactly these four top-level keys, and all four are required:\n'
+  'A test document has these four required top-level keys:\n'
   + '- `name`: the test\'s display name, one line of plain English.\n'
   + '- `test-id`: a stable identifier — the letters `t_` followed by exactly ten lowercase words '
   + 'joined by hyphens. Choose ten words of your own rather than copying the example\'s.\n'
@@ -74,7 +90,10 @@ export const TEST_DOCUMENT_FORMAT_INSTRUCTION =
   + 'product that IS a configured target, use its key.\n'
   + '- `steps`: a YAML list of natural-language step strings, at least one of which asserts '
   + 'concrete expected content.\n'
-  + 'NO other top-level key is accepted. A document carrying one is rejected without being read.\n'
+  + '`context` is optional: one paragraph of standing background the whole test assumes.\n'
+  + 'The schema also accepts `use`, `meta`, `setup` and `teardown`; this stage does not teach them, '
+  + 'so leave them out. Any top-level key outside the ones named here is rejected without the '
+  + 'document being read.\n'
   + 'When the Exemplar tests block carries tests, it shows this project\'s house style and takes '
   + 'precedence on every question of style; this block is the floor beneath it, not a rival.\n\n'
   + `${TEST_DOCUMENT_FORMAT_EXAMPLE_MARKER}\n\n${TEST_DOCUMENT_FORMAT_EXAMPLE}`
