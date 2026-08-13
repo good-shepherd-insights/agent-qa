@@ -129,6 +129,9 @@ function harness(options: { readonly unboundDeriver?: true } = {}): {
         return Promise.resolve({ scope, facts: [], cautions: [], procedures: [], exemplars: [] })
       },
       suiteTextCorpus: () => Promise.resolve([]),
+      // 394-33 WR-07: the `target` vocabulary. This file's subject is the SCOPE derivation, and
+      // the two are deliberately different values — see the port's own doc.
+      configuredTargetNames: () => Promise.resolve(['local-form']),
     },
   } as unknown as FunctionDeps
 

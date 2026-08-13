@@ -156,6 +156,10 @@ function deps(options: {
         exemplars: [],
       }),
       suiteTextCorpus: () => Promise.resolve(options.suiteText ?? []),
+      // 394-33 WR-07: the `target` vocabulary the compile prompt serves. This bench's model is
+      // scripted and reads none of it — the verb is here because the port requires it, and
+      // because this deps object is cast, so nothing but a run would have told us.
+      configuredTargetNames: () => Promise.resolve(['local-form']),
     },
   } as unknown as FunctionDeps
 }
