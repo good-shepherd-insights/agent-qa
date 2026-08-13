@@ -656,11 +656,20 @@ async function routingHandoff(
  * THE PRODUCTION READ of `abandonment.error`, and the only one: its typed coordinates.
  *
  * A prefix-regressed abandonment means a PROBE run showed a step that used to pass now failing, and
- * `PassingPrefixRegressedError` carries which step and which run. That pair is an addressable,
- * replayable coordinate into a durable record — the same thing every other `evidenceRefs` entry is
- * — so the finding a person reads can reach the run that ended the repair instead of merely stating
- * that one did. Appended BESIDE the routed run's own refs: the routed run says why the draft failed,
- * this says why repair stopped, and they are different runs.
+ * `PassingPrefixRegressedError` carries the whole coordinate: which run, which member of it, and
+ * which step. That is an addressable, replayable coordinate into a durable record — the same thing
+ * every other `evidenceRefs` entry is — so the finding a person reads can reach the run that ended
+ * the repair instead of merely stating that one did. Appended BESIDE the routed run's own refs: the
+ * routed run says why the draft failed, this says why repair stopped, and they are different runs.
+ *
+ * ALL FOUR FIELDS COME FROM THE ERROR, AND THAT IS THE FIX RATHER THAN A TIDY-UP (CR-01). This used
+ * to take `filePath`/`testName` from the invocation's `draftRef`, which is the PRE-repair draft: a
+ * probe runs the candidate `applyPatches` just staged, and staging addresses a draft by the digest
+ * of its new bytes, so the two paths differ by construction on every iteration that reached a run.
+ * The persisted coordinate named a real run and a file that run never opened, and a reader joining
+ * on the four-tuple found nothing — a durable finding nobody can audit. The error is built at the
+ * one site that held the probed member, which is also why this stays a read of typed facts and not
+ * a second walk of the run store (394-24's one-derivation law).
  *
  * WHAT IS DELIBERATELY NOT READ: `error.message`, and through it `RepairExhaustedError.lastRefusal`,
  * which ends in the model's own bytes. Prose about a decision is `explanation`'s job and the model
@@ -671,7 +680,6 @@ async function routingHandoff(
  */
 function withRegressedProbeEvidence(
   route: FindingRoute,
-  draftRef: DraftRef,
   abandonment: RepairAbandonment,
 ): FindingRoute {
   if (abandonment.kind !== 'prefix-regressed') return route
@@ -683,8 +691,8 @@ function withRegressedProbeEvidence(
       ...route.evidenceRefs,
       {
         runId: abandonment.error.runId,
-        filePath: draftRef.filePath,
-        testName: draftRef.testName,
+        filePath: abandonment.error.filePath,
+        testName: abandonment.error.testName,
         stepIndex: abandonment.error.stepIndex,
         channel: 'step-trace',
       },
@@ -817,7 +825,6 @@ export async function routeAfterVerify(
   // refuses `no-run-evidence` by name and that refusal was already converted.
   const exhaustedRoute: FindingRoute = withRegressedProbeEvidence(
     findingRouteForAbandonedRepair(draftRef, handoff as CompletedRunHandoff, route.failingStepIndex),
-    draftRef,
     repaired.abandonment,
   )
   return {

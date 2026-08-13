@@ -142,11 +142,19 @@ export class PassingPrefixViolationError extends Error {
  * different things: a static violation says the model asked to touch a protected step, and this
  * says it broke one WITHOUT asking. The second is the more interesting signal and would be lost
  * inside a shared class.
+ *
+ * ITS FOUR FIELDS ARE ONE COORDINATE, AND THEY NAME THE PROBED MEMBER (CR-01). A run record is
+ * addressed by (runId, filePath, testName, stepIndex), so the run id alone is half an address —
+ * and the half a reader would otherwise supply from the PRE-repair draft names a file this probe
+ * never opened, because every applied patch set re-stages the candidate under its new digest. All
+ * four are minted by this package from the candidate it probed; none is model text.
  */
 export class PassingPrefixRegressedError extends Error {
   constructor(
     readonly stepIndex: number,
     readonly runId: string,
+    readonly filePath: string,
+    readonly testName: string,
   ) {
     super(
       `repair: probe run ${runId} shows step ${stepIndex} failing, and that step passed in the `
@@ -379,6 +387,11 @@ export function fencePatchAgainstDraftIdentity(
  * evidence as a regression would end repair for an infrastructure hiccup, which is the direction
  * that costs a user a good test. It also cannot hide anything: a probe missing a prefix step
  * cannot have passed either, so the iteration is spent regardless.
+ *
+ * THE COORDINATE IS BUILT HERE BECAUSE THIS IS WHERE THE PROBED MEMBER IS IN HAND. `draft` is the
+ * STAGED candidate the probe was started on, and `draftMember` above joined the run's member to it
+ * on the same pair — so naming the pair costs nothing and no later reader has to guess which of the
+ * invocation's several drafts the run executed.
  */
 function prefixRegression(
   draft: ParsedDraftLike,
@@ -389,7 +402,12 @@ function prefixRegression(
   if (member === undefined || probe === undefined) return null
   for (const step of member.steps) {
     if (step.stepIndex < prefix.length && stepFailed(step)) {
-      return new PassingPrefixRegressedError(step.stepIndex, probe.runId)
+      return new PassingPrefixRegressedError(
+        step.stepIndex,
+        probe.runId,
+        draft.filePath,
+        draft.testName,
+      )
     }
   }
   return null
