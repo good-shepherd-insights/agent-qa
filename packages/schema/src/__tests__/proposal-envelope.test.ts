@@ -43,13 +43,16 @@ describe('the envelope vocabulary is closed and spelled once', () => {
   // exhaustive `Record<ProposalKind, …>` sites, so a kind added without an answer at either FAILS
   // TO COMPILE. What no compiler can catch is a kind added and then never decided about here, or
   // one silently removed — a `.toEqual` over a literal list is the only cell that reds for that,
-  // and it is the site 394-06 had to update by hand when the list went from one member to three.
-  it('has exactly three kinds, and the predicate matches them exactly', () => {
-    expect(PROPOSAL_KINDS).toEqual(['knowledge', 'test-draft', 'finding'])
+  // and it is the site 394-06 had to update by hand when the list went from one member to three,
+  // and 395-01 when `config` joined as the fourth.
+  it('has exactly four kinds, and the predicate matches them exactly', () => {
+    expect(PROPOSAL_KINDS).toEqual(['knowledge', 'test-draft', 'finding', 'config'])
     expect(isProposalKind('knowledge')).toBe(true)
     expect(isProposalKind('test-draft')).toBe(true)
     expect(isProposalKind('finding')).toBe(true)
-    expect(isProposalKind('config')).toBe(false)
+    expect(isProposalKind('config')).toBe(true)
+    // The rejected half of the pair, kept as a value the vocabulary does not carry.
+    expect(isProposalKind('scaffold')).toBe(false)
     expect(isProposalKind(undefined)).toBe(false)
   })
 

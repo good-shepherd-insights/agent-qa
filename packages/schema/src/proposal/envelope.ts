@@ -20,6 +20,7 @@
 import { z } from 'zod'
 
 import { FindingProposalV1Schema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
+import { ConfigProposalV1Schema } from '../config-mutation/proposal'
 import { KnowledgeProposalV1Schema, ProposalIdSchema } from '../knowledge/proposal'
 
 /**
@@ -46,7 +47,7 @@ export const CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION = 1
  * free while a field would get none: an unhandled flag routes to the test-draft apply and renders
  * the test-draft's decision line, and nothing anywhere fails to compile.
  */
-export const PROPOSAL_KINDS = ['knowledge', 'test-draft', 'finding'] as const
+export const PROPOSAL_KINDS = ['knowledge', 'test-draft', 'finding', 'config'] as const
 
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number]
 
@@ -188,6 +189,16 @@ export const ProposalRecordSchema = z.discriminatedUnion('kind', [
     kind: z.literal('finding'),
     origin: ProposalOriginSchema,
     payload: FindingProposalV1Schema,
+  }).strict(),
+  // 395 D-01/D-17 · CFGM-01: the config editor's one artifact. Accepting it makes ONE git commit
+  // in the person's own repository, which is why its payload carries bytes rather than refs — see
+  // `config-mutation/proposal.ts`'s header for the exception and what buys it.
+  z.object({
+    schemaVersion: z.literal(CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION),
+    id: ProposalIdSchema,
+    kind: z.literal('config'),
+    origin: ProposalOriginSchema,
+    payload: ConfigProposalV1Schema,
   }).strict(),
 ])
 

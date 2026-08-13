@@ -73,6 +73,7 @@ export {
   committedFileText,
   sha256hex,
   sha256hex16,
+  sha256hexBytes,
 } from './determinism/index'
 export type {
   ScopeKey,
@@ -445,6 +446,43 @@ export {
 export type { AnalyzeRunPayload } from './job/index'
 export type { Patch, FileChange, Hunk, PatchStatus, PatchId } from './patch/index'
 export { asPatchId, patchSchema } from './patch/index'
+// 395 D-01/D-17 · CFGM-01/03/04: the config editor's DTOs, and THE diff/digest primitive both
+// halves of a config proposal call — construction in `agent`, apply in `cli`. The primitive is
+// exported from here and from nowhere else for the reason its own header states: two recipes for
+// one digest contract is 394's CR-02 defect class, and this phase's whole freshness guarantee is
+// the two halves agreeing byte for byte.
+export {
+  CONFIG_FILE_CHANGE_KINDS,
+  CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
+  ConfigApplyCommitSchema,
+  ConfigApplyOutcomeSchema,
+  ConfigFieldSetInputSchema,
+  ConfigProposalApplyInputSchema,
+  ConfigProposalApplyableV1Schema,
+  ConfigProposalFileSchema,
+  ConfigProposalV1Schema,
+  ConfigProposeOutputSchema,
+  EmptyConfigDiffFileError,
+  base64Decode,
+  base64Encode,
+  renderConfigDiff,
+  utf8Decode,
+  utf8Encode,
+} from './config-mutation/index'
+export type {
+  ConfigApplyCommit,
+  ConfigApplyOutcome,
+  ConfigDiffFileInput,
+  ConfigDiffResult,
+  ConfigFieldSetInput,
+  ConfigFileChangeKind,
+  ConfigFileDigest,
+  ConfigProposalApplyInput,
+  ConfigProposalApplyableV1,
+  ConfigProposalFile,
+  ConfigProposalV1,
+  ConfigProposeOutput,
+} from './config-mutation/index'
 
 // 316 seam helpers
 export type { RecordedActionResult } from './result/index'

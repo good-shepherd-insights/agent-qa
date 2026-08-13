@@ -16,6 +16,7 @@
 import { z } from 'zod'
 
 import { FindingProposalV1Schema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
+import { ConfigApplyOutcomeSchema, ConfigProposalV1Schema } from '../config-mutation/proposal'
 import { KnowledgeProposalV1Schema, ProposalIdSchema } from '../knowledge/proposal'
 import { KnowledgeApplyOutcomeSchema } from '../knowledge/review-verbs'
 import { GrantRecordOutcomeSchema } from '../safety/grant-ops'
@@ -67,6 +68,7 @@ export const ProposalEnvelopeSchema = z.discriminatedUnion('kind', [
   proposalEnvelopeArm('knowledge', KnowledgeProposalV1Schema),
   proposalEnvelopeArm('test-draft', TestDraftProposalV1Schema),
   proposalEnvelopeArm('finding', FindingProposalV1Schema),
+  proposalEnvelopeArm('config', ConfigProposalV1Schema),
 ])
 
 /** True only when the two types are mutually assignable — a real equality, not a subtype check. */
@@ -233,6 +235,14 @@ export const ProposalsAcceptAppliedSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('finding'),
     outcome: z.object({ acknowledged: z.literal(true) }).strict(),
+  }).strict(),
+  // 395 D-01/D-03 · CFGM-03: the apply that COMMITS the config change. `already-applied` rides the
+  // same outcome union rather than a sibling arm here, because a person who accepted twice is owed
+  // the receipt either way and a surface that had to distinguish two shapes to print one hash would
+  // be re-deciding what the port already decided.
+  z.object({
+    kind: z.literal('config'),
+    outcome: ConfigApplyOutcomeSchema,
   }).strict(),
 ])
 
