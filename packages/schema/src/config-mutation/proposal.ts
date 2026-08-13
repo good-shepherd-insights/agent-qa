@@ -126,6 +126,41 @@ export const CONFIG_BLOCKED_REASONS = ['schema-fail', 'guardrail-hit'] as const
 export type ConfigBlockedReason = (typeof CONFIG_BLOCKED_REASONS)[number]
 
 /**
+ * Why a propose call produced NO PROPOSAL AT ALL (Phase 395-05).
+ *
+ * A THIRD DISPOSITION, AND THE DISTINCTION FROM `blocked` IS DELIBERATE RATHER THAN COSMETIC. A
+ * blocked record is FILED: the change was constructible, a person can find the refusal in the inbox,
+ * and the reason is a fact about the RESULTING CONFIGURATION (it would not validate, or it would
+ * carry a secret). A refusal here is a fact about the REQUEST — the target already exists, the target
+ * does not exist, the value is not a reference — and there is no candidate configuration to file,
+ * because none was ever built. Filing one would put a row in a person's inbox for a call the agent
+ * should simply make again correctly.
+ *
+ * The four members, and what each one is a fact about:
+ *
+ *   target-exists         — `config.target.create` against a name the registry already holds. A
+ *                           create is never an upsert; the caller wanted `config.target.edit`.
+ *   target-not-found      — an edit or an auth binding naming a target that is not configured. The
+ *                           refusal lists the configured names (387's never-guess posture).
+ *   refs-only             — D-11: the input carried something that is not a reference. The value is
+ *                           never quoted, and no file was mutated before this was decided.
+ *   unsupported-reference — the reference is legal and this configuration schema has nowhere to put
+ *                           it. An honest "not here" naming where the value belongs, rather than a
+ *                           write whole-config validation would refuse a step later.
+ *
+ * RETUNE: owned by whoever owns D-01's action class. A member is added when an op learns to refuse a
+ * REQUEST for a reason a person can act on without opening an inbox.
+ */
+export const CONFIG_REFUSAL_REASONS = [
+  'target-exists',
+  'target-not-found',
+  'refs-only',
+  'unsupported-reference',
+] as const
+
+export type ConfigRefusalReason = (typeof CONFIG_REFUSAL_REASONS)[number]
+
+/**
  * One thing the guardrail scan found, described so a person can act without the value being shown.
  *
  * `redactedFingerprint` IS THE WHOLE DESIGN OF THIS SHAPE. A finding that quoted the secret would
@@ -230,6 +265,27 @@ export const ConfigProposeOutputSchema = z.discriminatedUnion('outcome', [
     validationIssues: z.array(z.string().min(1)).optional(),
   }).strict(),
   z.object({ outcome: z.literal('no-change'), path: z.string().min(1) }).strict(),
+  z.object({
+    outcome: z.literal('refused'),
+    reason: z.enum(CONFIG_REFUSAL_REASONS),
+    /**
+     * What was refused and what to do instead, in one sentence.
+     *
+     * NEVER THE VALUE. A `refs-only` refusal is reached precisely when the input carried something
+     * that looks like a credential, so a detail line quoting it would leak the secret on the way to
+     * refusing it — the same leak `configFieldSetBlockedSummaryLine` exists to close one arm over.
+     * The FIELD is named; the value is not.
+     */
+    detail: z.string().min(1),
+    /**
+     * What the caller could have meant — 387's disambiguation posture (D-15's never-guess line).
+     *
+     * A refusal that says "no such target" and stops makes the caller guess again; one that lists
+     * the configured names lets the next call be right. These are names the config already holds,
+     * so listing them discloses nothing the caller could not read with `config.get`.
+     */
+    candidates: z.array(z.string().min(1)).optional(),
+  }).strict(),
 ])
 
 export type ConfigProposeOutput = z.infer<typeof ConfigProposeOutputSchema>

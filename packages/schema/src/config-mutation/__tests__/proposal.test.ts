@@ -320,7 +320,7 @@ describe('the cross-boundary reason vocabulary is closed (D-02)', () => {
 })
 
 describe('the secret-adjacent field set is roots, and matching is by subtree (D-03)', () => {
-  it('names the seven roots', () => {
+  it('names the eight roots', () => {
     expect([...SECRET_ADJACENT_CONFIG_FIELDS]).toEqual([
       'workspace.envFile',
       'workspace.secretsFile',
@@ -329,7 +329,24 @@ describe('the secret-adjacent field set is roots, and matching is by subtree (D-
       'plugins.providers',
       'registry.providers',
       'registry.targets.*.authState',
+      // 395-05 added this one WITH THE FIELD THAT SHOWED IT, which is what the constant's retune
+      // comment asks for. `registry.targets.*.authState` above came from `WebPlatformConfig`, the
+      // RESOLVED platform configuration a run computes; `core`'s `TargetSchema` is `.strict()` and
+      // has no `authState` key, so nothing can ever be committed at that path. The committed
+      // configuration binds an auth state at `use.authState`, which was unflagged — meaning every
+      // op that binds an identity would have produced a proposal a standing grant could cover.
+      'use.authState',
     ])
+  })
+
+  it('flags the path the committed configuration actually binds an auth state at', () => {
+    // THE CELL THAT WOULD HAVE CAUGHT THE GAP. It is phrased against the two paths together so a
+    // reader can see the difference: only one of them is reachable in a committed config.
+    expect(isSecretAdjacentConfigField('use.authState')).toBe(true)
+    expect(isSecretAdjacentConfigField('use.authState.name')).toBe(true)
+    // ...and an ordinary `use` sibling is NOT flagged, so this root did not widen `use` wholesale.
+    expect(isSecretAdjacentConfigField('use.parallel')).toBe(false)
+    expect(isSecretAdjacentConfigField('use.timeout.step')).toBe(false)
   })
 
   it('flags each root exactly', () => {

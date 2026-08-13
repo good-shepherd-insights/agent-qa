@@ -67,6 +67,18 @@ export type CrossBoundaryReason = (typeof CROSS_BOUNDARY_REASONS)[number]
  *                                 username and an access key.
  *   registry.targets.*.authState — binds one target to a stored auth state, i.e. decides which
  *                                 identity a run acts as.
+ *   use.authState               — the SAME fact, at the path the committed configuration actually
+ *                                 spells it (395-05, added with the field that showed it).
+ *
+ * `use.authState` WAS MISSING, AND FINDING OUT WHY IS WORTH THE PARAGRAPH. 395-02 listed
+ * `registry.targets.*.authState` from `WebPlatformConfig`, which is the RESOLVED platform
+ * configuration a run computes — `core`'s `TargetSchema` is `.strict()` and has no `authState` key,
+ * so nothing can ever be committed at that path. The committed configuration binds an auth state at
+ * `use.authState` (`AuthStateUseSchema`: a name, or `{ name, load, capture }`), and that path was
+ * unflagged: every op that binds an identity would have produced an unflagged proposal a standing
+ * grant could cover. The listed root is KEPT rather than corrected away — this list may not shrink to
+ * make a proposal grantable, and a root that matches nothing costs nothing — but the reason it was
+ * wrong is recorded here so the next reader does not read a resolved-config path as a committed one.
  *
  * RETUNE: this list is owned by whoever owns D-02/D-03 — a phase that finds a secret-bearing region
  * of the config schema these roots do not cover adds the ROOT, with the field that showed it. It may
@@ -83,6 +95,7 @@ export const SECRET_ADJACENT_CONFIG_FIELDS = [
   'plugins.providers',
   'registry.providers',
   'registry.targets.*.authState',
+  'use.authState',
 ] as const
 
 export type SecretAdjacentConfigField = (typeof SECRET_ADJACENT_CONFIG_FIELDS)[number]

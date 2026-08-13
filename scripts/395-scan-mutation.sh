@@ -144,13 +144,12 @@ MUTATIONS = {
         + r".join('\n')).join('\n'),",
     ),
     'S2': (
-        "const scanned = deps.configScan.scan("
-        "scanParts(change.path, change.changeKind, rendered.changes, mutated))",
+        "const scanned = deps.configScan.scan(scanParts(rendered.changes, wholeFiles))",
         "const scanned = deps.configScan.scan([{ label: '%s', text: '' }])" % marker,
     ),
     'S3': (
-        "summaryLine: configFieldSetBlockedSummaryLine(input.path, report.detail),",
-        "summaryLine: configFieldSetSummaryLine(input.path, input.value),\n"
+        "summaryLine: configBlockedSummaryLine(plan.subject, report.detail),",
+        "summaryLine: plan.summaryLine,\n"
         "    ...(false ? { paths: ['%s'] } : {})," % marker,
     ),
 }

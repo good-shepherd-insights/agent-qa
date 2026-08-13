@@ -62,8 +62,15 @@ export type {
   ConfigUndoProposeInput,
 } from './actions'
 export {
+  CONFIG_REFERENCE_KINDS,
+  MAX_CONFIG_REFERENCE_LENGTH,
+  isLegalConfigReference,
+} from './references'
+export type { ConfigReferenceKind } from './references'
+export {
   CONFIG_BLOCKED_REASONS,
   CONFIG_FILE_CHANGE_KINDS,
+  CONFIG_REFUSAL_REASONS,
   CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
   ConfigProposalApplyableV1Schema,
   ConfigProposalBlockedV1Schema,
@@ -80,5 +87,6 @@ export type {
   ConfigProposalFile,
   ConfigProposalV1,
   ConfigProposeOutput,
+  ConfigRefusalReason,
   ConfigScanFinding,
 } from './proposal'

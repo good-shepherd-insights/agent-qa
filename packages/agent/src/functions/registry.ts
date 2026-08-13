@@ -26,6 +26,8 @@ import { authoringVerifyDraftSpec } from './ops/authoring-verify-draft.js'
 import { configFieldSetSpec } from './ops/config-field-set.js'
 import { configGetSpec } from './ops/config-get.js'
 import { configProposalApplySpec } from './ops/config-proposal-apply.js'
+import { configTargetCreateSpec } from './ops/config-target-create.js'
+import { configTargetEditSpec } from './ops/config-target-edit.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
 import { grantsListSpec } from './ops/grants-list.js'
@@ -145,6 +147,13 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // rather than answering an empty proposal about a project it cannot read.
   configFieldSetSpec as FunctionSpec,
   configProposalApplySpec as FunctionSpec,
+  // 395-05 D-01: the rest of the closed action class, registered as SIBLINGS on exactly the footing
+  // above. One op per action is what makes the class legible in the registry itself — the planner
+  // picks an action by tool name, 396 projects each one as its own MCP tool, and 397's parity walk
+  // enumerates them — where a single union op carrying a mode string would have projected as one
+  // tool whose real vocabulary lives inside a field nothing validates.
+  configTargetCreateSpec as FunctionSpec,
+  configTargetEditSpec as FunctionSpec,
   // 390 D-12/D-13: a new `quarantine.` domain — a taxonomy extension exactly as `entities.`
   // was, because quarantine state is neither a run, a memory nor an analysis. All three bind
   // through the OPTIONAL `quarantine` dep, so a host with no knowledge root lists them

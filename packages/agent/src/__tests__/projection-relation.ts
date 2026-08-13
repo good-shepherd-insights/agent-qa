@@ -31,6 +31,8 @@ import { authoringVerifyDraftSpec } from '../functions/ops/authoring-verify-draf
 import { configFieldSetSpec } from '../functions/ops/config-field-set.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
 import { configProposalApplySpec } from '../functions/ops/config-proposal-apply.js'
+import { configTargetCreateSpec } from '../functions/ops/config-target-create.js'
+import { configTargetEditSpec } from '../functions/ops/config-target-edit.js'
 import { entitiesGetSpec } from '../functions/ops/entities-get.js'
 import { grantsListSpec } from '../functions/ops/grants-list.js'
 import { proposalsAcceptSpec } from '../functions/ops/proposals-accept.js'
@@ -113,6 +115,12 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'config.field.set': configFieldSetSpec,
   'config.get': configGetSpec,
   'config.proposal.apply': configProposalApplySpec,
+  // 395-05 D-01. Paired the day they are registered. Both project the SAME three-arm propose union
+  // as `config.field.set` plus the `refused` arm 395-05 adds, and that fourth arm is exactly what a
+  // careless projection flattens: a catalogue that published it as one object would tell 396's
+  // consumers that a create against an existing target answers with a proposal id.
+  'config.target.create': configTargetCreateSpec,
+  'config.target.edit': configTargetEditSpec,
   'entities.get': entitiesGetSpec,
   'entities.resolve': entitiesResolveSpec,
   // 391 PROP-01 / D-03. Paired the day they are registered. `grants.list`'s output is the first

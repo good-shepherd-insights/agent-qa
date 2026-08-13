@@ -600,6 +600,20 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
+      // 395-05 D-01: the rest of the closed action class, BOUND on this composition for the reason
+      // above — the CLI host binds the config ports unconditionally. Both carry `config-write` and
+      // nothing else, which is what a listing shows a person who asks what letting the agent edit
+      // their configuration costs them.
+      'config.target.create': {
+        requiredScopes: ['config-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
+      'config.target.edit': {
+        requiredScopes: ['config-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
       // composition supplies an entity directory, so both read at the `read` tier.
       'entities.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },

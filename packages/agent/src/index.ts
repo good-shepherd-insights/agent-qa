@@ -193,14 +193,20 @@ export type {
   ConfigFileBytes,
   ConfigFileSet,
   ConfigFilesPortLike,
+  ConfigPathFacts,
   ConfigProposalsWritePortLike,
   ConfigScanPortLike,
+  ConfigStructuredValue,
   ConfigValidatePortLike,
   ConfigValidation,
 } from './config-mutation/ports.js'
 export {
   CONFIG_FIELD_SET_FUNCTION_ID,
 } from './functions/ops/config-field-set.js'
+// 395-05 D-01: the rest of the closed action class's op ids, on the footing of the two above — a
+// name a surface puts on the wire, never a dispatch handle. The SPECS stay inside `functions/`.
+export { CONFIG_TARGET_CREATE_FUNCTION_ID } from './functions/ops/config-target-create.js'
+export { CONFIG_TARGET_EDIT_FUNCTION_ID } from './functions/ops/config-target-edit.js'
 export {
   CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
   ConfigProposalNotApplicableError,

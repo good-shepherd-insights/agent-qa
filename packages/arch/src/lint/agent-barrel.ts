@@ -144,6 +144,11 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // dispatch path.
   'CONFIG_FIELD_SET_FUNCTION_ID',
   'CONFIG_PROPOSAL_APPLY_FUNCTION_ID',
+  // 395-05, D-01: the rest of the closed action class's op ids, in SORT position beside the two
+  // above and published for the identical reason — `composeLocalAgent()` and this phase's composed
+  // proofs put these names on the wire, and 387 D-11 forbids the literals each would spell.
+  'CONFIG_TARGET_CREATE_FUNCTION_ID',
+  'CONFIG_TARGET_EDIT_FUNCTION_ID',
   // 392 plan 05, D-21: the `/pin` refusal a REPL catches to say which class matched nothing. An
   // error CLASS on the footing of its siblings below — holding it runs nothing — and it is here
   // rather than local to the chat subtree because the surface that renders the refusal is in
@@ -623,9 +628,16 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'ConfigFileBytes',
   'ConfigFileSet',
   'ConfigFilesPortLike',
+  // 395-05: `ConfigPathFacts` — what the document HOLDS at a path, structurally. A create that must
+  // not overwrite, an edit that must not invent and an append that must not land on an existing
+  // member are three questions about the document's SHAPE, and `packages/agent` cannot parse yaml.
+  'ConfigPathFacts',
   'ConfigProposalsWritePortLike',
   'ConfigReaderPort',
   'ConfigScanPortLike',
+  // 395-05: the yaml FORMAT's value vocabulary — scalars, sequences and maps. A target entry and a
+  // hook entry are written as one block each, so the port that writes them cannot be scalar-only.
+  'ConfigStructuredValue',
   'ConfigValidatePortLike',
   'ConfigValidation',
   'CreateAgentJobQueueOptions',

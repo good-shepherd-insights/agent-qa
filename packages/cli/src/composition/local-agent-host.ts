@@ -36,13 +36,21 @@ import {
 import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { Document as YamlDocument, parseDocument, parse as parseYaml } from 'yaml'
+import {
+  Document as YamlDocument,
+  isMap,
+  isScalar,
+  isSeq,
+  parseDocument,
+  parse as parseYaml,
+} from 'yaml'
 
 import type {
   ConfigApplyPortLike,
   ConfigFieldSetResult,
   ConfigFileSet,
   ConfigFilesPortLike,
+  ConfigPathFacts,
   ConfigReaderPort,
   ConfigValidatePortLike,
   ConfigValidation,
@@ -66,6 +74,7 @@ import type {
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import {
   AgentQaConfigSchema,
+  HooksFileSchema,
   applyPatchSetToTestDoc,
   discoverWorkspaceFiles,
   generateRunId,
@@ -79,6 +88,7 @@ import {
 import type { TestDefinition } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
 import {
+  CONFIG_SET_GITIGNORE,
   KnowledgeApplyOutcomeSchema,
   base64Decode,
   enumerateConfigFileSet,
@@ -2230,6 +2240,37 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
       }
     },
 
+    /**
+     * The document's SHAPE at each path, from ONE parse (395-05).
+     *
+     * SHAPE AND NEVER CONTENT. `keys` and `length` describe the container so a create can refuse a
+     * collision, an edit can list the names that exist and an append can land past the end; the
+     * values inside are not returned, because a port that answered "what is at this path" would be
+     * the unmasked config reader `ConfigReaderPort`'s header says must not exist, reached through
+     * the back door of a mutation helper.
+     */
+    inspect({ bytes, paths }): Promise<readonly ConfigPathFacts[]> {
+      const document = bytes === undefined
+        ? new YamlDocument({})
+        : parseDocument(Buffer.from(bytes).toString('utf8'))
+      return Promise.resolve(paths.map((path) => {
+        const node = document.getIn(path.split('.'), true)
+        if (node === undefined || node === null) return { path, present: false }
+        if (isSeq(node)) return { path, present: true, kind: 'sequence' as const, length: node.items.length }
+        if (isMap(node)) {
+          return {
+            path,
+            present: true,
+            kind: 'map' as const,
+            // DOCUMENT ORDER, not sorted: these names are read back to a person as "did you mean",
+            // and the order they appear in the file is the order they will be looked for in it.
+            keys: node.items.map((item) => String(isScalar(item.key) ? item.key.value : item.key)),
+          }
+        }
+        return { path, present: true, kind: 'scalar' as const }
+      }))
+    },
+
     setField({ bytes, path, value }): Promise<ConfigFieldSetResult> {
       const document = bytes === undefined
         ? new YamlDocument({})
@@ -2270,40 +2311,77 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
  *
  * A PORT because the schema lives in `@vostride/agent-qa-core` and `packages/agent` does not depend
  * on it; `validate:arch` reds that edge with no legal repair. The `draftApply` idiom exactly.
+ *
+ * 395-05: THE CANDIDATE IS THE WHOLE FILE SET, NOT THE CONFIG YAML. `config.hook.add` changes only
+ * the hooks file, and a validator that only ever read the config yaml would have declared that
+ * proposal valid without looking at the one artifact it wrote — the whole-input law satisfied on
+ * paper and violated in fact. Each member is validated against the schema that OWNS it: the config
+ * yaml against `AgentQaConfigSchema`, the hooks file against `core`'s `HooksFileSchema` (which is
+ * where the canonical `h_` id rule and the duplicate-id/duplicate-name refinements live). A member
+ * with no schema — `.gitignore` is in the set — is passed over rather than guessed at.
+ *
+ * A CONSEQUENCE, STATED RATHER THAN DISCOVERED LATER: a project whose committed hooks file is
+ * already invalid now has every config proposal blocked with that file's issues, not only its hook
+ * additions. That is the same posture D-12 takes for a secret a human committed — the whole input is
+ * the whole input — and the blocked record names the file, so the person is told what to fix.
  */
 export function createConfigValidatePort(): ConfigValidatePortLike {
   return {
-    validate({ bytes }): Promise<ConfigValidation> {
-      let parsed: unknown
-      try {
-        parsed = parseYaml(Buffer.from(bytes).toString('utf8'))
-      } catch (error) {
-        // A yaml the parser cannot read is a validation failure and not a crash: the candidate
-        // came from a mutation this product made, so the person is owed the reason rather than a
-        // stack trace out of a library.
-        return Promise.resolve({
-          ok: false,
-          issues: [`the configuration is not readable as YAML: ${errorText(error)}`],
-        })
+    validate({ configFile, files }): Promise<ConfigValidation> {
+      const issues: string[] = []
+
+      for (const member of files) {
+        if (member.bytes === undefined) continue
+        // WHICH SCHEMA IS DECIDED BY WHICH MEMBER THIS IS, and the config file is named by the set
+        // rather than matched by extension: a project whose config is `agent-qa.yml` is still that
+        // project's config, and the hooks file is whatever `workspace.hooksFile` said it was.
+        const isConfig = member.path === configFile
+        const isHooks = !isConfig && member.path !== CONFIG_SET_GITIGNORE
+        if (!isConfig && !isHooks) continue
+
+        let parsed: unknown
+        try {
+          parsed = parseYaml(Buffer.from(member.bytes).toString('utf8'))
+        } catch (error) {
+          // A yaml the parser cannot read is a validation failure and not a crash: the candidate
+          // came from a mutation this product made, so the person is owed the reason rather than a
+          // stack trace out of a library.
+          issues.push(`${member.path}: not readable as YAML: ${errorText(error)}`)
+          continue
+        }
+
+        if (isConfig) {
+          // THE SAME THREE STEPS A REAL RUN TAKES — merge, normalize, parse (`resolveConfig`'s own
+          // sequence). Validating the raw file against the resolved schema instead was measured
+          // wrong during 395-01: `AgentQaConfigSchema` describes a COMPLETE configuration, so a
+          // candidate that omitted the env layer would be refused for keys a run supplies. The env
+          // overrides are included deliberately — "is this configuration valid" means valid for the
+          // process that will read it, and a proposal refused for a key the environment provides
+          // would be refusing a change that works.
+          const merged = mergeConfigs(parsed ?? {}, loadEnvOverrides(), {})
+          const result = AgentQaConfigSchema.safeParse(normalizeConfigForValidation(merged))
+          // The validator's OWN words, joined to a path. This layer reports issues; it does not
+          // classify them, because a closed issue vocabulary here would be a second, weaker copy of
+          // core's refinements, out of date the first time one is added.
+          if (!result.success) {
+            issues.push(...result.error.issues.map((issue) =>
+              `${issue.path.join('.') || '<root>'}: ${issue.message}`))
+          }
+          continue
+        }
+
+        // An EMPTY hooks file is a hooks file with no hooks, which is legal and common; `parseYaml`
+        // answers `null` for one, and refusing that would refuse every project that has the file and
+        // has not written a hook yet.
+        if (parsed === null || parsed === undefined) continue
+        const hooks = HooksFileSchema.safeParse(parsed)
+        if (!hooks.success) {
+          issues.push(...hooks.error.issues.map((issue) =>
+            `${member.path}: ${issue.path.join('.') || '<root>'}: ${issue.message}`))
+        }
       }
-      // THE SAME THREE STEPS A REAL RUN TAKES — merge, normalize, parse (`resolveConfig`'s own
-      // sequence). Validating the raw file against the resolved schema instead was measured wrong
-      // during 395-01: `AgentQaConfigSchema` describes a COMPLETE configuration, so a candidate
-      // that omitted the env layer would be refused for keys a run supplies. The env overrides are
-      // included deliberately — "is this configuration valid" means valid for the process that
-      // will read it, and a proposal refused for a key the environment provides would be refusing
-      // a change that works.
-      const merged = mergeConfigs(parsed ?? {}, loadEnvOverrides(), {})
-      const result = AgentQaConfigSchema.safeParse(normalizeConfigForValidation(merged))
-      if (result.success) return Promise.resolve({ ok: true })
-      return Promise.resolve({
-        ok: false,
-        // The validator's OWN words, joined to a path. This layer reports issues; it does not
-        // classify them, because a closed issue vocabulary here would be a second, weaker copy of
-        // core's refinements, out of date the first time one is added.
-        issues: result.error.issues.map((issue) =>
-          `${issue.path.join('.') || '<root>'}: ${issue.message}`),
-      })
+
+      return Promise.resolve(issues.length === 0 ? { ok: true } : { ok: false, issues })
     },
   }
 }

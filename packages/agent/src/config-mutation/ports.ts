@@ -44,6 +44,53 @@ import type {
 /** A dotted config path's new value. The three scalar shapes a config field can hold. */
 export type ConfigFieldValue = string | number | boolean
 
+/**
+ * A value of any shape the configuration format can hold (395-05).
+ *
+ * SCALARS ARE NOT ENOUGH ONCE MORE THAN ONE OP WRITES. `config.field.set` addresses one leaf, so its
+ * DTO's scalar union was the whole vocabulary. `config.target.create` writes a target ENTRY — a map
+ * of `platform`, `url` and possibly an auth binding — and `config.hook.add` writes a hook ENTRY into
+ * a sequence. Composing those out of several scalar writes would mean several parses of the same
+ * file, each free to disagree with the last about what it was editing, for an edit a person reads as
+ * one block.
+ *
+ * IT IS THE FORMAT'S VOCABULARY, NOT ANY OP'S. Three scalars, sequences and maps is what yaml holds;
+ * nothing here names a target, a hook or a plugin. A per-op value type would be the mutation fork
+ * this phase's construction pipeline exists to avoid.
+ */
+export type ConfigStructuredValue =
+  | ConfigFieldValue
+  | readonly ConfigStructuredValue[]
+  | { readonly [key: string]: ConfigStructuredValue }
+
+/**
+ * What the document holds at a path, as a STRUCTURAL fact rather than as a value (395-05).
+ *
+ * WHY THIS EXISTS AT ALL: three of this phase's ops have to answer a question about the document
+ * before they may mutate it. Does `registry.targets.shop` already exist (a create is never an
+ * upsert)? Does it exist at all (an edit of an absent target is a typed not-found, and 387's
+ * never-guess posture says the refusal lists the names that DO exist)? How long is the hook
+ * sequence, so an append writes past its end rather than over its last member? `packages/agent`
+ * cannot parse yaml — its ownership contract pins external dependencies at `['ai', 'zod']` — so the
+ * document's shape is a host fact exactly as its bytes are.
+ *
+ * IT ANSWERS SHAPE, NEVER CONTENT, and the line is drawn there deliberately. `keys` and `length`
+ * describe the container; the values inside it are not returned. A port that answered "what is at
+ * this path" would be a second, unmasked config reader — the capability `ConfigReaderPort`'s header
+ * says must not exist — reached through the back door of a mutation helper.
+ */
+export interface ConfigPathFacts {
+  /** The dotted path this fact is about, echoed so a caller reading several cannot misalign them. */
+  readonly path: string
+  readonly present: boolean
+  /** Absent when the path holds nothing. */
+  readonly kind?: 'scalar' | 'map' | 'sequence'
+  /** A map's keys, in document order. The names a disambiguation refusal lists. */
+  readonly keys?: readonly string[]
+  /** A sequence's length. What an append writes at. */
+  readonly length?: number
+}
+
 /** One member of the pinned config SET, with the bytes it holds right now. */
 export interface ConfigFileBytes {
   /** Workspace-relative, as the host's identity mint spells it. */
@@ -95,12 +142,28 @@ export interface ConfigFilesPortLike {
    * TAKES THE BYTES RATHER THAN RE-READING THEM. The caller has just re-read the file and is about
    * to digest what it read; a mutation that opened the file again would edit a version the digest
    * is not about, which is a freshness hole inside the freshness contract.
+   *
+   * 395-05 WIDENED `value` from a scalar to {@link ConfigStructuredValue}. See that type's header:
+   * the widening is the yaml FORMAT's vocabulary arriving in full, not an op's shape leaking into
+   * the port. `previousValue` still answers scalars only, because that is the only case an origin
+   * comparison can be taken over.
    */
   setField(input: {
     readonly bytes?: Uint8Array
     readonly path: string
-    readonly value: ConfigFieldValue
+    readonly value: ConfigStructuredValue
   }): Promise<ConfigFieldSetResult>
+  /**
+   * What the document HOLDS at each path, structurally (395-05). See {@link ConfigPathFacts}.
+   *
+   * EVERY PATH IN ONE CALL, SO EVERY ANSWER COMES FROM ONE PARSE. An op that asked twice could be
+   * told the target is absent and then, from a second parse of the same bytes, be given a key list
+   * that contains it. The bytes are handed in for `setField`'s reason, one paragraph up.
+   */
+  inspect(input: {
+    readonly bytes?: Uint8Array
+    readonly paths: readonly string[]
+  }): Promise<readonly ConfigPathFacts[]>
 }
 
 /**
@@ -136,8 +199,26 @@ export type ConfigValidation =
   | { readonly ok: false; readonly issues: readonly string[] }
 
 export interface ConfigValidatePortLike {
-  /** The WHOLE config as it would stand after the mutation — never the changed field alone. */
-  validate(input: { readonly configFile: string; readonly bytes: Uint8Array }): Promise<ConfigValidation>
+  /**
+   * The WHOLE CANDIDATE SET as it would stand after the mutation — never the changed field alone,
+   * and since 395-05 never the changed FILE alone either.
+   *
+   * THE SET, BECAUSE THE CONFIG IS MORE THAN ONE FILE. `config.hook.add` writes the hooks file and
+   * leaves the config yaml untouched; a validator that only ever saw the config yaml would have
+   * declared that proposal valid without reading the only bytes it changed. D-03's law is that the
+   * guards here are WHOLE-INPUT by construction, and the whole input is the pinned file set: the
+   * host validates each member it has a schema for (the config yaml against `core`'s
+   * `AgentQaConfigSchema`, the hooks file against `HooksFileSchema`) and passes over the ones it
+   * does not (`.gitignore` is a member of the set and has no schema).
+   *
+   * MEMBERS WITH NO BYTES ARE ABSENT FILES, and absent is a legal state for every member but the
+   * config yaml — a project with no hooks file is an ordinary project, not an invalid one.
+   */
+  validate(input: {
+    readonly configFile: string
+    /** Every member of the pinned set, with the bytes it would hold if this proposal applied. */
+    readonly files: readonly ConfigFileBytes[]
+  }): Promise<ConfigValidation>
 }
 
 /**

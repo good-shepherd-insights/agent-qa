@@ -144,6 +144,10 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // what `unbound` exists to say and what omitting them would have made unsayable.
   'config.field.set': 'unbound',
   'config.proposal.apply': 'unbound',
+  // 395-05 D-01: the rest of the closed action class, UNBOUND here for the identical reason — this
+  // fixture supplies no config ports at all. Listed by name and refused by name.
+  'config.target.create': 'unbound',
+  'config.target.edit': 'unbound',
   // 387 D-09. Both BOUND everywhere: the entity directory is a required dep, so unlike
   // `runs.start` there is no composition that can list these and then refuse them.
   'entities.get': 'bound',
@@ -272,6 +276,11 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // not parse would make the unbound-refusal leg report an input error and certify nothing.
   'config.field.set': { path: 'use.timeout', value: '45s' },
   'config.proposal.apply': { proposalId: 'prop_0123456789ab' },
+  // 395-05 D-01: PARSING inputs on the rows above reasoning — `invokeFunction` validates before it
+  // consults the binding, so a sample that did not parse would make the unbound-refusal leg report
+  // an input error and certify nothing about binding.
+  'config.target.create': { name: 'shop', platform: 'web', url: 'https://shop.example.com' },
+  'config.target.edit': { name: 'shop', changes: { url: 'https://shop.example.com/basket' } },
   // 387: `resolve` takes any reference at all, so the sample is free text that matches
   // nothing — the fixture directory is empty and the honest answer is the none arm. `get`
   // takes an exact address, and the fixture port below is what stands behind it.

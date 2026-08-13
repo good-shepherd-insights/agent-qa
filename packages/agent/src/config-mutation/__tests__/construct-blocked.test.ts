@@ -174,6 +174,13 @@ function harness(options: {
             { path: '.gitignore' },
           ],
         }),
+        // 395-05 widened the port with a structural probe. `config.field.set` never asks one — it
+        // addresses a path directly and has no collision or not-found posture — so this double
+        // THROWS rather than answering, and a pipeline that started probing on this op's behalf
+        // would fail here by name instead of quietly passing on a fabricated answer.
+        inspect: () => {
+          throw new Error('config.field.set must not inspect the document')
+        },
         setField: ({ bytes, path, value }) => {
           const text = bytes === undefined ? '' : utf8Decode(bytes)
           const key = path.split('.').at(-1) ?? path
