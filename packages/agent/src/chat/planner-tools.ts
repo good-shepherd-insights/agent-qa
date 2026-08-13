@@ -99,18 +99,45 @@ const ANSWER_ONLY_DESCRIPTION =
   + 'covers the clause it names and no other, and any clause left neither named here nor bound '
   + 'to a tool refuses the whole turn.'
 
+// THE SECOND SENTENCE IS 394-30's LIVE REFUSAL, ANSWERED AT THE CALL THAT MADE IT. A live planner
+// refused an authoring turn whose only obstacle was an OMITTED OPTIONAL FIELD — one its own tool
+// contract lists outside `required` — so the refusal was never "no tool here can do this" but "I
+// decided a tool I have needs something it says it does not". That decision is made at the moment
+// this call is emitted, which makes this description the nearest surface to it: the prompt states
+// the general law (chat-prompt.ts) and this states it where the misuse happens.
 const MARK_UNHANDLED_DESCRIPTION =
   'Declare that a part of the request cannot be carried out with the tools available. Naming it '
   + 'here refuses the whole turn without performing any of it, which is the correct outcome — '
-  + 'never substitute a different tool that looks close.'
+  + 'never substitute a different tool that looks close. Do not use this because an optional field '
+  + 'is missing — optional fields never make a request unhandleable.'
 
 const HOST_SUPPLIES_WINDOW =
   'The host supplies a session-scoped `window` when this field is omitted — omit it to ask about '
   + 'the current session; pass `window` only to widen to all-time or last-n.'
 
+// TWO FACTS, AND THE SENTENCE THAT PRECEDED IT GOT BOTH WRONG (394-30, WINDOWS 110).
+//
+// It closed with "pass `scope` only to author for a DIFFERENT target" — which reads to a planner as
+// an instruction to WITHHOLD a scope the person has already named, exactly the field the surface is
+// positioned to fill from their own words. And its opening promised a host derivation flatly, while
+// `deriveDefaultAuthoringScope` binds only where the project has ONE candidate product and returns
+// `AuthoringScopeUnresolvableError` otherwise (six candidates on the demo workspace). A model told
+// the host will handle something the host refuses has been handed a false premise to plan against.
+//
+// So this says who fills the field and when, and states the refusal as a refusal. Guessing belongs
+// to NOBODY: the host must not guess among candidates (D-19) and the planner must not invent a
+// requirement its contract denies, which leaves the person's own utterance as the one legitimate
+// source of a scope — and the planner as the only surface positioned to read it. The absent-scope
+// path is thereby a single-product-project affordance, and the sentence says so out loud rather
+// than letting a multi-product project discover it as a refusal.
 const HOST_DERIVES_SCOPE =
-  "The host derives the target test scope from this project's configured targets when `scope` is "
-  + 'omitted — pass `scope` only to author for a different target.'
+  "When the person's request names the page, product or target it is for, pass `scope` with that "
+  + "target's key. When `scope` is omitted the host derives it only when this project has exactly "
+  + 'one candidate product; otherwise the call returns a typed refusal naming every candidate — '
+  // The dist-gate sentinel 394-35 greps before it spends, kept whole on ONE source line: a string
+  // concatenation folds at build time, so a phrase split across two lines is greppable in the built
+  // bytes and invisible in the source the acceptance check reads.
+  + 'it never guesses.'
 
 /** A projected JSON-Schema node, as the shape this transform edits it through. */
 type SchemaNode = Record<string, unknown>
