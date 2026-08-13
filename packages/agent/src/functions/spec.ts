@@ -50,6 +50,7 @@ import type {
   ConfigApplyPortLike,
   ConfigFilesPortLike,
   ConfigProposalsWritePortLike,
+  ConfigScanPortLike,
   ConfigValidatePortLike,
 } from '../config-mutation/ports.js'
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
@@ -133,6 +134,7 @@ export type OptionalFunctionDepKey =
   | 'configValidate'
   | 'configApply'
   | 'configProposals'
+  | 'configScan'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -949,6 +951,22 @@ export interface FunctionDeps {
    * change — two unrelated capabilities failing together for no reason either of them names.
    */
   configProposals?: ConfigProposalsWritePortLike
+  /**
+   * 395 D-09/D-12 · CFGM-02: the construction-time secret scan, bound to the host's masking seeds.
+   *
+   * A DEP RATHER THAN A DIRECT CALL, even though this package may import `packages/safety` and does.
+   * The FUNCTION is pure and could be called from here; its SEEDS are the resolved environment slice
+   * the run masker is built from, and this package reads no environment. Binding the closure at the
+   * composition root is what makes the values this scan knows and the values the masker hides one
+   * set by construction (D-09) rather than two lists that happen to agree.
+   *
+   * BOUND UNCONDITIONALLY BY `composeLocalAgent`, like `configProposals` and unlike its other three
+   * neighbours: there is no host that legitimately cannot scan, because the capability needs nothing
+   * but the process it is already running in. It is optional here only so the deps record stays one
+   * shape, and the propose ops refuse BY NAME when it is missing — a construction that cannot scan
+   * must not surface a diff.
+   */
+  configScan?: ConfigScanPortLike
 }
 
 /**

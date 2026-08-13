@@ -611,13 +611,21 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // worth pinning: `packages/agent`'s ownership contract admits exactly `['ai', 'zod']`, so the
   // `yaml` Document API the comment-preserving mutation needs cannot live in-layer. The edit is a
   // fact about the file FORMAT, and it rides the port that already owns reading it.
+  //
+  // 395-04 adds two: `ConfigFieldSetResult` — the edit answers with the value it REPLACED beside
+  // the bytes it wrote, because the per-value cross-boundary classifier compares the two and a
+  // second parse to recover the old value would be free to disagree with the one that applied the
+  // edit — and `ConfigScanPortLike`, the construction-time secret scan bound to the host's own
+  // masking seeds (D-09: one seed set, not two lists that agree today).
   'ConfigApplyPortLike',
+  'ConfigFieldSetResult',
   'ConfigFieldValue',
   'ConfigFileBytes',
   'ConfigFileSet',
   'ConfigFilesPortLike',
   'ConfigProposalsWritePortLike',
   'ConfigReaderPort',
+  'ConfigScanPortLike',
   'ConfigValidatePortLike',
   'ConfigValidation',
   'CreateAgentJobQueueOptions',

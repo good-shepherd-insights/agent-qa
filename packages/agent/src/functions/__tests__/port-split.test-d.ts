@@ -125,6 +125,12 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // 394 analogues. Bundling them would make a composition that can read config but cannot commit
 // report the whole config story absent — which is exactly the state `unbound` exists to
 // distinguish from a capability that never existed.
+// 395-04 extends it a NINETEENTH time, by name: `configScan` — the construction-time secret scan,
+// bound to the host's masking seed sources. It is a key of its own rather than a member of
+// `configFiles` for the reason that split already states, read on this phase's safety axis: the
+// FUNCTION is pure and lives in `packages/safety`, and what a host supplies is its SEEDS. Folding it
+// into the files port would make "this host can read config bytes" and "this host knows which
+// values are secret" one claim, and the second is the one CFGM-02 turns on.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -147,6 +153,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'configValidate'
     | 'configApply'
     | 'configProposals'
+    | 'configScan'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

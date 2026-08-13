@@ -64,6 +64,7 @@ import type {
   ProposalRecord,
   ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
+import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -202,6 +203,14 @@ function registryFor(options: { readonly bindApply?: boolean } = {}) {
     // THE REAL THREE, over the real workspace and the real repository.
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
+    // 395-04: the REAL scan, with an EMPTY seed set. The function is production's; the seeds are
+    // not, and the difference is deliberate — `composeLocalAgent` seeds from `sensitiveEnvSlice`,
+    // which reads the environment this suite happens to run in, and a cell whose verdict depends on
+    // whether the developer exported a token is a cell that measures the machine. The pattern half
+    // still runs over every artifact below, so a secret-shaped value in any of these fixtures would
+    // block here. The SEEDED half is measured where it belongs, in `config-blocked-renders.test.ts`,
+    // which sets the variable it depends on.
+    configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
     ...(options.bindApply === false ? {} : { configApply: createConfigApplyPort(configPath) }),
     // The REAL store write, through the same two verbs `composeLocalAgent` binds — so the envelope
     // this path files is one the inbox below really reads back off disk.
@@ -299,16 +308,27 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
   })
 
   it('(a2) refuses a mutation that breaks the WHOLE config, before anything surfaces', async () => {
-    // CFGM-01: validation runs before the proposal exists. `use.parallel` is a boolean in the
-    // schema, so a string there is a candidate config that does not validate — and the answer is
-    // the typed `invalid` arm rather than a proposal a person could accept.
+    // CFGM-01: validation runs before any APPLYABLE proposal exists. `use.parallel` is a boolean in
+    // the schema, so a string there is a candidate config that does not validate.
+    //
+    // 395-04 turned this answer from a bare refusal into a filed BLOCKED record — one posture, two
+    // reasons — so the assertion moved with it rather than being deleted. The claim it protects is
+    // unchanged and is the one that matters: nothing a person could ACCEPT was ever produced.
     const answer = await propose(registryFor(), { path: 'use.parallel', value: 'yes please' })
 
-    expect(answer.outcome).toBe('invalid')
-    if (answer.outcome !== 'invalid') throw new Error('unreachable')
-    expect(answer.issues.length).toBeGreaterThan(0)
-    expect(answer.issues.join('\n')).toContain('use.parallel')
-    // NOTHING WAS FILED. A blocked record is 395-02's; today an invalid mutation leaves no artifact.
+    expect(answer.outcome).toBe('blocked')
+    if (answer.outcome !== 'blocked') throw new Error('unreachable')
+    expect(answer.blockedReason).toBe('schema-fail')
+    expect(answer.validationIssues?.length ?? 0).toBeGreaterThan(0)
+    expect((answer.validationIssues ?? []).join('\n')).toContain('use.parallel')
+    // THE RECORD IS BLOCKED ON DISK, not merely reported as blocked in a return value — and it has
+    // no payload to apply, which is the structural half of D-10 read back from the store.
+    const record = storedRecord(answer.proposalId)
+    if (record.kind !== 'config') throw new Error('stored record is not a config proposal')
+    expect(record.payload.payloadKind).toBe('blocked')
+    expect(JSON.stringify(record.payload)).not.toContain('shownDiffBase64')
+    expect(JSON.stringify(record.payload)).not.toContain('newContentBase64')
+    // NOTHING WAS WRITTEN AND NOTHING WAS COMMITTED.
     expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(commitCount()).toBe(1)
   })

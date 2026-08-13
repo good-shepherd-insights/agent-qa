@@ -29,6 +29,11 @@ export {
 } from './constants'
 export type { CrossBoundaryReason, SecretAdjacentConfigField } from './constants'
 export {
+  CONFIG_SET_DEFAULT_HOOKS_FILE,
+  CONFIG_SET_GITIGNORE,
+  enumerateConfigFileSet,
+} from './file-set'
+export {
   CONFIG_HOOK_RUNTIMES,
   ConfigApplyCommitSchema,
   ConfigApplyOutcomeSchema,

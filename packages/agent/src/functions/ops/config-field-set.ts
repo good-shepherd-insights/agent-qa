@@ -46,17 +46,27 @@ export const configFieldSetSpec: FunctionSpec<ConfigFieldSetInput, ConfigPropose
     readOnly: false,
   },
   async invoke(input, deps): Promise<ConfigProposeOutput> {
-    // THREE DEPS, ONE `boundThrough`, on `proposals.accept`'s stated arrangement. The declared name
-    // is the one whose absence means "this host has no config files at all"; the other two are
+    // FOUR DEPS, ONE `boundThrough`, on `proposals.accept`'s stated arrangement. The declared name
+    // is the one whose absence means "this host has no config files at all"; the other three are
     // checked here, by name, so an in-layer caller holding the spec gets the same refusal a gate
     // caller would.
-    const { configFiles, configValidate, configProposals } = deps
-    if (configFiles === undefined || configValidate === undefined || configProposals === undefined) {
+    //
+    // `configScan` IS IN THAT LIST AND ITS ABSENCE REFUSES (395-04, CFGM-02). A construction that
+    // cannot scan must not surface a diff: the alternative is a guardrail that silently stops
+    // existing whenever a host forgets one line of wiring, which is the permissive direction a
+    // security control may not fail in.
+    const { configFiles, configValidate, configProposals, configScan } = deps
+    if (
+      configFiles === undefined
+      || configValidate === undefined
+      || configProposals === undefined
+      || configScan === undefined
+    ) {
       throw new FunctionNotBoundError(CONFIG_FIELD_SET_FUNCTION_ID)
     }
     return await constructConfigFieldSetProposal(
       { action: CONFIG_FIELD_SET_FUNCTION_ID, path: input.path, value: input.value },
-      { configFiles, configValidate, configProposals },
+      { configFiles, configValidate, configProposals, configScan },
     )
   },
 }

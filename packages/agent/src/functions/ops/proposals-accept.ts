@@ -496,6 +496,22 @@ async function resolveApply(
   if (entry.applyInFlight) {
     return { outcome: 'apply-in-flight', proposalId: input.proposalId }
   }
+  // 395-04 D-10: a BLOCKED config proposal is a real record — listable, showable, and a perfectly
+  // reasonable thing for a person to try to accept. There is nothing filed to apply, and saying so
+  // as DATA is what keeps the reason and the id in the answer. `applyablePayload()` still refuses
+  // the same payload by name one layer down; that refusal guards the PORT, and letting it escape
+  // here would report this surface's ordinary answer as a fault (RESEARCH Pitfall 9's shape).
+  //
+  // NARROWED ON THE PAYLOAD'S OWN DISCRIMINANT, at the kind that has one. A check keyed on anything
+  // else — a status, a flag beside the payload — would be a second classification of one value,
+  // free to disagree with the one the funnel below takes.
+  if (entry.envelope.kind === 'config' && entry.envelope.payload.payloadKind === 'blocked') {
+    return {
+      outcome: 'not-applyable',
+      proposalId: input.proposalId,
+      reason: entry.envelope.payload.blockedReason,
+    }
+  }
   return {
     outcome: 'applied',
     applied: await applyEnvelope(deps, input.proposalId, entry.envelope),

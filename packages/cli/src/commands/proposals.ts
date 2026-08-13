@@ -164,15 +164,58 @@ function renderEntry(entry: ProposalInboxEntryDto): string {
  * That asymmetry is D-18's boundary made concrete: the digest and the listing carry refs and
  * counts, and `show` is the verb a person deliberately reaches for when they want the bytes.
  */
-function renderShow(result: ProposalsShowOutput): string {
+export function renderShow(result: ProposalsShowOutput): string {
   if (result.kind === 'not-found') {
     return pc.dim(`No proposal is recorded under ${result.proposalId}.`)
+  }
+  const { envelope } = result.entry
+  // 395-04 D-10 · CFGM-02: a BLOCKED config proposal renders its REPORT, and the report is all
+  // there is. This arm is not a formatting preference — it is where the phase's information-
+  // disclosure wall is visible on the one surface that exists to print bytes: a blocked record has
+  // no diff and no file content to print (395-02 made that structural), so what a person needs here
+  // is the reason, the files, and what the scan named. The JSON dump below would print the same
+  // facts unlabelled; this prints them as the sentence somebody can act on.
+  if (envelope.kind === 'config' && envelope.payload.payloadKind === 'blocked') {
+    return [renderEntry(result.entry), '', ...renderBlockedConfig(envelope.payload)].join('\n')
   }
   return [
     renderEntry(result.entry),
     '',
-    JSON.stringify(result.entry.envelope.payload, null, 2),
+    JSON.stringify(envelope.payload, null, 2),
   ].join('\n')
+}
+
+/**
+ * The blocked report, named and never quoted.
+ *
+ * EVERY LINE HERE IS A REFERENCE. A path, a config field, a detector's id and a non-reversing
+ * fingerprint — the four things `ConfigScanFinding` carries, and by construction it carries nothing
+ * else. There is deliberately no branch that prints a value, masked or otherwise: D-10 keeps the
+ * shown==applied byte-equality law exception-free by blocking the RENDER outright, and a
+ * mask-aware carve-out on this surface is exactly the exception it refuses.
+ */
+function renderBlockedConfig(
+  payload: Extract<ProposalInboxEntryDto['envelope'], { kind: 'config' }>['payload'] & {
+    payloadKind: 'blocked'
+  },
+): string[] {
+  const findings = payload.scanFindings ?? []
+  const issues = payload.validationIssues ?? []
+  return [
+    pc.yellow(`BLOCKED (${payload.blockedReason}) — nothing here can be applied.`),
+    `  files: ${payload.paths.join(', ')}`,
+    ...(findings.length === 0
+      ? []
+      : [
+        '  the guardrail scan found:',
+        ...findings.map((finding) =>
+          `    ${finding.path}${finding.field === undefined ? '' : ` (${finding.field})`}`
+          + `: ${finding.detector} [${finding.redactedFingerprint}]`),
+      ]),
+    ...(issues.length === 0
+      ? []
+      : ['  whole-config validation refused it:', ...issues.map((issue) => `    ${issue}`)]),
+  ]
 }
 
 /** The grant half, printed VERBATIM beside the apply half — never instead of it (D-01/D-05). */
@@ -210,11 +253,21 @@ function renderGrantOutcome(grant: ProposalsAcceptOutput['grant']): string {
 /** Exported so a differential can range it rather than restate it (the package's own precedent). */
 export function renderAccept(result: ProposalsAcceptOutput): string {
   const apply = result.apply
+  // 395-04's `not-applyable` arm lands here as its own line, and it says WHY rather than only that
+  // it did not apply: a person who accepted a blocked proposal is being told the thing they asked
+  // for was refused before it was ever offered, and "not-applyable: <id>" alone would send them to
+  // `show` to find out something this line already knows. The report itself stays one `show` away.
   const applyLine = apply.outcome === 'applied'
     ? `applied (${apply.applied.kind})`
-    : apply.outcome === 'not-found' || apply.outcome === 'apply-in-flight'
-      ? `${apply.outcome}: ${apply.proposalId}`
-      : `${apply.outcome}: ${apply.entry.envelope.id}`
+    : apply.outcome === 'not-applyable'
+      ? pc.yellow(
+        `not-applyable: ${apply.proposalId} — this proposal was blocked when it was constructed `
+        + `(${apply.reason}), so there is nothing filed to apply. `
+        + 'Run `proposals show` to read what it found.',
+      )
+      : apply.outcome === 'not-found' || apply.outcome === 'apply-in-flight'
+        ? `${apply.outcome}: ${apply.proposalId}`
+        : `${apply.outcome}: ${apply.entry.envelope.id}`
   return [applyLine, renderGrantOutcome(result.grant)].join('\n')
 }
 

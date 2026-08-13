@@ -40,6 +40,7 @@ import { Document as YamlDocument, parseDocument, parse as parseYaml } from 'yam
 
 import type {
   ConfigApplyPortLike,
+  ConfigFieldSetResult,
   ConfigFileSet,
   ConfigFilesPortLike,
   ConfigReaderPort,
@@ -51,7 +52,7 @@ import type {
   TestDraftApplyRequestLike,
   TestDraftApplyResultLike,
 } from '@vostride/agent-qa-agent'
-import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
+import { composeLocalAgent, sensitiveEnvSlice } from '@vostride/agent-qa-agent-local'
 import type {
   CandidateProsePosture,
   ComposeLocalAgentInput,
@@ -77,7 +78,13 @@ import {
 } from '@vostride/agent-qa-core'
 import type { TestDefinition } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
-import { KnowledgeApplyOutcomeSchema, base64Decode, renderConfigDiff, sha256hexBytes } from '@vostride/agent-qa-schema'
+import {
+  KnowledgeApplyOutcomeSchema,
+  base64Decode,
+  enumerateConfigFileSet,
+  renderConfigDiff,
+  sha256hexBytes,
+} from '@vostride/agent-qa-schema'
 import type {
   ConfigApplyOutcome,
   ConfigProposalApplyableV1,
@@ -2165,21 +2172,13 @@ function restoreConfigApplyFailure(
   }
 }
 
-/**
- * The pinned config file SET, enumerated from the config itself (RESEARCH Pitfall 5, 394-39).
- *
- * A SET AND NOT A GLOB, and the difference is what this constant is. `*.yaml` would answer
- * differently on the first repository whose layout nobody anticipated — silently, and in the
- * direction that matters, because the set is what a porcelain check scopes to, what an out-of-set
- * classifier compares against and what a commit's pathspec names. Every member here is a file the
- * CONFIG itself names: the config yaml, the hooks file `workspace.hooksFile` points at, and the
- * `.gitignore` whose managed block `init` maintains.
- *
- * RETUNE: add a member here when the config grows a new file it OWNS — not when a project happens
- * to keep another yaml beside it. The test is authorship: this product writes these files.
- */
-const CONFIG_SET_GITIGNORE = '.gitignore'
-const CONFIG_SET_DEFAULT_HOOKS_FILE = 'hooks.yaml'
+// 395-04: the pinned config file SET's enumeration MOVED to `schema`
+// (`config-mutation/file-set.ts`), and the move is the point rather than tidiness. Three packages
+// read that one answer — this port enumerates the files it reads bytes for, `agent`'s cross-boundary
+// classifier decides `out-of-set-path` against it, and 395-06's apply porcelain scopes its check to
+// it — and `agent` may not import `cli`. A copy on either side would fail in the PERMISSIVE
+// direction and silently, the day the set grew a member. The two names and the retune note live
+// beside the function.
 
 /**
  * Read the committed config set as RAW BYTES, and perform the comment-preserving field edit.
@@ -2209,12 +2208,15 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
       const fileConfig = await loadConfigFile(configPath) as { workspace?: { hooksFile?: unknown } }
       const hooksFile = typeof fileConfig.workspace?.hooksFile === 'string'
         ? fileConfig.workspace.hooksFile
-        : CONFIG_SET_DEFAULT_HOOKS_FILE
+        : undefined
 
-      // Deduplicated and sorted, so two reads of one project answer in one order. A `Set` rather
-      // than a filter because a project whose `hooksFile` IS the config file would otherwise be
-      // enumerated twice and digested twice under one path.
-      const members = [...new Set([configIdentity, hooksFile, CONFIG_SET_GITIGNORE])].sort()
+      // THE ONE ENUMERATION, imported. Deduplication, ordering and the default hooks file are all
+      // its business, so this port and the out-of-set classifier cannot disagree about which files
+      // are config.
+      const members = enumerateConfigFileSet({
+        configFile: configIdentity,
+        ...(hooksFile === undefined ? {} : { hooksFile }),
+      })
 
       return {
         configFile: configIdentity,
@@ -2228,12 +2230,30 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
       }
     },
 
-    setField({ bytes, path, value }): Promise<Uint8Array> {
+    setField({ bytes, path, value }): Promise<ConfigFieldSetResult> {
       const document = bytes === undefined
         ? new YamlDocument({})
         : parseDocument(Buffer.from(bytes).toString('utf8'))
-      document.setIn(path.split('.'), value)
-      return Promise.resolve(Uint8Array.from(Buffer.from(document.toString(), 'utf8')))
+      const segments = path.split('.')
+      // READ BEFORE WRITE, THROUGH THE SAME DOCUMENT (395-04, D-02). The classifier compares the
+      // value this edit replaces against the one it writes — a base URL pointing at a NEW origin is
+      // the case no per-op map can see — and the alternative to reading it here was a second parse
+      // of the same bytes, free to disagree with the one that actually applied the edit.
+      //
+      // SCALARS ONLY, and the narrowing is honest rather than lossy: `getIn` with `keepScalar` false
+      // answers a JS value, which for a map or a sequence is an object. "There was no scalar there"
+      // is the true statement about what a wholesale subtree replacement replaced, and such an edit
+      // is flagged on its own grounds (secret-adjacency) rather than by pretending it had one.
+      const previous = document.getIn(segments) as unknown
+      document.setIn(segments, value)
+      const mutated = Uint8Array.from(Buffer.from(document.toString(), 'utf8'))
+      return Promise.resolve(
+        typeof previous === 'string'
+          || typeof previous === 'number'
+          || typeof previous === 'boolean'
+          ? { bytes: mutated, previousValue: previous }
+          : { bytes: mutated },
+      )
     },
   }
 }
@@ -2612,6 +2632,21 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     configFiles: createConfigFilesPort(input.configPath),
     configValidate: createConfigValidatePort(),
     configApply: createConfigApplyPort(input.configPath),
+    // 395-04 D-09 · CFGM-02: the construction scan's seeds, supplied by the HOST because the
+    // environment is a host fact — `composeLocalAgent` is host-neutral and its own D-16 artifact
+    // guard reds on a `process.env` read in that package.
+    //
+    // `sensitiveEnvSlice` AND NOT `process.env`, imported rather than restated. It is the D-05
+    // name-based filter `buildRunMaskingContext` already feeds `seedMaskingContext` with, so the
+    // values this scan looks for and the values the run masker hides are one set by construction
+    // (D-09's sibling-input law). Raw env would seed HOME, PATH and every planner-visible setting,
+    // and a config edit whose new value happened to equal one of them would be refused as a secret —
+    // so bypassing the filter fails in both directions at once.
+    //
+    // The run's other two channels — the `SecretStore` and captured auth state — are RUN-SCOPED and
+    // do not exist at proposal time. Inventing them here would be inventing facts; the scan's
+    // pattern half is what covers shapes nobody seeded.
+    configScanSeeds: () => ({ env: sensitiveEnvSlice(process.env) }),
     config: createMaskedConfigReader(input.configPath),
     knowledgeRoot,
     // D-18: when a live daemon holds the writer lease, this host hands it the SAME

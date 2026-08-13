@@ -191,13 +191,19 @@ export type ConfigProposalV1 = z.infer<typeof ConfigProposalV1Schema>
 /**
  * What a propose op answers: the proposal it filed, or the reason there is nothing to decide.
  *
- * A TYPED RESULT RATHER THAN A THROW for the two ordinary outcomes. `invalid` is CFGM-01's
- * validation running BEFORE the proposal surfaces — a mutation that would break the whole config
- * never becomes something a person can accept. `no-change` is a set of a value the config already
- * holds, which is not an error and not a proposal either.
+ * A TYPED RESULT RATHER THAN A THROW for every ordinary outcome. `no-change` is a set of a value the
+ * config already holds, which is neither an error nor a decision anybody should be asked to make.
  *
- * 395-02/04 turn `invalid` into a BLOCKED proposal record rather than a bare refusal; the arm is
- * named for the fact rather than for today's disposition so that change is additive.
+ * 395-04 REPLACED 395-01's `invalid` ARM WITH `blocked`, which is the change that arm was named for.
+ * A refusal that returned issues and filed nothing left the person with a message and the inbox with
+ * no trace: nothing to look at later, nothing a second surface could render, and no record that the
+ * agent had tried. `blocked` is a PROPOSAL — one posture, two reasons (CFGM-01/D-10) — so a
+ * validation failure and a guardrail hit are both things a person can find, and the reason names
+ * which road it came in by. The arm carries the proposal's ID for exactly that reason.
+ *
+ * IT CARRIES THE REPORT AND NEVER THE ARTIFACT, on the blocked payload's own reasoning: findings
+ * name and fingerprint, validation issues are the validator's words, and no diff or file content
+ * exists on this arm to leak.
  */
 export const ConfigProposeOutputSchema = z.discriminatedUnion('outcome', [
   z.object({
@@ -212,9 +218,16 @@ export const ConfigProposeOutputSchema = z.discriminatedUnion('outcome', [
     shownDiff: z.string(),
   }).strict(),
   z.object({
-    outcome: z.literal('invalid'),
+    outcome: z.literal('blocked'),
+    /** The blocked record really was filed; this is where a person finds it. */
+    proposalId: z.string().min(1),
+    /** What was attempted, never what was found — the blocked payload's own line. */
+    summaryLine: z.string().min(1),
+    blockedReason: z.enum(CONFIG_BLOCKED_REASONS),
+    paths: z.array(z.string().min(1)).min(1),
+    scanFindings: z.array(ConfigScanFindingSchema).optional(),
     /** Whole-config validation issues, in the validator's own words. */
-    issues: z.array(z.string().min(1)).min(1),
+    validationIssues: z.array(z.string().min(1)).optional(),
   }).strict(),
   z.object({ outcome: z.literal('no-change'), path: z.string().min(1) }).strict(),
 ])

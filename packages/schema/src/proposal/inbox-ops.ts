@@ -250,8 +250,7 @@ export const ProposalsAcceptAppliedSchema = z.discriminatedUnion('kind', [
 export type ProposalsAcceptApplied = z.infer<typeof ProposalsAcceptAppliedSchema>
 
 /**
- * What became of the apply — five arms, mirroring `ProposalsRejectOutputSchema`'s five because they
- * are answers to the same five situations, and none of them is a throw.
+ * What became of the apply — six arms, and none of them is a throw.
  *
  * `expired` is the arm that keeps D-12's lifecycle from being decorative. An expired proposal is
  * still durably pending — nothing happens at the moment one expires, which is why there is no
@@ -259,6 +258,14 @@ export type ProposalsAcceptApplied = z.infer<typeof ProposalsAcceptAppliedSchema
  * lifecycle has already declared too old to act on. Refusing here is what makes the computed status
  * mean something at the one verb that COMMITS; `proposals.reject` deliberately does not refuse an
  * expired proposal, because declining something stale is always a reasonable thing to do.
+ *
+ * `not-applyable` is 395-04's, and it is DATA rather than the throw that would otherwise reach this
+ * surface. A blocked config proposal is a real record a person can list, show and accept — accepting
+ * it is a reasonable thing to try, and the honest answer is that there is nothing filed to apply.
+ * `applyablePayload()` refuses such a payload by name at the one apply funnel, but that refusal is
+ * an internal invariant guarding a port; letting it escape as an exception would report a decision
+ * surface's ordinary answer as a fault, discarding the reason and the id along with it (RESEARCH
+ * Pitfall 9's shape: refusals come back beside the receipt, never instead of it).
  */
 export const ProposalsAcceptOutcomeSchema = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('applied'), applied: ProposalsAcceptAppliedSchema }).strict(),
@@ -266,6 +273,16 @@ export const ProposalsAcceptOutcomeSchema = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.literal('expired'), entry: ProposalInboxEntrySchema }).strict(),
   z.object({ outcome: z.literal('apply-in-flight'), proposalId: z.string().min(1) }).strict(),
   z.object({ outcome: z.literal('not-found'), proposalId: z.string().min(1) }).strict(),
+  z.object({
+    outcome: z.literal('not-applyable'),
+    proposalId: z.string().min(1),
+    /**
+     * Why there is nothing to apply, in the blocked record's own two words (`schema-fail`,
+     * `guardrail-hit`). NEVER the report itself: a surface that wanted the findings reaches for
+     * `proposals.show`, which renders the record that already holds them.
+     */
+    reason: z.string().min(1),
+  }).strict(),
 ])
 
 export type ProposalsAcceptOutcome = z.infer<typeof ProposalsAcceptOutcomeSchema>

@@ -31,8 +31,14 @@
 // on disk is what a person already has in their repository.
 
 import type {
+  ConstructionScanPart,
+  ConstructionScanReport,
+} from '@vostride/agent-qa-safety'
+
+import type {
   ConfigApplyOutcome,
   ConfigProposalApplyableV1,
+  ConfigProposalV1,
 } from '@vostride/agent-qa-schema'
 
 /** A dotted config path's new value. The three scalar shapes a config field can hold. */
@@ -61,6 +67,25 @@ export interface ConfigFileSet {
   readonly files: readonly ConfigFileBytes[]
 }
 
+/**
+ * What the comment-preserving edit produced, and what it replaced.
+ *
+ * `previousValue` RIDES THE SAME PARSE THAT WROTE THE NEW ONE (395-04, D-02). The per-value
+ * cross-boundary classifier has to compare the committed value against the proposed one — a base URL
+ * pointing at a NEW origin is the case a per-op map cannot see — and the only alternative to
+ * returning it here was a second read of the same bytes through a second parse, free to disagree
+ * with the one the mutation actually applied. One parse answers both halves of one edit.
+ *
+ * ABSENT MEANS "there was no scalar there": either the path held nothing, or it held a map or a
+ * sequence. Both are true statements about what the edit replaced, and neither is a value an origin
+ * comparison can be taken over — a wholesale subtree replacement is flagged on its own grounds
+ * (secret-adjacency) rather than by pretending its old value was a string.
+ */
+export interface ConfigFieldSetResult {
+  readonly bytes: Uint8Array
+  readonly previousValue?: ConfigFieldValue
+}
+
 export interface ConfigFilesPortLike {
   /** Re-read the committed set. Called at PROPOSAL time, which is CFGM-04's own law. */
   read(): Promise<ConfigFileSet>
@@ -75,7 +100,28 @@ export interface ConfigFilesPortLike {
     readonly bytes?: Uint8Array
     readonly path: string
     readonly value: ConfigFieldValue
-  }): Promise<Uint8Array>
+  }): Promise<ConfigFieldSetResult>
+}
+
+/**
+ * The D-09 construction scan, bound to the host's own masking seed sources (395-04, CFGM-02).
+ *
+ * A CLOSURE RATHER THAN THE FUNCTION ITSELF, and the closed-over half is the whole point. The scan
+ * `packages/safety` exports takes `(parts, seeds)`; the SEEDS are host facts — the resolved
+ * environment slice the run masker is built from — and this package reads no environment. Binding
+ * them at the composition root is what makes the values this scan knows and the values the masker
+ * hides one set by construction (D-09's sibling-input law), rather than two lists that agree today.
+ *
+ * SYNCHRONOUS, because the scan it wraps is pure and synchronous. A promise here would invite an
+ * implementation that went and fetched something, which is the property the scan's own purity
+ * contract exists to keep.
+ *
+ * NO POLICY ARGUMENT, DELIBERATELY — see the scan's file header. An operator's egress policy answers
+ * "may this text reach a model provider"; this answers "is a secret about to be written into a git
+ * commit", and a shared knob would let a defensible `awsKey: 'off'` disable the second one.
+ */
+export interface ConfigScanPortLike {
+  scan(parts: readonly ConstructionScanPart[]): ConstructionScanReport
 }
 
 /**
@@ -122,6 +168,13 @@ export interface ConfigProposalsWritePortLike {
     readonly kind: 'config'
     /** The emitting op's bare id — provenance for a person reading an inbox, never a match key. */
     readonly emittedBy: string
-    readonly payload: ConfigProposalApplyableV1
+    /**
+     * EITHER ARM (395-04). A blocked record is filed through the SAME store and the same envelope as
+     * an applyable one, because "one posture, two reasons" means a person finds a refusal where they
+     * find everything else — and because a refusal nobody can list is a refusal that leaves no trace
+     * of the agent having tried. The store needs no new verb; the payload's own discriminant is what
+     * every reader narrows on.
+     */
+    readonly payload: ConfigProposalV1
   }): Promise<{ readonly proposalId: string }>
 }

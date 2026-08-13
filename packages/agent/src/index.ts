@@ -188,11 +188,13 @@ export type {
 // and neither may name a type that lives only inside `functions/`.
 export type {
   ConfigApplyPortLike,
+  ConfigFieldSetResult,
   ConfigFieldValue,
   ConfigFileBytes,
   ConfigFileSet,
   ConfigFilesPortLike,
   ConfigProposalsWritePortLike,
+  ConfigScanPortLike,
   ConfigValidatePortLike,
   ConfigValidation,
 } from './config-mutation/ports.js'
