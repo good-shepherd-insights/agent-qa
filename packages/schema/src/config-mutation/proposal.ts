@@ -7,10 +7,18 @@
 // guardrail-hit dispositions) arrives as an additive member of THIS arm's own discriminant, never
 // as a fifth envelope status that every existing reader would have to be re-taught.
 //
-// `payloadKind` IS A DISCRIMINANT AT ONE MEMBER, on the envelope's own reasoning about `kind`: a
-// second arm added later gets compile-time coverage at every site that narrows, while a boolean
-// would get none. Plan 395-01 ships `applyable` alone; the construct pipeline already returns a
-// discriminated result, so `blocked` is a member and not a redesign.
+// `payloadKind` IS A DISCRIMINANT, on the envelope's own reasoning about `kind`: a second arm gets
+// compile-time coverage at every site that narrows, while a boolean would get none. Plan 395-01
+// shipped `applyable` alone and predicted this; 395-02 added `blocked`, and the prediction was paid
+// exactly as written — `applyablePayload()` in `agent/src/config-mutation/construct.ts` stopped
+// compiling at the one point every apply path funnels through, and both callers were routed there.
+//
+// THE BLOCKED ARM IS SECRET-FREE BY CONSTRUCTION, NOT BY DISCIPLINE (D-10). It has no diff field and
+// no file-content field, and it is `.strict()`, so a payload carrying `shownDiffBase64` or
+// `newContentBase64` does not parse. That is deliberately a STRUCTURAL claim: the whole point of
+// blocking on a guardrail hit is that the bytes must not become persistable, and a rule that
+// depended on a producer remembering to leave two fields empty would be one careless mint away from
+// a secret sitting in a proposals directory forever.
 //
 // MAP, NOT TERRITORY — WITH ONE DELIBERATE EXCEPTION. Every other arm on this envelope carries refs
 // and one-liners and leaves the artifact on a shelf. This one carries the new file CONTENT and the
@@ -20,6 +28,8 @@
 // makes the claim checkable rather than asserted.
 
 import { z } from 'zod'
+
+import { CROSS_BOUNDARY_REASONS } from './constants'
 
 /** Version 1: the first shape. No config proposal exists on disk anywhere yet. */
 export const CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION = 1
@@ -91,72 +101,92 @@ export const ConfigProposalApplyableV1Schema = z.object({
    * not see a base-URL change to a new origin, which is why the flag is per proposal.
    */
   crossBoundary: z.boolean(),
-  crossBoundaryReasons: z.array(z.string().min(1)),
+  /**
+   * CONSTRAINED TO THE CLOSED VOCABULARY (D-02), not to `string`.
+   *
+   * The grant machinery refuses on these words and every surface renders them, so a free-form
+   * string would let a classifier invent a fifth class that reads fine in an inbox and matches
+   * nothing on the enforcement side. A reason nobody can enumerate is a reason nobody can refuse on.
+   */
+  crossBoundaryReasons: z.array(z.enum(CROSS_BOUNDARY_REASONS)),
 }).strict()
 
 export type ConfigProposalApplyableV1 = z.infer<typeof ConfigProposalApplyableV1Schema>
 
 /**
+ * Why a proposal is blocked. One POSTURE, two reasons (CFGM-01 / D-10).
+ *
+ * TWO REASONS AND NOT TWO POSTURES: a schema failure and a guardrail hit arrive by different roads
+ * and mean different things to a person, but they produce the same artifact — a record that names
+ * what was found and carries no payload to apply. Splitting them into two shapes would give every
+ * surface two things to render for one decision that is always "there is nothing here to accept".
+ */
+export const CONFIG_BLOCKED_REASONS = ['schema-fail', 'guardrail-hit'] as const
+
+export type ConfigBlockedReason = (typeof CONFIG_BLOCKED_REASONS)[number]
+
+/**
+ * One thing the guardrail scan found, described so a person can act without the value being shown.
+ *
+ * `redactedFingerprint` IS THE WHOLE DESIGN OF THIS SHAPE. A finding that quoted the secret would
+ * reintroduce, in the block record, exactly the leak the block exists to prevent — and the block
+ * record is persisted, so it would outlive the proposal it refused. A stable non-reversing
+ * fingerprint lets two findings be compared ("this is the same value as in your other file")
+ * without either of them carrying it.
+ */
+export const ConfigScanFindingSchema = z.object({
+  /** Workspace-relative path of the file the finding is in. */
+  path: z.string().min(1),
+  /** The config path or diff line label, when the detector can name one. */
+  field: z.string().min(1).optional(),
+  /** Which detector fired, in the safety package's own vocabulary (D-09). */
+  detector: z.string().min(1),
+  /** A short, non-reversing marker for the matched value. NEVER the value. */
+  redactedFingerprint: z.string().min(1),
+}).strict()
+
+export type ConfigScanFinding = z.infer<typeof ConfigScanFindingSchema>
+
+/**
+ * The blocked arm: a change that will not be offered, and the report of why.
+ *
+ * NO DIFF, NO CONTENT, NO EXCEPTIONS. Read the file header — the absence of those fields IS D-10.
+ * `paths` names the files implicated, which is a REFERENCE and the most a person needs to go look;
+ * `scanFindings` and `validationIssues` are the report for the two reasons respectively, and both
+ * are optional because a `schema-fail` has no scan findings and a `guardrail-hit` has no validation
+ * issues, which is a fact about the two roads in rather than a shape that half-applies.
+ *
+ * There is no `crossBoundary` flag here either: that flag exists to decide whether a standing
+ * approval may cover an apply, and there is no apply to cover.
+ */
+export const ConfigProposalBlockedV1Schema = z.object({
+  schemaVersion: z.literal(CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION),
+  payloadKind: z.literal('blocked'),
+  /** The bare id of the op whose change was blocked. */
+  action: z.string().min(1),
+  /** One line a person reads in an inbox list. Says what was attempted, never what was found. */
+  summaryLine: z.string().min(1),
+  blockedReason: z.enum(CONFIG_BLOCKED_REASONS),
+  /** The files the blocked change would have touched, by path. References, not content. */
+  paths: z.array(z.string().min(1)).min(1),
+  scanFindings: z.array(ConfigScanFindingSchema).optional(),
+  /** Whole-config validation issues, in the validator's own words. */
+  validationIssues: z.array(z.string().min(1)).optional(),
+}).strict()
+
+export type ConfigProposalBlockedV1 = z.infer<typeof ConfigProposalBlockedV1Schema>
+
+/**
  * The config payload arm, discriminated on {@link ConfigProposalApplyableV1Schema.shape.payloadKind}.
  *
- * One member today. See the file header for why it is a union anyway.
+ * Two members. See the file header for what the second one cost to add, and where.
  */
 export const ConfigProposalV1Schema = z.discriminatedUnion('payloadKind', [
   ConfigProposalApplyableV1Schema,
+  ConfigProposalBlockedV1Schema,
 ])
 
 export type ConfigProposalV1 = z.infer<typeof ConfigProposalV1Schema>
-
-/**
- * What a config apply COMMITTED, or what it found already committed.
- *
- * `already-applied` IS AN ARM, NEVER A THROW, and it carries the ORIGINAL receipt. The reasoning is
- * `knowledge.proposal.apply`'s, quoted from its own header: "a retrying surface — a dropped socket,
- * a re-issued MCP call, an operator pressing the key twice — must be able to learn that its apply
- * already happened AND what it did; a throw would say the first half while discarding the receipt,
- * which is the one thing the caller asked for." (CFGM-03's idempotency edge.)
- */
-export const ConfigApplyCommitSchema = z.object({
-  /** `agent` today; 395-06's dirty-tree discipline adds the human-first commit beside it. */
-  role: z.enum(['agent', 'human']),
-  /** The commit hash, abbreviated as git prints it. */
-  hash: z.string().min(1),
-}).strict()
-
-export type ConfigApplyCommit = z.infer<typeof ConfigApplyCommitSchema>
-
-export const ConfigApplyOutcomeSchema = z.discriminatedUnion('outcome', [
-  z.object({
-    outcome: z.literal('applied'),
-    commits: z.array(ConfigApplyCommitSchema).min(1),
-    /** The workspace-relative paths this apply wrote, in the order the commit names them. */
-    files: z.array(z.string().min(1)).min(1),
-  }).strict(),
-  z.object({
-    outcome: z.literal('already-applied'),
-    commits: z.array(ConfigApplyCommitSchema).min(1),
-    files: z.array(z.string().min(1)).min(1),
-  }).strict(),
-])
-
-export type ConfigApplyOutcome = z.infer<typeof ConfigApplyOutcomeSchema>
-
-/**
- * `config.field.set`'s input (D-03).
- *
- * ANY SCHEMA-ADDRESSABLE PATH, and the absence of a settable-field whitelist is the decision rather
- * than an omission — a whitelist is the door-enumeration failure this project has measured twice: a
- * rule that can only refuse what it can NAME cannot be driven to zero by naming more things. The
- * guards here are whole-input by construction instead: post-mutation validation of the ENTIRE
- * config (CFGM-01) for correctness, and D-02's per-value classifier for safety.
- */
-export const ConfigFieldSetInputSchema = z.object({
-  /** A dotted config path, e.g. `use.timeout` — split on `.` by the yaml Document mutation. */
-  path: z.string().min(1),
-  value: z.union([z.string(), z.number(), z.boolean()]),
-}).strict()
-
-export type ConfigFieldSetInput = z.infer<typeof ConfigFieldSetInputSchema>
 
 /**
  * What a propose op answers: the proposal it filed, or the reason there is nothing to decide.
@@ -175,7 +205,8 @@ export const ConfigProposeOutputSchema = z.discriminatedUnion('outcome', [
     proposalId: z.string().min(1),
     summaryLine: z.string().min(1),
     crossBoundary: z.boolean(),
-    crossBoundaryReasons: z.array(z.string().min(1)),
+    /** The same closed vocabulary the payload carries — one spelling, two readers. */
+    crossBoundaryReasons: z.array(z.enum(CROSS_BOUNDARY_REASONS)),
     files: z.array(z.string().min(1)).min(1),
     /** The rendered diff a surface prints, as text. The record keeps the bytes. */
     shownDiff: z.string(),
@@ -189,10 +220,3 @@ export const ConfigProposeOutputSchema = z.discriminatedUnion('outcome', [
 ])
 
 export type ConfigProposeOutput = z.infer<typeof ConfigProposeOutputSchema>
-
-/** `config.proposal.apply`'s input: an ID, never a document (the knowledge apply's law). */
-export const ConfigProposalApplyInputSchema = z.object({
-  proposalId: z.string().min(1),
-}).strict()
-
-export type ConfigProposalApplyInput = z.infer<typeof ConfigProposalApplyInputSchema>

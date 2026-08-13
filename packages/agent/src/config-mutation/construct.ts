@@ -175,16 +175,44 @@ export async function constructConfigFieldSetProposal(
 }
 
 /**
+ * There is nothing here to apply, and saying so is the whole job.
+ *
+ * A NAMED REFUSAL RATHER THAN A CAST. This error exists because 395-01 predicted the compile break
+ * below and said what routing it must produce; a `as ConfigProposalApplyableV1` at that line would
+ * have satisfied the compiler and handed a blocked record — which by construction has no diff bytes
+ * and no file content — to an apply port that would then read `undefined` where a person's
+ * configuration should be. The reason is named because a person reading this in a terminal is being
+ * told their change was refused BEFORE it was ever offered, which is not an error they caused.
+ */
+export class BlockedConfigProposalError extends TypeError {
+  constructor(readonly proposalReason: string) {
+    super(
+      'this configuration proposal was blocked when it was constructed '
+      + `(${proposalReason}), so there is nothing to apply: a blocked proposal records the report `
+      + 'and deliberately never records the change. Read the report, fix what it names, and ask '
+      + 'for the change again.',
+    )
+    this.name = 'BlockedConfigProposalError'
+  }
+}
+
+/**
  * Narrow a stored config payload to the arm an apply can act on.
  *
- * A ONE-LINE FUNCTION THAT EARNS ITS EXISTENCE AT THE NEXT PLAN. `ConfigProposalV1` has one arm
- * today, so this assignment compiles; the moment 395-02 adds the `blocked` arm the type becomes a
- * real union and this line STOPS COMPILING — at the one place every apply path funnels through,
- * naming the two callers that must decide what a blocked payload means. The alternative, each
- * caller handing `envelope.payload` straight to its port, would have widened silently: a blocked
- * proposal would reach an apply as an object with the right field names and be committed.
+ * THE FUNCTION 395-01 WROTE FOR THIS EXACT DAY, and it was paid. `ConfigProposalV1` had one arm
+ * then, so the assignment compiled; the moment 395-02 added the `blocked` arm the type became a
+ * real union and this line stopped compiling — at the one place every apply path funnels through,
+ * naming both callers (`proposals.accept`'s config route and `config.proposal.apply`) with one
+ * error. The alternative, each caller handing `envelope.payload` straight to its port, would have
+ * widened silently: a blocked proposal would reach an apply as an object with the right field names
+ * and be committed.
+ *
+ * D-10 IS WHAT MAKES THE REFUSAL SAFE TO STATE. The blocked record carries the scan report and no
+ * payload, so refusing here cannot be routed around by a caller willing to reconstruct the change —
+ * there is nothing stored to reconstruct it from.
  */
 export function applyablePayload(payload: ConfigProposalV1): ConfigProposalApplyableV1 {
+  if (payload.payloadKind === 'blocked') throw new BlockedConfigProposalError(payload.blockedReason)
   return payload
 }
 

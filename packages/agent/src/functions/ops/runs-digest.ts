@@ -152,9 +152,17 @@ function summaryLineFor(envelope: ProposalEnvelope): string {
       // new file content, and a digest line that reached for either would print a person's
       // configuration into a report three surfaces render. `summaryLine` is what the construction
       // wrote for exactly this slot (391 D-18's refs-and-counts law), and the count is a count.
-      return `config ${envelope.payload.summaryLine}, `
-        + `${envelope.payload.files.length} file(s)`
-        + `${envelope.payload.crossBoundary ? ', cross-boundary' : ''}`
+      //
+      // 395-02's `blocked` arm narrows HERE, which is the whole reason `payloadKind` is a
+      // discriminant: the blocked record is a REPORT and has no files to count, and a digest line
+      // that reached for the scan findings would print a fingerprint of the very value the block
+      // exists to keep off every surface. It says what was refused and why, in two words.
+      return envelope.payload.payloadKind === 'blocked'
+        ? `config ${envelope.payload.summaryLine}, blocked (${envelope.payload.blockedReason}), `
+          + `${envelope.payload.paths.length} file(s)`
+        : `config ${envelope.payload.summaryLine}, `
+          + `${envelope.payload.files.length} file(s)`
+          + `${envelope.payload.crossBoundary ? ', cross-boundary' : ''}`
     default:
       return envelope satisfies never
   }

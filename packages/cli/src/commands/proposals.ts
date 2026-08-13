@@ -126,7 +126,13 @@ function payloadHeadline(envelope: ProposalInboxEntryDto['envelope']): string {
       // payload carries the rendered diff's bytes and the new file content, so a headline that
       // reached for either would print a person's configuration into an inbox listing. The
       // one-liner is what the construction wrote for exactly this slot.
-      return `${envelope.payload.summaryLine} (${envelope.payload.files.length} file(s))`
+      //
+      // 395-02. The `blocked` arm narrows here: a blocked record has no files to count and its
+      // scan findings must not reach a listing, so the row says that it is blocked and why, and a
+      // person reaches for `show` to read the report itself.
+      return envelope.payload.payloadKind === 'blocked'
+        ? `${envelope.payload.summaryLine} (blocked: ${envelope.payload.blockedReason})`
+        : `${envelope.payload.summaryLine} (${envelope.payload.files.length} file(s))`
     default:
       return envelope satisfies never
   }

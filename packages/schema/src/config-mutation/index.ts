@@ -11,25 +11,57 @@ export {
 } from './line-diff'
 export type { LineEdit, LineOp, UnifiedHunk } from './line-diff'
 export {
-  CONFIG_FILE_CHANGE_KINDS,
-  CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
+  CROSS_BOUNDARY_REASONS,
+  SECRET_ADJACENT_CONFIG_FIELDS,
+  isSecretAdjacentConfigField,
+} from './constants'
+export type { CrossBoundaryReason, SecretAdjacentConfigField } from './constants'
+export {
+  CONFIG_HOOK_RUNTIMES,
   ConfigApplyCommitSchema,
   ConfigApplyOutcomeSchema,
+  ConfigApplyReceiptsSchema,
+  ConfigAuthSetInputSchema,
   ConfigFieldSetInputSchema,
+  ConfigHookAddInputSchema,
+  ConfigProjectScaffoldInputSchema,
   ConfigProposalApplyInputSchema,
-  ConfigProposalApplyableV1Schema,
-  ConfigProposalFileSchema,
-  ConfigProposalV1Schema,
-  ConfigProposeOutputSchema,
-} from './proposal'
+  ConfigTargetCreateInputSchema,
+  ConfigTargetEditInputSchema,
+  ConfigUndoProposeInputSchema,
+} from './actions'
 export type {
   ConfigApplyCommit,
   ConfigApplyOutcome,
+  ConfigApplyReceipts,
+  ConfigAuthSetInput,
   ConfigFieldSetInput,
-  ConfigFileChangeKind,
+  ConfigHookAddInput,
+  ConfigHookRuntime,
+  ConfigProjectScaffoldInput,
   ConfigProposalApplyInput,
+  ConfigTargetCreateInput,
+  ConfigTargetEditInput,
+  ConfigUndoProposeInput,
+} from './actions'
+export {
+  CONFIG_BLOCKED_REASONS,
+  CONFIG_FILE_CHANGE_KINDS,
+  CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
+  ConfigProposalApplyableV1Schema,
+  ConfigProposalBlockedV1Schema,
+  ConfigProposalFileSchema,
+  ConfigProposalV1Schema,
+  ConfigProposeOutputSchema,
+  ConfigScanFindingSchema,
+} from './proposal'
+export type {
+  ConfigBlockedReason,
+  ConfigFileChangeKind,
   ConfigProposalApplyableV1,
+  ConfigProposalBlockedV1,
   ConfigProposalFile,
   ConfigProposalV1,
   ConfigProposeOutput,
+  ConfigScanFinding,
 } from './proposal'

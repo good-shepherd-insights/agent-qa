@@ -16,7 +16,8 @@
 import { z } from 'zod'
 
 import { FindingProposalV1Schema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
-import { ConfigApplyOutcomeSchema, ConfigProposalV1Schema } from '../config-mutation/proposal'
+import { ConfigApplyOutcomeSchema } from '../config-mutation/actions'
+import { ConfigProposalV1Schema } from '../config-mutation/proposal'
 import { KnowledgeProposalV1Schema, ProposalIdSchema } from '../knowledge/proposal'
 import { KnowledgeApplyOutcomeSchema } from '../knowledge/review-verbs'
 import { GrantRecordOutcomeSchema } from '../safety/grant-ops'
