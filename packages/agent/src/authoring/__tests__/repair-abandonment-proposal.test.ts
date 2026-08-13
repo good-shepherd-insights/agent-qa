@@ -31,7 +31,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { memberOutcome, runDocument } from './evidence-fixtures.js'
+import { memberOutcome, runDocument, shelfPathForDigest } from './evidence-fixtures.js'
 import type { MemberFixture } from './evidence-fixtures.js'
 import { runAuthoringLoop } from '../loop.js'
 import { repairDraft, REPAIR_ITERATION_CAP } from '../repair.js'
@@ -112,11 +112,11 @@ function runAt(
   return { ...runDocument(runId, members), endedAt } as CompletedRunHandoff
 }
 
-function receiptFor(runIds: readonly string[]): DraftReceipt {
+function receiptFor(runIds: readonly string[], draftPath: string = DRAFT_PATH): DraftReceipt {
   return DraftReceiptSchema.parse({
     schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
     draftRef: {
-      filePath: DRAFT_PATH,
+      filePath: draftPath,
       testId: DRAFT_NAME,
       testName: DRAFT_NAME,
       contentDigest: 'digest-0',
@@ -182,6 +182,8 @@ const DRAFT_REF = {
 interface Bench {
   readonly deps: AuthoringLoopDeps
   readonly startedRunIds: string[]
+  /** The file path each started run was pointed at — the member that run actually executed. */
+  readonly startedPaths: string[]
 }
 
 /**
@@ -196,21 +198,31 @@ function bench(input: {
   readonly gateMember?: () => MemberFixture
 }): Bench {
   const startedRunIds: string[] = []
+  const startedPaths: string[] = []
   const documents = new Map<string, CompletedRunHandoff>()
   let emitted = 0
+  let evaluatedPath: string | undefined
   const gateMember = input.gateMember ?? mechanicsFailureMember
 
-  GATE_RUN_IDS.forEach((runId, index) => {
-    documents.set(runId, runAt(runId, 100 + index, [gateMember()]))
-  })
-
   const runs = {
-    start(_started: RunsStartInput) {
+    start(started: RunsStartInput) {
       const index = startedRunIds.length
       const runId = `r_probe-${index}`
       startedRunIds.push(runId)
+      // A RUN'S MEMBERS CARRY THE PATH THE RUN WAS POINTED AT. `probeStartInput` passes the STAGED
+      // draft's path, which moves with every applied patch set, so a probe document whose member
+      // kept the pre-repair path would describe a file that run never opened — and `draftMember`
+      // joins on exactly this pair. The scripted fixture supplies the outcome; the path is the
+      // harness's, taken from the start input rather than typed beside it.
+      const probedPath = (started.patterns?.[0] as string | undefined) ?? DRAFT_PATH
+      startedPaths.push(probedPath)
       const members = input.probes?.[index]
-      if (members !== undefined) documents.set(runId, runAt(runId, 200 + index, members))
+      if (members !== undefined) {
+        documents.set(
+          runId,
+          runAt(runId, 200 + index, members.map((member) => ({ ...member, filePath: probedPath }))),
+        )
+      }
       return Promise.resolve({ runId } as never)
     },
     get(runId: string) {
@@ -229,19 +241,45 @@ function bench(input: {
       },
     }),
     write: () => Promise.resolve({ kind: 'staged', draft: DRAFT } as DraftStageOutcome),
+    // THE PATCHED DRAFT MOVES, because production re-stages it: `applyPatches` renders the patched
+    // document and hands the bytes to `stageDraft`, which addresses them by their NEW digest. This
+    // double used to spread `...candidate` and change only the digest, keeping a `filePath`
+    // production had already left behind — which is why every cell over it read a pre-repair
+    // coordinate as correct (CR-01).
     applyPatches(candidate: ParsedDraftLike, set: TestEditPatchSet): Promise<DraftStageOutcome> {
+      const contentDigest = `${candidate.contentDigest}+${set.patches.length}`
       return Promise.resolve({
         kind: 'staged',
-        draft: { ...candidate, contentDigest: `${candidate.contentDigest}+${set.patches.length}` },
+        draft: {
+          ...candidate,
+          contentDigest,
+          filePath: shelfPathForDigest(candidate.filePath, contentDigest),
+        },
       })
     },
-    verifyDraft(): Promise<DraftReceipt> {
-      return Promise.resolve(receiptFor(GATE_RUN_IDS))
+    // THE GATE RUNS ARE RUNS OF THE DRAFT THAT WAS EVALUATED, so their members are minted here
+    // rather than in the bench's preamble: stage 3's refinement round re-stages the draft through
+    // the same `applyPatches` above, so the path stage 4 verifies is not the path the compile
+    // wrote. Members pinned to the compile-time path describe a file no gate run ever opened, and
+    // the router's (filePath, testName) join finds nothing. Only the FIRST call mints them — that
+    // is the evaluation; repair's final stability gate is a later one over a different candidate.
+    verifyDraft(evaluated: { draftPath: string }): Promise<DraftReceipt> {
+      if (evaluatedPath === undefined) {
+        evaluatedPath = evaluated.draftPath
+        GATE_RUN_IDS.forEach((runId, index) => {
+          documents.set(
+            runId,
+            runAt(runId, 100 + index, [{ ...gateMember(), filePath: evaluatedPath as string }]),
+          )
+        })
+      }
+      return Promise.resolve(receiptFor(GATE_RUN_IDS, evaluatedPath))
     },
   }
 
   return {
     startedRunIds,
+    startedPaths,
     deps: {
       read: {
         getAuthoringBrief: () => Promise.resolve({
@@ -406,6 +444,8 @@ describe('an abandoned repair produces a finding built from the route and typed 
 
 interface EvidenceRefRow {
   readonly runId: string
+  readonly filePath: string
+  readonly testName: string
   readonly stepIndex: number
   readonly channel: string
 }
@@ -527,6 +567,17 @@ describe('the abandonment\'s typed facts reach the durable arm', () => {
     // Beside the routed run's own refs rather than instead of them.
     expect(evidenceRefsOf(proposal).some((ref) => ref.runId === ROUTED_RUN_ID)).toBe(true)
     expect(proposal.repairIterations).toBe(1)
+
+    // THE COORDINATE JOINS THE RUN IT NAMES (CR-01). A `RunEvidenceRef` is read as the four-tuple
+    // (runId, filePath, testName, stepIndex), so naming the probe run while carrying the PRE-repair
+    // path addresses a member that run has none of. The expected path is the one the harness saw
+    // the loop start the probe on, not a path this cell recomputes.
+    const probedPath = harness.startedPaths[0] as string
+    // The double expresses the drift at all: without this the join assertion below is vacuous,
+    // because a stub that preserved `filePath` makes the wrong answer and the right one equal.
+    expect(probedPath).not.toBe(DRAFT_PATH)
+    expect(probeRef?.filePath).toBe(probedPath)
+    expect(probeRef?.testName).toBe(DRAFT_NAME)
   })
 
   it('the ORDINARY routed finding carries NEITHER key — absent, not defaulted', async () => {

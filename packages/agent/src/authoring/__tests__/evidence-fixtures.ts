@@ -364,3 +364,21 @@ export function acceptControlMember(outcome: MemberTestOutcome = 'healed'): Memb
     ...(outcome === 'healed' ? { selfHealSteps: [0] } : {}),
   }
 }
+
+// ---- the shelf path a patched draft moves to (394-28, CR-01) -----------------------------------
+
+/**
+ * Where a re-staged draft LIVES: the same shelf directory, named by its NEW content digest.
+ *
+ * `stageDraft` addresses a draft by `<shelfDir>/<contentDigest>.yaml` and `applyPatches` goes
+ * THROUGH it, so every applied patch set moves the draft's path — the pre-patch file is not
+ * rewritten in place. A double that spread `...draft` and changed only the digest preserved a
+ * `filePath` production had already abandoned, and every coordinate written from the pre-repair
+ * path looked correct through it. That is CR-01, and this is the one recipe the authoring doubles
+ * mint the moved path with (`repair-credential-screen.test.ts` already stood the drift in on its
+ * own; this is that recipe named once and shared).
+ */
+export function shelfPathForDigest(shelfPath: string, contentDigest: string): string {
+  const segments = shelfPath.split('/')
+  return [...segments.slice(0, -1), `${contentDigest}.yaml`].join('/')
+}
