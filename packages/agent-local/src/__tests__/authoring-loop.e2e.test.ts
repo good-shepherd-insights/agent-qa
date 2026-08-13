@@ -438,6 +438,15 @@ function scriptedModel(document = MODEL_DOCUMENT): ScriptedModel {
 const FORMAT_BLOCK_TITLE = 'Test document format'
 const FORMAT_EXAMPLE_MARKER = 'A complete document looks exactly like this:'
 
+/**
+ * The one sentence that makes a fifth key emittable (394-33, WR-06).
+ *
+ * Matched as a RULE rather than by looking for the key name anywhere in the block: a block that
+ * merely MENTIONS `context` — in a rejection sentence, say — is not permission, and a generator
+ * that treated it as permission would go green on a prompt that forbade the key.
+ */
+const CONTEXT_OPTIONAL_RULE = /^`context` is optional:/m
+
 /** What the generator has left when the prompt teaches it nothing: nothing. */
 class FormatBlockMissingError extends Error {
   constructor() {
@@ -466,9 +475,17 @@ function documentFromPrompt(request: JobModelRequest): string {
   const intent = promptBlockBody(request.prompt, 'Intent') ?? ''
   const scope = promptBlockBody(request.prompt, 'Scope') ?? ''
 
-  return example
-    .replace(/^name: .*$/m, `name: ${intent}`)
-    .replace(/^target: .*$/m, `target: ${scope.slice(scope.indexOf(':') + 1)}`)
+  const document = example
+    .replace(/^name: .*$/m, () => `name: ${intent}`)
+    .replace(/^target: .*$/m, () => `target: ${scope.slice(scope.indexOf(':') + 1)}`)
+
+  // A FIFTH KEY, EMITTED ONLY BECAUSE THE BLOCK TAUGHT IT, with its value derived from the Intent
+  // block rather than spelled here.
+  if (!CONTEXT_OPTIONAL_RULE.test(format)) return document
+  return document.replace(
+    /^target: .*$/m,
+    (line) => `${line}\ncontext: Standing background for this test — ${intent}`,
+  )
 }
 
 function formatFollowingModel(): ScriptedModel {
@@ -881,16 +898,61 @@ describe('authoring.draft.write end to end through the composition root', () => 
     expect(result.receipt).toBeDefined()
     expect(result.receipt?.draftRef.contentDigest).toBe(result.draftRef?.contentDigest)
 
-    // What reached the shelf: the four keys and nothing else, with the two free values taken from
-    // the Intent and Scope blocks rather than from anything this file wrote.
+    // What reached the shelf: the keys the block teaches and nothing else, with the free values
+    // taken from the Intent and Scope blocks rather than from anything this file wrote. `context`
+    // joined the set in 394-33 (WR-06) — the block now names it optional, so a prompt-driven
+    // generator emits it, and a block that went back to four keys reds here.
     const staged = readdirSync(join(workspace, SHELF_DIR))
     expect(staged).toHaveLength(1)
     const document = parseYaml(
       readFileSync(join(workspace, SHELF_DIR, staged[0] as string), 'utf8'),
     ) as Record<string, unknown>
-    expect(Object.keys(document).sort()).toEqual(['name', 'steps', 'target', 'test-id'])
+    expect(Object.keys(document).sort()).toEqual(['context', 'name', 'steps', 'target', 'test-id'])
     expect(document['name']).toBe(INTENT)
     expect(document['target']).toBe(SCOPE.key)
+  })
+
+  it('emits the optional `context` key the format block teaches (394-33, WR-06)', async () => {
+    // WHAT THIS CELL CLAIMS, AND WHAT IT DOES NOT. It claims the PROMPT CHANNEL: a schema-blind
+    // generator, driven by nothing but the compile prompt, emits a `context` key and those bytes
+    // reach the shelf. It does NOT claim `ParsedDraftLike.context` is populated — this file's
+    // `DraftAuthoringPort` is a FAKE whose `describe()` reads `name` and `steps` and would answer
+    // `staged` for a document whose `context` it never looked at (WINDOWS 116). That claim is made
+    // against the SHIPPED parser in `packages/cli/src/authoring/__tests__/zero-exemplar-format.test.ts`.
+    const model = formatFollowingModel()
+    const executor = fixtureExecutor(agentQaRoot, () => ({
+      testName: INTENT,
+      elementName: 'local form',
+    }))
+    const host = compose({
+      executor: executor.port,
+      authoring: draftAuthoring(workspace),
+      model: model.capability,
+    })
+
+    const result = (await invokeFunction(
+      host.registry,
+      AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      { intent: INTENT, scope: SCOPE },
+      HUMAN,
+    )) as AuthoringDraftWriteOutput
+
+    expect(result.outcome).toBe('drafted')
+
+    // THE RULE IS IN THE PROMPT — the condition, produced off the request the loop actually built
+    // rather than assumed from the constant's source.
+    const format = promptBlockBody(model.requests[0]?.system ?? '', FORMAT_BLOCK_TITLE)
+    expect(format).toBeDefined()
+    expect(CONTEXT_OPTIONAL_RULE.test(format ?? '')).toBe(true)
+
+    // AND THE KEY IS IN THE BYTES. `context` is one of the three `EDITABLE_POINTER_ROOTS`, and
+    // until this plan the block forbade it — so no compile could produce one.
+    const staged = readdirSync(join(workspace, SHELF_DIR))
+    expect(staged).toHaveLength(1)
+    const document = parseYaml(
+      readFileSync(join(workspace, SHELF_DIR, staged[0] as string), 'utf8'),
+    ) as Record<string, unknown>
+    expect(document['context']).toContain(INTENT)
   })
 
   it('has no schema of its own: the generator throws when the format block is absent', () => {
