@@ -56,6 +56,7 @@ import type {
   ConfigApplyPortLike,
   ConfigFilesPortLike,
   ConfigReaderPort,
+  ConfigScaffoldContentPortLike,
   ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
   EntityDirectoryPort,
@@ -1492,6 +1493,15 @@ export interface ComposeLocalAgentInput {
    * host that can commit configuration but cannot read what it committed.
    */
   readonly configUndoSource?: ConfigUndoSourcePortLike
+  /**
+   * 395-08 D-04 · CFGM-05: the shared scaffold CONTENT, rendered by the host that owns it.
+   *
+   * A SEPARATE OPTIONAL BINDING for `configUndoSource`'s reason. The substance lives beside
+   * `init`'s own write path in `packages/cli`, which neither this package nor `packages/agent` may
+   * import; its absence leaves `config.project.scaffold` — and only that op — unbound, which is the
+   * honest catalogue answer for a host that can edit a configuration but cannot create one.
+   */
+  readonly scaffoldContent?: ConfigScaffoldContentPortLike
   /**
    * 395-04 D-09 · CFGM-02: where the construction scan's seed values come from.
    *
@@ -2950,6 +2960,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       ...(input.configUndoSource === undefined
         ? {}
         : { configUndoSource: input.configUndoSource }),
+      ...(input.scaffoldContent === undefined
+        ? {}
+        : { scaffoldContent: input.scaffoldContent }),
       // THE PROPOSAL WRITE IS BOUND HERE AND NOT HANDED IN, unlike its three neighbours, because
       // this composition already owns the durable proposals store — the same `mintProposalId` and
       // `writePendingProposalRecord` the authoring arm above uses, over the same `agentQaRoot`. A

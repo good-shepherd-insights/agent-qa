@@ -51,6 +51,7 @@ import type {
   ConfigFilesPortLike,
   ConfigProposalsWritePortLike,
   ConfigScanPortLike,
+  ConfigScaffoldContentPortLike,
   ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
 } from '../config-mutation/ports.js'
@@ -137,6 +138,7 @@ export type OptionalFunctionDepKey =
   | 'configProposals'
   | 'configScan'
   | 'configUndoSource'
+  | 'scaffoldContent'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -979,6 +981,15 @@ export interface FunctionDeps {
    * name.
    */
   configUndoSource?: ConfigUndoSourcePortLike
+  /**
+   * 395-08 D-04 · CFGM-05: the shared scaffold CONTENT, rendered by the host that owns it.
+   *
+   * THE ONE DEP `config.project.scaffold` HAS AND THE OTHER SEVEN PROPOSE OPS DO NOT. D-04's claim
+   * is that `agent-qa init` and the scaffold proposal write one substance; that substance lives
+   * beside `init`'s filesystem machinery in `packages/cli`, which this package may not import. Its
+   * absence makes exactly one op unavailable, and it says so by name.
+   */
+  scaffoldContent?: ConfigScaffoldContentPortLike
 }
 
 /**

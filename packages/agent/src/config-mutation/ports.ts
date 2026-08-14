@@ -343,3 +343,31 @@ export type ConfigUndoSource =
 export interface ConfigUndoSourcePortLike {
   read(): Promise<ConfigUndoSource>
 }
+
+/**
+ * The scaffold's CONTENT, rendered by the host that owns it (395-08, D-04 · CFGM-05).
+ *
+ * A PORT BECAUSE THE CONTENT LIVES IN `cli` AND `agent` MAY NOT IMPORT IT. D-04's whole claim is
+ * that `agent-qa init` and `config.project.scaffold` write ONE substance; the substance is the
+ * default config derivation, the yaml comment injection, the hooks template and the managed
+ * `.gitignore` block, and all four live beside `init`'s filesystem machinery in
+ * `commands/scaffold-content.ts`. Copying any of it here would mint the second scaffold D-04
+ * exists to prevent, and the copy would fail silently — a person's proposal and their `init` would
+ * simply produce different projects.
+ *
+ * IT TAKES THE DERIVATION, NOT THE DOMAIN. `targetName` and `baseUrl` are what
+ * `parseHostnameToken` produced; handing the raw token over would put the derivation on both sides
+ * of the boundary and let the host answer a different one than the gate pinned.
+ *
+ * `existingGitignore` IS BYTES, ABSENT WHEN THERE IS NO FILE. The block is an UPSERT: a project
+ * with a `.gitignore` of its own gets the managed block appended to what it already has, and the
+ * proposal's diff shows exactly that. Absent and empty are deliberately different — the first is
+ * a file the apply CREATES, the second a file it rewrites.
+ */
+export interface ConfigScaffoldContentPortLike {
+  render(input: {
+    readonly targetName: string
+    readonly baseUrl: string
+    readonly existingGitignore?: Uint8Array
+  }): Promise<readonly { readonly path: string; readonly bytes: Uint8Array }[]>
+}

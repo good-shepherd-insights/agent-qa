@@ -195,6 +195,7 @@ export type {
   ConfigFilesPortLike,
   ConfigPathFacts,
   ConfigProposalsWritePortLike,
+  ConfigScaffoldContentPortLike,
   ConfigScanPortLike,
   ConfigStructuredValue,
   ConfigUndoSource,

@@ -235,6 +235,10 @@ const ALL_FUNCTION_IDS = [
   'config.field.set',
   'config.get',
   'config.hook.add',
+  // 395-08 D-13: one more id in SORT position. It declares `config-write` and NOT `read`, so it
+  // joins the derived drop-out set with its siblings and the filter assertion stays a claim
+  // about the RULE rather than about a list.
+  'config.project.scaffold',
   'config.proposal.apply',
   // 395-05 D-01: two more ids in SORT position — `target` follows `proposal` lexicographically, and
   // this list is compared against the registry's lexicographic listing, so a misplaced pair would

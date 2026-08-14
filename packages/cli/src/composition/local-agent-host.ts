@@ -91,7 +91,15 @@ import {
 } from '@vostride/agent-qa-core'
 import type { TestDefinition } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
-import type { ConfigUndoSource, ConfigUndoSourcePortLike } from '@vostride/agent-qa-agent'
+import type {
+  ConfigScaffoldContentPortLike,
+  ConfigUndoSource,
+  ConfigUndoSourcePortLike,
+} from '@vostride/agent-qa-agent'
+// D-04: the ONE scaffold producer. `agent-qa init` renders these same functions and writes them
+// to disk; this host renders them into a proposal's file bytes. No second copy exists.
+import { buildScaffoldFileSet } from '../commands/scaffold-content.js'
+import { TARGET_GITIGNORE_ENTRIES } from '../commands/init-filesystem.js'
 import {
   CONFIG_SET_DEFAULT_HOOKS_FILE,
   KnowledgeApplyOutcomeSchema,
@@ -2845,6 +2853,44 @@ function readBlobBytes(cwd: string, objectName: string): Uint8Array | undefined 
  * not carried: the construction re-reads current for itself, and the applied side never enters a
  * `current → parent` diff.
  */
+/**
+ * The shared scaffold CONTENT, rendered for the propose path (395-08, D-04 · CFGM-05).
+ *
+ * ONE PRODUCER, TWO WRITE PATHS, AND THIS IS THE SECOND ONE. `agent-qa init` calls the very same
+ * functions and then writes the bytes to disk through its own filesystem machinery; this port calls
+ * them and hands the bytes back so they can become a proposal's diff. There is no second copy of
+ * the scaffold's substance anywhere, which is what makes D-04's no-drift claim a property of the
+ * module graph rather than a promise — and it is why this lives in `cli` rather than in `agent`,
+ * which may not import it.
+ *
+ * THE ENTRIES ARE `TARGET_GITIGNORE_ENTRIES`, IMPORTED. That constant is the default
+ * `upsertManagedGitignoreBlock` writes, so a project scaffolded by proposal and one scaffolded by
+ * `init` get the same managed block by construction. It is imported rather than restated for the
+ * reason the whole module exists.
+ *
+ * NOTHING HERE TOUCHES THE FILESYSTEM. The existing `.gitignore`'s bytes arrive from the caller,
+ * which read them through `ConfigFilesPortLike.read` — the same read the digests are taken over, so
+ * the upsert composes against the bytes the apply will re-check rather than against a second read.
+ */
+export function createScaffoldContentPort(): ConfigScaffoldContentPortLike {
+  return {
+    render({ targetName, baseUrl, existingGitignore }) {
+      const files = buildScaffoldFileSet({
+        targetName,
+        baseUrl,
+        gitignoreEntries: TARGET_GITIGNORE_ENTRIES,
+        ...(existingGitignore === undefined
+          ? {}
+          : { existingGitignore: Buffer.from(existingGitignore).toString('utf8') }),
+      })
+      return Promise.resolve(files.map((file) => ({
+        path: file.path,
+        bytes: Uint8Array.from(Buffer.from(file.text, 'utf8')),
+      })))
+    },
+  }
+}
+
 export function createConfigUndoSourcePort(configPath: string): ConfigUndoSourcePortLike {
   const configDir = dirname(resolve(configPath))
   const exec = spawnSync as unknown as GitApplyExec
@@ -3222,6 +3268,10 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // one reads a commit somebody already made), and folding a read into the one port through
     // which committed configuration changes would enlarge that write surface for no reason.
     configUndoSource: createConfigUndoSourcePort(input.configPath),
+    // 395-08 D-04 · CFGM-05: the shared scaffold content, bound unconditionally. It needs no
+    // filesystem and no repository — it is a pure render of the one producer `agent-qa init` writes
+    // from — so there is no host posture in which a CLI has it unavailable.
+    scaffoldContent: createScaffoldContentPort(),
     // 395-04 D-09 · CFGM-02: the construction scan's seeds, supplied by the HOST because the
     // environment is a host fact — `composeLocalAgent` is host-neutral and its own D-16 artifact
     // guard reds on a `process.env` read in that package.

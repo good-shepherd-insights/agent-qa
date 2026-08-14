@@ -160,6 +160,7 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   'config.target.create': { name: 'shop', platform: 'web', url: 'https://shop.example.com' },
   'config.target.edit': { name: 'shop', changes: { url: 'https://shop.example.com/basket' } },
   'config.undo.propose': {},
+  'config.project.scaffold': { domain: 'shop.example.com' },
   'config.proposal.apply': { proposalId: 'prop_0123456789ab' },
 }
 

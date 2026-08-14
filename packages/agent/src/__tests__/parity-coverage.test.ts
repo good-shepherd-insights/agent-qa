@@ -154,6 +154,9 @@ const EXPECTED_BINDING_STATUS: Readonly<Record<string, 'bound' | 'unbound'>> = {
   // fixture supplies no `configUndoSource` either, which is the dep whose absence makes THIS op
   // specifically unavailable.
   'config.undo.propose': 'unbound',
+  // 395-08 D-04: unbound for the same shared reason and one of its own — this fixture supplies
+  // no `scaffoldContent`, the dep whose absence makes THIS op specifically unavailable.
+  'config.project.scaffold': 'unbound',
   // 387 D-09. Both BOUND everywhere: the entity directory is a required dep, so unlike
   // `runs.start` there is no composition that can list these and then refuse them.
   'entities.get': 'bound',
@@ -292,6 +295,9 @@ const INVOCATION_SAMPLES: Readonly<Record<string, unknown>> = {
   // 395-06 D-07: the EMPTY object really is the whole input, and it parses. Which commit to
   // reverse is read from git history, so there is no field here for a sample to fill.
   'config.undo.propose': {},
+  // 395-08 D-13: the ONE field the model fills. A hostname-shaped sample, because the gate is
+  // the first thing the op runs and a non-hostname would make this a refusal sample instead.
+  'config.project.scaffold': { domain: 'shop.example.com' },
   // 387: `resolve` takes any reference at all, so the sample is free text that matches
   // nothing — the fixture directory is empty and the honest answer is the none arm. `get`
   // takes an exact address, and the fixture port below is what stands behind it.

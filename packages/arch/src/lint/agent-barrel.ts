@@ -638,6 +638,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'ConfigPathFacts',
   'ConfigProposalsWritePortLike',
   'ConfigReaderPort',
+  // 395-08, D-04: the shared scaffold CONTENT port. Published because `composeLocalAgent()` takes
+  // it and the CLI host implements it over `commands/scaffold-content.ts` — the one producer both
+  // `agent-qa init` and `config.project.scaffold` render, so the two scaffolds cannot drift.
+  'ConfigScaffoldContentPortLike',
   'ConfigScanPortLike',
   // 395-05: the yaml FORMAT's value vocabulary — scalars, sequences and maps. A target entry and a
   // hook entry are written as one block each, so the port that writes them cannot be scalar-only.

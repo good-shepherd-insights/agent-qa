@@ -776,6 +776,7 @@ const EXPECTED_CONFIG_FAMILY = [
   'config.field.set',
   'config.get',
   'config.hook.add',
+  'config.project.scaffold',
   'config.proposal.apply',
   'config.target.create',
   'config.target.edit',

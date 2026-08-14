@@ -29,6 +29,7 @@ import { configHookAddSpec } from './ops/config-hook-add.js'
 import { configGetSpec } from './ops/config-get.js'
 import { configProposalApplySpec } from './ops/config-proposal-apply.js'
 import { configTargetCreateSpec } from './ops/config-target-create.js'
+import { configProjectScaffoldSpec } from './ops/config-project-scaffold.js'
 import { configUndoProposeSpec } from './ops/config-undo-propose.js'
 import { configTargetEditSpec } from './ops/config-target-edit.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
@@ -167,6 +168,11 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // suite (397) with no harness change — and what makes "there is no revert verb" checkable by
   // reading the registry rather than by trusting a sentence.
   configUndoProposeSpec as FunctionSpec,
+  // 395-08 D-13/D-15 · CFGM-05: the EIGHTH config op, and the only one that configures a project
+  // that has no configuration. Registered rather than folded into `config.target.create` because
+  // the two refuse each other's case by name — a create is never an upsert, and a scaffold is
+  // never an overwrite — and because the planner picks actions by tool name.
+  configProjectScaffoldSpec as FunctionSpec,
   // 390 D-12/D-13: a new `quarantine.` domain — a taxonomy extension exactly as `entities.`
   // was, because quarantine state is neither a run, a memory nor an analysis. All three bind
   // through the OPTIONAL `quarantine` dep, so a host with no knowledge root lists them

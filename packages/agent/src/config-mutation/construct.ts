@@ -57,10 +57,13 @@
 // filesystem and no git, and the composed case in `cli` drives it with the real ones.
 
 import {
+  CONFIG_SET_GITIGNORE,
+  UnrenderableConfigDiffError,
   base64Encode,
   isLegalConfigReference,
   renderConfigDiff,
   utf8Decode,
+  utf8Encode,
 } from '@vostride/agent-qa-schema'
 import type {
   ConfigAuthSetInput,
@@ -69,6 +72,7 @@ import type {
   ConfigProposalApplyableV1,
   ConfigProposalBlockedV1,
   ConfigProposalFile,
+  ConfigProjectScaffoldInput,
   ConfigProposeOutput,
   ConfigProposalV1,
   ConfigReferenceKind,
@@ -81,11 +85,13 @@ import type { ConstructionScanPart } from '@vostride/agent-qa-safety'
 import { CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { computeCrossBoundary } from './cross-boundary.js'
 import type { CrossBoundaryFieldEdit } from './cross-boundary.js'
+import { HOSTNAME_GATE_REFUSAL_DETAIL, parseHostnameToken } from './hostname-gate.js'
 import type {
   ConfigFieldValue,
   ConfigFileBytes,
   ConfigFileSet,
   ConfigFilesPortLike,
+  ConfigScaffoldContentPortLike,
   ConfigProposalsWritePortLike,
   ConfigScanPortLike,
   ConfigStructuredValue,
@@ -555,6 +561,121 @@ export async function constructConfigHookAddProposal(
     addsHook: true,
     candidate: candidateSet(set, [{ path: hooksMember.path, bytes: written.bytes }]),
   }, set, deps)
+}
+
+/**
+ * Everything `config.project.scaffold` needs beyond what every other action needs (395-08, D-04).
+ *
+ * A SEPARATE TYPE, on `ConstructConfigUndoDeps`' reasoning one paragraph down: the scaffold is the
+ * only action that renders content it did not compute from the committed file, so widening the
+ * shared bundle would make six ops bind a port none of them can reach.
+ */
+export interface ConstructConfigScaffoldDeps extends ConstructConfigProposalDeps {
+  readonly scaffoldContent: ConfigScaffoldContentPortLike
+}
+
+/**
+ * Configure a project from zero, as ONE reviewable proposal (D-04/D-13/D-15 · CFGM-05).
+ *
+ * THE GATE RUNS FIRST AND IT IS THE SECURITY PROPERTY (D-15). Nothing below is reached by a token
+ * that is not a hostname, and the refusal names both continuations rather than a candidate. The
+ * derivation the gate returns is the ONLY source of the target name and the base URL — this
+ * function computes neither — so "the LLM never invents an origin" is a statement about which
+ * function produced the bytes rather than about how the model was asked.
+ *
+ * A CONFIG THAT ALREADY EXISTS IS A REFUSAL, NOT AN OVERWRITE. Scaffold builds the whole
+ * configuration; running it against a project that has one would replace a person's file wholesale
+ * — the widest silent overwrite this phase could produce, rendered as a diff nobody would finish
+ * reading. `config.target.create` is the op for adding a target to a configured project, and it
+ * carries its own create-is-never-an-upsert refusal.
+ *
+ * IT IS ALWAYS CROSS-BOUNDARY, AND THAT IS COMPUTED RATHER THAN ASSERTED (D-14/D-02). The scaffold
+ * writes a base URL where the committed configuration had none, so `computeCrossBoundary` sees an
+ * edit whose old value is absent and whose new value is an origin — and it adds a hooks file and a
+ * config file that did not exist. The flag is read off the classifier the same way every other
+ * proposal's is; nothing here sets it by hand. 395-07's two-sided enforcement then makes a scaffold
+ * unsatisfiable by any standing grant, from either side.
+ *
+ * `UnrenderableConfigDiffError` IS CAUGHT HERE AND NOWHERE ELSE, and the scope is the argument.
+ * 395-02 minted that refusal for the case where two byte sequences decode identically and the diff
+ * renders as a blank page; every other op composes bytes it authored from a file it just read, and
+ * this is the one that folds a project's EXISTING `.gitignore` — arbitrary bytes, from a file this
+ * product does not own — into a file it proposes. Answering it as a typed `refused` rather than
+ * letting it escape as a fault is the difference between "this project's .gitignore is not text I
+ * can show you a diff of" and a stack trace in a chat turn.
+ */
+export async function constructConfigProjectScaffoldProposal(
+  input: ConfigProjectScaffoldInput & { readonly action: string },
+  deps: ConstructConfigScaffoldDeps,
+): Promise<ConfigProposeOutput> {
+  const verdict = parseHostnameToken(input.domain)
+  if (verdict.kind === 'not-a-hostname') {
+    return { outcome: 'refused', reason: 'not-a-hostname', detail: HOSTNAME_GATE_REFUSAL_DETAIL }
+  }
+
+  // (1) CFGM-04: the re-read, exactly as every other action does it.
+  const set = await deps.configFiles.read()
+  const existingConfig = requireConfigFile(set)
+  if (existingConfig.bytes !== undefined) {
+    return {
+      outcome: 'refused',
+      reason: 'already-configured',
+      detail:
+        `this project already has ${existingConfig.path}, and scaffolding writes a whole `
+        + 'configuration from zero — it would replace what is there. Use config.target.create to '
+        + `add ${verdict.targetName} to the configuration you already have.`,
+    }
+  }
+
+  const gitignore = set.files.find((file) => file.path === CONFIG_SET_GITIGNORE)
+  // THE ROUND TRIP IS CHECKED BEFORE THE DECODE IS USED. The block is composed as TEXT, so a
+  // `.gitignore` carrying bytes utf-8 does not round-trip would come back with every one of them
+  // replaced by U+FFFD — a proposal that silently rewrote a file it was only supposed to append to.
+  // Refused rather than repaired: this product did not author those bytes.
+  if (gitignore?.bytes !== undefined && !bytesEqual(utf8Encode(utf8Decode(gitignore.bytes)), gitignore.bytes)) {
+    return {
+      outcome: 'refused',
+      reason: 'unrenderable-diff',
+      detail:
+        `${gitignore.path} holds bytes that are not valid UTF-8, so appending the managed block to `
+        + 'it would rewrite parts of the file you did not ask to change. Nothing has been proposed.',
+    }
+  }
+
+  const rendered = await deps.scaffoldContent.render({
+    targetName: verdict.targetName,
+    baseUrl: verdict.baseUrl,
+    ...(gitignore?.bytes === undefined ? {} : { existingGitignore: gitignore.bytes }),
+  })
+
+  try {
+    return await fileConfigProposal({
+      action: input.action,
+      subject: `scaffold ${verdict.targetName}`,
+      summaryLine: `configure this project for ${verdict.baseUrl} as target ${verdict.targetName}`,
+      // THE DERIVED VALUES, AS THE EDITS THEY ARE. The classifier compares each against what the
+      // committed configuration held — nothing, because there is no committed configuration — which
+      // is what makes `new-origin` a computed verdict here rather than a constant this op asserts.
+      fieldEdits: [
+        { configPath: `${TARGETS_PATH}.${verdict.targetName}.platform`, newValue: 'web' },
+        { configPath: `${TARGETS_PATH}.${verdict.targetName}.url`, newValue: verdict.baseUrl },
+      ],
+      // The scaffolded hooks file declares one hook, which is code this project would then run.
+      // Stated by the op, as D-02 requires, and true: the file did not exist a moment ago.
+      addsHook: true,
+      candidate: candidateSet(set, [...rendered]),
+    }, set, deps)
+  } catch (error) {
+    if (!(error instanceof UnrenderableConfigDiffError)) throw error
+    return {
+      outcome: 'refused',
+      reason: 'unrenderable-diff',
+      detail:
+        `the bytes proposed for ${error.paths.join(', ')} differ from what is on disk, but the diff `
+        + 'of them renders as nothing — you would be asked to approve a blank page. Nothing has '
+        + 'been proposed.',
+    }
+  }
 }
 
 /**

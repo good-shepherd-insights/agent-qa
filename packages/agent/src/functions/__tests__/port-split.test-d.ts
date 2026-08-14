@@ -139,6 +139,13 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // would enlarge the write surface for no reason and make "this host can commit config" and "this
 // host can see what it committed" one claim — and only the second is what `config.undo.propose`
 // needs, which is why its absence makes exactly that op unavailable and nothing else.
+// 395-08 D-04 extends it a TWENTY-FIRST time, by name: `scaffoldContent` — the shared scaffold
+// substance, rendered by the host that owns it. It is a key of its own rather than a verb on
+// `configFiles` because the two answer opposite questions about opposite files: that port reads
+// bytes a project HAS, this one produces bytes a project does not have yet. It is a port at all
+// only because the content lives in `packages/cli` beside `init`'s own write path, which is D-04's
+// no-drift claim expressed as a module boundary — the alternative is a second copy of the scaffold
+// in this package, failing silently the first time either one is edited.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -163,6 +170,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'configProposals'
     | 'configScan'
     | 'configUndoSource'
+    | 'scaffoldContent'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

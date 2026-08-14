@@ -127,6 +127,9 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   workspaceRelativeIdentityPath:
     (await importOriginal<typeof import('@vostride/agent-qa-core')>()).workspaceRelativeIdentityPath,
   DEFAULT_AGENT_QA_ARTIFACTS_DIR: '.agent-qa/artifacts',
+  // 395-08: `commands/scaffold-content.ts` — D-04's one scaffold producer — reads this, and it is
+  // now in this command's module graph through the composition root.
+  DEFAULT_AGENT_QA_AUTH_STATES_DIR: '.agent-qa/auth-states',
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
   DEFAULT_AGENT_QA_SCREENSHOTS_DIR: '.agent-qa/artifacts/screenshots',
   DEFAULT_AGENT_QA_VIDEOS_DIR: '.agent-qa/artifacts/videos',

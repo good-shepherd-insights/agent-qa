@@ -605,6 +605,14 @@ describe('agent-qa fn (generic function invoker)', () => {
         bindingStatus: 'bound',
       },
       'config.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      // 395-08 D-04: BOUND, because `scaffoldContent` needs no filesystem and no repository — it is
+      // a pure render of the one producer `agent-qa init` writes from, so there is no CLI posture
+      // in which the scaffold is unavailable.
+      'config.project.scaffold': {
+        requiredScopes: ['config-write'],
+        resultKind: 'unary',
+        bindingStatus: 'bound',
+      },
       'config.proposal.apply': {
         requiredScopes: ['config-write'],
         resultKind: 'unary',

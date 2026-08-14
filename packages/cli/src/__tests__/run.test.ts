@@ -200,6 +200,11 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-core')>()
 
   return {
+  // 395-08: the two default-directory constants, FROM THE REAL MODULE. `commands/scaffold-content.ts`
+  // — D-04's one scaffold producer — reads them, and it is now in this command's module graph
+  // through the composition root. Passed through rather than spelled, so a mock cannot become a
+  // second answer about where the cache and the auth states live.
+  DEFAULT_AGENT_QA_AUTH_STATES_DIR: actual.DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   workspaceRelativeIdentityPath: actual.workspaceRelativeIdentityPath,
   parseAllTests: mockParseAllTests,
   parseAllTestBindings: vi.fn(async (filePaths: string[]) => {

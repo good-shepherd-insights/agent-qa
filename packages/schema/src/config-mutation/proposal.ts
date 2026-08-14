@@ -156,6 +156,19 @@ export type ConfigBlockedReason = (typeof CONFIG_BLOCKED_REASONS)[number]
  *                           carries file CONTENT, and an apply that wrote empty bytes where a
  *                           deletion belongs would leave a file behind while reporting the undo
  *                           done. Refused whole rather than applied by halves.
+ *   not-a-hostname        — 395-08/D-15: the token `config.project.scaffold` was given does not
+ *                           parse as a hostname, so there is no origin to derive and the product
+ *                           will not invent one from model memory. The refusal asks for a URL or a
+ *                           configured target name (387's disambiguation posture) and names
+ *                           neither a guess nor a candidate.
+ *   already-configured    — a scaffold against a project that already has a config file. Scaffold
+ *                           creates the configuration FROM ZERO; adding a target to a project that
+ *                           has one is `config.target.create`, whose own create-is-never-an-upsert
+ *                           refusal is the guard for that case. Writing a whole config over an
+ *                           existing one would be the widest silent overwrite in this phase.
+ *   unrenderable-diff     — 395-02's `UnrenderableConfigDiffError`, answered as data rather than
+ *                           thrown, because the scaffold is the one op that composes bytes it did
+ *                           not author (a project's existing `.gitignore`) into a file it proposes.
  *
  * RETUNE: owned by whoever owns D-01's action class. A member is added when an op learns to refuse a
  * REQUEST for a reason a person can act on without opening an inbox.
@@ -167,6 +180,9 @@ export const CONFIG_REFUSAL_REASONS = [
   'unsupported-reference',
   'no-agent-commit',
   'undo-needs-delete',
+  'not-a-hostname',
+  'already-configured',
+  'unrenderable-diff',
 ] as const
 
 export type ConfigRefusalReason = (typeof CONFIG_REFUSAL_REASONS)[number]
