@@ -17,6 +17,7 @@ import { z } from 'zod'
 
 import { FindingProposalV1Schema, TestDraftProposalV1Schema } from '../authoring/proposal-arms'
 import { ConfigApplyOutcomeSchema } from '../config-mutation/actions'
+import { CROSS_BOUNDARY_REASONS } from '../config-mutation/constants'
 import { ConfigProposalV1Schema } from '../config-mutation/proposal'
 import { KnowledgeProposalV1Schema, ProposalIdSchema } from '../knowledge/proposal'
 import { KnowledgeApplyOutcomeSchema } from '../knowledge/review-verbs'
@@ -298,6 +299,21 @@ export type ProposalsAcceptOutcome = z.infer<typeof ProposalsAcceptOutcomeSchema
  * record a standing approval for a commit that did not occur, which is the one way this surface
  * could widen autonomy without anything having been decided at all.
  *
+ * `cross-boundary` is the MINT HALF of 395's D-02, and it is the sibling of `protected-class` one
+ * level up: that arm refuses a class no approval may ever cover, this one refuses a PROPOSAL whose
+ * own values cross a boundary a standing approval may not span. The class stays grantable — an
+ * in-scope config proposal accepted with `--always` still records one — so what is refused here is
+ * this proposal, per value, which is the whole reason D-02 put the flag on the proposal rather than
+ * on the op. It carries the classifier's own `crossBoundaryReasons` because "refused" without the
+ * words is a refusal a person cannot act on, and the words are a closed vocabulary every surface
+ * already renders.
+ *
+ * IT IS AN ARM RATHER THAN A THROW for this union's stated reason, and here the reason is sharper
+ * than anywhere else on it: the apply has already committed. A person who accepted a cross-boundary
+ * proposal with `--always` gets the commit they asked for AND the sentence saying their standing
+ * approval was not recorded, in one answer. An exception would have discarded the receipt for a
+ * change that really happened, and the predictable next thing they do is apply it again.
+ *
  * `ledger-damaged` is the mint that could not be DECIDED at all, because the committed grant ledger
  * carries a line this build cannot read (391-09's typed refusal). It lives HERE, with this verb's
  * own arms, and deliberately NOT inside {@link GrantRecordOutcomeSchema}: the port keeps its THROW,
@@ -310,6 +326,21 @@ export type ProposalsAcceptOutcome = z.infer<typeof ProposalsAcceptOutcomeSchema
 export const ProposalsAcceptGrantOutcomeSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('not-requested') }).strict(),
   z.object({ kind: z.literal('not-applied') }).strict(),
+  z.object({
+    kind: z.literal('cross-boundary'),
+    /**
+     * WHY this proposal may not be pre-approved, in the classifier's OWN closed vocabulary.
+     *
+     * DELIBERATELY NOT `.min(1)`, and the reason is the direction a guard may not fail in. The
+     * producer's invariant — flag and reasons set together — is pinned where it is PRODUCED
+     * (`computeCrossBoundary` returns `crossBoundary: reasons.length > 0`), and the stored payload
+     * schema admits an empty list. A `.min(1)` here would mean that a record carrying the flag with
+     * no reasons — a doctored one, or one this build read through an older shape — could not have
+     * its refusal PARSED, so the one input this arm exists to refuse would be the one input that
+     * broke it. An empty list is therefore an answerable state: refused, with no reason recorded.
+     */
+    reasons: z.array(z.enum(CROSS_BOUNDARY_REASONS)),
+  }).strict(),
   z.object({
     kind: z.literal('ledger-damaged'),
     /** The refusal in the operator's words — what is wrong, and what repairs it. */
@@ -336,8 +367,10 @@ export type ProposalsAcceptGrantOutcome = z.infer<typeof ProposalsAcceptGrantOut
  *
  * WHAT IT STILL BUYS AFTER THE WIDENING, because an exclusion list that grows without a restated
  * purpose is the next decorative assertion. The exclusion names only arms THIS VERB mints itself
- * and the port cannot produce — the two no-mint answers, and the refusal-to-decide this op converts
- * from the port's throw. Everything left over is still required to be the port's union EXACTLY, so
+ * and the port cannot produce — the two no-mint answers, the refusal-to-decide this op converts
+ * from the port's throw, and 395's per-proposal `cross-boundary` refusal, which the port cannot
+ * express because `record` is never handed a proposal at all. Everything left over is still
+ * required to be the port's union EXACTLY, so
  * an arm the PORT gains and this surface does not carry still fails to compile here. The pin's
  * direction is unchanged: it constrains the port's arms, and the exclusion is the list of arms the
  * port was never asked to have.
@@ -345,7 +378,7 @@ export type ProposalsAcceptGrantOutcome = z.infer<typeof ProposalsAcceptGrantOut
 const _acceptGrantArmsCoverThePort: ExactlyEqual<
   Exclude<
     ProposalsAcceptGrantOutcome,
-    { kind: 'not-requested' | 'not-applied' | 'ledger-damaged' }
+    { kind: 'not-requested' | 'not-applied' | 'cross-boundary' | 'ledger-damaged' }
   >,
   GrantRecordOutcome
 > = true

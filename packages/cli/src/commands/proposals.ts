@@ -237,6 +237,19 @@ function renderGrantOutcome(grant: ProposalsAcceptOutput['grant']): string {
         `standing approval REFUSED: ${grant.actionClass} is a protected class — `
         + 'no standing approval can ever cover it, and this proposal was applied anyway.',
       )
+    case 'cross-boundary':
+      // 395-07 D-02, the mint half rendered. Same posture as the two refusals around it — the apply
+      // on the line above DID happen — and it names the REASONS, because "refused" without the
+      // words leaves a person unable to tell a hook addition from a new origin, and those are two
+      // very different things to have just approved. The class is deliberately NOT called
+      // protected: it is grantable, and saying otherwise would teach the wrong rule.
+      return pc.yellow(
+        'standing approval REFUSED for this proposal: it crosses a boundary a standing approval '
+        + `may not cover (${
+          grant.reasons.length === 0 ? 'no reason recorded' : grant.reasons.join(', ')
+        }). This proposal WAS applied. Config applies stay grantable — an in-scope change accepted `
+        + 'with --always still records one; this change needed you.',
+      )
     case 'ledger-damaged':
       // Same posture as the sovereignty refusal above and for the same reason: the apply on the
       // line above DID happen, so this cannot read as a footnote to it. The line numbers are what

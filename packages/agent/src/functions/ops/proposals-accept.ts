@@ -194,7 +194,17 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
   // is a grant that can match something. `fn:config.proposal.apply` is deliberately NOT in the
   // closed protected set: D-02 puts the protection on the PROPOSAL — the per-value `crossBoundary`
   // flag — rather than on the class, because cross-boundary-ness is a fact about a base URL pointing
-  // somewhere new, which no per-op map can see. The two-sided enforcement of that flag is 395-04's.
+  // somewhere new, which no per-op map can see.
+  //
+  // THE TWO SIDES OF THAT FLAG, AND WHERE EACH ONE LIVES (395-07). The MINT half is in `invoke`
+  // below: an accept-with-always on a flagged proposal answers the `cross-boundary` arm and calls
+  // the grants port not at all. The READ half is NOT here, and its absence is a decision rather
+  // than an omission — this verb's own class `fn:proposals.accept` is in the closed protected set,
+  // so `grantsFor` never returns a line covering it and no covering grant is ever consulted on this
+  // route in the first place. A filter placed here would be a mechanism at a seam where the thing
+  // it filters is never read. The read half lives where a grant CAN satisfy an ask over config —
+  // `config.proposal.apply`, the grantable class — and it is stated in that file's header.
+
   //
   // THE PAYLOAD TRAVELS TO THE PORT, on the test-draft arm's stated reasoning: this op has ALREADY
   // read the envelope — that is how it knows which route to dispatch — so handing the payload it is
@@ -325,6 +335,41 @@ const GRANT_NOT_REQUESTED: ProposalsAcceptGrantOutcome = { kind: 'not-requested'
 const GRANT_NOT_APPLIED: ProposalsAcceptGrantOutcome = { kind: 'not-applied' }
 
 /**
+ * The MINT HALF of 395 D-02: a cross-boundary proposal may not be pre-approved (395-07).
+ *
+ * WHAT IS REFUSED IS THE PROPOSAL, NOT THE CLASS, and the distinction is the decision. The
+ * `protected-class` arm one level down refuses a class no approval may ever cover, and it is a fact
+ * about the op. `fn:config.proposal.apply` is deliberately NOT such a class — an in-scope config
+ * change IS a reasonable thing to pre-approve, and D-02 says so — so the only thing that can carry
+ * the refusal is the per-VALUE flag the construction computed. A static per-op map could not see a
+ * base URL edited to point at a new origin, which is the whole reason the flag exists.
+ *
+ * READ OFF THE ENVELOPE THIS CALL ALREADY HOLDS, never re-read by id. `invoke` has the `show`
+ * answer in hand — that is how it knew which route to dispatch — and a second read here would open
+ * exactly the disagreement window the route's own payload-travels-to-the-port rule closes: two
+ * reads of one record with a decision taken between them can disagree about the very flag this
+ * refusal turns on.
+ *
+ * NARROWED ON THE PAYLOAD'S OWN DISCRIMINANT. A `blocked` payload never reaches the mint at all
+ * (`resolveApply` answers `not-applyable` above), and it carries no flag to read; narrowing here
+ * rather than assuming that is what keeps the two classifications from being two.
+ *
+ * ANSWERS `undefined` FOR EVERY OTHER KIND, which is the honest shape: knowledge, test-draft and
+ * finding proposals have no per-value boundary flag, and inventing `false` for them would be this
+ * function claiming to have classified something it never looked at.
+ */
+function crossBoundaryRefusal(
+  shown: Awaited<ReturnType<NonNullable<FunctionDeps['proposalsInbox']>['show']>>,
+): ProposalsAcceptGrantOutcome | undefined {
+  if (shown.kind === 'not-found') return undefined
+  const { envelope } = shown.entry
+  if (envelope.kind !== 'config') return undefined
+  if (envelope.payload.payloadKind !== 'applyable') return undefined
+  if (!envelope.payload.crossBoundary) return undefined
+  return { kind: 'cross-boundary', reasons: [...envelope.payload.crossBoundaryReasons] }
+}
+
+/**
  * The ONE refusal this op folds into data, named as a string because the class is unimportable.
  *
  * Nothing else may be folded. A lease refusal, an egress refusal and a contract refusal are
@@ -414,6 +459,21 @@ export const proposalsAcceptSpec: FunctionSpec<ProposalsAcceptInput, ProposalsAc
       // binds no grants port behaves identically to one that does.
       return { apply, grant: GRANT_NOT_REQUESTED }
     }
+
+    // 395 D-02, THE MINT HALF — placed HERE, above the grants dep, and both facts are the decision.
+    //
+    // ABOVE THE DEP because the refusal is a property of the PROPOSAL, not of the host: a
+    // composition that binds no grants port must give the same answer as one that does, and
+    // resolving the dep first would have made this refusal report a binding problem on hosts that
+    // have one. It is the same shape as D-01's line ten lines up — the plain form reaches no mint
+    // at all, and this form reaches no mint either.
+    //
+    // AND THE LEDGER IS THEREFORE NEVER TOUCHED, which is what makes "the grants file is
+    // byte-identical across a refused accept-with-always" a property of the code rather than of
+    // the port's good behaviour. No `record` call is made, so there is nothing for a mint to
+    // decline and nothing for an append to half-write.
+    const crossBoundary = crossBoundaryRefusal(shown)
+    if (crossBoundary !== undefined) return { apply, grant: crossBoundary }
 
     // REACHABILITY OF THIS THROW, OBSERVED RATHER THAN ASSUMED. At submodule commit `d7966f04` on
     // 2026-08-08, `grep -rn 'createFunctionRegistry(' packages --include=*.ts | grep -v '/dist/' |
