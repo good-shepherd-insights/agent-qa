@@ -654,6 +654,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'ConfigUndoSourcePortLike',
   'ConfigValidatePortLike',
   'ConfigValidation',
+  // 395-10 WR-11: one validation issue as a { path, message } PAIR. Published for the same reason
+  // the port beside it is — the CLI host implements the port and cannot name a type that lives only
+  // inside `config-mutation/` — and it is a TYPE, so it costs the runtime surface nothing.
+  'ConfigValidationIssue',
   'CreateAgentJobQueueOptions',
   // 392 plan 08: what a chat state container opens under. A TYPE, one member, and it is the model
   // the session DECLARES — which is the value `/model` overrides and the per-turn config re-read

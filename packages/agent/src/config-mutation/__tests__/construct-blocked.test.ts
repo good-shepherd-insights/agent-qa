@@ -185,7 +185,16 @@ function harness(options: {
   readonly config: string
   /** The committed hooks member's bytes. Absent means the file is not there, as the port answers. */
   readonly hooks?: string
-  readonly validation?: { ok: false; issues: readonly string[] } | { ok: true }
+  /**
+   * 395-10: the port's failure arm carries { path, message } PAIRS, so the double does too.
+   *
+   * A DESIGNED COMPILE BREAK rather than a rewritten claim. Every cell below asserts the same thing
+   * it asserted before — that the validator's words reach the record and the guardrail's do not —
+   * over a shape that now also says WHICH FILE each issue is about (WR-11).
+   */
+  readonly validation?:
+    | { ok: false; issues: readonly { path: string; message: string }[] }
+    | { ok: true }
 }): Harness {
   const filed: Filed[] = []
   let scanCount = 0
@@ -278,7 +287,10 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
   it('(1) files a BLOCKED record when the whole config no longer validates', async () => {
     const test = harness({
       config: CLEAN_CONFIG,
-      validation: { ok: false, issues: ['use.parallel: expected boolean, received string'] },
+      validation: {
+        ok: false,
+        issues: [{ path: CONFIG_FILE, message: 'use.parallel: expected boolean, received string' }],
+      },
     })
 
     const answer = await propose(test, { path: 'parallel', value: 'yes please' })
@@ -294,7 +306,11 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     const payload = test.filed[0]?.payload
     expect(payload?.payloadKind).toBe('blocked')
     if (payload?.payloadKind !== 'blocked') throw new Error('unreachable')
-    expect(payload.validationIssues).toEqual(['use.parallel: expected boolean, received string'])
+    // 395-10: the persisted string is the port's PAIR joined — the file the issue is about, then
+    // the validator's own sentence. The record shape is unchanged (`string[]`); what changed is that
+    // the file is no longer guessed at from what the proposal diffed.
+    expect(payload.validationIssues)
+      .toEqual([`${CONFIG_FILE}: use.parallel: expected boolean, received string`])
     expect(payload.paths).toEqual([CONFIG_FILE])
     // The two reasons are kept apart in the RECORD, not only in the return value.
     expect(payload.scanFindings).toBeUndefined()
@@ -399,7 +415,10 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
   it('(6) the two reasons are told apart, and the guardrail wins when both apply', async () => {
     const schemaFail = harness({
       config: CLEAN_CONFIG,
-      validation: { ok: false, issues: ['use.parallel: expected boolean, received string'] },
+      validation: {
+        ok: false,
+        issues: [{ path: CONFIG_FILE, message: 'use.parallel: expected boolean, received string' }],
+      },
     })
     const guardrail = harness({ config: CLEAN_CONFIG })
 
@@ -421,7 +440,7 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     // secret inside a blocked record. Scanning first means the words never get written.
     const both = harness({
       config: CLEAN_CONFIG,
-      validation: { ok: false, issues: [`envFile: ${PLANTED} is not a path`] },
+      validation: { ok: false, issues: [{ path: CONFIG_FILE, message: `envFile: ${PLANTED} is not a path` }] },
     })
     const answer = await propose(both, { path: 'envFile', value: PLANTED })
     if (answer.outcome !== 'blocked') throw new Error('unreachable')

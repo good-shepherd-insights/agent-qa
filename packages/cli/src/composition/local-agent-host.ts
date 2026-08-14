@@ -54,6 +54,7 @@ import type {
   ConfigReaderPort,
   ConfigValidatePortLike,
   ConfigValidation,
+  ConfigValidationIssue,
   DraftApplyPortLike,
   JobModelCapability,
   StartedRun,
@@ -2698,6 +2699,30 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
 }
 
 /**
+ * A yaml parse failure as a POSITION, and as nothing else (395-10 · GAP 1 / CR-01).
+ *
+ * THE ERROR IS NOT A MESSAGE SOURCE HERE. `yaml`'s `YAMLParseError` carries `linePos` — where the
+ * parser gave up — beside a `message` that is pretty-printed with a verbatim excerpt of the
+ * offending source line and a caret beneath the column. Every other property (`message`, `code`,
+ * the object's own stringification) is derived from the person's file content and is therefore not
+ * this product's to publish: the string built here is persisted in a blocked record and printed by
+ * `proposals show`. So this function reads two NUMBERS and composes a sentence of its own.
+ *
+ * THE FALLBACK IS VALUE-FREE TOO, and that is the point of having one. A throw with no `linePos` is
+ * not a yaml parse error this product recognises, and the tempting repair — fall back to the error's
+ * message when the position is missing — would reopen the whole channel for exactly the inputs
+ * nobody anticipated.
+ */
+function yamlParseFailureMessage(error: unknown): string {
+  const linePos = (error as { linePos?: readonly { line?: unknown; col?: unknown }[] }).linePos
+  const first = Array.isArray(linePos) ? linePos[0] : undefined
+  if (typeof first?.line === 'number' && typeof first.col === 'number') {
+    return `not readable as YAML at line ${first.line}, column ${first.col}`
+  }
+  return 'not readable as YAML (position unavailable)'
+}
+
+/**
  * Whole-config validation, run BEFORE a proposal surfaces (CFGM-01).
  *
  * IT VALIDATES THE ENTIRE CANDIDATE, not the changed field, and that is D-03's other half: the
@@ -2726,7 +2751,7 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
 export function createConfigValidatePort(): ConfigValidatePortLike {
   return {
     validate({ configFile, hooksFile, files }): Promise<ConfigValidation> {
-      const issues: string[] = []
+      const issues: ConfigValidationIssue[] = []
 
       for (const member of files) {
         if (member.bytes === undefined) continue
@@ -2744,7 +2769,15 @@ export function createConfigValidatePort(): ConfigValidatePortLike {
           // A yaml the parser cannot read is a validation failure and not a crash: the candidate
           // came from a mutation this product made, so the person is owed the reason rather than a
           // stack trace out of a library.
-          issues.push(`${member.path}: not readable as YAML: ${errorText(error)}`)
+          //
+          // WHERE, NEVER WHAT (395-10 · GAP 1). This line used to interpolate the thrown error's
+          // own text, and the vendored `yaml` package pretty-prints a parse error with an excerpt of
+          // the offending source line and a caret under the column. That excerpt is the person's own
+          // file content, it is persisted in the blocked record and printed by `proposals show`, and
+          // it was measured carrying a planted credential onto all three surfaces. The error's
+          // POSITION is the one fact this product chose to publish, so the position is the only
+          // thing read off the error — not its message, not its code, not its stringification.
+          issues.push({ path: member.path, message: yamlParseFailureMessage(error) })
           continue
         }
 
@@ -2762,8 +2795,14 @@ export function createConfigValidatePort(): ConfigValidatePortLike {
           // classify them, because a closed issue vocabulary here would be a second, weaker copy of
           // core's refinements, out of date the first time one is added.
           if (!result.success) {
-            issues.push(...result.error.issues.map((issue) =>
-              `${issue.path.join('.') || '<root>'}: ${issue.message}`))
+            // THE PATH IS THE FILE, the dotted config path stays inside the message. A schema issue
+            // is about a key in a document, and the document is the config yaml member — which is
+            // the fact the blocked record's `paths` needs (WR-11). Putting the dotted path there
+            // instead would name something that is not a file and cannot be opened.
+            issues.push(...result.error.issues.map((issue) => ({
+              path: member.path,
+              message: `${issue.path.join('.') || '<root>'}: ${issue.message}`,
+            })))
           }
           continue
         }
@@ -2774,8 +2813,10 @@ export function createConfigValidatePort(): ConfigValidatePortLike {
         if (parsed === null || parsed === undefined) continue
         const hooks = HooksFileSchema.safeParse(parsed)
         if (!hooks.success) {
-          issues.push(...hooks.error.issues.map((issue) =>
-            `${member.path}: ${issue.path.join('.') || '<root>'}: ${issue.message}`))
+          issues.push(...hooks.error.issues.map((issue) => ({
+            path: member.path,
+            message: `${issue.path.join('.') || '<root>'}: ${issue.message}`,
+          })))
         }
       }
 

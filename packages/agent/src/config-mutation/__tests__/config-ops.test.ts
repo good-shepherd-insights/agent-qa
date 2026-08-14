@@ -216,7 +216,13 @@ function harness(options: {
           file.bytes !== undefined && utf8Decode(file.bytes).includes(INVALID_MARKER))
         return Promise.resolve(bad.length === 0
           ? { ok: true as const }
-          : { ok: false as const, issues: bad.map((file) => `${file.path}: seeded invalid`) })
+          // 395-10: PAIRS, not pre-joined strings. The pipeline joins them for the record — so the
+          // cells' expected strings below are unchanged — and reads the path half into the blocked
+          // record's `paths` (WR-11).
+          : {
+            ok: false as const,
+            issues: bad.map((file) => ({ path: file.path, message: 'seeded invalid' })),
+          })
       },
     },
     configProposals: {

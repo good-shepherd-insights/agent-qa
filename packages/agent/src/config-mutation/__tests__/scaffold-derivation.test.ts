@@ -143,7 +143,9 @@ function harness(options: {
     readonly { path: string; bytes: Uint8Array }[]
   readonly scan?: boolean
   readonly readThrows?: boolean
-  readonly validation?: { ok: false; issues: readonly string[] } | { ok: true }
+  readonly validation?:
+    | { ok: false; issues: readonly { path: string; message: string }[] }
+    | { ok: true }
 } = {}): Harness {
   const filed: Filed[] = []
   const rendered: { targetName: string; baseUrl: string; existingGitignore?: string }[] = []

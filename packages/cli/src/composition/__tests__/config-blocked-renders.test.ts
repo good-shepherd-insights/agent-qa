@@ -42,6 +42,15 @@
 //                       implementation — it was observed red on pre-395-10 HEAD, where the record
 //                       filed `schema-fail` and `validationIssues` quoted the offending source line
 //                       verbatim.
+//   (G) POSITION        — 395-10, the same gap's second missing item, plus WR-11. A yaml parse
+//                       failure whose issue string is built from the LIBRARY'S error text: the
+//                       vendored `yaml` package pretty-prints its parse errors with an excerpt of
+//                       the offending source line, so `errorText(error)` publishes whatever that
+//                       line held. The cell's fixture is deliberately NOT secret-shaped and NOT
+//                       seeded, so the scan legitimately passes it and the schema-fail road really
+//                       runs — the channel is closed by REDUCING the issue to its position, not by
+//                       blocking earlier. It also pins WR-11: the record's `paths` must name the
+//                       file the issue is about, which pre-395-10 it did not.
 
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -410,5 +419,58 @@ describe('CFGM-02 on the surfaces a person reads (D-10/D-12)', () => {
         expect(persisted).not.toContain(window)
         expect(shown).not.toContain(window)
       }
+    })
+
+  it('(G) a yaml parse failure names WHERE, never WHAT — and the record names the right file',
+    async () => {
+      // NOT SECRET-SHAPED AND NOT SEEDED, on purpose: the scan passes these bytes, which is what
+      // lets the schema-fail road actually run. Cell (F) closes the road where a secret is the
+      // subject; this one closes the channel for everything else a person's file might hold, since
+      // a parse error quotes its source line whatever that line contains.
+      const marker = 'zeta-nine-deploy-marker'
+      writeFileSync(configPath, configText({ note: 'no secret in this file' }))
+      writeFileSync(join(root, HOOKS_FILE), `# project hooks
+hooks:
+  - name: nightly
+    note: ${marker}: oops
+`)
+
+      const answer = await propose({ path: 'use.timeout.step', value: '45s' })
+
+      expect(answer.outcome).toBe('blocked')
+      if (answer.outcome !== 'blocked') throw new Error('unreachable')
+      expect(answer.blockedReason).toBe('schema-fail')
+
+      // POSITION-ONLY. The issue names the file, the line and the column, and nothing else — no
+      // property of the thrown error other than where it happened reaches this string.
+      const issues = answer.validationIssues ?? []
+      const parseIssue = issues.find((issue) => issue.startsWith(`${HOOKS_FILE}: `))
+      expect(parseIssue).toBeDefined()
+      expect(parseIssue).toMatch(
+        new RegExp(`^${HOOKS_FILE}: not readable as YAML at line \\d+, column \\d+$`),
+      )
+
+      // WR-11: the record points a person at the file the issue is ABOUT, unioned with the file the
+      // proposal diffed. Pre-395-10 `paths` was the diffed files alone, so a person told their
+      // configuration was invalid was handed the one file that was fine.
+      expect(answer.paths).toContain(HOOKS_FILE)
+      expect(answer.paths).toContain(CONFIG_FILE)
+
+      const returned = JSON.stringify(answer)
+      const persisted = persistedText(agentQaRoot)
+      const shown = await cli(['proposals', 'show', answer.proposalId])
+
+      // PRESENCE FIRST, PER SURFACE: each really rendered this refusal, its reason, and the issue
+      // about this file. The absence below is therefore about what they print.
+      for (const surface of [returned, persisted, shown]) {
+        expect(surface).toContain('schema-fail')
+        expect(surface).toContain(HOOKS_FILE)
+        expect(surface).toContain('not readable as YAML at line')
+      }
+
+      // AND NONE OF THEM CARRIES THE SOURCE LINE'S TEXT.
+      expect(returned).not.toContain(marker)
+      expect(persisted).not.toContain(marker)
+      expect(shown).not.toContain(marker)
     })
 })

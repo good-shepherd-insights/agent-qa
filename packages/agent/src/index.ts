@@ -203,6 +203,7 @@ export type {
   ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
   ConfigValidation,
+  ConfigValidationIssue,
 } from './config-mutation/ports.js'
 export {
   CONFIG_FIELD_SET_FUNCTION_ID,

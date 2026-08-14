@@ -210,15 +210,41 @@ export interface ConfigScanPortLike {
 }
 
 /**
- * What whole-config validation said about the candidate config (CFGM-01).
+ * One thing whole-config validation said, and the file it said it ABOUT (395-10 · WR-11).
  *
- * ISSUES AS STRINGS in the validator's own words: this layer neither classifies nor renders them,
- * it reports them. A closed issue vocabulary here would be a second, weaker copy of `core`'s schema
- * refinements, out of date the first time one of them is added.
+ * THE MESSAGE IS THE VALIDATOR'S OWN WORDS; the path is not. This layer neither classifies nor
+ * renders the words — a closed issue vocabulary here would be a second, weaker copy of `core`'s
+ * schema refinements, out of date the first time one of them is added — but WHICH FILE an issue is
+ * about is a fact the validator alone knows, and a string that had already joined the two could
+ * only be split again by parsing it back apart.
+ *
+ * WHY IT IS SPLIT AT ALL. A blocked record's `paths` used to be the DIFFED files, so a proposal
+ * that edited the config yaml and was refused because the committed hooks file does not parse named
+ * the one file that was fine. A person following that reference finds nothing wrong and re-tries the
+ * edit. The pipeline now unions these paths into the record's, which it can only do if the path
+ * arrives as a path.
+ */
+export interface ConfigValidationIssue {
+  /** The config-set member the issue is about — never a dotted config path. */
+  readonly path: string
+  /**
+   * The validator's own sentence. It may contain a dotted config path; it may not contain a VALUE.
+   *
+   * THE SECOND HALF IS A CONTRACT AND NOT A HOPE, and 395-10 is where it was learned: the vendored
+   * `yaml` package pretty-prints a parse error with a verbatim excerpt of the offending source line,
+   * and an implementation that interpolated that error text published whatever that line held onto
+   * three surfaces. A message derived from a library's error must be reduced to the facts this
+   * product chose to publish — for a parse failure, its POSITION.
+   */
+  readonly message: string
+}
+
+/**
+ * What whole-config validation said about the candidate config (CFGM-01).
  */
 export type ConfigValidation =
   | { readonly ok: true }
-  | { readonly ok: false; readonly issues: readonly string[] }
+  | { readonly ok: false; readonly issues: readonly ConfigValidationIssue[] }
 
 export interface ConfigValidatePortLike {
   /**

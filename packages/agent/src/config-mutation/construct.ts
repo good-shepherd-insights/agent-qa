@@ -999,14 +999,25 @@ async function fileConfigProposal(
     files: plan.candidate,
   })
   if (!validation.ok) {
+    // WR-11: THE RECORD NAMES THE FILE THE ISSUE IS ABOUT, unioned with the files this proposal
+    // diffed. It used to name the diffed files alone, which pointed a person at the wrong one every
+    // time the refusal came from a member the proposal never touched — an already-invalid committed
+    // hooks file refuses every config proposal (see the validate port's header), and the person was
+    // handed the one file that was fine. Both halves are kept: the diffed paths say what was being
+    // changed, the implicated ones say where to look.
+    const implicated = validation.issues.map((issue) => issue.path)
     return await fileBlocked(deps, plan, {
       blockedReason: 'schema-fail',
       detail: 'the resulting configuration is not valid',
-      paths: diffInput.map((file) => file.path),
+      paths: [...new Set([...implicated, ...diffInput.map((file) => file.path)])],
+      // JOINED HERE AND NOWHERE ELSE. The persisted shape is `string[]` and stays that way — every
+      // render of a blocked record reads it — so the split the port now carries is a fact about the
+      // PIPELINE's inputs rather than a schema change rippling out to four surfaces.
+      //
       // Non-empty by contract; a validator that refused without saying why would leave a person with
       // nothing to act on, so an empty list is turned into the one honest sentence available.
       validationIssues: validation.issues.length > 0
-        ? [...validation.issues]
+        ? validation.issues.map((issue) => `${issue.path}: ${issue.message}`)
         : ['the configuration was refused by whole-config validation, which reported no detail'],
     })
   }
