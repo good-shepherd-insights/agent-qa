@@ -76,6 +76,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   createConfigApplyPort,
   createConfigFilesPort,
+  createConfigUndoSourcePort,
   createConfigValidatePort,
   createScaffoldContentPort,
 } from '../local-agent-host.js'
@@ -184,6 +185,7 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
     configFiles: createConfigFilesPort(configPath),
     configValidate: createConfigValidatePort(),
     configApply: createConfigApplyPort(configPath),
+    configUndoSource: createConfigUndoSourcePort(configPath),
     // THE REAL PRODUCER. Not a double, and not a copy — the factory the CLI composition binds.
     scaffoldContent: createScaffoldContentPort(),
     // The REAL scan with an EMPTY seed set, on `config-apply.test.ts`'s stated reasoning: the
@@ -411,6 +413,34 @@ describe('the accepted scaffold commits exactly the bytes it showed (CFGM-03/CFG
 
     expect(commitCount()).toBe(before)
     expect(existsSync(configPath)).toBe(false)
+  })
+})
+
+describe('undoing a scaffold is WINDOWS 128\'s case, measured (D-07 · 395-06)', () => {
+  it('(11) refuses `undo-needs-delete` — the scaffold is the delete gap the undo names', async () => {
+    // 395-06 filed `undo-needs-delete` naming 395-08 as its owner, on the reasoning that this plan
+    // "meets the whole-new-file case from the other direction". It does — from the CREATE side —
+    // and this cell is what turns that entry from a hypothetical into a measured one: a scaffold
+    // applies, its commit carries the D-06 trailer, so it IS the next undo's source, and reversing
+    // it would DELETE two files this write path can only propose CONTENT for.
+    const registry = registryFor({ confirm: true })
+    const id = proposedId(await scaffold(registry, 'booking.com'))
+    const accepted = await invokeFunction(
+      registry, 'proposals.accept', { proposalId: id }, HUMAN,
+    ) as ProposalsAcceptOutput
+    expect(accepted.apply.outcome).toBe('applied')
+
+    const before = commitCount()
+    const undone = await invokeFunction(
+      registry, 'config.undo.propose', {}, HUMAN,
+    ) as ConfigProposeOutput
+
+    expect(undone).toMatchObject({ outcome: 'refused', reason: 'undo-needs-delete' })
+    // It names both created files, and it commits and files nothing — refused WHOLE rather than
+    // applied by halves, which is the property 395-06 wrote the refusal for.
+    expect(undone.outcome === 'refused' && undone.detail).toContain(CONFIG_FILE)
+    expect(undone.outcome === 'refused' && undone.detail).toContain('hooks.yaml')
+    expect(commitCount()).toBe(before)
   })
 })
 
