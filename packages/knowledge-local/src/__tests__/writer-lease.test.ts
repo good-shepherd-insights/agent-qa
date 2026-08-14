@@ -107,6 +107,46 @@ function waitForFileInTest(file: string, timeoutMs: number): Promise<void> {
   return waitForConditionInTest(() => existsSync(file), timeoutMs, `file ${file}`)
 }
 
+/**
+ * Wait for a subprocess-written pid file to hold a COMPLETE value, then answer it (395-17).
+ *
+ * 395-15's discipline applied to the read site it did not reach: a marker another process writes
+ * is ready when its CONTENT parses, never when its inode appears. `writeFileSync` in the child is
+ * create-then-write at the syscall level, so a reader that waits on `existsSync` can and does
+ * observe zero bytes — and `Number(''.trim())` is `0`, which is why the failure spelled itself
+ * `bad orphan pid: 0`. That value is unreachable from any COMPLETED write: the child writes
+ * `String(child.pid)`, which is either a positive integer or the string `undefined`. Measured on
+ * the same writer schedule under contention: the inode shape faulted 3000/3000, this one 0/3000.
+ *
+ * The deadline names the path AND the last thing the file held, so a genuine red — a child that
+ * really never wrote — reads as itself rather than as a bare timeout.
+ */
+async function waitForPidFileInTest(file: string, timeoutMs: number): Promise<number> {
+  let lastSeen = '<file absent>'
+  let pid = 0
+  try {
+    await waitForConditionInTest(
+      () => {
+        if (!existsSync(file)) return false
+        lastSeen = readFileSync(file, 'utf8').trim()
+        if (lastSeen === '') return false
+        const candidate = Number(lastSeen)
+        if (!Number.isSafeInteger(candidate) || candidate <= 0) return false
+        pid = candidate
+        return true
+      },
+      timeoutMs,
+      `a complete pid in ${file}`,
+    )
+  } catch (error) {
+    // RETHROWN RATHER THAN INTERPOLATED EARLY: the last read is only known once the loop has run,
+    // so the message is composed here instead of in the argument, where it would always say
+    // `<file absent>`.
+    throw new Error(`${(error as Error).message} — last read: ${JSON.stringify(lastSeen)}`)
+  }
+  return pid
+}
+
 function spawnLeaseAcquirer(
   knowledgeRoot: string,
   stallInsideLockMs: number,
@@ -1657,9 +1697,7 @@ describe('escalation cost and budget on the acquisition hot path (W-05)', () => 
         stdio: ['pipe', 'pipe', 'pipe'],
       },
     ))
-    await waitForFileInTest(pidFile, 15_000)
-    const pid = Number(readFileSync(pidFile, 'utf8').trim())
-    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`bad orphan pid: ${pid}`)
+    const pid = await waitForPidFileInTest(pidFile, 15_000)
     // The owner must be attributable, or the escalation refuses and never reaches the wait at all.
     await waitForConditionInTest(() => processState(pid) === 'S' || processState(pid) === 'R', 15_000)
     return pid

@@ -885,6 +885,48 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(JSON.stringify(broken.events)).toBe(JSON.stringify(healthy.events))
     })
 
+  it('(R15) a present that REJECTS decides nothing either — the port type\'s other arm',
+    async () => {
+      // THE TWIN, over `Promise<void>` (395-17). The port is `(text) => void | Promise<void>`, and
+      // a guard covering only the synchronous throw would be a half-fix whose hole is exactly the
+      // arm a real async writer takes. One await covers both, and this cell is what says so.
+      //
+      // ITS ADMISSION TICKET IS THE MUTATION, NOT HEAD. (R15) lands after the guard, so it never
+      // saw the pre-guard build; its red is measured under leg M-P1 — the guard removed, this cell
+      // and (R14) red on the turn rejecting, every neighbour green.
+      const message = 'write a test for booking.com checkout'
+
+      const healthyOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const healthy = harness({ targets: [], realScaffold: healthyOp })
+      const healthyResult = await healthy.runTurn({ message })
+      expect(healthyResult.status).toBe('completed')
+
+      const brokenOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const broken = harness({
+        targets: [], realScaffold: brokenOp, presentFailure: 'rejects',
+      })
+      const brokenResult = await broken.runTurn({ message })
+
+      expect(brokenResult.status).toBe('completed')
+      expect(brokenResult).toEqual(healthyResult)
+
+      expect(broken.ordering).toEqual([
+        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
+        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      ])
+      expect(broken.ordering.indexOf(CONFIG_PROPOSAL_APPLY_FUNCTION_ID))
+        .toBeGreaterThan(broken.ordering.indexOf(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID))
+
+      expect(brokenOp.filed).toHaveLength(1)
+      expect(broken.presented).toHaveLength(1)
+      expect(broken.presented[0]?.orderingAtRender)
+        .toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
+
+      expect(broken.events).toHaveLength(healthy.events.length)
+      expect(JSON.stringify(broken.events)).toBe(JSON.stringify(healthy.events))
+    })
+
   it('(R9) does not run at all on a host that binds no vocabulary', async () => {
     // The dep is ABSENT. The shipped dispatch is exactly what it was before this seam existed —
     // including for the from-zero case, whose only guard on such a host is the authoring loop's own
