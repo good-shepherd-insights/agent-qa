@@ -56,7 +56,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { yamlParseFailureMessage } from '@vostride/agent-qa-core'
+import { formatDiagnostics, validateProject, yamlParseFailureMessage } from '@vostride/agent-qa-core'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -97,36 +97,14 @@ function occurrences(haystack: string, needle: string): number {
  * it is the mechanism by which any line of a person's file can end up in an error message, and the
  * only way to measure the channel is to put something recognisable on the line it prints.
  */
-function faultyConfigText(options: { readonly credential: boolean }): string {
-  const carried = options.credential
-    ? `apiToken: ${PLANTED_CREDENTIAL}`
-    : 'apiToken: an ordinary line with nothing sensitive on it'
-  return `# my project's own agent-qa configuration
-workspace:
-  testMatch:
-    - tests/**/*.yaml
-  suiteMatch:
-    - suites/**/*.suite.yaml
-  hooksFile: hooks.yaml
-
-registry:
-  llms:
-    - name: judge
-      provider: openai-subscription
-      model: gpt-5.6-terra
-
-use:
-  llm: judge
-  parallel: false
-
-# pasted in from the provider dashboard months ago
-${carried}
-registry:
-  llms: []
-`
-}
-
-/** A configuration the parser reads without complaint — the non-firing control's input. */
+/**
+ * A configuration the shipped schema accepts WHOLE — the non-firing control's input, and the body
+ * the faulty fixture is built from.
+ *
+ * COMPLETE ON PURPOSE. `config.field.set` validates the whole candidate (CFGM-01), so a config
+ * missing `workspace.envFile` blocks with `schema-fail` and the control cell would be measuring the
+ * validator rather than the loader guard it is the control for.
+ */
 const WELL_FORMED_CONFIG = `# my project's own agent-qa configuration
 workspace:
   testMatch:
@@ -134,6 +112,8 @@ workspace:
   suiteMatch:
     - suites/**/*.suite.yaml
   hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
 
 registry:
   llms:
@@ -144,9 +124,31 @@ registry:
 use:
   llm: judge
   parallel: false
+  mobile:
+    appState: preserve
   timeout:
     step: 30s
+    test: 90m
+    navigation: 2m
 `
+
+/** The ordinary line the secretless control carries where the credential otherwise sits. */
+const ORDINARY_LINE = 'an ordinary line with nothing sensitive on it'
+
+function faultyConfigText(options: { readonly credential: boolean }): string {
+  const carried = options.credential
+    ? `apiToken: ${PLANTED_CREDENTIAL}`
+    : `apiToken: ${ORDINARY_LINE}`
+  // THE SAME FILE, PLUS ONE DUPLICATE TOP-LEVEL KEY. The person's config was fine and then a merge
+  // or a copy-paste gave them a second `registry:` — which is why the fixture is this file and not
+  // a scrap of broken yaml: what the excerpt discloses is the content of a file worth protecting.
+  return `${WELL_FORMED_CONFIG}
+# pasted in from the provider dashboard months ago
+${carried}
+registry:
+  llms: []
+`
+}
 
 /**
  * Write the config and COMMIT it, because a committed file is what every road here reads.
@@ -227,6 +229,114 @@ describe('a committed config the parser cannot read names WHERE, never WHAT (395
     // line failed with the planted credential quoted back out of the person's own file.
     expectPositionOnly(message)
     expect(message).toContain(CONFIG_FILE)
+  })
+
+  it('(F2) config.target.create faults the same way — the guard is in the LOADER', async () => {
+    seedConfig(faultyConfigText({ credential: true }))
+
+    const { error } = await invokeComposed({
+      functionId: 'config.target.create',
+      payload: { name: 'shop', platform: 'web', url: 'https://shop.example.com' },
+    })
+
+    expect(error, 'an unreadable committed config must still fault the op').toBeDefined()
+    const message = error?.message ?? ''
+    expectPositionOnly(message)
+    expect(message).toContain(CONFIG_FILE)
+  })
+
+  it('(F3) config.project.scaffold faults the same way — the third op, from zero', async () => {
+    seedConfig(faultyConfigText({ credential: true }))
+
+    const { error } = await invokeComposed({
+      functionId: 'config.project.scaffold',
+      payload: { domain: 'booking.com' },
+    })
+
+    expect(error, 'an unreadable committed config must still fault the op').toBeDefined()
+    const message = error?.message ?? ''
+    expectPositionOnly(message)
+    expect(message).toContain(CONFIG_FILE)
+  })
+
+  it('(F4) agent-qa validate reports the same fault position-only — the SIBLING site', async () => {
+    seedConfig(faultyConfigText({ credential: true }))
+
+    // THE ROAD `agent-qa validate` TAKES. The command catches its own `resolveConfig` failure and
+    // defers to core `validateProject`, whose config-member arm is a SECOND interpolation site —
+    // not a caller of the cli loader at all. A fix that hardened only the loader leaves this road
+    // printing the excerpt, which is the half a three-op corpus cannot see.
+    const result = await validateProject({ configPath })
+
+    const configDiagnostics = result.diagnostics.filter((d) => d.file === configPath)
+    expect(configDiagnostics).toHaveLength(1)
+    const message = configDiagnostics[0]?.message ?? ''
+    expectPositionOnly(message)
+
+    // AND THE RENDERED OUTPUT, because the diagnostic is a structure and the person reads a string.
+    const rendered = formatDiagnostics(result)
+    expect(occurrences(rendered, PLANTED_CREDENTIAL)).toBe(0)
+    expect(rendered).toMatch(/line \d+, column \d+/)
+  })
+
+  it('(F5) the chat answer carries EXACTLY this string — refusalMessage returns .message',
+    async () => {
+      seedConfig(faultyConfigText({ credential: true }))
+
+      const { error } = await invokeComposed({
+        functionId: 'config.project.scaffold',
+        payload: { domain: 'booking.com' },
+      })
+
+      // THE EQUIVALENCE THE CHAT ROAD RESTS ON, asserted rather than assumed. `routeWriteTest`
+      // captures this rejection and hands it to `refusalMessage` (turn-engine.ts:290-292), which
+      // for an `Error` with a NON-EMPTY message returns that message VERBATIM — it falls through to
+      // `refusalName` only otherwise. So the two predicates below are precisely the conditions
+      // under which the string asserted next IS the sentence a chat turn's answer prints and the
+      // session jsonl persists.
+      expect(error).toBeInstanceOf(Error)
+      expect(error?.message).not.toBe('')
+
+      const asAChatTurnWouldCarryIt = error?.message ?? ''
+      expectPositionOnly(asAChatTurnWouldCarryIt)
+      expect(asAChatTurnWouldCarryIt).toContain(CONFIG_FILE)
+    })
+})
+
+describe('the controls: the guard fires on the FAULT, and on nothing else (395-14)', () => {
+  it('(F6) a WELL-FORMED config still proposes — the guard fired zero times', async () => {
+    seedConfig(WELL_FORMED_CONFIG)
+
+    const { answer, error } = await invokeComposed({
+      functionId: 'config.field.set',
+      payload: { path: 'use.timeout.step', value: '45s' },
+    })
+
+    // Named rather than swallowed: a catch that had started eating healthy loads would fail here
+    // with the message it failed with.
+    expect(error?.message ?? null).toBeNull()
+    expect((answer as { outcome?: string }).outcome).toBe('proposed')
+  })
+
+  it('(F7) the same fault with NO credential anywhere still reports its position', async () => {
+    // THE PRECONDITION-GUARDED CORPUS LAW. Every other road cell is drawn from inside the rule's
+    // own assumption — a fault WITH a secret beside it. A fix keyed on detecting a secret rather
+    // than on the fault would pass all of them and red here, and a fallback that hid the fault
+    // entirely (T-395-42) would red here too.
+    seedConfig(faultyConfigText({ credential: false }))
+
+    const { error } = await invokeComposed({
+      functionId: 'config.field.set',
+      payload: { path: 'use.timeout.step', value: '45s' },
+    })
+
+    expect(error, 'a secretless parse fault is still a fault').toBeDefined()
+    const message = error?.message ?? ''
+    expect(message).toMatch(/line \d+, column \d+/)
+    expect(message).toContain(CONFIG_FILE)
+    // The file's own content stays out of it here too — the line this fixture carries instead of
+    // the credential is still the person's text.
+    expect(message).not.toContain(ORDINARY_LINE)
   })
 })
 
