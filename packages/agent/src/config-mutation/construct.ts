@@ -599,11 +599,27 @@ export interface ConstructConfigScaffoldDeps extends ConstructConfigProposalDeps
  * function computes neither — so "the LLM never invents an origin" is a statement about which
  * function produced the bytes rather than about how the model was asked.
  *
- * A CONFIG THAT ALREADY EXISTS IS A REFUSAL, NOT AN OVERWRITE. Scaffold builds the whole
- * configuration; running it against a project that has one would replace a person's file wholesale
- * — the widest silent overwrite this phase could produce, rendered as a diff nobody would finish
- * reading. `config.target.create` is the op for adding a target to a configured project, and it
- * carries its own create-is-never-an-upsert refusal.
+ * A CONFIGURATION THIS SCAFFOLD WOULD OVERWRITE IS A REFUSAL — AND THAT IS DECLARED TARGETS, NEVER
+ * A FILE'S EXISTENCE (395-12, narrowed · SC-5's entry point). The refusal protects a person's
+ * configuration from being replaced wholesale, and what this op writes is the target registry. A
+ * config file that declares NO targets has nothing here to overwrite, so it is MERGED: exactly
+ * `registry.targets.<name>` is inserted into the person's own bytes and no other byte of that file
+ * moves. The declared-target set arrives as a STRUCTURAL fact from the inspect port — names, never
+ * values — for the reason this package parses no yaml at all.
+ *
+ * WHY THE OLD PREDICATE WAS A PINCER RATHER THAN A GUARD, recorded because the narrowing only reads
+ * as safe against it. `resolveCliChatCapabilities` reads the chat model out of `registry.llms`,
+ * which lives in the config file — so the only project that can reach this op through a chat turn
+ * is a project that HAS a config file, which is precisely the project the file-existence predicate
+ * refused. The two conditions closed on each other and CFGM-05's sentence could not complete for
+ * any project at all (WINDOWS 132's two jaws, both reproduced live by 395-VERIFICATION). Under the
+ * narrowing the serving class is every project that can chat: a model, no targets, one inserted
+ * entry. A project with no model anywhere still cannot chat about anything, which is WINDOWS
+ * 130/133's parked question about model resolution and not a config-mutation defect.
+ *
+ * `config.target.create` REMAINS THE OP for adding a target to a project that already declares one,
+ * and the refusal still names it — now naming the targets it will not replace, so a person reads
+ * WHICH configuration is standing in the way rather than merely that one is.
  *
  * IT IS ALWAYS CROSS-BOUNDARY, AND THAT IS COMPUTED RATHER THAN ASSERTED (D-14/D-02). The scaffold
  * writes a base URL where the committed configuration had none, so `computeCrossBoundary` sees an
@@ -632,14 +648,26 @@ export async function constructConfigProjectScaffoldProposal(
   // (1) CFGM-04: the re-read, exactly as every other action does it.
   const set = await deps.configFiles.read()
   const existingConfig = requireConfigFile(set)
-  if (existingConfig.bytes !== undefined) {
+
+  // THE PREDICATE, NARROWED (395-12). A config file with no `registry.targets` entries declares
+  // nothing this op would replace, so its existence alone is not a refusal. `inspect` answers the
+  // MAP's keys — names only, never values — which is the same structural read `config.target.create`
+  // already takes to list the names its own refusal offers.
+  const declaredTargets = existingConfig.bytes === undefined
+    ? []
+    : factsFor(
+      await deps.configFiles.inspect({ bytes: existingConfig.bytes, paths: [TARGETS_PATH] }),
+      TARGETS_PATH,
+    ).keys ?? []
+  if (declaredTargets.length > 0) {
     return {
       outcome: 'refused',
       reason: 'already-configured',
       detail:
-        `this project already has ${existingConfig.path}, and scaffolding writes a whole `
-        + 'configuration from zero — it would replace what is there. Use config.target.create to '
-        + `add ${verdict.targetName} to the configuration you already have.`,
+        `this project already configures ${declaredTargets.join(', ')} in ${existingConfig.path}, `
+        + 'and scaffolding writes a whole target registry — it would replace what is there. Use '
+        + `config.target.create to add ${verdict.targetName} to the configuration you already have.`,
+      candidates: [...declaredTargets],
     }
   }
 
@@ -658,10 +686,29 @@ export async function constructConfigProjectScaffoldProposal(
     }
   }
 
+  // WHETHER THIS SCAFFOLD ADDS A HOOKS FILE IS A FACT ABOUT THE SET, not a constant. From zero it
+  // always does; merging into a project that already has one, it must not — and `addsHook` is
+  // STATED by the op (D-02), so it has to stop being stated when no hook is added or the classifier
+  // would flag `hook-added` for a file nobody touched.
+  const hooksMember = set.files.find((file) => file.path === set.hooksFile)
+  const addsHook = hooksMember?.bytes === undefined
+
   const rendered = await deps.scaffoldContent.render({
     targetName: verdict.targetName,
     baseUrl: verdict.baseUrl,
     ...(gitignore?.bytes === undefined ? {} : { existingGitignore: gitignore.bytes }),
+    // MERGE MODE, AND ONLY WHEN THERE ARE BYTES TO MERGE INTO. Absent here is the from-zero road,
+    // whose rendered bytes are byte-identical to what 395-08 shipped and what the goldens pin.
+    ...(existingConfig.bytes === undefined
+      ? {}
+      : {
+        existingConfig: {
+          path: existingConfig.path,
+          bytes: existingConfig.bytes,
+          hooksPath: set.hooksFile,
+          hooksPresent: !addsHook,
+        },
+      }),
   })
 
   try {
@@ -677,8 +724,9 @@ export async function constructConfigProjectScaffoldProposal(
         { configPath: `${TARGETS_PATH}.${verdict.targetName}.url`, newValue: verdict.baseUrl },
       ],
       // The scaffolded hooks file declares one hook, which is code this project would then run.
-      // Stated by the op, as D-02 requires, and true: the file did not exist a moment ago.
-      addsHook: true,
+      // Stated by the op, as D-02 requires, and true exactly when the file did not exist a moment
+      // ago — see `addsHook`'s derivation above.
+      addsHook,
       candidate: candidateSet(set, [...rendered]),
     }, set, deps)
   } catch (error) {

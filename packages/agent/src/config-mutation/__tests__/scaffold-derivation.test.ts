@@ -22,8 +22,15 @@
 //                              the token itself is not echoed back as a candidate origin.
 //   (S2) never reads         — a gate placed AFTER the re-read. The double throws if read, so a
 //                              refusal that had already gone to the filesystem fails by name.
-//   (S3) already-configured  — a scaffold that overwrote an existing configuration. The double
-//                              answers real config bytes and the cell asserts NOTHING was filed.
+//   (S3) already-configured  — a scaffold that overwrote a DECLARED TARGET REGISTRY. Since 395-12
+//                              the predicate is the registry rather than the file: the double
+//                              answers a config that declares `shop` and the cell asserts NOTHING
+//                              was filed, and that the refusal names what it will not replace.
+//  (S3b) the narrowing       — a predicate still keyed on the file EXISTING. The double answers a
+//                              config file that declares NO targets, and the op must reach the
+//                              content port in MERGE mode carrying the person's own bytes. Its
+//                              two-sidedness is (S3) one cell up: same op, same fixture family,
+//                              opposite verdict, and neither can be satisfied by a constant.
 //   (S4) the port gets the   — an op that handed the raw token to the content port, or derived the
 //        DERIVATION            target name a second time on the far side of the boundary. The
 //                              double records what it was asked for.
@@ -54,6 +61,8 @@
 // against committed goldens, for two different domains. Splitting them is the same call 395-04 and
 // 395-07 recorded: a double that could answer the question under test would make the cell a
 // statement about the double.
+
+import { isMap, isScalar, parseDocument } from 'yaml'
 
 import { utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
 import type { ConfigProposalV1, ConfigProposeOutput } from '@vostride/agent-qa-schema'
@@ -121,9 +130,22 @@ interface Filed {
   readonly emittedBy: string
 }
 
+/** What the content port was asked for — including 395-12's merge mode, when it is present. */
+interface RenderedCall {
+  readonly targetName: string
+  readonly baseUrl: string
+  readonly existingGitignore?: string
+  readonly existingConfig?: {
+    readonly path: string
+    readonly text: string
+    readonly hooksPath: string
+    readonly hooksPresent: boolean
+  }
+}
+
 interface Harness {
   readonly filed: Filed[]
-  readonly rendered: { targetName: string; baseUrl: string; existingGitignore?: string }[]
+  readonly rendered: RenderedCall[]
   readonly scanned: string[]
   readonly deps: ConstructConfigScaffoldDeps
 }
@@ -148,7 +170,7 @@ function harness(options: {
     | { ok: true }
 } = {}): Harness {
   const filed: Filed[] = []
-  const rendered: { targetName: string; baseUrl: string; existingGitignore?: string }[] = []
+  const rendered: RenderedCall[] = []
   const scanned: string[] = []
 
   const defaultContent = (input: { targetName: string; baseUrl: string }) => [
@@ -183,8 +205,28 @@ function harness(options: {
             ],
           })
         },
-        inspect: () => {
-          throw new Error('config.project.scaffold must not inspect the document')
+        // FAITHFUL SINCE 395-12, and it had to become so: the narrowed `already-configured`
+        // predicate reads the DECLARED TARGET NAMES structurally, so a double that threw here
+        // would be pinning the absence of the very read the fix is made of. It is the shipped
+        // host's own `parseDocument` → `getIn` → `keys` answer — names, never values — spelled
+        // over the same `yaml` API, which is a DEV dependency of this package: a test may parse
+        // what this package's source may not.
+        inspect: ({ bytes, paths }) => {
+          const document = parseDocument(bytes === undefined ? '' : utf8Decode(bytes))
+          return Promise.resolve(paths.map((path) => {
+            const node = document.getIn(path.split('.'), true)
+            if (node === undefined || node === null) return { path, present: false }
+            if (isMap(node)) {
+              return {
+                path,
+                present: true,
+                kind: 'map' as const,
+                keys: node.items.map((item) =>
+                  String(isScalar(item.key) ? item.key.value : item.key)),
+              }
+            }
+            return { path, present: true, kind: 'scalar' as const }
+          }))
         },
         mintHookId: () => {
           throw new Error('config.project.scaffold must not mint a hook id')
@@ -216,6 +258,16 @@ function harness(options: {
             ...(input.existingGitignore === undefined
               ? {}
               : { existingGitignore: utf8Decode(input.existingGitignore) }),
+            ...(input.existingConfig === undefined
+              ? {}
+              : {
+                existingConfig: {
+                  path: input.existingConfig.path,
+                  text: utf8Decode(input.existingConfig.bytes),
+                  hooksPath: input.existingConfig.hooksPath,
+                  hooksPresent: input.existingConfig.hooksPresent,
+                },
+              }),
           })
           return Promise.resolve(
             (options.content ?? defaultContent)(input),
@@ -307,19 +359,53 @@ describe('config.project.scaffold refuses rather than guessing (D-15 · CFGM-05)
     expect(test.rendered).toHaveLength(0)
   })
 
-  it('(S3) refuses a project that already has a configuration, and files nothing', async () => {
-    const test = harness({ configBytes: 'workspace:\n  hooksFile: hooks.yaml\n' })
+  it('(S3) refuses a project that DECLARES targets, and files nothing', async () => {
+    // A DESIGNED FIXTURE BREAK (395-12). This fixture was `workspace:\n  hooksFile: …` — a config
+    // file declaring no targets at all — so it measured "a config file exists". The predicate it
+    // pins now is the narrowed one: a target registry this scaffold would replace.
+    const test = harness({
+      configBytes:
+        'workspace:\n  hooksFile: hooks.yaml\n'
+        + 'registry:\n  targets:\n    shop:\n      platform: web\n      url: https://shop.test\n',
+    })
     const answer = await scaffold(test, 'booking.com')
 
     expect(answer).toMatchObject({ outcome: 'refused', reason: 'already-configured' })
-    // It names the file it will not replace and the op that does what the caller probably wanted.
+    // It names WHAT it will not replace — the declared targets, not merely the file — and the op
+    // that does what the caller probably wanted.
+    expect(answer.outcome === 'refused' && answer.detail).toContain('shop')
     expect(answer.outcome === 'refused' && answer.detail).toContain(CONFIG_FILE)
     expect(answer.outcome === 'refused' && answer.detail).toContain('config.target.create')
+    expect(answer.outcome === 'refused' && answer.candidates).toEqual(['shop'])
     // NOTHING WAS RENDERED AND NOTHING WAS FILED. The refusal is above the content port, so a
-    // project with a configuration cannot have a whole replacement one built for it at all.
+    // project with a target registry cannot have a replacement one built for it at all.
     expect(test.rendered).toHaveLength(0)
     expect(test.filed).toHaveLength(0)
   })
+
+  it('(S3b) MERGES a config file that declares no targets, carrying the person\'s own bytes',
+    async () => {
+      // THE OTHER SIDE OF (S3), and the cell that reds on the pre-395-12 predicate: a config FILE
+      // exists, so the old rule refused — and refused precisely the class that can reach this op
+      // through a chat turn, because a project's chat model lives in `registry.llms`, in this file.
+      const configBytes = '# mine\nworkspace:\n  hooksFile: hooks.yaml\nregistry:\n  llms: []\n'
+      const test = harness({ configBytes })
+      const answer = await scaffold(test, 'booking.com')
+
+      expect(answer.outcome).toBe('proposed')
+      // The content port was reached in MERGE mode, holding the committed bytes UNCHANGED and the
+      // pinned set's own path vocabulary. A producer handed a path it re-derived could name a file
+      // outside the set; a producer handed no bytes could only render a whole replacement.
+      expect(test.rendered).toHaveLength(1)
+      expect(test.rendered[0]?.existingConfig).toEqual({
+        path: CONFIG_FILE,
+        text: configBytes,
+        hooksPath: 'hooks.yaml',
+        // This fixture's hooks member has no bytes, so the scaffold still adds one.
+        hooksPresent: false,
+      })
+      expect(test.filed).toHaveLength(1)
+    })
 
   it('(S9) answers UNRENDERABLE as data rather than letting it escape as a fault', async () => {
     // 395-02's refusal, reached the only way this pipeline can reach it: bytes that differ and

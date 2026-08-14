@@ -2917,7 +2917,7 @@ function readBlobBytes(cwd: string, objectName: string): Uint8Array | undefined 
  */
 export function createScaffoldContentPort(): ConfigScaffoldContentPortLike {
   return {
-    render({ targetName, baseUrl, existingGitignore }) {
+    render({ targetName, baseUrl, existingGitignore, existingConfig }) {
       const files = buildScaffoldFileSet({
         targetName,
         baseUrl,
@@ -2930,6 +2930,20 @@ export function createScaffoldContentPort(): ConfigScaffoldContentPortLike {
         ...(existingGitignore === undefined
           ? {}
           : { existingGitignore: Buffer.from(existingGitignore).toString('utf8') }),
+        // 395-12: the MERGE mode's bytes, decoded here for the reason the gitignore's are — the
+        // port speaks bytes because the digests are taken over bytes, and the content module is
+        // text. The paths cross unchanged: they are the pinned set's own spelling, and a producer
+        // that re-derived them could name a file outside the set.
+        ...(existingConfig === undefined
+          ? {}
+          : {
+            existingConfig: {
+              path: existingConfig.path,
+              text: Buffer.from(existingConfig.bytes).toString('utf8'),
+              hooksPath: existingConfig.hooksPath,
+              hooksPresent: existingConfig.hooksPresent,
+            },
+          }),
       })
       return Promise.resolve(files.map((file) => ({
         path: file.path,

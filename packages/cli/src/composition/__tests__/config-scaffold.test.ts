@@ -40,6 +40,17 @@
 //   (7) the confirm    — D-14's pause. The confirm port is a SPY and the cell asserts it was
 //                        CALLED, because a turn that never reached a confirm also completes.
 //   (8) fail closed    — a non-TTY caller. The same accept with no confirm bound must not commit.
+//  (13) the MERGE      — 395-12: an `already-configured` predicate keyed on a config file EXISTING
+//                        rather than on a configuration this scaffold would overwrite. The fixture
+//                        declares an LLM, carries comments, and declares ZERO targets — the only
+//                        project class that can reach a chat turn at all — so a file-keyed
+//                        predicate reds here with `refused / already-configured`. Its second half
+//                        is the merge itself: the emitted config is the person's own bytes with
+//                        exactly one target entry inserted, asserted by REMOVING the inserted text
+//                        and byte-comparing what is left against the committed file.
+// (13b) hooks left be  — a merge that composed the scaffold's hooks template over a hooks file a
+//                        person already wrote. That is the same wholesale overwrite
+//                        `already-configured` refuses for the config yaml, one file over.
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -70,7 +81,7 @@ import type {
   ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
-import { parse as parseYaml } from 'yaml'
+import { parseDocument, parse as parseYaml } from 'yaml'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -93,6 +104,55 @@ const CONFIG_FILE = 'agent-qa.config.yaml'
 
 /** The project's OWN gitignore rule, seeded so the upsert has something to compose with. */
 const SEEDED_GITIGNORE = '# the project\'s own rules\ndist/\n.agent-qa/\n'
+
+/**
+ * A configuration that declares an LLM, carries comments, and declares NO TARGETS (395-12).
+ *
+ * THIS IS THE CLASS SC-5 HAS TO SERVE, and it is measured rather than imagined:
+ * `resolveCliChatCapabilities` reads the chat model out of `registry.llms`, so a project that can
+ * hold a conversation at all is a project that HAS a config file. WINDOWS 132's jaw 2 is that the
+ * scaffold refused exactly those projects — the ones able to reach it — because `already-configured`
+ * was keyed on the file existing rather than on a configuration this scaffold would overwrite.
+ *
+ * IT ROUND-TRIPS BYTE-IDENTICALLY THROUGH `parseDocument` → `toString`, and cell (13) asserts that
+ * FIRST. The comment-preserving edit re-emits some constructs with canonical spacing, so a fixture
+ * that did not round-trip would fail the byte-preservation assertion below for a reason that has
+ * nothing to do with the merge. Asserting the identity round-trip separately is what separates the
+ * serializer's fidelity — which every `config.field.set` already rides — from this plan's own
+ * claim, which is that the merge inserts one entry and moves no other byte.
+ */
+const ZERO_TARGET_CONFIG = `# my own agent-qa configuration
+
+workspace:
+  testMatch:
+    - tests/**/*.yaml
+  suiteMatch:
+    - suites/**/*.suite.yaml
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
+
+# The model this project chats with. Without it there is no planner, and without a
+# planner the write_test route never fires at all.
+registry:
+  llms:
+    - name: judge
+      provider: openai-subscription
+      model: gpt-5.6-terra
+
+use:
+  llm: judge
+  mobile:
+    appState: preserve
+  parallel: false
+`
+
+/** The target entry the merge inserts, as the exact text it occupies in the emitted document. */
+const INSERTED_TARGET_ENTRY
+  = '  targets:\n    booking-com:\n      platform: web\n      url: https://booking.com\n'
+
+/** A hooks file a person wrote themselves — valid, and NOT the scaffold's template. */
+const SEEDED_HOOKS = '# the project\'s own hooks\nhooks: []\n'
 
 let root: string
 let configPath: string
@@ -262,6 +322,24 @@ function relocateToSubdir(): string {
   git('add', '--', 'sub/dir/.gitignore')
   git('commit', '--quiet', '-m', 'seed the subdirectory that will hold the configuration')
   return configDir
+}
+
+/**
+ * Commit a configuration that declares an LLM and no targets (395-12), plus an optional hooks file.
+ *
+ * COMMITTED, never merely written. `config.project.scaffold` re-reads the committed set at proposal
+ * time (CFGM-04) and the apply's porcelain check is scoped to that same set, so a fixture that left
+ * the config dirty would be measuring D-05's two-commit human-first road instead of the merge.
+ */
+function seedZeroTargetConfig(options: { readonly hooks?: string } = {}): void {
+  writeFileSync(configPath, ZERO_TARGET_CONFIG)
+  const paths = [CONFIG_FILE]
+  if (options.hooks !== undefined) {
+    writeFileSync(join(root, 'hooks.yaml'), options.hooks)
+    paths.push('hooks.yaml')
+  }
+  git('add', '--', ...paths)
+  git('commit', '--quiet', '-m', 'the project configures a model and no targets')
 }
 
 beforeEach(() => {
@@ -469,19 +547,105 @@ describe('undoing a scaffold is WINDOWS 128\'s case, measured (D-07 · 395-06)',
 })
 
 describe('a project that already has a configuration is refused, not overwritten (D-15)', () => {
-  it('(9) refuses `already-configured` and writes nothing', async () => {
-    writeFileSync(configPath, 'workspace:\n  hooksFile: hooks.yaml\n')
-    const before = readFileSync(configPath, 'utf8')
+  it('(9) refuses `already-configured` for a config that DECLARES targets, and writes nothing',
+    async () => {
+      // A DESIGNED FIXTURE BREAK (395-12). This fixture used to be `workspace:\n  hooksFile: …` —
+      // a config file that declares NO targets — so it measured "a config file exists" and would
+      // now propose a merge. The predicate it is here to pin is the narrowed one: a configuration
+      // this scaffold would OVERWRITE, which is a declared target registry. The refusal must still
+      // stand where it should, and this is the two-sided half of cell (13) rather than a separate
+      // claim: the same op, the same fixture family, the opposite verdict.
+      writeFileSync(
+        configPath,
+        'workspace:\n  hooksFile: hooks.yaml\n'
+        + 'registry:\n  targets:\n    shop:\n      platform: web\n      url: https://shop.test\n',
+      )
+      const before = readFileSync(configPath, 'utf8')
 
-    const answer = await scaffold(registryFor({ confirm: true }), 'booking.com')
-    expect(answer).toMatchObject({ outcome: 'refused', reason: 'already-configured' })
-    expect(readFileSync(configPath, 'utf8')).toBe(before)
-  })
+      const answer = await scaffold(registryFor({ confirm: true }), 'booking.com')
+      expect(answer).toMatchObject({ outcome: 'refused', reason: 'already-configured' })
+      // It names the targets it will not replace, so a person reads WHICH configuration is standing
+      // in the way rather than merely that one is — and still points at the op that adds a target.
+      expect(answer.outcome === 'refused' && answer.detail).toContain('shop')
+      expect(answer.outcome === 'refused' && answer.detail).toContain('config.target.create')
+      expect(readFileSync(configPath, 'utf8')).toBe(before)
+    })
 
   it('(10) refuses a token that is not a hostname, and proposes nothing', async () => {
     const answer = await scaffold(registryFor({ confirm: true }), 'the checkout flow')
     expect(answer).toMatchObject({ outcome: 'refused', reason: 'not-a-hostname' })
     expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+  })
+})
+
+describe('a configuration with ZERO declared targets is MERGED, never replaced (395-12 · SC-5)', () => {
+  it('(13) inserts exactly one target entry and preserves every other byte of the person\'s config',
+    async () => {
+      seedZeroTargetConfig()
+
+      // THE FIXTURE'S OWN ROUND TRIP, asserted before anything else — see ZERO_TARGET_CONFIG's
+      // header. This line is what keeps the byte assertion below a statement about the INSERTION
+      // rather than about the serializer's spacing.
+      expect(String(parseDocument(ZERO_TARGET_CONFIG))).toBe(ZERO_TARGET_CONFIG)
+
+      const registry = registryFor({ confirm: true })
+      // RED PRE-FIX: `refused` / `already-configured`, because the predicate was keyed on the config
+      // FILE existing. This project declares no target at all — there is nothing to overwrite.
+      const id = proposedId(await scaffold(registry, 'booking.com'))
+      const payload = storedApplyable(id)
+
+      const configChange = payload.files.find((file) => file.path === CONFIG_FILE)
+      expect(configChange?.changeKind).toBe('modify')
+
+      // THE MERGE, MEASURED BY SUBTRACTION. Removing the inserted entry's exact text from the
+      // emitted document must leave the committed bytes untouched — the LLM entry, both comment
+      // blocks, the blank lines and the key order. A whole-file render fails this by every line it
+      // rewrote, which is precisely the overwrite `already-configured` existed to prevent.
+      const merged = utf8Decode(base64Decode(configChange?.newContentBase64 as string))
+      expect(merged).toContain(INSERTED_TARGET_ENTRY)
+      expect(merged.replace(INSERTED_TARGET_ENTRY, '')).toBe(ZERO_TARGET_CONFIG)
+      expect(merged).toContain('provider: openai-subscription')
+      expect(merged).toContain('# my own agent-qa configuration')
+
+      // The merged candidate is a WORKING configuration, through the shipped schema rather than by
+      // inspection — the half that says the insert landed where a target belongs.
+      const parsedConfig = AgentQaConfigSchema.safeParse(parseYaml(merged))
+      expect(parsedConfig.success ? null : JSON.stringify(parsedConfig.error?.issues)).toBeNull()
+
+      const before = commitCount()
+      const accepted = await invokeFunction(
+        registry, 'proposals.accept', { proposalId: id }, HUMAN,
+      ) as ProposalsAcceptOutput
+      expect(accepted.apply.outcome).toBe('applied')
+      expect(confirms).toBeGreaterThan(0)
+
+      // ONE commit whose files are exactly the changed members: the config it merged into, the
+      // hooks file this project did not have, and the gitignore upsert.
+      expect(commitCount()).toBe(before + 1)
+      expect(headFiles()).toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
+      expect(readFileSync(configPath, 'utf8')).toBe(merged)
+    })
+
+  it('(13b) leaves a hooks file the project ALREADY has out of the candidate entirely', async () => {
+    seedZeroTargetConfig({ hooks: SEEDED_HOOKS })
+
+    const registry = registryFor({ confirm: true })
+    const id = proposedId(await scaffold(registry, 'booking.com'))
+    const payload = storedApplyable(id)
+
+    // NOT A MEMBER OF THE CHANGE SET AT ALL. The scaffold's hooks template is content for a project
+    // that has none; proposing it over a file a person wrote would be the widest silent overwrite
+    // this op could still make after the narrowing — one file over from the one it stopped making.
+    expect(payload.files.map((file) => file.path).sort()).toEqual(['.gitignore', CONFIG_FILE])
+    // `addsHook` is STATED (D-02), so it must stop being stated when no hook is added.
+    expect(payload.crossBoundaryReasons).not.toContain('hook-added')
+
+    const accepted = await invokeFunction(
+      registry, 'proposals.accept', { proposalId: id }, HUMAN,
+    ) as ProposalsAcceptOutput
+    expect(accepted.apply.outcome).toBe('applied')
+    expect(readFileSync(join(root, 'hooks.yaml'), 'utf8')).toBe(SEEDED_HOOKS)
+    expect(headFiles()).toEqual(['.gitignore', CONFIG_FILE])
   })
 })
 

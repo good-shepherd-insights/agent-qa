@@ -389,11 +389,49 @@ export interface ConfigUndoSourcePortLike {
  * with a `.gitignore` of its own gets the managed block appended to what it already has, and the
  * proposal's diff shows exactly that. Absent and empty are deliberately different — the first is
  * a file the apply CREATES, the second a file it rewrites.
+ *
+ * `existingConfig` IS THE SECOND MODE OF THE ONE PRODUCER (395-12, D-04 · CFGM-05), and it is a
+ * MODE rather than a second port because D-04's claim is that there is one substance: a second
+ * renderer would be exactly the drift D-04 exists to make impossible. Present when the project HAS
+ * a configuration that declares no targets — the class SC-5 has to serve, because a project able to
+ * hold a conversation at all is one whose `registry.llms` lives in a config file. In that mode the
+ * producer inserts exactly `registry.targets.<targetName>` into the person's own bytes through the
+ * comment-preserving Document API and emits no other change to that file. Absent means from zero,
+ * and the from-zero render is byte-for-byte what it was before this field existed.
  */
 export interface ConfigScaffoldContentPortLike {
   render(input: {
     readonly targetName: string
     readonly baseUrl: string
     readonly existingGitignore?: Uint8Array
+    readonly existingConfig?: ConfigScaffoldMergeTarget
   }): Promise<readonly { readonly path: string; readonly bytes: Uint8Array }[]>
+}
+
+/**
+ * The person's committed configuration, and where this scaffold's other members belong beside it.
+ *
+ * THE PATHS ARE CARRIED RATHER THAN DEFAULTED, on `ConfigFileSet.hooksFile`'s reasoning one contract
+ * over. From zero the producer knows both names because it is inventing them; in a project that
+ * already has a configuration it knows neither — `workspace.hooksFile` can name anything, and the
+ * config member's own identity is whatever the pinned set spells. A scaffold that rendered
+ * `hooks.yaml` into a project whose config names something else would be proposing a file OUTSIDE
+ * the pinned set: flagged `out-of-set-path` and then refused by an apply that cannot scope to it.
+ */
+export interface ConfigScaffoldMergeTarget {
+  /** Which member of the pinned set these bytes are — never assumed to be the default name. */
+  readonly path: string
+  /** The committed configuration this scaffold inserts exactly one target entry into. */
+  readonly bytes: Uint8Array
+  /** Where a hooks file belongs — the name the configuration itself declares. */
+  readonly hooksPath: string
+  /**
+   * True when that file already exists, in which case the scaffold renders NO hooks at all.
+   *
+   * NOT AN OVERWRITE AND NOT A MERGE. The scaffold's hooks template is content for a project that
+   * has none; composing it into a hooks file a person wrote would be the widest silent overwrite
+   * this op could still make after the target-registry narrowing — the same overwrite
+   * `already-configured` refuses for the config yaml, one file over.
+   */
+  readonly hooksPresent: boolean
 }

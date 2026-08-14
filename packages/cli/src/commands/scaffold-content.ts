@@ -28,7 +28,7 @@
 // compare a value against itself. This module owns the block's SHAPE — markers, header line,
 // splice and append — and takes the entries as an argument.
 
-import { stringify } from 'yaml'
+import { parseDocument, stringify } from 'yaml'
 
 export const SUPPORTED_INIT_PLATFORMS = [
   'web',
@@ -389,6 +389,52 @@ export interface ScaffoldContentInput {
   readonly gitignoreEntries: readonly string[]
   /** What the project's `.gitignore` holds right now, or absent when it has none. */
   readonly existingGitignore?: string
+  /**
+   * MERGE MODE (395-12): the project's existing configuration, which declares no targets.
+   *
+   * ABSENT IS THE FROM-ZERO ROAD and it is byte-for-byte what it always was — the committed goldens
+   * pin that, and they did not move when this field was added. Present, the producer inserts
+   * exactly one `registry.targets` entry into these bytes and emits no other change to that file.
+   */
+  readonly existingConfig?: ScaffoldMergeTarget
+}
+
+/** Where the merge writes, and where its siblings belong beside a configuration that exists. */
+export interface ScaffoldMergeTarget {
+  /** The config member's own path — never assumed to be `agent-qa.config.yaml`. */
+  readonly path: string
+  readonly text: string
+  /** Where a hooks file belongs — the name `workspace.hooksFile` declares. */
+  readonly hooksPath: string
+  /** True when that file already exists, in which case NO hooks content is rendered at all. */
+  readonly hooksPresent: boolean
+}
+
+/**
+ * The person's own configuration with exactly ONE target entry inserted (395-12 · CFGM-05).
+ *
+ * `parseDocument` → `setIn` → `toString` IS THE SHIPPED IDIOM, and it is the same one
+ * `agent-qa config set` and `createConfigFilesPort.setField` ride — chosen for the same
+ * load-bearing reason rather than for style: a parse → object → stringify round trip destroys every
+ * comment in a comment-dense config and widens the rendered diff past the point a person can review
+ * it, which is the whole of what CFGM-01 asks a proposal to be.
+ *
+ * ONE `setIn` AND NOTHING ELSE. Not a merge of two documents, not a re-serialization, not a
+ * normalization pass: one write at one path. Every other key, comment, blank line and ordering
+ * decision in the file is the person's, and the proposal's diff is the insertion by construction
+ * rather than by a filter applied afterwards.
+ */
+export function mergeScaffoldTargetEntry(input: {
+  readonly existingText: string
+  readonly targetName: string
+  readonly baseUrl: string
+}): string {
+  const document = parseDocument(input.existingText)
+  document.setIn(
+    ['registry', 'targets', input.targetName],
+    { platform: 'web', url: input.baseUrl },
+  )
+  return document.toString()
 }
 
 export interface ScaffoldContentFile {
@@ -413,8 +459,37 @@ export interface ScaffoldContentFile {
  * they did not say. `init` is the path that ASKS, and it still passes its answers in.
  *
  * PLATFORM IS `web`, STATED. A hostname is a web origin; there is no mobile fact in a domain token.
+ *
+ * TWO MODES, ONE PRODUCER (395-12, D-04). With `existingConfig` present the config member is the
+ * person's own bytes plus one inserted target entry, and the hooks file is rendered only when the
+ * project has none — see `ScaffoldMergeTarget`. The `.gitignore` upsert is the same in both modes,
+ * because it always was an upsert.
  */
 export function buildScaffoldFileSet(input: ScaffoldContentInput): readonly ScaffoldContentFile[] {
+  const gitignore: ScaffoldContentFile = {
+    path: SCAFFOLD_GITIGNORE_FILE,
+    text: composeManagedGitignore(input.existingGitignore ?? '', input.gitignoreEntries),
+  }
+
+  if (input.existingConfig !== undefined) {
+    const merge = input.existingConfig
+    return [
+      {
+        path: merge.path,
+        text: mergeScaffoldTargetEntry({
+          existingText: merge.text,
+          targetName: input.targetName,
+          baseUrl: input.baseUrl,
+        }),
+      },
+      // A HOOKS FILE A PERSON WROTE IS NOT A MEMBER OF THIS ANSWER. The template is content for a
+      // project that has none; composing it over theirs would be the wholesale overwrite the
+      // target-registry narrowing just stopped this op making, one file over.
+      ...(merge.hooksPresent ? [] : [{ path: merge.hooksPath, text: buildHooksFile('web') }]),
+      gitignore,
+    ]
+  }
+
   const config = buildScaffoldConfig('web', {
     llmEntries: [],
     usesSubscriptionAuth: false,
@@ -435,9 +510,6 @@ export function buildScaffoldFileSet(input: ScaffoldContentInput): readonly Scaf
   return [
     { path: SCAFFOLD_CONFIG_FILE, text: renderScaffoldConfigYaml(config) },
     { path: SCAFFOLD_HOOKS_FILE, text: buildHooksFile('web') },
-    {
-      path: SCAFFOLD_GITIGNORE_FILE,
-      text: composeManagedGitignore(input.existingGitignore ?? '', input.gitignoreEntries),
-    },
+    gitignore,
   ]
 }
