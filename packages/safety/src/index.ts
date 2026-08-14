@@ -9,6 +9,14 @@ export {
   SEEDED_SECRET_DETECTOR,
   scanConstructedArtifact,
 } from './guardrail/construction-scan'
+// The detector PRIMITIVE, public (395-20 · F-03). `findDetectorMatches` is a pure
+// text-in/matches-out function: it grants no registration capability, holds no state and reads no
+// policy, so it is outside D-03's non-export rule (which is about registration capability leaving
+// the public surface). It is exported because a caller outside this package needs the SAME shape
+// vocabulary the guardrail uses — `config show`/`config set` recognising a credential by shape
+// rather than by key name — and re-deriving those regexes in the cli would be a second answer to
+// "what does a credential look like", which is precisely the drift this phase keeps paying for.
+export { findDetectorMatches } from './guardrail/detectors'
 export { createGuardrailProviderRequestHook, GuardrailBlockError } from './guardrail/egress-hook'
 export {
   defaultGuardrailPolicyInput,

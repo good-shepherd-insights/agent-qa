@@ -9,6 +9,8 @@ import {
   yamlParseFailureMessage,
 } from '@vostride/agent-qa-core'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
+import type { GuardrailDetectorFamily } from '@vostride/agent-qa-schema'
+import { findDetectorMatches } from '@vostride/agent-qa-safety'
 
 const ENV_MAPPING: Record<string, string> = {
   AGENT_QA_DASHBOARD_PORT: 'services.dashboard.port',
@@ -217,6 +219,104 @@ function flattenObject(obj: unknown, prefix = ''): Record<string, unknown> {
 
 type ConfigSource = 'global config' | 'test yaml' | 'cli flag'
 
+/**
+ * THE KEY-NAME ARM's set — normalized last segments (395-20 · F-03).
+ *
+ * RETUNE NOTE. This set was private to `commands/config.ts` and answered ONE caller, the `config
+ * set` refusal. It held `apikey`, `authtoken`, `token`, `key`, `accesskey`, `secret`, `password`,
+ * `bearertoken`, `accesstoken`, `refreshtoken` — and NOT `apitoken`, which is why the verifier's
+ * `agent-qa config set apiToken sk-…` was accepted and written into the committed yaml, and why
+ * applying the old predicate at the render would still have printed the review's own fixture key.
+ * The widening below adds that hole's key and the adjacent forms that are obvious misses of the
+ * same enumeration: the `*secret` and `*key` credential compounds, the remaining token families,
+ * and the plain credential words.
+ *
+ * WHAT IS DELIBERATELY NOT HERE. `auth` alone: `plugins.auth` is a configuration block this
+ * product's own refusal message tells people to use, and a name arm that swallows it would refuse
+ * the guidance it prints. `url`, `endpoint`, `user`: identifiers, not credentials — (K4) pins them
+ * rendering and writing verbatim.
+ *
+ * AND THE SET IS NOT THE POINT. A name list can only refuse what it can NAME (393's
+ * door-enumeration finding), so every member added here closes exactly one door and no class. The
+ * class is closed by the value arm below; this set exists so that a credential whose VALUE has no
+ * recognisable shape (an opaque internal token, a password) is still caught under a name that says
+ * what it is.
+ */
+const CREDENTIAL_KEY_NAMES = new Set([
+  'accesskey',
+  'accesstoken',
+  'apikey',
+  'apisecret',
+  'apitoken',
+  'authorization',
+  'authtoken',
+  'bearertoken',
+  'clientsecret',
+  'credential',
+  'credentials',
+  'idtoken',
+  'key',
+  'passwd',
+  'password',
+  'privatekey',
+  'refreshtoken',
+  'secret',
+  'secretkey',
+  'sessiontoken',
+  'token',
+])
+
+/**
+ * THE VALUE-SHAPE ARM's families — the SC-2 vocabulary, a named subset (395-20 · F-03).
+ *
+ * These four are the CREDENTIAL-shaped families of the guardrail detector set: `apiKey` (the
+ * `sk-`/`gh?_`/`AIza` provider prefixes and the 40-char opaque token shape), `bearer`, `awsKey` and
+ * `pemKey`. Reusing them rather than writing new regexes here is deliberate — a second answer to
+ * "what does a credential look like" is a second thing that drifts, and drift between two answers
+ * to one question is the defect this plan closes.
+ *
+ * THE THREE EXCLUDED, and why: `email` and `creditCard` are PII, not credentials — redacting a
+ * `notify.email` out of `config show` would break the command for a value the person put there to
+ * read back, and this predicate also gates a WRITE refusal, where refusing to set an email address
+ * would be a plain regression. `injectionShape` is a prompt-routing heuristic whose own source
+ * calls it a soft signal costing review rather than rejection; wiring it to a hard refusal would
+ * mean `config set` rejecting ordinary prose.
+ *
+ * KNOWN OVER-REACH, accepted (T-395-56): the `apiKey` family carries a generic 40-character
+ * alphanumeric shape, so a 40-char hex digest set as a config value is treated as credential-shaped.
+ * That is the arm doing its job on an ambiguous input, and the failure direction is the safe one.
+ */
+const CREDENTIAL_VALUE_DETECTORS: readonly GuardrailDetectorFamily[] = [
+  'apiKey',
+  'awsKey',
+  'bearer',
+  'pemKey',
+]
+
+/**
+ * THE ONE ANSWER to "is this config entry credential-bearing" (395-20 · F-03).
+ *
+ * TWO CALLERS, ONE EXPORT, ON PURPOSE. `formatConfigDebug`'s row loop redacts through it and
+ * `setAction` refuses through it. Before this, the render had no predicate at all and the write had
+ * a private one with a hole — the read and write sides of a single contract answering the question
+ * differently is exactly the shape 388/390/392 keep filing, and it is why `config set apiToken`
+ * could write a value `config show` would then print back.
+ *
+ * The arms are an OR: a credential is either something the key says is one, or something the value
+ * looks like.
+ */
+export function isCredentialEntry(key: string, value: unknown): boolean {
+  const lastSegment = key.split('.').pop() ?? ''
+  if (CREDENTIAL_KEY_NAMES.has(lastSegment.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true
+  if (typeof value !== 'string' || value === '') return false
+  return CREDENTIAL_VALUE_DETECTORS.some(
+    (family) => findDetectorMatches(family, value).length > 0,
+  )
+}
+
+/** What a person sees where a credential's value would have been. */
+const CREDENTIAL_REDACTION = '<redacted>'
+
 export function formatConfigDebug(
   globalConfig: unknown,
   testConfig: unknown,
@@ -247,7 +347,13 @@ export function formatConfigDebug(
       }
     }
     const valStr = typeof mergedFlat[key] === 'string' ? mergedFlat[key] : JSON.stringify(mergedFlat[key])
-    rows.push({ key, value: valStr, source })
+    // THE REDACTION LIVES HERE, IN THE ROW LOOP, NOT AT A CALL SITE (395-20 · F-03). This function
+    // has THREE person-facing callers — `config show` (commands/config.ts) and the two `--debug`
+    // config tables on the run road (commands/run.ts:2783 and :2913). Redacting inside `showAction`
+    // would have closed the road the verifier happened to drive and left the other two printing the
+    // same values: the sibling-input law applied to the render itself.
+    const rendered = isCredentialEntry(key, mergedFlat[key]) ? CREDENTIAL_REDACTION : valStr
+    rows.push({ key, value: rendered, source })
   }
 
   if (rows.length === 0) return pc.dim('  (no config values)')
