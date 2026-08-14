@@ -1,18 +1,38 @@
 import { Command, Option } from 'commander'
 import { readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
-import { stringify } from 'yaml'
 import pc from 'picocolors'
 import select from '@inquirer/select'
 import input from '@inquirer/input'
 import checkbox from '@inquirer/checkbox'
 import {
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
-  DEFAULT_AGENT_QA_CACHE_DIR,
   DEFAULT_AGENT_QA_RUNTIME_DIR,
   getAgentQaVersion,
 } from '@vostride/agent-qa-core'
 import { getProvider, listProviders } from '@vostride/agent-qa-model'
+// D-04: the scaffold's CONTENT, shared with `config.project.scaffold`. This file keeps the
+// filesystem machinery and the interactive conversation; the substance being written comes from
+// one producer, so the two scaffolds cannot drift.
+import {
+  INIT_AUTH_STATES_DIR,
+  SUBSCRIPTION_AUTH_PACKAGE,
+  SUPPORTED_INIT_PLATFORMS,
+  addYamlComments,
+  buildDefaultConfig,
+  buildHooksFile,
+  hasWeb,
+  isSubscriptionProvider,
+  normalizePlatformSelection,
+  parseInitPlatform,
+  renderScaffoldConfigYaml,
+  HN_TOP_STORY_HOOK_ID,
+  type InitLLMConfig,
+  type InitPlatformInput,
+  type MobileRuntime,
+  type PlatformCapability,
+  type Platform,
+} from './scaffold-content.js'
 import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL } from '../model-defaults.js'
 import {
   KNOWLEDGE_GITIGNORE_PROBES,
@@ -28,35 +48,15 @@ import {
   type InitPathPlan,
 } from './init-filesystem.js'
 
-export const SUPPORTED_INIT_PLATFORMS = [
-  'web',
-  'android',
-  'ios',
-  'web+android',
-  'web+ios',
-] as const
-type Platform = (typeof SUPPORTED_INIT_PLATFORMS)[number]
-type PlatformCapability = 'web' | 'mobile'
-type MobileRuntime = 'android' | 'ios'
-type InitPlatformSelection = {
-  capabilities: PlatformCapability[]
-  mobileRuntimes: MobileRuntime[]
-}
-type InitPlatformInput = Platform | InitPlatformSelection
-type LLMSetupChoice = 'none' | 'codex' | 'claude-code'
-type InitLLMConfig = {
-  name: string
-  provider: string
-  model: string
-  baseURL?: string
-}
-const INIT_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
-const INIT_AUTH_STATES_DIR = DEFAULT_AGENT_QA_AUTH_STATES_DIR || '.agent-qa/auth-states'
-const INIT_RUNTIME_DIR = DEFAULT_AGENT_QA_RUNTIME_DIR || '.agent-qa'
-const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
+// The platform vocabulary, the LLM config shape and the scaffold's own constants all live in
+// `scaffold-content.ts` now (D-04). Re-exported here because this module is their public door.
+export { SUPPORTED_INIT_PLATFORMS, parseInitPlatform, buildDefaultConfig } from './scaffold-content.js'
+
 const PACKAGE_JSON_FILE = 'package.json'
-const DEFAULT_SCREENSHOT_SIZE = '256k'
-const DEFAULT_EFFECTIVE_RESOLUTION = 768
+// Kept here rather than moved: it feeds `buildGitignoreEntries`, the deliberate literal
+// copy this file keeps pinned against `init-filesystem.ts`'s own — see scaffold-content.ts.
+const INIT_RUNTIME_DIR = DEFAULT_AGENT_QA_RUNTIME_DIR || '.agent-qa'
+type LLMSetupChoice = 'none' | 'codex' | 'claude-code'
 const OPENAI_SUBSCRIPTION_CONFIG: InitLLMConfig = {
   name: 'codex',
   provider: 'openai-subscription',
@@ -93,68 +93,11 @@ export const LLM_SETUP_CHOICES: Array<{ value: LLMSetupChoice; name: string; des
   },
 ]
 
-export function parseInitPlatform(value: string): Platform {
-  if ((SUPPORTED_INIT_PLATFORMS as readonly string[]).includes(value)) {
-    return value as Platform
-  }
-  throw new Error(`Unsupported init platform "${value}"`)
-}
-
-function normalizePlatformSelection(platform: InitPlatformInput): InitPlatformSelection {
-  if (typeof platform !== 'string') {
-    return {
-      capabilities: [...new Set(platform.capabilities)],
-      mobileRuntimes: [...new Set(platform.mobileRuntimes)],
-    }
-  }
-
-  const selectedPlatform = parseInitPlatform(platform)
-  switch (selectedPlatform) {
-    case 'web':
-      return { capabilities: ['web'], mobileRuntimes: [] }
-    case 'android':
-      return { capabilities: ['mobile'], mobileRuntimes: ['android'] }
-    case 'ios':
-      return { capabilities: ['mobile'], mobileRuntimes: ['ios'] }
-    case 'web+android':
-      return { capabilities: ['web', 'mobile'], mobileRuntimes: ['android'] }
-    case 'web+ios':
-      return { capabilities: ['web', 'mobile'], mobileRuntimes: ['ios'] }
-    default: {
-      const exhaustivePlatform: never = selectedPlatform
-      throw new Error(`Unsupported init platform "${String(exhaustivePlatform)}"`)
-    }
-  }
-}
-
-function hasWeb(platform: InitPlatformInput): boolean {
-  return normalizePlatformSelection(platform).capabilities.includes('web')
-}
-
 function defaultExampleTargetName(platform: InitPlatformInput): string {
   const selection = normalizePlatformSelection(platform)
   if (hasWeb(platform)) return 'example-web'
   if (selection.mobileRuntimes.includes('android')) return 'example-android'
   return 'example-ios'
-}
-
-function buildTargets(platform: InitPlatformInput): Record<string, unknown> {
-  const selection = normalizePlatformSelection(platform)
-  const targets: Record<string, unknown> = {}
-
-  if (selection.capabilities.includes('web')) {
-    targets['example-web'] = { platform: 'web', url: 'https://example.com' }
-    targets['automation-exercise'] = { platform: 'web', url: 'https://automationexercise.com' }
-    targets['wai-bad'] = { platform: 'web', url: 'https://www.w3.org/WAI/demos/bad/before/home.html' }
-  }
-  if (selection.mobileRuntimes.includes('android')) {
-    targets['example-android'] = { platform: 'android' }
-  }
-  if (selection.mobileRuntimes.includes('ios')) {
-    targets['example-ios'] = { platform: 'ios' }
-  }
-
-  return targets
 }
 
 function buildExampleTest(platform: InitPlatformInput, variant: 'pass' | 'fail'): string {
@@ -211,7 +154,6 @@ const AUTOMATION_EXERCISE_TESTS = [
     ],
   },
 ]
-const HN_TOP_STORY_HOOK_ID = 'h_aster-bloom-cloud-drift-ember-field-glade-hollow-ivory-jasper'
 const HN_TOP_STORY_TEST_ID = 't_quad-adar-micro-magic-cross-cue-open-agog-rang-cours'
 const BAD_A11Y_TEST_ID = 't_ponent-toa-base-fred-click-sigma-lad-agen-report-sticky'
 
@@ -230,19 +172,6 @@ name: Automation Exercise demo suite
 target: automation-exercise
 tests:
 ${AUTOMATION_EXERCISE_TESTS.map(test => `  - test: tests/automation-exercise/${test.fileName}\n    id: ${test.id}`).join('\n')}
-`
-}
-
-function buildHooksFile(platform: InitPlatformInput): string {
-  if (!hasWeb(platform)) return 'hooks: []\n'
-
-  return `hooks:
-  - id: ${HN_TOP_STORY_HOOK_ID}
-    name: Fetch first Hacker News story
-    runtime: node
-    file: scripts/fetch-hn-top-story.mjs
-    timeout: 30s
-    network: true
 `
 }
 
@@ -309,10 +238,6 @@ steps:
   - Verify the page says "Welcome to CityLights"
   - Verify the page says "Inaccessible Home Page"
 `
-}
-
-function isSubscriptionProvider(provider: string): boolean {
-  return getProvider(provider)?.subscription === true
 }
 
 export function installedAgentQaVersion(): string {
@@ -428,24 +353,6 @@ export function upsertSubscriptionAuthPackageDependency(
   }
 }
 
-function toLLMEntry(config: InitLLMConfig): Record<string, unknown> {
-  const llmEntry: Record<string, unknown> = {
-    name: config.name,
-    provider: config.provider,
-    model: config.model,
-  }
-
-  if (getProvider(config.provider)?.needsBaseURL) {
-    llmEntry.baseURL = config.baseURL
-  }
-
-  return llmEntry
-}
-
-function buildSingleLLMConfig(provider: string, model: string, baseURL?: string): InitLLMConfig {
-  return { name: 'default', provider, model, baseURL }
-}
-
 export function defaultModelForProvider(provider: string): string {
   return getProvider(provider)?.defaultModel ?? 'model-name'
 }
@@ -458,135 +365,6 @@ function subscriptionConfigsForChoice(choice: LLMSetupChoice): InitLLMConfig[] {
 
 function subscriptionConfigsForChoices(choices: LLMSetupChoice[]): InitLLMConfig[] {
   return choices.flatMap(subscriptionConfigsForChoice)
-}
-
-export function buildDefaultConfig(
-  platform: InitPlatformInput,
-  providerOrLLMs: string | InitLLMConfig[],
-  model?: string,
-  baseURL?: string,
-): Record<string, unknown> {
-  const llmConfigs = Array.isArray(providerOrLLMs)
-    ? providerOrLLMs
-    : [buildSingleLLMConfig(providerOrLLMs, model ?? 'model-name', baseURL)]
-  const llmEntries = llmConfigs.map(toLLMEntry)
-  const usesSubscriptionAuth = llmConfigs.some(config => isSubscriptionProvider(config.provider))
-
-  const config: Record<string, unknown> = {
-    workspace: {
-      testMatch: ['tests/**/*.yaml'],
-      suiteMatch: ['suites/**/*.suite.yaml'],
-      hooksFile: 'hooks.yaml',
-      envFile: '.env',
-      secretsFile: '.env.secrets.local',
-    },
-    services: {
-      dashboard: { port: 3100, artifactsDir: '.agent-qa/artifacts' },
-      mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
-      cache: { dir: INIT_CACHE_DIR, ttl: '7d' },
-      authState: { dir: INIT_AUTH_STATES_DIR },
-      vision: { screenshotSize: DEFAULT_SCREENSHOT_SIZE, effectiveResolution: DEFAULT_EFFECTIVE_RESOLUTION },
-      ...(hasWeb(platform)
-        ? {
-            accessibility: {
-              enabled: true,
-              standard: 'wcag2aa',
-              runAfter: 'every-step',
-              failOnViolation: false,
-            },
-          }
-        : {}),
-      recording: { enabled: true },
-      logging: { level: 'warn' },
-    },
-    registry: {
-      llms: llmEntries,
-      targets: buildTargets(platform),
-    },
-    ...(usesSubscriptionAuth
-      ? {
-          plugins: {
-            auth: [{ package: SUBSCRIPTION_AUTH_PACKAGE }],
-          },
-        }
-      : {}),
-    use: {
-      ...(hasWeb(platform) ? { browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } } } : {}),
-      mobile: { appState: 'preserve' },
-      timeout: { step: '20m', test: '90m', navigation: '2m' },
-      planner: { maxSubActions: 10, previousStepCount: 5 },
-      logCapture: { console: true, network: true },
-      parallel: false,
-      llm: llmConfigs[0]?.name ?? 'default',
-    },
-  }
-
-  return config
-}
-
-function addYamlComments(yamlStr: string): string {
-  let result = '# agent-qa Configuration\n\n'
-
-  const lines = yamlStr.split('\n')
-  for (const line of lines) {
-    if (line.startsWith('workspace:')) {
-      result += '# File discovery and project settings\n'
-    } else if (line.startsWith('services:')) {
-      result += '\n# Infrastructure services (dashboard, MCP, cache, auth state, logging)\n'
-    } else if (line.startsWith('registry:')) {
-      result += '\n# Committed knowledge root (optional block; these defaults apply when absent)\n'
-      result += '# knowledge:\n'
-      result += '#   dir: agent-qa-knowledge\n'
-      result += '#   commitArtifacts: none\n'
-      result += '\n# Named resource definitions (LLM configs, app targets)\n'
-    } else if (line.startsWith('plugins:')) {
-      result += '\n# Optional subscription auth plugin declarations\n'
-    } else if (line.startsWith('use:')) {
-      result += '\n# Execution settings (cascades: global -> suite -> test -> CLI flags)\n'
-    }
-    result += line + '\n'
-
-    if (line === '  secretsFile: .env.secrets.local') {
-      result += '# Optional: ignore archived or generated tests.\n'
-      result += '  # testPathIgnore:\n'
-      result += '  #   - tests/archive/**/*.yaml\n'
-    } else if (line === '    artifactsDir: .agent-qa/artifacts') {
-      result += '    # Optional: persist dashboard state to a custom SQLite path.\n'
-      result += '    # dbPath: .agent-qa/dashboard.sqlite\n'
-    } else if (line === '    ttl: 7d') {
-      if (yamlStr.includes('\n  accessibility:\n')) {
-        result += '  # Accessibility checks power the W3C BAD demo test.\n'
-      } else {
-        result += '  # Optional accessibility service example:\n'
-        result += '  # accessibility:\n'
-        result += '  #   enabled: false\n'
-        result += '  #   standard: wcag2aa\n'
-      }
-    } else if (line === 'registry:') {
-      result += '  # Optional: local and cloud device/provider profiles.\n'
-      result += '  # devices:\n'
-      result += '  #   android-emu:\n'
-      result += '  #     platform: android\n'
-      result += '  #     transport: local\n'
-      result += '  # providers:\n'
-      result += '  #   browserstack:\n'
-      result += '  #     username: ${BROWSERSTACK_USERNAME}\n'
-      result += '  #     accessKey: ${BROWSERSTACK_ACCESS_KEY}\n'
-    } else if (line === '  targets:') {
-      result += '    # Optional: add more web or mobile targets here.\n'
-      result += '    # my-mobile:\n'
-      result += '    #   platform: android\n'
-      result += '    #   appPackage: com.example.app\n'
-      result += '    #   appActivity: .MainActivity\n'
-      result += '    #   app:\n'
-      result += '    #     path: apps/example.apk\n'
-    } else if (line === '  llm: codex' || line === '  llm: claude-subscription' || line === '  llm: default') {
-      result += '  # Optional: bind mobile runs to a configured device profile.\n'
-      result += '  # device: android-emu\n'
-    }
-  }
-
-  return result
 }
 
 const DEFAULT_HOOKS_FILE = 'hooks.yaml'
@@ -1135,7 +913,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       const configPlan: InitPathPlan = {
         root: dir,
         path: configPath,
-        content: addYamlComments(stringify(config)),
+        content: renderScaffoldConfigYaml(config),
         force,
       }
       const completePlan = [

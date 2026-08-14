@@ -17,6 +17,10 @@ import {
   type Stats,
 } from 'node:fs'
 import { basename, dirname, relative, resolve, sep } from 'node:path'
+// D-04: the managed block's SHAPE — markers, header line, splice and append — lives with the
+// rest of the scaffold's content, so the proposal path composes the identical bytes this path
+// writes. What stays here is the WRITING: classification, atomic publish, preserve semantics.
+import { composeManagedGitignore } from './scaffold-content.js'
 
 export type InitFileOutcome = 'created' | 'updated' | 'preserved'
 
@@ -171,7 +175,7 @@ export const KNOWLEDGE_GITIGNORE_PROBES = [
   { path: 'policies/global.md', expected: 'visible' },
 ] as const satisfies readonly GitignoreProbe[]
 
-const TARGET_GITIGNORE_ENTRIES = [
+export const TARGET_GITIGNORE_ENTRIES = [
   '.agent-qa/',
   '.agent-qa/auth-states/',
   // 394 (T-394-03): the draft shelf. It sits INSIDE `tests/` on purpose — see the two-sided
@@ -186,8 +190,6 @@ const TARGET_GITIGNORE_ENTRIES = [
   DURABLE_TEMPORARY_GITIGNORE_RULE,
 ] as const
 
-const MANAGED_GITIGNORE_START = '# agent-qa init:start'
-const MANAGED_GITIGNORE_END = '# agent-qa init:end'
 
 function isErrno(error: unknown, code: string): boolean {
   return (error as NodeJS.ErrnoException).code === code
@@ -1057,56 +1059,6 @@ export function writeConfigMarkerLast(
   return writeScaffoldFileAtomic(plan, hooks)
 }
 
-function managedGitignoreBlock(entries: readonly string[]): string {
-  return [
-    MANAGED_GITIGNORE_START,
-    '# Runtime, credential, dependency, and local-only paths managed by agent-qa init.',
-    ...entries,
-    MANAGED_GITIGNORE_END,
-    '',
-  ].join('\n')
-}
-
-function stripManagedGitignoreBlock(content: string): string {
-  const startCount = content.split(MANAGED_GITIGNORE_START).length - 1
-  const endCount = content.split(MANAGED_GITIGNORE_END).length - 1
-  if (startCount !== endCount || startCount > 1) {
-    throw new Error(
-      'Refusing malformed target .gitignore: expected at most one complete '
-      + 'agent-qa init managed block',
-    )
-  }
-  if (startCount === 0) return content
-
-  const start = content.indexOf(MANAGED_GITIGNORE_START)
-  const endMarker = content.indexOf(MANAGED_GITIGNORE_END, start)
-  // The counts balance at one and one even when a bad merge inverts the pair, and the
-  // anchored search then reports no match. Splicing at the offset computed from -1 would
-  // cut the file at an arbitrary byte with no relationship to any marker, duplicating the
-  // user's own rules and mangling a line. Refuse instead: this is the ordering property the
-  // count-based refusal above already advertises but does not check.
-  if (endMarker === -1) {
-    throw new Error(
-      'Refusing malformed target .gitignore: the agent-qa init managed '
-      + 'end marker precedes its start marker',
-    )
-  }
-  let end = endMarker + MANAGED_GITIGNORE_END.length
-  if (content.slice(end, end + 2) === '\r\n') end += 2
-  else if (content[end] === '\n') end += 1
-  return content.slice(0, start) + content.slice(end)
-}
-
-function appendManagedBlockAtEof(content: string, block: string): string {
-  if (content.length === 0) return block
-  const separator = content.endsWith('\n\n')
-    ? ''
-    : content.endsWith('\n')
-      ? '\n'
-      : '\n\n'
-  return `${content}${separator}${block}`
-}
-
 export function upsertManagedGitignoreBlock(
   path: string,
   entries: readonly string[] = TARGET_GITIGNORE_ENTRIES,
@@ -1115,10 +1067,7 @@ export function upsertManagedGitignoreBlock(
   const root = dirname(absolutePath)
   const classification = classifyInitPath(absolutePath, root)
   const existing = classification === 'regular' ? readFileSync(absolutePath, 'utf8') : ''
-  const candidate = appendManagedBlockAtEof(
-    stripManagedGitignoreBlock(existing),
-    managedGitignoreBlock(entries),
-  )
+  const candidate = composeManagedGitignore(existing, entries)
   if (candidate === existing) return { path: absolutePath, outcome: 'preserved' }
   return writeScaffoldFileAtomic({
     path: absolutePath,
