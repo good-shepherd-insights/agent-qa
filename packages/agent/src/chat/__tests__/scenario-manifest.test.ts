@@ -78,8 +78,16 @@ describe('the corpus manifest is versioned and internally coherent', () => {
     // 22 + the mixed-mapping cell the ROUND-3 verification found neither lane had. v7 is 394-11's
     // ARRIVAL FLIP: the size is unchanged at 23 and two live cells change arm, which is exactly the
     // case this pin exists to make visible — a flip moves the denominator without moving the size.
-    expect(SCENARIO_CORPUS.length).toBe(23)
-    expect(SCENARIO_CORPUS_VERSION).toBe(7)
+    //
+    // v8 IS 395-09's ARRIVAL ADMISSION, and it is the OTHER movement this pair exists to tell apart.
+    // 392 D-08 designed the config handoff as a flip; 395's research enumerated the whole v7 corpus
+    // and found no config cell to flip, so the handoff lands as an admission instead. The size rises
+    // to 24 AND the live denominator rises to 6 — both, together — where v7's flip moved only the
+    // denominator. Reading the two numbers in one assertion is the only thing that distinguishes
+    // "a capability arrived" from "a cell changed its mind", and after this commit a reader can say
+    // which happened without reconstructing it from the diff.
+    expect(SCENARIO_CORPUS.length).toBe(24)
+    expect(SCENARIO_CORPUS_VERSION).toBe(8)
     // The denominators the ceiling is computed over, pinned per lane. Every gap-round cell is
     // `fail_closed` precisely so these two numbers did NOT move — a corpus round that quietly grew
     // the denominator would report a better rate for having done work (the treadmill law). What
@@ -92,7 +100,7 @@ describe('the corpus manifest is versioned and internally coherent', () => {
       SCENARIO_CORPUS.filter((entry) => entry.lane === lane && entry.kind === 'should_execute')
         .length
     expect(denominator('hermetic')).toBe(11)
-    expect(denominator('live')).toBe(5)
+    expect(denominator('live')).toBe(6)
   })
 
   it('states denominators in its own header that are the ones the list actually has', () => {
@@ -131,6 +139,23 @@ describe('the corpus manifest is versioned and internally coherent', () => {
     expect(kindOf('write-test-2fa-and-run')).toBe('should_execute')
     expect(kindOf('fn-unknown-op')).toBe('fail_closed')
     expect(kindOf('pin-and-write-test')).toBe('fail_closed')
+  })
+
+  it('records 395s config arrival by name: an ADMITTED live cell, not a flipped one', () => {
+    // THE SAME LAW, EXECUTED THE OTHER WAY (395-09, D-16 / 392 D-08). The size pin above says the
+    // corpus grew; this says WHAT it grew by, so a build that dropped the cell reds naming the
+    // capability rather than reporting an off-by-one about a set.
+    //
+    // AND THE ADMISSION IS ASSERTED TO BE ONE. `find` answering undefined is the shape a flip would
+    // have left — a cell that already existed and changed arm — so the presence assertion is what
+    // makes this row about an admission at all. It is stated as `should_execute` beside it because
+    // an admitted cell landing `fail_closed` would join the corpus without joining the denominator,
+    // which is the movement 392 D-08's handoff was NOT asking for.
+    const admitted = SCENARIO_CORPUS.find((entry) => entry.id === 'config-edit-timeout')
+    expect(admitted).toBeDefined()
+    expect(admitted?.class).toBe('planner')
+    expect(admitted?.lane).toBe('live')
+    expect(admitted?.kind).toBe('should_execute')
   })
 
   it('assigns each class its D-13 lane, with every exception NAMED', () => {

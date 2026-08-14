@@ -148,8 +148,16 @@ describe('the live lane announces which lane actually ran (T-392-32)', () => {
     // write-test cells became routable. That is the one movement a denominator is allowed to make
     // — a deliberate flip that a phase claims as its arrival proof — and it is distinguishable
     // here from the forbidden one only because both numbers are read at once.
-    expect(LIVE_CORPUS.length).toBe(6)
-    expect(LIVE_DENOMINATOR).toBe(5)
+    //
+    // 7 AND 6 AS OF CORPUS v8 (395-09), AND BOTH MOVED, WHICH IS THE OTHER LEGAL MOVEMENT. 392 D-08
+    // designed the config handoff as a flip and 395's research found no config cell in v7 to flip,
+    // so `planner/config-edit-timeout` is ADMITTED: the lane gains a member AND the ceiling gains a
+    // denominator entry. v7's flip moved the second number alone; this moves both. Reading them
+    // together is what lets a later reader say which of the three movements happened — a flip, an
+    // admission, or the forbidden one where a gap round quietly grows the denominator for work
+    // being done — without reconstructing it from the diff.
+    expect(LIVE_CORPUS.length).toBe(7)
+    expect(LIVE_DENOMINATOR).toBe(6)
   })
 })
 

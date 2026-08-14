@@ -77,12 +77,33 @@ import type { ScenarioClass, ScenarioExpectationKind, ScenarioLane } from '@vost
  *      write-test half is only the vehicle; flipping it would delete the corpus's one cell that
  *      names a directive on a turn that fails.
  *
- * DENOMINATORS AT THIS VERSION: 11 hermetic, 5 live. One canonical line, parsed by
+ * v8 — 395 plan 09, THE CONFIG ARRIVAL, AND IT IS AN ADMISSION RATHER THAN A FLIP. 392 D-08 named
+ *      the handoff as a flip — "the config `fail_closed` scenario moves to `should_execute`" — and
+ *      395's research went looking for that cell across all 23 files and every line below. THERE IS
+ *      NO CONFIG CELL IN v7. Nothing was ever admitted to flip, so executing the handoff faithfully
+ *      means admitting one: `planner/config-edit-timeout`, LIVE and `should_execute`, taking the
+ *      corpus to 24 and the live denominator to 6.
+ *
+ *      THE SIZE MOVING IS THE WHOLE DIFFERENCE, and it is why the size and the denominator are
+ *      pinned side by side in `scenario-manifest.test.ts`. v7 was the first version whose size did
+ *      not move: two cells changed arm and the live denominator rose by two, which is what a flip
+ *      looks like from here. This version's size rises by one AND the denominator rises by one,
+ *      which is what an admission looks like, and the pair is the only thing that tells them apart.
+ *
+ *      AN ADMISSION GROWS THE DENOMINATOR, WHICH IS THE MOVEMENT THE TREADMILL LAW EXISTS TO WATCH.
+ *      Stated rather than slipped through: every gap-round cell since v4 was authored `fail_closed`
+ *      precisely so the denominators did not move for work being done. This one is not a gap-round
+ *      cell — it is a capability that did not exist in v7's build and does in this one, and the
+ *      denominator it enters is the population the `mark_unhandled` ceiling is computed over. The
+ *      rate reported after this commit is a rate about a DIFFERENT corpus, which is the sentence
+ *      this version number exists to let a reader say.
+ *
+ * DENOMINATORS AT THIS VERSION: 11 hermetic, 6 live. One canonical line, parsed by
  * `scenario-manifest.test.ts` and compared against the counts the list below actually has, so this
  * header cannot go on claiming numbers the corpus stopped having. Every other assertion in that
  * file reads the LIST, which is exactly why the header needed its own.
  */
-export const SCENARIO_CORPUS_VERSION = 7
+export const SCENARIO_CORPUS_VERSION = 8
 
 /**
  * One admitted scenario.
@@ -140,6 +161,16 @@ export const SCENARIO_CORPUS: readonly ScenarioCorpusEntry[] = Object.freeze([
   // and the flip is what says so. Its file pins planned == executed, so a turn that planned the
   // capability without reaching it reds here rather than reading as arrival.
   entry({ id: 'write-test-for-checkout', class: 'planner', lane: 'live', kind: 'should_execute' }),
+  // --- planner: 395's config arrival, ADMITTED (395-09) ------------------------------------------
+  // The first member this corpus has ever gained for a capability rather than for a defect. 392
+  // D-08 designed this as a flip and there was nothing to flip: no config cell was ever admitted,
+  // which 395's research established by enumerating every file above. So the handoff is executed as
+  // an ADMISSION — the size moves as well as the denominator, and the pair of pins in
+  // `scenario-manifest.test.ts` is what makes the two movements distinguishable after the fact.
+  // The cell pins planned == executed == 1 on `config.field.set`, the propose op D-03 gave any
+  // schema-addressable path; it deliberately stops short of `config.proposal.apply`, which is the
+  // verb that changes a person's git history and the only one in the family that is gated.
+  entry({ id: 'config-edit-timeout', class: 'planner', lane: 'live', kind: 'should_execute' }),
   // --- compound: the canon pair, live lane (392-02) ---------------------------------------------
   entry({ id: 'run-42-and-digest', class: 'compound', lane: 'live', kind: 'should_execute' }),
   // The spec's own example, FLIPPED (394-11). Both clauses are routable now, so D-10's pre-flight
