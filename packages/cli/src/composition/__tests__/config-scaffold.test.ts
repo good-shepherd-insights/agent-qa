@@ -240,6 +240,30 @@ function proposedId(answer: ConfigProposeOutput): string {
   return answer.proposalId
 }
 
+/**
+ * THE SECOND LAYOUT for the CREATE direction: configDir is not the repository root (395-11).
+ *
+ * The undo's half of this axis is `config-apply-discipline.test.ts` cells 15-17; this is the same
+ * blind spot on the other side of the same pipeline. Every fixture in this file used one temp
+ * directory as both git root and config dir, so a scaffold that answered in the wrong path
+ * vocabulary would have written to the same place either way and no cell could tell.
+ *
+ * `sub/dir/.gitignore` IS SEEDED AND COMMITTED, because the pinned set is resolved relative to the
+ * CONFIG directory: the project's `.gitignore` for this layout is the one beside the config, and a
+ * fixture that seeded only the root's would be measuring the upsert against a file the scaffold
+ * never reads.
+ */
+function relocateToSubdir(): string {
+  const configDir = join(root, 'sub', 'dir')
+  mkdirSync(configDir, { recursive: true })
+  configPath = join(configDir, CONFIG_FILE)
+  agentQaRoot = join(configDir, '.agent-qa')
+  writeFileSync(join(configDir, '.gitignore'), SEEDED_GITIGNORE)
+  git('add', '--', 'sub/dir/.gitignore')
+  git('commit', '--quiet', '-m', 'seed the subdirectory that will hold the configuration')
+  return configDir
+}
+
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'config-scaffold-'))
   configPath = join(root, CONFIG_FILE)
@@ -459,4 +483,53 @@ describe('a project that already has a configuration is refused, not overwritten
     expect(answer).toMatchObject({ outcome: 'refused', reason: 'not-a-hostname' })
     expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
   })
+})
+
+describe('the config dir is NOT the repository root (395-11 · CR-03\'s create direction)', () => {
+  it('(12) a from-zero scaffold at sub/dir lands its three members THERE, once each, in one commit',
+    async () => {
+      const configDir = relocateToSubdir()
+      const registry = registryFor({ confirm: true })
+      const id = proposedId(await scaffold(registry, 'booking.com'))
+      const payload = storedApplyable(id)
+
+      // The proposal's own paths are configDir-relative — the vocabulary the pinned set, the apply
+      // pathspec and the classifier all speak. A payload that had carried repo-root-relative paths
+      // here would be CR-03's defect arriving from the create direction.
+      expect([...payload.files.map((file) => file.path)].sort())
+        .toEqual([...enumerateConfigFileSet({ configFile: CONFIG_FILE })])
+
+      const before = commitCount()
+      const accepted = await invokeFunction(
+        registry, 'proposals.accept', { proposalId: id }, HUMAN,
+      ) as ProposalsAcceptOutput
+      expect(accepted.apply.outcome).toBe('applied')
+
+      // ONE commit, and its file list is git's own — repo-root-relative, so the sub/dir prefix
+      // appears EXACTLY ONCE per member. A doubled prefix is what an apply resolving a
+      // repo-root-relative path against configDir produces, and it is the damage this cell names.
+      expect(commitCount()).toBe(before + 1)
+      expect(headFiles()).toEqual([
+        'sub/dir/.gitignore', `sub/dir/${CONFIG_FILE}`, 'sub/dir/hooks.yaml',
+      ])
+      expect(existsSync(join(configDir, 'sub'))).toBe(false)
+
+      // THE BYTES LANDED WHERE THE PAYLOAD SAID, resolved against the CONFIG dir, and the config
+      // is a working one where it landed rather than merely present.
+      for (const file of payload.files) {
+        expect(readFileSync(join(configDir, file.path), 'utf8'))
+          .toBe(utf8Decode(base64Decode(file.newContentBase64)))
+      }
+      const written = parseYaml(readFileSync(configPath, 'utf8')) as {
+        registry?: { targets?: Record<string, { url?: string }> }
+      }
+      expect(AgentQaConfigSchema.safeParse(written).success).toBe(true)
+      expect(written.registry?.targets?.['booking-com']?.url).toBe('https://booking.com')
+
+      // The project's own rule in the gitignore BESIDE the config survives the upsert — the half
+      // that says the scaffold composed with the right file rather than merely wrote one.
+      const gitignore = readFileSync(join(configDir, '.gitignore'), 'utf8')
+      expect(gitignore.startsWith(SEEDED_GITIGNORE)).toBe(true)
+      expect(gitignore).toContain('# agent-qa init:start')
+    })
 })

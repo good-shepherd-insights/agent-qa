@@ -120,9 +120,15 @@ MARKER="MUTATION_395_06_MARKER"
 # the branch this mutation disables never fires for them. That asymmetry is the point — a suite in
 # which A1 red everything would be a suite whose payloads were all doctored.
 ALLOWED_A1="(f) a payload widened after the render refuses at the byte comparison, before any write"
-# A2 mis-attributes the human's commit. ONLY the authorship cell sees it; the order, the count, the
+# A2 mis-attributes the human's commit. ONLY the authorship cells see it; the order, the count, the
 # messages, the file lists and the trailer are all still exactly right.
-ALLOWED_A2="(1) a dirty proposal file produces TWO commits"
+#
+# TWO CELLS RATHER THAN ONE SINCE 395-11, and the second is named rather than the leg widened. Cell
+# 17 is cell 1's assertion set run at the sub/dir layout — same discipline, different fixture axis —
+# so it depends on exactly the authorship this mutation breaks and reds for exactly the same reason.
+# A leg that had been relaxed to "any red" instead would have stopped being able to say that.
+ALLOWED_A2="(1) a dirty proposal file produces TWO commits
+(17) at sub/dir a dirty config file still produces TWO commits"
 # A3 widens the dirty scan to the whole pinned set. TWO cells red and both are the mutation's own
 # doing: the no-sweeping cell, because an unrelated dirty config-set member is now committed, and
 # the out-of-set cell, because a scan that iterates the SET never looks at a proposal file outside
