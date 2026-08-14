@@ -133,6 +133,24 @@ function memoryLog(): SessionLogPort & { readonly events: ChatSessionEvent[] } {
 interface Harness {
   readonly ordering: string[]
   readonly inputs: { functionId: string; input: unknown }[]
+  /**
+   * Every mid-turn render, each carrying a SNAPSHOT of `ordering` taken at the moment it happened
+   * (395-13).
+   *
+   * The snapshot rather than a marker pushed into `ordering` itself, and that is deliberate:
+   * `ordering` keeps recording INVOCATIONS ONLY, so every expected array in the cells below is the
+   * array it always was and a render's position is read off a copy instead of by widening the thing
+   * six other cells assert on.
+   */
+  readonly presented: { text: string; orderingAtRender: string[] }[]
+  /**
+   * What each invocation RESOLVED to.
+   *
+   * So a cell can compare a rendered surface against the op's OWN answer rather than against a copy
+   * of the fixture — the difference between measuring that this proposal was shown and measuring
+   * that something with the right shape was.
+   */
+  readonly answers: { functionId: string; answer: unknown }[]
   runTurn(input: AgentAskInput): Promise<AgentAskResult>
 }
 
@@ -336,9 +354,19 @@ function harness(options: {
    */
   readonly realScaffold?: ScaffoldOpFixture
   readonly denyApply?: string
+  /**
+   * Bind NO presentation port, which is every headless host (395-13).
+   *
+   * Present by default, because the surface under test is the one production binds; this flag is
+   * the absent-safe half, and it is a flag rather than a second harness so both hosts run the same
+   * assembly.
+   */
+  readonly noPresent?: boolean
 } = {}): Harness {
   const ordering: string[] = []
   const inputs: { functionId: string; input: unknown }[] = []
+  const presented: { text: string; orderingAtRender: string[] }[] = []
+  const answers: { functionId: string; answer: unknown }[] = []
   let clock = 0
 
   // The planner is what turns a free-text utterance into an `authoring.draft.write` call — the same
@@ -352,6 +380,29 @@ function harness(options: {
     }),
   }
 
+  // What each seat answers, hoisted out of the recorder below so that recorder stays ONE shape:
+  // record the call, resolve the answer, record the answer.
+  const answerFor = (functionId: string, input: unknown): Promise<unknown> => {
+    if (functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID) {
+      if (options.realScaffold !== undefined) {
+        return configProjectScaffoldSpec.invoke(
+          input as { readonly domain: string },
+          options.realScaffold.deps,
+        ) as Promise<unknown>
+      }
+      return Promise.resolve(options.scaffoldAnswer ?? {
+        outcome: 'proposed',
+        proposalId: 'prop-scaffold',
+        summaryLine: 'configure this project for https://booking.com as target booking-com',
+        crossBoundary: true,
+        crossBoundaryReasons: ['new-origin'],
+        files: ['.gitignore', 'agent-qa.config.yaml', 'hooks.yaml'],
+        shownDiff: '--- /dev/null\n+++ b/agent-qa.config.yaml\n',
+      })
+    }
+    return Promise.resolve({ ok: true })
+  }
+
   const deps: TurnEngineDeps = {
     table: CHAT_RESOLVER_TABLE,
     split: splitClauses,
@@ -361,35 +412,29 @@ function harness(options: {
       forStage: (_stage: ChatBindingStage, sessionId: string): FunctionCaller =>
         ({ ...PLANNER_CALLER, sessionId }),
     },
-    invoke: (functionId, input) => {
+    invoke: async (functionId, input) => {
       ordering.push(functionId)
       inputs.push({ functionId, input })
       if (functionId === options.denyApply) {
-        return Promise.reject(new FunctionDeniedError(
+        throw new FunctionDeniedError(
           'Denied config.proposal.apply: fail-closed: this project has no agent-qa configuration '
           + 'and there is nobody to ask',
-        ))
+        )
       }
-      if (functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID) {
-        if (options.realScaffold !== undefined) {
-          return configProjectScaffoldSpec.invoke(
-            input as { readonly domain: string },
-            options.realScaffold.deps,
-          ) as Promise<unknown>
-        }
-        return Promise.resolve(options.scaffoldAnswer ?? {
-          outcome: 'proposed',
-          proposalId: 'prop-scaffold',
-          summaryLine: 'configure this project for https://booking.com as target booking-com',
-          crossBoundary: true,
-          crossBoundaryReasons: ['new-origin'],
-          files: ['.gitignore', 'agent-qa.config.yaml', 'hooks.yaml'],
-          shownDiff: '--- /dev/null\n+++ b/agent-qa.config.yaml\n',
-        })
-      }
-      return Promise.resolve({ ok: true })
+      const answer = await answerFor(functionId, input)
+      answers.push({ functionId, answer })
+      return answer
     },
     planner,
+    // 395-13 D-14: the surface a person reads mid-turn. BOUND BY DEFAULT, because the host under
+    // test is the one production composes; `noPresent` is the absent-safe half.
+    ...(options.noPresent === true
+      ? {}
+      : {
+        present: (text: string) => {
+          presented.push({ text, orderingAtRender: [...ordering] })
+        },
+      }),
     ...(options.targets === undefined
       ? {}
       : { configuredTargets: () => Promise.resolve(options.targets as readonly string[]) }),
@@ -401,7 +446,7 @@ function harness(options: {
   }
 
   const engine = createTurnEngine(deps)
-  return { ordering, inputs, runTurn: (input) => engine.runTurn(input) }
+  return { ordering, inputs, presented, answers, runTurn: (input) => engine.runTurn(input) }
 }
 
 describe('the write_test route is deterministic and narrow (D-15)', () => {
@@ -554,6 +599,13 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
     // The answer names the missing configuration, which is the v48 posture's own sentence carried
     // through rather than re-worded here.
     expect(result.unhandled?.reason).toContain('no agent-qa configuration')
+    // 395-13: THE RENDER HAPPENED AND THE REFUSAL STILL STANDS. Showing a person what they are
+    // being asked about is not a step toward doing it — the proposal reached the surface exactly
+    // once, then the apply was refused and nothing was authored. A render that suppressed itself on
+    // the declined road would hide the one thing a person needs in order to decline for a reason.
+    expect(test.presented).toHaveLength(1)
+    expect(test.presented[0]?.orderingAtRender)
+      .not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
   })
 
   it('(R7) refuses an unconfigured project with no hostname, and invokes nothing at all', async () => {
@@ -646,6 +698,94 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(configuredResult.status).toBe('completed')
       expect(configured.ordering).toEqual([AUTHORING_DRAFT_WRITE_FUNCTION_ID])
       expect(configuredOp.filed).toHaveLength(0)
+    })
+
+  it('(R12) renders THIS proposal — summary, files, true diff — AFTER the scaffold and BEFORE the apply',
+    async () => {
+      // SC-5's FIRST CLAUSE, AS AN ORDERING CLAIM (395-13, D-14 · CFGM-05). 395-VERIFICATION drove
+      // this exact road under a real pty and found the person answering `fn:config.proposal.apply
+      // needs your approval` with zero diff markers, zero mention of the config file, the target
+      // name or the summary line anywhere they could read. "Reviewable" was ruled to bind AT
+      // APPROVAL TIME, so the claim is not that the bytes eventually appear — it is that they are
+      // on the surface BEFORE the verb that commits them is invoked.
+      //
+      // TWO NAMED RED DIRECTIONS, both measured by mutation rather than argued:
+      //   M-R1 render-absent      — the `engine.present` call deleted. Reds on the empty recorder.
+      //   M-R2 render-after-apply — the same call moved below the apply invoke. Reds on the
+      //                             snapshot, which then carries `config.proposal.apply`.
+      //
+      // THE REAL OP ANSWERS IT. Nothing here tells the scaffold what to say, so what is compared is
+      // the proposal this chain actually produced.
+      const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const test = harness({ targets: [], realScaffold: scaffoldOp })
+      const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
+
+      expect(result.status).toBe('completed')
+      expect(test.ordering).toEqual([
+        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
+        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      ])
+
+      // EXACTLY ONE render. A turn that rendered twice would be a person shown the same proposal in
+      // two places, either of which could be the stale one.
+      expect(test.presented).toHaveLength(1)
+      const render = test.presented[0]
+
+      // THE ORDERING, read off the snapshot taken AT RENDER TIME rather than inferred from the
+      // finished turn: at the moment these bytes reached the surface the scaffold had run and the
+      // apply had NOT. A render that arrived after the commit satisfies neither half.
+      expect(render?.orderingAtRender).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
+      expect(render?.orderingAtRender).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+
+      // THE CONTENT IS THIS PROPOSAL'S, taken from the op's OWN resolved answer. A literal here
+      // would agree with itself the day the derivation changed; this comparison cannot.
+      const answer = test.answers.find(
+        (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+      )?.answer as {
+        readonly outcome: string
+        readonly summaryLine: string
+        readonly files: readonly string[]
+        readonly shownDiff: string
+      }
+      expect(answer.outcome).toBe('proposed')
+      expect(render?.text).toContain(answer.summaryLine)
+      expect(answer.files.length).toBeGreaterThan(0)
+      for (const path of answer.files) expect(render?.text, path).toContain(path)
+
+      // THE TRUE `shownDiff`, BYTE FOR BYTE AND UNTRUNCATED — never a re-derivation (F-02's
+      // compounding). These are the same bytes the record stores and D-19 byte-compares at apply,
+      // so what a person reads here cannot drift from what an accept commits. `endsWith` is the
+      // untruncated half: the diff is the tail of the render verbatim, not a reflowed excerpt.
+      expect(answer.shownDiff).toContain(SCAFFOLD_CONFIG_FILE)
+      expect(answer.shownDiff.split('\n').length).toBeGreaterThan(3)
+      expect(render?.text).toContain(answer.shownDiff)
+      expect(render?.text.endsWith(answer.shownDiff)).toBe(true)
+
+      // AND THE RENDER IS EXACTLY THE THREE PARTS, in order — summary, file list, diff — with no
+      // fourth thing invented on the way to the person.
+      expect(render?.text)
+        .toBe([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
+    })
+
+  it('(R13) renders NOTHING on a host that binds no presentation port, and the chain is unchanged',
+    async () => {
+      // THE ABSENT-SAFE HALF. A headless host — every `agent.ask` caller, the daemon, the MCP
+      // projection — binds no surface, and this seam must leave it byte-for-byte as it was: same
+      // chain, same status, nothing rendered. The gate's own posture is untouched either way, which
+      // is what makes the port display-only rather than a second authorization input.
+      const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const test = harness({ targets: [], realScaffold: scaffoldOp, noPresent: true })
+      const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
+
+      expect(result.status).toBe('completed')
+      expect(test.presented).toEqual([])
+      expect(test.ordering).toEqual([
+        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
+        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      ])
+      expect(scaffoldOp.filed).toHaveLength(1)
     })
 
   it('(R9) does not run at all on a host that binds no vocabulary', async () => {

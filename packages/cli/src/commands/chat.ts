@@ -273,6 +273,28 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
             ...(deps.input === undefined ? {} : { input: deps.input }),
             ...(deps.output === undefined ? {} : { output: deps.output }),
           }),
+          // 395-13, D-14: the mid-turn render, on THE SAME STREAM the confirm prompt one line up
+          // and this file's own turn output write to. That is the entire requirement — a proposal
+          // rendered anywhere else is a proposal the person answering the prompt is not reading —
+          // and it is why the stream is resolved here rather than defaulted inside the engine,
+          // which has no streams.
+          //
+          // UNCONDITIONAL, INCLUDING UNDER PIPED STDIN. A scripted session is still a transcript
+          // somebody reads, and it is the surface the live lane greps; suppressing the render for
+          // non-TTY would make the one automatable reading of this clause unavailable.
+          //
+          // THROUGH THE MASKER, on this file's own law twenty lines up: everything printed crosses
+          // it. The bytes here already passed the construction scan (D-12), so this is the second
+          // of two independent passes rather than the only one.
+          chatPresent: (text: string) => {
+            const stream = deps.output ?? process.stdout
+            const maskingContext = createMaskingContext()
+            try {
+              stream.write(`${unmaskForHumanOutput(maskingContext, text)}\n`)
+            } finally {
+              maskingContext.dispose()
+            }
+          },
         })
         const chat = host.chat
 

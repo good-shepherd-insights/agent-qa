@@ -1662,6 +1662,18 @@ export interface ComposeLocalAgentInput {
    * to ask — which leaves `confirm` absent and the gate's deny-by-default in place, unchanged.
    */
   readonly chatConfirm?: (bindings: ChatConfirmBindings) => ConfirmPort | undefined
+  /**
+   * Where a chat session PRINTS a mid-turn artifact a person must read before deciding (395-13,
+   * D-14).
+   *
+   * A PLAIN FUNCTION rather than `chatConfirm`'s factory, and the difference is the whole of what
+   * this seam is: a confirm needs this composition's grant mint and session log to mean anything,
+   * while printing needs nothing from here at all. The surface is handed text and writes it.
+   *
+   * PASSED THROUGH UNTOUCHED to the turn engine's `present`. Absent ⇒ the engine renders nothing
+   * mid-turn, which is every host that is not a REPL — and no gate, receipt or session row moves.
+   */
+  readonly chatPresent?: (text: string) => void | Promise<void>
 }
 
 /**
@@ -2472,6 +2484,10 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     ...(input.draftAuthoring !== undefined && input.runExecution !== undefined
       ? { configuredTargets: () => (input.draftAuthoring as DraftAuthoringPort).configuredTargetNames() }
       : {}),
+    // 395-13 D-14: where the scaffold proposal is rendered before the in-turn apply is invoked.
+    // Conditionally spread on the exact idiom above, so a host that binds no surface leaves the
+    // field ABSENT and the engine's own "renders nothing" posture is what answers — in one place.
+    ...(input.chatPresent === undefined ? {} : { present: input.chatPresent }),
     now: () => clock.now(),
     mintTurnId: () => `turn-${randomUUID()}`,
   })

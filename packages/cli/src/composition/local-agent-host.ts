@@ -471,6 +471,15 @@ export interface ComposeCliLocalAgentInput {
    */
   chatConfirm?: ComposeLocalAgentInput['chatConfirm']
   /**
+   * Where a chat session PRINTS the scaffold proposal a person is about to be asked about
+   * (395-13, D-14), passed through untouched on `chatConfirm`'s precedent.
+   *
+   * The same split as the line above: this host knows whether there is a stream to write on, and
+   * the shared composition knows what a turn is. Absent leaves the engine rendering nothing, which
+   * is every non-chat CLI invocation.
+   */
+  chatPresent?: ComposeLocalAgentInput['chatPresent']
+  /**
    * What a chat session plans with (392 plan 09, CHAT-06 / D-04), passed through untouched.
    *
    * RESOLVED BY THE CALLER, NOT HERE, and the reason is mechanical rather than stylistic: this
@@ -3445,6 +3454,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       input.analysisTokenBudget ?? (() => resolveCliAnalysisTokenBudget(input.configPath)),
     ...(input.postRun === undefined ? {} : { postRun: input.postRun }),
     ...(input.chatConfirm === undefined ? {} : { chatConfirm: input.chatConfirm }),
+    ...(input.chatPresent === undefined ? {} : { chatPresent: input.chatPresent }),
     // 392 plan 09, CHAT-06: the chat model arrives ALREADY BUILT, through `createModel` at the
     // resolution one layer up. Conditionally spread on the `confirm` precedent, so a host without
     // one leaves the field ABSENT and the composition's own headless posture is what answers.

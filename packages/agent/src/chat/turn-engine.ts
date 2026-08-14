@@ -144,6 +144,30 @@ export interface TurnEngineDeps {
    * answer the question has not lost a guard — the backstop it always had is still there.
    */
   readonly configuredTargets?: () => Promise<readonly string[]>
+  /**
+   * Where a mid-turn artifact a PERSON must read BEFORE deciding is written (395-13, D-14 · CFGM-05).
+   *
+   * DISPLAY-ONLY, and that is a contract rather than a description. Nothing handed to this port
+   * enters an authorization decision: `classifyRisk`, the gate's `evaluate` and
+   * `FunctionSpec.disclose` read the identical action they always did, and the descriptor the gate
+   * receives is untouched. A seam that fed the gate would be I/O placed between a caller and its
+   * own authorization decision, which `spec.ts` forbids by name one file over.
+   *
+   * ABSENT ⇒ THIS HOST RENDERS NOTHING MID-TURN. That is a posture and not a degraded mode: the
+   * turn's result, its receipts and its session log are byte-for-byte what they were, and the only
+   * thing such a host lacks is a surface to print on. Every headless host and every `agent.ask`
+   * caller is in that class, and each still fails a confirm closed exactly as before — the gate's
+   * deny-by-default is not this seam's to move in either direction.
+   *
+   * IT EXISTS BECAUSE THE ONE CHAIN THAT ASKS FOR AN APPROVAL MID-TURN HAD NOTHING TO SHOW.
+   * `routeWriteTest` invokes `config.proposal.apply` — a gated verb — from inside a turn, so the
+   * shipped v48/392 confirm pauses the chain at a point where no surface had yet been given the
+   * proposal. D-14 is one sentence with two halves: *the scaffold proposal renders inline, the
+   * shipped confirm pauses the chain*. The second half shipped in 395-08; 395-VERIFICATION measured
+   * the first half absent (zero diff markers, zero mention of the file, the target or the summary
+   * line anywhere a person could read), and this is that half.
+   */
+  readonly present?: (text: string) => void | Promise<void>
   readonly now: () => string
   readonly mintTurnId: () => string
 }
@@ -762,7 +786,17 @@ async function runTurnThrough(
       writeTestRefusal = refusalMessage(error)
       return 'stop'
     }
-    const answer = proposed as { outcome?: string; proposalId?: string; detail?: string }
+    // THE NARROWING READS THE PROPOSED ARM'S OWN FIELDS (395-13). It used to stop at three, and the
+    // three it stopped at were the ones a MACHINE needs — which is exactly why nothing a person
+    // could read ever left this function.
+    const answer = proposed as {
+      outcome?: string
+      proposalId?: string
+      detail?: string
+      summaryLine?: string
+      files?: readonly string[]
+      shownDiff?: string
+    }
     if (answer.outcome !== 'proposed' || answer.proposalId === undefined) {
       // A refusal or a blocked record. Both are answers a person can act on, and neither is a
       // reason to author a test against a project that is still unconfigured.
@@ -780,6 +814,30 @@ async function runTurnThrough(
       status: 'executed',
       outcome: `proposed ${answer.proposalId}`,
     })
+
+    // D-14's FIRST HALF (395-13 · the SC-5 gap): the person about to be asked whether to apply this
+    // proposal is shown WHAT it applies, BEFORE the verb that applies it is invoked. The ordering is
+    // the whole claim — a render that arrived after the apply would be a receipt, and "reviewable"
+    // was ruled to bind at approval time.
+    //
+    // THE OP'S OWN BYTES, NEVER A RE-DERIVATION. `shownDiff` is the rendered text whose bytes the
+    // proposal record stores and D-19 byte-compares at apply, so what is read here cannot drift from
+    // what an accept commits. Composing a second diff from the same inputs would be a second answer
+    // to "what is about to happen", and the road where it would matter most is the one where the
+    // merge silently rewrites bytes it promised not to touch (F-02).
+    //
+    // ENTIRELY DOWNSTREAM OF THE CONSTRUCTION SCAN. These are the bytes CFGM-02's scan ranged over
+    // the WHOLE candidate set including context lines (D-12); the `blocked` arm carries no diff by
+    // construction and the route already returned above on any non-`proposed` outcome, so there is
+    // no arm of this function on which unscanned bytes reach a surface.
+    if (
+      engine.present !== undefined
+      && answer.summaryLine !== undefined
+      && answer.files !== undefined
+      && answer.shownDiff !== undefined
+    ) {
+      await engine.present([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
+    }
 
     try {
       await engine.invoke(
