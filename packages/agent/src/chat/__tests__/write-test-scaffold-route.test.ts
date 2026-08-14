@@ -242,6 +242,7 @@ function inspectFacts(configText: string, paths: readonly string[]): readonly Co
 }
 
 interface FiledProposal {
+  readonly proposalId: string
   readonly summaryLine: string
   readonly paths: readonly string[]
 }
@@ -250,7 +251,25 @@ interface ScaffoldOpFixture {
   readonly deps: Parameters<typeof configProjectScaffoldSpec.invoke>[1]
   /** Every proposal the REAL op filed, so a cell reads what it actually proposed. */
   readonly filed: FiledProposal[]
+  /**
+   * The store read BY ID — the ports-level `agent-qa proposals show <id>` (395-19 · CR-04).
+   *
+   * The owner's ruling turns on the difference between a turn that LOSES a person's work and one
+   * that declines to ask them about it: a refused route must leave the proposal recoverable under
+   * the id the op answered with. `filed` alone cannot say that — it is the writer's own array, and
+   * reading position 0 out of it proves nothing about reaching the record the way a person would.
+   * This is the lookup that surface performs, over the same records the port persisted.
+   */
+  show(proposalId: string): FiledProposal | undefined
 }
+
+/**
+ * The id this in-memory store mints.
+ *
+ * Fixed rather than sequential because two cells already pin the apply's input as
+ * `{ proposalId: 'prop-scaffold' }`; what 395-19 adds is that the SAME id reads back out.
+ */
+const SCAFFOLD_PROPOSAL_ID = 'prop-scaffold'
 
 function scaffoldOpFixture(options: {
   /** The committed configuration, or absent for a project that has none at all. */
@@ -327,16 +346,18 @@ function scaffoldOpFixture(options: {
   const configProposals: ConfigProposalsWritePortLike = {
     put: (record) => {
       filed.push({
+        proposalId: SCAFFOLD_PROPOSAL_ID,
         summaryLine: record.payload.summaryLine,
         paths: record.payload.payloadKind === 'applyable'
           ? record.payload.files.map((file) => file.path)
           : [...record.payload.paths],
       })
-      return Promise.resolve({ proposalId: 'prop-scaffold' })
+      return Promise.resolve({ proposalId: SCAFFOLD_PROPOSAL_ID })
     },
   }
 
   return {
+    show: (proposalId: string) => filed.find((entry) => entry.proposalId === proposalId),
     deps: {
       configFiles,
       configValidate,
@@ -350,6 +371,15 @@ function scaffoldOpFixture(options: {
     filed,
   }
 }
+
+/**
+ * What a broken display port says when it fails.
+ *
+ * HOISTED so a cell can assert the refusal sentence does NOT carry it (395-19 · T-395-53). A
+ * refusal derived from the failed port would be the port gaining a voice in the turn through the
+ * back door of an error path — the thing RULING 2 closed, re-opened by the arm that replaced it.
+ */
+const PRESENT_FAILURE_ERROR = 'the pipe closed'
 
 function harness(options: {
   /** Absent ⇒ the dep is not bound at all, which is cell (R9)'s whole subject. */
@@ -424,8 +454,6 @@ function harness(options: {
   // CAPTURED rather than constructed inline, so the stream this run wrote can be read back off the
   // Harness. Nothing about the binding changes: the same instance is handed to the same dep.
   const sessionLog = memoryLog()
-
-  const PRESENT_FAILURE_ERROR = 'the pipe closed'
 
   const deps: TurnEngineDeps = {
     table: CHAT_RESOLVER_TABLE,
@@ -826,80 +854,120 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(scaffoldOp.filed).toHaveLength(1)
     })
 
-  it('(R14) a present that THROWS decides nothing: the turn completes and the session log is unchanged',
+  it('(R14) a present that THROWS REFUSES the route: no confirm is offered, the proposal stays filed and readable',
     async () => {
-      // THE PORT'S THIRD STATE (395-17 · RULING 2 · CR-03). (R12) pins bound-and-healthy, (R13)
-      // pins absent — and nothing measured bound-and-BROKEN, which is the state a real host reaches
-      // the moment its stream is closed under it. 395-VERIFICATION reproduced what happened there:
-      // the exception escaped `routeWriteTest`, whose call site sits in an `else if` CONDITION
-      // outside the dispatch try, so `runTurn` threw — after the proposal was already durable and
-      // before the apply gate was ever offered. A display surface had decided a turn's fate.
+      // THE PORT'S THIRD STATE, RE-RULED (395-19 · CR-04 · owner ruling 2026-08-15). (R12) pins
+      // bound-and-healthy, (R13) pins absent, and this pair pins bound-and-BROKEN — the state a
+      // real host reaches the moment its stream closes under it.
       //
-      // THE CLAIM IS AN EQUALITY, not a survival check: a broken surface must leave the turn
-      // BYTE-IDENTICAL to a healthy one. Two runs of the same road over the same fixture class,
-      // compared on all four families — the result, the invocation ordering, what was filed, and
-      // the session event stream. The events half is the one D-14 asserted and nobody measured
-      // (F-08): the harness pins a fixed turn id and a counting clock, so the two streams are
-      // comparable byte for byte and a swallowed failure that still cost the log a `turn_complete`
-      // would fail right here.
+      // WHAT THIS CELL USED TO ASSERT, AND WHY IT IS GONE. 395-17 made the failure inert (RULING 2:
+      // no host binding may take the turn's process down) and then let the chain CONTINUE into
+      // `config.proposal.apply`'s confirm — asking a person to approve a configuration change they
+      // had just been shown nothing of. The cell PINNED that continuation as an EQUALITY with the
+      // healthy run: `JSON.stringify(broken.events) === JSON.stringify(healthy.events)`, plus an
+      // apply-after-scaffold ordering on the broken road. That equality is the corpus-blindness
+      // class this phase keeps reproducing — it froze "the person was never shown the diff" as
+      // INDISTINGUISHABLE from "the person was shown the diff", which is the one difference SC-4
+      // exists to notice. The owner named it and ruled the route must REFUSE. Both assertions are
+      // DELETED, not relaxed.
+      //
+      // WHAT REPLACES THEM IS THE REFUSAL'S EFFECTS. The healthy run stays in the cell, but as the
+      // NON-VACUITY CONTROL rather than as an equality target: the same road over the same fixture
+      // class DOES reach the apply, so the broken road's missing apply is a divergence this cell
+      // produced and not a road that never got there.
       const message = 'write a test for booking.com checkout'
 
       const healthyOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const healthy = harness({ targets: [], realScaffold: healthyOp })
       const healthyResult = await healthy.runTurn({ message })
       expect(healthyResult.status).toBe('completed')
+      // THE CONTROL, stated as an assertion so it cannot rot into an assumption: on a working
+      // surface this exact road reaches the gated verb.
+      expect(healthy.ordering).toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
 
       const brokenOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const broken = harness({
         targets: [], realScaffold: brokenOp, presentFailure: 'throws',
       })
-      // AWAITED PLAINLY, and that is the assertion. Pre-guard this line is where the cell died:
-      // `runTurn` rejected with `the pipe closed`, and everything below was unreachable.
+      // AWAITED PLAINLY, AND THAT IS RULING 2's HALF, UNCHANGED. A rejection here fails the cell:
+      // the try/catch in `routeWriteTest` stays, so a broken display port still cannot decide a
+      // turn by killing it. What changed above the catch's `return` is only where control goes.
       const brokenResult = await broken.runTurn({ message })
 
-      // COMPLETION — the same answer, not merely an answer.
-      expect(brokenResult.status).toBe('completed')
-      expect(brokenResult).toEqual(healthyResult)
-
-      // ORDERING — the apply gate the filed proposal is entitled to, AFTER the scaffold that filed
-      // it. Pre-guard this array stopped at the scaffold id.
-      expect(broken.ordering).toEqual([
-        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
-        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
-      ])
-      expect(broken.ordering.indexOf(CONFIG_PROPOSAL_APPLY_FUNCTION_ID))
-        .toBeGreaterThan(broken.ordering.indexOf(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID))
-
-      // FILED ONCE, AND RENDERED ONCE. The render was ATTEMPTED — between the scaffold and the
-      // apply, exactly where (R12) puts it — and it failed. A guard that skipped the call instead
-      // of swallowing its failure would show zero attempts here.
-      expect(brokenOp.filed).toHaveLength(1)
+      // THE RENDER WAS ATTEMPTED, EXACTLY ONCE, in the place (R12) puts it. An arm that skipped the
+      // call rather than refusing on its failure would show zero attempts here, and this cell would
+      // then be measuring a road nobody travels.
       expect(broken.presented).toHaveLength(1)
       expect(broken.presented[0]?.orderingAtRender)
         .toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
 
-      // EVENTS EQUAL, BYTE FOR BYTE — D-14's other half, finally an assertion. Same clauses, same
-      // receipts, same turn completion, same order.
-      expect(broken.events).toHaveLength(healthy.events.length)
-      expect(JSON.stringify(broken.events)).toBe(JSON.stringify(healthy.events))
+      // NO CONFIRM WAS EVER OFFERED — the ruling's whole content. `config.proposal.apply` is the
+      // gated verb whose invocation IS the confirm, so its absence from the recorded ordering is
+      // the fact that nobody was asked. Asserted as an exact array so a fourth invocation cannot
+      // slip in, and again by name so the failure message says which verb.
+      expect(broken.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
+      expect(broken.ordering).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+      expect(broken.ordering).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+
+      // THE TURN DOES NOT PRETEND IT SUCCEEDED. The refusal surfaces the way every other stop arm
+      // in this route surfaces — (R7)'s and (R8)'s shape: a `fail_closed` turn carrying a sentence.
+      expect(brokenResult.status).toBe('fail_closed')
+      expect(brokenResult.unhandled?.reason ?? '').not.toBe('')
+      // AND THE SENTENCE IS THE ARM'S OWN, twice over. Not the route's generic unconfigured detail,
+      // which is what a `stop` that set no reason would fall back to — that fallback would tell a
+      // person to name a site when the site was already resolved and proposed. And not derived from
+      // the broken port: a refusal quoting `the pipe closed` would hand the display surface a voice
+      // in the turn through the error path RULING 2 closed (T-395-53). The WORDING is the source's
+      // to choose; these two are the properties the cell owns.
+      expect(brokenResult.unhandled?.reason).not.toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
+      expect(brokenResult.unhandled?.reason).not.toContain(PRESENT_FAILURE_ERROR)
+
+      // THE SESSION RECORD TESTIFIES TO THE SAME THING. The scaffold's receipt is there — the
+      // proposal was filed and receipted before the render was attempted — and no receipt for the
+      // authoring dispatch exists, so the log cannot be read as a turn that did the work.
+      const receipted = broken.events
+        .filter((event) => event.kind === 'clause_receipt')
+        .map((event) => (event as { functionId: string }).functionId)
+      expect(receipted).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
+      expect(receipted).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+      // The apply half is VACUOUS TODAY and kept deliberately as a forward pin: the route's apply
+      // invoke writes no receipt on either road, so this passes on the healthy one too. It is here
+      // so that the day a confirm receipt IS written, it cannot be written from this state.
+      expect(receipted).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+      expect(broken.events.some(
+        (event) => event.kind === 'turn_complete'
+          && (event as { status: string }).status === 'completed',
+      )).toBe(false)
+
+      // NO WORK IS LOST: the route refuses the TURN, not the PROPOSAL. It was filed exactly once,
+      // and it reads back out of the store under the id the op answered with — the ports-level
+      // `agent-qa proposals show <id>`, which is the continuation the refusal points a person at.
+      expect(brokenOp.filed).toHaveLength(1)
+      const proposalId = (broken.answers.find(
+        (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+      )?.answer as { readonly proposalId?: string } | undefined)?.proposalId
+      expect(proposalId).toBe(SCAFFOLD_PROPOSAL_ID)
+      const shown = brokenOp.show(proposalId ?? '')
+      expect(shown?.summaryLine).toBe(brokenOp.filed[0]?.summaryLine)
+      expect(shown?.paths.length ?? 0).toBeGreaterThan(0)
     })
 
-  it('(R15) a present that REJECTS decides nothing either — the port type\'s other arm',
+  it('(R15) a present that REJECTS refuses it too — the port type\'s other arm',
     async () => {
-      // THE TWIN, over `Promise<void>` (395-17). The port is `(text) => void | Promise<void>`, and
-      // a guard covering only the synchronous throw would be a half-fix whose hole is exactly the
-      // arm a real async writer takes. One await covers both, and this cell is what says so.
+      // THE TWIN, over `Promise<void>` (395-17's arm split, 395-19's ruling). The port is
+      // `(text) => void | Promise<void>`, and an arm covering only the synchronous throw would be a
+      // half-fix whose hole is exactly the shape a real async writer takes. One await covers both,
+      // and this cell is what says so — now about the REFUSAL rather than about the swallow.
       //
-      // ITS ADMISSION TICKET IS THE MUTATION, NOT HEAD. (R15) lands after the guard, so it never
-      // saw the pre-guard build; its red is measured under leg M-P1 — the guard removed, this cell
-      // and (R14) red on the turn rejecting, every neighbour green.
+      // ITS ASSERTIONS ARE (R14)'s, REPEATED RATHER THAN SHARED, because the two arms are two
+      // claims: a helper would let one arm's regression hide inside the other's green.
       const message = 'write a test for booking.com checkout'
 
       const healthyOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const healthy = harness({ targets: [], realScaffold: healthyOp })
       const healthyResult = await healthy.runTurn({ message })
       expect(healthyResult.status).toBe('completed')
+      expect(healthy.ordering).toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
 
       const brokenOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const broken = harness({
@@ -907,24 +975,38 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       })
       const brokenResult = await broken.runTurn({ message })
 
-      expect(brokenResult.status).toBe('completed')
-      expect(brokenResult).toEqual(healthyResult)
-
-      expect(broken.ordering).toEqual([
-        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
-        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
-      ])
-      expect(broken.ordering.indexOf(CONFIG_PROPOSAL_APPLY_FUNCTION_ID))
-        .toBeGreaterThan(broken.ordering.indexOf(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID))
-
-      expect(brokenOp.filed).toHaveLength(1)
       expect(broken.presented).toHaveLength(1)
       expect(broken.presented[0]?.orderingAtRender)
         .toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
 
-      expect(broken.events).toHaveLength(healthy.events.length)
-      expect(JSON.stringify(broken.events)).toBe(JSON.stringify(healthy.events))
+      expect(broken.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
+      expect(broken.ordering).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+      expect(broken.ordering).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+
+      expect(brokenResult.status).toBe('fail_closed')
+      expect(brokenResult.unhandled?.reason ?? '').not.toBe('')
+      expect(brokenResult.unhandled?.reason).not.toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
+      expect(brokenResult.unhandled?.reason).not.toContain(PRESENT_FAILURE_ERROR)
+
+      const receipted = broken.events
+        .filter((event) => event.kind === 'clause_receipt')
+        .map((event) => (event as { functionId: string }).functionId)
+      expect(receipted).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
+      expect(receipted).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+      expect(receipted).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+      expect(broken.events.some(
+        (event) => event.kind === 'turn_complete'
+          && (event as { status: string }).status === 'completed',
+      )).toBe(false)
+
+      expect(brokenOp.filed).toHaveLength(1)
+      const proposalId = (broken.answers.find(
+        (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+      )?.answer as { readonly proposalId?: string } | undefined)?.proposalId
+      expect(proposalId).toBe(SCAFFOLD_PROPOSAL_ID)
+      const shown = brokenOp.show(proposalId ?? '')
+      expect(shown?.summaryLine).toBe(brokenOp.filed[0]?.summaryLine)
+      expect(shown?.paths.length ?? 0).toBeGreaterThan(0)
     })
 
   it('(R9) does not run at all on a host that binds no vocabulary', async () => {

@@ -291,6 +291,24 @@ function refusalMessage(error: unknown): string {
   return error instanceof Error && error.message !== '' ? error.message : refusalName(error)
 }
 
+/**
+ * What a person is told when the scaffold proposal could NOT BE DISPLAYED (395-19 · CR-04).
+ *
+ * A FIXED LITERAL, AND THAT IS PART OF THE RULE. Nothing here is derived from the failed render —
+ * not the caught error, not anything the broken port produced — because a refusal that quoted the
+ * display surface would hand that surface a voice in the turn through the error path, which is the
+ * one thing the guard around the render exists to deny (T-395-53).
+ *
+ * IT NAMES THE CONTINUATION because the route refuses the TURN and not the PROPOSAL: the record is
+ * already durable under its own id when this arm is reached, so nothing a person asked for is lost
+ * — it is waiting behind `proposals show`, which is the surface they would review it on anyway.
+ */
+export const WRITE_TEST_UNDISPLAYABLE_DETAIL =
+  'The configuration change could not be displayed, so it was not offered for approval — you are '
+  + 'never asked to accept a change you were not shown. Nothing is lost: the proposal is still '
+  + 'filed. Run `agent-qa proposals list` to find it, `agent-qa proposals show <id>` to read it, '
+  + 'and `agent-qa proposals accept <id>` to apply it.'
+
 /** What one directive did: a line to print back, or the reason the turn is refused. */
 type DirectiveResult =
   | { readonly kind: 'handled'; readonly text: string }
@@ -836,21 +854,32 @@ async function runTurnThrough(
       && answer.files !== undefined
       && answer.shownDiff !== undefined
     ) {
-      // INERT BY CONSTRUCTION, NOT BY LUCK (395-17 · CR-03). D-14 says this port is display-only
-      // and absent-safe; that sentence is a claim about the port's THIRD state too — bound, and
-      // broken — and until this guard it was false there. A surface that could not print is not a
-      // reason to abandon a turn whose proposal is already durable: the gate below still asks, the
-      // turn still finishes, and the session log stays byte-for-byte what a healthy render writes.
+      // INERT BY CONSTRUCTION, NOT BY LUCK (395-17 · CR-03 · RULING 2). D-14 says this port is
+      // display-only and absent-safe; that sentence is a claim about the port's THIRD state too —
+      // bound, and broken — and until this guard it was false there: the exception escaped
+      // `routeWriteTest` from a call site outside the dispatch try and took `runTurn` down with it.
+      // The try STAYS, and one await covers both arms of `(text) => void | Promise<void>` — the
+      // synchronous throw and the rejected promise — so no host binding can distinguish itself by
+      // which way its stream fails, and none can decide a turn by dying.
       //
-      // ONE AWAIT COVERS BOTH ARMS of `(text) => void | Promise<void>` — the synchronous throw and
-      // the rejected promise — so no future host binding can distinguish itself by which way its
-      // stream fails. The catch swallows deliberately: a display failure has no receipt to earn and
-      // no decision to influence, and reporting it here would be the port gaining a voice in the
-      // turn through the back door of an error path.
+      // BUT A TURN MAY NOT PRETEND A DISCLOSURE HAPPENED (395-19 · CR-04 · owner ruling
+      // 2026-08-15), and that is what this catch used to do. It swallowed by decision D-395-17-A,
+      // and the apply invoke below then ran unconditionally — so a host whose display had failed
+      // walked straight into `config.proposal.apply`'s confirm, asking a person to approve a
+      // configuration change they had been shown NOTHING of. SUPERSEDED: reviewability is this
+      // phase's thesis and SC-4 forbids an approval that silently widens scope; a blind confirm is
+      // the sharpest violation of it there is, and a bookkeeping receipt would have RECORDED the
+      // omission rather than PREVENTED it.
+      //
+      // SO THE ROUTE REFUSES, exactly as its other stop arms do. This costs the person nothing: the
+      // proposal was filed and receipted above, it stays reviewable under its own id, and the
+      // sentence points at the surface that reads it. The refusal is the TURN's, never the
+      // PROPOSAL's — and it is a fixed literal, so the broken port contributes no bytes to it.
       try {
         await engine.present([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
       } catch {
-        // Nothing. See above: the render is the only thing that failed.
+        writeTestRefusal = WRITE_TEST_UNDISPLAYABLE_DETAIL
+        return 'stop'
       }
     }
 
