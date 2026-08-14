@@ -51,7 +51,7 @@
 //                                  around the whole loader would reword it and red here.
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -60,6 +60,7 @@ import { inspect } from 'node:util'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
   formatDiagnostics,
+  parseTestFile,
   resolveWorkspacePaths,
   validateProject,
   yamlParseFailureMessage,
@@ -192,6 +193,17 @@ function seedConfig(text: string): void {
 const PLANTED_HOOKS_CREDENTIAL = 'sk-ant-api03-395sixteenHOOKSFIXTUREONLYnotarealkey'
 const PLANTED_SUITE_CREDENTIAL = 'sk-ant-api03-395sixteenSUITEFIXTUREONLYnotarealkey'
 
+/**
+ * The FOURTH member's own value (395-18 · F-01-R3a).
+ *
+ * A plain test yaml — the `else` arm of the `isSuiteFile` branch at `validate.ts:341-345` whose
+ * `if` arm 395-16 hardened. Distinct from the three above for the same reason they are distinct
+ * from each other: when a whole-output cell reds, the value says WHICH member leaked. `.suite.yaml`
+ * is an extension, not a property of what a file contains, and it was the only thing separating a
+ * hardened member from a leaking one.
+ */
+const PLANTED_TEST_CREDENTIAL = 'sk-ant-api03-395eighteenTESTFIXTUREONLYnotarealkey'
+
 /** The same adjacency mechanism as the config fixture, one file class over. */
 const FAULTY_HOOKS = `hooks:
   - id: 01JQZ0000000000000000LOGIN
@@ -214,6 +226,31 @@ tests:
 apiToken: ${PLANTED_SUITE_CREDENTIAL}
 tests:
   - tests/b.yaml
+`
+
+/**
+ * A plain test yaml — the same adjacency mechanism, on the member `parseTestFile` owns.
+ *
+ * It matches `WELL_FORMED_CONFIG`'s `testMatch` glob (`tests/**` + `*.yaml`) and NOT its
+ * `suiteMatch` glob, so `validateFiles` takes the `else` arm and the file reaches
+ * `validateTestFile` -> `parseTestFile` -> `formatYamlError`.
+ *
+ * THE DUPLICATED KEY IS THE CREDENTIAL'S OWN LINE, and that is deliberate rather than incidental.
+ * `formatYamlError` speaks on two channels: the pretty `message` (which prints the excerpt AROUND
+ * the flagged line) and `source` (which is a copy of the flagged line ITSELF, `content.split('\n')`
+ * indexed by `linePos.line`). A fixture whose duplicate key sits on a structural line below the
+ * credential reds the message channel and leaves `source` carrying `steps:` — a person's own line,
+ * but not a recognisable one. Duplicating the `apiToken` key puts the planted value on BOTH
+ * channels, so each channel's pre-fix RED names the value it published.
+ */
+const FAULTY_TEST = `name: log in to the app
+target: my-app
+steps:
+  - Click the login button
+
+# pasted in from the provider dashboard, and again after a bad merge
+apiToken: ${PLANTED_TEST_CREDENTIAL}
+apiToken: ${PLANTED_TEST_CREDENTIAL}
 `
 
 /** Write a repo-relative file and COMMIT it — every road here reads a committed tree. */
@@ -521,6 +558,20 @@ describe('every member of the config file set reports position-only (395-16)', (
     ).toBe(0)
     expect(rendered, `the rendered validate output:\n${rendered}`)
       .toMatch(/not readable as YAML at line \d+, column \d+/)
+
+    // DE-VACUIZED (395-18 · WR-01). The clauses above are all satisfiable by ONE member: two
+    // zero-counts are trivially true of a member that produced no diagnostic at all, and the single
+    // position regex is satisfied by whichever sibling did produce one. The verifier measured
+    // exactly that — disabling the hooks member's diagnostic production entirely left this cell
+    // GREEN while the member it exists to measure was never reached. So the set is now asserted AS
+    // a set: both members named in the rendering, and the position sentence counted, once per
+    // member. A member whose diagnostic production regresses to nothing reds here.
+    expect(rendered, `the rendered validate output:\n${rendered}`).toMatch(/agent-qa\.config\.yaml/)
+    expect(rendered, `the rendered validate output:\n${rendered}`).toMatch(/hooks\.yaml/)
+    expect(
+      rendered.match(/not readable as YAML at line \d+, column \d+/g)?.length ?? 0,
+      `the set is two members, so the rendering carries two position sentences:\n${rendered}`,
+    ).toBe(2)
   })
 
   it('(SU1) a suite file the parser cannot read renders position-only — the third member',
@@ -543,6 +594,81 @@ describe('every member of the config file set reports position-only (395-16)', (
       expect(rendered, `the rendered validate output:\n${rendered}`)
         .toMatch(/not readable as YAML at line \d+, column \d+/)
     })
+})
+
+// THE FOURTH MEMBER — the `else` arm of the branch round 3 hardened (395-18 · F-01-R3a).
+//
+// `validateFiles` branches on `isSuiteFile` (`core/src/validation/validate.ts:341-345`). Round 3
+// hardened the `if` arm — (SU1) above is its cell — and left the `else` arm: every non-suite test
+// yaml, running `validateTestFile` -> `parseTestFile` (`prettyErrors: true`) -> `formatYamlError`,
+// whose body was `message: err.message`, the yaml library's pretty print with the verbatim source
+// excerpt and caret. The verifier reproduced this on the shipped binary while the SAME dist
+// rendered a `.suite.yaml` twin position-only in the same run.
+//
+// `formatYamlError` speaks on TWO channels and only one of them is the message: `ParseError.source`
+// is a straight copy of the person's own line, printed by `run.ts:599-613` and persisted into the
+// dashboard DB at `run.ts:2676`. A store is a surface with a delay, so the message fix alone does
+// not hold on the `run` road — hence two cells, one per channel.
+describe('the plain-test member reports position-only on BOTH channels (395-18)', () => {
+  it('(V1) the SHIPPED `agent-qa validate` renders a plain test yaml position-only', () => {
+    // The config member must PARSE, so discovery resolves a workspace and the road reaches the
+    // plain-test member at all.
+    seedConfig(WELL_FORMED_CONFIG)
+    seedWorkspaceSupportFiles()
+    seedFile('hooks.yaml', 'hooks: []\n')
+    seedFile('tests/leak.yaml', FAULTY_TEST)
+
+    // THE BINARY, NOT THE SOURCE, and the BARE discovery road — no file argument, so the file is
+    // found through the workspace's own `testMatch` glob exactly as a person's `agent-qa validate`
+    // finds it. Whole combined stdout+stderr, no stream or line filter.
+    const run = spawnSync(process.execPath, [CLI_DIST, 'validate'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+    })
+    const combined = `${run.stdout ?? ''}${run.stderr ?? ''}`
+
+    expect(
+      occurrences(combined, PLANTED_TEST_CREDENTIAL),
+      `the command's output carried the planted credential:\n${combined}`,
+    ).toBe(0)
+    expect(combined, `the command's output:\n${combined}`)
+      .toMatch(/not readable as YAML at line \d+, column \d+/)
+    // The fault is still REPORTED, and the person is still told which file to open.
+    expect(combined, `the command's output:\n${combined}`).toMatch(/leak\.yaml/)
+    expect(run.status, `an unreadable test file is still an error exit: ${combined}`).toBe(1)
+  })
+
+  it('(V2) the producer\'s own ParseError is position-only in message AND in source', () => {
+    // THE SECOND CHANNEL, PINNED AT ITS SOURCE. `ParseError.source` never reaches the `validate`
+    // road (`validateTestFile` maps only file/line/column/message/severity), so (V1) cannot see it.
+    // It reaches the `run` road's printer and the dashboard DB, which is why it is asserted on the
+    // value the producer returns rather than on any one consumer's rendering.
+    seedConfig(WELL_FORMED_CONFIG)
+    seedWorkspaceSupportFiles()
+    seedFile('tests/leak.yaml', FAULTY_TEST)
+
+    // PRODUCED, NEVER A LITERAL: the bytes handed to the parser are read back off the committed
+    // file, so this cell cannot pin content the seeding road does not actually put on disk.
+    const testPath = join(root, 'tests', 'leak.yaml')
+    const committed = readFileSync(testPath, 'utf-8')
+    const result = parseTestFile(committed, testPath)
+
+    expect(result.errors.length, 'a duplicate top-level key is a parse fault').toBeGreaterThan(0)
+    const first = result.errors[0]
+
+    // THE SOURCE CHANNEL FIRST, because it is the one no other cell in this file can reach.
+    expect(
+      first?.source,
+      `ParseError.source is a copy of the person's own line, printed by run.ts:599-613 and `
+      + `persisted into the dashboard DB at run.ts:2676: ${JSON.stringify(first?.source)}`,
+    ).toBe('')
+    expect(
+      occurrences(first?.message ?? '', PLANTED_TEST_CREDENTIAL),
+      `the message carried the planted credential: ${first?.message}`,
+    ).toBe(0)
+    expect(first?.message).toMatch(/^not readable as YAML at line \d+, column \d+$/)
+  })
 })
 
 describe('the controls: the guard fires on the FAULT, and on nothing else (395-14)', () => {
