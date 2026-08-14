@@ -2459,6 +2459,19 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         toolset: { hash: chatToolsetHash(composedRegistry), ids },
       }
     },
+    // 395-08 D-14/D-15 · CFGM-05: the target vocabulary the PRE-DISPATCH write_test route reads.
+    // Bound off the SAME host verb `authoringRead.configuredTargetNames` uses, so the seam that
+    // decides whether to offer a scaffold and the loop that later checks what a model emitted are
+    // reading one answer rather than two. A host that cannot name its targets binds nothing and the
+    // route never runs, which leaves the shipped dispatch and the loop's own backstop exactly as
+    // they were.
+    // BOUND ONLY WHERE THE LOOP IS. A host that cannot author has nothing for this route to route,
+    // and binding it anyway would answer an empty vocabulary — which the route reads as the
+    // from-zero case and refuses, reporting the wrong cause for a host whose real problem is that
+    // `authoring.draft.write` is unbound. Absent leaves the shipped dispatch untouched.
+    ...(input.draftAuthoring !== undefined && input.runExecution !== undefined
+      ? { configuredTargets: () => (input.draftAuthoring as DraftAuthoringPort).configuredTargetNames() }
+      : {}),
     now: () => clock.now(),
     mintTurnId: () => `turn-${randomUUID()}`,
   })

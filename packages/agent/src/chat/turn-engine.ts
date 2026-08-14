@@ -41,10 +41,17 @@ import type {
   ChatSessionHandle,
   ClauseReceipt,
   ChatTurnStatus,
+  FunctionCaller,
   SessionLogPort,
 } from '@vostride/agent-qa-schema'
 
 import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../functions/ops/authoring-draft-write.js'
+import { CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID } from '../functions/ops/config-project-scaffold.js'
+import { CONFIG_PROPOSAL_APPLY_FUNCTION_ID } from '../functions/ops/config-proposal-apply.js'
+import {
+  WRITE_TEST_UNCONFIGURED_DETAIL,
+  resolveWriteTestRoute,
+} from '../config-mutation/write-test-route.js'
 
 import type {
   CallerMint,
@@ -118,6 +125,25 @@ export interface TurnEngineDeps {
    * given one BY the adapter and the id is the adapter's answer rather than the caller's input.
    */
   readonly state?: (sessionId: string) => ChatTurnStateSink
+  /**
+   * This project's configured target vocabulary, for the PRE-DISPATCH write_test route (395-08,
+   * D-14/D-15 · CFGM-05).
+   *
+   * A THUNK for `config`'s reason: a scaffold applied earlier in this very turn changes the answer,
+   * and a value captured at composition would send the authoring dispatch that follows it against
+   * the vocabulary as it stood before the person approved anything.
+   *
+   * BOUND FROM THE SAME PORT THE AUTHORING LOOP READS (`AuthoringReadPortLike.configuredTargetNames`),
+   * so "which targets does this project declare" has one answer on both sides of the dispatch. Two
+   * readings of that question would let this seam route on a vocabulary the loop then disagrees with,
+   * which is the sibling-input failure this project keeps rediscovering.
+   *
+   * ABSENT ⇒ NO ROUTING. A host that cannot name its targets dispatches authoring exactly as it did
+   * before this seam existed, and the loop's own backstop is unchanged. That is deliberately the
+   * permissive direction: this seam adds a scaffold offer and a refusal, and a host that cannot
+   * answer the question has not lost a guard — the backstop it always had is still there.
+   */
+  readonly configuredTargets?: () => Promise<readonly string[]>
   readonly now: () => string
   readonly mintTurnId: () => string
 }
@@ -234,6 +260,11 @@ const NO_PLAN: PlannerStageOutcome = { toolCalls: [] }
 function refusalName(error: unknown): string {
   if (error instanceof Error) return error.name === '' ? error.message : error.name
   return String(error)
+}
+
+/** The refusal SENTENCE a person reads. See `routeWriteTest`'s catch for why not the name. */
+function refusalMessage(error: unknown): string {
+  return error instanceof Error && error.message !== '' ? error.message : refusalName(error)
 }
 
 /** What one directive did: a line to print back, or the reason the turn is refused. */
@@ -681,6 +712,93 @@ async function runTurnThrough(
     directiveLines.push(line.text)
   }
 
+  /**
+   * The PRE-DISPATCH write_test route (395-08, D-14/D-15 · CFGM-05).
+   *
+   * IT RUNS BEFORE THE AUTHORING DISPATCH AND NOT INSIDE IT, which is RESEARCH Pitfall 6's whole
+   * point: the authoring loop's `AuthoringDraftUnconfiguredTargetError` is a BACKSTOP over what a
+   * model emitted, and it fires after an LLM call and a compilation. This asks a different question,
+   * about the REQUEST, and it asks it before anything is spent.
+   *
+   * THE CONFIRM IS THE SHIPPED ONE (D-14). There is no new suspended-approval state here and no
+   * second approval surface: `config.proposal.apply` is a gated verb, so the v48/392 inline confirm
+   * pauses THIS chain at THIS point, and a non-TTY host fails it closed by the gate's own posture.
+   * On approval the apply commits and control returns to the loop below, which dispatches authoring
+   * in the same turn against the target that now exists.
+   *
+   * IT NEVER RIDES A STANDING GRANT, AND THAT IS COMPUTED RATHER THAN ARRANGED. A scaffold proposal
+   * is always cross-boundary (a created target is a new origin), so 395-07's two-sided enforcement
+   * refuses a covering grant on the way in — the chain gets an individual human decision or it gets
+   * nothing.
+   */
+  async function routeWriteTest(
+    engine: TurnEngineDeps,
+    step: { readonly functionId: string; readonly args: unknown },
+    caller: FunctionCaller,
+    appendEvent: (event: ChatSessionEvent) => Promise<void>,
+    turn: string,
+  ): Promise<'proceed' | 'stop'> {
+    const intent = (step.args as { intent?: unknown } | undefined)?.intent
+    if (typeof intent !== 'string') return 'proceed'
+
+    const route = resolveWriteTestRoute({
+      intent,
+      configuredTargetNames: await (engine.configuredTargets as () => Promise<readonly string[]>)(),
+    })
+    if (route.kind === 'configured' || route.kind === 'passthrough') return 'proceed'
+    if (route.kind === 'refuse') {
+      writeTestRefusal = WRITE_TEST_UNCONFIGURED_DETAIL
+      return 'stop'
+    }
+
+    // OP CALLS OP (392 D-24), through the same binding every other dispatch crosses — so the
+    // scaffold is gated, audited and receipted exactly as a directly-asked-for one would be.
+    let proposed: unknown
+    try {
+      proposed = await engine.invoke(
+        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID, { domain: route.domain }, caller,
+      )
+    } catch (error) {
+      writeTestRefusal = refusalMessage(error)
+      return 'stop'
+    }
+    const answer = proposed as { outcome?: string; proposalId?: string; detail?: string }
+    if (answer.outcome !== 'proposed' || answer.proposalId === undefined) {
+      // A refusal or a blocked record. Both are answers a person can act on, and neither is a
+      // reason to author a test against a project that is still unconfigured.
+      writeTestRefusal = answer.detail ?? WRITE_TEST_UNCONFIGURED_DETAIL
+      return 'stop'
+    }
+
+    await appendEvent({
+      kind: 'clause_receipt',
+      turnId: turn,
+      at: engine.now(),
+      clause: step.functionId,
+      functionId: CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+      origin: caller.origin,
+      status: 'executed',
+      outcome: `proposed ${answer.proposalId}`,
+    })
+
+    try {
+      await engine.invoke(
+        CONFIG_PROPOSAL_APPLY_FUNCTION_ID, { proposalId: answer.proposalId }, caller,
+      )
+    } catch (error) {
+      // The confirm was declined, or the host is non-TTY and the gate failed it closed. Either way
+      // the configuration was not written, so nothing may be authored against it.
+      //
+      // THE MESSAGE AND NOT THE NAME. A receipt carries `refusalName` because a receipt is a map,
+      // but this string is what a PERSON reads as the answer to what they asked for, and
+      // `FunctionDeniedError` on its own tells them nothing about which decision they are being
+      // told about. The directives path takes the message for the same reason one file up.
+      writeTestRefusal = refusalMessage(error)
+      return 'stop'
+    }
+    return 'proceed'
+  }
+
   // ---- Stage 4: sequential execution in utterance order, stopping on failure (D-11).
   //
   // THE LOOP IS UNREACHABLE FROM A REFUSAL BY CONSTRUCTION, which is D-10 expressed as control
@@ -690,6 +808,10 @@ async function runTurnThrough(
   // there is no plan to walk until the verdict has produced one.
   const receipts: ClauseReceipt[] = []
   let failed = false
+  // The sentence the route wants a refused turn to carry, set by `routeWriteTest` before it answers
+  // `stop`. A field rather than a return value so the refusal below reads as the one `refuse()` call
+  // it is, and so a route that stopped without a reason still gets D-15's default sentence.
+  let writeTestRefusal: string | undefined
 
   for (const step of verdict.plan) {
     // The mint follows the stage that PROVED the binding, which the verdict states (Pitfall 1).
@@ -710,6 +832,16 @@ async function runTurnThrough(
         status: 'not-run',
         outcome: 'an earlier clause failed, so this one was never attempted',
       }
+    } else if (
+      step.functionId === AUTHORING_DRAFT_WRITE_FUNCTION_ID
+      && deps.configuredTargets !== undefined
+      && (await routeWriteTest(deps, step, caller, append, turnId)) === 'stop'
+    ) {
+      // THE ROUTE REFUSED, OR THE SCAFFOLD IT OFFERED WAS NOT ACCEPTED. Nothing is authored, and
+      // the turn says why through the same `refuse()` every other refusal takes — so a person who
+      // declined a configuration change is not left with a draft written against a project that
+      // still has none.
+      return refuse(step.clause.text, writeTestRefusal ?? WRITE_TEST_UNCONFIGURED_DETAIL)
     } else {
       try {
         // The result is CAPTURED rather than discarded (394-14). It reaches exactly one reader —
