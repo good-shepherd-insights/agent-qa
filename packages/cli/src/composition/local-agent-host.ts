@@ -82,6 +82,8 @@ import {
   // emptied of that dependency by 394-11 and this needs no reopening of it.
   generateHookId,
   generateRunId,
+  DEFAULT_AGENT_QA_AUTH_STATES_DIR,
+  DEFAULT_AGENT_QA_CACHE_DIR,
   parseTestFile,
   parseTestFileWithTokens,
   renderPatchedTestDoc,
@@ -2878,6 +2880,11 @@ export function createScaffoldContentPort(): ConfigScaffoldContentPortLike {
       const files = buildScaffoldFileSet({
         targetName,
         baseUrl,
+        // THE HOST DEFAULTS, READ HERE (FUNC-02). `scaffold-content.ts` may not name
+        // `@vostride/agent-qa-core`; this file is ledgered for it, so the two directory defaults
+        // are resolved on this side and handed over — the same two values `init` passes.
+        cacheDir: DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache',
+        authStatesDir: DEFAULT_AGENT_QA_AUTH_STATES_DIR || '.agent-qa/auth-states',
         gitignoreEntries: TARGET_GITIGNORE_ENTRIES,
         ...(existingGitignore === undefined
           ? {}

@@ -7,6 +7,7 @@ import input from '@inquirer/input'
 import checkbox from '@inquirer/checkbox'
 import {
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
+  DEFAULT_AGENT_QA_CACHE_DIR,
   DEFAULT_AGENT_QA_RUNTIME_DIR,
   getAgentQaVersion,
 } from '@vostride/agent-qa-core'
@@ -15,14 +16,11 @@ import { getProvider, listProviders } from '@vostride/agent-qa-model'
 // filesystem machinery and the interactive conversation; the substance being written comes from
 // one producer, so the two scaffolds cannot drift.
 import {
-  INIT_AUTH_STATES_DIR,
   SUBSCRIPTION_AUTH_PACKAGE,
   SUPPORTED_INIT_PLATFORMS,
-  addYamlComments,
-  buildDefaultConfig,
   buildHooksFile,
+  buildScaffoldConfig,
   hasWeb,
-  isSubscriptionProvider,
   normalizePlatformSelection,
   parseInitPlatform,
   renderScaffoldConfigYaml,
@@ -48,14 +46,75 @@ import {
   type InitPathPlan,
 } from './init-filesystem.js'
 
-// The platform vocabulary, the LLM config shape and the scaffold's own constants all live in
-// `scaffold-content.ts` now (D-04). Re-exported here because this module is their public door.
-export { SUPPORTED_INIT_PLATFORMS, parseInitPlatform, buildDefaultConfig } from './scaffold-content.js'
+// The platform vocabulary and the scaffold's content producers live in `scaffold-content.ts` now
+// (D-04). Re-exported here because this module is their public door.
+export { SUPPORTED_INIT_PLATFORMS, parseInitPlatform } from './scaffold-content.js'
+
+// HOST DEFAULTS, READ HERE AND PASSED DOWN (FUNC-02). `scaffold-content.ts` may not name
+// `@vostride/agent-qa-core` — the surface firewall's ledger never grows — so the two directory
+// defaults are resolved on this side of the boundary and handed over as facts.
+const INIT_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
+const INIT_AUTH_STATES_DIR = DEFAULT_AGENT_QA_AUTH_STATES_DIR || '.agent-qa/auth-states'
 
 const PACKAGE_JSON_FILE = 'package.json'
 // Kept here rather than moved: it feeds `buildGitignoreEntries`, the deliberate literal
 // copy this file keeps pinned against `init-filesystem.ts`'s own — see scaffold-content.ts.
 const INIT_RUNTIME_DIR = DEFAULT_AGENT_QA_RUNTIME_DIR || '.agent-qa'
+
+function isSubscriptionProvider(provider: string): boolean {
+  return getProvider(provider)?.subscription === true
+}
+
+/**
+ * An `InitLLMConfig` as the registry writes it — the ONE question the provider registry answers.
+ *
+ * IT STAYS ON THIS SIDE OF THE BOUNDARY (FUNC-02). `needsBaseURL` and `subscription` are facts
+ * about what this machine has installed, and `scaffold-content.ts` may not ask. It receives the
+ * answers.
+ */
+function toLLMEntry(config: InitLLMConfig): Record<string, unknown> {
+  const llmEntry: Record<string, unknown> = {
+    name: config.name,
+    provider: config.provider,
+    model: config.model,
+  }
+
+  if (getProvider(config.provider)?.needsBaseURL) {
+    llmEntry.baseURL = config.baseURL
+  }
+
+  return llmEntry
+}
+
+function buildSingleLLMConfig(provider: string, model: string, baseURL?: string): InitLLMConfig {
+  return { name: 'default', provider, model, baseURL }
+}
+
+/**
+ * The interactive scaffold's config — the same shape `config.project.scaffold` renders (D-04).
+ *
+ * THE SIGNATURE IS UNCHANGED, deliberately: `init-config-schema.test.ts` and `init.test.ts` drive
+ * it, and this function's answer is byte-identical to what it was before the shared module existed.
+ * What moved is the SHAPE; what stayed is the provider resolution above and the host defaults, both
+ * of which are questions about this machine rather than about a scaffold.
+ */
+export function buildDefaultConfig(
+  platform: InitPlatformInput,
+  providerOrLLMs: string | InitLLMConfig[],
+  model?: string,
+  baseURL?: string,
+): Record<string, unknown> {
+  const llmConfigs = Array.isArray(providerOrLLMs)
+    ? providerOrLLMs
+    : [buildSingleLLMConfig(providerOrLLMs, model ?? 'model-name', baseURL)]
+
+  return buildScaffoldConfig(platform, {
+    llmEntries: llmConfigs.map(toLLMEntry),
+    usesSubscriptionAuth: llmConfigs.some(config => isSubscriptionProvider(config.provider)),
+    cacheDir: INIT_CACHE_DIR,
+    authStatesDir: INIT_AUTH_STATES_DIR,
+  })
+}
 type LLMSetupChoice = 'none' | 'codex' | 'claude-code'
 const OPENAI_SUBSCRIPTION_CONFIG: InitLLMConfig = {
   name: 'codex',

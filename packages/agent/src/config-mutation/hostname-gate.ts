@@ -90,7 +90,7 @@ export function parseHostnameToken(token: string): HostnameGateVerdict {
 
   const host = hostOf(trimmed).toLowerCase()
   // A dot is necessary and nowhere near sufficient. It is stated first because it is the one
-  // syntactic fact that separates "a site" from "a word", and every check below is about labels.
+  // syntactic fact separating a site from an ordinary word, and every check below is about labels.
   if (!host.includes('.')) return { kind: 'not-a-hostname' }
   if (host.length > 253) return { kind: 'not-a-hostname' }
 

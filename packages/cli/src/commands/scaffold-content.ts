@@ -12,6 +12,15 @@
 // filesystem machinery — preflight, atomic publish, marker-last ordering — which stays where it is
 // because it is about WRITING, and writing is the half the two actors do differently.
 //
+// IT NAMES NO INTERNAL PACKAGE, AND THAT IS THE FUNC-02 FIREWALL RATHER THAN A PREFERENCE. The
+// surface firewall's ledger "only ever SHRINKS: new surface code can never join it", so a file
+// written today may not import `@vostride/agent-qa-core` or `@vostride/agent-qa-model` at all. The
+// two host facts the config's defaults need — the cache directory and the auth-state directory —
+// arrive as ARGUMENTS from the two callers that are ledgered for them, and the provider registry
+// stays entirely on `init`'s side of the boundary: what this module receives is `llmEntries`, the
+// already-resolved list, because "which providers exist" is a question about this machine and
+// "what does a scaffolded config look like" is not.
+//
 // WHAT DELIBERATELY DID NOT MOVE: `TARGET_GITIGNORE_ENTRIES` (init-filesystem.ts) and
 // `buildGitignoreEntries` (init.ts). Those two are a deliberate pair of literal copies pinned
 // against each other by the runtime-versus-defaults agreement test, because `init-filesystem.js` is
@@ -20,11 +29,6 @@
 // splice and append — and takes the entries as an argument.
 
 import { stringify } from 'yaml'
-import {
-  DEFAULT_AGENT_QA_AUTH_STATES_DIR,
-  DEFAULT_AGENT_QA_CACHE_DIR,
-} from '@vostride/agent-qa-core'
-import { getProvider } from '@vostride/agent-qa-model'
 
 export const SUPPORTED_INIT_PLATFORMS = [
   'web',
@@ -48,8 +52,6 @@ export type InitLLMConfig = {
   baseURL?: string
 }
 
-export const INIT_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
-export const INIT_AUTH_STATES_DIR = DEFAULT_AGENT_QA_AUTH_STATES_DIR || '.agent-qa/auth-states'
 export const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
 const DEFAULT_SCREENSHOT_SIZE = '256k'
 const DEFAULT_EFFECTIVE_RESOLUTION = 768
@@ -92,10 +94,6 @@ export function hasWeb(platform: InitPlatformInput): boolean {
   return normalizePlatformSelection(platform).capabilities.includes('web')
 }
 
-export function isSubscriptionProvider(provider: string): boolean {
-  return getProvider(provider)?.subscription === true
-}
-
 /**
  * The `registry.targets` block.
  *
@@ -128,37 +126,36 @@ export function buildTargets(
   return targets
 }
 
-function toLLMEntry(config: InitLLMConfig): Record<string, unknown> {
-  const llmEntry: Record<string, unknown> = {
-    name: config.name,
-    provider: config.provider,
-    model: config.model,
-  }
-
-  if (getProvider(config.provider)?.needsBaseURL) {
-    llmEntry.baseURL = config.baseURL
-  }
-
-  return llmEntry
+/**
+ * The host facts the config's defaults need, INJECTED (FUNC-02).
+ *
+ * `llmEntries` IS ALREADY RESOLVED, and that is the whole of the boundary. Turning an
+ * `InitLLMConfig` into a registry entry means asking the provider registry whether the provider
+ * needs a base URL, and whether it is a subscription provider; both are questions about what this
+ * machine has installed. `init` answers them and hands the answers over. The scaffold path answers
+ * them by having no LLMs at all.
+ */
+export interface ScaffoldConfigFacts {
+  readonly llmEntries: readonly Record<string, unknown>[]
+  readonly usesSubscriptionAuth: boolean
+  /** `services.cache.dir`. A host default, so a host supplies it. */
+  readonly cacheDir: string
+  /** `services.authState.dir`. Same. */
+  readonly authStatesDir: string
+  /**
+   * `registry.targets`, when the caller has its own.
+   *
+   * `init` scaffolds three example web targets so a fresh project has something to run;
+   * `config.project.scaffold` derives exactly ONE from the utterance's domain and must not carry
+   * two third-party demo sites into a repository nobody asked to have them in.
+   */
+  readonly targets?: Record<string, unknown>
 }
 
-function buildSingleLLMConfig(provider: string, model: string, baseURL?: string): InitLLMConfig {
-  return { name: 'default', provider, model, baseURL }
-}
-
-export function buildDefaultConfig(
+export function buildScaffoldConfig(
   platform: InitPlatformInput,
-  providerOrLLMs: string | InitLLMConfig[],
-  model?: string,
-  baseURL?: string,
-  targetsOverride?: Record<string, unknown>,
+  facts: ScaffoldConfigFacts,
 ): Record<string, unknown> {
-  const llmConfigs = Array.isArray(providerOrLLMs)
-    ? providerOrLLMs
-    : [buildSingleLLMConfig(providerOrLLMs, model ?? 'model-name', baseURL)]
-  const llmEntries = llmConfigs.map(toLLMEntry)
-  const usesSubscriptionAuth = llmConfigs.some(config => isSubscriptionProvider(config.provider))
-
   const config: Record<string, unknown> = {
     workspace: {
       testMatch: ['tests/**/*.yaml'],
@@ -170,8 +167,8 @@ export function buildDefaultConfig(
     services: {
       dashboard: { port: 3100, artifactsDir: '.agent-qa/artifacts' },
       mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
-      cache: { dir: INIT_CACHE_DIR, ttl: '7d' },
-      authState: { dir: INIT_AUTH_STATES_DIR },
+      cache: { dir: facts.cacheDir, ttl: '7d' },
+      authState: { dir: facts.authStatesDir },
       vision: { screenshotSize: DEFAULT_SCREENSHOT_SIZE, effectiveResolution: DEFAULT_EFFECTIVE_RESOLUTION },
       ...(hasWeb(platform)
         ? {
@@ -187,10 +184,10 @@ export function buildDefaultConfig(
       logging: { level: 'warn' },
     },
     registry: {
-      llms: llmEntries,
-      targets: buildTargets(platform, targetsOverride),
+      llms: [...facts.llmEntries],
+      targets: buildTargets(platform, facts.targets),
     },
-    ...(usesSubscriptionAuth
+    ...(facts.usesSubscriptionAuth
       ? {
           plugins: {
             auth: [{ package: SUBSCRIPTION_AUTH_PACKAGE }],
@@ -204,7 +201,7 @@ export function buildDefaultConfig(
       planner: { maxSubActions: 10, previousStepCount: 5 },
       logCapture: { console: true, network: true },
       parallel: false,
-      llm: llmConfigs[0]?.name ?? 'default',
+      llm: (facts.llmEntries[0]?.name as string | undefined) ?? 'default',
     },
   }
 
@@ -380,6 +377,10 @@ export const SCAFFOLD_HOOKS_FILE = 'hooks.yaml'
 export const SCAFFOLD_GITIGNORE_FILE = '.gitignore'
 
 export interface ScaffoldContentInput {
+  /** `services.cache.dir` — a host default the caller supplies (FUNC-02, see the file header). */
+  readonly cacheDir: string
+  /** `services.authState.dir` — same. */
+  readonly authStatesDir: string
   /** The derived target name, e.g. `booking-com`. Deterministic host code produces it (D-13). */
   readonly targetName: string
   /** The derived base URL, e.g. `https://booking.com`. Same producer, same rule. */
@@ -414,16 +415,25 @@ export interface ScaffoldContentFile {
  * PLATFORM IS `web`, STATED. A hostname is a web origin; there is no mobile fact in a domain token.
  */
 export function buildScaffoldFileSet(input: ScaffoldContentInput): readonly ScaffoldContentFile[] {
-  const config = buildDefaultConfig('web', [], undefined, undefined, {
-    [input.targetName]: { platform: 'web', url: input.baseUrl },
+  const config = buildScaffoldConfig('web', {
+    llmEntries: [],
+    usesSubscriptionAuth: false,
+    cacheDir: input.cacheDir,
+    authStatesDir: input.authStatesDir,
+    targets: { [input.targetName]: { platform: 'web', url: input.baseUrl } },
   })
+  // NO LLM ENTRY AND NO `use.llm`, removed rather than never written so the ONE config shape above
+  // stays one shape. `registry.llms: []` beside `use.llm: default` is what the shared builder emits
+  // for an empty list, and `AgentQaConfigSchema` refuses a `use.llm` naming no registered entry —
+  // so leaving them would be a scaffold that cannot validate, which is exactly the failure this
+  // plan was told to prove does not happen.
   const registry = config.registry as Record<string, unknown>
   delete registry.llms
   const use = config.use as Record<string, unknown>
   delete use.llm
 
   return [
-    { path: SCAFFOLD_CONFIG_FILE, text: addYamlComments(stringify(config)) },
+    { path: SCAFFOLD_CONFIG_FILE, text: renderScaffoldConfigYaml(config) },
     { path: SCAFFOLD_HOOKS_FILE, text: buildHooksFile('web') },
     {
       path: SCAFFOLD_GITIGNORE_FILE,
