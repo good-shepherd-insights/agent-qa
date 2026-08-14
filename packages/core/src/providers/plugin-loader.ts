@@ -1,8 +1,8 @@
 import {
   declarationKey,
+  importDeclaredPluginModule,
   packageDeclarationValue,
   pathDeclarationValue,
-  resolveModuleSpecifier,
 } from '../plugin-loader-util.js'
 
 export type ProviderPluginDeclaration =
@@ -134,8 +134,11 @@ export async function loadProviderPlugins(
     const key = declarationKey(declaration, baseDir)
     if (loadedDeclarations.has(key)) continue
 
-    const specifier = resolveModuleSpecifier(declaration, baseDir)
-    const module = await import(specifier) as ProviderPluginModule
+    // THE SIBLING OF THE AUTH ROAD, hardened in the same pass (395-21 · F-05). `plugins.providers`
+    // is not what the default scaffold declares, but it is the identical bare resolve-and-import
+    // one directory over, and a class fixed only on the member a verifier happened to drive is how
+    // this project has re-opened the same defect three rounds running.
+    const module = await importDeclaredPluginModule<ProviderPluginModule>(declaration, baseDir, 'provider')
     const descriptors = extractDescriptors(module, key)
 
     loadedDeclarations.add(key)

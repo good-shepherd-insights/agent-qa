@@ -1,9 +1,9 @@
 import { registerLLMAuthProviderPlugins, type LLMAuthProviderPlugin } from './plugin-registry.js'
 import {
   declarationKey,
+  importDeclaredPluginModule,
   packageDeclarationValue,
   pathDeclarationValue,
-  resolveModuleSpecifier,
 } from '../plugin-loader-util.js'
 
 export type AuthPluginDeclaration =
@@ -81,8 +81,12 @@ export async function loadLLMAuthPlugins(
     const key = declarationKey(declaration, baseDir)
     if (loadedDeclarations.has(key)) continue
 
-    const specifier = resolveModuleSpecifier(declaration, baseDir)
-    const module = await import(specifier) as AuthPluginModule
+    // A DECLARED PLUGIN THE PROJECT DOES NOT HAVE IS ANSWERED, NOT STACK-DUMPED (395-21 · F-05).
+    // The product's own `init --platform web` declares the subscription-auth package before the
+    // person has installed it, so this is the first thing a fresh project meets on `agent-qa run`.
+    // It is still a failure — the plugin genuinely is not there — and it now names the package and
+    // the install step instead of Node's require stack.
+    const module = await importDeclaredPluginModule<AuthPluginModule>(declaration, baseDir, 'auth')
     const bundle = await resolvePluginBundle(module, key)
 
     registerLLMAuthProviderPlugins(bundle.providers)

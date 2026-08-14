@@ -85,6 +85,9 @@ const SUCCESS_SENTENCE = 'All files valid'
 const PLANTED_CONFIG_CREDENTIAL = 'sk-ant-api03-395twentyoneCONFIGFIXTUREONLYnotarealkey'
 const PLANTED_TEST_CREDENTIAL = 'sk-ant-api03-395twentyoneTESTFIXTUREONLYnotarealkey'
 
+/** The package the default scaffold declares and a fresh project has not installed. */
+const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
+
 /** A canonical test id of this fixture's own, distinct from every id the scaffold writes. */
 const FIXTURE_TEST_ID = 't_zebra-quartz-ledger-marble-signal-timber-violet-walnut-yellow-anchor'
 
@@ -260,6 +263,37 @@ describe('a project the product scaffolds is validated, not attested over an emp
     expect(combined, `the resolution failure did not say what was wrong:\n${combined}`)
       .toMatch(/use\.browser\.name/)
     expect(status, `an unresolvable config is a non-zero exit:\n${combined}`).not.toBe(0)
+  }, 180_000)
+
+  it('(Z4) the verbs that DO load the declared plugin name the package and the remedy, not a require stack', () => {
+    // THE INIT-SIDE MEMBER, DISPOSED AS A SOURCE FIX (395-21 · Task 2). Task 1 took validate off the
+    // plugin road entirely, which is right for a validator and wrong as a general answer: `run` and
+    // `devices list` genuinely need the plugin the scaffold declared, and in a fresh project they
+    // met Node's own module-resolution stack — `Cannot find module ...` over a `Require stack:`
+    // naming agent-qa.config.yaml as if a YAML file were a module. The failure stays a failure. What
+    // it now says is the package and the one install command init itself had already printed.
+    //
+    // BOTH VERBS IN ONE CELL, deliberately: `run` reaches the loader through `resolveConfig`'s auth
+    // road and `devices list` through its own, and a fix pinned on one of them is exactly how this
+    // project has re-opened a class three rounds running.
+    scaffoldWithShippedInit()
+
+    for (const verb of [['run', 'tests/example-pass.yaml'], ['devices', 'list']]) {
+      const { status, combined } = runShippedCli(...verb)
+
+      expect(status, `a project missing its declared plugin must still fail (${verb.join(' ')}):\n${combined}`)
+        .not.toBe(0)
+      expect(combined, `the failure did not name the package (${verb.join(' ')}):\n${combined}`)
+        .toContain(SUBSCRIPTION_AUTH_PACKAGE)
+      expect(combined, `the failure did not name the remedy (${verb.join(' ')}):\n${combined}`)
+        .toMatch(/npm install @vostride\/agent-qa-subscription-auth/)
+      // THE TWO CLAUSES THAT WERE RED. Node's loader boilerplate is what the person used to get,
+      // and a message that still carried it would mean the typed error had not replaced anything.
+      expect(combined, `the failure still speaks Node's loader dialect (${verb.join(' ')}):\n${combined}`)
+        .not.toContain('Require stack')
+      expect(combined, `the failure still speaks Node's loader dialect (${verb.join(' ')}):\n${combined}`)
+        .not.toContain('Cannot find module')
+    }
   }, 180_000)
 
   it('(Z3) a project with NO config refuses — the state the guard must reject, before and after', () => {
