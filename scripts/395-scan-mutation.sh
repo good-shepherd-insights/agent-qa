@@ -7,13 +7,23 @@
 # not reach a render. It does NOT say those cells would CATCH the implementations D-09/D-10/D-12
 # forbid — and all three below read as simplifications a reasonable person would write:
 #
-#   S1  the scan NARROWED to the changed lines. "Scan the diff" is the most natural reading there
-#       is, and it is the exact defect D-12 exists to forbid: a secret a human committed months ago
-#       sits on a CONTEXT line, renders in the artifact a person is shown, and becomes invisible to
-#       the guard. The discrimination this leg buys is precise: the cells whose secret is on an
-#       ADDED line stay GREEN under it, so a suite that only ever planted secrets in the new value
-#       would pass this mutation completely. Only the context-line cells red — which is why the
-#       allowed list below is short, and why a longer one would be the finding.
+#   S1  the scan RANGED OVER THE DIFF — its changed lines, plus the whole content of files the diff
+#       ADDS. "Scan the diff" is the most natural reading there is, and it is the exact defect D-12
+#       and 395-10's GAP 1 exist to forbid: a secret a human committed months ago either sits on a
+#       CONTEXT line of the artifact a person is shown, or sits in a set member the proposal never
+#       touched at all, and both are invisible to a guard aimed at the diff. The discrimination this
+#       leg buys is precise: the cells whose secret is on an ADDED line stay GREEN under it, so a
+#       suite that only ever planted secrets in the new value would pass this mutation completely.
+#       Only the context-line and unchanged-member cells red — which is why the allowed list below
+#       is short, and why a longer one would be the finding.
+#
+#       395-10 MADE THIS LEG TWO EDITS, AND THAT IS THE HONEST REFRESH RATHER THAN A LOOSENING. The
+#       leg's claim is unchanged — "a scan whose range is the diff is caught" — but the code that
+#       range is now expressed in has two sources: the hunk parts and the whole-candidate parts. A
+#       mutation that narrowed only the hunks left the whole-candidate parts carrying every byte, so
+#       the suite stayed GREEN and this script FATALed, correctly: one edit no longer expressed the
+#       implementation the leg is aimed at. The two edits together reproduce pre-395-10 `scanParts`
+#       exactly.
 #
 #   S2  the scan call site SEVERED — it still runs, over nothing. The guardrail stops existing while
 #       every type checks and the call is still visibly there, which is how a wiring defect survives
@@ -86,10 +96,16 @@ echo "subject   $SUBJECT"
 echo "  sha256  $BASELINE_SHA"
 echo
 
-# S1 narrows the scan to the changed lines. The context-line cells red; the cells whose secret is on
-# an ADDED line stay green, and that asymmetry is the whole point of the leg.
+# S1 ranges the scan over the diff. The context-line cells and the unchanged-member cells red; the
+# cells whose secret is on an ADDED line stay green, and that asymmetry is the whole point of the leg.
+#
+# THE TWO 395-10 CELLS ARE NAMED, NOT ADMITTED WHOLESALE. They belong here because the mutation
+# removes exactly the range they measure — the whole-candidate parts — and their red is the leg
+# working, not the leg widening.
 ALLOWED_S1="D-12: a secret on a CONTEXT line blocks, and is named as already committed
+a secret in an UNCHANGED member blocks, and the validator never sees the candidate
 a committed secret on a CONTEXT line blocks an innocuous edit
+a secret in an UNCHANGED set member blocks, and no surface carries a window of it
 list and show name the file and the reason, and carry no window of the secret
 accepting the blocked proposal answers not-applyable and commits nothing"
 # S2 severs the scan. Every guardrail cell reds, including the invocation counter.
@@ -100,17 +116,22 @@ D-12: a secret on a CONTEXT line blocks, and is named as already committed
 a secret the change itself introduces is NOT described as already committed
 the two reasons are told apart, and the guardrail wins when both apply
 the scan really runs on every construction
+a secret in an UNCHANGED member blocks, and the validator never sees the candidate
 a committed secret on a CONTEXT line blocks an innocuous edit
+a secret in an UNCHANGED set member blocks, and no surface carries a window of it
 list and show name the file and the reason, and carry no window of the secret
 accepting the blocked posture
 accepting the blocked proposal answers not-applyable and commits nothing"
 # S3 leaks the refused value through the blocked summary line. EXACTLY the disclosure cells red —
-# the block itself still happens, which is what makes this the subtle one.
+# the block itself still happens, which is what makes this the subtle one. The two 395-10 cells
+# assert the D-12 existing-config SENTENCE, which this mutation replaces, so the range cell reds
+# here too; the position-only cell does not, because it asserts no summary line.
 ALLOWED_S3="the persisted record carries no diff, no content, and no window of the secret
 the blocked summary line drops the value the applyable one would print
 D-12: a secret on a CONTEXT line blocks, and is named as already committed
 a secret the change itself introduces is NOT described as already committed
 the two reasons are told apart, and the guardrail wins when both apply
+a secret in an UNCHANGED member blocks, and the validator never sees the candidate
 list and show name the file and the reason, and carry no window of the secret
 accepting the blocked proposal answers not-applyable and commits nothing"
 
@@ -120,6 +141,15 @@ MARKER="MUTATION_395_04_MARKER"
 # anchor, rather than by a regex over a bracket-heavy line. This project has recorded two false
 # "DID NOT APPLY" verdicts from escaping — one from BRE bracket handling and one from a shell-mangled
 # multi-line pattern — so the anchor is compared literally and the count is asserted to be exactly 1.
+#
+# A MUTATION IS A LIST OF EDITS (395-10). One edit per mutation was enough while each implementation
+# the legs are aimed at lived on one line; S1's does not any more. The single-occurrence assertion is
+# per EDIT, so a list is strictly stronger than a longer replacement string would be: every anchor
+# still has to match exactly once or the script stops.
+#
+# THE MARKER APPEARS IN EXACTLY ONE EDIT PER MUTATION, because `assert_dist_carries_marker` counts
+# it and expects 1. It only has to prove the rebuild took, and one occurrence in the built artifact
+# proves that for the whole file.
 apply_mutation () {
   case "${SCAN_MUTATION_SELFTEST:-}" in
     neutered) return 0 ;;
@@ -132,39 +162,49 @@ name = os.environ['MUTATION_NAME']
 marker = os.environ['MARKER']
 path = os.environ['SUBJECT_PATH']
 
-# S1: "scan the diff" read as the changed lines — the most natural reading, and the D-12 defect.
+# S1: "scan the diff" — the changed lines plus whole ADDED files, which is pre-395-10 `scanParts`
+#     exactly. Two edits: narrow the hunk parts, and drop the whole-candidate parts.
 # S2: the call site severed. It still runs, still typechecks, and sees nothing.
 # S3: the blocked line reusing the applyable one, which prints the VALUE the guardrail just refused.
 MUTATIONS = {
-    'S1': (
-        r"text: change.hunks.map((hunk) => [hunk.header, ...hunk.lines].join('\n')).join('\n'),",
-        "text: change.hunks.map((hunk) => [hunk.header, ...hunk.lines.filter("
-        "(line) => line.startsWith('+') || line.startsWith('-') "
-        "|| line.startsWith('%s'))]" % marker
-        + r".join('\n')).join('\n'),",
-    ),
-    'S2': (
-        "const scanned = deps.configScan.scan(scanParts(rendered.changes, wholeFiles))",
+    'S1': [
+        (
+            r"text: change.hunks.map((hunk) => [hunk.header, ...hunk.lines].join('\n')).join('\n'),",
+            "text: change.hunks.map((hunk) => [hunk.header, ...hunk.lines.filter("
+            "(line) => line.startsWith('+') || line.startsWith('-') "
+            "|| line.startsWith('%s'))]" % marker
+            + r".join('\n')).join('\n'),",
+        ),
+        (
+            "  for (const member of candidate) {",
+            "  for (const member of candidate.slice(0, 0)) {",
+        ),
+    ],
+    'S2': [(
+        "const scanned = deps.configScan.scan("
+        "scanParts(rendered.changes, wholeFiles, plan.candidate))",
         "const scanned = deps.configScan.scan([{ label: '%s', text: '' }])" % marker,
-    ),
-    'S3': (
+    )],
+    'S3': [(
         "summaryLine: configBlockedSummaryLine(plan.subject, report.detail),",
         "summaryLine: plan.summaryLine,\n"
         "    ...(false ? { paths: ['%s'] } : {})," % marker,
-    ),
+    )],
 }
 
 if name not in MUTATIONS:
     sys.exit('FATAL: unknown mutation %s' % name)
 
-anchor, replacement = MUTATIONS[name]
 source = open(path).read()
-found = source.count(anchor)
-if found != 1:
-    sys.exit(
-        'FATAL: mutation %s expected exactly one occurrence of its anchor, found %d' % (name, found)
-    )
-open(path, 'w').write(source.replace(anchor, replacement, 1))
+for index, (anchor, replacement) in enumerate(MUTATIONS[name], start=1):
+    found = source.count(anchor)
+    if found != 1:
+        sys.exit(
+            'FATAL: mutation %s edit %d expected exactly one occurrence of its anchor, found %d'
+            % (name, index, found)
+        )
+    source = source.replace(anchor, replacement, 1)
+open(path, 'w').write(source)
 PY
 }
 
@@ -306,9 +346,9 @@ for preflight in "$AGENT_FILTER|$AGENT_SUITE" "$CLI_FILTER|$CLI_SUITE"; do
 done
 echo
 
-run_leg S1 "the scan narrowed to the changed lines (D-12)" "$ALLOWED_S1" \
+run_leg S1 "the scan ranged over the diff (D-12 · GAP 1)" "$ALLOWED_S1" \
   "$AGENT_FILTER" "$AGENT_SUITE" "$AGENT_PREFIX" nodist
-run_leg S1 "the scan narrowed to the changed lines, on the RENDER surfaces" "$ALLOWED_S1" \
+run_leg S1 "the scan ranged over the diff, on the RENDER surfaces" "$ALLOWED_S1" \
   "$CLI_FILTER" "$CLI_SUITE" "$CLI_PREFIX" dist
 run_leg S2 "the scan severed — it runs over nothing" "$ALLOWED_S2" \
   "$AGENT_FILTER" "$AGENT_SUITE" "$AGENT_PREFIX" nodist
@@ -317,8 +357,8 @@ run_leg S2 "the scan severed, on the RENDER surfaces" "$ALLOWED_S2" \
 run_leg S3 "the blocked summary line reusing the applyable one" "$ALLOWED_S3" \
   "$AGENT_FILTER" "$AGENT_SUITE" "$AGENT_PREFIX" nodist
 
-echo "PASS — a scan that reads only the changed lines is caught by the context-line cells and by"
-echo "       nothing else; a severed scan is caught everywhere including its own invocation count;"
+echo "PASS — a scan ranged over the diff is caught by the context-line and unchanged-member cells"
+echo "       and by nothing else; a severed scan is caught everywhere including its invocation count;"
 echo "       and a blocked record built from the applyable summary line is caught before it can"
 echo "       carry a refused secret into an inbox row. Every leg observed RED, every restore was"
 echo "       proven byte-identical, and every dist-measured leg proved its rebuild took."
