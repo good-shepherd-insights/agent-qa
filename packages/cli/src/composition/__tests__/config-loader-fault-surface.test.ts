@@ -1050,4 +1050,100 @@ describe('a healthy config\'s credentials are neither printed nor written (395-2
       'the value arm must catch a credential-shaped value under that same key',
     ).toBe(true)
   })
+
+  it('(K2) the SHIPPED `config set apiToken <secret>` is refused and the yaml is byte-unchanged',
+    () => {
+      seedConfig(WELL_FORMED_CONFIG)
+      const before = readFileSync(configPath, 'utf8')
+
+      const { status, combined } = runShippedCli('config', 'set', 'apiToken', PLANTED_WRITE)
+
+      // THE VERIFIER'S OWN MEASUREMENT, INVERTED. Pre-fix this printed
+      // `✓ apiToken = sk-… saved to agent-qa.config.yaml` and the value was in the committed file.
+      const after = readFileSync(configPath, 'utf8')
+      expect(after, `config set wrote to the committed yaml:\n${after}`).toBe(before)
+      expect(occurrences(after, PLANTED_WRITE), `the yaml carries the credential:\n${after}`).toBe(0)
+      expect(occurrences(combined, 'not written by config set'), `no refusal was taken:\n${combined}`)
+        .toBe(1)
+      expect(status, `the refusal must keep the measured exit parity:\n${combined}`).toBe(0)
+    })
+
+  it('(K3-set) a credential-shaped value under a key name NO list carries is refused too', () => {
+    seedConfig(WELL_FORMED_CONFIG)
+    const before = readFileSync(configPath, 'utf8')
+
+    const { status, combined } = runShippedCli('config', 'set', UNLISTED_KEY_PATH, PLANTED_UNLISTED)
+
+    // THE WRITE SIDE OF THE DOOR-ENUMERATION ACCEPTANCE. Nothing about this key's NAME says
+    // credential; the refusal has to come from the value's shape or not at all.
+    const after = readFileSync(configPath, 'utf8')
+    expect(after, `config set wrote to the committed yaml:\n${after}`).toBe(before)
+    expect(occurrences(after, PLANTED_UNLISTED), `the yaml carries the credential:\n${after}`).toBe(0)
+    expect(occurrences(combined, 'not written by config set'), `no refusal was taken:\n${combined}`)
+      .toBe(1)
+    expect(status, `the refusal must keep the measured exit parity:\n${combined}`).toBe(0)
+  })
+
+  it('(K4a) an ordinary value still WRITES and still says so — the no-over-redaction control', () => {
+    seedConfig(WELL_FORMED_CONFIG)
+
+    const { status, combined } = runShippedCli('config', 'set', 'use.timeout.step', '45s')
+
+    const after = readFileSync(configPath, 'utf8')
+    expect(combined, `an ordinary set must succeed:\n${combined}`)
+      .toContain('use.timeout.step = 45s saved to agent-qa.config.yaml')
+    expect(after, `the ordinary value was not written:\n${after}`).toContain('step: 45s')
+    expect(status).toBe(0)
+  })
+
+  it('(K4b) base URLs, target names and ports still render VERBATIM at show', () => {
+    seedConfig(CONTROL_CONFIG)
+
+    const { status, combined } = runShippedCli('config', 'show')
+
+    // THE OVER-REDACTION CONTROL, on the three value kinds a config is mostly made of. A value arm
+    // tuned by broadening rather than by naming its families would swallow these, and `config show`
+    // would stop being worth running.
+    expect(combined, `the base URL was redacted:\n${combined}`).toContain(CONTROL_BASE_URL)
+    expect(combined, `the target name was redacted:\n${combined}`).toContain(CONTROL_TARGET_NAME)
+    expect(combined, `the port was redacted:\n${combined}`).toContain(CONTROL_PORT)
+    expect(occurrences(combined, REDACTION_MARKER), `nothing here is a credential:\n${combined}`)
+      .toBe(0)
+    expect(status).toBe(0)
+  })
+
+  it('(K4c) the pre-existing llm.apiKey refusal keeps its sentence, and all three arms exit alike',
+    () => {
+      seedConfig(WELL_FORMED_CONFIG)
+      const before = readFileSync(configPath, 'utf8')
+
+      // THE DESIGNED NO-BREAK. `sk-test` is deliberately too short for the apiKey family's `sk-`
+      // shape (asserted below), so this drive fires the NAME arm — the same arm, with the same
+      // three lines, that shipped before this plan.
+      const existing = runShippedCli('config', 'set', 'llm.apiKey', 'sk-test')
+      expect(isCredentialEntry('someOrdinaryKey', 'sk-test'), 'the control value must not be shaped')
+        .toBe(false)
+      expect(existing.combined).toContain('Credential values are not written by config set.')
+      expect(existing.combined).toContain(
+        'Use agent-qa auth set --config <name> --type api-key|bearer-token for compatible or Gemini configs.',
+      )
+      expect(existing.combined).toContain(
+        'Use plugins.auth plus the dashboard auth flow for subscription configs.',
+      )
+
+      // EXIT PARITY, MEASURED RATHER THAN ASSUMED. The pre-existing arm reports and returns without
+      // touching `process.exitCode`, so it exits 0; the new arms are held to the SAME status here
+      // rather than to a number this plan picked. If a later round decides a refusal should exit
+      // non-zero, this cell moves all three together — which is the point of asserting the
+      // relation and not the constant.
+      const nameArm = runShippedCli('config', 'set', 'apiToken', PLANTED_WRITE)
+      const valueArm = runShippedCli('config', 'set', UNLISTED_KEY_PATH, PLANTED_UNLISTED)
+      expect(nameArm.status, 'the widened name arm must exit as the pre-existing refusal does')
+        .toBe(existing.status)
+      expect(valueArm.status, 'the value-shape arm must exit as the pre-existing refusal does')
+        .toBe(existing.status)
+      expect(existing.status, 'the measured pre-existing refusal status (395-20)').toBe(0)
+
+      expect(readFileSync(configPath, 'utf8'), 'no refusal may write').toBe(before)
+    })
 })
