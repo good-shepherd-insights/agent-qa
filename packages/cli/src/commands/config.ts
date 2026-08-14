@@ -3,7 +3,7 @@ import pc from 'picocolors'
 import { parseDocument, Document } from 'yaml'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
-import { loadConfigFile, loadEnvOverrides, formatConfigDebug } from '../config.js'
+import { loadConfigFile, loadEnvOverrides, formatConfigDebug, ConfigFileNotYamlError } from '../config.js'
 
 const SENSITIVE_KEYS = new Set([
   'apikey',
@@ -83,7 +83,22 @@ async function setAction(key: string, value: string | undefined): Promise<void> 
 }
 
 async function showAction(): Promise<void> {
-  const fileConfig = await loadConfigFile('agent-qa.config.yaml')
+  // THE OP REPORTS, IT DOES NOT CRASH (395-16 · CR-01). This await was bare, so an unreadable
+  // committed config left the command as an uncaught rejection and Node's default printer rendered
+  // the error with its whole cause chain — the one road a person reaches this error on was also the
+  // one road that printed the most. The typed arm answers the error's own position-only sentence
+  // and exits 1. Anything else rethrows: a filesystem fault is not this guard's subject.
+  let fileConfig: unknown
+  try {
+    fileConfig = await loadConfigFile('agent-qa.config.yaml')
+  } catch (err: unknown) {
+    if (err instanceof ConfigFileNotYamlError) {
+      console.error(pc.red(err.message))
+      process.exitCode = 1
+      return
+    }
+    throw err
+  }
   const envOverrides = loadEnvOverrides()
   // Merge env into file config (3-layer: file+env is the global config)
   const { mergeConfigs } = await import('../config.js')

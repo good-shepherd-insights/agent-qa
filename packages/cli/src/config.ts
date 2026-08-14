@@ -57,14 +57,26 @@ function parseEnvValue(key: string, value: string): unknown {
  *
  * NO MEMBER INTERPOLATES THE CAUGHT ERROR'S OWN TEXT. `yaml` pretty-prints its parse errors with a
  * verbatim excerpt of the person's source, which was measured carrying a planted credential out of
- * three ops. The `cause` keeps the original for a debugger to reach deliberately; nothing composed
- * here reads it.
+ * three ops.
+ *
+ * AND THE CAUSE IS SANITIZED TOO, BECAUSE THE RUNTIME READS THE CAUSE CHAIN (395-16 · CR-01).
+ * An earlier revision of this class attached the raw `YAMLParseError` as `cause` on the reasoning
+ * that no composed member reads it. That reasoning was false of the runtime, and shipped as a
+ * defect: a thrown value is read by far more than the code that composed it. Node's DEFAULT
+ * UNCAUGHT PRINTER renders an error with `util.inspect`, which walks `cause` and prints it under a
+ * `[cause]:` header — `agent-qa config show` awaited this loader bare and crash-printed the
+ * person's own file back at them. `console.error(err)` does the same thing, structured loggers
+ * (pino, winston) serialize the chain, and crash reporters upload it. So the cause carried here is
+ * a fresh `Error` holding THE SAME POSITION-ONLY SENTENCE as the message: a debugger still gets a
+ * chain to walk, and every one of those readers gets a position and nothing else. The caught value
+ * is not reachable from this error by any property.
  */
 export class ConfigFileNotYamlError extends Error {
   readonly configPath: string
 
   constructor(configPath: string, cause: unknown) {
-    super(`${configPath}: ${yamlParseFailureMessage(cause)}`, { cause })
+    const positionOnly = `${configPath}: ${yamlParseFailureMessage(cause)}`
+    super(positionOnly, { cause: new Error(positionOnly) })
     this.name = 'ConfigFileNotYamlError'
     this.configPath = configPath
   }

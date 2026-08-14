@@ -53,7 +53,9 @@
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { inspect } from 'node:util'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { formatDiagnostics, validateProject, yamlParseFailureMessage } from '@vostride/agent-qa-core'
@@ -73,6 +75,17 @@ const CONFIG_FILE = 'agent-qa.config.yaml'
  * to be searchable, distinctive, and impossible to confuse with a live credential.
  */
 const PLANTED_CREDENTIAL = 'sk-ant-api03-395fourteenFIXTUREONLYnotarealkey'
+
+/**
+ * The SHIPPED binary, resolved from this file's own location (395-16 · CR-01 / S2).
+ *
+ * `packages/cli/src/composition/__tests__` → three levels up is `packages/cli`. The cell below
+ * drives `dist/cli.js` and not the source, because the crash this measures happens in the process a
+ * person actually runs — and because a reading taken on a STALE dist measures the previous build.
+ * The plan's verify line rebuilds core then cli before every run of this file for exactly that
+ * reason.
+ */
+const CLI_DIST = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'dist', 'cli.js')
 
 let root: string
 let configPath: string
@@ -300,6 +313,75 @@ describe('a committed config the parser cannot read names WHERE, never WHAT (395
       const asAChatTurnWouldCarryIt = error?.message ?? ''
       expectPositionOnly(asAChatTurnWouldCarryIt)
       expect(asAChatTurnWouldCarryIt).toContain(CONFIG_FILE)
+    })
+})
+
+// THE SURFACE THE ROUND-2 CORPUS COULD NOT SEE (395-16 · RULING 1 / CR-01).
+//
+// Every cell above reads `error.message`. The channel that survived them reads the error as a
+// VALUE: `util.inspect` walks the `cause` chain, and Node's default uncaught printer is a
+// util.inspect call — so `agent-qa config show`, which awaited the loader bare, crash-printed the
+// person's file back at them while ten cells stayed green. The two cells here change the assertion
+// SURFACE rather than the case count: the serialization as a printer reads it, and the shipped
+// binary's entire stdout+stderr.
+describe('the loader\'s error is clean as a VALUE, and the shipped command reports it (395-16)', () => {
+  it('(S1) the rejection serializes position-only — util.inspect and .stack, not just .message',
+    async () => {
+      seedConfig(faultyConfigText({ credential: true }))
+
+      const error = await loadConfigFile(configPath).then(
+        () => undefined,
+        (err: unknown) => err as Error,
+      )
+      expect(error, 'an unreadable committed config must still reject').toBeDefined()
+
+      // THE CAUSE CHAIN, as every printer renders it. `inspect(err, { depth: null })` is what the
+      // default uncaught printer, `console.error(err)` and every structured logger do with a thrown
+      // value; a raw `YAMLParseError` attached as `cause` republishes the excerpt through all three.
+      const serialized = inspect(error, { depth: null })
+      expect(
+        occurrences(serialized, PLANTED_CREDENTIAL),
+        `the serialization carried the planted credential: ${serialized}`,
+      ).toBe(0)
+
+      // AND THE STACK, which is a second serialization of the same value — `err.stack` on an error
+      // with a cause is rendered with the cause by V8's own formatter in several hosts, and is what
+      // crash reporters upload.
+      const stack = String(error?.stack ?? '')
+      expect(
+        occurrences(stack, PLANTED_CREDENTIAL),
+        `the stack carried the planted credential: ${stack}`,
+      ).toBe(0)
+
+      // The `.message` surface the round-2 corpus asserted on is unchanged, and still position-only.
+      expectPositionOnly(error?.message ?? '')
+      expect(error?.message).toContain(CONFIG_FILE)
+    })
+
+  it('(S2) the SHIPPED `agent-qa config show` reports the position and never crash-prints the file',
+    () => {
+      seedConfig(faultyConfigText({ credential: true }))
+
+      // THE BINARY, NOT THE SOURCE, and its WHOLE output — no stream filter, no line filter. The
+      // verifier reproduced this leak by running exactly this command.
+      const run = spawnSync(process.execPath, [CLI_DIST, 'config', 'show'], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+      })
+      const combined = `${run.stdout ?? ''}${run.stderr ?? ''}`
+
+      expect(
+        occurrences(combined, PLANTED_CREDENTIAL),
+        `the command's output carried the planted credential:\n${combined}`,
+      ).toBe(0)
+      expect(combined, `the command's output:\n${combined}`)
+        .toMatch(/not readable as YAML at line \d+, column \d+/)
+      // THE CRASH-PRINTER'S OWN RENDERING, asserted on the runtime's output. Node writes
+      // `[cause]: ...` when it prints an uncaught error carrying one; no source comment can fake
+      // this assertion and no `.message` cell can reach it.
+      expect(combined, `the command's output:\n${combined}`).not.toMatch(/\[cause\]/)
+      expect(run.status, `the command should report and exit 1, not crash-exit: ${combined}`).toBe(1)
     })
 })
 
