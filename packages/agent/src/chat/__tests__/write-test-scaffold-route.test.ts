@@ -33,9 +33,20 @@
 //                         flow" invokes NOTHING at all — not even the scaffold — and the refusal
 //                         names both continuations without echoing the words back as an origin.
 //   (R8) blocked/refused— a scaffold that answered `refused` and a chain that dispatched authoring
-//                         anyway. The proposal's own detail is what the turn reports.
+//                         anyway. The proposal's own detail is what the turn reports. Its fixture's
+//                         refusal is one the REAL op can produce in this project class (395-12): a
+//                         canned `already-configured` would be a refusal a zero-target project can
+//                         no longer earn, which is the vacuity (R3/R4) was just repaired for.
 //   (R9) unbound        — a host that binds no vocabulary. The route must not run at all, so the
 //                         shipped dispatch is byte-for-byte what it was before this seam existed.
+//  (R10) WR-05          — a scaffold arm with no from-zero precondition. `readme.md` PARSES as a
+//                         hostname, so in a project that declares targets the pre-395-12 route
+//                         resolved `scaffold` and the turn ended in `already-configured` for
+//                         `readme-md` — a site nobody named, traded for a working dispatch. The
+//                         cell asserts the authoring dispatch is EXACTLY what 394 ships.
+//  (R11) both classes   — a route that decided on the WORDING. ONE utterance, TWO project classes,
+//                         in one cell: zero targets scaffolds and one configured target passes
+//                         through. Neither half can be satisfied by a constant.
 //
 // THE ROUTE RESOLVER IS ALSO MEASURED DIRECTLY, with a rejection corpus, because a refusal rule
 // needs corpus cases it REJECTS or every cell is drawn from inside the rule's own assumption.
@@ -419,6 +430,28 @@ describe('the write_test route is deterministic and narrow (D-15)', () => {
     })).toEqual({ kind: 'configured', name: 'booking-com' })
   })
 
+  it('(WR-05) never offers the scaffold in a project that already declares targets', () => {
+    // A HOSTNAME-SHAPED TOKEN THAT IS NOT A SITE. `readme.md` and `index.html` both satisfy
+    // `parseHostnameToken` — a dot, legal labels, an alphabetic final label — so before 395-12 the
+    // scaffold arm fired on them in ANY project, and a configured project's turn ended in
+    // `already-configured` for `readme-md`. The precondition is the project, in both arms.
+    for (const intent of [
+      'write a test that checks the readme.md rendering',
+      'write a test for the index.html landing page',
+      'write a test for booking.com checkout',
+    ]) {
+      expect(resolveWriteTestRoute({ intent, configuredTargetNames: ['shop'] }), intent)
+        .toEqual({ kind: 'passthrough' })
+    }
+
+    // THE OTHER SIDE IN THE SAME CELL, so neither half can be a constant: the identical tokens in a
+    // project that declares NOTHING still reach the scaffold, which is the road SC-5 needs open.
+    expect(resolveWriteTestRoute({
+      intent: 'write a test that checks the readme.md rendering',
+      configuredTargetNames: [],
+    })).toEqual({ kind: 'scaffold', domain: 'readme.md', targetName: 'readme-md' })
+  })
+
   it('REFUSES only a project with no targets and an utterance with no hostname', () => {
     // The rejection corpus. Every row is a real write_test request; the only ones that refuse are
     // the ones with nothing at all to author against.
@@ -504,7 +537,10 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
   })
 
   it('(R5/R6) authors NOTHING when the confirm is declined or the host is non-TTY', async () => {
-    const test = harness({ targets: ['other-site'], denyApply: CONFIG_PROPOSAL_APPLY_FUNCTION_ID })
+    // TARGETS EMPTY SINCE 395-12 (WR-05): a project that declares targets now PASSES THROUGH a
+    // hostname token, so `['other-site']` would route authoring and this cell would measure
+    // nothing. The from-zero class is the one in which a scaffold is offered at all.
+    const test = harness({ targets: [], denyApply: CONFIG_PROPOSAL_APPLY_FUNCTION_ID })
     const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
 
     expect(result.status).toBe('fail_closed')
@@ -536,20 +572,81 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
   })
 
   it('(R8) reports the scaffold\'s own refusal and dispatches nothing', async () => {
+    // TARGETS EMPTY, AND THE REFUSAL IS ONE THE REAL OP CAN PRODUCE HERE (395-12). Two fixture
+    // moves, one reason: WR-05 means a target-declaring project passes a hostname through, and
+    // `already-configured` is a refusal a ZERO-target project can no longer earn — a canned answer
+    // no shipped build could produce is exactly the vacuity (R3/R4) was repaired for. 395-02's
+    // `unrenderable-diff` is reachable from zero: it is what the op answers when the project's own
+    // `.gitignore` holds bytes that are not valid UTF-8.
     const test = harness({
-      targets: ['other-site'],
+      targets: [],
       scaffoldAnswer: {
         outcome: 'refused',
-        reason: 'already-configured',
-        detail: 'this project already has agent-qa.config.yaml',
+        reason: 'unrenderable-diff',
+        detail: '.gitignore holds bytes that are not valid UTF-8',
       },
     })
     const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
 
     expect(result.status).toBe('fail_closed')
     expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
-    expect(result.unhandled?.reason).toBe('this project already has agent-qa.config.yaml')
+    expect(result.unhandled?.reason).toBe('.gitignore holds bytes that are not valid UTF-8')
   })
+
+  it('(R10 · WR-05) passes a hostname-shaped NON-SITE token through in a configured project',
+    async () => {
+      // RED, MEASURED BY MUTATION rather than quoted from history: with WR-05's precondition
+      // removed, `readme.md` parses as a hostname and this turn's ordering becomes
+      // `[config.project.scaffold, config.proposal.apply, authoring.draft.write]` — it scaffolds
+      // and COMMITS a target for `readme-md`, a site nobody named. Before 395-12 narrowed
+      // `already-configured` the same route ended that turn in a refusal instead; either way what
+      // is lost is 394's plain authoring dispatch, which is what this cell pins.
+      const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const test = harness({ targets: ['shop'], realScaffold: scaffoldOp })
+      const message = 'write a test that checks the readme.md rendering'
+      const result = await test.runTurn({ message })
+
+      expect(result.status).toBe('completed')
+      // EXACTLY WHAT 394 SHIPS — and the reference is PRODUCED rather than typed. The same message
+      // is driven through a host that binds no vocabulary at all (cell (R9)'s class), where the
+      // route provably does not run, and the two dispatches are compared whole. A literal here
+      // would have to re-spell the engine's own `sessionRef` stamp, and would then agree with
+      // itself the day that stamp changed; this comparison cannot.
+      const unrouted = harness()
+      await unrouted.runTurn({ message })
+      expect(test.ordering).toEqual([AUTHORING_DRAFT_WRITE_FUNCTION_ID])
+      expect(test.inputs).toEqual(unrouted.inputs)
+      expect(test.inputs).toHaveLength(1)
+      expect((test.inputs[0]?.input as { intent?: string }).intent).toBe(message)
+      // And the scaffold op was never reached at all, so nothing was filed on the way past.
+      expect(scaffoldOp.filed).toHaveLength(0)
+    })
+
+  it('(R11) ONE utterance, TWO project classes: zero targets scaffolds, one target passes through',
+    async () => {
+      // THE CORPUS DISCIPLINE R7 established, applied to the scaffold arm: the same words against
+      // both classes in one cell, so the route's decision is measured as a property of the PROJECT.
+      // A route keyed on the wording makes both halves agree; a constant fails one of them.
+      const message = 'write a test for booking.com checkout'
+
+      const fromZero = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const zero = harness({ targets: [], realScaffold: fromZero })
+      const zeroResult = await zero.runTurn({ message })
+      expect(zeroResult.status).toBe('completed')
+      expect(zero.ordering).toEqual([
+        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
+        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      ])
+      expect(fromZero.filed).toHaveLength(1)
+
+      const configuredOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const configured = harness({ targets: ['shop'], realScaffold: configuredOp })
+      const configuredResult = await configured.runTurn({ message })
+      expect(configuredResult.status).toBe('completed')
+      expect(configured.ordering).toEqual([AUTHORING_DRAFT_WRITE_FUNCTION_ID])
+      expect(configuredOp.filed).toHaveLength(0)
+    })
 
   it('(R9) does not run at all on a host that binds no vocabulary', async () => {
     // The dep is ABSENT. The shipped dispatch is exactly what it was before this seam existed —

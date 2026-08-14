@@ -28,6 +28,21 @@
 // sentence — "anything else with no configured-target match gets a typed refusal asking for a URL or
 // target name" — read where it is actually true.
 //
+// THE SCAFFOLD ARM CARRIES THE SAME PRECONDITION SINCE 395-12 (WR-05). Scaffolding is the FROM-ZERO
+// path; a project that already declares targets authors against them. Offering the scaffold there
+// traded a working dispatch for a refusal about a site nobody named — a token like `readme.md` or
+// `index.html` parses as a hostname, and in a configured project that turn used to end in
+// `already-configured` for `readme-md`. The precondition is the project, in both arms.
+//
+// THE ARM TABLE, IN ORDER, BECAUSE THE ORDER IS THE CONTRACT:
+//
+//   1. a token that IS a configured target name              -> configured
+//   2. a hostname token whose DERIVED name is configured      -> configured
+//   3. a hostname token in a project that declares targets    -> passthrough   (WR-05, 395-12)
+//   4. a hostname token in a project that declares none       -> scaffold
+//   5. no hostname, and the project declares targets          -> passthrough
+//   6. no hostname, and the project declares none             -> refuse
+//
 // TOKENS, NOT SUBSTRINGS. A configured target named `shop` must not match the word `workshop`, and
 // a hostname must be a whole word rather than a fragment of one. The split is on characters that
 // cannot appear in a hostname or in a target name, so the tokens this sees are the words a person
@@ -86,6 +101,11 @@ export function resolveWriteTestRoute(input: {
     if (configured.has(verdict.targetName)) {
       return { kind: 'configured', name: verdict.targetName }
     }
+    // WR-05 (395-12). A project that declares targets authors against them; `readme.md` and
+    // `index.html` both parse as hostnames, and offering a scaffold for one of them is how a turn
+    // that had a perfectly good authoring dispatch ended in `already-configured` for a site nobody
+    // named. The scaffold arm is the from-zero path and this is where it says so.
+    if (configured.size > 0) return { kind: 'passthrough' }
     return { kind: 'scaffold', domain: verdict.domain, targetName: verdict.targetName }
   }
 
