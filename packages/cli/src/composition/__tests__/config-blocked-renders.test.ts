@@ -34,8 +34,16 @@
 //                       the field, or the block is a dead end.
 //   (D) the control   — the composition binding raw environment instead of the name-based slice.
 //   (E) accept        — an accept that threw, or one that reached the apply port.
+//   (F) RANGE         — 395-10, GAP 1 / CR-01. A scan whose INPUT is the diff while the validator's
+//                       input is the whole pinned set. The planted value sits in a set member this
+//                       proposal never touches, so it appears in no hunk and in no added file: a
+//                       diff-ranged scan returns clean, the validator reads those bytes, and its
+//                       words carry them onto three surfaces. The cell is red on exactly that
+//                       implementation — it was observed red on pre-395-10 HEAD, where the record
+//                       filed `schema-fail` and `validationIssues` quoted the offending source line
+//                       verbatim.
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -57,10 +65,20 @@ import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.j
  */
 const SEEDED_SECRET = 'grommet-hinge-395-parlour-slate'
 
+/**
+ * `sha256hex16(SEEDED_SECRET)`, computed OUTSIDE this codebase — `hashlib.sha256(v).hexdigest()[:16]`.
+ *
+ * The presence half of cell (F)'s absence assertions. A surface that carries this demonstrably
+ * observed those exact bytes and chose not to print them, which is what separates a non-disclosing
+ * render from a channel that never had the value in the first place.
+ */
+const SEEDED_FINGERPRINT = '624a6dac7a3dc6cb'
+
 /** The env NAME matters: `sensitiveEnvSlice` selects by name suffix, never by value. */
 const SECRET_ENV_NAME = 'AGENT_QA_395_ACCEPTANCE_TOKEN'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
+const HOOKS_FILE = 'hooks.yaml'
 
 function configText(options: { readonly note: string }): string {
   // THE NOTE SITS TWO LINES ABOVE THE `step` THIS SUITE EDITS, so it renders on a CONTEXT line of
@@ -99,6 +117,43 @@ use:
     appState: reset
   parallel: false
 `
+}
+
+/**
+ * A committed hooks file this suite's proposals never touch, malformed around the line that carries
+ * `value` (395-10 · GAP 1).
+ *
+ * MALFORMED ON PURPOSE, and the malformation is the VERIFICATION fixture reproduced: `yaml`'s parse
+ * error for a nested mapping in a compact mapping is pretty-printed with a verbatim excerpt of the
+ * offending source line, so the pre-395-10 pipeline — which validated these bytes without ever
+ * scanning them — put `value` into `validationIssues`, onto the propose return, into the persisted
+ * record and into `proposals show`. It stays malformed after the fix because the fix must block
+ * BEFORE the validator runs, not because the validator got quieter.
+ */
+function hooksTextCarrying(value: string): string {
+  return `# project hooks
+hooks:
+  - name: deploy note
+    token: ${value}: oops
+`
+}
+
+/**
+ * Everything this workspace persisted, as one text — paths included.
+ *
+ * THE WHOLE STORE RATHER THAN ONE RECORD PATH. The claim under test is that no persisted byte
+ * anywhere carries the planted value, and a helper that knew the record's filename could be
+ * satisfied by a leak that landed in a sibling file (an index, a decision trail, a log).
+ */
+function persistedText(dir: string): string {
+  const out: string[] = []
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    out.push(full)
+    if (statSync(full).isDirectory()) out.push(persistedText(full))
+    else out.push(readFileSync(full, 'utf8'))
+  }
+  return out.join('\n')
 }
 
 let root: string
@@ -293,4 +348,67 @@ describe('CFGM-02 on the surfaces a person reads (D-10/D-12)', () => {
     expect(rendered).toContain('guardrail-hit')
     for (const window of windows(SEEDED_SECRET)) expect(rendered).not.toContain(window)
   })
+
+  it('(F) a secret in an UNCHANGED set member blocks, and no surface carries a window of it',
+    async () => {
+      // THE CONFIG IS CLEAN AND VALID; the planted value lives in the hooks file, which this
+      // proposal does not touch. That is the CR-01 geometry: the scan's input was the diff, the
+      // validator's input was the whole pinned set, and the difference between the two ranges was a
+      // disclosure channel.
+      writeFileSync(configPath, configText({ note: 'no secret in this file' }))
+      writeFileSync(join(root, HOOKS_FILE), hooksTextCarrying(SEEDED_SECRET))
+
+      // NON-VACUITY FIRST, AGAINST THE REAL RENDERER. The planted value is in NO hunk and in no
+      // added file — the rendered artifact does not contain it at all — so this cell cannot pass
+      // under a diff-ranged scan by accident of where the fixture put its bytes. It is red on that
+      // implementation by construction.
+      const rendered = renderConfigDiff([{
+        path: CONFIG_FILE,
+        oldBytes: utf8Encode(configText({ note: 'no secret in this file' })),
+        newBytes: utf8Encode(
+          configText({ note: 'no secret in this file' }).replace('step: 30s', 'step: 45s'),
+        ),
+      }])
+      if (rendered.outcome !== 'changed') throw new Error('the fixture edit rendered no diff')
+      expect(utf8Decode(rendered.diffBytes)).not.toContain(SEEDED_SECRET)
+
+      const answer = await propose({ path: 'use.timeout.step', value: '45s' })
+
+      // BLOCKED BY THE GUARDRAIL, NOT BY THE SCHEMA. Pre-395-10 this answered `schema-fail`: the
+      // scan never read these bytes and the yaml parser did, so the refusal came from the validator
+      // and carried the validator's words.
+      expect(answer.outcome).toBe('blocked')
+      if (answer.outcome !== 'blocked') throw new Error('unreachable')
+      expect(answer.blockedReason).toBe('guardrail-hit')
+      // D-12's existing-config sentence, produced by the same carried-over MEASUREMENT the changed
+      // -member road uses — the bytes are committed, so the person is told they already have them.
+      expect(answer.summaryLine).toContain('already carries a secret')
+      expect(answer.summaryLine).toContain(HOOKS_FILE)
+      expect(answer.paths).toContain(HOOKS_FILE)
+      expect(answer.scanFindings?.[0]?.detector).toBe('seeded-secret')
+      expect(answer.scanFindings?.[0]?.path).toBe(HOOKS_FILE)
+      // No validator words at all: the block happened before the validator was handed anything.
+      expect(answer.validationIssues).toBeUndefined()
+
+      const returned = JSON.stringify(answer)
+      const persisted = persistedText(agentQaRoot)
+      const shown = await cli(['proposals', 'show', answer.proposalId])
+
+      // THE PRESENCE HALVES, PER SURFACE, BEFORE ANY ABSENCE. Each of the three demonstrably
+      // rendered THIS block, about THIS file, from a report that observed THOSE bytes — so the
+      // windowed absence below is a fact about what they print rather than about three channels
+      // that printed nothing.
+      for (const surface of [returned, persisted, shown]) {
+        expect(surface).toContain('guardrail-hit')
+        expect(surface).toContain(HOOKS_FILE)
+        expect(surface).toContain(SEEDED_FINGERPRINT)
+      }
+
+      // AND NONE OF THE THREE CARRIES ANY EIGHT-CHARACTER RUN OF THE VALUE.
+      for (const window of windows(SEEDED_SECRET)) {
+        expect(returned).not.toContain(window)
+        expect(persisted).not.toContain(window)
+        expect(shown).not.toContain(window)
+      }
+    })
 })

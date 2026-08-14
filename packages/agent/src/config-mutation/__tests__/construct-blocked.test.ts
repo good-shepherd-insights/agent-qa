@@ -43,6 +43,14 @@
 //                           permissive direction a security control may not fail in.
 //  (10) the scan RAN      — every absence above passing because nothing was ever scanned. The
 //                           invocation count is what makes the rest of this file non-vacuous.
+//  (11) the RANGE         — 395-10, GAP 1 / CR-01. A scan whose input is the DIFF while the
+//                           validator's input is the whole candidate set. The planted secret sits
+//                           in a set member no hunk and no added file contains, so a diff-ranged
+//                           scan returns clean and the validator — the only step that reads those
+//                           bytes — is handed them. The cell asserts the block AND that the
+//                           validator was never invoked, so it reds on the pre-395-10 pipeline
+//                           (which answered `proposed`) and on any "fix" that merely re-worded the
+//                           validator's output after letting it read unscanned bytes.
 
 import {
   CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
@@ -100,6 +108,17 @@ const COMMITTED_SECRET = 'AKIAZZZZZZZZZZZZZZZZ'
 const PLANTED_FINGERPRINT = 'a93e68f8176af0b0'
 const COMMITTED_FINGERPRINT = '295cfae3fd0324ea'
 
+/**
+ * A THIRD secret, living only in the hooks member — the file cell (11)'s proposal never touches.
+ *
+ * DISTINCT FROM THE OTHER TWO so the range cell cannot pass on either of their fixtures, and shaped
+ * rather than seeded for this file's own reason (the seed set here is empty on purpose).
+ */
+const HOOKS_SECRET = 'AKIAHHHHHHHHHHHHHHHH'
+const HOOKS_FINGERPRINT = 'd41c346bc8d1849c'
+
+const HOOKS_FILE = 'hooks.yaml'
+
 const CLEAN_CONFIG = `# agent-qa Configuration
 workspace:
   hooksFile: hooks.yaml
@@ -144,6 +163,14 @@ interface Harness {
   readonly filed: Filed[]
   /** How many times the scan was actually called — the non-vacuity counter for every absence. */
   scans: () => number
+  /**
+   * How many times the VALIDATOR was called (395-10).
+   *
+   * The range claim's other half. "The scan reads everything the validator reads" is provable in
+   * one direction by the block; this counter proves the other — that on a guardrail hit the
+   * validator was never handed the candidate at all, so no words of its can exist to persist.
+   */
+  validations: () => number
 }
 
 /**
@@ -156,22 +183,28 @@ interface Harness {
  */
 function harness(options: {
   readonly config: string
+  /** The committed hooks member's bytes. Absent means the file is not there, as the port answers. */
+  readonly hooks?: string
   readonly validation?: { ok: false; issues: readonly string[] } | { ok: true }
 }): Harness {
   const filed: Filed[] = []
   let scanCount = 0
+  let validateCount = 0
 
   return {
     filed,
     scans: () => scanCount,
+    validations: () => validateCount,
     deps: {
       configFiles: {
         read: () => Promise.resolve({
           configFile: CONFIG_FILE,
-          hooksFile: 'hooks.yaml',
+          hooksFile: HOOKS_FILE,
           files: [
             { path: CONFIG_FILE, bytes: utf8Encode(options.config) },
-            { path: 'hooks.yaml' },
+            options.hooks === undefined
+              ? { path: HOOKS_FILE }
+              : { path: HOOKS_FILE, bytes: utf8Encode(options.hooks) },
             { path: '.gitignore' },
           ],
         }),
@@ -203,7 +236,10 @@ function harness(options: {
         },
       },
       configValidate: {
-        validate: () => Promise.resolve(options.validation ?? { ok: true }),
+        validate: () => {
+          validateCount += 1
+          return Promise.resolve(options.validation ?? { ok: true })
+        },
       },
       configProposals: {
         put: (record) => {
@@ -495,4 +531,42 @@ describe('the blocked posture: one posture, two reasons (CFGM-01 · D-10)', () =
     await propose(hit, { path: 'envFile', value: PLANTED })
     expect(hit.scans()).toBe(2)
   })
+
+  it('(11) a secret in an UNCHANGED member blocks, and the validator never sees the candidate',
+    async () => {
+      const hooks = `# project hooks
+hooks:
+  - name: deploy
+    token: ${HOOKS_SECRET}
+`
+      // THE RANGE PROOF, FIRST AND AGAINST THE REAL RENDERER. The edit is to the config file; the
+      // secret is in the hooks file, which this proposal does not touch. It is therefore in no hunk
+      // and in no added file — the rendered artifact does not contain it at all. A scan ranged over
+      // the DIFF cannot see it however wide its context window is, which is what makes this cell a
+      // measurement of RANGE rather than another measurement of the context-line property (5).
+      const before = utf8Encode(CLEAN_CONFIG)
+      const after = utf8Encode(CLEAN_CONFIG.replace('step: 30s', 'step: 45s'))
+      const rendered = renderConfigDiff([{ path: CONFIG_FILE, oldBytes: before, newBytes: after }])
+      if (rendered.outcome !== 'changed') throw new Error('the fixture edit rendered no diff')
+      expect(utf8Decode(rendered.diffBytes)).not.toContain(HOOKS_SECRET)
+
+      const test = harness({ config: CLEAN_CONFIG, hooks })
+      const answer = await propose(test, { path: 'step', value: '45s' })
+
+      expect(answer.outcome).toBe('blocked')
+      if (answer.outcome !== 'blocked') throw new Error('unreachable')
+      expect(answer.blockedReason).toBe('guardrail-hit')
+      // The bytes are committed, so it is the D-12 existing-config sentence, and it names the file
+      // the person has to go and fix rather than the one they were editing.
+      expect(answer.summaryLine).toContain('already carries a secret')
+      expect(answer.summaryLine).toContain(HOOKS_FILE)
+      expect(answer.scanFindings?.[0]?.path).toBe(HOOKS_FILE)
+      expect(answer.scanFindings?.[0]?.redactedFingerprint).toBe(HOOKS_FINGERPRINT)
+
+      // THE OTHER HALF OF THE RANGE CLAIM: the validator was never handed the candidate. A pipeline
+      // that scanned wide but still validated first — or that validated and then re-worded what it
+      // got back — would fail here even with every assertion above passing.
+      expect(test.validations()).toBe(0)
+      expect(JSON.stringify(test.filed)).not.toContain(HOOKS_SECRET.slice(0, 8))
+    })
 })

@@ -12,8 +12,9 @@
 //      the point a person can review it, which is CFGM-01's whole subject.
 //   3. RENDER the diff and take the digests, through the ONE schema primitive (D-17). Construction
 //      and apply call the same export; that is the whole of the CR-02 mitigation.
-//   4. SCAN the rendered artifact (CFGM-02, D-09/D-12). Non-empty findings mint a BLOCKED record and
-//      the diff bytes are discarded — they never enter the store, so no later render can leak them.
+//   4. SCAN the rendered artifact AND THE WHOLE CANDIDATE SET (CFGM-02, D-09/D-12 · 395-10). Every
+//      byte step (5) will read is read here first; non-empty findings mint a BLOCKED record and the
+//      diff bytes are discarded — they never enter the store, so no later render can leak them.
 //   5. VALIDATE THE WHOLE CANDIDATE SET. CFGM-01 is explicit that validation runs BEFORE the
 //      proposal exists, so a mutation that breaks the config never becomes something a person can
 //      accept. It validates the ENTIRE candidate rather than the changed field, because D-03 removed
@@ -38,9 +39,24 @@
 // closes a disclosure channel the other leaves open. A whole-config validator reports issues IN THE
 // VALIDATOR'S OWN WORDS, and those words are derived from the candidate bytes; a refusal that
 // quoted the offending value would put a secret into `validationIssues`, and the blocked record is
-// PERSISTED, so it would outlive the proposal it refused. Scanning first means every schema-fail
-// record this pipeline files was built from bytes the scan had already cleared. The property is
-// stated as one sentence: NOTHING THIS PIPELINE PERSISTS IS UNSCANNED.
+// PERSISTED, so it would outlive the proposal it refused.
+//
+// AND WHY ORDER ALONE WAS NOT ENOUGH (395-10 · GAP 1 / CR-01). The ordering above was correct and
+// bought nothing on the schema-fail road for a year of this phase's life, because the two steps
+// RANGED DIFFERENT INPUTS: step (4) read the rendered diff, step (5) is handed the whole candidate
+// set. A secret in a set member the proposal never touched was therefore validated without ever
+// being scanned, and the validator's words carried it to three surfaces — measured end to end on
+// the shipped CLI. The fix is a containment, not a sequence, and it is what the invariant below now
+// rests on:
+//
+//   RANGE(step 4) ⊇ RANGE(step 5). Every candidate member with bytes is scanned WHOLE before the
+//   validator is handed the candidate set. See `scanParts`.
+//
+// That containment is what makes the one sentence true rather than aspirational: NOTHING THIS
+// PIPELINE PERSISTS IS UNSCANNED. It bounds at the detectors' own coverage and nowhere else — a
+// value no detector and no seed recognises can still be interpolated into a validator's message,
+// exactly as it can be written into a diff, which is one uniform bound across both roads rather
+// than a second hole on this one.
 //
 // ONE POSTURE, TWO REASONS (CFGM-01 · D-10). A validation failure and a guardrail hit arrive by
 // different roads and mean different things to a person, but they produce the same artifact — a
@@ -940,8 +956,9 @@ async function fileConfigProposal(
       bytes: plan.candidate.find((member) => member.path === change.path)?.bytes,
     }))
 
-  // (4) CFGM-02, BEFORE ANYTHING SURFACES AND BEFORE ANYTHING IS FILED.
-  const scanned = deps.configScan.scan(scanParts(rendered.changes, wholeFiles))
+  // (4) CFGM-02, BEFORE ANYTHING SURFACES AND BEFORE ANYTHING IS FILED, AND OVER EVERYTHING STEP
+  // (5) WILL READ. The candidate set is handed in beside the rendered artifact — see `scanParts`.
+  const scanned = deps.configScan.scan(scanParts(rendered.changes, wholeFiles, plan.candidate))
   if (scanned.findings.length > 0) {
     // D-12: was this already in the person's repository? Asked by scanning the COMMITTED bytes with
     // the same function, so "pre-existing" is a measurement rather than an inference from diff
@@ -972,8 +989,10 @@ async function fileConfigProposal(
     })
   }
 
-  // (5) CFGM-01: the WHOLE candidate SET. Its issues are the validator's own words over bytes the
-  // scan above has already cleared, which is what makes them safe to persist.
+  // (5) CFGM-01: the WHOLE candidate SET — and every member of it was scanned WHOLE at step (4),
+  // which is the property that makes the validator's own words safe to persist. It is a statement
+  // about RANGE and not about order (395-10): the same set object is handed to both steps, so the
+  // validator cannot read a byte the scan did not.
   const validation = await deps.configValidate.validate({
     configFile: set.configFile,
     hooksFile: set.hooksFile,
@@ -1059,10 +1078,31 @@ async function fileConfigProposal(
  * A CREATED FILE GETS ITS WHOLE CONTENT AS WELL. The scaffold case (395-08) surfaces whole new files
  * rather than diffs, and a proposal that creates the config — or the hooks file, which
  * `config.hook.add` does on a project that has none — from nothing is that case arriving early.
+ *
+ * AND EVERY CANDIDATE MEMBER GETS ITS WHOLE CONTENT (395-10 · GAP 1 / CR-01). This is the RANGE
+ * half, and it is a different property from the two above rather than more of them. Both of those
+ * widen the scan within the artifact this proposal RENDERS; this one widens it to the artifact step
+ * (5) READS. The two used to differ, and the difference was a disclosure channel that was measured
+ * end to end on the shipped CLI: a secret sitting in a committed set member the proposal never
+ * touched — a `hooks.yaml` nobody was editing — appeared in no hunk and in no added file, so the
+ * scan returned clean; the validator was then handed that member in full, could not parse it, and
+ * quoted the offending source line into `validationIssues`, which is persisted and rendered. Order
+ * did not help: 395-04 had already ordered the scan before the validator, correctly, and it bought
+ * nothing on that road because the two steps ranged different inputs. So the rule this function now
+ * implements is a containment rather than a sequence — Range(scan) ⊇ Range(validate) — and the
+ * pipeline's stated invariant is true only while it holds.
+ *
+ * MEMBERS ARRIVE WHOLE AND UNDEDUPLICATED against the two lists above. A member that is also an
+ * added file is scanned twice, which costs a pass over bytes already in memory and produces
+ * duplicate findings that `dedupeFindings` collapses on their own key. The alternative — computing
+ * which member each earlier part already covered — would be a second, weaker statement of the same
+ * containment, and one that could go wrong quietly. This one cannot: every member with bytes is
+ * here.
  */
 function scanParts(
   changes: readonly { path: string; hunks: readonly { header: string; lines: readonly string[] }[] }[],
   wholeFiles: readonly { path: string; bytes?: Uint8Array }[],
+  candidate: readonly ConfigFileBytes[],
 ): ConstructionScanPart[] {
   const parts: ConstructionScanPart[] = changes.map((change) => ({
     label: change.path,
@@ -1071,6 +1111,10 @@ function scanParts(
   for (const file of wholeFiles) {
     if (file.bytes === undefined) continue
     parts.push({ label: file.path, text: utf8Decode(file.bytes) })
+  }
+  for (const member of candidate) {
+    if (member.bytes === undefined) continue
+    parts.push({ label: member.path, text: utf8Decode(member.bytes) })
   }
   return parts
 }
