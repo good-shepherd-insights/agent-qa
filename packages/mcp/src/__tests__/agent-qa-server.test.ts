@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { inspect } from 'node:util'
 import {
   ENTITY_ID_TYPES,
   generateCanonicalId,
@@ -571,6 +572,51 @@ describe('agent-qa MCP schema references', () => {
       vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js')
       vi.doUnmock('@modelcontextprotocol/sdk/server/mcp.js')
       vi.resetModules()
+    }
+  })
+})
+
+// THE MCP SURFACE'S MEMBER OF THE YAML PRETTY-PRINT CLASS (395-18 · F-01, Task 2's enumeration).
+//
+// `readConfig` handed `parseYaml` the person's committed `agent-qa.config.yaml` with no catch, so
+// the `yaml` package's pretty-printed throw — a verbatim excerpt of the file around the fault, with
+// a caret — became `agent_qa_get_config`'s error text. That text is not read at a terminal: it is
+// appended to a model's context and sent to whichever provider serves the turn. The same mechanism
+// was closed on `agent-qa validate` (395-14/16/18), `config show` (395-16) and `run --suite`
+// (395-18); this is the surface where it travels furthest.
+describe('a config the MCP surface cannot parse names WHERE, never WHAT (395-18)', () => {
+  const PLANTED_MCP_CREDENTIAL = 'sk-ant-api03-395eighteenMCPFIXTUREONLYnotarealkey'
+
+  it('(M1) agent_qa_get_config reports the position and never the file\'s content', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'mcp-config-fault-'))
+    const configPath = join(tempDir, 'agent-qa.config.yaml')
+    // THE ADJACENCY IS THE FIXTURE: a duplicate top-level key whose own line carries the value, so
+    // both the excerpt the library prints and the line it flags hold something recognisable.
+    await writeFile(
+      configPath,
+      'registry:\n  llms: []\n\n# pasted in from the provider dashboard, and again after a bad merge\n'
+      + `apiToken: ${PLANTED_MCP_CREDENTIAL}\napiToken: ${PLANTED_MCP_CREDENTIAL}\n`,
+      'utf-8',
+    )
+
+    try {
+      const server = createAgentQaMcpServer({ configPath })
+      const thrown = await callRegisteredTool(server, 'agent_qa_get_config', { configPath })
+        .then(() => undefined, (err: unknown) => err)
+
+      expect(thrown, 'an unreadable config must still fault the tool').toBeDefined()
+      // THE WHOLE VALUE AS A PRINTER READS IT, not just `.message` — the SDK renders a thrown
+      // handler's message into the tool result, and every logger in the path walks the cause chain
+      // (395-16 · D-395-16-A).
+      const serialized = inspect(thrown, { depth: null })
+      expect(
+        serialized.split(PLANTED_MCP_CREDENTIAL).length - 1,
+        `the tool's error carried the planted credential: ${serialized}`,
+      ).toBe(0)
+      expect(serialized).toMatch(/not readable as YAML at line \d+, column \d+/)
+      expect(serialized).toContain('agent-qa.config.yaml')
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
     }
   })
 })

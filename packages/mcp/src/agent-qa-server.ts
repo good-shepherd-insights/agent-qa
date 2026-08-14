@@ -11,6 +11,7 @@ import {
   getAgentQaVersion,
   redactAuthStateValue,
   resolveAnalyticsStandardProperties,
+  yamlParseFailureMessage,
   type AnalyticsEventProperties,
   type AnalyticsService,
   type AnalyticsServiceConfig,
@@ -372,7 +373,24 @@ async function readConfig(configPath?: string): Promise<{
 }> {
   const path = resolve(configPath ?? 'agent-qa.config.yaml')
   const content = await readFile(path, 'utf-8')
-  const raw = parseYaml(content) ?? {}
+
+  let raw: unknown
+  try {
+    raw = parseYaml(content) ?? {}
+  } catch (err) {
+    // WHERE, NEVER WHAT — the MCP surface (395-18, found by Task 2's enumeration).
+    // This call was unguarded, so a duplicate key in `agent-qa.config.yaml` threw the yaml
+    // library's pretty-printed excerpt out of `agent_qa_get_config`'s handler, and the SDK renders
+    // a thrown handler's `.message` as the tool's error text. That text is not read by a person at
+    // a terminal — it is appended to a MODEL's context and sent to whichever provider is serving
+    // the turn. Of every consumer of this one file, this is the one where republishing its bytes
+    // travels furthest.
+    //
+    // The masking below (`maskSensitive`) cannot help here: it walks a PARSED config, and there is
+    // no parsed config on this arm.
+    throw new Error(`${path}: ${yamlParseFailureMessage(err)}`)
+  }
+
   const validation = AgentQaConfigSchema.safeParse(raw)
   const record = raw && typeof raw === 'object' && !Array.isArray(raw)
     ? raw as Record<string, unknown>

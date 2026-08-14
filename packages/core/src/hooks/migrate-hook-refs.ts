@@ -4,6 +4,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { z } from 'zod'
 import { generateHookId, isCanonicalHookId } from '@vostride/agent-qa-ids'
 import { AgentQaConfigSchema } from '../schema/config-schema.js'
+import { yamlParseFailureMessage } from '../validation/yaml-fault.js'
 import { discoverWorkspaceFiles, resolveWorkspacePaths } from '../workspace/workspace-paths.js'
 import type { HookRuntime } from '@vostride/agent-qa-runner'
 
@@ -202,7 +203,22 @@ async function resolveWorkspaceMigrationContext(
 ): Promise<WorkspaceMigrationContext> {
   const resolvedConfigPath = configPath ? resolve(configPath) : resolve(workspaceDir, 'agent-qa.config.yaml')
   const rawConfig = await readFile(resolvedConfigPath, 'utf-8')
-  const parsedConfig = parseYaml(rawConfig)
+
+  let parsedConfig: unknown
+  try {
+    parsedConfig = parseYaml(rawConfig)
+  } catch (error) {
+    // WHERE, NEVER WHAT — the audit's config arm (395-18, found by Task 2's enumeration).
+    // This call was unguarded and its throw is caught one frame up by
+    // `auditWorkspaceHookReferenceMigration`, which put `(error as Error).message` — the library's
+    // pretty excerpt of the person's own config — into the audit's `errors[]`. The audit has no
+    // in-repo caller today, which is precisely why nothing had measured it: an exported core API
+    // that nobody drives is where this class goes to survive a round.
+    throw new HookReferenceMigrationError([
+      `${resolvedConfigPath}: ${yamlParseFailureMessage(error)}`,
+    ])
+  }
+
   const configResult = AgentQaConfigSchema.safeParse(parsedConfig)
 
   if (!configResult.success) {
@@ -251,13 +267,29 @@ export async function auditWorkspaceHookReferenceMigration(
     }
   }
 
-  let parsedHooksFile: unknown
+  // READ AND PARSE ARE SEPARATE ARMS (395-18). They shared one catch, so one message had to serve
+  // an ENOENT and a yaml fault at once — and composing THAT through the position primitive would
+  // have turned a filesystem fact into `not readable as YAML (position unavailable)`, reporting a
+  // parse position for a file that was never parsed (395-14 · E1b).
+  let rawHooksFile: string
   try {
-    parsedHooksFile = parseYaml(await readFile(context.hooksFilePath, 'utf-8'))
+    rawHooksFile = await readFile(context.hooksFilePath, 'utf-8')
   } catch (error) {
     return {
       ok: false,
       errors: [`${context.hooksFilePath}: ${(error as Error).message}`],
+      rewriteFiles: [],
+      cleanupTargets: [],
+    }
+  }
+
+  let parsedHooksFile: unknown
+  try {
+    parsedHooksFile = parseYaml(rawHooksFile)
+  } catch (error) {
+    return {
+      ok: false,
+      errors: [`${context.hooksFilePath}: ${yamlParseFailureMessage(error)}`],
       rewriteFiles: [],
       cleanupTargets: [],
     }
@@ -312,11 +344,20 @@ export async function auditWorkspaceHookReferenceMigration(
   for (const relativePath of context.targetFiles) {
     const absolutePath = resolve(context.configDir, relativePath)
 
-    let parsedFile: unknown
+    // The same two arms as the hooks file above, for the same reason (395-18).
+    let rawFile: string
     try {
-      parsedFile = parseYaml(await readFile(absolutePath, 'utf-8'))
+      rawFile = await readFile(absolutePath, 'utf-8')
     } catch (error) {
       errors.push(`${relativePath}: ${(error as Error).message}`)
+      continue
+    }
+
+    let parsedFile: unknown
+    try {
+      parsedFile = parseYaml(rawFile)
+    } catch (error) {
+      errors.push(`${relativePath}: ${yamlParseFailureMessage(error)}`)
       continue
     }
 

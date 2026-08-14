@@ -59,6 +59,7 @@ import { inspect } from 'node:util'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
+  auditWorkspaceHookReferenceMigration,
   formatDiagnostics,
   parseTestFile,
   resolveWorkspacePaths,
@@ -204,6 +205,9 @@ const PLANTED_SUITE_CREDENTIAL = 'sk-ant-api03-395sixteenSUITEFIXTUREONLYnotarea
  */
 const PLANTED_TEST_CREDENTIAL = 'sk-ant-api03-395eighteenTESTFIXTUREONLYnotarealkey'
 
+/** The fifth: `agent-qa.local.yaml`, the file `loadLocalBindings` reads (395-18 · V4). */
+const PLANTED_LOCAL_CREDENTIAL = 'sk-ant-api03-395eighteenLOCALFIXTUREONLYnotarealkey'
+
 /** The same adjacency mechanism as the config fixture, one file class over. */
 const FAULTY_HOOKS = `hooks:
   - id: 01JQZ0000000000000000LOGIN
@@ -251,6 +255,29 @@ steps:
 # pasted in from the provider dashboard, and again after a bad merge
 apiToken: ${PLANTED_TEST_CREDENTIAL}
 apiToken: ${PLANTED_TEST_CREDENTIAL}
+`
+
+/**
+ * `WELL_FORMED_CONFIG` with a device registered, so `agent-qa devices list` gets past
+ * `registry.devices` and reaches `loadLocalBindings` — the road (V4) measures.
+ *
+ * DERIVED from the shipped-schema-accepted body rather than written beside it: a second hand-kept
+ * config is a second thing that can drift out of what the schema accepts, and then the control it
+ * feeds would be measuring the validator.
+ */
+const CONFIG_WITH_DEVICE = WELL_FORMED_CONFIG.replace(
+  'registry:\n  llms:',
+  'registry:\n  devices:\n    handset:\n      transport: local\n      platform: ios\n  llms:',
+)
+
+/** `agent-qa.local.yaml`, the same adjacency mechanism, on the file only this machine has. */
+const FAULTY_LOCAL_BINDINGS = `devices:
+  handset:
+    transport: local
+
+# pasted in from the provider dashboard, and again after a bad merge
+apiToken: ${PLANTED_LOCAL_CREDENTIAL}
+apiToken: ${PLANTED_LOCAL_CREDENTIAL}
 `
 
 /** Write a repo-relative file and COMMIT it — every road here reads a committed tree. */
@@ -669,6 +696,106 @@ describe('the plain-test member reports position-only on BOTH channels (395-18)'
     ).toBe(0)
     expect(first?.message).toMatch(/^not readable as YAML at line \d+, column \d+$/)
   })
+})
+
+// THE REST OF THE CLASS, FOUND BY ENUMERATION RATHER THAN BY THE NEXT VERIFIER (395-18 · Task 2).
+//
+// Task 2's mechanical sweep of every yaml-parse call site in `packages/*/src` turned up three more
+// members of the identical mechanism, two of them reproduced on the shipped binary before a line
+// was changed. They are here rather than in a deferral row because they are `agent-qa`'s own
+// person-visible roads, which is the boundary the plan draws: dashboard surfaces defer (WINDOWS
+// 140), CLI and core surfaces get fixed in the pass that finds them.
+describe('the other person-visible yaml-parse roads report position-only (395-18)', () => {
+  it('(V3) the SHIPPED `agent-qa run --suite` never quotes the suite file back', () => {
+    seedConfig(WELL_FORMED_CONFIG)
+    seedWorkspaceSupportFiles()
+    seedFile('hooks.yaml', 'hooks: []\n')
+    seedFile('tests/ok.yaml', 'name: fine\ntarget: my-app\nsteps:\n  - Click something\n')
+    seedFile('suites/leak.suite.yaml', FAULTY_SUITE)
+
+    // `parseSuiteFile` (core/src/parser/suite-parser.ts:8) handed `parseYaml` the person's bytes
+    // with NO catch at all, and `run.ts:1079` awaits it inside the suite preflight. The throw is
+    // reported as `Framework error: <the library's pretty excerpt>`.
+    const run = spawnSync(process.execPath, [CLI_DIST, 'run', '--suite', 'suites/leak.suite.yaml'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+    })
+    const combined = `${run.stdout ?? ''}${run.stderr ?? ''}`
+
+    expect(
+      occurrences(combined, PLANTED_SUITE_CREDENTIAL),
+      `the command's output carried the planted credential:\n${combined}`,
+    ).toBe(0)
+    expect(combined, `the command's output:\n${combined}`)
+      .toMatch(/not readable as YAML at line \d+, column \d+/)
+    expect(combined, `the command's output:\n${combined}`).toMatch(/leak\.suite\.yaml/)
+  })
+
+  it('(V4) the SHIPPED `agent-qa devices list` never crash-prints agent-qa.local.yaml', () => {
+    // `loadLocalBindings` (cli/src/devices.ts:67) parsed `agent-qa.local.yaml` unguarded, so the
+    // raw `YAMLParseError` left the process through Node's default uncaught printer — the excerpt,
+    // the stack, and the `linePos` object, all of it. The config below names a device so the
+    // command reaches the local-bindings road at all.
+    seedConfig(CONFIG_WITH_DEVICE)
+    seedFile('agent-qa.local.yaml', FAULTY_LOCAL_BINDINGS)
+
+    const run = spawnSync(process.execPath, [CLI_DIST, 'devices', 'list'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' },
+    })
+    const combined = `${run.stdout ?? ''}${run.stderr ?? ''}`
+
+    expect(
+      occurrences(combined, PLANTED_LOCAL_CREDENTIAL),
+      `the command's output carried the planted credential:\n${combined}`,
+    ).toBe(0)
+    expect(combined, `the command's output:\n${combined}`)
+      .toMatch(/not readable as YAML at line \d+, column \d+/)
+    expect(combined, `the command's output:\n${combined}`).toMatch(/agent-qa\.local\.yaml/)
+    // The uncaught printer's own marks. A report is not a crash.
+    expect(combined, `the command's output:\n${combined}`).not.toMatch(/YAMLParseError/)
+    expect(combined, `the command's output:\n${combined}`).not.toMatch(/linePos/)
+  })
+
+  it('(V5) the hook-reference migration audit answers position-only on BOTH of its file arms',
+    async () => {
+      // `auditWorkspaceHookReferenceMigration` is a core export with no in-repo caller today, which
+      // is exactly why it was still interpolating `(error as Error).message`: nothing drove it, so
+      // nothing measured it. Its `errors[]` is the audit's whole answer to a person.
+      seedConfig(faultyConfigText({ credential: true }))
+      seedWorkspaceSupportFiles()
+
+      const onTheConfigArm = await auditWorkspaceHookReferenceMigration({
+        workspaceDir: root,
+        configPath,
+      })
+      expect(onTheConfigArm.ok).toBe(false)
+      const configErrors = (onTheConfigArm as { errors: string[] }).errors.join('\n')
+      expect(
+        occurrences(configErrors, PLANTED_CREDENTIAL),
+        `the audit carried the config credential: ${configErrors}`,
+      ).toBe(0)
+      expect(configErrors).toMatch(/not readable as YAML at line \d+, column \d+/)
+
+      // AND THE HOOKS ARM, a separate catch on a separate file — the sibling-input law applied
+      // inside one function rather than across two.
+      seedConfig(WELL_FORMED_CONFIG)
+      seedFile('hooks.yaml', FAULTY_HOOKS)
+
+      const onTheHooksArm = await auditWorkspaceHookReferenceMigration({
+        workspaceDir: root,
+        configPath,
+      })
+      expect(onTheHooksArm.ok).toBe(false)
+      const hooksErrors = (onTheHooksArm as { errors: string[] }).errors.join('\n')
+      expect(
+        occurrences(hooksErrors, PLANTED_HOOKS_CREDENTIAL),
+        `the audit carried the hooks credential: ${hooksErrors}`,
+      ).toBe(0)
+      expect(hooksErrors).toMatch(/not readable as YAML at line \d+, column \d+/)
+    })
 })
 
 describe('the controls: the guard fires on the FAULT, and on nothing else (395-14)', () => {
