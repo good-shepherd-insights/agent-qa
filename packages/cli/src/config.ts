@@ -6,6 +6,7 @@ import {
   AgentQaConfigSchema,
   loadLLMAuthPlugins,
   resolveKnowledgeRoot,
+  yamlParseFailureMessage,
 } from '@vostride/agent-qa-core'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 
@@ -44,25 +45,68 @@ function parseEnvValue(key: string, value: string): unknown {
   return value
 }
 
+/**
+ * A committed config the parser cannot read, named by WHERE and never by WHAT (395-14 · F-01).
+ *
+ * WHY A NAMED CLASS AND NOT A BARE `Error`. This throw leaves the loader through every config op,
+ * through `resolveConfig`, and — via `refusalMessage` — into a chat turn's answer and its session
+ * jsonl. A caller that wants to recognise the case (F-03's typed-refusal arm, later) needs
+ * something better than a substring match on a sentence; `name` and `configPath` are that. The
+ * message itself carries the path because the surfaces this reaches print a message and nothing
+ * else.
+ *
+ * NO MEMBER INTERPOLATES THE CAUGHT ERROR'S OWN TEXT. `yaml` pretty-prints its parse errors with a
+ * verbatim excerpt of the person's source, which was measured carrying a planted credential out of
+ * three ops. The `cause` keeps the original for a debugger to reach deliberately; nothing composed
+ * here reads it.
+ */
+export class ConfigFileNotYamlError extends Error {
+  readonly configPath: string
+
+  constructor(configPath: string, cause: unknown) {
+    super(`${configPath}: ${yamlParseFailureMessage(cause)}`, { cause })
+    this.name = 'ConfigFileNotYamlError'
+    this.configPath = configPath
+  }
+}
+
+/**
+ * THE READ AND THE PARSE GET SEPARATE CATCHES, and that separation is load-bearing.
+ *
+ * `Config file not found: <path>` is matched verbatim by the live lane's third-arm detection
+ * (`scripts/395-live-from-zero.sh:514`) and folded by `coveringGrantInForce`; a non-ENOENT read
+ * fault (EISDIR, EACCES) is a fact about the filesystem and not about the file's content, and is
+ * rethrown untouched. Only the PARSE throw is reworded — one guard, aimed at one channel.
+ */
 export async function loadConfigFile(configPath: string): Promise<unknown> {
+  let content: string
   try {
-    const content = await readFile(configPath, 'utf-8')
-    return parseYaml(content) ?? {}
+    content = await readFile(configPath, 'utf-8')
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
     throw err
   }
+  try {
+    return parseYaml(content) ?? {}
+  } catch (err: unknown) {
+    throw new ConfigFileNotYamlError(configPath, err)
+  }
 }
 
 export async function loadRequiredConfigFile(configPath: string): Promise<unknown> {
+  let content: string
   try {
-    const content = await readFile(configPath, 'utf-8')
-    return parseYaml(content) ?? {}
+    content = await readFile(configPath, 'utf-8')
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(`Config file not found: ${configPath}`)
     }
     throw err
+  }
+  try {
+    return parseYaml(content) ?? {}
+  } catch (err: unknown) {
+    throw new ConfigFileNotYamlError(configPath, err)
   }
 }
 

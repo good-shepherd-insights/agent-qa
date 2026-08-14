@@ -9,5 +9,6 @@ export {
   VALID_FILENAME_RE,
 } from './validate.js'
 export type { ValidationDiagnostic, ValidationResult } from './validate.js'
+export { yamlParseFailureMessage } from './yaml-fault.js'
 export { formatDiagnostics, formatDiagnosticsPlain } from './formatter.js'
 export { warnIfOutOfBounds } from './coord-bounds.js'

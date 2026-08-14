@@ -91,6 +91,11 @@ import {
   resolveKnowledgeRoot,
   resolveWorkspacePaths,
   workspaceRelativeIdentityPath,
+  // 395-14: the position-only yaml-fault sentence, LIFTED out of this file into core. It was a
+  // private copy here; the cli loader guard and core's own `validateConfig` arm need the same
+  // sentence, and two spellings of one sentence are two things that can drift apart. The bytes this
+  // file emits are unchanged — only the definition moved.
+  yamlParseFailureMessage,
 } from '@vostride/agent-qa-core'
 import type { TestDefinition } from '@vostride/agent-qa-core'
 import type { ApplyDelegate, ApplyReviewResult } from '@vostride/agent-qa-agent-local'
@@ -2705,30 +2710,6 @@ export function createConfigFilesPort(configPath: string): ConfigFilesPortLike {
       )
     },
   }
-}
-
-/**
- * A yaml parse failure as a POSITION, and as nothing else (395-10 · GAP 1 / CR-01).
- *
- * THE ERROR IS NOT A MESSAGE SOURCE HERE. `yaml`'s `YAMLParseError` carries `linePos` — where the
- * parser gave up — beside a `message` that is pretty-printed with a verbatim excerpt of the
- * offending source line and a caret beneath the column. Every other property (`message`, `code`,
- * the object's own stringification) is derived from the person's file content and is therefore not
- * this product's to publish: the string built here is persisted in a blocked record and printed by
- * `proposals show`. So this function reads two NUMBERS and composes a sentence of its own.
- *
- * THE FALLBACK IS VALUE-FREE TOO, and that is the point of having one. A throw with no `linePos` is
- * not a yaml parse error this product recognises, and the tempting repair — fall back to the error's
- * message when the position is missing — would reopen the whole channel for exactly the inputs
- * nobody anticipated.
- */
-function yamlParseFailureMessage(error: unknown): string {
-  const linePos = (error as { linePos?: readonly { line?: unknown; col?: unknown }[] }).linePos
-  const first = Array.isArray(linePos) ? linePos[0] : undefined
-  if (typeof first?.line === 'number' && typeof first.col === 'number') {
-    return `not readable as YAML at line ${first.line}, column ${first.col}`
-  }
-  return 'not readable as YAML (position unavailable)'
 }
 
 /**
