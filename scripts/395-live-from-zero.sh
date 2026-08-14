@@ -60,12 +60,28 @@
 # would make legs 3 and 4 agree. The refusal's precondition being the project — 395-08's load-bearing
 # decision — is therefore measured live, from outside, over three real chat sessions.
 #
-# VERDICTS COME OUT OF THE PERSISTED SESSION JSONL, NEVER OUT OF THE TRANSCRIPT (the 392/394 lesson).
+# VERDICTS COME OUT OF THE PERSISTED SESSION JSONL, NEVER OUT OF THE TRANSCRIPT (the 392/394 lesson)
+# — WITH EXACTLY ONE EXCEPTION, NAMED HERE RATHER THAN DISCOVERED IN A LEG.
 # `.agent-qa/sessions/<id>.jsonl` carries `stage_outcome`, `mark_unhandled` and `turn_complete` rows
 # and the session header's `model` field; those are what every assertion below reads. The transcript
 # is captured for the receipt and is never a verdict input — readline's own re-render of the line
 # being typed spells the same bytes a turn boundary does (394's CR-03), so a transcript read is an
 # instrument this lane declines to build.
+#
+#   THE ONE EXCEPTION — LEG 3's D-14 RENDER CLAIM (395-13). The claim is *the person can read the
+#   proposal at the moment they are asked to approve it*, and its subject is THE PERSON'S SCREEN.
+#   The session jsonl deliberately does not carry it: D-18 makes the log a MAP — which op ran and
+#   how it went — so a render is exactly the thing that log is designed not to hold. Asserting this
+#   clause anywhere else would be asserting a proxy for it. 395-VERIFICATION found the gap by
+#   grepping a transcript for precisely this reason, and scored SC-5 failed on it.
+#
+#   ITS CR-03 BOUND, STATED RATHER THAN IGNORED. Readline re-renders the line being typed, so a
+#   transcript grep for anything a PERSON could have typed is unsound. The two strings this
+#   exception greps are neither: `configure this project for https://agent-qa.test as target
+#   agent-qa-test` is the PROPOSAL's own summary line, composed by `construct.ts` from D-13's
+#   derivation, and `config.proposal.apply` is a function id the gate spells. Nothing this lane
+#   types into stdin contains either. NO OTHER LEG GAINS A TRANSCRIPT READ, and this one reads the
+#   transcript for ONE claim while every other verdict it records still comes out of the jsonl.
 #
 # LOCAL ONLY, AND THE ONE NON-LOCAL-LOOKING NAME IS A NON-RESOLVING RESERVED ONE. P-08 forbids
 # driving automation against a third-party production site. The local demo app at
@@ -453,6 +469,11 @@ fi
 #     predicate, and SC-5's entry point closing again.
 #   * The planner not binding, which would leave this leg unable to tell arm B from arm A.
 #   * The scaffold arm reaching the apply with NO proposal filed, or the refuse arm filing one.
+#   * THE RENDER MISSING FROM THE TRANSCRIPT, or arriving after the gate's own sentence (395-13).
+#     That is D-14's first half — the proposal a person reads AT the moment they are asked — and it
+#     is this lane's one transcript reading, bounded in the posture header above. The reading can
+#     only be taken on the scaffold arm; on the `d15-refuse` arm no proposal exists to render, and
+#     the leg's PASS sentence SAYS the reading was not taken rather than passing it silently.
 
 banner 'LEG 3 — SC-5s serving class: config present so the planner binds, ZERO targets'
 
@@ -502,6 +523,44 @@ else
     'd15-refuse'*) [ "${L3_PROPOSALS:-0}" = '0' ] || L3_PROPOSAL_OK=0 ;;
   esac
 
+  # ----------------------------------------------------------------------------------------------
+  # THE D-14 RENDER READING — this lane's ONE transcript verdict (395-13, the SC-5 closure)
+  # ----------------------------------------------------------------------------------------------
+  #
+  # THE PROPOSAL'S OWN SUMMARY LINE, NOT A SUBSTITUTE FOR IT. `construct.ts` composes
+  # `configure this project for ${baseUrl} as target ${targetName}` and D-13 pins the derivation
+  # from this leg's fixed utterance token `agent-qa.test`, so the string below is the product's own
+  # sentence about THIS proposal — reproduced here rather than read out of the jsonl because the
+  # jsonl carries only `proposed <id>` (D-18's map rule) and the whole claim is what a person SEES.
+  #
+  # AND THE ORDER IS THE CLAIM. The render is written synchronously before the in-turn
+  # `config.proposal.apply` invoke, so there is no timing sensitivity here at all: on the scaffold
+  # arm the summary line MUST appear at a line strictly above the first line naming the verb. A
+  # render that arrived afterwards would be a receipt for a decision already made.
+  L3_SUMMARY_LINE='configure this project for https://agent-qa.test as target agent-qa-test'
+  L3_TRANSCRIPT="$TRANSCRIPTS/leg3-no-targets.txt"
+  L3_RENDER_READING='not-taken'
+  L3_RENDER_LINE=0
+  L3_GATE_LINE=0
+  if [ "$L3_ARM" = 'scaffold-proposed-then-gate-asked' ] && [ -f "$L3_TRANSCRIPT" ]; then
+    L3_RENDER_READING='taken'
+    L3_RENDER_LINE="$(grep -n -m1 -F "$L3_SUMMARY_LINE" "$L3_TRANSCRIPT" | cut -d: -f1)"
+    L3_GATE_LINE="$(grep -n -m1 -F 'config.proposal.apply' "$L3_TRANSCRIPT" | cut -d: -f1)"
+    L3_RENDER_LINE="${L3_RENDER_LINE:-0}"
+    L3_GATE_LINE="${L3_GATE_LINE:-0}"
+    printf '  render    summary line at transcript line %s, `config.proposal.apply` at line %s\n' \
+      "$L3_RENDER_LINE" "$L3_GATE_LINE"
+  fi
+
+  # WHAT THE PASS SENTENCE SAYS ABOUT THIS READING, on either arm. A leg that took no reading and
+  # said nothing would report a green lane for a clause nobody measured — which is the failure mode
+  # this whole ladder is written against.
+  if [ "$L3_RENDER_READING" = 'taken' ]; then
+    L3_RENDER_SENTENCE="D-14's RENDER READING WAS TAKEN THIS RUN (395-13): the proposal's own summary line stands at transcript line $L3_RENDER_LINE, strictly above the first mention of \`config.proposal.apply\` at line $L3_GATE_LINE — so the person at the ask is reading THIS proposal's summary line, file list and true unified diff BEFORE the verb that commits it is invoked. That is SC-5's first clause, measured on the surface it is about."
+  else
+    L3_RENDER_SENTENCE="D-14's RENDER READING WAS NOT TAKEN THIS RUN, and this leg says so rather than passing it silently: arm '$L3_ARM' produces no proposal at all, so there is nothing to render and the transcript cannot carry the clause. The reading is available only on the scaffold arm; re-drive to take it (WINDOWS 131 model nondeterminism)."
+  fi
+
   if [ "$L3_MUTATED" -eq 1 ]; then
     record_leg 'L3 SC-5 serving class' 'RED' \
       "A REFUSED FROM-ZERO TURN CHANGED THE REPOSITORY. commits $P3_BEFORE->$P3_AFTER, config ${P3_DIGEST_BEFORE:0:12}->${P3_DIGEST_AFTER:0:12}. Arm: $L3_ARM. 395-06's 'every config refusal lives above every mutation' has broken, which is a worse finding than any routing change."
@@ -520,9 +579,18 @@ else
   elif [ "$L3_PROPOSAL_OK" -eq 0 ]; then
     record_leg 'L3 SC-5 serving class' 'RED' \
       "arm '$L3_ARM' filed ${L3_PROPOSALS:-0} proposal(s), which that arm does not permit. The scaffold arm must file exactly the proposal it reached the apply with; the D-15 refuse arm must file none, because it refuses above every effect."
+  elif [ "$L3_RENDER_READING" = 'taken' ] && [ "${L3_RENDER_LINE:-0}" = '0' ]; then
+    record_leg 'L3 SC-5 serving class' 'RED' \
+      "THE RENDER REGRESSED — D-14's INLINE RENDER IS GONE FROM THE TURN. The scaffold proposed and the turn reached the gated apply, but the proposal's own summary line ('$L3_SUMMARY_LINE') appears NOWHERE in the transcript a person reads. That is 395-VERIFICATION's SC-5 gap reopening verbatim: a person is asked to approve a configuration change on the strength of a function name. Transcript: $L3_TRANSCRIPT"
+  elif [ "$L3_RENDER_READING" = 'taken' ] && [ "${L3_GATE_LINE:-0}" = '0' ]; then
+    record_leg 'L3 SC-5 serving class' 'RED' \
+      "the turn's own sentence names \`config.proposal.apply\` in the session jsonl but the transcript does not, so this leg cannot ORDER the render against the gate and took no reading. The surface's wording has moved; re-author this assertion against it. Transcript: $L3_TRANSCRIPT"
+  elif [ "$L3_RENDER_READING" = 'taken' ] && [ "$L3_RENDER_LINE" -ge "$L3_GATE_LINE" ]; then
+    record_leg 'L3 SC-5 serving class' 'RED' \
+      "THE RENDER ARRIVES AFTER THE APPLY — approval-time review is broken even though the bytes eventually show. The summary line is at transcript line $L3_RENDER_LINE and \`config.proposal.apply\` is already named at line $L3_GATE_LINE. The owner's 2026-08-14 ruling is that 'reviewable' binds AT APPROVAL TIME; a proposal rendered after the verb that commits it is a receipt, not a review."
   else
     record_leg 'L3 SC-5 serving class' 'PASS' \
-      "RUNG 3 IS OPEN, MEASURED LIVE — 395-12. The planner bound, and in a project that HAS a configuration and declares NO targets the turn reached the scaffold for real. ARM TAKEN THIS RUN: $L3_ARM (proposals filed: ${L3_PROPOSALS:-0}). On the scaffold arm the op MERGED one target entry into the person's own config, answered \`proposed\`, and \`routeWriteTest\` invoked \`config.proposal.apply\` in-turn — reaching the ask, which under this lane's piped stdio has nobody to answer it, so the v48 gate denies by name. That denial is the measurement, and its bound is stated: a person answering YES is measured over the production composition in \`config-scaffold.test.ts\` cells (14)/(14b). Either arm leaves the repository untouched: ZERO commits, a byte-identical config file. The arm split is WINDOWS 131 live — the route reads the tokens of the intent the MODEL emitted."
+      "RUNG 3 IS OPEN, MEASURED LIVE — 395-12. The planner bound, and in a project that HAS a configuration and declares NO targets the turn reached the scaffold for real. ARM TAKEN THIS RUN: $L3_ARM (proposals filed: ${L3_PROPOSALS:-0}). On the scaffold arm the op MERGED one target entry into the person's own config, answered \`proposed\`, and \`routeWriteTest\` invoked \`config.proposal.apply\` in-turn — reaching the ask, which under this lane's piped stdio has nobody to answer it, so the v48 gate denies by name. That denial is the measurement, and its bound is stated: a person answering YES is measured over the production composition in \`config-scaffold.test.ts\` cells (14)/(14b). Either arm leaves the repository untouched: ZERO commits, a byte-identical config file. The arm split is WINDOWS 131 live — the route reads the tokens of the intent the MODEL emitted. $L3_RENDER_SENTENCE"
   fi
 fi
 
