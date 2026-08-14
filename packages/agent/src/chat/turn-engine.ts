@@ -836,7 +836,22 @@ async function runTurnThrough(
       && answer.files !== undefined
       && answer.shownDiff !== undefined
     ) {
-      await engine.present([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
+      // INERT BY CONSTRUCTION, NOT BY LUCK (395-17 · CR-03). D-14 says this port is display-only
+      // and absent-safe; that sentence is a claim about the port's THIRD state too — bound, and
+      // broken — and until this guard it was false there. A surface that could not print is not a
+      // reason to abandon a turn whose proposal is already durable: the gate below still asks, the
+      // turn still finishes, and the session log stays byte-for-byte what a healthy render writes.
+      //
+      // ONE AWAIT COVERS BOTH ARMS of `(text) => void | Promise<void>` — the synchronous throw and
+      // the rejected promise — so no future host binding can distinguish itself by which way its
+      // stream fails. The catch swallows deliberately: a display failure has no receipt to earn and
+      // no decision to influence, and reporting it here would be the port gaining a voice in the
+      // turn through the back door of an error path.
+      try {
+        await engine.present([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
+      } catch {
+        // Nothing. See above: the render is the only thing that failed.
+      }
     }
 
     try {

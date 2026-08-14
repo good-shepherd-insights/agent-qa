@@ -151,6 +151,15 @@ interface Harness {
    * that something with the right shape was.
    */
   readonly answers: { functionId: string; answer: unknown }[]
+  /**
+   * The session events THIS run wrote, live (395-17).
+   *
+   * Exposed because the display-only claim has a second half nothing measured: D-14 says a
+   * presentation port shows and never decides, and "never decides" includes the log. The harness
+   * pins a fixed turn id and a counting clock, so two runs of the same road write byte-identical
+   * streams and a cell can compare them whole rather than asserting on a chosen field.
+   */
+  readonly events: ChatSessionEvent[]
   runTurn(input: AgentAskInput): Promise<AgentAskResult>
 }
 
@@ -362,6 +371,15 @@ function harness(options: {
    * assembly.
    */
   readonly noPresent?: boolean
+  /**
+   * Bind a present that FAILS, in whichever of the port type's two arms is named (395-17).
+   *
+   * `(text) => void | Promise<void>` can fail synchronously or by rejecting, and a host binding a
+   * real stream can do either — so the third state of this port (bound, and broken) gets a double
+   * per arm. Both RECORD first: the render was attempted, and that observation must survive the
+   * failure or a cell could not tell a broken surface from one that was never reached.
+   */
+  readonly presentFailure?: 'throws' | 'rejects'
 } = {}): Harness {
   const ordering: string[] = []
   const inputs: { functionId: string; input: unknown }[] = []
@@ -403,11 +421,17 @@ function harness(options: {
     return Promise.resolve({ ok: true })
   }
 
+  // CAPTURED rather than constructed inline, so the stream this run wrote can be read back off the
+  // Harness. Nothing about the binding changes: the same instance is handed to the same dep.
+  const sessionLog = memoryLog()
+
+  const PRESENT_FAILURE_ERROR = 'the pipe closed'
+
   const deps: TurnEngineDeps = {
     table: CHAT_RESOLVER_TABLE,
     split: splitClauses,
     reconcile: deterministicOverrideStrategy,
-    sessionLog: memoryLog(),
+    sessionLog,
     mint: {
       forStage: (_stage: ChatBindingStage, sessionId: string): FunctionCaller =>
         ({ ...PLANNER_CALLER, sessionId }),
@@ -433,6 +457,13 @@ function harness(options: {
       : {
         present: (text: string) => {
           presented.push({ text, orderingAtRender: [...ordering] })
+          // RECORD, THEN FAIL. The attempt is the thing a cell needs to see; a double that failed
+          // before recording would make "bound and broken" indistinguishable from "never reached".
+          if (options.presentFailure === 'throws') throw new Error(PRESENT_FAILURE_ERROR)
+          if (options.presentFailure === 'rejects') {
+            return Promise.reject(new Error(PRESENT_FAILURE_ERROR))
+          }
+          return undefined
         },
       }),
     ...(options.targets === undefined
@@ -446,7 +477,14 @@ function harness(options: {
   }
 
   const engine = createTurnEngine(deps)
-  return { ordering, inputs, presented, answers, runTurn: (input) => engine.runTurn(input) }
+  return {
+    ordering,
+    inputs,
+    presented,
+    answers,
+    events: sessionLog.events,
+    runTurn: (input) => engine.runTurn(input),
+  }
 }
 
 describe('the write_test route is deterministic and narrow (D-15)', () => {
@@ -786,6 +824,65 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
         AUTHORING_DRAFT_WRITE_FUNCTION_ID,
       ])
       expect(scaffoldOp.filed).toHaveLength(1)
+    })
+
+  it('(R14) a present that THROWS decides nothing: the turn completes and the session log is unchanged',
+    async () => {
+      // THE PORT'S THIRD STATE (395-17 · RULING 2 · CR-03). (R12) pins bound-and-healthy, (R13)
+      // pins absent — and nothing measured bound-and-BROKEN, which is the state a real host reaches
+      // the moment its stream is closed under it. 395-VERIFICATION reproduced what happened there:
+      // the exception escaped `routeWriteTest`, whose call site sits in an `else if` CONDITION
+      // outside the dispatch try, so `runTurn` threw — after the proposal was already durable and
+      // before the apply gate was ever offered. A display surface had decided a turn's fate.
+      //
+      // THE CLAIM IS AN EQUALITY, not a survival check: a broken surface must leave the turn
+      // BYTE-IDENTICAL to a healthy one. Two runs of the same road over the same fixture class,
+      // compared on all four families — the result, the invocation ordering, what was filed, and
+      // the session event stream. The events half is the one D-14 asserted and nobody measured
+      // (F-08): the harness pins a fixed turn id and a counting clock, so the two streams are
+      // comparable byte for byte and a swallowed failure that still cost the log a `turn_complete`
+      // would fail right here.
+      const message = 'write a test for booking.com checkout'
+
+      const healthyOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const healthy = harness({ targets: [], realScaffold: healthyOp })
+      const healthyResult = await healthy.runTurn({ message })
+      expect(healthyResult.status).toBe('completed')
+
+      const brokenOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const broken = harness({
+        targets: [], realScaffold: brokenOp, presentFailure: 'throws',
+      })
+      // AWAITED PLAINLY, and that is the assertion. Pre-guard this line is where the cell died:
+      // `runTurn` rejected with `the pipe closed`, and everything below was unreachable.
+      const brokenResult = await broken.runTurn({ message })
+
+      // COMPLETION — the same answer, not merely an answer.
+      expect(brokenResult.status).toBe('completed')
+      expect(brokenResult).toEqual(healthyResult)
+
+      // ORDERING — the apply gate the filed proposal is entitled to, AFTER the scaffold that filed
+      // it. Pre-guard this array stopped at the scaffold id.
+      expect(broken.ordering).toEqual([
+        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
+        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+      ])
+      expect(broken.ordering.indexOf(CONFIG_PROPOSAL_APPLY_FUNCTION_ID))
+        .toBeGreaterThan(broken.ordering.indexOf(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID))
+
+      // FILED ONCE, AND RENDERED ONCE. The render was ATTEMPTED — between the scaffold and the
+      // apply, exactly where (R12) puts it — and it failed. A guard that skipped the call instead
+      // of swallowing its failure would show zero attempts here.
+      expect(brokenOp.filed).toHaveLength(1)
+      expect(broken.presented).toHaveLength(1)
+      expect(broken.presented[0]?.orderingAtRender)
+        .toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
+
+      // EVENTS EQUAL, BYTE FOR BYTE — D-14's other half, finally an assertion. Same clauses, same
+      // receipts, same turn completion, same order.
+      expect(broken.events).toHaveLength(healthy.events.length)
+      expect(JSON.stringify(broken.events)).toBe(JSON.stringify(healthy.events))
     })
 
   it('(R9) does not run at all on a host that binds no vocabulary', async () => {
