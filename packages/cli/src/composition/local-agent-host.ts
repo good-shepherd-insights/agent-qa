@@ -2939,9 +2939,45 @@ export function createScaffoldContentPort(): ConfigScaffoldContentPortLike {
   }
 }
 
-export function createConfigUndoSourcePort(configPath: string): ConfigUndoSourcePortLike {
+/**
+ * git named a file this product does not own — refused whole, by name (395-11 · CR-03).
+ *
+ * A REFUSAL RATHER THAN A FLAG, and the distinction is the whole of why this class exists. The
+ * cross-boundary classifier already reports `out-of-set-path` on a proposal that names such a file,
+ * and a flag forces a person to make an individual decision about it — which is the right answer
+ * when the CONSTRUCTION legitimately reached outside the set, and the wrong one here. There are
+ * exactly two ways a path git listed under a set-scoped pathspec can fail to be a set member:
+ * this port asked its question in the wrong path vocabulary, or the pinned set stopped describing
+ * the project. Neither is something to build a write proposal out of and hand somebody to approve.
+ *
+ * IT NAMES BOTH SIDES. The stray paths say what was answered; the members say what the answer was
+ * checked against — so the person reading it can see which of the two failures they have without
+ * re-deriving the set themselves.
+ */
+export class ConfigUndoSourceOutOfSetError extends Error {
+  constructor(strayPaths: readonly string[], members: readonly string[]) {
+    super(
+      `refusing to build an undo from ${JSON.stringify(strayPaths.join(', '))}: git listed `
+      + 'path(s) that are not members of this project\'s pinned configuration set '
+      + `(${JSON.stringify(members.join(', '))}). Every path in that commit must already be a `
+      + 'member — a path outside it is either a relativity bug in this port or a file agent-qa '
+      + 'does not own, and an undo is refused whole rather than proposed from one.',
+    )
+    this.name = 'ConfigUndoSourceOutOfSetError'
+  }
+}
+
+/**
+ * @param injectedExec - the git seam, defaulted to `spawnSync` exactly as the sibling apply helpers
+ *   default theirs. Production never passes it; it exists so a cell can drive the out-of-set
+ *   refusal above, which no real repository can be made to produce once `--relative` is in place.
+ */
+export function createConfigUndoSourcePort(
+  configPath: string,
+  injectedExec?: GitApplyExec,
+): ConfigUndoSourcePortLike {
   const configDir = dirname(resolve(configPath))
-  const exec = spawnSync as unknown as GitApplyExec
+  const exec = injectedExec ?? (spawnSync as unknown as GitApplyExec)
 
   return {
     async read(): Promise<ConfigUndoSource> {
@@ -2976,8 +3012,24 @@ export function createConfigUndoSourcePort(configPath: string): ConfigUndoSource
       const proposalId = trailer.slice(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: `.length).trim()
       if (proposalId === '') return { kind: 'none' }
 
+      // `--relative` IS WHAT MAKES THE ANSWER THE configDir VOCABULARY BY CONSTRUCTION RATHER THAN
+      // BY LUCK (395-11 · CR-03). git answers `--name-only` in repo-root-relative paths, and every
+      // other participant in this pipeline speaks configDir-relative — the pinned set, the apply's
+      // pathspec, the classifier's `pinnedFileSet`, the freshness digests. Without this flag the two
+      // vocabularies are identical for exactly one layout, the one `agent-qa init` produces, and
+      // differ by a prefix for every other: a config at `sub/dir/` yielded
+      // `sub/dir/agent-qa.config.yaml`, which the construction then read as a NEW file at
+      // `<configDir>/sub/dir/agent-qa.config.yaml` — a whole-file add with no `baseDigest`, whose
+      // absent digest satisfies D-18 vacuously, and whose accept created the nested directory and
+      // committed a duplicate configuration while reverting nothing.
+      //
+      // THE PATHSPEC AND THE `--relative` BASE ARE THE SAME DIRECTORY. `members` are configDir
+      // -relative and this process runs in `configDir`, which is what `--relative` resolves against
+      // when given no explicit value — so the paths that come back are answers about the same
+      // strings the question was asked with. That identity is the invariant; the guard below is it
+      // asserted rather than assumed.
       const touched = runApplyGit(exec, configDir, anchor, [
-        'show', '--name-only', '--format=', commit.trim(), '--', ...members,
+        'show', '--name-only', '--relative', '--format=', commit.trim(), '--', ...members,
       ])
       if (touched.status !== 0) {
         throw new Error(
@@ -2989,13 +3041,29 @@ export function createConfigUndoSourcePort(configPath: string): ConfigUndoSource
         touched.stdout.split('\n').map((line) => line.trim()).filter((line) => line !== ''),
       )].sort()
 
+      // ASSERTED, NOT ASSUMED. The pathspec above already restricts the answer to the pinned set,
+      // so under a correct relativity this loop can never fire — which is precisely the reason to
+      // write it: a silent invariant that holds by an argument is one that stops holding the day
+      // the argument does, and the failure it hid last time was a duplicate config file committed
+      // at a doubled path. See `ConfigUndoSourceOutOfSetError`'s header for why this is a refusal.
+      const stray = paths.filter((path) => !members.includes(path))
+      if (stray.length > 0) throw new ConfigUndoSourceOutOfSetError(stray, members)
+
       return {
         kind: 'found',
         commit: commit.trim(),
         proposalId,
         subject: subject.trim(),
         files: paths.map((path) => {
-          const parentBytes = readBlobBytes(configDir, `${commit.trim()}^:${path}`)
+          // `./` IS NOT COSMETIC — IT IS THE OTHER HALF OF THE SAME RELATIVITY (395-11). In git's
+          // `<rev>:<path>` object syntax a bare path is resolved from the ROOT of the tree and only
+          // a path beginning `./` or `../` is resolved from the current directory. So the moment
+          // the listing above started answering in the configDir vocabulary, reading its blobs
+          // without this prefix would ask for `<repo-root>/agent-qa.config.yaml` — a path that does
+          // not exist on a sub/dir layout — and `readBlobBytes` would answer `undefined`, which
+          // this pipeline reads as "the parent had no such file" and turns into a spurious
+          // `undo-needs-delete` refusal. Both halves are relative to `configDir` or neither is.
+          const parentBytes = readBlobBytes(configDir, `${commit.trim()}^:./${path}`)
           // ABSENT IS "THE PARENT HAD NO SUCH FILE", which is the fact that makes this an
           // undo-needs-delete rather than an empty payload. `git show` distinguishes that from a
           // present EMPTY file by its exit status, which is why the status is what is read.

@@ -42,9 +42,19 @@
 //                        parent` (cell 12 reds), an undo that reached a second write path (every
 //                        undo cell goes through `proposals.accept`), a missing no-agent-commit
 //                        refusal, and an undo-of-undo needing a special case.
+//   (15-17) sub/dir    — 395-11 / CR-03. THE SECOND LAYOUT, and the reason it exists is that until
+//                        it did, every fixture in this file used ONE temp directory as both the git
+//                        root and the config dir, so the two path vocabularies coincided in every
+//                        cell and a port that answered in the wrong one could not be seen. Cell 15
+//                        reds on the shipped `git show --name-only` without `--relative` (files
+//                        carries `sub/dir/agent-qa.config.yaml`, the change renders as an `add`
+//                        with no `baseDigest`, and an accept commits a duplicate at a doubled
+//                        path); cell 16 reds on an undo source that trusts git's answer instead of
+//                        checking it against the pinned set; cell 17 reds on any apply whose
+//                        human-first discipline holds only when configDir IS the repository root.
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -82,6 +92,7 @@ import {
   AGENT_CONFIG_COMMIT_AUTHOR,
   AGENT_CONFIG_PROPOSAL_TRAILER_KEY,
   CONFIG_REPROPOSE_CLI_VERB,
+  ConfigUndoSourceOutOfSetError,
   HUMAN_FIRST_COMMIT_SUBJECT,
   applyConfigProposalAsOneCommit,
   createConfigApplyPort,
@@ -89,6 +100,7 @@ import {
   createConfigUndoSourcePort,
   createConfigValidatePort,
 } from '../local-agent-host.js'
+import type { GitApplyExec } from '../local-agent-host.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
@@ -189,7 +201,42 @@ function storedApplyablePayload(proposalId: string): ConfigProposalApplyableV1 {
   return record.payload
 }
 
-function registryFor() {
+/**
+ * THE SECOND LAYOUT: the git root and the config directory are different directories (395-11).
+ *
+ * Every other fixture in this file is `mkdtemp` + `git init` + a config file at its top, so
+ * `configDir === <git root>` and the configDir-relative vocabulary every port in this phase speaks
+ * is byte-identical to the repo-root-relative vocabulary git answers in. That coincidence is what
+ * hid CR-03 for a whole phase. This helper breaks it by MOVING the seeded config under `sub/dir`
+ * and committing it there, so the two vocabularies differ by a prefix and any port that confuses
+ * them produces a visibly doubled path.
+ *
+ * IT REUSES `root` AS THE GIT ROOT rather than making a second repository, so `git()`, `commitAt`,
+ * `filesIn` and `porcelain` keep answering about the whole repository — which is what lets cell 15
+ * assert that no `sub/dir/sub/dir` path exists ANYWHERE, not just where it looked.
+ */
+function seedSubdirLayout(): void {
+  git('rm', '--quiet', '--cached', '--', 'agent-qa.config.yaml')
+  rmSync(configPath)
+
+  const configDir = join(root, 'sub', 'dir')
+  mkdirSync(configDir, { recursive: true })
+  configPath = join(configDir, 'agent-qa.config.yaml')
+  // The runtime root travels WITH the config, which is where a real project's does.
+  agentQaRoot = join(configDir, '.agent-qa')
+  writeFileSync(configPath, SEEDED_CONFIG)
+  writeFileSync(join(configDir, '.gitignore'), SEEDED_GITIGNORE)
+
+  git('add', '--', 'sub/dir/agent-qa.config.yaml', 'sub/dir/.gitignore')
+  git('commit', '--quiet', '-m', 'seed the configuration in a subdirectory')
+}
+
+/** Every tracked path in the repository, so a cell can say a shape exists NOWHERE. */
+function trackedPaths(): string[] {
+  return git('ls-files').stdout.split('\n').map((line) => line.trim()).filter((l) => l.length > 0)
+}
+
+function registryFor(overrides: Partial<FunctionDeps> = {}) {
   const inbox = createProposalsInbox({
     resolveAgentQaRoot: () => agentQaRoot,
     now: () => Date.now(),
@@ -242,6 +289,9 @@ function registryFor() {
         return Promise.resolve({ proposalId })
       },
     },
+    // 395-11: the ONE seam a cell may replace, spread last and empty for every cell but the
+    // rejected-case one. Every other dependency above stays production's.
+    ...overrides,
   }
 
   return createFunctionRegistry({
@@ -792,5 +842,144 @@ describe('D-07: undo is a proposal, and it rides the one gated write path', () =
     expect(ids.filter((id) => id.endsWith('.apply'))).toEqual(['config.proposal.apply'])
     expect(ids.filter((id) => id.includes('revert'))).toEqual([])
     expect(ids.filter((id) => id === 'config.undo' || id === 'config.undo.apply')).toEqual([])
+  })
+})
+
+describe('the config dir is NOT the repository root (395-11 · CR-03)', () => {
+  it('(15) an undo at sub/dir names the configDir-relative member, modifies it, and restores its bytes', async () => {
+    seedSubdirLayout()
+    const registry = registryFor()
+    const original = Uint8Array.from(readFileSync(configPath))
+
+    await accept(registry, proposedId(await call(
+      registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' },
+    )))
+    const mutated = Uint8Array.from(readFileSync(configPath))
+    expect(mutated).not.toEqual(original)
+
+    const undo = await call(registry, 'config.undo.propose', {})
+    const undoId = proposedId(undo)
+    const payload = storedApplyablePayload(undoId)
+
+    // PRESENCE INTEGRITY BEFORE ABSENCE. `not.toContain` on a field that does not exist, and an
+    // equality against a list nobody populated, both pass under an undo that proposed nothing —
+    // so the two facts that make the assertions below mean something are asserted first.
+    expect(payload.files.length).toBeGreaterThan(0)
+    expect(Array.isArray(payload.crossBoundaryReasons)).toBe(true)
+
+    // THE VOCABULARY. This is the CR-03 assertion: git answers in repo-root-relative paths unless
+    // told otherwise, and every other participant in this pipeline — the pinned set, the apply's
+    // pathspec, the classifier's `pinnedFileSet` — speaks configDir-relative.
+    expect(payload.files.map((file) => file.path)).toEqual(['agent-qa.config.yaml'])
+
+    const change = payload.files.find((file) => file.path === 'agent-qa.config.yaml')
+    if (change === undefined) throw new Error('unreachable — asserted above')
+    // A MODIFY CARRYING A baseDigest, not an ADD. The distinction is D-18's whole freshness
+    // semantics: an ABSENT `baseDigest` means "the apply must find no file there", which is
+    // vacuously true of a path that does not exist — so an undo rendered as an add slides past
+    // the guard that exists to catch exactly a stale write.
+    expect(change.changeKind).toBe('modify')
+    expect(change.baseDigest).toBe(sha256hexBytes(mutated))
+
+    // The classifier's own verdict on the same question, read independently of the path assertion.
+    expect(payload.crossBoundaryReasons).not.toContain('out-of-set-path')
+
+    await accept(registry, undoId)
+
+    // BYTE EQUALITY at the sub/dir layout — the fact an undo that "succeeded" against a phantom
+    // path cannot produce, because it never touched the real file.
+    expect(Uint8Array.from(readFileSync(configPath))).toEqual(original)
+    expect(commitAt('HEAD').author).toBe(AGENT_CONFIG_COMMIT_AUTHOR)
+    expect(commitAt('HEAD').body).toContain(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: ${undoId}`)
+    expect(commitAt('HEAD').subject).toContain('revert agent-qa configuration commit')
+
+    // AND NOTHING AT A DOUBLED PATH, asked of the filesystem AND of the index. The shipped
+    // implementation's accept would `mkdirSync` and commit `sub/dir/sub/dir/agent-qa.config.yaml`,
+    // so this is the assertion that names the damage rather than only its cause.
+    expect(existsSync(join(root, 'sub', 'dir', 'sub'))).toBe(false)
+    expect(trackedPaths().filter((path) => path.includes('sub/dir/sub'))).toEqual([])
+  })
+
+  it('(16) a git answer naming a path OUTSIDE the pinned set is refused by name, and nothing is filed', async () => {
+    seedSubdirLayout()
+
+    // THE EXEC SEAM, DOUBLED FOR ONE ANSWER AND FAITHFUL FOR THE REST. `rev-parse` and `log` are
+    // delegated to the real `spawnSync` against the real repository, so the port reaches its
+    // `show` with a real commit and a real trailer it read for itself; only the file listing is
+    // replaced. A double that answered all three would be measuring the double.
+    //
+    // WHY THIS CELL EXISTS AT ALL: the guard it drives is precondition-guarded, and a guard whose
+    // only cases are ones it ACCEPTS is drawn from inside its own assumption. Cell 15 is the
+    // accepted case. This is the rejected one.
+    const stray = 'packages/cli/src/composition/local-agent-host.ts'
+    const strayExec: GitApplyExec = (file, args, options) => {
+      const real = spawnSync(file, args, options) as unknown as ReturnType<GitApplyExec>
+      if (args[0] !== 'show') return real
+      return { status: 0, signal: null, stdout: `${stray}\n`, stderr: '' }
+    }
+
+    const registry = registryFor({
+      configUndoSource: createConfigUndoSourcePort(configPath, strayExec),
+    })
+
+    await accept(registry, proposedId(await call(
+      registry, 'config.field.set', { path: 'use.timeout.step', value: '45s' },
+    )))
+    const commitsBefore = commitCount()
+    const filedBefore = await invokeFunction(registry, 'proposals.list', {}, HUMAN)
+
+    // REFUSED WHOLE, BY NAME. Not a flag, not a warning on a proposal a person is then asked to
+    // decide about — the construction never happens, because a commit path outside the pinned set
+    // is either a relativity bug or a file this product does not own, and neither is something to
+    // build a write proposal from.
+    await expect(call(registry, 'config.undo.propose', {}))
+      .rejects.toThrow(ConfigUndoSourceOutOfSetError)
+    await expect(call(registry, 'config.undo.propose', {}))
+      .rejects.toThrow(new RegExp(stray.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    // The message names the SET too, so a person reading it can see what the answer was checked
+    // against rather than only that it failed.
+    await expect(call(registry, 'config.undo.propose', {}))
+      .rejects.toThrow(/agent-qa\.config\.yaml/)
+
+    // ZERO DELTA on both stores a refusal could have touched.
+    expect(await invokeFunction(registry, 'proposals.list', {}, HUMAN)).toEqual(filedBefore)
+    expect(commitCount()).toBe(commitsBefore)
+    expect(porcelain()).toEqual([])
+  })
+
+  it('(17) at sub/dir a dirty config file still produces TWO commits — human first, by author and file list', async () => {
+    seedSubdirLayout()
+
+    const humanEdit = SEEDED_CONFIG.replace('test: 90m', 'test: 45m')
+    writeFileSync(configPath, humanEdit)
+
+    const registry = registryFor()
+    const id = proposedId(await call(registry, 'config.field.set', {
+      path: 'use.timeout.step', value: '45s',
+    }))
+    const before = commitCount()
+
+    await accept(registry, id)
+    expect(commitCount()).toBe(before + 2)
+
+    const agent = commitAt('HEAD')
+    const human = commitAt('HEAD~1')
+
+    // ORDER, AUTHORSHIP AND PER-COMMIT FILE LISTS — never a count (the A2 lesson: a count of two
+    // passes under an apply that made two AGENT commits, or made them in the other order).
+    expect(human.subject).toBe(HUMAN_FIRST_COMMIT_SUBJECT)
+    expect(human.author).toBe('A Person <a-person@example.invalid>')
+    expect(human.body).not.toContain(AGENT_CONFIG_PROPOSAL_TRAILER_KEY)
+
+    expect(agent.subject).toBe('config: set use.timeout.step to 45s')
+    expect(agent.author).toBe(AGENT_CONFIG_COMMIT_AUTHOR)
+    expect(agent.body).toContain(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: ${id}`)
+
+    // THE FILE LISTS, which is where the layout shows up: git reports them repo-root-relative, so
+    // the member appears ONCE at its real place and never at a doubled one. Both commits are
+    // asserted, so an apply that got the human's commit right and the agent's wrong reds here.
+    expect(filesIn('HEAD~1')).toEqual(['sub/dir/agent-qa.config.yaml'])
+    expect(filesIn('HEAD')).toEqual(['sub/dir/agent-qa.config.yaml'])
+    expect(trackedPaths().filter((path) => path.includes('sub/dir/sub'))).toEqual([])
   })
 })
