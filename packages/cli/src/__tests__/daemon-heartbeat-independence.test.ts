@@ -236,7 +236,11 @@ function spawnContender(
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
     child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
     child.once('error', reject);
-    child.once('exit', (code) => {
+    // 'close', not 'exit': 'exit' can fire while the parent's end of the pipe still has undelivered
+    // bytes, which is the same half-written-document read as the marker torn read — here it would
+    // surface as a spurious "no outcome" rejection. 'close' is the point the writer is provably
+    // done: the process is gone AND both stdio streams have ended.
+    child.once('close', (code) => {
       const line = stdout.split('\n')[0] ?? '';
       if (!stdout.includes('\n')) {
         reject(new Error(`contender exited ${code} with no outcome:\n${stderr}`));
@@ -247,19 +251,44 @@ function spawnContender(
   });
 }
 
-async function waitForFile(
+/**
+ * Wait for a subprocess-written marker to be PARSEABLE, and hand back the parsed value.
+ *
+ * The shape this replaces waited on `existsSync` and then parsed the path in a separate
+ * statement. `writeFileSync` creates the file before it finishes writing it, so the existence
+ * answer arrives while the document may still be empty or half-flushed: the parse that follows
+ * reads a live writer's file and dies with `SyntaxError: Unexpected end of JSON input` under
+ * whole-monorepo parallel load. Success here is a COMPLETED JSON document, never an inode.
+ *
+ * Returning the value is load-bearing. A caller that took only a signal and then re-read the
+ * path would race the same writer a second time; there is exactly one read, and it is the one
+ * that already succeeded.
+ *
+ * Bounds are the old wait's, unchanged: a 25ms tick, a 30s deadline, and an early abort when the
+ * fixture child exits before the file ever becomes readable.
+ */
+async function waitForParseableJson<T>(
   path: string,
   child?: FixtureChild,
   timeoutMs = 30_000,
-): Promise<void> {
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
-  while (!existsSync(path)) {
+  let lastFailure = 'never attempted';
+  for (;;) {
+    try {
+      return JSON.parse(readFileSync(path, 'utf8')) as T;
+    } catch (error) {
+      // Absent, ENOENT between existence and read, or a torn document: all one not-yet state.
+      lastFailure = (error as Error).message;
+    }
     if (child !== undefined && child.process.exitCode !== null) {
       const exited = await child.exit;
       throw new Error(`Fixture exited before writing ${path}:\n${exited.output}`);
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Timed out waiting for fixture file: ${path}`);
+      throw new Error(
+        `Timed out waiting for parseable fixture file: ${path} (last read failure: ${lastFailure})`,
+      );
     }
     await delay(25);
   }
@@ -382,8 +411,8 @@ if (FIXTURE_ROLE === 'beating-holder') {
         });
 
         try {
-          await waitForFile(marker, holder);
-          const holderPid = (JSON.parse(readFileSync(marker, 'utf8')) as { pid: number }).pid;
+          const opened = await waitForParseableJson<{ pid: number }>(marker, holder);
+          const holderPid = opened.pid;
           const initial = leaseOnDisk(root);
           const initialEpochBytes = epochBytes(root);
 
@@ -431,10 +460,10 @@ if (FIXTURE_ROLE === 'beating-holder') {
           // half: had the beat been starved for the held window, the lease would now be TTL-stale
           // and this contender would reclaim it with an epoch bump.
           writeFileSync(permit, 'resume\n', 'utf8');
-          await waitForFile(released, holder);
-          const releasedPayload = JSON.parse(readFileSync(released, 'utf8')) as {
-            heldForMs: number;
-          };
+          const releasedPayload = await waitForParseableJson<{ heldForMs: number }>(
+            released,
+            holder,
+          );
           expect(releasedPayload.heldForMs).toBeGreaterThan(LEASE_HEARTBEAT_TTL_MS);
           expect(readFileSync(join(root, MUTATION_RECORD_FILE), 'utf8')).toBe('mutated\n');
 
@@ -493,8 +522,8 @@ if (FIXTURE_ROLE === 'beating-holder') {
           let wasStopped = false;
 
           try {
-            await waitForFile(marker, holder);
-            const holderPid = (JSON.parse(readFileSync(marker, 'utf8')) as { pid: number }).pid;
+            const opened = await waitForParseableJson<{ pid: number }>(marker, holder);
+            const holderPid = opened.pid;
             const initial = leaseOnDisk(root);
 
             // Whole-process SIGSTOP: the worker thread stops with everything else, so no beat can
