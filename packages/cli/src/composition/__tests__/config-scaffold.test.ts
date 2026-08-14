@@ -81,10 +81,13 @@ import type {
   ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
+import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { parseDocument, parse as parseYaml } from 'yaml'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  CLI_FUNCTION_CALLER,
+  composeCliLocalAgent,
   createConfigApplyPort,
   createConfigFilesPort,
   createConfigUndoSourcePort,
@@ -647,6 +650,156 @@ describe('a configuration with ZERO declared targets is MERGED, never replaced (
     expect(readFileSync(join(root, 'hooks.yaml'), 'utf8')).toBe(SEEDED_HOOKS)
     expect(headFiles()).toEqual(['.gitignore', CONFIG_FILE])
   })
+})
+
+// -------------------------------------------------------------------------------------------
+// THE THIRD ARM: `config.proposal.apply` from a project with NO config file (395-12 · SC-5).
+//
+// THE VERB THE ROUTE ITSELF CALLS, and the only one of CFGM-05's three blocks that was not in
+// WINDOWS at all. 395-VERIFICATION found it by execution: the route invokes `config.proposal.apply`
+// in-turn immediately after the scaffold, and on a zero-config project that verb threw
+// `Config file not found` — so even with the other two blocks removed the sentence could not
+// complete. `proposals accept` reaches the same apply by a different gate path and DID work from
+// zero, which is the asymmetry these cells close.
+//
+// THE PRODUCTION COMPOSITION, NOT `registryFor`. The cells above build a registry by hand and bind
+// no grants port, so the road that failed — `coveringGrantInForce` → `grants.list` →
+// `resolveKnowledgeRoot` → `resolveConfig` — does not exist in them. `composeCliLocalAgent` is the
+// host the CLI runs, and it is what the trace named.
+//
+// WHAT MAKES EACH CELL RED:
+//
+//  (14) apply from zero  — the fault escaping. Pre-fix this threw
+//                          `Config file not found: <root>/agent-qa.config.yaml`, with the stack
+//                          above. Its second half is the ASK: the confirm is a spy and its call
+//                          count is asserted, because "applied" alone cannot tell a gate that
+//                          asked from a fold that skipped the ask arm entirely.
+// (14a) unknown id       — a fold that turned a typed refusal into something else. From zero, an
+//                          id nothing filed must still answer the verb's own not-found refusal.
+// (14b) the NO sibling   — a fold that BYPASSED the ask arm. Same fixture class, a fresh from-zero
+//                          scaffold, the confirm answering NO: the verb must refuse, commit
+//                          nothing, and leave the proposal pending. A bypassed confirm would apply
+//                          and commit despite the NO, so the deny-safe claim is measured by a case
+//                          the folded gate still REJECTS rather than argued in a comment.
+//
+// THE CONFIGURED ROAD IS PINNED ELSEWHERE, BY NAME: `config-grant-enforcement.test.ts` cells
+// (R1)/(R2)/(R3) drive this same verb through this same composition in a CONFIGURED project. Those
+// cells are the two-sided half of this fold and they must stay green beside it.
+// -------------------------------------------------------------------------------------------
+
+/**
+ * Drive one verb through the PRODUCTION composition, interactive, with a SPY confirm.
+ *
+ * IT NEVER RETHROWS, and that is what lets the refusal cells assert the confirm count too: an
+ * exception propagating out of here would take the spy's reading with it, and "the ask was reached"
+ * would become an inference from the refusal's wording rather than a measurement.
+ */
+async function invokeComposed(input: {
+  readonly functionId: string
+  readonly payload: unknown
+  readonly confirmAnswer: boolean
+}): Promise<{
+  readonly answer?: unknown
+  readonly error?: Error
+  readonly confirmCalls: number
+}> {
+  const confirm = vi.fn(() => input.confirmAnswer)
+  const host = composeCliLocalAgent({ agentQaRoot, configPath, confirm })
+  try {
+    const answer = await runSafetyScope({ executionContext: 'local-interactive' }, async () =>
+      await invokeFunction(host.registry, input.functionId, input.payload, CLI_FUNCTION_CALLER))
+    return { answer, confirmCalls: confirm.mock.calls.length }
+  } catch (error) {
+    return { error: error as Error, confirmCalls: confirm.mock.calls.length }
+  } finally {
+    await host.close()
+  }
+}
+
+/** File a real from-zero scaffold proposal through the production composition. */
+async function composedScaffoldId(): Promise<string> {
+  const host = composeCliLocalAgent({ agentQaRoot, configPath })
+  try {
+    return proposedId(await invokeFunction(
+      host.registry, 'config.project.scaffold', { domain: 'booking.com' }, CLI_FUNCTION_CALLER,
+    ) as ConfigProposeOutput)
+  } finally {
+    await host.close()
+  }
+}
+
+describe('config.proposal.apply reaches its own answer from ZERO (395-12 · SC-5\'s third arm)', () => {
+  it('(14) applies a from-zero scaffold as ONE commit, with the confirm OBSERVED asked', async () => {
+    const id = await composedScaffoldId()
+    const before = commitCount()
+
+    // RED PRE-FIX: this line threw `Config file not found: <root>/agent-qa.config.yaml`, from
+    // `loadRequiredConfigFile ← resolveConfig ← resolveKnowledgeRoot ← grants.list ←
+    // coveringGrantInForce ← applyConfigProposalById`.
+    const { answer, error, confirmCalls } = await invokeComposed({
+      functionId: 'config.proposal.apply',
+      payload: { proposalId: id },
+      confirmAnswer: true,
+    })
+    // Named rather than swallowed: a fault here fails with the message it failed with, which is
+    // how the pre-fix RED direction was read off this very cell.
+    expect(error?.message ?? null).toBeNull()
+    expect((answer as { outcome?: string }).outcome).toBe('applied')
+
+    // THE ASK WAS REACHED. Asserted as a call count, because a fold that skipped the ask arm
+    // entirely would also produce `applied` — and would be the elevation this fold must not be.
+    expect(confirmCalls).toBeGreaterThanOrEqual(1)
+
+    expect(commitCount()).toBe(before + 1)
+    expect(headFiles()).toEqual(['.gitignore', CONFIG_FILE, 'hooks.yaml'])
+    expect(git('log', '-1', '--format=%B').stdout).toContain(`Agent-QA-Proposal: ${id}`)
+    // And the project really is configured afterwards — the sentence's far end.
+    const written = parseYaml(readFileSync(configPath, 'utf8')) as {
+      registry?: { targets?: Record<string, { url?: string }> }
+    }
+    expect(written.registry?.targets?.['booking-com']?.url).toBe('https://booking.com')
+  })
+
+  it('(14a) answers the verb\'s own not-found refusal for an unknown id, from zero', async () => {
+    const before = commitCount()
+    const { error } = await invokeComposed({
+      functionId: 'config.proposal.apply',
+      payload: { proposalId: 'prop_00000000-0000-4000-8000-000000000000' },
+      confirmAnswer: true,
+    })
+    // The verb's OWN typed refusal — not the config throw, and not a fold that answered `applied`
+    // for an id nothing filed.
+    expect(error?.message).toContain('no proposal with that id exists')
+    expect(error?.message).not.toContain('Config file not found')
+    expect(commitCount()).toBe(before)
+    expect(existsSync(configPath)).toBe(false)
+  })
+
+  it('(14b) refuses on a NO answer from zero — no commit, and the proposal still pending',
+    async () => {
+      const id = await composedScaffoldId()
+      const before = commitCount()
+
+      const { answer, error, confirmCalls } = await invokeComposed({
+        functionId: 'config.proposal.apply',
+        payload: { proposalId: id },
+        confirmAnswer: false,
+      })
+      expect(answer, 'a NO answer must not apply').toBeUndefined()
+      expect(error?.message).toMatch(/prompted-denied|fail-closed/)
+      // The ask was REACHED and its answer HONOURED. A fold that bypassed the ask arm would have
+      // applied here despite the NO, which is the elevation this pair measures.
+      expect(confirmCalls).toBeGreaterThanOrEqual(1)
+
+      // ZERO COMMITS, no config on disk, and the proposal still in the store — the case the folded
+      // gate still REJECTS, which is what makes the deny-safe claim a measurement.
+      expect(commitCount()).toBe(before)
+      expect(existsSync(configPath)).toBe(false)
+      // `storedApplyable` throws with the record's own summary line if the store no longer holds
+      // an applyable config proposal at that id — so this reads the pending record back off DISK
+      // rather than asserting a field on something this cell built.
+      expect(storedApplyable(id).payloadKind).toBe('applyable')
+    })
 })
 
 describe('the config dir is NOT the repository root (395-11 · CR-03\'s create direction)', () => {

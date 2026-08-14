@@ -126,6 +126,33 @@ export class CrossBoundaryConfigApplyError extends Error {
  * A HOST THAT BINDS NO GRANTS PORT HAS NO LEDGER TO READ, and answers `false`. That is the honest
  * reading — there are no standing approvals on such a host — and it is why the production
  * composition binding both the port and the gate's reader is asserted rather than assumed.
+ *
+ * A HOST THAT CANNOT REACH ITS LEDGER ANSWERS THE SAME, AND IT IS THE SAME SENTENCE (395-12 · the
+ * SC-5 third arm). This was measured, not imagined: on a project with no config file the shipped
+ * CLI's `list()` resolves a knowledge root through `resolveConfig`, which throws `Config file not
+ * found` — `loadRequiredConfigFile ← resolveConfig ← resolveKnowledgeRoot (local-agent-host.ts) ←
+ * grants.list (knowledge-local/grants/operations.ts) ← here ← applyConfigProposalById`. The throw
+ * escaped as a fault from the very verb `routeWriteTest` invokes in-turn immediately after a
+ * from-zero scaffold, so CFGM-05's sentence could not complete even with the route's other two
+ * blocks removed.
+ *
+ * IT MIRRORS THE GATE'S OWN POSTURE, WORD FOR WORD IN SPIRIT (`compose-local-agent.ts:3047`): a
+ * host that cannot resolve a knowledge root has no grant ledger, so "no standing approvals" is the
+ * TRUE answer. The two readers of that one file must not disagree about what an unreachable ledger
+ * means, and folding here is what makes them agree.
+ *
+ * THE DIRECTION IS DENY-SAFE AND THE ARGUMENT IS THE PAIR, not this line alone. `false` here does
+ * not ALLOW anything — it declines to add a SECOND refusal on top of the gate's. The gate's own
+ * reader folds identically, so on such a host no standing approval can satisfy the ask from either
+ * side and the apply necessarily crossed a human confirm. What this fold cannot do is let a grant
+ * authorize a cross-boundary apply, because a ledger nobody can read holds no grant in force for
+ * either reader. It is CAUGHT RATHER THAN SNIFFED because the failure is a host's plain `Error`
+ * one package away; a guard keyed on its message would be a rule drawn from the wording of the
+ * thing it guards, and would stop holding the day that wording changed.
+ *
+ * NOT WIDENED TO THE REPORT SURFACE. `grants.list` the VERB still surfaces the failure, because
+ * "what approvals are in force" is a question a person asks and "none" would be a false answer
+ * where the truth is "I cannot read it". This fold is on the AUTHORIZATION road only.
  */
 async function coveringGrantInForce(
   deps: FunctionDeps,
@@ -133,8 +160,12 @@ async function coveringGrantInForce(
 ): Promise<boolean> {
   const grants = deps.standingGrants
   if (grants === undefined) return false
-  const { grants: active } = await grants.list()
-  return active.some((grant) => grant.actionClass === actionClass)
+  try {
+    const { grants: active } = await grants.list()
+    return active.some((grant) => grant.actionClass === actionClass)
+  } catch {
+    return false
+  }
 }
 
 /**
