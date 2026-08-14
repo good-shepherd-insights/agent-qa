@@ -43,6 +43,14 @@
 //  (Z2) loud on unresolvable — a config that is PRESENT and cannot be resolved is named on the
 //       output, exits non-zero, and never reaches the success sentence. Zero occurrences of the
 //       planted value: the surfaced line carries the thrown message and nothing of the file.
+//  (Z4) the init-side member — the verbs that DO need the declared plugin (`run`, `devices list`)
+//       answer with the package name and the install command instead of Node's require stack. Its
+//       mechanism lives in core's plugin loaders, not in `validate.ts`, so it stays green under
+//       this plan's own mutation leg.
+//  (Z6) the amplifier road, closed — with resolution succeeding in the scaffolded project, the
+//       workspace-match gate answers `validate hooks.yaml` again. That gate's absence is what put
+//       the verifier onto the unhardened arm; its zero-occurrence clause is 395-18's closure and
+//       holds on both sides of the leg.
 //  (Z3) the no-config control — the precondition-guarded case, the state the new posture's guard
 //       must REJECT. Measured before and after the fix: a genuine standalone project with no
 //       config is a refusal today and stays one, and this plan introduces no successful
@@ -84,6 +92,7 @@ const SUCCESS_SENTENCE = 'All files valid'
  */
 const PLANTED_CONFIG_CREDENTIAL = 'sk-ant-api03-395twentyoneCONFIGFIXTUREONLYnotarealkey'
 const PLANTED_TEST_CREDENTIAL = 'sk-ant-api03-395twentyoneTESTFIXTUREONLYnotarealkey'
+const PLANTED_HOOKS_CREDENTIAL = 'sk-ant-api03-395twentyoneHOOKSFIXTUREONLYnotarealkey'
 
 /** The package the default scaffold declares and a fresh project has not installed. */
 const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
@@ -294,6 +303,40 @@ describe('a project the product scaffolds is validated, not attested over an emp
       expect(combined, `the failure still speaks Node's loader dialect (${verb.join(' ')}):\n${combined}`)
         .not.toContain('Cannot find module')
     }
+  }, 180_000)
+
+  it('(Z6) the workspace-match gate is BACK in the init-scaffolded project — the amplifier road is closed', () => {
+    // THE REACHABILITY AMPLIFIER, ON ITS OWN FILE. A swallowed resolution did two things, and only
+    // one of them was the false green: it also left `workspace` undefined, which drops
+    // `validateProject`'s workspace-match gate and sends `validate <any>.yaml` straight down the
+    // explicit-file arm. That is how the verifier came to run `agent-qa validate hooks.yaml` in a
+    // freshly-init'd project and get the hooks credential back verbatim, pre-395-18.
+    //
+    // `hooks.yaml` is the file the verifier drove and it is matched by NEITHER `testMatch` nor
+    // `suiteMatch`, so with resolution succeeding the gate is what answers. The zero-occurrence
+    // clause holds on both sides of leg M-Z1 and is not this plan's closure to claim — it is
+    // 395-18's, measured here on the road where the gate is not backing it up.
+    scaffoldWithShippedInit()
+    writeFileUnder(
+      'hooks.yaml',
+      `${readFileSync(join(root, 'hooks.yaml'), 'utf-8')}
+# pasted in from the provider dashboard, and again after a bad merge
+apiToken: ${PLANTED_HOOKS_CREDENTIAL}
+apiToken: ${PLANTED_HOOKS_CREDENTIAL}
+`,
+    )
+
+    const { status, combined } = runShippedCli('validate', 'hooks.yaml')
+
+    expect(
+      combined,
+      `the workspace-match gate did not answer — the amplifier road is open:\n${combined}`,
+    ).toContain('File is not matched by configured workspace testMatch or suiteMatch patterns')
+    expect(
+      occurrences(combined, PLANTED_HOOKS_CREDENTIAL),
+      `validate republished the hooks file's own bytes:\n${combined}`,
+    ).toBe(0)
+    expect(status, `a refused file is an error exit:\n${combined}`).toBe(1)
   }, 180_000)
 
   it('(Z5) explicit-file validate of a poisoned plain test in an UNRESOLVABLE project renders position-only', () => {
