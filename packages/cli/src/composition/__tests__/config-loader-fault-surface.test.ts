@@ -58,11 +58,16 @@ import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { formatDiagnostics, validateProject, yamlParseFailureMessage } from '@vostride/agent-qa-core'
+import {
+  formatDiagnostics,
+  resolveWorkspacePaths,
+  validateProject,
+  yamlParseFailureMessage,
+} from '@vostride/agent-qa-core'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { loadConfigFile, loadRequiredConfigFile } from '../../config.js'
+import { loadConfigFile, loadRequiredConfigFile, resolveConfig } from '../../config.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
@@ -173,6 +178,84 @@ function seedConfig(text: string): void {
   writeFileSync(configPath, text)
   git('add', '--', CONFIG_FILE)
   git('commit', '--quiet', '-m', 'the project configures itself')
+}
+
+/**
+ * The OTHER members of the file set `enumerateConfigFileSet` pins (395-16 · CR-02 / WINDOWS 139).
+ *
+ * ONE VALUE PER MEMBER, ON PURPOSE. Three distinct planted strings, so a cell that reads the whole
+ * rendered output can say WHICH member leaked rather than only that something did — cross-member
+ * misattribution is visible instead of averaged away. This project's recurring failure mode is a
+ * guard hardened on one member of a set while its sibling leaks (388/390/392); the fixtures below
+ * exist so the set is measured as a set.
+ */
+const PLANTED_HOOKS_CREDENTIAL = 'sk-ant-api03-395sixteenHOOKSFIXTUREONLYnotarealkey'
+const PLANTED_SUITE_CREDENTIAL = 'sk-ant-api03-395sixteenSUITEFIXTUREONLYnotarealkey'
+
+/** The same adjacency mechanism as the config fixture, one file class over. */
+const FAULTY_HOOKS = `hooks:
+  - id: 01JQZ0000000000000000LOGIN
+    name: login
+    runtime: node
+    file: ./scripts/login.js
+    timeout: 30s
+
+# pasted in from the provider dashboard months ago
+apiToken: ${PLANTED_HOOKS_CREDENTIAL}
+hooks:
+  - id: 01JQZ0000000000000000OTHER
+`
+
+const FAULTY_SUITE = `name: checkout
+tests:
+  - tests/a.yaml
+
+# pasted in from the provider dashboard months ago
+apiToken: ${PLANTED_SUITE_CREDENTIAL}
+tests:
+  - tests/b.yaml
+`
+
+/** Write a repo-relative file and COMMIT it — every road here reads a committed tree. */
+function seedFile(relativePath: string, text: string): void {
+  const absolute = join(root, relativePath)
+  mkdirSync(dirname(absolute), { recursive: true })
+  writeFileSync(absolute, text)
+  git('add', '--', relativePath)
+  git('commit', '--quiet', '-m', `the project commits ${relativePath}`)
+}
+
+/**
+ * The files `WELL_FORMED_CONFIG`'s workspace block names, so the workspace road resolves and the
+ * rendering under assertion is the members' own diagnostics rather than a pile of missing-file ones.
+ */
+function seedWorkspaceSupportFiles(): void {
+  writeFileSync(join(root, '.env'), '')
+  writeFileSync(join(root, '.env.secrets.local'), '')
+  mkdirSync(join(root, 'scripts'), { recursive: true })
+  writeFileSync(join(root, 'scripts', 'login.js'), 'console.log("login")\n')
+  mkdirSync(join(root, 'tests'), { recursive: true })
+  git('add', '--', '.env', '.env.secrets.local', 'scripts/login.js')
+  git('commit', '--quiet', '-m', 'the project has the files its config names')
+}
+
+/**
+ * The road `agent-qa validate` actually takes (commands/validate.ts:13-24), reproduced rather than
+ * approximated: resolve the config, resolve the workspace, hand both to `validateProject`, and
+ * RENDER. The string returned is the string the command writes to stdout.
+ */
+async function renderedValidateOutput(
+  overrides: { readonly hooksFile?: string } = {},
+): Promise<string> {
+  let workspace
+  try {
+    const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+    workspace = resolveWorkspacePaths({ config, configPath })
+  } catch {
+    // Exactly as the command does: validateProject reports the config diagnostics itself.
+  }
+  const result = await validateProject({ configPath, workspace, hooksFile: overrides.hooksFile })
+  return formatDiagnostics(result)
 }
 
 /**
@@ -382,6 +465,83 @@ describe('the loader\'s error is clean as a VALUE, and the shipped command repor
       // this assertion and no `.message` cell can reach it.
       expect(combined, `the command's output:\n${combined}`).not.toMatch(/\[cause\]/)
       expect(run.status, `the command should report and exit 1, not crash-exit: ${combined}`).toBe(1)
+    })
+})
+
+// THE FILE SET, MEASURED AS A SET (395-16 · RULING 1 / CR-02 · WINDOWS 139).
+//
+// `enumerateConfigFileSet` pins a SET: the config yaml, the hooks file, and the suite files beside
+// them. 395-14 hardened ONE member and left its siblings interpolating the library's pretty excerpt
+// — this project's documented recurring failure mode, and invisible to cell (F4) because (F4)
+// filters diagnostics to `d.file === configPath`. Every cell here asserts over the WHOLE rendered
+// `formatDiagnostics` output with NO per-file filter, which is the string the command writes to
+// stdout and the surface a person reads.
+describe('every member of the config file set reports position-only (395-16)', () => {
+  it('(H1) a hooks.yaml the parser cannot read renders position-only in the WHOLE output',
+    async () => {
+      // The config member must PARSE, so the road reaches its sibling at all.
+      seedConfig(WELL_FORMED_CONFIG)
+      seedWorkspaceSupportFiles()
+      seedFile('hooks.yaml', FAULTY_HOOKS)
+
+      const rendered = await renderedValidateOutput()
+
+      expect(
+        occurrences(rendered, PLANTED_HOOKS_CREDENTIAL),
+        `the rendered validate output carried the hooks credential:\n${rendered}`,
+      ).toBe(0)
+      expect(rendered, `the rendered validate output:\n${rendered}`)
+        .toMatch(/hooks\.yaml/)
+      expect(rendered, `the rendered validate output:\n${rendered}`)
+        .toMatch(/not readable as YAML at line \d+, column \d+/)
+    })
+
+  it('(H2) BOTH members poisoned at once — one whole-surface assertion over the set', async () => {
+    // THE SHAPE (F4)'s FILTER MADE IMPOSSIBLE. One rendering, every member's diagnostics in it, and
+    // one assertion per planted value. A guard that covers the member it was written for and misses
+    // the one beside it cannot pass this cell by being filtered out of view.
+    //
+    // `hooksFile` is passed EXPLICITLY here, and that is a finding rather than a convenience: when
+    // the config itself is unreadable the command's `resolveConfig` throws, `workspace` stays
+    // undefined, and `validateProject` never reaches the hooks member at all. Driving the set as a
+    // set therefore needs the member named, or the cell would be green on a leak it never provoked.
+    seedConfig(faultyConfigText({ credential: true }))
+    seedWorkspaceSupportFiles()
+    seedFile('hooks.yaml', FAULTY_HOOKS)
+
+    const rendered = await renderedValidateOutput({ hooksFile: join(root, 'hooks.yaml') })
+
+    expect(
+      occurrences(rendered, PLANTED_CREDENTIAL),
+      `the rendered validate output carried the config credential:\n${rendered}`,
+    ).toBe(0)
+    expect(
+      occurrences(rendered, PLANTED_HOOKS_CREDENTIAL),
+      `the rendered validate output carried the hooks credential:\n${rendered}`,
+    ).toBe(0)
+    expect(rendered, `the rendered validate output:\n${rendered}`)
+      .toMatch(/not readable as YAML at line \d+, column \d+/)
+  })
+
+  it('(SU1) a suite file the parser cannot read renders position-only — the third member',
+    async () => {
+      // WINDOWS 139, driven on the road `agent-qa validate` walks: the suite file is DISCOVERED
+      // through the workspace's own suiteMatch glob, not handed in as a path.
+      seedConfig(WELL_FORMED_CONFIG)
+      seedWorkspaceSupportFiles()
+      seedFile('hooks.yaml', 'hooks: []\n')
+      seedFile('suites/leak.suite.yaml', FAULTY_SUITE)
+
+      const rendered = await renderedValidateOutput()
+
+      expect(
+        occurrences(rendered, PLANTED_SUITE_CREDENTIAL),
+        `the rendered validate output carried the suite credential:\n${rendered}`,
+      ).toBe(0)
+      expect(rendered, `the rendered validate output:\n${rendered}`)
+        .toMatch(/leak\.suite\.yaml/)
+      expect(rendered, `the rendered validate output:\n${rendered}`)
+        .toMatch(/not readable as YAML at line \d+, column \d+/)
     })
 })
 
