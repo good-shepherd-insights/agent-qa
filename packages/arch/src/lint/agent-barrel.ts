@@ -339,6 +339,16 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'gatherSuiteStability',
   'invokeFunction',
   'isChatMetaToolName',
+  // 395 plan 20, F-03: the one answer to "is this config entry credential-bearing". It is here on
+  // the same structural footing as the masking helpers above — a total function of (key, value)
+  // returning a boolean, with no dispatch, no host reach and no capability of any kind; it cannot
+  // resolve, gate or run anything. It is PUBLISHED rather than kept private because the CLI
+  // surface must ask it twice, at the render of `config show` and at the write of `config set`,
+  // and the two sides of that contract answering it privately and differently is the defect this
+  // plan closes: the private copy lacked `apitoken`, so the product wrote a credential into the
+  // committed yaml and then printed it back. The alternative was a surface-firewall waiver for a
+  // new cli → safety edge, which that ledger's own first rule forbids.
+  'isCredentialEntry',
   // 392 plan 06: the pure trigger pass (see `createChatCompactionHook` above). A total function of
   // (messages, accounting, turnId, clock) returning a conversation and at most one event — no
   // storage, no dispatch, and no branch that fails to return a conversation.

@@ -205,6 +205,12 @@ export type {
   ConfigValidation,
   ConfigValidationIssue,
 } from './config-mutation/ports.js'
+// 395-20 F-03: the one answer to "is this config entry credential-bearing", exported because the
+// CLI surface asks it twice — once to redact a rendered row, once to refuse a write — and a
+// surface that answered it privately is how the render and the write drifted apart in the first
+// place. The module comment records why the predicate lives in this package rather than beside
+// its callers.
+export { isCredentialEntry } from './config-mutation/credential-entry.js'
 export {
   CONFIG_FIELD_SET_FUNCTION_ID,
 } from './functions/ops/config-field-set.js'

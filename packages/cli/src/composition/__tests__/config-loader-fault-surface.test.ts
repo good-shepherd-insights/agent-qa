@@ -57,7 +57,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { inspect } from 'node:util'
 
-import { invokeFunction } from '@vostride/agent-qa-agent'
+import { invokeFunction, isCredentialEntry } from '@vostride/agent-qa-agent'
 import {
   auditWorkspaceHookReferenceMigration,
   formatDiagnostics,
@@ -69,7 +69,7 @@ import {
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { isCredentialEntry, loadConfigFile, loadRequiredConfigFile, resolveConfig } from '../../config.js'
+import { loadConfigFile, loadRequiredConfigFile, resolveConfig } from '../../config.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
@@ -899,8 +899,10 @@ describe('the ENOENT arms are byte-identical (395-14 · T-395-41)', () => {
 //      The product wrote the credential its own refusal exists to keep out, and then printed it
 //      back.
 //
-// THE CLOSURE IS ONE PREDICATE APPLIED TWICE. `isCredentialEntry` is exported from `config.ts` and
-// imported by BOTH the render (`formatConfigDebug`'s row loop) and the write (`setAction`) — the
+// THE CLOSURE IS ONE PREDICATE APPLIED TWICE. `isCredentialEntry` is exported from ONE place —
+// `@vostride/agent-qa-agent`'s `config-mutation/credential-entry.ts`, which is where the surface
+// firewall allows the value arm to reach the guardrail detectors — and it is imported by BOTH the
+// render (`formatConfigDebug`'s row loop) and the write (`setAction`) — the
 // two-sided contract pin law (388/390/392): a render-side redaction without a write-side refusal,
 // or the reverse, is one-sided hardening and a regression generator. The read and the write of this
 // very surface had already drifted apart exactly that way, which is finding 3.

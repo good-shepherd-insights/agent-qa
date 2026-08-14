@@ -3,10 +3,11 @@ import pc from 'picocolors'
 import { parseDocument, Document } from 'yaml'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
+import { isCredentialEntry } from '@vostride/agent-qa-agent'
+
 import {
   ConfigFileNotYamlError,
   formatConfigDebug,
-  isCredentialEntry,
   loadConfigFile,
   loadEnvOverrides,
   mergeConfigs,
