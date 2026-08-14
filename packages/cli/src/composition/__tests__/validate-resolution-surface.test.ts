@@ -296,6 +296,42 @@ describe('a project the product scaffolds is validated, not attested over an emp
     }
   }, 180_000)
 
+  it('(Z5) explicit-file validate of a poisoned plain test in an UNRESOLVABLE project renders position-only', () => {
+    // THE ROAD THE VERIFIER ACTUALLY DROVE (395-VERIFICATION · CR-02's reachability paragraph).
+    // When the config does not resolve, `workspace` is undefined and `validateProject` takes the
+    // ungated explicit-file arm — no workspace-match refusal, straight into `validateTestFile` ->
+    // `parseTestFile` -> `formatYamlError`. In that exact state the verifier ran
+    // `agent-qa validate hooks.yaml` and got a credential back verbatim.
+    //
+    // THIS CELL IS WHY THIS PLAN DEPENDS ON 395-18, and it is deliberately measuring something this
+    // plan did NOT fix: the closure lives in core's formatter, one layer below `validate.ts`. Leg
+    // M-Z1 tears out this plan's own fix and (Z5) must stay green under it — that is the proof the
+    // two mechanisms are independent rather than one entangled patch.
+    const configText = scaffoldWithShippedInit()
+    makeConfigUnresolvable(configText)
+    writeFileUnder(join('tests', 'z5-poisoned.yaml'), POISONED_TEST)
+    git('add', '--', join('tests', 'z5-poisoned.yaml'))
+    git('commit', '--quiet', '-m', 'the project commits a test file with a pasted credential')
+
+    const { combined } = runShippedCli('validate', join('tests', 'z5-poisoned.yaml'))
+
+    expect(
+      occurrences(combined, PLANTED_TEST_CREDENTIAL),
+      `validate republished the test file's own bytes:\n${combined}`,
+    ).toBe(0)
+    // THE CONFIG'S VALUE TOO. This plan opened a NEW output channel on this exact road — the
+    // captured resolution failure on stderr — and the config in this fixture carries a credential of
+    // its own. A watchdog on the channel this plan added, on the road where it fires.
+    expect(
+      occurrences(combined, PLANTED_CONFIG_CREDENTIAL),
+      `the surfaced resolution failure republished the config's own bytes:\n${combined}`,
+    ).toBe(0)
+    expect(combined, `the fault was not reported by position:\n${combined}`)
+      .toMatch(/line \d+, column \d+/)
+    expect(combined, `the person was not told which file to open:\n${combined}`)
+      .toContain('z5-poisoned.yaml')
+  }, 180_000)
+
   it('(Z3) a project with NO config refuses — the state the guard must reject, before and after', () => {
     // THE PRECONDITION-GUARDED CONTROL (384 · round 4): without a case the new posture's guard
     // REJECTS, every cell here is drawn from inside the rule's own assumption. There is no
