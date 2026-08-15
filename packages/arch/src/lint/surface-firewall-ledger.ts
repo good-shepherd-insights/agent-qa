@@ -405,34 +405,4 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     clearedBy: '386',
     reason: 'working-memory flush wires safety ports by hand; relocates with the run-session composition root',
   },
-  {
-    file: 'packages/mcp/src/agent-qa-server.ts',
-    specifier: '@vostride/agent-qa-core',
-    clearedBy: '396',
-    reason: 'the v1 37-tool MCP server, scheduled for deletion in the SDK re-derivation - ledgered, never fixed',
-  },
-  {
-    file: 'packages/mcp/src/agent-qa-server.ts',
-    specifier: '@vostride/agent-qa-ids',
-    clearedBy: '396',
-    reason: 'the v1 37-tool MCP server, scheduled for deletion in the SDK re-derivation - ledgered, never fixed',
-  },
-  {
-    file: 'packages/mcp/src/schema-reference.ts',
-    specifier: '@vostride/agent-qa-core',
-    clearedBy: '396',
-    reason: 'v1 MCP schema reference tooling, deleted with the v1 server',
-  },
-  {
-    file: 'packages/mcp/src/schema-reference.ts',
-    specifier: '@vostride/agent-qa-ids',
-    clearedBy: '396',
-    reason: 'v1 MCP schema reference tooling, deleted with the v1 server',
-  },
-  {
-    file: 'packages/mcp/src/server.ts',
-    specifier: '@vostride/agent-qa-core',
-    clearedBy: '396',
-    reason: 'v1 MCP server entry, deleted with the v1 server',
-  },
 ]

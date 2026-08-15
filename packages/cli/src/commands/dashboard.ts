@@ -41,7 +41,6 @@ async function startDashboardBackedServices(
     })
 
     const servicesConfig = (config as any).services?.dashboard ?? {}
-    const mcpConfig = (config as any).services?.mcp ?? {}
     const port = opts.port ? parseInt(opts.port, 10) : (servicesConfig.port || 3470)
     const configuredDbPath = opts.db ?? servicesConfig.dbPath
     const artifactsDir = servicesConfig.artifactsDir ?? '.agent-qa/artifacts'
@@ -97,7 +96,6 @@ async function startDashboardBackedServices(
       artifactsDir: resolve(configDir, artifactsDir),
       workspacePaths,
       configPath: configFilePath,
-      mcp: mcpConfig,
       llmConfig: dashboardLLMConfig,
       authFetch,
     })

@@ -20,13 +20,11 @@ import {
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
 import type { DashboardLLMConfig } from '../llm-model-mapping.js'
-import {
-  createLocalMcpHttpHandler,
-  resolveLocalMcpEndpoint,
-  resolveMcpEndpointShape,
-  type LocalMcpEndpointConfig,
-  type LocalMcpTransport,
-} from '@vostride/agent-qa-mcp'
+// 396-01 D-10: the `@vostride/agent-qa-mcp` import is GONE, together with the MCP endpoint this
+// server used to start beside the dashboard. The v2 server is composed per-caller by the CLI's own
+// host (`agent-qa mcp`) over the function registry, so a dashboard that mounted its own copy would
+// be a second composition root for the same surface — the private power the milestone abolishes.
+// M5's dashboard rebuild decides whether it wants a mount back, via `/hono` and its own decision.
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -60,29 +58,18 @@ interface StartServerOptions {
   artifactsDir?: string
   workspacePaths?: ResolvedWorkspacePaths
   configPath?: string
-  mcp?: LocalMcpEndpointConfig
   llmConfig?: DashboardLLMConfig & {
     vision?: { screenshotSize?: number; effectiveResolution?: number }
   }
   authFetch?: typeof globalThis.fetch
 }
 
-interface McpStartupInfo {
-  enabled: boolean
-  transport: LocalMcpTransport
-  host?: string
-  port?: number
-  path?: string
-  url?: string
-}
-
 export async function startServer(opts: StartServerOptions): Promise<{
   server: Server
   port: number
-  mcp: McpStartupInfo
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, mcp, llmConfig, authFetch } = opts
+  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch } = opts
 
   const resolvedConfigPath = configPath ?? resolve('agent-qa.config.yaml')
   const configManager = new ConfigManager(resolvedConfigPath)
@@ -570,38 +557,11 @@ export async function startServer(opts: StartServerOptions): Promise<{
   process.on('SIGTERM', gracefulShutdown)
   process.on('SIGINT', gracefulShutdown)
 
-  const configuredMcp = (mcp ?? (config as any).services?.mcp ?? {}) as LocalMcpEndpointConfig
-  const effectiveMcpConfig = configuredMcp.port === undefined && port === 0
-    ? { ...configuredMcp, port: 0 }
-    : configuredMcp
-  const resolvedMcp = resolveLocalMcpEndpoint(effectiveMcpConfig)
-  let mcpHttpServer: Server | undefined
-  let mcpInfo: McpStartupInfo
-  const captureMcpLifecycle = async (
-    properties: {
-      mcp_server_state: 'started' | 'disabled'
-      mcp_transport: LocalMcpTransport
-      mcp_host_kind?: 'loopback' | 'other'
-      mcp_port_kind?: 'default' | 'custom'
-      mcp_path_kind?: 'default' | 'custom'
-    },
-  ): Promise<void> => {
-    if (isAnalyticsPrivacyEnabled(config)) return
-
-    try {
-      const standardProperties = await resolveAnalyticsStandardProperties({ surface: 'dashboard-server' })
-      await captureAnalytics(buildAnalyticsEvent({
-        name: 'agent-qa.mcp.server.lifecycle',
-        properties: {
-          ...standardProperties,
-          surface: 'dashboard-server',
-          ...properties,
-        },
-      }), { config }).catch(() => {})
-    } catch {
-      // Dashboard MCP lifecycle analytics must not alter startup behavior.
-    }
-  }
+  // 396-01 D-10: the `services.mcp` read, the endpoint resolution, the `node:http` MCP listener and
+  // the `agent-qa.mcp.server.lifecycle` analytics that reported on it all lived here and are gone.
+  // The config KEY itself is deliberately retained in `ServicesSchema` — that object is `.strict()`,
+  // so deleting the key would make every existing project that declares `services.mcp` fail to parse
+  // — see DELETION-INVENTORY.md's dated row for the disposition and its owner.
   const cleanupRuntimeResources = () => {
     jobQueue.stop()
     if (testRunner) {
@@ -613,87 +573,8 @@ export async function startServer(opts: StartServerOptions): Promise<{
     db.close()
   }
 
-  if (!resolvedMcp.enabled) {
-    mcpInfo = {
-      enabled: false,
-      transport: resolvedMcp.transport,
-    }
-    await captureMcpLifecycle({
-      mcp_server_state: 'disabled',
-      mcp_transport: resolvedMcp.transport,
-    })
-    console.log('MCP disabled by services.mcp.enabled: false')
-  } else if (resolvedMcp.transport === 'stdio') {
-    mcpInfo = {
-      enabled: false,
-      transport: 'stdio',
-    }
-    console.log('MCP stdio transport selected; start editor MCP with `agent-qa mcp`')
-  } else {
-    let mcpHttpHandler = createLocalMcpHttpHandler({
-      endpoint: resolvedMcp,
-      dashboardUrl: `http://localhost:${port}`,
-      configPath: resolvedConfigPath,
-      analyticsConfig: config,
-    })
-    mcpHttpServer = createServer((req, res) => {
-      void mcpHttpHandler(req, res)
-    })
-
-    try {
-      await new Promise<void>((resolveMcp, rejectMcp) => {
-        const onError = (err: Error) => {
-          rejectMcp(err)
-        }
-        mcpHttpServer!.once('error', onError)
-        mcpHttpServer!.listen(resolvedMcp.port, resolvedMcp.host, () => {
-          mcpHttpServer!.off('error', onError)
-          resolveMcp()
-        })
-      })
-    } catch (err) {
-      mcpHttpServer.close()
-      cleanupRuntimeResources()
-      const message = err instanceof Error ? err.message : String(err)
-      throw new Error(`Failed to start MCP endpoint at ${resolvedMcp.url}: ${message}`)
-    }
-
-    const mcpAddress = mcpHttpServer.address()
-    const actualMcpPort = typeof mcpAddress === 'object' && mcpAddress
-      ? mcpAddress.port
-      : resolvedMcp.port
-    const actualMcp = resolveLocalMcpEndpoint({
-      ...resolvedMcp,
-      port: actualMcpPort,
-    })
-    if (actualMcpPort !== resolvedMcp.port) {
-      mcpHttpHandler = createLocalMcpHttpHandler({
-        endpoint: actualMcp,
-        dashboardUrl: `http://localhost:${port}`,
-        configPath: resolvedConfigPath,
-        analyticsConfig: config,
-      })
-    }
-
-    mcpInfo = {
-      enabled: true,
-      transport: 'http',
-      host: actualMcp.host,
-      port: actualMcp.port,
-      path: actualMcp.path,
-      url: actualMcp.url,
-    }
-    await captureMcpLifecycle({
-      mcp_server_state: 'started',
-      mcp_transport: 'http',
-      ...resolveMcpEndpointShape(actualMcp),
-    })
-    console.log(`MCP running locally at ${actualMcp.url} (Streamable HTTP, loopback only)`)
-  }
-
   return new Promise((resolve, reject) => {
     const onError = (err: Error) => {
-      mcpHttpServer?.close()
       cleanupRuntimeResources()
       reject(err)
     }
@@ -704,7 +585,6 @@ export async function startServer(opts: StartServerOptions): Promise<{
       resolve({
         server,
         port,
-        mcp: mcpInfo,
         close: () => {
           jobQueue.stop()
           if (testRunner) {
@@ -713,7 +593,6 @@ export async function startServer(opts: StartServerOptions): Promise<{
           releaseAllMobileAppiumLeases('server-close')
           appiumManager.shutdown()
           sessionManager.cleanupAll()
-          mcpHttpServer?.close()
           server.close()
           db.close()
         },
