@@ -245,25 +245,52 @@ export function mergeUseBlocks(
  *
  * ORDERING IS UNCHANGED because the caller sorts: indexed segments are ordinary characters to
  * `Array.prototype.sort`, so rows land deterministically.
+ *
+ * AND AN ALIAS CYCLE IS A BOUNDED MARKER, NOT A CRASH (395-27 · WR-03). YAML anchors make an object
+ * graph, not a tree: `cycle: &anchor\n  child: *anchor` parses to a node that contains itself, this
+ * recursion had no termination condition for it, and the `RangeError` escaped `showAction`'s `try`
+ * (which wraps only the load) into Node's DEFAULT PRINTER — the printer 395-16 exists to keep config
+ * content away from. The object arm always had that exposure; the array arm above widened the input
+ * class that reaches it.
+ *
+ * THE GUARD IS PATH-SCOPED, NOT VISITED-SCOPED, AND THE DIFFERENCE IS THE WHOLE POINT. Remembering
+ * every container ever SEEN cannot tell a cycle from a REPEAT: one anchor referenced twice as
+ * siblings is an ordinary config — it is what anchors are FOR — and a visited-set marks the second
+ * copy circular and blanks a subtree that was never cyclic, which is a correctness regression
+ * wearing a guard's clothes. `ancestors` is the chain from the root to this node's PARENT; it grows
+ * on the way down and is released as the recursion unwinds, so a container is circular exactly when
+ * it contains ITSELF. (W10-control) reds under the visited-set variant and (W10) does not.
  */
-function flattenObject(obj: unknown, prefix = ''): Record<string, unknown> {
+const CIRCULAR_MARKER = '<circular>'
+
+function flattenObject(
+  obj: unknown,
+  prefix = '',
+  ancestors: readonly object[] = [],
+): Record<string, unknown> {
   const result: Record<string, unknown> = {}
   if (typeof obj !== 'object' || obj === null) {
     if (prefix) result[prefix] = obj
     return result
   }
+  // BEFORE EITHER CONTAINER ARM, so a cyclic array terminates on the same rule a cyclic object does.
+  if (ancestors.includes(obj)) {
+    if (prefix) result[prefix] = CIRCULAR_MARKER
+    return result
+  }
+  const path = [...ancestors, obj]
   if (Array.isArray(obj)) {
     if (obj.length === 0) {
       if (prefix) result[prefix] = obj
       return result
     }
     obj.forEach((element, index) => {
-      Object.assign(result, flattenObject(element, `${prefix}[${index}]`))
+      Object.assign(result, flattenObject(element, `${prefix}[${index}]`, path))
     })
     return result
   }
   for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-    Object.assign(result, flattenObject(value, prefix ? `${prefix}.${key}` : key))
+    Object.assign(result, flattenObject(value, prefix ? `${prefix}.${key}` : key, path))
   }
   return result
 }

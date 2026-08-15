@@ -67,9 +67,16 @@ import {
   yamlParseFailureMessage,
 } from '@vostride/agent-qa-core'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
+import { parse as parseYaml } from 'yaml'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { loadConfigFile, loadRequiredConfigFile, resolveConfig } from '../../config.js'
+import {
+  loadConfigFile,
+  loadRequiredConfigFile,
+  mergeConfigs,
+  mergeWithTestConfig,
+  resolveConfig,
+} from '../../config.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
@@ -1538,5 +1545,162 @@ describe('credentials nested in an array subtree (395-23 · F-03-R4a)', () => {
     expect(combined, `a credential-free URL-shaped member was redacted:\n${combined}`)
       .toContain(CONTAINER_CLEAN_URL)
     expect(status, 'config show must stay a success').toBe(0)
+  })
+})
+
+// A YAML ALIAS CYCLE IS BOUNDED OUTPUT, NOT A CRASH (395-27 · WR-03).
+//
+// WHAT THE REVIEWER MEASURED ON THE SHIPPED BINARY, with `cycle: &anchor\n  child: *anchor`:
+//
+//   file:///…/packages/cli/dist/cli.js:193
+//     for (const [key, value] of Object.entries(obj)) {
+//   RangeError: Maximum call stack size exceeded
+//       at flattenObject (file:///…/packages/cli/dist/cli.js:193:37)
+//       at flattenObject (file:///…/packages/cli/dist/cli.js:194:27)
+//       … ~10k frames …
+//   Node.js v24.10.0
+//
+// `flattenObject` has no cycle guard, `showAction`'s `try` wraps only the load, and the `RangeError`
+// therefore escapes into Node's DEFAULT PRINTER — the printer 395-16 exists to keep config content
+// away from. The object arm always had this exposure; 395-23's array arm widened the input class
+// that reaches it, so an alias cycle through a `registry.llms[]` element gets there too.
+//
+// AND THE OBVIOUS FIX IS THE WRONG ONE. A `WeakSet` of every container ever VISITED — the shape the
+// review itself suggested — cannot tell a cycle from a REPEAT. One anchor referenced twice as
+// siblings is an ordinary config a person writes on purpose (it is what YAML anchors are FOR), and
+// a visited-set marks the second copy circular and blanks a subtree that was never cyclic. The
+// guard is therefore scoped to the CURRENT PATH — the chain of ancestors of the node being
+// flattened, released as the recursion unwinds.
+//
+// WHAT MAKES EACH CELL RED:
+//
+//  (W10)         — the guard removed: the RangeError returns and the stack markers count above 0.
+//  (W10-control) — THE DISCRIMINATION CONTROL, and the reason this task is not a one-liner. It
+//                  REDS under the visited-set implementation (leg M-W3) while (W10) stays green,
+//                  which is what makes "path-scoped, not visited-scoped" a measurement instead of
+//                  a sentence in a comment.
+
+/** The bounded marker a cyclic position renders as. */
+const CIRCULAR_MARKER = '<circular>'
+
+/** An ordinary leaf sharing the cyclic container — the bound on how much the guard may swallow. */
+const CYCLE_SIBLING_VALUE = 'cycle-sibling-fixtureonly-395-27'
+
+/**
+ * A REAL object cycle after parsing: the anchor is aliased from INSIDE itself.
+ *
+ * Derived from the shipped-schema-accepted body for `CONTROL_CONFIG`'s reason, and asserted cyclic
+ * BY IDENTITY in the cell below before any behavioural claim rests on it — (K5)'s discipline for a
+ * derived fixture, applied to a structural property instead of a substitution.
+ */
+const CYCLIC_ALIAS_CONFIG = `${WELL_FORMED_CONFIG}
+cycleHolder: &loop
+  child: *loop
+  ordinaryLeaf: ${CYCLE_SIBLING_VALUE}
+`
+
+/** The label both copies of the repeated (NON-cyclic) alias must render verbatim. */
+const REPEATED_ALIAS_LABEL = 'repeated-alias-fixtureonly-395-27'
+
+/**
+ * One anchor, referenced twice as SIBLINGS. Shared object identity, no cycle — the ordinary thing a
+ * person uses a YAML anchor for, and the case a visited-set guard destroys.
+ */
+const REPEATED_ALIAS_CONFIG = `${WELL_FORMED_CONFIG}
+sharedBlock: &shared
+  label: ${REPEATED_ALIAS_LABEL}
+firstUse: *shared
+secondUse: *shared
+`
+
+describe('a cyclic config is bounded output and a repeated one is not (395-27 · WR-03)', () => {
+  it('(W10) an alias CYCLE renders a bounded marker and `config show` completes', () => {
+    // THE FIXTURE IS WHAT IT CLAIMS, ASSERTED BY IDENTITY. A fixture that merely LOOKS cyclic would
+    // make every assertion below a measurement of nothing.
+    const parsed = parseYaml(CYCLIC_ALIAS_CONFIG) as Record<string, Record<string, unknown>>
+    expect(parsed.cycleHolder.child, 'the fixture must contain a REAL object cycle')
+      .toBe(parsed.cycleHolder)
+
+    // AND THE MERGE ABOVE THE FLATTEN IS MEASURED, NOT ASSUMED SAFE. The frozen item is "`config
+    // show` crashes", not "`flattenObject` recurses": if `deepMerge` were where the cyclic input
+    // actually died, a guard in the flatten would close nothing. It survives because `deepMerge`
+    // recurses on the keys of the OVERRIDE, and the show road's overrides are empty — its depth is
+    // bounded by the override's depth and never by the base's.
+    const merged = mergeConfigs(parsed, {}, {})
+    expect((merged as Record<string, Record<string, unknown>>).cycleHolder.child,
+      'the merge must preserve the cycle rather than dying on it or flattening it away')
+      .toBe((merged as Record<string, Record<string, unknown>>).cycleHolder)
+    expect(mergeWithTestConfig(parsed, {}, {}), 'the show road\'s own merge must complete')
+      .toBeTypeOf('object')
+
+    seedConfig(CYCLIC_ALIAS_CONFIG)
+    const cyclic = runShippedCli('config', 'show')
+
+    // THE CRASH IS GONE, ASSERTED AT THE SURFACE A PERSON READS.
+    expect(
+      occurrences(cyclic.combined, 'RangeError'),
+      `config show still crashes on an alias cycle:\n${cyclic.combined}`,
+    ).toBe(0)
+    expect(
+      occurrences(cyclic.combined, 'at flattenObject'),
+      `Node's default printer rendered the recursion:\n${cyclic.combined}`,
+    ).toBe(0)
+    expectNoRawNodeStack(cyclic.combined, '`config show` over a cyclic config')
+
+    // AND IT IS STILL THE COMMAND IT WAS: a table, at the status the healthy road produces.
+    expect(cyclic.combined, `config show printed no table:\n${cyclic.combined}`)
+      .toContain('Resolved Configuration:')
+    expect(
+      cyclic.combined,
+      `the cyclic position did not render a bounded marker:\n${cyclic.combined}`,
+    ).toContain(CIRCULAR_MARKER)
+    expect(cyclic.combined, `the cyclic key lost its row:\n${cyclic.combined}`)
+      .toContain('cycleHolder.child')
+    // THE BOUND IS ON HOW MUCH THE GUARD SWALLOWS, TOO. An ordinary leaf sharing the cyclic
+    // container is not part of the cycle and still renders.
+    expect(cyclic.combined, `the guard blanked a non-cyclic sibling:\n${cyclic.combined}`)
+      .toContain(CYCLE_SIBLING_VALUE)
+    // BOUNDED OUTPUT, MEASURED. The pre-fix reading was a ~10,000-frame stack; a guard that
+    // recursed "a bit less" rather than stopping would pass every assertion above.
+    expect(
+      cyclic.combined.length,
+      `config show produced unbounded output (${cyclic.combined.length} bytes)`,
+    ).toBeLessThan(8_000)
+
+    // EXIT PARITY WITH THE HEALTHY ROAD, MEASURED RATHER THAN ASSUMED — (K5)'s relation.
+    seedConfig(WELL_FORMED_CONFIG)
+    const healthy = runShippedCli('config', 'show')
+    expect(cyclic.status, `the cyclic road must exit as the healthy one does:\n${cyclic.combined}`)
+      .toBe(healthy.status)
+    expect(healthy.status, 'the measured healthy status').toBe(0)
+  })
+
+  it('(W10-control) a REPEATED alias is not a cycle — both copies render VERBATIM', () => {
+    // THE FIXTURE IS SHARED AND NOT CYCLIC, BOTH ASSERTED BY IDENTITY. Shared identity is what
+    // makes a visited-set guard fire here; the absence of a cycle is what makes firing WRONG.
+    const parsed = parseYaml(REPEATED_ALIAS_CONFIG) as Record<string, Record<string, unknown>>
+    expect(parsed.firstUse, 'both uses must be the SAME object — that is what an alias is')
+      .toBe(parsed.secondUse)
+    expect(parsed.sharedBlock, 'and the same object as the anchor').toBe(parsed.firstUse)
+    expect(parsed.sharedBlock.label, 'and it must be an ordinary leaf, not a cycle')
+      .toBe(REPEATED_ALIAS_LABEL)
+
+    seedConfig(REPEATED_ALIAS_CONFIG)
+    const { status, combined } = runShippedCli('config', 'show')
+
+    // THREE ROWS, THREE COPIES OF THE VALUE. Under a visited-set guard this counts 1 and the two
+    // aliased copies come back as markers — a subtree blanked that was never cyclic.
+    expect(
+      occurrences(combined, REPEATED_ALIAS_LABEL),
+      `a repeated (non-cyclic) alias lost a copy — the guard is visited-scoped, not path-scoped:\n${combined}`,
+    ).toBe(3)
+    expect(combined, 'the anchor row').toContain('sharedBlock.label')
+    expect(combined, 'the first alias row').toContain('firstUse.label')
+    expect(combined, 'the second alias row').toContain('secondUse.label')
+    expect(
+      occurrences(combined, CIRCULAR_MARKER),
+      `nothing here is circular and the guard said otherwise:\n${combined}`,
+    ).toBe(0)
+    expect(status, `a repeated alias is an ordinary healthy config:\n${combined}`).toBe(0)
   })
 })
