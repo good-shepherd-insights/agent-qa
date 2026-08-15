@@ -1255,3 +1255,23 @@ export type {
   ScenarioLane,
   SessionLogPort,
 } from './chat/index'
+
+// 396-04 (D-01 / D-16 · MCPS-02): `runs.list`'s named output contract and the three declared fold
+// contracts the MCP catalogue advertises. Published on the barrel because `packages/mcp` is their
+// consumer and it reaches this package only through here.
+export {
+  RunsListOutputSchema,
+  TOOL_FOLD_DISCRIMINANT,
+  AuthoringRefineFoldInputSchema,
+  AuthoringRefineFoldOutputSchema,
+  ConfigChangeFoldInputSchema,
+  ConfigChangeFoldOutputSchema,
+  KnowledgeChangeFoldInputSchema,
+  KnowledgeChangeFoldOutputSchema,
+} from './functions/index'
+export type {
+  RunsListOutput,
+  AuthoringRefineFoldInput,
+  ConfigChangeFoldInput,
+  KnowledgeChangeFoldInput,
+} from './functions/index'

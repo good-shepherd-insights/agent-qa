@@ -1,18 +1,38 @@
-// The per-caller server factory (Phase 396 plan 01, D-01 / D-05 / D-16 · MCPS-02).
+// The per-caller server factory (Phase 396 plans 01 + 04, D-01 / D-02 / D-05 / D-11 / D-13 / D-16).
 //
 // WHY THIS FILE EXISTS. `buildAgentQaMcpServer(deps)` is the only thing this package hands a host:
 // give it a composed registry, the caller that host minted, and a masker, and it returns an
-// `McpServer` carrying exactly the tools that caller may see, each of which does nothing but
-// validate and call `invokeFunction`. Every serving entry in the v2 SDK takes a FACTORY and runs it
-// once per serving unit — once per HTTP request, once per stdio connection — so a per-caller build
-// is the official idiom rather than a trick, and it is what makes absence STRUCTURAL: a tool this
-// caller may not see was never registered on this instance, so there is nothing to leak on a torn
-// filter and nothing to distinguish from a tool that never existed (D-08).
+// `McpServer` carrying exactly the tools and resource templates that caller may see, each of which
+// does nothing but validate and call `invokeFunction`. Every serving entry in the v2 SDK takes a
+// FACTORY and runs it once per serving unit — once per HTTP request, once per stdio connection — so
+// a per-caller build is the official idiom rather than a trick, and it is what makes absence
+// STRUCTURAL: a tool this caller may not see was never registered on this instance, so there is
+// nothing to leak on a torn filter and nothing to distinguish from a tool that never existed (D-08).
 //
-// THE HANDLER DOES NOTHING. That is D-01's "pure projection" spelled as code, and it is the whole
+// THE HANDLERS DO NOTHING. That is D-01's "pure projection" spelled as code, and it is the whole
 // architectural claim of the phase: no MCP-local business logic, no second data path, no reaching
 // past the function layer the way the v1 server reached the dashboard's REST API. Read any handler
 // below and the only verbs are `invokeFunction` and the masker.
+//
+// THREE DISPATCH SHAPES AND NO FOURTH, all of them still nothing but validate-and-invoke:
+//   single   — one op, called with the caller's arguments unchanged.
+//   union    — D-01's fold. The discriminant names the arm, is CHECKED against the tool's declared
+//              op set, is stripped, and the rest goes to that op. The check is T-396-10's mitigation:
+//              a caller cannot smuggle an op this tool does not declare, and even if the advertised
+//              union were wrong, `invokeFunction` re-validates against the op's own contract.
+//   pipeline — D-02's one read door. Two `invokeFunction` calls, the second reached only through the
+//              first's resolved arm. Two calls and not one because that is what the resolve-then-get
+//              contract IS; a single call could not tell an ambiguous reference from a resolved one.
+//
+// NO PROMPTS ARE REGISTERED (D-14). The authoring brief reaches callers as data through the
+// authoring tools, and 398's build-time capability catalog owns discoverability. The SDK's prompt
+// registration verb is therefore named NOWHERE in this file — including in prose, since an
+// acceptance grep counts occurrences of that symbol and requires zero, and a guard a comment can
+// defeat is not a guard (the same discipline `apply-refusal.ts` keeps for the human-origin verb).
+//
+// THE TASK SEAM IS NOT IMPORTED HERE, and that absence is MCPS-06's actual content (D-12): a seam
+// that took the JobQueue contract would make every queue change an MCP change. `task-seam.ts` is
+// published on the barrel for a later consumer and reached by nothing in this build.
 //
 // Protocol grounding: SEP-2567 (no per-connection list variance — the variance here is per CALLER,
 // keyed on the credential the host resolved, which is what the SDK's own `authInfo` factory example
@@ -20,14 +40,23 @@
 // from a shared cache entry), SEP-2106 (full JSON Schema 2020-12 for the advertised contracts).
 
 import { McpServer } from '@modelcontextprotocol/server'
+import type { CallToolResult, InputRequiredResult } from '@modelcontextprotocol/server'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 
-import { AGENT_QA_OP_CONTRACTS, AGENT_QA_TOOL_PROJECTIONS } from './mapping.js'
+import { createApplyToolHandler, summarizeProposalForApply } from './apply-refusal.js'
+import type { ApplyToolCallContext, ApplyToolInput } from './apply-refusal.js'
+import {
+  advertisedContracts,
+  AGENT_QA_OP_CONTRACTS,
+  AGENT_QA_TOOL_PROJECTIONS,
+  compositionOf,
+} from './mapping.js'
 import type { ToolProjection } from './mapping.js'
 import { McpProjectionError, toRegisterToolConfig } from './projection.js'
 import type { ProjectedOpSpec } from './projection.js'
+import { registerEntityResources } from './resources.js'
 import { visibleToCaller } from './visibility.js'
 
 /**
@@ -35,7 +64,7 @@ import { visibleToCaller } from './visibility.js'
  *
  * A constant here and NOT the package version read off disk: reading `package.json` at runtime is a
  * host capability this package does not have and must not acquire (its runtime dependency allow-list
- * is the two protocol packages, D-20). Plan 04 decides whether the host should pass its own version
+ * is the two protocol packages, D-20). Plan 05 decides whether the host should pass its own version
  * in, which is the only place that fact honestly lives.
  */
 export const AGENT_QA_MCP_SERVER_VERSION = '2.0.0'
@@ -60,6 +89,9 @@ export interface AgentQaMcpServerDeps {
    */
   readonly maskText: (text: string) => string
 }
+
+/** The host-bound `(registry, caller)` closure over `invokeFunction`. */
+type BoundInvoke = (opId: string, input: unknown) => Promise<unknown>
 
 /**
  * The scope set a tool needs — for a fold, the UNION across its arms.
@@ -100,6 +132,112 @@ function resolveSpecs(
 }
 
 /**
+ * Read a fold call's arm, refusing anything the tool does not declare (T-396-10).
+ *
+ * The SDK has already validated the arguments against the advertised discriminated union, so this
+ * check is the SECOND reading of the same fact — kept for the reason every other double-check in
+ * this layer is kept: the two readings have independent sources (the composed schema in
+ * `@vostride/agent-qa-schema`, the op list in `mapping.ts`), so a disagreement between them is
+ * exactly the drift worth refusing on rather than dispatching through.
+ */
+function selectFoldArm(
+  projection: ToolProjection,
+  args: unknown,
+): { readonly opId: string; readonly input: Record<string, unknown> } {
+  const key = projection.discriminant!
+  const record = (args ?? {}) as Record<string, unknown>
+  const selected = record[key]
+  if (typeof selected !== 'string' || !projection.ops.includes(selected)) {
+    throw new McpProjectionError(
+      projection.name,
+      `was called with ${key}=${JSON.stringify(selected)}, which is not one of the ops it declares`,
+    )
+  }
+  // The discriminant is WIRE vocabulary and stops here: what crosses the function-layer wall is the
+  // object `invokeFunction` will parse against the op's own `.strict()` contract, which would refuse
+  // the extra key.
+  const { [key]: _arm, ...input } = record
+  return { opId: selected, input }
+}
+
+/** The one arm of an entity resolution that has something further to fetch (D-02). */
+function resolvedCardId(resolution: unknown): string | undefined {
+  if (typeof resolution !== 'object' || resolution === null) return undefined
+  const record = resolution as { kind?: unknown; card?: unknown }
+  if (record.kind !== 'resolved') return undefined
+  const card = record.card as { id?: unknown } | undefined
+  return typeof card?.id === 'string' ? card.id : undefined
+}
+
+/**
+ * Run one projected call and answer what the op answered.
+ *
+ * Every branch is `invokeFunction` and argument shuffling. Nothing computes a result, nothing reads
+ * a store, nothing decides a policy.
+ */
+async function runProjection(
+  projection: ToolProjection,
+  args: unknown,
+  invoke: BoundInvoke,
+): Promise<unknown> {
+  switch (compositionOf(projection)) {
+    case 'single':
+      return invoke(projection.ops[0]!, args)
+    case 'union': {
+      const arm = selectFoldArm(projection, args)
+      return invoke(arm.opId, arm.input)
+    }
+    case 'pipeline': {
+      // D-02's one read door: resolve the reference the caller has, then — and only when the
+      // resolver committed to ONE entity — re-read that entity at its canonical address. The second
+      // read is the never-guess `entities.get`, so what a caller finally holds is the card an exact
+      // address renders rather than the resolver's own rendering of a match.
+      const resolution = await invoke(projection.ops[0]!, args)
+      const id = resolvedCardId(resolution)
+      if (id === undefined) return resolution
+      const card = await invoke(projection.ops[1]!, { ref: id })
+      return { ...(resolution as Record<string, unknown>), card }
+    }
+  }
+}
+
+/**
+ * The one generic tool handler.
+ *
+ * Input validation happened twice before the invoke — once by the SDK against the advertised
+ * schema, once inside `invokeFunction` against the op's own — and both parses are kept, because
+ * they are the same check made by two independent parties.
+ */
+function createProjectionHandler(
+  projection: ToolProjection,
+  invoke: BoundInvoke,
+  maskText: (text: string) => string,
+) {
+  return async (args: unknown): Promise<CallToolResult> => {
+    try {
+      const output = await runProjection(projection, args, invoke)
+      return {
+        content: [{ type: 'text' as const, text: maskText(JSON.stringify(output)) }],
+        structuredContent: output,
+      }
+    } catch (err) {
+      // A refusal is a RESULT, not a transport failure: the caller gets the reason as a tool
+      // error it can read. The message is masked for the reason the whole file exists — an
+      // error string is the channel 395's credential disclosure actually travelled down.
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: maskText(err instanceof Error ? err.message : String(err)),
+          },
+        ],
+        isError: true,
+      }
+    }
+  }
+}
+
+/**
  * Build the server this caller sees.
  *
  * The listing is read through `registry.list(deps.caller)` — the registry's own view of itself for
@@ -109,8 +247,11 @@ function resolveSpecs(
 export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
   const server = new McpServer(
     { name: 'agent-qa', version: AGENT_QA_MCP_SERVER_VERSION },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {} } },
   )
+
+  const invoke: BoundInvoke = (opId, input) =>
+    invokeFunction(deps.registry, opId, input, deps.caller)
 
   const declarations = new Map<string, ProjectedOpSpec>()
   for (const declaration of deps.registry.list(deps.caller)) {
@@ -147,46 +288,52 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
       }
     }
 
+    const advertised = advertisedContracts(projection)
+    if (advertised === undefined) {
+      throw new McpProjectionError(
+        projection.name,
+        'has no advertised contract; a multi-arm tool needs an entry in AGENT_QA_COMPOSED_CONTRACTS',
+      )
+    }
+
     const specs = resolveSpecs(projection, declarations)
     if (specs === undefined) continue
     if (!visibleToCaller(requiredScopeUnion(specs), deps.caller.grantedScopes)) continue
 
     registered.add(projection.name)
-    // 1:1 today by construction: `toRegisterToolConfig` refuses a declared fold above rather than
-    // approximating its contract, so a registered tool always has exactly one arm and the id below
-    // is that arm. Plan 04 replaces this line together with the fold refusal, in one change.
-    const opId = specs[0]!.id
-    server.registerTool(
-      projection.name,
-      toRegisterToolConfig(projection, specs, deps.maskText),
-      async (args: unknown) => {
-        // The ENTIRE handler. Input validation happened twice before this line — once by the SDK
-        // against the advertised schema, once inside `invokeFunction` against the same object — and
-        // both parses are kept, because they are the same check made by two independent parties.
-        try {
-          const output = await invokeFunction(deps.registry, opId, args, deps.caller)
-          const text = deps.maskText(JSON.stringify(output))
-          return {
-            content: [{ type: 'text' as const, text }],
-            structuredContent: output as Record<string, unknown>,
-          }
-        } catch (err) {
-          // A refusal is a RESULT, not a transport failure: the caller gets the reason as a tool
-          // error it can read. The message is masked for the reason the whole file exists — an
-          // error string is the channel 395's credential disclosure actually travelled down.
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: deps.maskText(err instanceof Error ? err.message : String(err)),
-              },
-            ],
-            isError: true,
-          }
-        }
-      },
-    )
+    const config = toRegisterToolConfig(projection, specs, advertised, deps.maskText)
+
+    if (projection.kind === 'apply') {
+      // D-11's refuse-and-teach primitive, bound to THIS family's apply op. One primitive, two
+      // tools: there is no second refusal shape to keep in step and no family-specific branch
+      // anywhere below it. It does not pass through the generic handler above, which is why it
+      // takes its own `maskText` — a handler registered directly is a channel nothing else masks.
+      const applyHandler = createApplyToolHandler({
+        applyOpId: projection.ops[0]!,
+        invoke,
+        summarize: summarizeProposalForApply,
+        maskText: deps.maskText,
+      })
+      server.registerTool(
+        projection.name,
+        config,
+        async (args: unknown, ctx: unknown): Promise<CallToolResult | InputRequiredResult> =>
+          applyHandler(args as ApplyToolInput, ctx as ApplyToolCallContext),
+      )
+      continue
+    }
+
+    server.registerTool(projection.name, config, createProjectionHandler(projection, invoke, deps.maskText))
   }
+
+  // D-13: the six entity Resource Templates, gated by the SAME visibility law and resolving through
+  // the SAME wall. Registered here rather than by the host so a `resource_link` in any tool result
+  // above is dereferenceable on the instance that produced it.
+  registerEntityResources(server, {
+    registry: deps.registry,
+    caller: deps.caller,
+    maskText: deps.maskText,
+  })
 
   return server
 }

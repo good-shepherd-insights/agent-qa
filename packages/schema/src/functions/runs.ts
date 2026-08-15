@@ -82,6 +82,23 @@ export const RunsListInputSchema = z.object({}).strict()
 
 export type RunsListInput = z.infer<typeof RunsListInputSchema>
 
+/**
+ * `runs.list`'s OUTPUT contract, named (2026-08-16, Phase 396 plan 04 · D-16).
+ *
+ * The array used to be composed inline in the op — `output: z.array(RunSummarySchema)` — which is
+ * correct for the op and unusable for anything else, because the composed object existed only
+ * inside that spec literal. D-16's claim is that the schema a surface ADVERTISES and the schema
+ * `invokeFunction` VALIDATES are the same object rather than two derivations of it, and a surface
+ * cannot name an object that was never bound to a name. So it is bound here, beside the element
+ * schema it wraps, and `runs-list.ts` imports it instead of rebuilding it.
+ *
+ * Note what it is NOT: a second contract. `packages/agent`'s spec now names this one, so there is
+ * still exactly one array-of-summaries schema in the system and nothing to keep in step.
+ */
+export const RunsListOutputSchema = z.array(RunSummarySchema)
+
+export type RunsListOutput = z.infer<typeof RunsListOutputSchema>
+
 export const RUN_DETAIL_SCHEMA_VERSION = 1
 
 /**

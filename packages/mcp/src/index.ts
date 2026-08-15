@@ -16,8 +16,23 @@ export type { AgentQaMcpServerDeps } from './catalog.js'
 
 export { createAgentQaMcpNodeHandler } from './http.js'
 
-export { AGENT_QA_OP_CONTRACTS, AGENT_QA_TOOL_PROJECTIONS } from './mapping.js'
-export type { ToolOpContracts, ToolProjection, ToolProjectionKind } from './mapping.js'
+export {
+  advertisedContracts,
+  AGENT_QA_COMPOSED_CONTRACTS,
+  AGENT_QA_OP_CONTRACTS,
+  AGENT_QA_TOOL_PROJECTIONS,
+  compositionOf,
+  DEGRADED_OUTPUT_CONTRACTS,
+  UNPROJECTED_OPS,
+} from './mapping.js'
+export type {
+  OutputSchemaDegradation,
+  ToolComposition,
+  ToolOpContracts,
+  ToolProjection,
+  ToolProjectionKind,
+  UnprojectedOp,
+} from './mapping.js'
 
 export { McpProjectionError, toRegisterToolConfig } from './projection.js'
 export type { ProjectedOpSpec, RegisterToolConfig } from './projection.js'

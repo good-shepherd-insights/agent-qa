@@ -126,3 +126,24 @@ export type {
   AuthoringDraftEditInput,
   AuthoringDraftEditOutput,
 } from './authoring'
+// 396-04 (D-16): `runs.list`'s output contract, named rather than composed inline in the op, so a
+// surface can advertise the same object `invokeFunction` validates with.
+export { RunsListOutputSchema } from './runs'
+export type { RunsListOutput } from './runs'
+// 396-04 (D-01 · MCPS-02): the three declared fold contracts the MCP catalogue advertises. Minted
+// here because they are composed with zod and `packages/mcp` may not name a validator library
+// (D-20); see the module header for why a JSON-Schema-level composition cannot work at all.
+export {
+  TOOL_FOLD_DISCRIMINANT,
+  AuthoringRefineFoldInputSchema,
+  AuthoringRefineFoldOutputSchema,
+  ConfigChangeFoldInputSchema,
+  ConfigChangeFoldOutputSchema,
+  KnowledgeChangeFoldInputSchema,
+  KnowledgeChangeFoldOutputSchema,
+} from './tool-folds'
+export type {
+  AuthoringRefineFoldInput,
+  ConfigChangeFoldInput,
+  KnowledgeChangeFoldInput,
+} from './tool-folds'

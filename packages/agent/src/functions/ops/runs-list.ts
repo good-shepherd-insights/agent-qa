@@ -4,9 +4,8 @@
 // into the schema-owned `RunSummary` projection and imposes a total order so a fixed
 // fixture always renders byte-identically.
 
-import { RunSummarySchema, RunsListInputSchema } from '@vostride/agent-qa-schema'
+import { RunsListInputSchema, RunsListOutputSchema } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, RunSummary, RunsListInput } from '@vostride/agent-qa-schema'
-import { z } from 'zod'
 
 import type { FunctionSpec } from '../spec.js'
 
@@ -31,7 +30,10 @@ export const runsListSpec: FunctionSpec<RunsListInput, RunSummary[]> = {
   requiredScopes: ['read'],
   resultKind: 'unary',
   input: RunsListInputSchema,
-  output: z.array(RunSummarySchema),
+  // 2026-08-16 (396-04, D-16): the NAMED array schema, not `z.array(RunSummarySchema)` composed
+  // here. The two are the same shape; only one of them is an object a surface can also name, and
+  // D-16's whole claim is that the advertised schema and the validated schema are one object.
+  output: RunsListOutputSchema,
   // Read ops declare `readOnly` so the static classifier lands them on the read-only
   // tier — allow in every execution context. The verdict is still computed and audited
   // (D-11): there is no read bypass, only a read classification.

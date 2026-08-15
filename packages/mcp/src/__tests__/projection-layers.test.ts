@@ -12,8 +12,13 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { AGENT_QA_OP_CONTRACTS, AGENT_QA_TOOL_PROJECTIONS } from '../mapping.js'
-import type { ToolProjection } from '../mapping.js'
+import {
+  advertisedContracts,
+  AGENT_QA_OP_CONTRACTS,
+  AGENT_QA_TOOL_PROJECTIONS,
+  compositionOf,
+} from '../mapping.js'
+import type { ToolOpContracts, ToolProjection } from '../mapping.js'
 import { McpProjectionError, toRegisterToolConfig } from '../projection.js'
 import type { ProjectedOpSpec } from '../projection.js'
 import { visibleToCaller } from '../visibility.js'
@@ -67,11 +72,22 @@ describe('visibleToCaller (D-05)', () => {
   })
 })
 
+/**
+ * The contract a 1:1 tool advertises IS its op's, so the fixture reads it back the same way
+ * `catalog.ts` does rather than restating it — a helper that hand-picked the schemas would pass
+ * over a mapping whose join is broken.
+ */
+function advertised(projection: ToolProjection): ToolOpContracts {
+  const contracts = advertisedContracts(projection)
+  if (contracts === undefined) throw new Error(`no advertised contract for ${projection.name}`)
+  return contracts
+}
+
 describe('toRegisterToolConfig (D-16)', () => {
   const identity = (text: string): string => text
 
   it('derives the description from the op summary and advertises the op contracts', () => {
-    const config = toRegisterToolConfig(READ_PROJECTION, [spec()], identity)
+    const config = toRegisterToolConfig(READ_PROJECTION, [spec()], advertised(READ_PROJECTION), identity)
 
     expect(config.title).toBe('agent_qa_list_proposals')
     expect(config.description).toBe(spec().summary)
@@ -83,7 +99,7 @@ describe('toRegisterToolConfig (D-16)', () => {
   })
 
   it('derives readOnlyHint and idempotentHint for a read op', () => {
-    const config = toRegisterToolConfig(READ_PROJECTION, [spec()], identity)
+    const config = toRegisterToolConfig(READ_PROJECTION, [spec()], advertised(READ_PROJECTION), identity)
     expect(config.annotations.readOnlyHint).toBe(true)
     expect(config.annotations.idempotentHint).toBe(true)
     expect(config.annotations.destructiveHint).toBe(false)
@@ -98,9 +114,15 @@ describe('toRegisterToolConfig (D-16)', () => {
       requiredScopes: ['config-write'],
       risk: { name: 'fn:config.field.set', recognized: true, destructive: true },
     })
+    const projection: ToolProjection = {
+      name: 'agent_qa_set_config_field',
+      ops: ['config.field.set'],
+      kind: 'workflow',
+    }
     const config = toRegisterToolConfig(
-      { name: 'agent_qa_set_config_field', ops: ['config.field.set'], kind: 'workflow' },
+      projection,
       [writing],
+      AGENT_QA_OP_CONTRACTS['config.field.set']!,
       identity,
     )
     expect(config.annotations.readOnlyHint).toBe(false)
@@ -117,7 +139,8 @@ describe('toRegisterToolConfig (D-16)', () => {
     const masked = toRegisterToolConfig(
       READ_PROJECTION,
       [spec({ summary: `Lists proposals for ${planted}.` })],
-      (text) => text.split(planted).join('[SECRET_0]'),
+      advertised(READ_PROJECTION),
+      (text: string) => text.split(planted).join('[SECRET_0]'),
     )
 
     for (let at = 0; at + 8 <= planted.length; at += 1) {
@@ -129,19 +152,98 @@ describe('toRegisterToolConfig (D-16)', () => {
   })
 
   it('refuses a projection with no arms', () => {
-    expect(() => toRegisterToolConfig(READ_PROJECTION, [], identity)).toThrow(McpProjectionError)
+    expect(() =>
+      toRegisterToolConfig(READ_PROJECTION, [], advertised(READ_PROJECTION), identity),
+    ).toThrow(McpProjectionError)
   })
 
-  // Refused rather than approximated: shipping the first arm's contract for a fold would advertise
-  // a schema that silently rejects valid calls to every other arm.
-  it('refuses a declared fold instead of approximating its contract', () => {
+  // Plan 01 REFUSED a fold here rather than approximating it; plan 04 composes one, so the refusal
+  // moved to the case that is still dishonest — a tool derived from FEWER arms than it declares.
+  // Shipping that would advertise the union of two arms while dispatching over three, and the
+  // caller who found the missing arm would be told its valid input was invalid.
+  it('refuses a fold derived from a subset of its declared arms', () => {
+    const projection: ToolProjection = {
+      name: 'agent_qa_propose_config_change',
+      ops: ['config.field.set', 'config.hook.add', 'config.auth.set'],
+      kind: 'workflow',
+      discriminant: 'action',
+    }
     expect(() =>
       toRegisterToolConfig(
-        { name: 'agent_qa_propose_config', ops: ['config.field.set', 'config.hook.add'], kind: 'workflow' },
-        [spec(), spec({ id: 'config.hook.add' })],
+        projection,
+        [spec({ id: 'config.field.set' }), spec({ id: 'config.hook.add' })],
+        advertised({ ...projection, name: 'agent_qa_propose_config_change' }),
         identity,
       ),
-    ).toThrow(/declared fold/u)
+    ).toThrow(/declares 3 ops but was derived from 2/u)
+  })
+
+  // THE BAR for the degradation clause: an implementation that advertised the output regardless
+  // would pass every cell above (the read contracts all convert) and red here, because
+  // `RunStartAcknowledgementSchema` is built over a branded run id and its output-mode conversion
+  // throws. Left unhandled, that throw happens inside `tools/list` and takes the LISTING down.
+  it('omits the outputSchema for a declared degradation and says so in the description', () => {
+    const projection: ToolProjection = {
+      name: 'agent_qa_start_run',
+      ops: ['runs.start'],
+      kind: 'workflow',
+    }
+    const config = toRegisterToolConfig(
+      projection,
+      [spec({ id: 'runs.start', requiredScopes: ['run'], risk: { name: 'fn:runs.start', recognized: true } })],
+      advertised(projection),
+      identity,
+    )
+    expect(config.outputSchema).toBeUndefined()
+    expect(config.description).toContain('advertises no outputSchema')
+    expect(config.description).toContain('RunStartAcknowledgementSchema')
+  })
+
+  // The other side of the same two-sided declaration: an entry for a contract that converts fine is
+  // a tool withholding a schema it could publish, so it refuses rather than rots.
+  it('refuses a degradation entry whose contract converts cleanly', () => {
+    const projection: ToolProjection = {
+      name: 'agent_qa_start_run',
+      ops: ['proposals.list'],
+      kind: 'read',
+    }
+    expect(() =>
+      toRegisterToolConfig(
+        projection,
+        [spec()],
+        AGENT_QA_OP_CONTRACTS['proposals.list']!,
+        identity,
+      ),
+    ).toThrow(/converts cleanly in output mode/u)
+  })
+
+  // The undeclared case. This is the cell that stands between a new op contract and a dead
+  // `tools/list`: the failure is named here, at build time, with the tool and the converter's own
+  // message, instead of surfacing as an unattributed exception in a protocol response.
+  it('refuses an undeclared unrepresentable output contract, naming the tool', () => {
+    const projection: ToolProjection = {
+      name: 'agent_qa_list_proposals',
+      ops: ['proposals.list'],
+      kind: 'read',
+    }
+    expect(() =>
+      toRegisterToolConfig(
+        projection,
+        [spec()],
+        AGENT_QA_OP_CONTRACTS['runs.start']!,
+        identity,
+      ),
+    ).toThrow(/agent_qa_list_proposals advertises an output contract JSON Schema cannot represent/u)
+  })
+})
+
+describe('compositionOf — derived, never restated', () => {
+  it('reads single, union and pipeline off the entry', () => {
+    expect(compositionOf({ name: 't', ops: ['a'], kind: 'read' })).toBe('single')
+    expect(compositionOf({ name: 't', ops: ['a', 'b'], kind: 'read' })).toBe('pipeline')
+    expect(
+      compositionOf({ name: 't', ops: ['a', 'b'], kind: 'read', discriminant: 'action' }),
+    ).toBe('union')
   })
 })
 
