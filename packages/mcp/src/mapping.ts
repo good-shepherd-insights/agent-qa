@@ -63,7 +63,7 @@ import {
   TOOL_FOLD_DISCRIMINANT,
 } from '@vostride/agent-qa-schema'
 
-import { APPLY_TOOL_INPUT_SCHEMA } from './apply-refusal.js'
+import { APPLY_TOOL_INPUT_SCHEMA, composeApplyToolOutput } from './apply-refusal.js'
 
 /**
  * What a tool DOES, coarsely — the axis annotations are derived along (`projection.ts`).
@@ -367,13 +367,18 @@ export const AGENT_QA_COMPOSED_CONTRACTS: Readonly<Record<string, ToolOpContract
     input: EntitiesResolveInputSchema,
     output: EntityCardResolutionSchema,
   }),
+  // The apply doors advertise the op's outcome OR the D-11 refusal, on both sides of the call, for
+  // one reason (396-06): `confirmed` and "nothing was applied, here is the call that would" are
+  // both facts about a single-round-trip tool call and about no other caller of the same op. The
+  // union is composed from the op's OWN converted document, so the receipt arm is the op's contract
+  // rather than a copy of it.
   agent_qa_apply_proposal: Object.freeze({
     input: APPLY_TOOL_INPUT_SCHEMA,
-    output: KnowledgeApplyOutcomeSchema,
+    output: composeApplyToolOutput(KnowledgeApplyOutcomeSchema),
   }),
   agent_qa_apply_config_proposal: Object.freeze({
     input: APPLY_TOOL_INPUT_SCHEMA,
-    output: ConfigApplyOutcomeSchema,
+    output: composeApplyToolOutput(ConfigApplyOutcomeSchema),
   }),
 })
 

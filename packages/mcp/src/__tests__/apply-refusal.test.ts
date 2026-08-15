@@ -71,11 +71,13 @@
 //       This leg is why that cell drives one handler TWICE as well as two handlers once: the
 //       two-instance form alone passed M5, because each instance's counter reads 1.
 
+import { CLIENT_CAPABILITIES_META_KEY } from '@modelcontextprotocol/server'
 import { describe, expect, it } from 'vitest'
 import { ProposalsShowOutputSchema } from '@vostride/agent-qa-schema'
 
 import {
   APPLY_CONFIRMATION_REQUEST_KEY,
+  APPLY_REFUSAL_STATUS,
   APPLY_TOOL_INPUT_JSON_SCHEMA,
   APPLY_TOOL_INPUT_SCHEMA,
   PROPOSALS_SHOW_OP_ID,
@@ -173,6 +175,26 @@ function confirmForm(result: Record<string, unknown>): Record<string, unknown> |
   return request?.params
 }
 
+/**
+ * A context whose caller CAN answer an embedded input request (396-06).
+ *
+ * The form is attached only to such a connection, because the SDK refuses to serve an
+ * `input_required` result to one that cannot answer it — and refuses by REPLACING the whole result,
+ * teach included. So every cell below whose subject is the FORM drives a capable caller, and the
+ * cells whose subject is the teach drive both. `CLIENT_CAPABILITIES_META_KEY` is the SDK's own
+ * envelope key rather than a string typed here, so this fixture and the handler read one name.
+ */
+const CAPABLE_CTX = {
+  mcpReq: {
+    envelope: { [CLIENT_CAPABILITIES_META_KEY]: { elicitation: {} } },
+  },
+} as const
+
+/** The same, with an in-band answer carried on the retry. */
+function capableWithResponses(responses: Record<string, unknown>) {
+  return { mcpReq: { ...CAPABLE_CTX.mcpReq, inputResponses: responses } }
+}
+
 /** The plain text a caller reads, joined — the surface a person actually sees. */
 function contentText(result: Record<string, unknown>): string {
   const content = (result['content'] ?? []) as readonly { type: string, text?: string }[]
@@ -185,7 +207,7 @@ describe('createApplyToolHandler — the first call (D-11 refuse-and-teach)', ()
   it('refuses a first call and invokes the apply op zero times', async () => {
     const { handler, applyCalls } = handlerUnderTest()
 
-    const result = await handler({ proposal_id: PROPOSAL_ID }, {})
+    const result = await handler({ proposal_id: PROPOSAL_ID }, CAPABLE_CTX)
 
     expect(result['isError']).toBeFalsy()
     expect(result['resultType']).toBe('input_required')
@@ -219,7 +241,7 @@ describe('createApplyToolHandler — the first call (D-11 refuse-and-teach)', ()
   it('asks for exactly one field, and it is the proposal id', async () => {
     const { handler } = handlerUnderTest()
 
-    const form = confirmForm(await handler({ proposal_id: PROPOSAL_ID }, {}))
+    const form = confirmForm(await handler({ proposal_id: PROPOSAL_ID }, CAPABLE_CTX))
     const schema = form?.['requestedSchema'] as {
       type?: string
       properties?: Record<string, unknown>
@@ -265,7 +287,7 @@ describe('createApplyToolHandler — the first call (D-11 refuse-and-teach)', ()
       maskText: (text) => text,
     })
 
-    const result = await handler({ proposal_id: PROPOSAL_ID }, {})
+    const result = await handler({ proposal_id: PROPOSAL_ID }, CAPABLE_CTX)
 
     expect(result['resultType']).toBe('input_required')
     expect(contentText(result)).toContain('confirmed')
@@ -341,7 +363,7 @@ describe('createApplyToolHandler — the in-band route (SEP-2322 inputResponses)
 
     const result = await handler(
       { proposal_id: PROPOSAL_ID },
-      { mcpReq: { inputResponses: { [APPLY_CONFIRMATION_REQUEST_KEY]: { action: 'decline' } } } },
+      capableWithResponses({ [APPLY_CONFIRMATION_REQUEST_KEY]: { action: 'decline' } }),
     )
 
     expect(result['resultType']).toBe('input_required')
@@ -353,7 +375,7 @@ describe('createApplyToolHandler — doctored one-shots (T-396-04)', () => {
   it('refuses confirmed: false', async () => {
     const { handler, applyCalls } = handlerUnderTest()
 
-    const result = await handler({ proposal_id: PROPOSAL_ID, confirmed: false }, {})
+    const result = await handler({ proposal_id: PROPOSAL_ID, confirmed: false }, CAPABLE_CTX)
 
     expect(result['resultType']).toBe('input_required')
     expect(applyCalls()).toEqual([])
@@ -367,7 +389,7 @@ describe('createApplyToolHandler — doctored one-shots (T-396-04)', () => {
   it('refuses a truthy NON-boolean confirmation (the second wall)', async () => {
     const { handler, applyCalls } = handlerUnderTest()
 
-    const result = await handler({ proposal_id: PROPOSAL_ID, confirmed: 'true' }, {})
+    const result = await handler({ proposal_id: PROPOSAL_ID, confirmed: 'true' }, CAPABLE_CTX)
 
     expect(result['resultType']).toBe('input_required')
     expect(applyCalls()).toEqual([])
@@ -378,16 +400,12 @@ describe('createApplyToolHandler — doctored one-shots (T-396-04)', () => {
 
     const result = await handler(
       { proposal_id: PROPOSAL_ID },
-      {
-        mcpReq: {
-          inputResponses: {
-            [APPLY_CONFIRMATION_REQUEST_KEY]: {
-              action: 'accept',
-              content: { proposal_id: OTHER_PROPOSAL_ID },
-            },
-          },
+      capableWithResponses({
+        [APPLY_CONFIRMATION_REQUEST_KEY]: {
+          action: 'accept',
+          content: { proposal_id: OTHER_PROPOSAL_ID },
         },
-      },
+      }),
     )
 
     expect(result['resultType']).toBe('input_required')
@@ -402,19 +420,17 @@ describe('createApplyToolHandler — doctored one-shots (T-396-04)', () => {
 // Plan 02 Task 2 — the era-degradation cell.
 //
 // WHY THE PRIMARY ROUTE IS PRIMARY, as a measured property instead of a paragraph. On a stateless
-// legacy (2025-era) HTTP connection there is no return path for a server-to-client request, so the
-// SDK's `input_required` legacy shim degrades to a clean capability refusal: the FORM cannot be
-// delivered. If the instruction to re-call with `confirmed: true` lived only inside the form's
-// message, such a caller would receive a refusal it has no way to act on — stranded on day zero,
-// which per RESEARCH Pitfall 4 is every shipping client.
+// legacy (2025-era) connection there is no return path for a server-to-client request at all. If
+// the instruction to re-call with `confirmed: true` lived only inside the form's message, such a
+// caller would receive a refusal it has no way to act on — stranded on day zero, which per RESEARCH
+// Pitfall 4 is every shipping client.
 //
-// WHAT THIS CELL DOES AND DOES NOT MEASURE, named rather than narrowed silently: it drives the
-// PAYLOAD, projecting away exactly the fields such a connection cannot carry, and asserts what is
-// left still teaches. It does not drive two real transports. The wire-level two-era drive — a 2025
-// client and a 2026 client against the shipped composition — is plan 06 Task 1 cell 6
-// (`packages/cli/src/__tests__/mcp-apply-differential.test.ts`). The claim split between the two is
-// deliberate: the property is a property of the payload, and only the reachability is a property of
-// the wire.
+// 396-06 MEASURED WHAT THAT DEGRADATION ACTUALLY IS, and it was worse than "the form is dropped":
+// the SDK REPLACES the whole result with a capability error (2025 era) or fails the call with
+// `-32021` (2026 era, undeclared `elicitation`), so the teach went with it. The handler therefore
+// attaches the form only to a caller whose declared capabilities can carry it, and the group below
+// this one is that gate's hermetic bar. The wire-level three-way drive is plan 06's
+// `packages/cli/src/__tests__/mcp-apply-differential.test.ts`, group 6.
 describe('createApplyToolHandler — the refusal teaches without the form (C3/C-MCP-1)', () => {
   // THE BAR: M4 — the instruction moved into the elicitation message only. Every other cell in this
   // file stays green under that mutation.
@@ -423,8 +439,13 @@ describe('createApplyToolHandler — the refusal teaches without the form (C3/C-
 
     const refusal = await handler({ proposal_id: PROPOSAL_ID }, {})
 
-    // Exactly what survives the degradation: the form and its discriminator are gone.
+    // 396-06 UPDATE: this cell used to PROJECT the form away to model what a 2025-era connection
+    // would receive. It no longer has to — the handler does not attach a form to a caller that
+    // cannot answer one, and `handlerUnderTest()` with a bare ctx IS that caller. The projection is
+    // kept as an assertion that there was nothing to project.
     const { inputRequests: _requests, resultType: _type, ...degraded } = refusal
+    expect(refusal['inputRequests']).toBeUndefined()
+    expect(refusal['resultType']).toBeUndefined()
     expect(degraded['inputRequests']).toBeUndefined()
 
     const text = contentText(degraded)
@@ -433,6 +454,78 @@ describe('createApplyToolHandler — the refusal teaches without the form (C3/C-
     expect(text).toContain('true')
     // Actionable, not merely present: the caller is told which tool argument to set and to what.
     expect(text).toMatch(/confirmed[^\n]*true/u)
+  })
+})
+
+// 396-06 — the capability gate, hermetically.
+//
+// THE BAR: leg A3, the check inverted so the form is attached unconditionally. That is the shipped
+// behaviour this group replaces, and every cell here reds under it except the capable one — which is
+// exactly the discrimination the group claims, since a gate that always says yes is not a gate.
+//
+// The teach is identical on all three, and that is asserted rather than assumed: a fix that served
+// the plain arm a DIFFERENT sentence would have made D-11's door two doors.
+describe('createApplyToolHandler — the form rides only where it can be answered (396-06)', () => {
+  const NO_ENVELOPE = {}
+  const ENVELOPE_WITHOUT_ELICITATION = {
+    mcpReq: { envelope: { [CLIENT_CAPABILITIES_META_KEY]: {} } },
+  }
+
+  it('attaches no form to a caller that declared no capabilities at all (the 2025 era)', async () => {
+    const { handler, applyCalls } = handlerUnderTest()
+
+    const refusal = await handler({ proposal_id: PROPOSAL_ID }, NO_ENVELOPE)
+
+    expect(refusal['resultType']).toBeUndefined()
+    expect(refusal['inputRequests']).toBeUndefined()
+    expect(refusal['isError']).toBeFalsy()
+    expect(contentText(refusal)).toContain('confirmed')
+    expect(applyCalls()).toEqual([])
+  })
+
+  it('attaches no form to a 2026 caller whose declared capabilities do not include elicitation',
+    async () => {
+      const { handler } = handlerUnderTest()
+
+      const refusal = await handler({ proposal_id: PROPOSAL_ID }, ENVELOPE_WITHOUT_ELICITATION)
+
+      expect(refusal['resultType']).toBeUndefined()
+      expect(refusal['inputRequests']).toBeUndefined()
+      expect(contentText(refusal)).toContain('confirmed')
+    })
+
+  it('attaches the form to a caller that declared elicitation, and teaches the SAME sentence',
+    async () => {
+      const { handler } = handlerUnderTest()
+
+      const plain = await handler({ proposal_id: PROPOSAL_ID }, NO_ENVELOPE)
+      const capable = await handler({ proposal_id: PROPOSAL_ID }, CAPABLE_CTX)
+
+      expect(capable['resultType']).toBe('input_required')
+      expect(confirmForm(capable)).toBeDefined()
+      // ONE teach, two envelopes. The content and the structured refusal are byte-equal across the
+      // pair; only the form differs.
+      expect(contentText(capable)).toBe(contentText(plain))
+      expect(capable['structuredContent']).toEqual(plain['structuredContent'])
+    })
+
+  // The output half of the same change, and the reason it was forced: an apply tool advertises an
+  // `outputSchema`, and the SDK refuses a non-error, non-`input_required` result that carries no
+  // `structuredContent`. A refusal with no structured arm could not be served at all.
+  it('carries the refusal as DATA on the arm authored for it', async () => {
+    const { handler } = handlerUnderTest()
+
+    const refusal = await handler({ proposal_id: PROPOSAL_ID }, {})
+    const structured = refusal['structuredContent'] as Record<string, unknown>
+
+    expect(structured['status']).toBe(APPLY_REFUSAL_STATUS)
+    expect(structured['applied']).toBe(false)
+    expect(structured['proposal_id']).toBe(PROPOSAL_ID)
+    expect(String(structured['instruction'])).toContain('confirmed: true')
+    // The keys are exactly the arm's, so a field added here without being advertised fails.
+    expect(Object.keys(structured).sort()).toEqual(
+      ['applied', 'instruction', 'proposal_id', 'status', 'summary'],
+    )
   })
 })
 

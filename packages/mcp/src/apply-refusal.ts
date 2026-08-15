@@ -11,11 +11,22 @@
 // `confirmed: true` as an ordinary tool argument, and it is PRIMARY. The in-band route is
 // SEP-2322's multi-round-trip form — the server returns `input_required`, the client collects the
 // answer and retries the same call carrying `inputResponses` — and it is secondary. The ordering is
-// not a preference: on a stateless legacy (2025-era) connection there is no return path for a
-// server-to-client request at all, so the SDK's shim degrades the embedded form to a clean
-// capability refusal. Nothing on day zero speaks the 2026 wire. A door whose only handle is the
+// not a preference: nothing on day zero speaks the 2026 wire, and a door whose only handle is the
 // form is a door most callers cannot open, which is why the instruction to re-call travels in
 // ORDINARY CONTENT and the form is an affordance layered on top of it.
+//
+// THE FORM IS ATTACHED ONLY WHERE IT CAN BE ANSWERED, and that condition is not a nicety — it is
+// what makes the paragraph above TRUE rather than merely intended. 396-06 drove this handler at the
+// wire and measured that an `inputRequired` result is not a payload an uninterested client ignores:
+// the SDK REFUSES to serve one to a connection that cannot answer it, and it does so by REPLACING
+// the handler's whole result. On a 2025-era connection the caller received
+// `isError: true` with "Cannot request input 'confirm' (elicitation/create): … no client
+// capabilities are available on this connection", and on a 2026-07-28 connection whose client did
+// not declare `elicitation` the call FAILED with `-32021` (HTTP 400 — a `ProtocolError` thrown at
+// the client). In both cases the summary and the deterministic instruction — the whole teach — were
+// gone, which made D-11's door a dead end for very nearly every caller that exists. So the form
+// rides only on a connection whose declared capabilities can carry it; everyone else gets the teach,
+// which is the route that was always primary.
 //
 // NO SESSION, NO TOKEN, NO SERVER-SIDE STATE. Nothing is minted here and nothing is remembered
 // between the two calls. The cross-call handle IS the `proposal_id` — a server-minted identifier
@@ -40,7 +51,12 @@
 // SEP-2567 (sessions removed — cross-call state travels as server-minted handles in tool
 // arguments), SEP-2575 (the stateless protocol those two follow from).
 
-import { acceptedContent, fromJsonSchema, inputRequired } from '@modelcontextprotocol/server'
+import {
+  CLIENT_CAPABILITIES_META_KEY,
+  acceptedContent,
+  fromJsonSchema,
+  inputRequired,
+} from '@modelcontextprotocol/server'
 import type {
   CallToolResult,
   InputRequiredResult,
@@ -136,6 +152,86 @@ export const APPLY_CONFIRMATION_REQUESTED_SCHEMA = {
   required: ['proposal_id'],
 } as const
 
+/**
+ * The REFUSAL, as a shape a machine reads — the output half of the same exception the input half
+ * above already takes (396-06).
+ *
+ * WHY THIS EXISTS AT ALL, measured rather than reasoned. An apply tool advertises an `outputSchema`
+ * — the op's own outcome contract — and the SDK enforces it: a result that is neither `isError` nor
+ * an `input_required` result and carries no `structuredContent` is refused with
+ * `Output validation error: Tool … has an output schema but no structured content was provided`
+ * (`mcp-DXXb3Vv3.mjs:1442`). So the moment the form stops riding on every refusal, the refusal needs
+ * a structured shape of its own or it cannot be served at all.
+ *
+ * AND IT IS THE RIGHT SHAPE INDEPENDENTLY OF THAT. `ConfigApplyOutcome` has two arms, `applied` and
+ * `already-applied`, and both mean the change is in; there is no arm that means "nothing happened,
+ * here is how to make it happen", because at the FUNCTION layer that state does not exist — it is
+ * created by this surface, where a tool call is one round trip with nobody to ask. That is the same
+ * argument the input envelope is authored on, and it lands in the same place: the apply doors are
+ * the one pair whose advertised contract is not the op's contract, on both sides, for one reason.
+ *
+ * `applied: false` is a redundant field on purpose. `status` already says it, and a caller reading a
+ * union is one missed arm away from treating a refusal as a receipt; a boolean that is false on
+ * every refusal and absent from every outcome is the cheapest possible way for that reader to be
+ * right by accident.
+ */
+export const APPLY_REFUSAL_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    status: {
+      type: 'string',
+      const: 'confirmation-required',
+      description: 'Nothing was applied: this call was not confirmed.',
+    },
+    applied: {
+      type: 'boolean',
+      const: false,
+      description: 'Always false on this arm. Nothing was committed by the call that returned it.',
+    },
+    proposal_id: {
+      type: 'string',
+      description: 'The proposal this refusal is about — the id to re-send with confirmed: true.',
+    },
+    summary: { type: 'string', description: 'What the proposal would do, if applied.' },
+    instruction: { type: 'string', description: 'The exact call that applies it.' },
+  },
+  required: ['status', 'applied', 'proposal_id', 'summary', 'instruction'],
+  additionalProperties: false,
+} as const
+
+/** The one value the refusal's discriminant takes. Exported so a caller's test need not retype it. */
+export const APPLY_REFUSAL_STATUS = 'confirmation-required'
+
+/**
+ * The contract an apply tool ADVERTISES on the output side: the op's outcome, or the refusal.
+ *
+ * Composed from the op's OWN converted document rather than from a restatement of it, so the arm a
+ * receipt validates against is the op's contract and not a copy that could drift. The conversion is
+ * done in OUTPUT mode — the mode `tools/list` uses — and the target matches `projection.ts`'s pin.
+ *
+ * WHEN THE OP'S OWN CONTRACT CANNOT BE CONVERTED this returns it UNCHANGED, deliberately: the
+ * two-sided `DEGRADED_OUTPUT_CONTRACTS` probe in `projection.ts` is what names that failure, and a
+ * throw here would move it to module-import time where it would take the whole package down with a
+ * message naming no tool.
+ */
+export function composeApplyToolOutput(opOutput: StandardSchemaWithJSON): StandardSchemaWithJSON {
+  let converted: Record<string, unknown>
+  try {
+    converted = opOutput['~standard'].jsonSchema.output({
+      target: 'draft-2020-12',
+    }) as unknown as Record<string, unknown>
+  } catch {
+    return opOutput
+  }
+  // The nested document's own `$schema` is dropped: a dialect declaration belongs at the root of the
+  // document that declares it, and both nested arms are in the one dialect the root names.
+  const { $schema: _dialect, ...outcome } = converted
+  return fromJsonSchema({
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    anyOf: [outcome, APPLY_REFUSAL_JSON_SCHEMA],
+  } as unknown as Parameters<typeof fromJsonSchema>[0])
+}
+
 /** What a caller sends to an apply tool. `confirmed` is `unknown` on purpose — see the handler. */
 export interface ApplyToolInput {
   readonly proposal_id: string
@@ -152,7 +248,37 @@ export interface ApplyToolInput {
 export interface ApplyToolCallContext {
   readonly mcpReq?: {
     readonly inputResponses?: Record<string, unknown> | undefined
+    /**
+     * The per-request `_meta` envelope (2026-07-28), carrying the caller's declared capabilities.
+     *
+     * Read here rather than through the server's `getClientCapabilities()` accessor for two
+     * reasons: that accessor is deprecated in favour of exactly this envelope, and it would put an
+     * `McpServer` instance into a module whose whole design is that it holds nothing. A 2025-era
+     * request carries no envelope at all, and its absence is the correct answer for that era —
+     * measured 2026-08-16: per-request legacy serving has NO client capabilities on any connection,
+     * so an embedded request can never be answered there.
+     */
+    readonly envelope?: Record<string, unknown> | undefined
   }
+}
+
+/**
+ * Can THIS connection answer an embedded input request?
+ *
+ * The one condition under which the SEP-2322 form is attached. Keyed on the capability the SDK
+ * itself checks (`elicitation`) and read through the SDK's own envelope key constant, so the
+ * question this asks and the question the SDK asks are one question rather than two spellings that
+ * agree today.
+ *
+ * Measured on 2.0.0, 2026-08-16, all three combinations that exist:
+ *   2025-era connection                      -> no envelope            -> false
+ *   2026-07-28, client declares nothing      -> `{}`                   -> false
+ *   2026-07-28, client declares elicitation  -> `{elicitation: {}}`    -> true
+ */
+function clientCanAnswerAForm(ctx: ApplyToolCallContext | undefined): boolean {
+  const declared = ctx?.mcpReq?.envelope?.[CLIENT_CAPABILITIES_META_KEY]
+  if (typeof declared !== 'object' || declared === null) return false
+  return (declared as { elicitation?: unknown }).elicitation !== undefined
 }
 
 /** The host-bound `(registry, caller)` closure over `invokeFunction`. */
@@ -194,13 +320,16 @@ export interface ApplyToolHandlerDeps {
  * this proposal IS, the second is the exact call that applies it. A 2025-era caller receiving only
  * `content` still has both.
  */
-function teachingText(summary: string, proposalId: string, mismatch: string | undefined): string {
+function teachingParts(
+  summary: string,
+  proposalId: string,
+  mismatch: string | undefined,
+): { readonly summary: string; readonly instruction: string; readonly text: string } {
   const instruction =
     `To apply it, call this tool again with proposal_id "${proposalId}" and confirmed: true. `
     + 'Nothing has been changed by this call.'
-  return mismatch === undefined
-    ? `${summary}\n${instruction}`
-    : `${summary}\n${mismatch}\n${instruction}`
+  const described = mismatch === undefined ? summary : `${summary}\n${mismatch}`
+  return { summary: described, instruction, text: `${described}\n${instruction}` }
 }
 
 /**
@@ -284,7 +413,8 @@ export function createApplyToolHandler(deps: ApplyToolHandlerDeps) {
   async function refuse(
     proposalId: string,
     mismatch: string | undefined,
-  ): Promise<CallToolResult & InputRequiredResult> {
+    withForm: boolean,
+  ): Promise<CallToolResult | (CallToolResult & InputRequiredResult)> {
     // Read through the SAME invoke every other tool uses. Never a store, never a second data path:
     // a handler that could read the proposals directory would be the private power this whole
     // re-derivation exists to abolish.
@@ -298,11 +428,28 @@ export function createApplyToolHandler(deps: ApplyToolHandlerDeps) {
       summary = `Proposal ${proposalId}: its details could not be read, so nothing is claimed about it here.`
     }
 
-    const text = maskText(teachingText(summary, proposalId, mismatch))
-    return {
-      // NOT `isError`. Refusing to commit unasked is this tool working, and an error result would
-      // teach a host to surface it as a fault and an agent to retry it as one.
+    const parts = teachingParts(summary, proposalId, mismatch)
+    const text = maskText(parts.text)
+    // NOT `isError`, on either branch. Refusing to commit unasked is this tool working, and an
+    // error result would teach a host to surface it as a fault and an agent to retry it as one.
+    //
+    // `structuredContent` is the same refusal as DATA, on the arm of the advertised union authored
+    // for it. Every field it carries is masked, for the reason the whole handler is: the summary is
+    // composed out of proposal content, which is the channel 395's disclosure travelled down.
+    const teach: CallToolResult = {
       content: [{ type: 'text' as const, text }],
+      structuredContent: {
+        status: APPLY_REFUSAL_STATUS,
+        applied: false,
+        proposal_id: proposalId,
+        summary: maskText(parts.summary),
+        instruction: maskText(parts.instruction),
+      },
+    }
+    if (!withForm) return teach
+
+    return {
+      ...teach,
       ...inputRequired({
         inputRequests: {
           [APPLY_CONFIRMATION_REQUEST_KEY]: inputRequired.elicit({
@@ -345,6 +492,6 @@ export function createApplyToolHandler(deps: ApplyToolHandlerDeps) {
           + `name the proposal this call is about ("${proposalId}"), so nothing was applied.`
         : undefined
 
-    return refuse(proposalId, mismatch)
+    return refuse(proposalId, mismatch, clientCanAnswerAForm(ctx))
   }
 }

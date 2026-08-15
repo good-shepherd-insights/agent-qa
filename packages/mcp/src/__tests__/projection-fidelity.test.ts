@@ -46,6 +46,7 @@ import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { APPLY_REFUSAL_JSON_SCHEMA } from '../apply-refusal.js'
 import { buildAgentQaMcpServer } from '../catalog.js'
 import {
   advertisedContracts,
@@ -212,9 +213,11 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
       const tool = advertised.get(projection.name)
       expect(tool, projection.name).toBeDefined()
 
-      // The two apply doors advertise D-11's wire envelope on the INPUT side by design — an
-      // authored contract, not an op's — so the input comparison does not apply to them. Their
-      // OUTPUT is still the op's own, and is compared below like every other.
+      // The two apply doors advertise D-11's wire vocabulary on BOTH sides by design (396-06): the
+      // `confirmed` envelope going in, and `op outcome OR refusal` coming out. Both exist because a
+      // tool call is a single round trip with nobody to ask — a fact about this surface and about
+      // no other caller of the same op. The op's own document is still what the RECEIPT arm is, and
+      // that is compared below rather than exempted.
       const composition = compositionOf(projection)
       const inputComparable = projection.kind !== 'apply'
 
@@ -253,12 +256,24 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
           (document, at) =>
             armOutputs.findIndex((other) => JSON.stringify(other) === JSON.stringify(document)) === at,
         )
-        if (distinct.length === 1) {
+        if (projection.kind === 'apply') {
+          // The receipt arm is the op's OWN converted document, byte for byte, and the refusal arm
+          // is the authored one. Compared member by member rather than exempted, so a door that
+          // quietly narrowed the receipt it advertises still fails here.
+          const arms = (advertisedOutput.anyOf ?? []) as readonly JsonDocument[]
+          expect(arms.length, `${projection.name} output arms`).toBe(2)
+          expect(arms[0], `${projection.name} receipt arm`).toEqual(distinct[0])
+          expect(arms[1], `${projection.name} refusal arm`).toEqual(
+            APPLY_REFUSAL_JSON_SCHEMA as unknown as JsonDocument,
+          )
+          checked += 1
+        } else if (distinct.length === 1) {
           expect(advertisedOutput, `${projection.name} output`).toEqual(distinct[0])
+          checked += 1
         } else {
           expect(advertisedOutput.anyOf, `${projection.name} output union`).toEqual(distinct)
+          checked += 1
         }
-        checked += 1
       }
     }
 
@@ -292,17 +307,18 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
       expect(advertised, projection.name).toBeDefined()
       const own = AGENT_QA_OP_CONTRACTS[projection.ops[0]!]!
 
-      // The apply doors advertise D-11's authored wire envelope on the input side by design, so
-      // only their OUTPUT is the op's own object. Everything else is both sides.
-      if (projection.kind !== 'apply') {
-        expect(advertised!.input, `${projection.name} input identity`).toBe(own.input)
-        checked += 1
-      }
+      // The apply doors advertise authored wire vocabulary on BOTH sides (396-06), so identity
+      // cannot hold for either of theirs — a composed union is a NEW object by construction, the
+      // same structural exclusion union folds carry. What stands in for identity there is the
+      // member-by-member comparison in the cell above, which reads the receipt arm back out of the
+      // composed document and requires it to equal the op's own projection.
+      if (projection.kind === 'apply') continue
+      expect(advertised!.input, `${projection.name} input identity`).toBe(own.input)
       expect(advertised!.output, `${projection.name} output identity`).toBe(own.output)
-      checked += 1
+      checked += 2
     }
-    // 9 non-union tools: 7 contribute both sides, the 2 apply doors contribute output only.
-    expect(checked).toBe(16)
+    // 7 non-union, non-apply tools contributing both sides.
+    expect(checked).toBe(14)
   })
 
   // Pitfall 3, and the field-level half of D-16's "descriptions live on the zod schemas" clause.
