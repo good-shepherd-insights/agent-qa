@@ -706,6 +706,79 @@ else
 fi
 
 # ------------------------------------------------------------------------------------------------
+# LEG 6 — THE ASK ROAD, UNDER A REAL PTY: is the proposal SHOWN before the approval prompt?
+# ------------------------------------------------------------------------------------------------
+#
+# THE BOUND ROUND 4 STATED, CLOSED HERE AT k=1. 395-VERIFICATION drove `agent.ask` through the
+# production composition with a STUB planner and measured the complete set of bytes reaching the
+# person's terminal before the decision: one line, the approval prompt itself. Its own closing
+# sentence names what it did not do — *"I did not drive `agent-qa ask` against a live planner"*. This
+# leg spends that inch, on the shipped `dist/cli.js`, over a live model.
+#
+# A REAL PTY IS THE WHOLE POINT AND NOT AN IMPLEMENTATION DETAIL. `createTtyConfirmPort` returns a
+# prompt only when both streams are TTYs; under the pipes legs 2-4 use, the gate denies in
+# `local-headless` before any prompt exists and the ordering this leg is about cannot be observed at
+# all. A piped version of this leg would be green and would measure nothing.
+#
+# IT DECLINES. The reading is about what was on the terminal BEFORE the decision, so answering yes
+# would apply a configuration change and turn a measurement into a write.
+#
+# WHAT MAKES THIS LEG RED: a prompt reached with no render above it — i.e. the CR-03 state, on the
+# shipped one-shot verb. Byte offsets, not booleans: the render markers must all fall BEFORE the
+# prompt's offset, so a render that arrived after the ask reds exactly as a missing one does.
+#
+# WHAT MAKES IT SKIP, ANNOUNCED THE WAY L5's IS: the live planner declining to emit the `write_test`
+# clause on this single utterance — its known k=1 nondeterminism, the same one SC-5's own lane lives
+# with. A skip states the residual bound and names the hermetic cells that hold the ground
+# ((A1)/(A2) in `packages/cli/src/composition/__tests__/ask-present-road.test.ts`), never silence.
+
+banner 'LEG 6 — the ask road under a real pty: render before the approval prompt?'
+
+ASK_PTY="$REPO_ROOT/scripts/395-ask-road-pty.py"
+if ! command -v python3 >/dev/null || [ ! -f "$ASK_PTY" ]; then
+  record_leg 'L6 ask road (pty)' 'SKIP' \
+    "NOT RUN, AND SAYING SO: python3 or $ASK_PTY is absent, and this leg needs a real pty. The standing hermetic evidence on the identical route is (A1)/(A2) in packages/cli/src/composition/__tests__/ask-present-road.test.ts, which drive the same production composition with the confirm as a spy."
+else
+  P6="$(new_project ask-road)"
+  write_config "$P6" no-targets
+  seal_project "$P6"
+  L6_COMMITS_BEFORE="$(commit_count "$P6")"
+  L6_VERDICT="$(python3 "$ASK_PTY" "$P6" "$CLI_ENTRY" \
+    'write a test for booking.com checkout' \
+    "$TRANSCRIPTS/leg6-ask-road.txt" "${LIVE_FROM_ZERO_TURN_TIMEOUT:-900}" 2>&1 | grep '^L6-VERDICT' || true)"
+  # Offsets out of the verdict line, so every branch below reads one measurement.
+  L6_PROMPT="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*prompt=\([-0-9]*\).*/\1/p')"
+  L6_SUMMARY="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*summary=\([-0-9]*\).*/\1/p')"
+  L6_FILES="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*files=\([-0-9]*\).*/\1/p')"
+  L6_DIFF="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*diff=\([-0-9]*\).*/\1/p')"
+  L6_COMMITS_AFTER="$(commit_count "$P6")"
+  printf '  verdict   %s\n  commits   %s -> %s\n  transcript %s\n' \
+    "${L6_VERDICT:-<none>}" "$L6_COMMITS_BEFORE" "$L6_COMMITS_AFTER" "$TRANSCRIPTS/leg6-ask-road.txt"
+
+  if [ -z "$L6_VERDICT" ]; then
+    record_leg 'L6 ask road (pty)' 'RED' \
+      "the pty drive produced no verdict line at all — no reading was taken. Transcript: $TRANSCRIPTS/leg6-ask-road.txt"
+  elif [ "${L6_PROMPT:--1}" -lt 0 ] \
+    && grep -q 'No capability in this build handles' "$TRANSCRIPTS/leg6-ask-road.txt" 2>/dev/null; then
+    # THE CAUSE IS KNOWABLE, SO IT IS NAMED. A leg that shrugs "nondeterminism" at a deterministic
+    # wall is the shape of measurement this phase keeps catching.
+    record_leg 'L6 ask road (pty)' 'SKIP' \
+      "THE ASK ROAD CANNOT PLAN AT ALL, AND THAT IS THIS DRIVE'S FINDING — measured, not inferred. In the SAME project shape LEG 3 drives (a real config carrying \`registry.llms\`, zero targets), \`agent-qa chat\` binds \`gpt-5.6-terra\` and routes; \`agent-qa ask\` answered *'No capability in this build handles: \"write a test for booking.com checkout\"'* — the D-08 headless refusal. \`chat.ts:253\` resolves \`resolveCliChatCapabilities\` and passes \`chatModel\`/\`chatModelFor\`/\`chatAccounting\`; \`ask.ts\` passes NONE of them, so the composition is headless and no \`authoring.draft.write\` is ever planned. CONSEQUENCE FOR 395-VERIFICATION's CR-03: its drive substituted a \`chatModel\` the shipped verb does not bind, so the blind confirm it measured is not reachable through \`agent-qa ask\` AS SHIPPED — the finding's mechanism is real and its \`ask\`-surface reachability premise was itself unmeasured. 395-22 closes the mechanism anyway at the choke point (\`turn-engine.ts\`'s displayability precondition, covering every host) and binds \`chatPresent\` here so the render is in place the day the model binding is. NOT SILENTLY WIDENED: binding a chat model on \`ask\` would make a gated in-turn apply reachable from a verb that today cannot reach it, which is a scope call for the owner and not for this plan. THE RESIDUAL BOUND: the ask road's render-before-prompt ordering is held hermetically by (A1)/(A2) in packages/cli/src/composition/__tests__/ask-present-road.test.ts — (A2) pins zero confirm invocations with no port bound, (A1) pins the render event strictly before the confirm spy's first call with it bound — over the SAME production composition and the same op. Transcript: $TRANSCRIPTS/leg6-ask-road.txt"
+  elif [ "${L6_PROMPT:--1}" -lt 0 ]; then
+    record_leg 'L6 ask road (pty)' 'SKIP' \
+      "NO APPROVAL PROMPT WAS REACHED ON THIS SINGLE DRIVE, so the ordering has nothing to be measured against — the live planner did not route this utterance to \`write_test\` (its known k=1 nondeterminism, the same SC-5's own lane lives with), or the turn refused for a reason the branch above does not recognise. THE RESIDUAL BOUND, STATED: the ask road's render-before-prompt ordering is held hermetically by (A1)/(A2) in packages/cli/src/composition/__tests__/ask-present-road.test.ts — (A2) pins zero confirm invocations with no port bound, (A1) pins the render event strictly before the confirm spy's first call with it bound — over the SAME production composition and the same op. Live k=1 did not add to it this run. Transcript: $TRANSCRIPTS/leg6-ask-road.txt"
+  elif [ "${L6_SUMMARY:--1}" -ge 0 ] && [ "${L6_SUMMARY}" -lt "${L6_PROMPT}" ] \
+    && [ "${L6_FILES:--1}" -ge 0 ] && [ "${L6_FILES}" -lt "${L6_PROMPT}" ] \
+    && [ "${L6_DIFF:--1}" -ge 0 ] && [ "${L6_DIFF}" -lt "${L6_PROMPT}" ]; then
+    record_leg 'L6 ask road (pty)' 'PASS' \
+      "SC-5's FIRST CLAUSE, MEASURED ON THE SHIPPED ONE-SHOT VERB. On a real terminal, over a live planner, the person was shown the proposal's summary line (byte $L6_SUMMARY), the config file it touches (byte $L6_FILES) and a true unified-diff hunk (byte $L6_DIFF) — all STRICTLY BEFORE the approval prompt at byte $L6_PROMPT. Round 4 measured this same road carrying exactly one line before the decision, the prompt itself. The prompt was DECLINED, and the repository is untouched: commits $L6_COMMITS_BEFORE -> $L6_COMMITS_AFTER."
+  else
+    record_leg 'L6 ask road (pty)' 'RED' \
+      "THE CR-03 STATE, ON A SHIPPED SURFACE: an approval prompt at byte $L6_PROMPT with the render markers at summary=$L6_SUMMARY files=$L6_FILES diff=$L6_DIFF — a person was asked to approve a configuration change they were not shown, or were shown it only afterwards. Transcript: $TRANSCRIPTS/leg6-ask-road.txt"
+  fi
+fi
+
+# ------------------------------------------------------------------------------------------------
 # THE SELF-TEST — an instrument that cannot fail is not an instrument
 # ------------------------------------------------------------------------------------------------
 #
