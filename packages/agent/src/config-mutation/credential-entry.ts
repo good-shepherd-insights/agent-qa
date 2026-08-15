@@ -116,8 +116,19 @@ export function isCredentialEntry(key: string, value: unknown): boolean {
   // and was redacted by the arm below — now arrives as `credentials[0]`, whose raw normalization is
   // `credentials0`, a member of no set. Decomposing a container must not cost the container's own
   // name, or the fix that closed the leak would have opened a smaller one beside it.
-  const lastSegment = (key.split('.').pop() ?? '').replace(/\[\d+\]$/, '')
-  if (CREDENTIAL_KEY_NAMES.has(lastSegment.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true
+  //
+  // AND NEITHER IS AN ANCESTOR'S NAME SOMETHING DECOMPOSITION MAY COST (395-26 · T-395-R5-04). The
+  // paragraph above states the rule and the code implemented it for one segment: the row key
+  // `flattenObject` hands in is the WHOLE dotted path a leaf inherits, so reading only its last
+  // segment discarded `credentials` from `plugins.myplugin.credentials.pass` and `apiKey` from
+  // `registry.llms[0].apiKey.value`, and the shipped `config show` printed both at exit 0. An
+  // ancestor's name is part of what a decomposed leaf inherits, so the name question is asked of
+  // every segment — and the index strip, which exists for the same reason, applies to every segment
+  // too rather than to the last one alone.
+  const segments = key.split('.').map(
+    segment => segment.replace(/\[\d+\]$/, '').toLowerCase().replace(/[^a-z0-9]/g, ''),
+  )
+  if (segments.some(segment => CREDENTIAL_KEY_NAMES.has(segment))) return true
   if (value === undefined || value === null) return false
   if (typeof value === 'string') return valueLooksLikeCredential(value)
   // ANYTHING ELSE IS SCANNED THROUGH ITS JSON SERIALIZATION — every byte a render or a tool
