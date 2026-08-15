@@ -74,6 +74,78 @@ jobs:
       - name: Validate publish surface
         run: pnpm run validate:publish
 
+  mcp-conformance:
+    name: MCP conformance (ubuntu)
+    runs-on: ubuntu-latest
+
+    # Generous on purpose. The 395 lesson: a CI timeout tuned to a local stopwatch
+    # turns a slow cold runner into a red build with nothing wrong in it. The run
+    # itself is ~13s of suite plus an npm fetch and a workspace build; twenty-five
+    # minutes leaves room for a cold cache, a slow registry and a busy runner
+    # without ever leaving a hung server wedged (the script's own readiness bound
+    # and EXIT trap are the inner guards — T-396-23).
+    timeout-minutes: 25
+
+    # A JOB OF ITS OWN RATHER THAN A STEP IN `workspace`, deliberately. This gate
+    # measures the external suite's verdict on the shipped MCP server; the
+    # workspace job measures this repository's own suites. Keeping them separate
+    # means a conformance regression names itself in the checks list instead of
+    # arriving as "Full workspace failed", and a red here never obscures a red
+    # there.
+    #
+    # WHAT GATES: the conformance tool's OWN exit code, which is exactly D-18 —
+    # a failure listed in `packages/mcp/conformance-baseline.yaml` is expected and
+    # exits 0; a NEW failure exits 1; a baselined entry that has started passing
+    # exits 1 as a stale entry. The SCORE never gates. There is no threshold in
+    # this workflow, none in the script, and none in the baseline — adding one is
+    # the thing D-18 forbids, and this job deliberately contains no arithmetic
+    # over the counts it publishes.
+    #
+    # WHAT GETS PUBLISHED: the script writes the raw passed/total counts into
+    # `$GITHUB_STEP_SUMMARY` on every run, so the number is visible on a green
+    # build and not only on a red one (D-19). Nothing here commits: the baseline
+    # is edited by a human in a reviewed change, never by CI.
+    #
+    # THE PIN IS EXACT (`@modelcontextprotocol/conformance@0.2.0-alpha.11`,
+    # `--requirements 2026-07-28`) and lives in the script, invoked directly
+    # rather than through the project's composite action — the action tag lags the
+    # npm alphas, so routing through it would float the version this job's whole
+    # premise depends on being frozen (RESEARCH A5).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The script builds too (its subject is `packages/cli/dist/cli.js`, and a
+      # conformance run against a stale dist measures the previous implementation).
+      # Building here as well costs a turbo cache hit and keeps a compile break
+      # visible as its own step, matching this file's other jobs.
+      - name: Build
+        run: pnpm build
+
+      # RUN FIRST, ON THIS PLATFORM, BEFORE THE GATE IT GUARDS. The four proofs
+      # take ~10s and each one requires a deliberate failure: a dead port, a
+      # truncated one-scenario run, the ratchet boundary in both directions, and a
+      # baseline entry that matches no check. They run HERE rather than only on a
+      # developer's machine because this project has already shipped a guard that
+      # held on macOS and was defeatable on Linux; a vacuity gate that only fires
+      # on the author's laptop protects nothing in CI.
+      - name: Conformance runner self-test
+        run: bash scripts/396-conformance.sh --selftest
+
+      - name: MCP conformance
+        run: bash scripts/396-conformance.sh
+
   ps-hosts:
     name: ps-host legs (macos)
     runs-on: macos-latest
