@@ -54,6 +54,7 @@ import {
   ConfigProposalApplyableV1Schema,
   ConfigProposalBlockedV1Schema,
   ConfigProposalV1Schema,
+  ConfigProposeOutputSchema,
 } from '../proposal'
 import { utf8Encode } from '../utf8'
 
@@ -278,6 +279,55 @@ describe('a produced applyable payload round-trips through its own schema', () =
   it('narrows to the applyable arm through the union', () => {
     const parsed = ConfigProposalV1Schema.parse(payload)
     expect(parsed.payloadKind).toBe('applyable')
+  })
+})
+
+describe('(S1) the proposed arm cannot carry an EMPTY rendered diff (395-22 · CFGM-05)', () => {
+  // THE TWO HALVES OF THE SAME LAW, SPELLED ONCE EACH. `shownDiffBase64` on the stored payload has
+  // carried `.min(1)` since D-19 — the bytes a person was shown may not be nothing — and the
+  // proposed arm's `shownDiff` is the TEXT of exactly those bytes on its way to a surface. It
+  // carried no lower bound, so an empty rendered diff satisfied every presence check between the
+  // producer and the confirm: a summary line above nothing at all, then an approval prompt.
+  //
+  // 395-22's engine precondition refuses that state at the choke point for every host. This cell is
+  // the other closure: with `.min(1)` here it is UNREPRESENTABLE through the real producer, so the
+  // engine check covers hosts and futures rather than today's one op. Two independent closures on
+  // one road, which is why the mutation leg that tears out the engine's half leaves this green.
+  const proposed = {
+    outcome: 'proposed' as const,
+    proposalId: 'prop-scaffold',
+    summaryLine: 'configure this project for https://booking.com as target booking-com',
+    crossBoundary: true,
+    crossBoundaryReasons: ['new-origin' as const],
+    files: ['agent-qa.config.yaml'],
+  }
+
+  it('refuses an empty shownDiff', () => {
+    expect(ConfigProposeOutputSchema.safeParse({ ...proposed, shownDiff: '' }).success).toBe(false)
+  })
+
+  it('accepts a one-character shownDiff — the boundary control', () => {
+    // THE CONTROL IS THE POINT OF THE PAIR: `.min(1)` and a rejection of everything are the same
+    // cell without it, and a proposed arm nothing could satisfy would be a worse defect than the
+    // one being closed.
+    expect(ConfigProposeOutputSchema.safeParse({ ...proposed, shownDiff: '-' }).success).toBe(true)
+  })
+
+  it('matches the stored payload\'s own bound, which has always been .min(1)', () => {
+    // ASSERTED AS A RELATION rather than as two independent facts: the text a surface prints and the
+    // bytes the record keeps are the same diff, so one accepting what the other rejects is the drift
+    // this cell exists to notice.
+    expect(ConfigProposalApplyableV1Schema.safeParse({
+      schemaVersion: CURRENT_CONFIG_PROPOSAL_SCHEMA_VERSION,
+      payloadKind: 'applyable',
+      action: 'config.project.scaffold',
+      summaryLine: 'configure this project',
+      files: [{ path: 'agent-qa.config.yaml', changeKind: 'modify', newContentBase64: '' }],
+      shownDiffBase64: '',
+      shownDiffDigest: 'abc',
+      crossBoundary: true,
+      crossBoundaryReasons: [],
+    }).success).toBe(false)
   })
 })
 

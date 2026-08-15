@@ -153,11 +153,23 @@ export interface TurnEngineDeps {
    * receives is untouched. A seam that fed the gate would be I/O placed between a caller and its
    * own authorization decision, which `spec.ts` forbids by name one file over.
    *
-   * ABSENT ⇒ THIS HOST RENDERS NOTHING MID-TURN. That is a posture and not a degraded mode: the
-   * turn's result, its receipts and its session log are byte-for-byte what they were, and the only
-   * thing such a host lacks is a surface to print on. Every headless host and every `agent.ask`
-   * caller is in that class, and each still fails a confirm closed exactly as before — the gate's
-   * deny-by-default is not this seam's to move in either direction.
+   * ABSENT ⇒ THE `write_test` SCAFFOLD ROUTE REFUSES, AND THAT IS MEASURED RATHER THAN ASSERTED
+   * (395-22 · CR-03). This paragraph used to say the opposite — that an absent port is a posture
+   * and not a degraded mode, and that every headless host and every `agent.ask` caller alike still
+   * meets the gate's refusal unchanged. 395-VERIFICATION (gap round 4) drove `agent.ask`
+   * through the production composition and measured that sentence FALSE: `composeCliLocalAgent`
+   * binds `input.confirm ?? createTtyConfirmPort()` regardless of this port, so at a terminal an
+   * unbound `present` is not a host that fails closed — it is a host that PROMPTS, having shown the
+   * person nothing. The complete set of bytes reaching their terminal before the decision was the
+   * approval prompt itself.
+   *
+   * A confirm a person can approve must never be reachable for a change they were not shown, so
+   * `routeWriteTest` now treats displayability as a PRECONDITION of the gated apply: no port, or
+   * nothing worth printing, and the route stops with `WRITE_TEST_UNDISPLAYABLE_DETAIL` above the
+   * render. The proposal stays filed and readable under its own id. The gate's deny-by-default is
+   * still not this seam's to move in either direction — what changed is that the route no longer
+   * walks a person INTO the gate blind. A host that binds no surface and never reaches this route
+   * is untouched, which is every non-chat CLI invocation.
    *
    * IT EXISTS BECAUSE THE ONE CHAIN THAT ASKS FOR AN APPROVAL MID-TURN HAD NOTHING TO SHOW.
    * `routeWriteTest` invokes `config.proposal.apply` — a gated verb — from inside a turn, so the
@@ -848,12 +860,44 @@ async function runTurnThrough(
     // the WHOLE candidate set including context lines (D-12); the `blocked` arm carries no diff by
     // construction and the route already returned above on any non-`proposed` outcome, so there is
     // no arm of this function on which unscanned bytes reach a surface.
+    // DISPLAYABILITY IS A PRECONDITION OF THE APPLY, NOT A SIDE EFFECT OF A BOUND PORT (395-22 ·
+    // CR-03 · the owner's 2026-08-15 CR-04 ruling, completed). This used to be a field-presence
+    // GUARD around the render: satisfy it and the proposal was shown, miss it and control fell
+    // straight through to the gated apply below. 395-19 put the CR-04 refusal inside that guard,
+    // which closed the arm where a bound port THROWS and left open the arm where no port is bound
+    // at all — and `agent-qa ask` is that arm on a terminal: no `present`, a real
+    // `createTtyConfirmPort` confirm, the route bound unconditionally. 395-VERIFICATION (round 4)
+    // drove it through the production composition and measured the complete set of bytes reaching
+    // the person before the decision: one line, the approval prompt itself.
+    //
+    // SO THE CONDITION IS INVERTED AND HOISTED. Every way a proposal can fail to be displayable —
+    // no surface to print on, or nothing worth printing — produces the stop verdict HERE, above the
+    // render, and only a proposal that survives this can reach `engine.invoke(
+    // CONFIG_PROPOSAL_APPLY_FUNCTION_ID, …)`. That covers every host and every future producer
+    // rather than the two arms a verifier happened to drive, which is this phase's own
+    // sibling-input law applied to the guard's whole input set.
+    //
+    // EMPTINESS COUNTS AS ABSENCE, and that is the arm a presence-only check passes: an empty
+    // `shownDiff` renders a summary line above nothing at all and then asks for approval. The
+    // schema's proposed arm carries `.min(1)` as of this plan, so the real op cannot produce it —
+    // this is the engine's own answer, independent of any one producer's contract.
+    //
+    // ONE REFUSAL VOCABULARY. `WRITE_TEST_UNDISPLAYABLE_DETAIL` is reused verbatim for every arm
+    // rather than split into siblings: its sentence — you are never asked to accept a change you
+    // were not shown, and the proposal is still filed — is true of all of them, and a person who
+    // saw nothing does not need to be told which internal reason produced the nothing.
+    const present = engine.present
     if (
-      engine.present !== undefined
-      && answer.summaryLine !== undefined
-      && answer.files !== undefined
-      && answer.shownDiff !== undefined
+      present === undefined
+      || answer.summaryLine === undefined || answer.summaryLine === ''
+      || answer.files === undefined || answer.files.length === 0
+      || answer.shownDiff === undefined || answer.shownDiff === ''
     ) {
+      writeTestRefusal = WRITE_TEST_UNDISPLAYABLE_DETAIL
+      return 'stop'
+    }
+
+    {
       // INERT BY CONSTRUCTION, NOT BY LUCK (395-17 · CR-03 · RULING 2). D-14 says this port is
       // display-only and absent-safe; that sentence is a claim about the port's THIRD state too —
       // bound, and broken — and until this guard it was false there: the exception escaped
@@ -876,7 +920,7 @@ async function runTurnThrough(
       // sentence points at the surface that reads it. The refusal is the TURN's, never the
       // PROPOSAL's — and it is a fixed literal, so the broken port contributes no bytes to it.
       try {
-        await engine.present([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
+        await present([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
       } catch {
         writeTestRefusal = WRITE_TEST_UNDISPLAYABLE_DETAIL
         return 'stop'

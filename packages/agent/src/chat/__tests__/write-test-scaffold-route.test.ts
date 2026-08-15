@@ -86,7 +86,7 @@ import {
 import { CHAT_RESOLVER_TABLE } from '../resolver-table.js'
 import { deterministicOverrideStrategy } from '../reconcile.js'
 import { splitClauses } from '../clause-split.js'
-import { createTurnEngine } from '../turn-engine.js'
+import { WRITE_TEST_UNDISPLAYABLE_DETAIL, createTurnEngine } from '../turn-engine.js'
 import type { TurnEngineDeps } from '../turn-engine.js'
 import { toToolName } from '../tool-names.js'
 import type { ChatBindingStage, PlannerStagePort } from '../ports.js'
@@ -834,25 +834,158 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
         .toBe([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
     })
 
-  it('(R13) renders NOTHING on a host that binds no presentation port, and the chain is unchanged',
+  it('(R13′) an UNBOUND present REFUSES the route: nothing is displayed, so nothing is offered',
     async () => {
-      // THE ABSENT-SAFE HALF. A headless host — every `agent.ask` caller, the daemon, the MCP
-      // projection — binds no surface, and this seam must leave it byte-for-byte as it was: same
-      // chain, same status, nothing rendered. The gate's own posture is untouched either way, which
-      // is what makes the port display-only rather than a second authorization input.
+      // MATRIX CELL: present=undefined × all fields present × the shipped `ask` host shape
+      // (395-22 · CR-03 · the owner's 2026-08-15 CR-04 ruling, completed on the UNBOUND arm).
+      //
+      // WHAT THIS CELL USED TO ASSERT, AND WHY IT IS GONE. (R13) pinned the absent port as a chain
+      // that CONTINUES: `expect(test.ordering).toEqual([scaffold, apply, draft.write])` plus
+      // `status === 'completed'`. 395-VERIFICATION (gap round 4) drove exactly this shape through
+      // the PRODUCTION composition — `composeCliLocalAgent` + `agent.ask` + the shipped
+      // `createTtyConfirmPort` — and measured the complete set of bytes reaching a person's
+      // terminal before the decision: one line, the approval prompt itself. That is verbatim the
+      // state the owner ruled against on the THROWS arm one round earlier, reached through the
+      // unbound door instead of the throwing one, and this cell ASSERTED IT AS CORRECT. A corpus
+      // that pins the defect cannot see the defect; that is why the assertions are DELETED rather
+      // than relaxed.
+      //
+      // WHAT REPLACES THEM IS (R14)/(R15)'s REFUSAL-EFFECT SET, deliberately duplicated rather than
+      // shared (D-395-19-D's recorded posture): three arms of one port are three claims, and a
+      // helper would let one arm's regression hide inside another's green.
+      //
+      // NOTE THE ONE ASSERTION THIS ARM OWNS ALONE: `presented` is empty because there is no port
+      // to attempt on — the refusal happens at the PRECONDITION, above the render, which is what
+      // makes displayability a property of the proposal rather than a side effect of a call.
       const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
       const test = harness({ targets: [], realScaffold: scaffoldOp, noPresent: true })
       const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
 
-      expect(result.status).toBe('completed')
+      // NOTHING WAS DISPLAYED, and nothing was attempted: no port, no render.
       expect(test.presented).toEqual([])
-      expect(test.ordering).toEqual([
-        CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
-        CONFIG_PROPOSAL_APPLY_FUNCTION_ID,
-        AUTHORING_DRAFT_WRITE_FUNCTION_ID,
-      ])
+
+      // NO CONFIRM WAS EVER OFFERED. `config.proposal.apply` is the gated verb whose invocation IS
+      // the confirm, so its absence from the recorded ordering is the fact that nobody was asked.
+      // The exact array first so a fourth invocation cannot slip in, then by name so the failure
+      // message says which verb.
+      expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
+      expect(test.ordering).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+      expect(test.ordering).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+
+      // THE TURN DOES NOT PRETEND IT SUCCEEDED, and it carries the arm's own sentence — the fixed
+      // literal every displayability refusal shares. One refusal vocabulary: a person who was shown
+      // nothing is told the same thing whether the surface broke or was never there.
+      expect(result.status).toBe('fail_closed')
+      expect(result.unhandled?.reason).toBe(WRITE_TEST_UNDISPLAYABLE_DETAIL)
+      expect(result.unhandled?.reason).not.toBe(WRITE_TEST_UNCONFIGURED_DETAIL)
+
+      // THE SESSION RECORD TESTIFIES TO THE SAME THING: the scaffold's receipt is there, the
+      // authoring dispatch's is not, and no `completed` turn was written.
+      const receipted = test.events
+        .filter((event) => event.kind === 'clause_receipt')
+        .map((event) => (event as { functionId: string }).functionId)
+      expect(receipted).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
+      expect(receipted).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+      expect(receipted).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+      expect(test.events.some(
+        (event) => event.kind === 'turn_complete'
+          && (event as { status: string }).status === 'completed',
+      )).toBe(false)
+
+      // NO WORK IS LOST: the route refuses the TURN, not the PROPOSAL. Filed exactly once, and it
+      // reads back out of the store under the id the op answered with — the ports-level
+      // `agent-qa proposals show <id>` the refusal sentence points a person at.
       expect(scaffoldOp.filed).toHaveLength(1)
+      const proposalId = (test.answers.find(
+        (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+      )?.answer as { readonly proposalId?: string } | undefined)?.proposalId
+      expect(proposalId).toBe(SCAFFOLD_PROPOSAL_ID)
+      const shown = scaffoldOp.show(proposalId ?? '')
+      expect(shown?.summaryLine).toBe(scaffoldOp.filed[0]?.summaryLine)
+      expect(shown?.paths.length ?? 0).toBeGreaterThan(0)
     })
+
+  // -----------------------------------------------------------------------------------------------
+  // (R16)-(R19) — THE PER-FIELD DISPLAYABILITY MATRIX (395-22).
+  //
+  // WHY A CANNED ANSWER HERE AND A REAL OP ABOVE. The real scaffold op cannot produce a proposed
+  // answer with a missing or empty display field — `ConfigProposeOutputSchema`'s proposed arm
+  // requires `summaryLine`/`files` non-empty and, as of this plan, `shownDiff` too. That collapse is
+  // the POINT and it is stated rather than assumed: on the op road these states are unrepresentable
+  // by construction, and (S1) in the schema package measures that. These cells exist because the
+  // engine's precondition covers every host and every future op, not just today's one producer — so
+  // they drive the harness's stub producer, which is this unit file's own corpus idiom.
+  //
+  // THE PRESENT PORT IS HEALTHY IN ALL FOUR. That is what separates them from (R13′): the surface
+  // works, and the refusal is about the PROPOSAL having nothing to show — displayability as a
+  // property of the artifact rather than of the port.
+  // -----------------------------------------------------------------------------------------------
+
+  /** The stub producer's proposed answer, minus whichever field a cell is measuring. */
+  const DISPLAYABLE_ANSWER = {
+    outcome: 'proposed',
+    proposalId: 'prop-scaffold',
+    summaryLine: 'configure this project for https://booking.com as target booking-com',
+    crossBoundary: true,
+    crossBoundaryReasons: ['new-origin'],
+    files: ['.gitignore', 'agent-qa.config.yaml', 'hooks.yaml'],
+    shownDiff: '--- /dev/null\n+++ b/agent-qa.config.yaml\n',
+  } as const
+
+  /**
+   * The refusal-effect set of (R13′), asserted over a healthy-port run (395-22).
+   *
+   * SHARED HERE AND NOT ABOVE, deliberately: (R13′)/(R14)/(R15) are three arms of the PORT and each
+   * repeats its assertions so one arm's regression cannot hide in another's green. (R16)-(R19) are
+   * four coordinates of ONE field-shape mechanism driven through one producer, so what varies
+   * between them is the input and not the claim — and a helper is the honest spelling of that.
+   */
+  async function expectUndisplayableRefusal(scaffoldAnswer: unknown): Promise<void> {
+    const test = harness({ targets: [], scaffoldAnswer })
+    const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
+
+    // THE RENDER WAS NEVER ATTEMPTED. The port is bound and healthy, so an empty recorder can only
+    // mean the refusal sat ABOVE the call — the precondition rather than a failed render.
+    expect(test.presented).toEqual([])
+    expect(test.ordering).toEqual([CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID])
+    expect(test.ordering).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+    expect(test.ordering).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+    expect(result.status).toBe('fail_closed')
+    expect(result.unhandled?.reason).toBe(WRITE_TEST_UNDISPLAYABLE_DETAIL)
+
+    const receipted = test.events
+      .filter((event) => event.kind === 'clause_receipt')
+      .map((event) => (event as { functionId: string }).functionId)
+    expect(receipted).toContain(CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID)
+    expect(receipted).not.toContain(AUTHORING_DRAFT_WRITE_FUNCTION_ID)
+  }
+
+  it('(R16) a proposal with NO summary line is not displayable, so it is not offered', async () => {
+    // MATRIX CELL: summaryLine absent × present=healthy.
+    const { summaryLine: _summaryLine, ...withoutSummary } = DISPLAYABLE_ANSWER
+    await expectUndisplayableRefusal(withoutSummary)
+  })
+
+  it('(R17) a proposal with NO file list is not displayable, so it is not offered', async () => {
+    // MATRIX CELL: files absent × present=healthy.
+    const { files: _files, ...withoutFiles } = DISPLAYABLE_ANSWER
+    await expectUndisplayableRefusal(withoutFiles)
+  })
+
+  it('(R18) a proposal with NO rendered diff is not displayable, so it is not offered', async () => {
+    // MATRIX CELL: shownDiff absent × present=healthy.
+    const { shownDiff: _shownDiff, ...withoutDiff } = DISPLAYABLE_ANSWER
+    await expectUndisplayableRefusal(withoutDiff)
+  })
+
+  it('(R19) an EMPTY rendered diff is not a display either — presence is not the test', async () => {
+    // MATRIX CELL: shownDiff === '' × present=healthy. THE SHARPEST OF THE FOUR, because it is the
+    // one a presence-only guard passes: the field is there, the render happens, and the person is
+    // shown a summary line above nothing at all and then asked to approve. `.min(1)` on the schema's
+    // proposed arm ((S1)) collapses this on the op road; this cell is the engine's own answer, which
+    // is what covers every other producer.
+    await expectUndisplayableRefusal({ ...DISPLAYABLE_ANSWER, shownDiff: '' })
+  })
 
   it('(R14) a present that THROWS REFUSES the route: no confirm is offered, the proposal stays filed and readable',
     async () => {

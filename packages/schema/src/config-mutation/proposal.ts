@@ -276,8 +276,14 @@ export const ConfigProposeOutputSchema = z.discriminatedUnion('outcome', [
     /** The same closed vocabulary the payload carries — one spelling, two readers. */
     crossBoundaryReasons: z.array(z.enum(CROSS_BOUNDARY_REASONS)),
     files: z.array(z.string().min(1)).min(1),
-    /** The rendered diff a surface prints, as text. The record keeps the bytes. */
-    shownDiff: z.string(),
+    /**
+     * The rendered diff a surface prints, as text. The record keeps the bytes.
+     *
+     * `.min(1)` FOR THE SAME REASON `shownDiffBase64` CARRIES IT (395-22 · CFGM-05): this is the
+     * text of exactly those bytes on its way to a person, and a proposal whose rendered diff is
+     * empty is one they can be shown a summary line above nothing at all and then asked to approve.
+     */
+    shownDiff: z.string().min(1),
   }).strict(),
   z.object({
     outcome: z.literal('blocked'),
