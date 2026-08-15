@@ -409,8 +409,11 @@ async function readConfig(configPath?: string): Promise<{
     // the turn. Of every consumer of this one file, this is the one where republishing its bytes
     // travels furthest.
     //
-    // The masking below (`maskSensitive`) cannot help here: it walks a PARSED config, and there is
-    // no parsed config on this arm.
+    // The masking on the success path (`maskSensitive`) cannot help here: it walks a PARSED config,
+    // and there is no parsed config on this arm. That success path was left unfixed by 395-18 and
+    // was leaking on the same channel this comment describes until 395-25 routed it through
+    // `isCredentialEntry` — the argument above applies to both arms of this `try`, and now both
+    // arms honour it.
     throw new Error(`${path}: ${yamlParseFailureMessage(err)}`)
   }
 
