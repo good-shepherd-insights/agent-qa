@@ -101,6 +101,14 @@ const CREDENTIAL_VALUE_DETECTORS: readonly GuardrailDetectorFamily[] = [
  *
  * The arms are an OR: a credential is either something the key says is one, or something the value
  * looks like.
+ *
+ * AND THE THIRD ARM EXISTS SO A CONTAINER IS NEVER A HIDING PLACE FROM THE PREDICATE (395-23 ·
+ * F-03-R4a). Before it, this function returned `false` for every non-string, so a caller handed a
+ * whole `registry.llms[]` — the array where all of this product's provider credentials live — got
+ * the same answer as for an empty config, and `config show` printed every byte of it. A caller that
+ * decomposes first (the render road now does) never reaches this arm; a caller that does not (the
+ * MCP masker is one) gets the answer its leaves would have given, through the SAME detector
+ * families, because two answers to one question is the drift this module exists to end.
  */
 export function isCredentialEntry(key: string, value: unknown): boolean {
   // AN INDEX IS NOT PART OF THE NAME (395-23 · F-03-R4a). The render road now flattens arrays to
@@ -110,8 +118,30 @@ export function isCredentialEntry(key: string, value: unknown): boolean {
   // name, or the fix that closed the leak would have opened a smaller one beside it.
   const lastSegment = (key.split('.').pop() ?? '').replace(/\[\d+\]$/, '')
   if (CREDENTIAL_KEY_NAMES.has(lastSegment.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true
-  if (typeof value !== 'string' || value === '') return false
+  if (value === undefined || value === null) return false
+  if (typeof value === 'string') return valueLooksLikeCredential(value)
+  // ANYTHING ELSE IS SCANNED THROUGH ITS JSON SERIALIZATION — every byte a render or a tool
+  // response could put in front of a person or a model, read by the SAME families.
+  let serialized: string | undefined
+  try {
+    serialized = JSON.stringify(value)
+  } catch {
+    // A value this predicate cannot read is a value it cannot clear. `JSON.stringify` throws on a
+    // circular structure and on a BigInt; answering `false` there would mean "not a credential"
+    // for the one input class we know nothing about, on a function that gates a redaction and a
+    // write refusal. Fail toward redacting and refusing — the same direction T-395-56 accepts for
+    // the 40-character over-reach above.
+    return true
+  }
+  // `undefined` back from `stringify` is a function or a symbol: nothing renderable, nothing to
+  // hide.
+  if (serialized === undefined || serialized === '') return false
+  return valueLooksLikeCredential(serialized)
+}
+
+function valueLooksLikeCredential(text: string): boolean {
+  if (text === '') return false
   return CREDENTIAL_VALUE_DETECTORS.some(
-    (family) => findDetectorMatches(family, value).length > 0,
+    (family) => findDetectorMatches(family, text).length > 0,
   )
 }
