@@ -103,7 +103,12 @@ const CREDENTIAL_VALUE_DETECTORS: readonly GuardrailDetectorFamily[] = [
  * looks like.
  */
 export function isCredentialEntry(key: string, value: unknown): boolean {
-  const lastSegment = key.split('.').pop() ?? ''
+  // AN INDEX IS NOT PART OF THE NAME (395-23 · F-03-R4a). The render road now flattens arrays to
+  // indexed rows, so a `credentials: [...]` that used to arrive as ONE row named `credentials` —
+  // and was redacted by the arm below — now arrives as `credentials[0]`, whose raw normalization is
+  // `credentials0`, a member of no set. Decomposing a container must not cost the container's own
+  // name, or the fix that closed the leak would have opened a smaller one beside it.
+  const lastSegment = (key.split('.').pop() ?? '').replace(/\[\d+\]$/, '')
   if (CREDENTIAL_KEY_NAMES.has(lastSegment.toLowerCase().replace(/[^a-z0-9]/g, ''))) return true
   if (typeof value !== 'string' || value === '') return false
   return CREDENTIAL_VALUE_DETECTORS.some(

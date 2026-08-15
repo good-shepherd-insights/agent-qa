@@ -1149,3 +1149,148 @@ describe('a healthy config\'s credentials are neither printed nor written (395-2
       expect(readFileSync(configPath, 'utf8'), 'no refusal may write').toBe(before)
     })
 })
+
+// A CONTAINER IS NOT A HIDING PLACE ON THE RENDER ROAD (395-23 · F-03-R4a).
+//
+// WHAT THE CELLS ABOVE COULD NOT SEE, AND WHY. Every (K1)/(K3-show) fixture plants its credential at
+// a SCALAR LEAF — `apiToken`, `llm.apiKey`, `deployment.rolloutTag`. The corpus was blind by
+// CONTAINER SHAPE, not by key name and not by value shape: `flattenObject`
+// (`cli/src/config.ts:202-217`) tested `!Array.isArray(value)` before recursing, so an array-valued
+// subtree went to the `else` branch WHOLE and became one row whose value is `JSON.stringify(theArray)`
+// — and `isCredentialEntry` returned `false` for any non-string, so that row failed both arms of the
+// one predicate and printed verbatim.
+//
+// AND IT IS NOT AN EXOTIC SHAPE HERE. `RegistrySchema.llms` is `z.array(NamedLLMConfigSchema)` —
+// an array is exactly where this product's provider credentials LIVE. `baseURL` is a free
+// `z.string()` (a URL-userinfo credential passes schema validation), `SENSITIVE_HEADER_TERMS` does
+// not carry `x-client-auth` (a header credential passes too), and `showAction` reads
+// `loadConfigFile`, the UNVALIDATED file, so no schema guard runs on this road regardless. The
+// verifier reproduced all of it on the shipped binary at exit 0 (395-VERIFICATION CR-01).
+//
+// TWO FIXES, DELIBERATELY DISJOINT, AND EACH CELL MEASURES ONE OF THEM:
+//
+//  (K5) the container leak    — the render road. Reds if `flattenObject` stops recursing arrays: the
+//                               array becomes one leaf row again and both planted tokens print.
+//  (K6) the container control — the over-redaction half, in the (K4a)/(K4b) family. The guard must
+//                               decompose the array, not blacken it: an array member that is not a
+//                               credential still renders VERBATIM. Green pre-fix too (the whole
+//                               array printed, so the members were visible), which is exactly why
+//                               its pre-fix reading is recorded — post-fix it is a comparison, not
+//                               an assumption.
+//  (K7, in the agent package) — the predicate's own non-string arm. NOT here, and NOT redundant:
+//                               once (K5)'s recursion lands, the render never hands the predicate a
+//                               container at all, so the two halves red on disjoint cells. That
+//                               disjointness IS the independence proof, and the MCP masker is the
+//                               product-surface road that reaches the predicate with a container.
+
+/** The container fixture's own values — fresh, fixture-owned, never the verifier's own strings. */
+const PLANTED_ARRAY_URLINFO = 'sk-ant-api03-395twentythreeURLUSERINFOFIXTUREONLYnotarealkey'
+const PLANTED_ARRAY_HEADER = 'sk-ant-api03-395twentythreeHEADERAUTHFIXTUREONLYnotarealkey'
+
+/** The non-credential members (K6) pins: a name and a credential-free URL-shaped field. */
+const CONTAINER_LLM_NAME = 'primary-container-fixture'
+const CONTAINER_CLEAN_URL = 'https://docs.example.com/models'
+
+/** The exact llms entry `WELL_FORMED_CONFIG` ships, replaced wholesale below. */
+const WELL_FORMED_LLM_ENTRY = `    - name: judge
+      provider: openai-subscription
+      model: gpt-5.6-terra`
+
+/**
+ * The healthy config CR-01 was reproduced on: credentials nested INSIDE `registry.llms[]`, one in a
+ * URL's userinfo and one under a header key `SENSITIVE_HEADER_TERMS` does not carry.
+ *
+ * DERIVED from `WELL_FORMED_CONFIG` for `CONTROL_CONFIG`'s reason — a second hand-kept config drifts
+ * and then the fixture measures the drift. (K5) asserts the substitution actually happened, because
+ * a silently-no-op `.replace` would leave a fixture with no credential in it and a cell that passes
+ * by measuring nothing.
+ */
+const ARRAY_LEAK_CONFIG = WELL_FORMED_CONFIG.replace(
+  WELL_FORMED_LLM_ENTRY,
+  `    - name: ${CONTAINER_LLM_NAME}
+      provider: openai-compatible
+      model: gpt-5.6-terra
+      docsUrl: ${CONTAINER_CLEAN_URL}
+      baseURL: https://user:${PLANTED_ARRAY_URLINFO}@api.example.com
+      providerHeaders:
+        X-Client-Auth: ${PLANTED_ARRAY_HEADER}`,
+)
+
+describe('credentials nested in an array subtree (395-23 · F-03-R4a)', () => {
+  it('(K5) the SHIPPED `config show` prints ZERO bytes of a credential inside registry.llms[]',
+    () => {
+      // THE FIXTURE IS REAL, ASSERTED. If the derivation above ever stops matching, this cell would
+      // seed a credential-free config and pass for the wrong reason.
+      expect(ARRAY_LEAK_CONFIG, 'the container fixture must differ from the plain well-formed one')
+        .not.toBe(WELL_FORMED_CONFIG)
+      expect(occurrences(ARRAY_LEAK_CONFIG, PLANTED_ARRAY_URLINFO), 'the URL credential was planted')
+        .toBe(1)
+      expect(occurrences(ARRAY_LEAK_CONFIG, PLANTED_ARRAY_HEADER), 'the header credential was planted')
+        .toBe(1)
+
+      seedConfig(ARRAY_LEAK_CONFIG)
+      const container = runShippedCli('config', 'show')
+
+      // THE VERIFIER'S OWN READING, INVERTED. Pre-fix each of these counted 1, on the whole combined
+      // stdout+stderr of the shipped binary — no stream filter, no line filter.
+      expect(
+        occurrences(container.combined, PLANTED_ARRAY_URLINFO),
+        `config show printed the URL-userinfo credential:\n${container.combined}`,
+      ).toBe(0)
+      expect(
+        occurrences(container.combined, PLANTED_ARRAY_HEADER),
+        `config show printed the providerHeaders credential:\n${container.combined}`,
+      ).toBe(0)
+
+      // AND THE ROWS ARE STILL THERE. Exactly the two credential-bearing leaves are marked; a guard
+      // that blackened the whole container would count 1 here and red (K6) beside it.
+      expect(
+        occurrences(container.combined, REDACTION_MARKER),
+        `the container credential rows are not marked:\n${container.combined}`,
+      ).toBe(2)
+
+      // EXIT PARITY WITH (K1), MEASURED RATHER THAN ASSUMED — the same relation (K4c) asserts for
+      // the write arms. `config show` over a healthy file is a success on both fixtures or neither.
+      seedConfig(SHOW_LEAK_CONFIG)
+      const scalar = runShippedCli('config', 'show')
+      expect(container.status, `the container road must exit as (K1)'s does:\n${container.combined}`)
+        .toBe(scalar.status)
+      expect(scalar.status, 'the measured (K1) status').toBe(0)
+    })
+
+  it('(K5-idx) an INDEXED container keeps the name it had — the regression (K5)\'s fix would mint',
+    () => {
+      // WHAT DECOMPOSING A CONTAINER COSTS IF NOBODY PAYS IT. Before (K5)'s fix an array was ONE row
+      // keyed by its own name, so `credentials: [...]` was redacted by the NAME arm — accidentally,
+      // but really. Recursion renames that row `credentials[0]`, whose normalized last segment is
+      // `credentials0`, a member of no set: the fix would have turned a redacted row into a printed
+      // one. Half a fix mints a regression (388/390/392), so the ONE predicate strips a trailing
+      // index before it asks its name question — a container's element is still the container.
+      expect(
+        isCredentialEntry('credentials[0]', 'an-opaque-value-no-detector-knows'),
+        'an indexed element of a credential-named container is still credential-bearing',
+      ).toBe(true)
+      // AND THE CONTROL: the index is stripped, the NAME still has to be one. `registry.llms[0]` is
+      // not a credential name, so an ordinary element stays ordinary — this is what forbids reading
+      // the line above as "anything indexed is a secret".
+      expect(
+        isCredentialEntry('registry.llms[0]', 'an-opaque-value-no-detector-knows'),
+        'an indexed element of an ordinary container is still ordinary',
+      ).toBe(false)
+    })
+
+  it('(K6) non-credential members of that same array still render VERBATIM', () => {
+    seedConfig(ARRAY_LEAK_CONFIG)
+
+    const { status, combined } = runShippedCli('config', 'show')
+
+    // THE OVER-REDACTION CONTROL FOR CONTAINERS. The cheapest way to make (K5) pass is to redact the
+    // whole array row, which would make `config show` useless for the thing people run it for. These
+    // two members sit in the SAME array element as both planted credentials.
+    expect(combined, `the array member's name was redacted:\n${combined}`)
+      .toContain(CONTAINER_LLM_NAME)
+    expect(combined, `a credential-free URL-shaped member was redacted:\n${combined}`)
+      .toContain(CONTAINER_CLEAN_URL)
+    expect(status, 'config show must stay a success').toBe(0)
+  })
+})

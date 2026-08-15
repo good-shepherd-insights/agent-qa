@@ -199,19 +199,49 @@ export function mergeUseBlocks(
   ) as Record<string, unknown>
 }
 
+/**
+ * ROWS FOR `formatConfigDebug`, AND AN ARRAY IS NOT A LEAF (395-23 · F-03-R4a).
+ *
+ * WHAT THIS USED TO DO AND WHY IT LEAKED. Both branches tested `!Array.isArray(value)` before
+ * recursing, so an array-valued subtree became ONE row whose value is `JSON.stringify(theArray)` —
+ * every byte of every element, printed by the ordinary render of a healthy file. `isCredentialEntry`
+ * answers `false` for a non-string, so that row failed both arms of the one predicate and printed
+ * verbatim: `registry.llms[0].baseURL` and `registry.llms[0].providerHeaders['X-Client-Auth']`
+ * reached a person's terminal at exit 0 on all three callers of this function. That is not an exotic
+ * shape here — `RegistrySchema.llms` is `z.array(...)`, which is precisely where this product's
+ * provider credentials live.
+ *
+ * SO THE ROW PRODUCER DECOMPOSES CONTAINERS, rather than the predicate learning to read one shape of
+ * container. A credential can only be redacted at a row, so the fix belongs where rows are made:
+ * every scalar in the tree becomes its own row, arrays under a bracket-indexed segment
+ * (`registry.llms[0].baseURL`) and objects under a dotted one, and the redaction in the row loop
+ * then asks its one question about a string, exactly as it does for every scalar leaf.
+ *
+ * AN EMPTY ARRAY STAYS A LEAF, deliberately: it carries no bytes to hide, and dropping the row would
+ * delete a key a person's config actually declares from a command whose whole job is saying which
+ * keys resolve from where. It renders as `[]`.
+ *
+ * ORDERING IS UNCHANGED because the caller sorts: indexed segments are ordinary characters to
+ * `Array.prototype.sort`, so rows land deterministically.
+ */
 function flattenObject(obj: unknown, prefix = ''): Record<string, unknown> {
   const result: Record<string, unknown> = {}
-  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+  if (typeof obj !== 'object' || obj === null) {
     if (prefix) result[prefix] = obj
     return result
   }
-  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-    const path = prefix ? `${prefix}.${key}` : key
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      Object.assign(result, flattenObject(value, path))
-    } else {
-      result[path] = value
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) {
+      if (prefix) result[prefix] = obj
+      return result
     }
+    obj.forEach((element, index) => {
+      Object.assign(result, flattenObject(element, `${prefix}[${index}]`))
+    })
+    return result
+  }
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    Object.assign(result, flattenObject(value, prefix ? `${prefix}.${key}` : key))
   }
   return result
 }
