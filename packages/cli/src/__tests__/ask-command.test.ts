@@ -19,6 +19,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createAskCommand } from '../commands/ask.js'
 
+/**
+ * Every composition input this command handed the real composition root (395-22 · (A3)).
+ *
+ * A PASS-THROUGH RECORDER AND NOT A DOUBLE. The mock below delegates to the genuine
+ * `composeCliLocalAgent` — every other cell in this file drives the real registry through the real
+ * composition and must keep doing so, because "the CLI owns no turn capability" is a structural
+ * claim that a stubbed composition would make unmeasurable. What is added is a tap: the ARGUMENT is
+ * captured on its way through, which is the only thing (A3) is about.
+ */
+const compositionInputs = vi.hoisted(() => [] as { chatPresent?: (text: string) => void }[])
+
+vi.mock('../composition/local-agent-host.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../composition/local-agent-host.js')>()
+  return {
+    ...original,
+    composeCliLocalAgent: (input: Parameters<typeof original.composeCliLocalAgent>[0]) => {
+      compositionInputs.push(input as { chatPresent?: (text: string) => void })
+      return original.composeCliLocalAgent(input)
+    },
+  }
+})
+
 interface InvocationResult {
   stdout: string
   stderr: string
@@ -75,6 +97,7 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
 
   beforeEach(() => {
     originalExitCode = process.exitCode
+    compositionInputs.length = 0
   })
 
   afterEach(() => {
@@ -105,6 +128,43 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     const result = await runAsk(configPath, ['proposals'])
 
     expect(result.stdout).toContain('proposals.list completed')
+  })
+
+  it('(A3) binds a presentation port on the SAME stream its confirm prompts on', async () => {
+    // 395-22 · CR-03 · CFGM-05. `composeCliLocalAgent` supplies `createTtyConfirmPort()` whenever
+    // this process has two TTYs, so at a terminal this command DOES ask a person to approve gated
+    // work — and until this plan it bound no surface to show them what they were approving. Round
+    // 4's verification measured the consequence end to end: the complete set of bytes on the
+    // terminal before the decision was the approval prompt itself.
+    //
+    // THE BINDING IS THE CLAIM, MEASURED AT THE SEAM. `ask.ts` cannot decide what a turn is, and it
+    // does not: it hands the composition a writer, exactly as `chat.ts:289` does, and everything
+    // downstream is the shared composition's. So the cell asserts the argument, and then asserts
+    // what the argument DOES — a binding present but inert would pass the first half alone.
+    const configPath = fixtureWorkspace(roots)
+    await runAsk(configPath, ['proposals'])
+
+    expect(compositionInputs).toHaveLength(1)
+    const chatPresent = compositionInputs[0]?.chatPresent
+    expect(typeof chatPresent).toBe('function')
+
+    // AND IT WRITES TO STDOUT, WITH A TRAILING NEWLINE, THROUGH THE MASKER. The stream matters more
+    // than the bytes: a render on any other stream is a render the person answering the prompt is
+    // not reading, which is the whole content of the 2026-08-14 "reviewable binds at approval time"
+    // ruling. `process.stdout.write` is spied rather than `console.log`, because the confirm prompt
+    // this must share a stream with writes the same way.
+    const written: string[] = []
+    const write = vi.spyOn(process.stdout, 'write')
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        written.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+        return true
+      })
+    try {
+      chatPresent?.('a summary line\nagent-qa.config.yaml\n--- /dev/null')
+    } finally {
+      write.mockRestore()
+    }
+    expect(written.join('')).toBe('a summary line\nagent-qa.config.yaml\n--- /dev/null\n')
   })
 
   it('D-08: a fail-closed turn reports the clause and exits non-zero', async () => {

@@ -231,4 +231,71 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       // and it is on disk under the id the refusal points a person at.
       expect(filedProposals()).toHaveLength(1)
     })
+
+  it('(A1) with the port bound the proposal is RENDERED before the confirm is asked',
+    async () => {
+      // THE GUARD-ACCEPTS CONTROL, and it carries two claims at once.
+      //
+      // FIRST, TASK 1's PRECONDITION DOES NOT OVER-REFUSE. A route that refused always would satisfy
+      // (A2) perfectly and destroy the feature; this cell is what makes (A2)'s refusal a divergence
+      // rather than a constant. Same composition, same utterance, same op — one binding different.
+      //
+      // SECOND, TASK 2's BINDING PUTS THE RENDER IN THE RIGHT PLACE. `ask.ts` now hands
+      // `composeCliLocalAgent` a `chatPresent` writing to `process.stdout`, which is the stream
+      // `createTtyConfirmPort` prompts on; here that writer is a recorder and the prompt is a spy,
+      // and BOTH APPEND TO ONE ORDERED LIST. The ordering claim is read off that shared list rather
+      // than inferred from two independent counters — a render that arrived after the commit would
+      // satisfy neither half of "reviewable binds at approval time".
+      const planner = scriptedWriteTestPlanner()
+      const events: string[] = []
+      const rendered: string[] = []
+      const confirm = vi.fn(() => {
+        events.push('confirm')
+        return true
+      })
+      const host = composeCliLocalAgent({
+        agentQaRoot,
+        configPath,
+        confirm,
+        chatPresent: (text: string) => {
+          events.push('present')
+          rendered.push(text)
+        },
+        chatModel: planner.model as never,
+      })
+
+      let result: AgentAskResult
+      try {
+        result = await runSafetyScope(
+          { executionContext: 'local-interactive' },
+          async () => await invokeFunction(
+            host.registry, AGENT_ASK_FUNCTION_ID, { message: UTTERANCE }, CLI_FUNCTION_CALLER,
+          ) as AgentAskResult,
+        )
+      } finally {
+        await host.close()
+      }
+
+      // THE RENDER HAPPENED, EXACTLY ONCE, AND THE PROMPT CAME AFTER IT. Index comparison over the
+      // one list: a turn that rendered after asking would put `confirm` first, and a turn that never
+      // rendered would have no `present` at all.
+      expect(rendered).toHaveLength(1)
+      expect(events.indexOf('present')).toBe(0)
+      expect(events.indexOf('confirm')).toBeGreaterThan(events.indexOf('present'))
+      expect(confirm.mock.calls.length).toBeGreaterThanOrEqual(1)
+
+      // AND WHAT WAS RENDERED IS THIS PROPOSAL: its summary line, the config file it touches, and a
+      // true unified diff. Asserted as properties of the real op's own answer rather than as a
+      // literal, so a re-derived or truncated render reds here.
+      const text = rendered[0] ?? ''
+      expect(text).toContain('booking.com')
+      expect(text).toContain(CONFIG_FILE)
+      expect(text).toContain('@@')
+      expect(text.split('\n').length).toBeGreaterThan(3)
+
+      // AND THE TURN PROCEEDED: the far end of SC-5's sentence — authoring runs against the project
+      // the person just configured, and the configuration really is on disk.
+      expect(result.status).not.toBe('fail_closed')
+      expect(filedProposals()).toHaveLength(1)
+    })
 })

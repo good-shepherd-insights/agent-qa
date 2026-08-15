@@ -11,9 +11,25 @@
 // through this same op with the same input contract. `ask` is a single-turn session on the same
 // log grammar (D-17), which is why it needs no special case in the adapter.
 //
-// NON-TTY IS FAIL-CLOSED AND UNCHANGED (D-03). This command binds no confirm port, so an ask-tier
-// clause reaches `evaluate()`'s deny-by-default exactly as v48 specified — a scripted `ask` in CI
-// cannot approve anything on a person's behalf, and the refusal arrives as a failed receipt.
+// AT A TERMINAL THIS COMMAND ASKS, SO IT MUST SHOW (395-22 · CR-03 · CFGM-05 · the owner's
+// 2026-08-15 CR-04 ruling). The paragraph that used to stand here said this command binds no
+// confirm port and that an ask-tier clause therefore meets `evaluate()`'s deny-by-default exactly
+// as v48 specified. It passes no confirm — but `composeCliLocalAgent` supplies
+// `createTtyConfirmPort()` in its place, which is a real `readline` prompt whenever both streams
+// are TTYs. 395-VERIFICATION (gap round 4) measured the consequence end to end on the from-zero
+// `write_test` road: the complete set of bytes reaching the person's terminal before the decision
+// was the approval prompt itself. That comment was the belief that left the hole.
+//
+// So this command binds `chatPresent` on the SAME stream its inherited confirm prompts on — what is
+// being asked about is shown before the prompt, which is what the 2026-08-14 ruling means by
+// "reviewable binds at approval time". The binder below is `chat.ts:289`'s, verbatim in shape:
+// through the masker, unconditional, `process.stdout`.
+//
+// NON-TTY IS STILL FAIL-CLOSED (D-03). Where there is nobody to prompt, `createTtyConfirmPort`
+// answers `undefined`, the field stays absent and the gate's deny-by-default is what answers — a
+// scripted `ask` in CI cannot approve anything on a person's behalf, and the refusal arrives as a
+// failed receipt. And where a proposal cannot be displayed at all, the route refuses above the gate
+// rather than walking a person into it blind (`turn-engine.ts`'s displayability precondition).
 
 import { dirname, resolve } from 'node:path'
 
@@ -84,6 +100,32 @@ function emitHuman(text: string): void {
   }
 }
 
+/**
+ * The mid-turn render, on THE SAME STREAM the inherited TTY confirm prompts on (395-22 · D-14).
+ *
+ * `chat.ts:289`'s binder, adapted to a surface that owns no stream of its own. Three properties and
+ * they are all load-bearing:
+ *
+ *   THE STREAM — `process.stdout`, which is where `createTtyConfirmPort` writes its prompt. A
+ *   proposal rendered anywhere else is a proposal the person answering the prompt is not reading.
+ *
+ *   UNCONDITIONAL, INCLUDING UNDER PIPED STDIN. A scripted `ask` is still a transcript somebody
+ *   reads, and it is the surface the live lane greps; suppressing the render for non-TTY would make
+ *   the one automatable reading of this clause unavailable.
+ *
+ *   THROUGH THE MASKER, on `emitHuman`'s law above: everything this file prints crosses it. The
+ *   bytes here already passed the construction scan (D-12), so this is the second of two
+ *   independent passes rather than the only one.
+ */
+function chatPresent(text: string): void {
+  const maskingContext = createMaskingContext()
+  try {
+    process.stdout.write(`${unmaskForHumanOutput(maskingContext, text)}\n`)
+  } finally {
+    maskingContext.dispose()
+  }
+}
+
 function reportError(error: unknown): void {
   if (error instanceof AskCommandError) {
     console.error(pc.red(`Ask error [${error.code}]: ${error.message}`))
@@ -113,7 +155,7 @@ export function createAskCommand(): Command {
           }
 
           const composition = compositionInput(command)
-          const { registry } = composeCliLocalAgent(composition)
+          const { registry } = composeCliLocalAgent({ ...composition, chatPresent })
           const result = (await invokeFunction(
             registry,
             AGENT_ASK_FUNCTION_ID,
