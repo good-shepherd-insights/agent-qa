@@ -375,6 +375,66 @@ apiToken: ${PLANTED_HOOKS_CREDENTIAL}
       .toContain('z5-poisoned.yaml')
   }, 180_000)
 
+  // THE FLAG THE PERSON TYPED, HONORED (395-24 · WR-01).
+  //
+  // `validate` is declared with an ARGUMENT (`[files...]`), and commander hands an argument-bearing
+  // action `(…args, options, command)` — three parameters here, not two. `validate.ts:9` destructured
+  // `(files, command)`, so the second binding was the OPTIONS OBJECT, `command.parent` was undefined,
+  // and the config path fell all the way through to the `'agent-qa.config.yaml'` default. `--config`
+  // was silently ignored on this road.
+  //
+  // AND ROUND 4 MADE IT WORSE IN PRACTICE, which is why this is measured on the shipped binary rather
+  // than argued at source. Before 395-21 a swallowed resolution merely degraded quietly; now every
+  // `--config` invocation fails LOUDLY, naming a file the person never mentioned. (W2) is that
+  // half — the misnaming is its own defect and gets its own cell, because a fix that made
+  // `--config` resolve while still reporting the default's name would pass (W1) alone.
+
+  it('(W1) `--config staging.yaml validate` validates STAGING.YAML — the flag is not ignored', () => {
+    const configText = scaffoldWithShippedInit()
+    // THE NON-DEFAULT NAME, AND NO DEFAULT FILE AT ALL. With `agent-qa.config.yaml` still present the
+    // cell could pass on the defect: the fallback would find a valid config and report a real count.
+    // Removing it makes the flag load-bearing.
+    writeFileSync(join(root, 'staging.yaml'), configText)
+    rmSync(join(root, CONFIG_FILE))
+    writeFileUnder(join('tests', 'w1-added.yaml'), VALID_TEST)
+    expect(existsSync(join(root, CONFIG_FILE)), 'the default config must be absent').toBe(false)
+
+    const expected = discoveredFileCount()
+    expect(expected, 'the scaffold plus the added member is a non-empty set').toBeGreaterThan(1)
+
+    const { status, combined } = runShippedCli('--config', 'staging.yaml', 'validate')
+
+    const reported = /All files valid \((\d+) file\(s\) checked\)/.exec(combined)
+    expect(reported, `validate did not resolve the config the person named:\n${combined}`).not.toBeNull()
+    expect(Number(reported?.[1]), `the validator attested over an empty set:\n${combined}`).toBe(expected)
+    expect(status, `a valid project named by --config is a clean exit:\n${combined}`).toBe(0)
+    // THE NAMING CLAUSE ON THE SUCCESS ARM TOO: the default filename must not appear anywhere in
+    // what the person reads, because it is not a file this invocation has anything to do with.
+    expect(
+      occurrences(combined, CONFIG_FILE),
+      `validate spoke about a file the person did not ask about:\n${combined}`,
+    ).toBe(0)
+  }, 180_000)
+
+  it('(W2) a failure names the file the person ASKED ABOUT, never one they did not', () => {
+    // THE NAMING CONTROL. Pre-fix this printed
+    //   Cannot read config file: ENOENT: … open 'agent-qa.config.yaml'
+    //   Config resolution failed: Config file not found: agent-qa.config.yaml
+    // in a project where the person had typed `--config missing.yaml` — a report about a file that
+    // was never part of the question.
+    writeFileSync(join(root, 'README.md'), 'a project that was never initialized\n')
+
+    const { status, combined } = runShippedCli('--config', 'missing.yaml', 'validate')
+
+    expect(status, `an unresolvable config is a non-zero exit:\n${combined}`).toBe(1)
+    expect(combined, `the failure did not name the file the person asked about:\n${combined}`)
+      .toContain('missing.yaml')
+    expect(
+      occurrences(combined, CONFIG_FILE),
+      `the failure named a file the person did not ask about:\n${combined}`,
+    ).toBe(0)
+  }, 120_000)
+
   it('(Z3) a project with NO config refuses — the state the guard must reject, before and after', () => {
     // THE PRECONDITION-GUARDED CONTROL (384 · round 4): without a case the new posture's guard
     // REJECTS, every cell here is drawn from inside the rule's own assumption. There is no
