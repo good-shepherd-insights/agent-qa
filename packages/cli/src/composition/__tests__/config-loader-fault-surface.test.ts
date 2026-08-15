@@ -871,7 +871,14 @@ describe('the ENOENT arms are byte-identical (395-14 · T-395-41)', () => {
         (err: unknown) => err as Error,
       )
       expect(error?.message).toBe(`Config file not found: ${missing}`)
-      expect(error?.name).toBe('Error')
+      // THE CLASS IS NOT THE PARSE CLASS — the fact this line has asserted all along, now stated
+      // directly instead of through a proxy. It read `toBe('Error')` because the throw was a bare
+      // `Error`; 395-27 · WR-02 gave the absent-file case its own name so `showAction` can
+      // recognise it by `instanceof` rather than by matching THIS VERY SENTENCE, which is the
+      // reasoning `ConfigFileNotYamlError`'s own doc block already wrote down. The byte-pin above
+      // is what the live lane matches and it is unchanged; only the class name moved.
+      expect(error?.name).not.toBe('ConfigFileNotYamlError')
+      expect(error?.name).toBe('ConfigFileNotFoundError')
     })
 
   it('(E1b) a non-ENOENT READ fault is rethrown untouched — the guard is parse-scoped', async () => {
@@ -1225,6 +1232,167 @@ describe('the config verbs read and write the file --config names (395-24 · WR-
     expect(status, `config show must stay a success:\n${combined}`).toBe(0)
     expect(combined, `config show read the default file, not the one named:\n${combined}`)
       .toContain(STAGING_ONLY_VALUE)
+  })
+})
+
+// BOTH SIDES OF THE CONFIG VERB PAIR REPORT THEIR FAULTS (395-27 · WR-01 / WR-02).
+//
+// WHAT 395-24 MINTED AND THIS CLOSES. Once `--config <path>` reached these verbs the path became
+// PERSON-SUPPLIED, and neither verb was ready for a path that does not resolve:
+//
+//   $ agent-qa --config sub/staging.yaml config set version 9
+//   node:internal/fs/promises:642
+//   Error: ENOENT: no such file or directory, open 'sub/staging.yaml'
+//       at async setAction (file:///…/packages/cli/dist/cli.js:18376:3) { errno: -2, … }
+//
+// That is Node's DEFAULT UNCAUGHT PRINTER — the printer 395-16 exists to keep config content away
+// from — reached by the ordinary road of typing a path with a typo in it. `showAction` was given
+// the report-not-crash guard in 395-16 (*"THE OP REPORTS, IT DOES NOT CRASH"*); its sibling one
+// function above was not. Fifth filing of the one-sided-hardening shape in this arc.
+//
+// AND THE READ SIDE LIES RATHER THAN CRASHING. `showAction` calls `loadConfigFile`, which swallows
+// ENOENT and answers `{}`, so `agent-qa --config nope.yaml config show` printed
+// `(no config values)` and exited 0: the person named a file, and the command described nothing at
+// all as though it had read it. `validate` was given the opposite (correct) posture in the same
+// round — `(W2)` in validate-resolution-surface.test.ts pins a non-zero exit naming the file — so
+// the two verbs disagreeing about the same missing file IS the bug.
+//
+// WHAT MAKES EACH CELL RED:
+//
+//  (W8)         — the write guard removed. The uncaught rejection returns and the stack-frame
+//                 assertions count above 0. Leg M-W1.
+//  (W8-read)    — the READ's non-ENOENT rethrow one line above the write. `--config <a directory>`
+//                 crashed identically, on the same verb, in the same function: guarding the write
+//                 alone would have been the SIXTH filing of the shape this plan exists to close.
+//  (W9)         — the explicit-path refusal removed. `config show` describes an empty config for a
+//                 file that is not there. Leg M-W2.
+//  (W9-control) — THE SCOPE BOUNDARY, MEASURED RATHER THAN DECLARED. A project with genuinely no
+//                 config and no `--config` flag is not being lied to, and widening the refusal
+//                 there would change behaviour in every zero-config project and in the live lane.
+//                 Its reading was taken on the pre-change tree and is asserted here verbatim, so
+//                 "unchanged" is a comparison. It stays GREEN under leg M-W2 — that is what proves
+//                 the two roads are DISTINGUISHED rather than both refused.
+//
+// RECORDED AND DELIBERATELY NOT ACTED ON: on the unflagged road `validate` refuses (it reaches
+// `loadRequiredConfigFile` through `resolveConfig`) while `config show` reports an empty table at
+// exit 0. The two verbs stay different there on purpose — `validate`'s whole job is to answer
+// whether a config resolves, and `config show`'s is to say which keys resolve from where, which is
+// a truthful (if short) answer in a project that declares none. Stated here so a later round does
+// not discover it as news.
+
+/** A path whose PARENT DIRECTORY does not exist — the person's own typo, rendered as they typed it. */
+const UNWRITABLE_CONFIG_PATH = 'sub/staging.yaml'
+
+/** A `--config` value naming a file no project has. */
+const ABSENT_CONFIG_PATH = 'nope.yaml'
+
+/** The frame markers Node's default uncaught printer emits and a report never does. */
+const NODE_STACK_MARKERS = ['node:internal/', 'at async ', 'Require stack'] as const
+
+function expectNoRawNodeStack(combined: string, what: string): void {
+  for (const marker of NODE_STACK_MARKERS) {
+    expect(
+      occurrences(combined, marker),
+      `${what} rendered Node's default printer (\`${marker}\`):\n${combined}`,
+    ).toBe(0)
+  }
+  // AND NO ABSOLUTE PATH OUT OF THE PERSON'S FILESYSTEM. The raw error carried
+  // `file:///…/packages/cli/dist/cli.js` and the temp root; a report names the path the person
+  // TYPED and nothing else (WR-07's discipline).
+  expect(combined, `${what} printed the shipped binary's own path:\n${combined}`)
+    .not.toContain(CLI_DIST)
+  expect(combined, `${what} printed an absolute path the person never typed:\n${combined}`)
+    .not.toContain(root)
+}
+
+describe('the config verbs report their faults instead of crashing (395-27 · WR-01/WR-02)', () => {
+  it('(W8) `config set` on an unwritable path REPORTS it and leaves the default byte-identical', () => {
+    seedConfig(WELL_FORMED_CONFIG)
+    const defaultBefore = readFileSync(configPath, 'utf8')
+
+    const { status, combined } = runShippedCli(
+      '--config', UNWRITABLE_CONFIG_PATH, 'config', 'set', 'version', '9')
+
+    // THE REPORT, NOT THE CRASH. The exit code alone cannot tell these apart — an uncaught
+    // rejection also exits 1 — so the load-bearing assertion is the absence of the printer.
+    expect(status, `an unwritable config path is a non-zero exit:\n${combined}`).not.toBe(0)
+    expectNoRawNodeStack(combined, '`config set`')
+    expect(combined, `the report did not name the path the person typed:\n${combined}`)
+      .toContain(UNWRITABLE_CONFIG_PATH)
+    // AND NOTHING WAS WRITTEN ANYWHERE. Byte-for-byte on the file the person did NOT name, and the
+    // success line must not have been printed for a write that did not happen.
+    expect(readFileSync(configPath, 'utf8'), 'a failed write touched the default config')
+      .toBe(defaultBefore)
+    expect(combined, `a failed write claimed success:\n${combined}`).not.toContain('saved to')
+  })
+
+  it('(W8-read) the same verb\'s READ fault reports too — the sibling one line above the write', () => {
+    // THE HALF A GUARD ON THE WRITE ALONE WOULD HAVE LEFT OPEN, measured before it was closed:
+    //   $ agent-qa --config adir config set version 9
+    //   Error: EISDIR: illegal operation on a directory, read
+    //       at async setAction (file:///…/dist/cli.js:18366:21) { errno: -21, code: 'EISDIR', … }
+    // Same verb, same function, same printer, one line above the frozen item. `setAction`'s read
+    // catch answers ENOENT with a fresh document and rethrew everything else.
+    seedConfig(WELL_FORMED_CONFIG)
+    mkdirSync(join(root, 'adir'))
+    const defaultBefore = readFileSync(configPath, 'utf8')
+
+    const { status, combined } = runShippedCli('--config', 'adir', 'config', 'set', 'version', '9')
+
+    expect(status, `an unreadable config path is a non-zero exit:\n${combined}`).not.toBe(0)
+    expectNoRawNodeStack(combined, '`config set` over an unreadable path')
+    expect(combined, `the report did not name the path the person typed:\n${combined}`)
+      .toContain('adir')
+    expect(readFileSync(configPath, 'utf8'), 'a failed read touched the default config')
+      .toBe(defaultBefore)
+  })
+
+  it('(W9) `--config nope.yaml config show` says the file is ABSENT and exits non-zero', () => {
+    seedConfig(WELL_FORMED_CONFIG)
+
+    const { status, combined } = runShippedCli('--config', ABSENT_CONFIG_PATH, 'config', 'show')
+
+    expect(status, `a config the person named and does not have is a failure:\n${combined}`).toBe(1)
+    expect(combined, `the report did not name the file the person asked about:\n${combined}`)
+      .toContain(ABSENT_CONFIG_PATH)
+    // THE LIE CLAUSE, AND IT IS THE ONE THAT REDS PRE-FIX. Describing an empty configuration is a
+    // read the person will believe they performed.
+    expect(
+      occurrences(combined, '(no config values)'),
+      `config show described an empty config for a file that is not there:\n${combined}`,
+    ).toBe(0)
+    expect(
+      occurrences(combined, 'Resolved Configuration'),
+      `config show composed a table for a file that is not there:\n${combined}`,
+    ).toBe(0)
+    // AND IT DOES NOT SPEAK ABOUT A FILE THE PERSON DID NOT ASK ABOUT — (W2)'s naming discipline,
+    // applied to this verb's twin of the same fault.
+    expect(
+      occurrences(combined, CONFIG_FILE),
+      `config show named a file the person did not ask about:\n${combined}`,
+    ).toBe(0)
+    expectNoRawNodeStack(combined, '`config show` over an absent named file')
+  })
+
+  it('(W9-control) the UNFLAGGED road in a project with NO config is measured unchanged', () => {
+    // THE PRE-CHANGE READING, TAKEN ON THE TREE AS 395-26 LEFT IT AND ASSERTED VERBATIM:
+    //   exit 0, stdout "\nResolved Configuration:\n\n  (no config values)\n\n"
+    // No `seedConfig` — this project genuinely declares no configuration, which is the state the
+    // new refusal must REJECT (384 · round 4: a guard needs a case it does not fire on, or every
+    // cell around it is drawn from inside the guard's own assumption).
+    const { status, combined } = runShippedCli('config', 'show')
+
+    expect(status, `the unflagged zero-config road must stay a success:\n${combined}`).toBe(0)
+    expect(combined, `the unflagged road stopped composing its table:\n${combined}`)
+      .toContain('Resolved Configuration:')
+    expect(combined, `the unflagged road stopped saying it has no values:\n${combined}`)
+      .toContain('(no config values)')
+    // THE WIDENING CLAUSE. If the refusal leaked onto the default road it would name the default
+    // file in a refusal sentence; the table names it nowhere.
+    expect(
+      occurrences(combined, 'Config file not found'),
+      `the explicit-path refusal widened onto the unflagged road:\n${combined}`,
+    ).toBe(0)
   })
 })
 

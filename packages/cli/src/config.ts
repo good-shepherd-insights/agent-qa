@@ -106,13 +106,35 @@ export async function loadConfigFile(configPath: string): Promise<unknown> {
   }
 }
 
+/**
+ * The absent-file case, RECOGNISABLE WITHOUT A SUBSTRING MATCH ON ITS OWN SENTENCE (395-27 · WR-02).
+ *
+ * The message is BYTE-IDENTICAL to the bare `Error` this replaces, because that exact string is
+ * matched by the live lane's third-arm detection (`scripts/395-live-from-zero.sh:514`), folded by
+ * `coveringGrantInForce`, and pinned by `(E1)`. Nothing about what any surface PRINTS changes.
+ *
+ * What changes is that `showAction` can now ask WHICH fault this is by `instanceof` instead of by
+ * `message.startsWith(...)` — the reasoning `ConfigFileNotYamlError` above already wrote down: a
+ * caller that wants to recognise the case needs something better than a substring match on a
+ * sentence, and a sentence-matching caller is one rewording away from silently taking the wrong arm.
+ */
+export class ConfigFileNotFoundError extends Error {
+  readonly configPath: string
+
+  constructor(configPath: string) {
+    super(`Config file not found: ${configPath}`)
+    this.name = 'ConfigFileNotFoundError'
+    this.configPath = configPath
+  }
+}
+
 export async function loadRequiredConfigFile(configPath: string): Promise<unknown> {
   let content: string
   try {
     content = await readFile(configPath, 'utf-8')
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new Error(`Config file not found: ${configPath}`)
+      throw new ConfigFileNotFoundError(configPath)
     }
     throw err
   }
