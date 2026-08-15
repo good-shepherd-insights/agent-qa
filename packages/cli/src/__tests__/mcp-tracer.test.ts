@@ -1,0 +1,130 @@
+// The one path, end to end, on the v2 SDK (Phase 396 plan 01 — the phase's tracer).
+//
+// WHAT THIS PROVES, and why it is one cell rather than four. Every layer of the re-derived server
+// has its own unit cells over in `packages/mcp`; none of them can answer the only question that
+// matters before any expansion happens, which is whether the ARCHITECTURE works: a real MCP client
+// asks a per-caller server built from a REAL composed registry for its tool list, calls the one
+// projected tool, and gets back `structuredContent` that parses under the op's own contract. If
+// that round trip holds, the remaining twelve projected tools are data entries. If it does not, no
+// amount of mapping would have helped.
+//
+// PRODUCED, NOT LITERAL, ON BOTH SIDES. The server is built by the shipped factory over the
+// production `composeCliLocalAgent` against a real temp project on disk — no stubbed registry, no
+// hand-assembled declaration. The client is the real `@modelcontextprotocol/client` speaking the
+// real wire; the only thing replaced is the socket, because `handler.fetch` is the SDK's own
+// documented in-process driver. A cell that asserted against a hand-built response would be
+// measuring this file's idea of the protocol rather than the protocol.
+//
+// The assertion on the output side is `ProposalsListOutputSchema.parse` — the op's OWN contract,
+// imported rather than restated. That is what makes it a D-16 claim: the schema the server
+// advertised, the schema `invokeFunction` validated with, and the schema asserted here are one
+// object, so the cell cannot pass over a server advertising something the op does not honour.
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { createMcpHandler } from '@modelcontextprotocol/server'
+import { Client } from '@modelcontextprotocol/client'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
+import { ProposalsListOutputSchema } from '@vostride/agent-qa-schema'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { MCP_FUNCTION_CALLER } from '../commands/mcp.js'
+import { composeCliLocalAgent } from '../composition/local-agent-host.js'
+
+const roots: string[] = []
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+/** A real project on disk, of the shape `agent-qa init` produces. */
+function workspace(): { configPath: string; agentQaRoot: string } {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-396-01-tracer-'))
+  roots.push(root)
+  const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        workspace: {
+          testMatch: ['tests/**/*.yaml'],
+          testPathIgnore: [],
+          suiteMatch: ['suites/**/*.suite.yaml'],
+          hooksFile: 'hooks.yaml',
+          envFile: '.env',
+          secretsFile: '.env.secrets.local',
+        },
+        use: { mobile: { appState: 'preserve' } },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  )
+  const agentQaRoot = join(root, '.agent-qa')
+  mkdirSync(agentQaRoot, { recursive: true })
+  return { configPath, agentQaRoot }
+}
+
+describe('the MCP tracer: one projected tool, end to end on the v2 SDK', () => {
+  it('lists agent_qa_list_proposals and answers a call with contract-valid structuredContent', async () => {
+    const where = workspace()
+    const host = composeCliLocalAgent({
+      agentQaRoot: where.agentQaRoot,
+      configPath: where.configPath,
+      confirm: undefined,
+    })
+
+    // The masker is the required dep; identity here because this cell is about the round trip and
+    // the masking claim has its own cells. Named rather than defaulted, because a masker that can
+    // be omitted is a masker that will be.
+    const handler = createMcpHandler(() =>
+      buildAgentQaMcpServer({
+        registry: host.registry,
+        caller: MCP_FUNCTION_CALLER,
+        maskText: (text: string) => text,
+      }),
+    )
+    const transport = new StreamableHTTPClientTransport(new URL('http://tracer.local/mcp'), {
+      fetch: ((url: URL | string, init?: RequestInit) =>
+        handler.fetch(new Request(url, init))) as typeof fetch,
+    })
+    const client = new Client({ name: 'agent-qa-396-tracer', version: '0.0.0' })
+
+    try {
+      await client.connect(transport)
+
+      const listed = await client.listTools()
+      const tool = listed.tools.find((entry) => entry.name === 'agent_qa_list_proposals')
+      expect(tool, `tools/list carried: ${listed.tools.map((t) => t.name).join(', ')}`).toBeDefined()
+
+      // The annotation is DERIVED from the op — `proposals.list` declares `readOnly` and asks for
+      // nothing beyond `read` — so this asserts the derivation reached the wire, not a literal.
+      expect(tool!.annotations?.readOnlyHint).toBe(true)
+
+      // D-16's advertised half: a real object-typed output schema, converted by the SDK from the
+      // op's own zod contract. `entries` is the contract's own property name.
+      expect(tool!.outputSchema).toBeDefined()
+      expect((tool!.outputSchema as { type?: string }).type).toBe('object')
+      expect(
+        Object.keys((tool!.outputSchema as { properties?: Record<string, unknown> }).properties ?? {}),
+      ).toContain('entries')
+
+      const called = await client.callTool({ name: 'agent_qa_list_proposals', arguments: {} })
+      expect(called.isError ?? false, JSON.stringify(called.content)).toBe(false)
+
+      // D-16's enforced half, and the whole point of the cell: the result parses under the op's own
+      // output contract. An empty store is a RESULT — a project with nothing pending reads exactly
+      // like one that has never proposed anything, because those are the same fact.
+      const parsed = ProposalsListOutputSchema.parse(called.structuredContent)
+      expect(parsed.entries).toEqual([])
+    } finally {
+      await client.close().catch(() => {})
+      await handler.close().catch(() => {})
+      await host.close().catch(() => {})
+    }
+  })
+})
