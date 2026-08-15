@@ -169,7 +169,7 @@ async function setAction(key: string, value: string | undefined, command: Comman
       // `EISDIR` here and this arm rethrew it into the same default printer the write did — the
       // same crash, on the same verb, in the same function, one guard away. A guard given to one
       // sibling and not the other is the shape this arc has now filed six times (388/390/392/395),
-      // and the two siblings here are eleven lines apart.
+      // and the two siblings here are in the same function, a dozen lines apart.
       reportConfigFileFailure('read', configPath, err)
       return
     }
