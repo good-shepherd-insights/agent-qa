@@ -4,6 +4,8 @@ export type { BrowserConfig } from './browser'
 export { appStateSchema, browserConfigSchema, viewportSchema } from './browser'
 export type { DeviceConfig } from './device'
 export { deviceConfigSchema } from './device'
+export type { McpStdioGrant, McpTokenEntry } from './mcp'
+export { McpStdioGrantSchema, McpTokenEntrySchema } from './mcp'
 export type { RemoteDeviceConfig } from './remote-device'
 export { remoteDeviceSchema } from './remote-device'
 export type {

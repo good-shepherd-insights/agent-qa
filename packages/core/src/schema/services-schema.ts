@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { McpStdioGrantSchema, McpTokenEntrySchema } from '@vostride/agent-qa-schema'
 import { DurationString, SizeString } from './primitives.js'
 
 export const DashboardConfigSchema = z.object({
@@ -22,12 +23,25 @@ const LoopbackHostSchema = z.string().trim().min(1).refine(
   { message: 'MCP host must be localhost, 127.0.0.1, or ::1 in local-only mode' },
 )
 
+// Phase 396 D-06/D-07: the per-caller credential declarations and the stdio grant opt-in land on
+// the EXISTING `services.mcp` block rather than on a new top-level `mcp` key, for exactly the
+// reason `services.dashboard` states two blocks above: this project already has one MCP
+// configuration home, and a second one would be two places an operator could reasonably write the
+// same fact. The DTOs themselves are minted in `@vostride/agent-qa-schema` (384 D-16) and imported
+// here — the refs-only shape of a token entry is not re-declared in this package.
 export const McpConfigSchema = z.object({
   enabled: z.boolean().optional(),
   transport: z.enum(['http', 'stdio']).optional(),
   host: LoopbackHostSchema.optional(),
   port: z.number().int().min(1).max(65535).optional(),
   path: z.string().trim().min(1).regex(/^\//, 'MCP path must start with /').optional(),
+  // Default `[]` and not optional-undefined: "no tokens declared" and "tokens key absent" are the
+  // same fact, and a host that had to spell both would be a host with a branch nobody tests.
+  tokens: z.array(McpTokenEntrySchema).default([]),
+  // `.prefault({})` rather than `.default({})` so the inner `grantConfigWrite: false` actually
+  // materialises on an absent block — zod 4's `.default()` short-circuits without parsing, which is
+  // the same trap the knowledge block above documents.
+  stdio: McpStdioGrantSchema.prefault({}),
 }).strict()
 
 export const CacheConfigSchema = z.object({
