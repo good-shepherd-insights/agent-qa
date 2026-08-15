@@ -3449,8 +3449,14 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     ...(input.chatReconcile === undefined ? {} : { chatReconcile: input.chatReconcile }),
     // 391 PROP-01: conditionally spread, so a host with no terminal leaves the field ABSENT and the
     // gate's own deny-by-default is what answers — in exactly one place.
+    //
+    // 396-01 D-09: the resolution reads the FIELD's presence and not its value, which is what lets
+    // a host REFUSE the prompt rather than only fail to have one. Under `??` those were the same
+    // answer, and for the MCP host they must not be: its stdout is the JSON-RPC channel, so a tty
+    // prompt written there does not go unanswered, it breaks every client on the connection. An
+    // absent field still defaults to "prompt where there is somebody to prompt".
     ...(() => {
-      const confirm = input.confirm ?? createTtyConfirmPort()
+      const confirm = 'confirm' in input ? input.confirm : createTtyConfirmPort()
       return confirm === undefined ? {} : { confirm }
     })(),
   })

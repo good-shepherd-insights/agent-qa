@@ -183,6 +183,9 @@ importers:
       '@inquirer/select':
         specifier: 5.1.4
         version: 5.1.4(@types/node@24.12.2)
+      '@modelcontextprotocol/server':
+        specifier: 2.0.0
+        version: 2.0.0
       '@vostride/agent-qa-agent':
         specifier: workspace:*
         version: link:../agent
@@ -234,6 +237,9 @@ importers:
       '@vostride/agent-qa-safety-local':
         specifier: workspace:*
         version: link:../safety-local
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
       '@vostride/agent-qa-web':
         specifier: workspace:*
         version: link:../web
@@ -268,9 +274,6 @@ importers:
       '@vostride/agent-qa-arch':
         specifier: workspace:*
         version: link:../arch
-      '@vostride/agent-qa-schema':
-        specifier: workspace:*
-        version: link:../schema
       glob:
         specifier: 13.0.6
         version: 13.0.6

@@ -14,6 +14,12 @@ export const AGENT_QA_CLI_EXTERNAL_DEPENDENCIES = [
   '@inquirer/input',
   '@inquirer/password',
   '@inquirer/select',
+  // 2026-08-15 (Phase 396 plan 01, D-09): the MCP stdio serving entry. It lives on THIS package and
+  // not on `packages/mcp` because it owns a process — it takes over this process's stdin and stdout
+  // and negotiates the protocol era for the connection — and owning the process is what a host does.
+  // The projection package stays free of every host API, which is what keeps its own two-dep
+  // allow-list (D-20) honest.
+  '@modelcontextprotocol/server',
   'ai',
   'commander',
   'picocolors',

@@ -98,7 +98,6 @@ beforeEach(() => {
   mockStartServer.mockResolvedValue({
     server: {},
     port: 3470,
-    mcp: { enabled: true, transport: 'http', url: 'http://127.0.0.1:3471/mcp' },
     close: vi.fn(),
   })
 })
@@ -191,7 +190,6 @@ describe('createDashboardCommand', () => {
     expect(mockStartServer).toHaveBeenCalledWith(
       expect.objectContaining({
         port: 4000,
-        mcp: { enabled: true, port: 3472, path: '/mcp' },
         llmConfig: expect.objectContaining({
           provider: 'anthropic-compatible',
           vision: {
@@ -280,7 +278,6 @@ describe('createDashboardCommand', () => {
     mockStartServer.mockResolvedValueOnce({
       server: {},
       port: 3470,
-      mcp: { enabled: true, transport: 'http', url: 'http://127.0.0.1:3471/mcp' },
       close,
     })
 
@@ -346,7 +343,6 @@ describe('createServeCommand', () => {
     expect(mockStartServer).toHaveBeenCalledWith(
       expect.objectContaining({
         port: 4100,
-        mcp: { enabled: true, port: 3472, path: '/mcp' },
       }),
     )
     expect(exitSpy).not.toHaveBeenCalled()
@@ -362,7 +358,6 @@ describe('createServeCommand', () => {
     mockStartServer.mockResolvedValueOnce({
       server: {},
       port: 3470,
-      mcp: { enabled: true, transport: 'http', url: 'http://127.0.0.1:3471/mcp' },
       close,
     })
 
