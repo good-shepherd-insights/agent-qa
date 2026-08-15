@@ -61,6 +61,23 @@ import {
 export const TOOL_FOLD_DISCRIMINANT = 'action'
 
 /**
+ * The prose a caller reads about the discriminant, carried ON the schema.
+ *
+ * D-16's last clause is that human-facing descriptions live on the zod schemas so one source feeds
+ * both surfaces. The discriminant is the one field of a fold that no arm DTO can describe — it does
+ * not exist until the fold is composed — so if its meaning is not attached here it is attached
+ * nowhere, and a caller is left inferring the vocabulary from a `const` list.
+ */
+const DISCRIMINANT_DESCRIPTION =
+  'Which registry operation this call is for. The value is the operation id itself; the rest of '
+  + 'the object is that operation\'s own input.'
+
+/** One arm's discriminant: the op id as a literal, carrying the shared prose. */
+function armLiteral<Id extends string>(opId: Id): z.ZodLiteral<Id> {
+  return z.literal(opId).describe(DISCRIMINANT_DESCRIPTION)
+}
+
+/**
  * Compose the output a fold advertises from its arms' own output contracts.
  *
  * DEDUPED BY OBJECT IDENTITY, and the collapse is the point rather than an optimisation. Six of the
@@ -84,10 +101,10 @@ function foldOutput(arms: readonly z.ZodType[]): z.ZodType {
 
 const refineArms = [
   AuthoringDraftEditInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('authoring.draft.edit'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('authoring.draft.edit'),
   }),
   AuthoringVerifyDraftInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('authoring.draft.verify'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('authoring.draft.verify'),
   }),
 ] as const
 
@@ -111,25 +128,25 @@ export const AuthoringRefineFoldOutputSchema = foldOutput([
 
 const configArms = [
   ConfigFieldSetInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('config.field.set'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('config.field.set'),
   }),
   ConfigTargetCreateInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('config.target.create'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('config.target.create'),
   }),
   ConfigTargetEditInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('config.target.edit'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('config.target.edit'),
   }),
   ConfigAuthSetInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('config.auth.set'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('config.auth.set'),
   }),
   ConfigHookAddInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('config.hook.add'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('config.hook.add'),
   }),
   ConfigProjectScaffoldInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('config.project.scaffold'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('config.project.scaffold'),
   }),
   ConfigUndoProposeInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('config.undo.propose'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('config.undo.propose'),
   }),
 ] as const
 
@@ -155,13 +172,13 @@ export const ConfigChangeFoldOutputSchema = foldOutput(
 
 const knowledgeArms = [
   KnowledgeAcceptProposeInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('knowledge.accept.propose'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('knowledge.accept.propose'),
   }),
   KnowledgeRejectProposeInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('knowledge.reject.propose'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('knowledge.reject.propose'),
   }),
   KnowledgeForgetProposeInputSchema.extend({
-    [TOOL_FOLD_DISCRIMINANT]: z.literal('knowledge.forget.propose'),
+    [TOOL_FOLD_DISCRIMINANT]: armLiteral('knowledge.forget.propose'),
   }),
 ] as const
 
