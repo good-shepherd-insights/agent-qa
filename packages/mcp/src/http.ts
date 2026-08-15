@@ -24,10 +24,22 @@
 // connection; the variance is per caller, resolved from `authInfo` in front of the handler).
 
 import { createMcpHandler } from '@modelcontextprotocol/server'
+import type { McpRequestContext } from '@modelcontextprotocol/server'
 import { toNodeHandler } from '@modelcontextprotocol/node'
 
 import { buildAgentQaMcpServer } from './catalog.js'
 import type { AgentQaMcpServerDeps } from './catalog.js'
+
+/**
+ * How a host answers "who is this request, and what may they see?" — once per request.
+ *
+ * It takes the SDK's own construction context, so the two facts a per-caller server can vary on —
+ * `authInfo` and `era` — arrive here rather than being read back out of a header inside a tool
+ * handler. What it returns is the same `deps` a stdio host composes, which is what keeps ONE
+ * `buildAgentQaMcpServer` shape across both transports: they differ in how scopes are resolved and
+ * in nothing else.
+ */
+export type AgentQaMcpDepsResolver = (ctx: McpRequestContext) => AgentQaMcpServerDeps
 
 /**
  * A Node request handler serving this catalog over stateless streamable HTTP.
@@ -36,12 +48,19 @@ import type { AgentQaMcpServerDeps } from './catalog.js'
  * around: a per-request instance is what makes a caller's tool set a property of that caller rather
  * than of whoever connected first, and it is why absence stays structural on this transport too.
  *
- * `deps` is resolved by the HOST, not from the request. Bearer verification happens in FRONT of
- * this handler and its verdict arrives as `req.auth`, which the adapter forwards as the handler's
- * pass-through `authInfo`; reading an `Authorization` header inside a tool handler would be a second
- * vocabulary for one question. Plan 05 wires that resolution — until then every caller of this face
- * is the one the host composed.
+ * IT TAKES A RESOLVER AND NOT A FIXED `deps`, and the difference is the whole of plan 05. Bearer
+ * verification happens in FRONT of this handler: the host reads the `Authorization` header, decides
+ * a scope set, and attaches the verdict as `req.auth`, which `toNodeHandler` forwards as the
+ * handler's pass-through `authInfo` (measured on `@modelcontextprotocol/node@2.0.0`, whose own doc
+ * comment states it — no fetch-wrapper is needed on the Node path, resolving RESEARCH assumption
+ * A3). This function then hands that context to the resolver and the resolver decides what the
+ * instance is built with. Reading an `Authorization` header inside a tool handler would be a second
+ * vocabulary for one question, and verifying a token twice in two places is how the two answers
+ * start to differ.
+ *
+ * A host with one fixed caller passes `() => deps` — the static case is the degenerate resolver,
+ * not a second signature to keep in step.
  */
-export function createAgentQaMcpNodeHandler(deps: AgentQaMcpServerDeps) {
-  return toNodeHandler(createMcpHandler(() => buildAgentQaMcpServer(deps)))
+export function createAgentQaMcpNodeHandler(resolveDeps: AgentQaMcpDepsResolver) {
+  return toNodeHandler(createMcpHandler((ctx) => buildAgentQaMcpServer(resolveDeps(ctx))))
 }

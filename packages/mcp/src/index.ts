@@ -15,6 +15,7 @@ export { buildAgentQaMcpServer, AGENT_QA_MCP_SERVER_VERSION } from './catalog.js
 export type { AgentQaMcpServerDeps } from './catalog.js'
 
 export { createAgentQaMcpNodeHandler } from './http.js'
+export type { AgentQaMcpDepsResolver } from './http.js'
 
 export {
   advertisedContracts,

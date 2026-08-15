@@ -141,11 +141,13 @@ describe('the MCP tracer: one projected tool, end to end on the v2 SDK', () => {
       configPath: where.configPath,
       confirm: undefined,
     })
-    const nodeHandler = createAgentQaMcpNodeHandler({
+    // 396-05: the handler takes a per-request deps RESOLVER, because the HTTP face varies by
+    // caller. A host with one fixed caller passes the degenerate resolver.
+    const nodeHandler = createAgentQaMcpNodeHandler(() => ({
       registry: host.registry,
       caller: MCP_FUNCTION_CALLER,
       maskText: (text: string) => text,
-    })
+    }))
     const server = createServer((req, res) => {
       void nodeHandler(req, res)
     })
