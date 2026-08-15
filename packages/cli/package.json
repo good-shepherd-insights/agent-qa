@@ -110,6 +110,7 @@
   },
   "devDependencies": {
     "@inquirer/confirm": "6.0.12",
+    "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "~24.12.2",
     "@vostride/agent-qa-arch": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*",

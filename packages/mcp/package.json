@@ -48,15 +48,13 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "@vostride/agent-qa-agent": "workspace:*",
-    "@vostride/agent-qa-core": "workspace:*",
-    "@vostride/agent-qa-ids": "workspace:*",
-    "yaml": "2.8.4",
-    "zod": "4.4.2",
-    "@modelcontextprotocol/server": "^2.0.0",
-    "@modelcontextprotocol/node": "^2.0.0"
+    "@vostride/agent-qa-schema": "workspace:*"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "~24.12.2",
     "@vostride/agent-qa-arch": "workspace:*",
     "tsup": "~8.5.1",
