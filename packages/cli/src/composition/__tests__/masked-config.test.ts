@@ -1521,6 +1521,18 @@ const DECLARED_STRING_LEAF_PATHS: readonly string[] = [
   'services.dashboard.workspace',
   'services.mcp.host',
   'services.mcp.path',
+  // Phase 396 D-06. Both recorded INERT, and the classification is the whole content of that
+  // decision rather than a formality. `name` is an operator's label for a credential — `"ci"`,
+  // `"claude-desktop"` — carrying no address and matched against nothing a caller sends.
+  // `tokenEnvVar` is the NAME of an environment variable, and registering a name as
+  // credential-bearing would invert the refs-only law it exists to serve: the reference is in the
+  // file precisely SO the secret is not, and hiding the reference would leave an operator unable
+  // to read which variable their own server wants while hiding nothing. The VALUE never appears in
+  // this schema at all — `McpTokenEntrySchema` is `.strict()` and refuses a field that could hold
+  // one, which is a stronger guarantee than masking a field that exists. A cell below executes
+  // both halves of this row.
+  'services.mcp.tokens.*.name',
+  'services.mcp.tokens.*.tokenEnvVar',
   'services.vision.screenshotSize',
   'use.buildTag',
   'use.llm',
@@ -1630,6 +1642,34 @@ describe('the registered URL-name set cannot silently go stale', () => {
     expect(isCredentialBearingUrlField('services.dashboard.workspace')).toBe(false)
     expect(isMaskedConfigPath('services.dashboard.baseUrl', visibility)).toBe(false)
     expect(isMaskedConfigPath('services.dashboard.workspace', visibility)).toBe(false)
+  })
+
+  it('registers the D-06 token entry as inert, and holds no field a token VALUE could occupy', () => {
+    // The human decision the pin forced for Phase 396, executed. Neither leaf is an ADDRESS, so
+    // neither is reduced to an origin.
+    expect(isCredentialBearingUrlField('services.mcp.tokens.*.name')).toBe(false)
+    expect(isCredentialBearingUrlField('services.mcp.tokens.*.tokenEnvVar')).toBe(false)
+
+    // The label renders verbatim. It is what an operator called a credential, not the credential.
+    expect(isMaskedConfigPath('services.mcp.tokens.0.name', visibility)).toBe(false)
+
+    // `tokenEnvVar` is MASKED, and this row is recorded as measured rather than argued into the
+    // shape the D-06 story would prefer. The name census reads the leaf, `tokenenvvar` contains
+    // `token`, and the value is hidden in `config show`. That is over-masking — a variable NAME is
+    // not a secret and an operator loses the ability to read which variable their own server wants
+    // — and it is left standing, because the alternative is adding a carve-out to a credential
+    // census in order to make a field whose name contains `token` more visible. The census being
+    // this eager is also the reason a violation of the refs-only law would fail closed: a `token`
+    // field added to the entry tomorrow is hidden by this same rule, ahead of anyone noticing.
+    expect(isMaskedConfigPath('services.mcp.tokens.0.tokenEnvVar', visibility)).toBe(true)
+
+    // And the reason that is SAFE: there is no third leaf under a token entry. The census walks
+    // the shipped schema, so this is the schema's own answer rather than a claim about it — a
+    // `token` field added tomorrow appears here and fails the pin above on the same run.
+    const leaves = [...declaredStringLeafPaths(AgentQaConfigSchema)]
+      .filter((path) => path.startsWith('services.mcp.tokens.'))
+      .sort()
+    expect(leaves).toEqual(['services.mcp.tokens.*.name', 'services.mcp.tokens.*.tokenEnvVar'])
   })
 
   it('registers the four names the corpus above plants credentials on', () => {
