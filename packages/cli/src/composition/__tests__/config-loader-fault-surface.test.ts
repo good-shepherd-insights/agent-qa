@@ -1067,7 +1067,9 @@ describe('a healthy config\'s credentials are neither printed nor written (395-2
       expect(occurrences(after, PLANTED_WRITE), `the yaml carries the credential:\n${after}`).toBe(0)
       expect(occurrences(combined, 'not written by config set'), `no refusal was taken:\n${combined}`)
         .toBe(1)
-      expect(status, `the refusal must keep the measured exit parity:\n${combined}`).toBe(0)
+      // 395-24 · WR-02: a refused write is a failed command. Moved together with (K3-set) and the
+      // pre-existing arm — (K4c) is the cell that pins the three as one relation.
+      expect(status, `a refusal must be visible to a script:\n${combined}`).toBe(1)
     })
 
   it('(K3-set) a credential-shaped value under a key name NO list carries is refused too', () => {
@@ -1083,7 +1085,8 @@ describe('a healthy config\'s credentials are neither printed nor written (395-2
     expect(occurrences(after, PLANTED_UNLISTED), `the yaml carries the credential:\n${after}`).toBe(0)
     expect(occurrences(combined, 'not written by config set'), `no refusal was taken:\n${combined}`)
       .toBe(1)
-    expect(status, `the refusal must keep the measured exit parity:\n${combined}`).toBe(0)
+    // 395-24 · WR-02, moved with its siblings — see (K4c) for the relation.
+    expect(status, `a refusal must be visible to a script:\n${combined}`).toBe(1)
   })
 
   it('(K4a) an ordinary value still WRITES and still says so — the no-over-redaction control', () => {
@@ -1114,8 +1117,16 @@ describe('a healthy config\'s credentials are neither printed nor written (395-2
     expect(status).toBe(0)
   })
 
-  it('(K4c) the pre-existing llm.apiKey refusal keeps its sentence, and all three arms exit alike',
+  it('(K4c) the pre-existing llm.apiKey refusal keeps its sentence, and all three arms exit 1',
     () => {
+      // THE ROUND THIS CELL'S OWN NOTE ANTICIPATED (395-24 · WR-02). It used to pin the relation
+      // among the three arms against a CONSTANT it labelled "the measured pre-existing refusal
+      // status (395-20)" — exit 0 — with a note that a later round moves all three together. This
+      // is that round, and the constant moves, not the relation: a refusal that exits 0 is a
+      // SECURITY ACTION INVISIBLE TO ANY SCRIPT. `agent-qa config set apiToken $SECRET && echo ok`
+      // printed `ok` while the write had been refused; CI could not tell a refused credential write
+      // from a successful one. The three arms still exit ALIKE — that is what the cell has always
+      // been for — and what they exit is now 1.
       seedConfig(WELL_FORMED_CONFIG)
       const before = readFileSync(configPath, 'utf8')
 
@@ -1133,21 +1144,83 @@ describe('a healthy config\'s credentials are neither printed nor written (395-2
         'Use plugins.auth plus the dashboard auth flow for subscription configs.',
       )
 
-      // EXIT PARITY, MEASURED RATHER THAN ASSUMED. The pre-existing arm reports and returns without
-      // touching `process.exitCode`, so it exits 0; the new arms are held to the SAME status here
-      // rather than to a number this plan picked. If a later round decides a refusal should exit
-      // non-zero, this cell moves all three together — which is the point of asserting the
-      // relation and not the constant.
       const nameArm = runShippedCli('config', 'set', 'apiToken', PLANTED_WRITE)
       const valueArm = runShippedCli('config', 'set', UNLISTED_KEY_PATH, PLANTED_UNLISTED)
+
+      // THE RELATION FIRST, STILL. Whatever a refusal exits, every arm exits it — a guard hardened
+      // on the member a reviewer happened to drive while its sibling stays open is this project's
+      // recurring failure mode (388/390/392/395-18).
       expect(nameArm.status, 'the widened name arm must exit as the pre-existing refusal does')
         .toBe(existing.status)
       expect(valueArm.status, 'the value-shape arm must exit as the pre-existing refusal does')
         .toBe(existing.status)
-      expect(existing.status, 'the measured pre-existing refusal status (395-20)').toBe(0)
+      // AND THE CONSTANT, NOW THAT IT IS DEFENSIBLE: a refused write is a failed command.
+      expect(existing.status, 'a credential-write refusal is a non-zero exit (395-24 · WR-02)').toBe(1)
 
+      // EACH ARM WRITES NOTHING, CHECKED PER-ARM RATHER THAN ONCE AT THE END. A single trailing
+      // comparison passes if one arm writes and a later one restores.
       expect(readFileSync(configPath, 'utf8'), 'no refusal may write').toBe(before)
+      expect(occurrences(readFileSync(configPath, 'utf8'), PLANTED_WRITE)).toBe(0)
+      expect(occurrences(readFileSync(configPath, 'utf8'), PLANTED_UNLISTED)).toBe(0)
     })
+})
+
+// THE FLAG THE PERSON TYPED, ON THE CONFIG VERBS (395-24 · WR-03).
+//
+// `setAction` hardcoded `const configPath = 'agent-qa.config.yaml'` and `showAction` hardcoded the
+// same string into its `loadConfigFile` call, while the ROOT program has carried a `--config <path>`
+// option all along. The measured consequence is the worst shape a config bug takes: a SILENT WRONG-FILE
+// WRITE. `agent-qa --config staging.yaml config set version 9` reported
+// `✓ version = 9 saved to agent-qa.config.yaml` and modified the file the person was explicitly
+// steering away from, while `staging.yaml` stayed untouched. Nothing in the output said so.
+//
+// (W3) drives both halves on the shipped binary, and the load-bearing assertion is the NEGATIVE one:
+// the default config's bytes are hash-compared before and after. A cell that only checked
+// "staging.yaml got the value" would pass on an implementation that wrote BOTH.
+
+/** A key only the staging config carries — the row that says WHICH file `config show` read. */
+const STAGING_ONLY_KEY = 'stagingOnlyMarker'
+const STAGING_ONLY_VALUE = 'staging-sentinel-value-395-24'
+
+describe('the config verbs read and write the file --config names (395-24 · WR-03)', () => {
+  it('(W3) `--config staging.yaml config set` writes STAGING and leaves the default byte-identical', () => {
+    seedConfig(WELL_FORMED_CONFIG)
+    const stagingPath = join(root, 'staging.yaml')
+    writeFileSync(stagingPath, `${WELL_FORMED_CONFIG}${STAGING_ONLY_KEY}: ${STAGING_ONLY_VALUE}\n`)
+    const defaultBefore = readFileSync(configPath, 'utf8')
+
+    const { status, combined } = runShippedCli('--config', 'staging.yaml', 'config', 'set', 'version', '9')
+
+    expect(status, `the set must succeed:\n${combined}`).toBe(0)
+    // `config set` writes the CLI argument, which is a string, so `yaml` quotes it — matched as the
+    // shipped writer actually renders it rather than as this cell would have guessed.
+    expect(readFileSync(stagingPath, 'utf8'), 'the file the person named did not receive the value')
+      .toMatch(/^version: "?9"?$/m)
+    // THE WRONG-FILE CLAUSE. Byte-for-byte, not "does not contain 9" — a write that reformatted the
+    // yaml without changing a value is still a write to a file the person steered away from.
+    expect(readFileSync(configPath, 'utf8'), 'config set touched the file the person did NOT name')
+      .toBe(defaultBefore)
+    expect(combined, `the success line named the wrong file:\n${combined}`)
+      .toContain('saved to staging.yaml')
+    expect(
+      occurrences(combined, CONFIG_FILE),
+      `config set spoke about a file the person did not ask about:\n${combined}`,
+    ).toBe(0)
+  })
+
+  it('(W3-show) `--config staging.yaml config show` renders the row only STAGING carries', () => {
+    seedConfig(WELL_FORMED_CONFIG)
+    writeFileSync(
+      join(root, 'staging.yaml'),
+      `${WELL_FORMED_CONFIG}${STAGING_ONLY_KEY}: ${STAGING_ONLY_VALUE}\n`,
+    )
+
+    const { status, combined } = runShippedCli('--config', 'staging.yaml', 'config', 'show')
+
+    expect(status, `config show must stay a success:\n${combined}`).toBe(0)
+    expect(combined, `config show read the default file, not the one named:\n${combined}`)
+      .toContain(STAGING_ONLY_VALUE)
+  })
 })
 
 // A CONTAINER IS NOT A HIDING PLACE ON THE RENDER ROAD (395-23 · F-03-R4a).
