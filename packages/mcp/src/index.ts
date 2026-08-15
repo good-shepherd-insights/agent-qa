@@ -24,8 +24,9 @@ export type { ProjectedOpSpec, RegisterToolConfig } from './projection.js'
 
 export { visibleToCaller } from './visibility.js'
 
-export {
-  AGENT_QA_MCP_OWNERSHIP_CONTRACT,
-  AGENT_QA_MCP_PACKAGE_NAME,
-  AGENT_QA_MCP_PACKAGE_DIR,
-} from './ownership-contract.js'
+// THE OWNERSHIP CONTRACT IS DELIBERATELY NOT RE-EXPORTED, and a running guard is why. Plan 01 first
+// published it here on the reasoning that it describes this package; `pnpm validate:publish` refused
+// the build outright — "dist must not ship the ownership contract" — because the contract is an
+// internal architectural declaration and a published one becomes something a consumer can read and
+// depend on. `packages/arch`'s manifest imports it by relative path, which is the sanctioned route
+// and needs no barrel entry.
