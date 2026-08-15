@@ -23,7 +23,7 @@
 // OBSERVED REDS — measured 2026-08-16, messages quoted verbatim from vitest:
 //
 //   M1  strict `confirmed === true` widened to truthiness (`if (args.confirmed)`)
-//       1 failed | 18 passed
+//       1 failed | 19 passed
 //       > FAIL  doctored one-shots (T-396-04) > refuses a truthy NON-boolean confirmation (the second wall)
 //       > AssertionError: expected undefined to be 'input_required' // Object.is equality
 //       The `confirmed: false` cell stayed GREEN under this leg, which is exactly why both exist:
@@ -31,36 +31,41 @@
 //       from a truthiness gate. Only a truthy non-boolean can.
 //
 //   M2  the refusal branch deleted — the first call applies (`return apply(proposalId)`)
-//       9 failed | 10 passed
+//       10 failed | 10 passed
 //       > FAIL  refuses a first call and invokes the apply op zero times
 //       > AssertionError: expected undefined to be 'input_required' // Object.is equality
 //       > FAIL  reads the summary through the SAME invoke — never a store of its own
 //       > AssertionError: expected [ { …(2) } ] to deeply equal [ { opId: 'proposals.show', …(1) } ]
 //       > FAIL  carries the proposal summary and the deterministic instruction in its content
 //       > AssertionError: expected '{"outcome":"applied","proposalId":"pr…' to contain 'knowledge'
-//       …and six more, including both doctored one-shots.
+//       …and six more, including both doctored one-shots and the era-degradation cell.
 //       WORTH NAMING: the determinism cell stayed GREEN under M2 — two unconditional applies are
 //       perfectly deterministic. That is what M5 is for.
 //
 //   M3  a second property (`reason`) hard-coded into the elicitation `requestedSchema`
-//       1 failed | 18 passed
+//       1 failed | 19 passed
 //       > FAIL  asks for exactly one field, and it is the proposal id
 //       > AssertionError: expected [ 'proposal_id', 'reason' ] to deeply equal [ 'proposal_id' ]
 //
 //   M4  the deterministic instruction moved OUT of `content` into the elicitation `message` only
 //       (the plausible "the form already says it" simplification)
-//       3 failed | 16 passed
-//       > FAIL  carries the proposal summary and the deterministic instruction in its content
+//       4 failed | 16 passed
+//       > FAIL  teaches the deterministic route in content a 2025-era caller can still read
 //       > AssertionError: expected 'Proposal prop_alpha-bravo-charlie: a …' to contain 'confirmed'
+//       > FAIL  carries the proposal summary and the deterministic instruction in its content
 //       > FAIL  still teaches when the summary read fails — the route is always available
 //       > FAIL  refuses an in-band answer that names a DIFFERENT proposal, and says so
 //       > AssertionError: expected 'Proposal prop_alpha-bravo-charlie: a …' to contain 'prop_delta-echo-foxtrot'
+//       The era-degradation cell SHARES this bar with three others rather than owning it alone —
+//       said here rather than claimed otherwise. What that cell adds on its own is the degraded
+//       PROJECTION (the form and its discriminator removed before reading) and the single-line
+//       actionability regex; the wire-level two-era drive is plan 06's.
 //
 //   M5  a per-instance counter minted into the refusal's `requestState`
 //       (`let refusalCount = 0` in the factory closure — the SDK offers `requestState` for exactly
 //       this, so minting one is the plausible wrong implementation, and it is the server-side state
 //       SEP-2567/MCPS-07 name as a non-goal)
-//       1 failed | 18 passed
+//       1 failed | 19 passed
 //       > FAIL  answers the same first call with the same payload twice
 //       > AssertionError: expected { content: [ { …(2) } ], …(3) } to deeply equal { content: [ { …(2) } ], …(3) }
 //       This leg is why that cell drives one handler TWICE as well as two handlers once: the
@@ -391,6 +396,43 @@ describe('createApplyToolHandler — doctored one-shots (T-396-04)', () => {
     expect(text).toContain(OTHER_PROPOSAL_ID)
     expect(text).toContain(PROPOSAL_ID)
     expect(text.toLowerCase()).toContain('does not name')
+  })
+})
+
+// Plan 02 Task 2 — the era-degradation cell.
+//
+// WHY THE PRIMARY ROUTE IS PRIMARY, as a measured property instead of a paragraph. On a stateless
+// legacy (2025-era) HTTP connection there is no return path for a server-to-client request, so the
+// SDK's `input_required` legacy shim degrades to a clean capability refusal: the FORM cannot be
+// delivered. If the instruction to re-call with `confirmed: true` lived only inside the form's
+// message, such a caller would receive a refusal it has no way to act on — stranded on day zero,
+// which per RESEARCH Pitfall 4 is every shipping client.
+//
+// WHAT THIS CELL DOES AND DOES NOT MEASURE, named rather than narrowed silently: it drives the
+// PAYLOAD, projecting away exactly the fields such a connection cannot carry, and asserts what is
+// left still teaches. It does not drive two real transports. The wire-level two-era drive — a 2025
+// client and a 2026 client against the shipped composition — is plan 06 Task 1 cell 6
+// (`packages/cli/src/__tests__/mcp-apply-differential.test.ts`). The claim split between the two is
+// deliberate: the property is a property of the payload, and only the reachability is a property of
+// the wire.
+describe('createApplyToolHandler — the refusal teaches without the form (C3/C-MCP-1)', () => {
+  // THE BAR: M4 — the instruction moved into the elicitation message only. Every other cell in this
+  // file stays green under that mutation.
+  it('teaches the deterministic route in content a 2025-era caller can still read', async () => {
+    const { handler } = handlerUnderTest()
+
+    const refusal = await handler({ proposal_id: PROPOSAL_ID }, {})
+
+    // Exactly what survives the degradation: the form and its discriminator are gone.
+    const { inputRequests: _requests, resultType: _type, ...degraded } = refusal
+    expect(degraded['inputRequests']).toBeUndefined()
+
+    const text = contentText(degraded)
+    expect(text).toContain(PROPOSAL_ID)
+    expect(text).toContain('confirmed')
+    expect(text).toContain('true')
+    // Actionable, not merely present: the caller is told which tool argument to set and to what.
+    expect(text).toMatch(/confirmed[^\n]*true/u)
   })
 })
 
