@@ -126,6 +126,35 @@ export { DEFAULT_MCP_SCOPES as MCP_DEFAULT_GRANTED_SCOPES }
 export type McpHttpRefusal = 'host' | 'origin' | 'auth'
 
 /**
+ * The masker this host composes (T-396-17).
+ *
+ * BUILT THROUGH THE RUN PATH'S OWN PRODUCER rather than assembled here — 395-04's sibling-input
+ * law: the values this host hides and the values a run hides are then one set by construction
+ * instead of two lists that agree today. The run's other two channels (a live secret store,
+ * captured auth state) are run-scoped and do not exist in a server process.
+ *
+ * THE DECLARED CREDENTIALS ARE SEEDED EXPLICITLY, and that second argument is the whole reason
+ * this is a named function rather than three lines inside the action. `sensitiveEnvSlice` selects
+ * environment variables BY NAME SUFFIX; nothing obliges an operator to point `tokenEnvVar` at a
+ * name ending in `_TOKEN`, so without this seeding the one credential this process definitionally
+ * holds would be the one credential the masker did not know about. That is not a hypothetical
+ * ordering of words: 396-03 measured that dropping the masker from a single refusal path left an
+ * entire suite green. A differential cell drives this function and reds when the seeding goes.
+ *
+ * Exported so the MCPS-04 suite masks with the object the command masks with. A suite that built
+ * its own masker would be asserting that ITS masker works.
+ */
+export function composeMcpMasking(input: {
+  tokens: readonly ResolvedMcpToken[]
+  env: NodeJS.ProcessEnv
+}): ReturnType<typeof buildRunMaskingContext> {
+  return buildRunMaskingContext({
+    env: input.env,
+    secretStore: mcpTokenSecretStore(input.tokens),
+  })
+}
+
+/**
  * Bind a resolved scope set to a registry and a masker.
  *
  * THE ONE PLACE deps are composed, so stdio and HTTP cannot drift into two different servers. What
@@ -269,17 +298,9 @@ export function createMcpCommand(): Command {
         // credential they just configured.
         const tokens = resolveMcpTokens(config?.services?.mcp?.tokens ?? [], process.env)
 
-        // The masker, built through the run path's OWN producer rather than assembled here. That
-        // matters for the reason 395-04 named as the sibling-input law: the values this host hides
-        // and the values a run hides are then one set by construction instead of two lists that
-        // agree today. The run's other two channels (a live secret store, captured auth state) are
-        // run-scoped and do not exist in a server process — but the DECLARED MCP CREDENTIALS are
-        // exactly a secret store, and they are seeded as one, because `sensitiveEnvSlice` selects
-        // by name suffix and nothing obliges `tokenEnvVar` to have one.
-        const masking = buildRunMaskingContext({
-          env: process.env,
-          secretStore: mcpTokenSecretStore(tokens),
-        })
+        // See `composeMcpMasking` — the seeding of the declared credentials is the load-bearing
+        // half, and it is documented there because that is the function a differential drives.
+        const masking = composeMcpMasking({ tokens, env: process.env })
         const maskText = (text: string) => masking.mask(text)
 
         const host = composeCliLocalAgent({
