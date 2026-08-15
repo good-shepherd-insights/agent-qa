@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@vostride/agent-qa-agent": "workspace:*",
     "@vostride/agent-qa-core": "workspace:*",
     "@vostride/agent-qa-ids": "workspace:*",
     "yaml": "2.8.4",

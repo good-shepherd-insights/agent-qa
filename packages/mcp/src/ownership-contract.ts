@@ -15,6 +15,7 @@ export const AGENT_QA_MCP_EXTERNAL_DEPENDENCIES = [
   'zod',
 ] as const
 export const AGENT_QA_MCP_INTERNAL_DEPENDENCIES = [
+  '@vostride/agent-qa-agent',
   '@vostride/agent-qa-core',
   '@vostride/agent-qa-ids',
 ] as const

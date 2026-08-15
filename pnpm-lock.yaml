@@ -720,6 +720,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.2)
+      '@vostride/agent-qa-agent':
+        specifier: workspace:*
+        version: link:../agent
       '@vostride/agent-qa-core':
         specifier: workspace:*
         version: link:../core

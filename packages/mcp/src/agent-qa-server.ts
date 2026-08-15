@@ -23,6 +23,7 @@ import {
   getEntityIdContracts,
   isCanonicalId,
 } from '@vostride/agent-qa-ids'
+import { isCredentialEntry } from '@vostride/agent-qa-agent'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
 import {
@@ -341,22 +342,44 @@ export function classifyRunFailureFromDashboardData(input: {
   }
 }
 
+const CONFIG_REDACTION_MARKER = '<redacted>'
+
+/**
+ * THE MCP RENDER CHANNEL ASKS THE ONE CREDENTIAL PREDICATE (395-25 · F-06/CR-02).
+ *
+ * This function used to be the product's THIRD independent answer to "is this a credential": a
+ * four-substring key vocabulary (`key`/`token`/`secret`/`password`) with no value-shape arm at all,
+ * so a provider key inside `registry.llms[0].baseURL`'s userinfo or under a header named
+ * `X-Client-Auth` was returned verbatim — and what it did recognise it masked only PARTIALLY,
+ * `slice(0,3) + '****' + slice(-4)`, disclosing seven characters of the secret on a disclosure
+ * budget nobody set. Both are deleted. No credential word-list lives in this file any more: a
+ * sibling vocabulary is a thing that drifts, and drift between two answers to one question is the
+ * defect 395-20's ONE-ANSWER thesis exists to end. `isCredentialEntry` answers here, on the write
+ * road, and on `config show` — the same arms, the same detector families, one place to retune.
+ *
+ * WHY A CONTAINER IS DECOMPOSED BEFORE IT IS ASKED. The predicate's non-string arm (395-23) scans a
+ * value's whole JSON serialization, so handing it `registry.llms` — or the root config — answers
+ * `true` for any container with a credential anywhere beneath it. Measured: asking the full
+ * predicate at every entry rendered the entire `raw` config as `"<redacted>"`. That is not masking,
+ * it is deleting the tool's output; the model then cannot read the config it was asked about. So a
+ * container is decomposed to its leaves and the value arm answers where the bytes actually are —
+ * while the container is still asked the predicate's NAME arm alone (the same function, called with
+ * no value, which is exactly the name question), so a `credentials:` block is redacted whole
+ * without its neighbours going dark with it.
+ *
+ * Full replacement, never partial: a recognized credential's entire value becomes `<redacted>` —
+ * the same marker `config show` prints, because a person and a model should see this product make
+ * one gesture.
+ */
 function maskSensitive(value: unknown, parentKey = ''): unknown {
   const authRedacted = redactAuthStateValue(value)
-  const lower = parentKey.toLowerCase()
   if (typeof authRedacted === 'string' && authRedacted !== value) {
     return authRedacted
   }
-  if (typeof authRedacted === 'string' && (
-    lower.includes('key')
-    || lower.includes('token')
-    || lower.includes('secret')
-    || lower.includes('password')
-  )) {
-    return authRedacted.length > 8 ? `${authRedacted.slice(0, 3)}****${authRedacted.slice(-4)}` : '****'
-  }
+  const isContainer = Array.isArray(authRedacted) || (authRedacted !== null && typeof authRedacted === 'object')
+  if (isCredentialEntry(parentKey, isContainer ? undefined : authRedacted)) return CONFIG_REDACTION_MARKER
   if (Array.isArray(authRedacted)) return authRedacted.map(item => maskSensitive(item, parentKey))
-  if (authRedacted && typeof authRedacted === 'object') {
+  if (isContainer) {
     return Object.fromEntries(
       Object.entries(authRedacted as Record<string, unknown>).map(([key, child]) => [key, maskSensitive(child, key)]),
     )
