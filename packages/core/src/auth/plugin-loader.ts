@@ -1,6 +1,7 @@
 import { registerLLMAuthProviderPlugins, type LLMAuthProviderPlugin } from './plugin-registry.js'
 import {
   declarationKey,
+  declarationLabel,
   importDeclaredPluginModule,
   packageDeclarationValue,
   pathDeclarationValue,
@@ -87,7 +88,11 @@ export async function loadLLMAuthPlugins(
     // It is still a failure — the plugin genuinely is not there — and it now names the package and
     // the install step instead of Node's require stack.
     const module = await importDeclaredPluginModule<AuthPluginModule>(declaration, baseDir, 'auth')
-    const bundle = await resolvePluginBundle(module, key)
+    // THE MAP KEY IS NOT THE PERSON'S NAME FOR IT (395-24 · WR-07). `key` is `path:/abs/route/to.js`
+    // — absolute so two relative routes to one file collide in `loadedDeclarations`, prefixed so a
+    // package cannot collide with a file. Neither fact belongs in a sentence a person reads, and
+    // `resolvePluginBundle`'s "must export …" message is one.
+    const bundle = await resolvePluginBundle(module, declarationLabel(declaration, baseDir))
 
     registerLLMAuthProviderPlugins(bundle.providers)
     loadedDeclarations.add(key)

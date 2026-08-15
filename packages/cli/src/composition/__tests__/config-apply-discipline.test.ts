@@ -154,6 +154,11 @@ let agentQaRoot: string
 function git(...args: string[]): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
   if (result.error !== undefined) throw result.error
+  if (result.status !== 0) {
+    // 395-24 · WR-12 — a `git` that ran and failed must not return quietly; see
+    // validate-resolution-surface.test.ts for the full note.
+    throw new Error(`git ${args.join(' ')} exited ${result.status}: ${result.stderr}`)
+  }
   return { status: result.status, stdout: result.stdout, stderr: result.stderr }
 }
 

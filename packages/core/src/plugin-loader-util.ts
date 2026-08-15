@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, isAbsolute, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 export type PluginDeclarationLike = {
@@ -38,11 +38,45 @@ export function exportTargetFromPackageJson(pkg: Record<string, unknown>): strin
   return null
 }
 
+/**
+ * A third party's `package.json` this resolver could not read as JSON (395-24 · WR-11).
+ *
+ * POSITION, NEVER CONTENT — the F-01 discipline, on a JSON channel. The unguarded
+ * `JSON.parse(readFileSync(...))` below threw Node's own `SyntaxError`, and that error's text quotes
+ * a FRAGMENT OF THE FILE back (`Unexpected token ... in JSON at position N`, and on newer V8 an
+ * excerpt of the offending line). The bytes belong to a package in `node_modules`, not to the
+ * person's own committed file, which is why the verifier filed it a warning rather than an F-01
+ * member — but it is the same mechanism, and this file is where the phase put the one producer.
+ *
+ * NO `cause`, for `PluginNotInstalledError`'s reason: an `Error` carrying a `cause` is serialized by
+ * `util.inspect` on roads this project has already been burned by, and the cause here is exactly the
+ * `SyntaxError` whose bytes must not travel.
+ */
+export class PluginPackageManifestError extends Error {
+  readonly packageJsonPath: string
+
+  constructor(packageJsonPath: string) {
+    super(`Plugin package manifest ${packageJsonPath} could not be read as JSON.`)
+    this.name = 'PluginPackageManifestError'
+    this.packageJsonPath = packageJsonPath
+  }
+}
+
 export function resolvePackageImportFromBase(packageName: string, baseDir: string): string | null {
   const packageJsonPath = findPackageJson(packageName, baseDir)
   if (!packageJsonPath) return null
 
-  const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as Record<string, unknown>
+  let pkg: Record<string, unknown>
+  try {
+    pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as Record<string, unknown>
+  } catch {
+    // THROW, RATHER THAN RETURN null. `null` here means "no export target found, try the loader's
+    // own resolution" — a legitimate outcome for a package whose manifest parsed fine. Returning it
+    // for an UNREADABLE manifest would send an installed-but-corrupt package down the
+    // `require.resolve` fallback and out as "not installed", which is WR-05's misnaming reached
+    // from a second direction.
+    throw new PluginPackageManifestError(packageJsonPath)
+  }
   const target = exportTargetFromPackageJson(pkg)
   if (!target || !target.startsWith('.')) return null
   return pathToFileURL(resolve(dirname(packageJsonPath), target)).href
@@ -56,10 +90,41 @@ export function pathDeclarationValue(declaration: PluginDeclarationLike): string
   return typeof declaration.path === 'string' ? declaration.path.trim() : ''
 }
 
+/**
+ * The INTERNAL identity of a declaration — a dedup map key, and nothing a person reads.
+ *
+ * The absolute path and the `package:`/`path:` discriminator prefix are both correct HERE: two
+ * declarations naming the same file by different relative routes must collide in
+ * `loadedDeclarations`, and a package named `foo` must not collide with a file named `foo`. Use
+ * `declarationLabel` for anything that reaches a message (395-24 · WR-07).
+ */
 export function declarationKey(declaration: PluginDeclarationLike, baseDir: string): string {
   const packageName = packageDeclarationValue(declaration)
   if (packageName) return `package:${packageName}`
   return `path:${resolve(baseDir, pathDeclarationValue(declaration))}`
+}
+
+/**
+ * The PERSON-FACING name of a declaration (395-24 · WR-07).
+ *
+ * `declarationKey`'s value was being interpolated straight into the loaders' own error sentences —
+ * `Auth plugin "path:/Users/someone/work/app/plugins/thing.js" must export …` — which hands a person
+ * an absolute path out of their own filesystem and an internal discriminator prefix that means
+ * nothing to them. `PluginNotInstalledError` already names declarations correctly (it composes from
+ * the DECLARATION, which is the person's own one-line config entry); this brings its neighbours to
+ * the same discipline while leaving the map key alone, because the map key's absoluteness is its job.
+ *
+ * A path OUTSIDE `baseDir` renders as declared rather than as a `../../..` chain — the point is a
+ * string the person recognizes from their config, not a shorter one.
+ */
+export function declarationLabel(declaration: PluginDeclarationLike, baseDir: string): string {
+  const packageName = packageDeclarationValue(declaration)
+  if (packageName) return packageName
+
+  const declared = pathDeclarationValue(declaration)
+  if (!isAbsolute(declared)) return declared
+  const fromBase = relative(baseDir, declared)
+  return fromBase === '' || fromBase.startsWith('..') ? declared : fromBase
 }
 
 export type PluginDeclarationKind = 'auth' | 'provider'
@@ -86,6 +151,25 @@ export type PluginDeclarationKind = 'auth' | 'provider'
  * a verifier happened to find while its sibling stays open (388/390/392/395-18). Both go through
  * `importDeclaredPluginModule` below.
  */
+/**
+ * The npm package-name charset, anchored (395-24 · WR-06).
+ *
+ * WHY A GATE AT ALL. The sentence below composes the declaration's `package` string into
+ * `npm install <that string>` — a COMMAND LINE THE CLI TELLS A PERSON TO RUN — and the schema behind
+ * that string is `z.string().trim().min(1)` with no charset restriction whatsoever. It is not RCE:
+ * the config is the person's own file, and nothing here executes anything. It is a channel round 4
+ * created in which a string from a data file becomes a runnable command, and a person who pastes a
+ * suggested command rarely re-reads it. So the runnable form is offered only for a name that
+ * actually IS an npm name, and every other declaration gets the same remedy stated as prose.
+ *
+ * RETUNE NOTE. This is npm's own published name grammar as of 2026-08: optional `@scope/` prefix,
+ * then lowercase letters, digits, and `-._~`. It deliberately does NOT accept uppercase (npm has
+ * rejected uppercase in new names since 2017) — a legacy uppercase package still gets a correct
+ * message, just without the composed command. If a future registry widens the grammar, widen THIS
+ * constant; do not add a second check beside the producer.
+ */
+const NPM_PACKAGE_NAME = /^(?:@[a-z0-9-._~]+\/)?[a-z0-9-._~]+$/
+
 export class PluginNotInstalledError extends Error {
   readonly pluginKind: PluginDeclarationKind
   readonly pluginPackage: string | null
@@ -95,6 +179,10 @@ export class PluginNotInstalledError extends Error {
     const label = kind === 'auth' ? 'Auth' : 'Provider'
     const packageName = packageDeclarationValue(declaration)
     const pluginPath = pathDeclarationValue(declaration)
+    const remedy = NPM_PACKAGE_NAME.test(packageName)
+      ? `Install it with your package manager (for example: npm install ${packageName}), or remove `
+        + `the plugins.${kind} entry that declares it.`
+      : `Install it with your package manager, or remove the plugins.${kind} entry that declares it.`
     // NO `cause`, EVER (395-16 · D-395-16-A). The wrapped error carries a require stack of absolute
     // paths, and an `Error` with a `cause` is serialized by `util.inspect` on the roads this project
     // has already been burned by. The remedy is composed from the DECLARATION, which is the
@@ -102,8 +190,7 @@ export class PluginNotInstalledError extends Error {
     super(
       packageName
         ? `${label} plugin package "${packageName}" is declared in agent-qa.config.yaml but is not `
-          + `installed. Install it with your package manager (for example: npm install `
-          + `${packageName}), or remove the plugins.${kind} entry that declares it.`
+          + `installed. ${remedy}`
         : `${label} plugin file "${pluginPath}" is declared in agent-qa.config.yaml but could not be `
           + `loaded. Check that the path is correct and the file exists, or remove the `
           + `plugins.${kind} entry that declares it.`,
@@ -121,11 +208,80 @@ function isModuleResolutionFailure(err: unknown): boolean {
 }
 
 /**
+ * A plugin package that IS installed and could not be loaded (395-24 · WR-05).
+ *
+ * THE MISNAMING THIS TYPE ENDS. `isModuleResolutionFailure` answers `MODULE_NOT_FOUND` /
+ * `ERR_MODULE_NOT_FOUND`, and Node raises those codes for a resolution failure ANYWHERE in the
+ * import graph — including inside the plugin's own body, when the plugin's own transitive dependency
+ * is missing or its `exports` target points at a file that is not there. The doc comment above the
+ * importer claimed only the plugin's own RUNTIME throws pass through untouched, and that was true of
+ * runtime throws and false of resolution failures one level down. The consequence a person met was
+ * `… is declared in agent-qa.config.yaml but is not installed. Install it with npm install <pkg>` —
+ * for a package sitting in their `node_modules` right then. They install what they already have,
+ * nothing changes, and the message has actively misdirected them.
+ *
+ * The distinguishing fact is not the error's code but the FILESYSTEM: `findPackageJson` either
+ * located the package under a `node_modules` on the way up from `baseDir`, or it did not.
+ *
+ * The underlying failure travels as TEXT, not as `cause`, for `PluginNotInstalledError`'s reason.
+ */
+export class PluginLoadFailedError extends Error {
+  readonly pluginKind: PluginDeclarationKind
+  readonly pluginPackage: string
+
+  constructor(packageName: string, kind: PluginDeclarationKind, underlying: string) {
+    const label = kind === 'auth' ? 'Auth' : 'Provider'
+    super(
+      `${label} plugin package "${packageName}" is installed but failed to load: ${underlying}. `
+      + `This is a fault in the plugin or in its own dependencies, not a missing install.`,
+    )
+    this.name = 'PluginLoadFailedError'
+    this.pluginKind = kind
+    this.pluginPackage = packageName
+  }
+}
+
+/**
+ * The underlying failure's FIRST LINE, and only its first line.
+ *
+ * CJS `MODULE_NOT_FOUND` puts its `Require stack:` — a list of absolute paths out of the person's
+ * own filesystem — inside `.message` itself, not only on `.stack`. Carrying the whole message would
+ * reopen exactly the channel 395-21 closed, one type over. The first line is the diagnostically
+ * useful part (it names the specifier that could not be resolved) and is what a person needs to know
+ * which dependency their plugin is missing. `instanceof Error` rather than a cast, for validate.ts's
+ * reason (WR-04): a thrown non-Error must still produce a string.
+ */
+function messageOf(err: unknown): string {
+  const text = err instanceof Error ? err.message : String(err)
+  return text.split('\n', 1)[0] ?? ''
+}
+
+/**
+ * Translate a module-resolution failure into the error that names what is actually wrong.
+ *
+ * A PATH declaration keeps `PluginNotInstalledError` — its sentence is already about a file that
+ * could not be loaded and says to check the path, which is the right thing to say either way.
+ */
+function resolutionFailureFor(
+  declaration: PluginDeclarationLike,
+  baseDir: string,
+  kind: PluginDeclarationKind,
+  err: unknown,
+): Error {
+  const packageName = packageDeclarationValue(declaration)
+  if (packageName && findPackageJson(packageName, baseDir) !== null) {
+    return new PluginLoadFailedError(packageName, kind, messageOf(err))
+  }
+  return new PluginNotInstalledError(declaration, kind)
+}
+
+/**
  * Resolve and import one declared plugin, answering the person when the module is not there.
  *
- * ONLY module-resolution failures are translated. A plugin that IS installed and throws from its own
- * body rethrows untouched — disguising a plugin's own crash as "not installed" would send the person
- * to install something they already have.
+ * ONLY module-resolution failures are translated, and only for a package the filesystem says is
+ * ABSENT. A plugin that IS installed rethrows as `PluginLoadFailedError` (resolution fault inside
+ * its own graph) or untouched (its own runtime throw) — disguising either as "not installed" would
+ * send the person to install something they already have.
  */
 export async function importDeclaredPluginModule<T>(
   declaration: PluginDeclarationLike,
@@ -136,14 +292,14 @@ export async function importDeclaredPluginModule<T>(
   try {
     specifier = resolveModuleSpecifier(declaration, baseDir)
   } catch (err) {
-    if (isModuleResolutionFailure(err)) throw new PluginNotInstalledError(declaration, kind)
+    if (isModuleResolutionFailure(err)) throw resolutionFailureFor(declaration, baseDir, kind, err)
     throw err
   }
 
   try {
     return await import(specifier) as T
   } catch (err) {
-    if (isModuleResolutionFailure(err)) throw new PluginNotInstalledError(declaration, kind)
+    if (isModuleResolutionFailure(err)) throw resolutionFailureFor(declaration, baseDir, kind, err)
     throw err
   }
 }

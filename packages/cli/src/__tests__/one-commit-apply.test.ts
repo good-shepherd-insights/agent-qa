@@ -53,6 +53,14 @@ let root: string
 let configPath: string
 let draftPath: string
 
+/**
+ * DELIBERATELY NOT STATUS-CHECKED (395-24 · WR-12). Its eight siblings throw on a non-zero exit —
+ * a `git` that ran and failed must not return quietly into a suite whose value is measurement trust.
+ * This copy is the documented exception: the conflicted-index fixture at
+ * `it('… captureIndexEntry …')` runs `git('merge', 'theirs')` and asserts `merged.status` is NOT 0,
+ * because producing real stage-1/2/3 entries REQUIRES a merge that fails. Hardening this helper
+ * would throw inside the fixture that needs the failure.
+ */
 function git(...args: string[]): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
   if (result.error !== undefined) throw result.error

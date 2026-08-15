@@ -129,6 +129,15 @@ let root: string
 function git(...args: string[]): void {
   const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
   if (result.error !== undefined) throw result.error
+  if (result.status !== 0) {
+    // A FAILED `git` MUST NOT RETURN QUIETLY (395-24 · WR-12). `result.error` is set only when the
+    // CHILD PROCESS COULD NOT BE SPAWNED; a `git commit` that ran and exited non-zero (nothing
+    // staged, a hook refusing, a bad identity) came back through here indistinguishable from a
+    // success, and every cell downstream then measured a fixture that was never built. In a suite
+    // whose whole value is that its measurements are trustworthy, that is the most expensive kind
+    // of silence — a GREEN that means nothing.
+    throw new Error(`git ${args.join(' ')} exited ${result.status}: ${result.stderr}`)
+  }
 }
 
 function occurrences(haystack: string, needle: string): number {

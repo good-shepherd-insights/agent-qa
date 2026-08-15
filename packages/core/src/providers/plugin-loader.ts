@@ -1,5 +1,6 @@
 import {
   declarationKey,
+  declarationLabel,
   importDeclaredPluginModule,
   packageDeclarationValue,
   pathDeclarationValue,
@@ -139,7 +140,10 @@ export async function loadProviderPlugins(
     // one directory over, and a class fixed only on the member a verifier happened to drive is how
     // this project has re-opened the same defect three rounds running.
     const module = await importDeclaredPluginModule<ProviderPluginModule>(declaration, baseDir, 'provider')
-    const descriptors = extractDescriptors(module, key)
+    // THE SIBLING OF THE AUTH ROAD'S WR-07 FIX, applied in the same pass for this file's own stated
+    // reason: `extractDescriptors` and `assertProviderDescriptor` both interpolate this string into
+    // person-facing sentences, and the map key's absolute `path:` form has no business in one.
+    const descriptors = extractDescriptors(module, declarationLabel(declaration, baseDir))
 
     loadedDeclarations.add(key)
     loadedProviders.push(...descriptors)
