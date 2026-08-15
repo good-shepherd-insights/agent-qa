@@ -129,3 +129,88 @@ describe('the one credential predicate answers for containers too (395-23 · F-0
     ).toBe(true)
   })
 })
+
+// AN ANCESTOR'S NAME IS PART OF THE PATH A DECOMPOSED LEAF INHERITS (395-26 · T-395-R5-04).
+//
+// WHAT THE SECURITY AUDITOR MEASURED. `flattenObject` hands this predicate the WHOLE dotted row key,
+// and the name arm read only the last segment of it. So `credentials[0].pass`,
+// `plugins.myplugin.credentials.pass` and `registry.llms[0].apiKey.value` all normalized to `pass`
+// or `value` — members of no set — and the shipped `config show` printed every one of them at exit
+// 0. Round 5 fixed the ARRAY instance (`credentials[0]` keeping its own name); the class is
+// ancestor-name loss, and a plain nested object leaks by the identical mechanism with no array
+// anywhere on the path.
+//
+// THE VALUES BELOW ARE OPAQUE ON PURPOSE. A `sk-`-shaped value would be cleared by the value arm and
+// these cells would pass with the ancestor arm deleted — the (K3-name) non-vacuity discipline,
+// applied to the arm this family is actually about.
+//
+//  (K8)         the ancestor arm fires — reds if the name question is narrowed back to one segment.
+//  (K8-control) it is SCOPED, not global — reds if the arm answers true for any deep path, which
+//               would blacken `workspace.testMatch`, a port and a timeout and make `config show`
+//               useless.
+//  (K8-index)   the trailing index is stripped on ANCESTOR segments too, not only on the last one.
+describe('the credential name question reads every segment of the path (395-26 · T-395-R5-04)', () => {
+  /** Unremarkable word-and-digit strings. No detector family recognises any of them. */
+  const OPAQUE = 'tealwood-7412-delta-fixtureonly'
+
+  it('(K8) the arm fires on an ancestor, whether that ancestor holds an object, an array element or a nested key', () => {
+    // NON-VACUITY FIRST: the value carries no credential shape, so only the NAME question can
+    // answer true below.
+    expect(
+      isCredentialEntry('someOrdinaryKey', OPAQUE),
+      'the fixture value must be opaque or the value arm is carrying this family',
+    ).toBe(false)
+
+    expect(
+      isCredentialEntry('plugins.myplugin.credentials.pass', OPAQUE),
+      'a plain nested object under a credential-named key — the CLASS, no array anywhere',
+    ).toBe(true)
+    expect(
+      isCredentialEntry('credentials[0].pass', OPAQUE),
+      'an object element of a credential-named array — the instance round 5 closed',
+    ).toBe(true)
+    expect(
+      isCredentialEntry('registry.llms[0].apiKey.value', OPAQUE),
+      'an object under a credential-named key inside an array — the register\'s own named component',
+    ).toBe(true)
+  })
+
+  it('(K8-control) the arm is SCOPED to credential names — an ordinary deep path stays ordinary', () => {
+    expect(
+      isCredentialEntry('workspace.testMatch', ['tests/**/*.yaml', 'e2e/**/*.yaml']),
+      'an ordinary list of globs must stay ordinary under a deep key',
+    ).toBe(false)
+    expect(
+      isCredentialEntry('registry.llms[0].baseURL', 'https://api.example.com/v1'),
+      'a credential-free base URL must stay verbatim',
+    ).toBe(false)
+    expect(isCredentialEntry('services.dashboard.port', 4173), 'a port is not a credential').toBe(false)
+    expect(isCredentialEntry('use.timeout.step', '45s'), 'a timeout is not a credential').toBe(false)
+    expect(isCredentialEntry('deployment.rolloutTag', OPAQUE), 'an ordinary tag is not a credential')
+      .toBe(false)
+    expect(isCredentialEntry('rolloutTag', OPAQUE), 'a single-segment ordinary key is unchanged')
+      .toBe(false)
+    // AND THE ONE THE SET DELIBERATELY EXCLUDES stays excluded through an ancestor too: `auth` is a
+    // configuration block this product's own refusal message tells people to use.
+    expect(
+      isCredentialEntry('plugins.auth.endpoint', 'https://auth.example.com/callback'),
+      '`auth` is not in the name set, and reading more segments must not smuggle it in',
+    ).toBe(false)
+  })
+
+  it('(K8-index) a trailing index is stripped on ANCESTOR segments too, not only on the last one', () => {
+    expect(
+      isCredentialEntry('credentials[3].pass', OPAQUE),
+      'a non-zero index must not hide the container\'s own name',
+    ).toBe(true)
+    expect(
+      isCredentialEntry('registry.credentials[11].nested.value', OPAQUE),
+      'the index strip applies wherever the segment sits in the path',
+    ).toBe(true)
+    // THE BOUND: stripping an index must not invent a name. `credentialsX` is not `credentials`.
+    expect(
+      isCredentialEntry('credentialsx[0].pass', OPAQUE),
+      'the strip removes an index, not arbitrary trailing characters',
+    ).toBe(false)
+  })
+})
