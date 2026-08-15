@@ -370,14 +370,28 @@ const CONFIG_REDACTION_MARKER = '<redacted>'
  * Full replacement, never partial: a recognized credential's entire value becomes `<redacted>` —
  * the same marker `config show` prints, because a person and a model should see this product make
  * one gesture.
+ *
+ * AND THE CREDENTIAL QUESTION IS ASKED FIRST, THE AUTH REDACTOR SECOND (395-26 · T-395-R5-10). The
+ * order used to be the other way round, with a return taken whenever `redactAuthStateValue` had
+ * CHANGED the string — and that redactor ends in partial `.replace()` substitutions, so any string
+ * it merely TOUCHED left this function without the credential predicate ever being asked. Measured
+ * on the built dist: the identical credential came back `<redacted>` under one key and verbatim
+ * under `notes`, because `notes` also carried a `storageStatePath=` token. A partial substitution
+ * is not a redaction, so "the redactor changed this string" must never be allowed to mean "this
+ * string is safe": the credential question is asked above it, the redactor's own output is asked
+ * again below it, and the redactor is now a transformation whose result is re-examined rather than
+ * a gate that can answer on the predicate's behalf.
  */
 function maskSensitive(value: unknown, parentKey = ''): unknown {
+  const valueIsContainer = Array.isArray(value) || (value !== null && typeof value === 'object')
+  if (isCredentialEntry(parentKey, valueIsContainer ? undefined : value)) return CONFIG_REDACTION_MARKER
+
   const authRedacted = redactAuthStateValue(value)
+  const isContainer = Array.isArray(authRedacted) || (authRedacted !== null && typeof authRedacted === 'object')
+  if (isCredentialEntry(parentKey, isContainer ? undefined : authRedacted)) return CONFIG_REDACTION_MARKER
   if (typeof authRedacted === 'string' && authRedacted !== value) {
     return authRedacted
   }
-  const isContainer = Array.isArray(authRedacted) || (authRedacted !== null && typeof authRedacted === 'object')
-  if (isCredentialEntry(parentKey, isContainer ? undefined : authRedacted)) return CONFIG_REDACTION_MARKER
   if (Array.isArray(authRedacted)) return authRedacted.map(item => maskSensitive(item, parentKey))
   if (isContainer) {
     return Object.fromEntries(
