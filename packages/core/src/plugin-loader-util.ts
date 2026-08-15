@@ -1,11 +1,58 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export type PluginDeclarationLike = {
   package?: string
   path?: string
+}
+
+/**
+ * One filesystem path, rendered as the string a PERSON reads (395-28 · CR-03).
+ *
+ * `declarationLabel` below makes this disposition for a path the loader COMPOSED from the person's
+ * own config. This is the same disposition for a path the loader merely FOUND — a manifest location,
+ * or a path inside text Node's loader wrote. Inside `baseDir` it renders relative, because that is
+ * the route the person recognizes from their own project; anywhere else it renders as a fixed
+ * placeholder, because a `../../../..` chain out of the project is neither shorter nor safer than
+ * the absolute path it replaces.
+ */
+function personFacingPath(candidate: string, baseDir: string): string {
+  let raw = candidate
+  if (raw.startsWith('file://')) {
+    try {
+      raw = fileURLToPath(raw)
+    } catch {
+      return '<path>'
+    }
+  }
+  const fromBase = relative(baseDir, raw)
+  if (fromBase === '' || fromBase.startsWith('..') || isAbsolute(fromBase)) return '<path>'
+  return fromBase
+}
+
+/**
+ * An absolute path INSIDE prose, anchored so a slash in a word is not one (395-28 · CR-03).
+ *
+ * WHY ANCHORED. The obvious shape — "any run of non-space characters containing a separator" —
+ * strips `and/or` and the person's own declared `plugins/local-auth.js` right along with the paths,
+ * and a failure message that has lost its own diagnosis is a different defect from the one being
+ * closed, not a fix for it. So a separator counts as the START of a path only when a boundary comes
+ * first: the start of the string, whitespace, a quote, or an opening bracket. The `file://` form is
+ * matched too, because that is the form Node's ESM loader quotes.
+ *
+ * The boundary is CAPTURED rather than looked behind, so adjacent paths separated by one space each
+ * keep their own boundary available to the next match.
+ */
+const ABSOLUTE_PATH_IN_TEXT = /(^|[\s'"`([<])((?:file:\/\/)?(?:[A-Za-z]:)?[\\/][^\s'"`)\]>]*)/g
+
+function stripAbsolutePaths(text: string, baseDir: string): string {
+  return text.replace(
+    ABSOLUTE_PATH_IN_TEXT,
+    (_match, boundary: string, candidate: string) =>
+      `${boundary}${personFacingPath(candidate, baseDir)}`,
+  )
 }
 
 export function findPackageJson(packageName: string, baseDir: string): string | null {
@@ -51,12 +98,22 @@ export function exportTargetFromPackageJson(pkg: Record<string, unknown>): strin
  * NO `cause`, for `PluginNotInstalledError`'s reason: an `Error` carrying a `cause` is serialized by
  * `util.inspect` on roads this project has already been burned by, and the cause here is exactly the
  * `SyntaxError` whose bytes must not travel.
+ *
+ * POSITION IS NOT THE SAME AS AN ABSOLUTE PATH (395-28 · CR-03, secondary). `findPackageJson`
+ * returns an absolute path, and the sentence used to interpolate it straight — handing the person a
+ * route through their own filesystem to say something a project-relative route says just as well.
+ * The `declarationKey`/`declarationLabel` split applies one type over: the TYPED FIELD keeps the
+ * absolute path, because callers use it to open the file, and the SENTENCE renders through
+ * `personFacingPath`, because that is what a person reads.
  */
 export class PluginPackageManifestError extends Error {
   readonly packageJsonPath: string
 
-  constructor(packageJsonPath: string) {
-    super(`Plugin package manifest ${packageJsonPath} could not be read as JSON.`)
+  constructor(packageJsonPath: string, baseDir: string) {
+    super(
+      `Plugin package manifest ${personFacingPath(packageJsonPath, baseDir)} could not be read `
+      + `as JSON.`,
+    )
     this.name = 'PluginPackageManifestError'
     this.packageJsonPath = packageJsonPath
   }
@@ -75,7 +132,7 @@ export function resolvePackageImportFromBase(packageName: string, baseDir: strin
     // for an UNREADABLE manifest would send an installed-but-corrupt package down the
     // `require.resolve` fallback and out as "not installed", which is WR-05's misnaming reached
     // from a second direction.
-    throw new PluginPackageManifestError(packageJsonPath)
+    throw new PluginPackageManifestError(packageJsonPath, baseDir)
   }
   const target = exportTargetFromPackageJson(pkg)
   if (!target || !target.startsWith('.')) return null
@@ -242,18 +299,34 @@ export class PluginLoadFailedError extends Error {
 }
 
 /**
- * The underlying failure's FIRST LINE, and only its first line.
+ * The underlying failure's FIRST LINE, with the person's filesystem taken out of it.
  *
- * CJS `MODULE_NOT_FOUND` puts its `Require stack:` — a list of absolute paths out of the person's
- * own filesystem — inside `.message` itself, not only on `.stack`. Carrying the whole message would
- * reopen exactly the channel 395-21 closed, one type over. The first line is the diagnostically
- * useful part (it names the specifier that could not be resolved) and is what a person needs to know
- * which dependency their plugin is missing. `instanceof Error` rather than a cast, for validate.ts's
- * reason (WR-04): a thrown non-Error must still produce a string.
+ * THE FIRST-LINE REDUCTION IS TRUE OF CJS AND INSUFFICIENT. CJS `MODULE_NOT_FOUND` puts its
+ * `Require stack:` — a list of absolute paths out of the person's own filesystem — inside `.message`
+ * itself, not only on `.stack`, and dropping every line after the first removes that list. The first
+ * line is also the diagnostically useful part: it names the specifier that could not be resolved,
+ * which is what a person needs to know which dependency their plugin is missing. Both of those
+ * remain true. What was false was the implied converse — that the first line is therefore CLEAN.
+ *
+ * THE DIALECT THIS FILE ACTUALLY USES SAYS OTHERWISE (395-28 · CR-03). `importDeclaredPluginModule`
+ * calls `await import(...)`, so the ESM loader is the only loader it reaches, and ESM writes its
+ * paths INTO the first line rather than under it. Measured on Node v24.10.0:
+ *
+ *     Cannot find module 'file:///abs/path/node_modules/@f/p/missing-entry.js' imported from
+ *     /abs/path/packages/core/src/plugin-loader-util.ts
+ *
+ * — two absolute paths, on one line, out of the person's filesystem. So the reduction is kept and a
+ * SECOND, dialect-independent step is added: strip the absolute paths from whatever survives. That
+ * covers CJS's remaining `Require stack` entries if a first line ever carries one, and it covers the
+ * ESM form this file takes every time. `resolutionFailureFor` already holds `baseDir`; nothing new
+ * is plumbed to reach it.
+ *
+ * `instanceof Error` rather than a cast, for validate.ts's reason (WR-04): a thrown non-Error must
+ * still produce a string.
  */
-function messageOf(err: unknown): string {
+function messageOf(err: unknown, baseDir: string): string {
   const text = err instanceof Error ? err.message : String(err)
-  return text.split('\n', 1)[0] ?? ''
+  return stripAbsolutePaths(text.split('\n', 1)[0] ?? '', baseDir)
 }
 
 /**
@@ -270,7 +343,7 @@ function resolutionFailureFor(
 ): Error {
   const packageName = packageDeclarationValue(declaration)
   if (packageName && findPackageJson(packageName, baseDir) !== null) {
-    return new PluginLoadFailedError(packageName, kind, messageOf(err))
+    return new PluginLoadFailedError(packageName, kind, messageOf(err, baseDir))
   }
   return new PluginNotInstalledError(declaration, kind)
 }

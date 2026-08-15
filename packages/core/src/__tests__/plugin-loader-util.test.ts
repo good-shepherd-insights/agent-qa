@@ -31,6 +31,7 @@ import {
   declarationKey,
   declarationLabel,
   importDeclaredPluginModule,
+  resolveModuleSpecifier,
   resolvePackageImportFromBase,
 } from '../plugin-loader-util.js'
 
@@ -57,6 +58,7 @@ const MALFORMED_MANIFEST = `{ "main": ${MANIFEST_SENTINEL} }`
 const BROKEN_MANIFEST_PACKAGE = '@fixture-395-24/broken-manifest-pkg'
 const INSTALLED_BUT_BROKEN_PACKAGE = '@fixture-395-24/installed-but-broken-pkg'
 const GENUINELY_ABSENT_PACKAGE = '@fixture-395-24/never-installed-pkg'
+const LEGIBILITY_PACKAGE = '@fixture-395-28/legibility-pkg'
 
 function installPackage(name: string, manifestText: string): string {
   const dir = join(root, 'node_modules', ...name.split('/'))
@@ -93,11 +95,28 @@ describe('an unreadable package manifest reports its POSITION, never its content
       PluginPackageManifestError,
     )
     const message = (thrown as Error).message
-    // THE POSITION: the person is told which file to open.
+    // THE POSITION: the person is told which manifest to open — BY THE ROUTE THEY RECOGNIZE, not by
+    // an absolute route through their own filesystem (395-28 · CR-03, secondary). Until 395-28 this
+    // cell asserted the ABSOLUTE path was PRESENT; measured pre-fix the sentence read
+    //
+    //   Plugin package manifest /var/folders/…/plugin-loader-util-XXXX/node_modules/
+    //   @fixture-395-24/broken-manifest-pkg/package.json could not be read as JSON.
+    //
+    // The inversion below is paired with a positive identification assertion, so it cannot be
+    // satisfied by a sentence that has stopped saying anything.
     expect(message, `the fault did not say which manifest:\n${message}`).toContain(
+      join('node_modules', ...BROKEN_MANIFEST_PACKAGE.split('/'), 'package.json'),
+    )
+    expect(
+      occurrences(message, root),
+      `the fault republished the person's filesystem:\n${message}`,
+    ).toBe(0)
+    expect(message).toContain('could not be read as JSON')
+    // THE TYPED FIELD KEEPS THE ABSOLUTE PATH — the `declarationKey`/`declarationLabel` split, one
+    // type over: internal identity stays absolute, the sentence a person reads does not.
+    expect((thrown as PluginPackageManifestError).packageJsonPath).toBe(
       join(root, 'node_modules', ...BROKEN_MANIFEST_PACKAGE.split('/'), 'package.json'),
     )
-    expect(message).toContain('could not be read as JSON')
     // THE CONTENT: zero bytes of it, on the message AND on the serialization a person actually
     // sees. `.stack` and `util.inspect` are the channels this phase has already been burned by
     // (395-16), so the negative grep runs on all three rather than on `.message` alone.
@@ -149,9 +168,44 @@ describe('an installed package that fails to load is not called missing (395-24 
       .not.toContain('is not installed')
     expect(message, `the failure told them to install what they already have:\n${message}`)
       .not.toContain('npm install')
-    // AND NODE'S LOADER DIALECT STAYS OUT OF IT. CJS `MODULE_NOT_FOUND` puts a list of absolute
-    // paths inside `.message` itself; only the first line travels.
-    expect(message, `the failure carried a require stack:\n${message}`).not.toContain('Require stack')
+    // AND NONE OF THE PERSON'S FILESYSTEM TRAVELS WITH IT (395-28 · CR-03).
+    //
+    // WHAT THIS ASSERTION REPLACED, AND WHY. Until 395-28 this cell asserted only the absence of a
+    // CJS-only require-stack marker. `importDeclaredPluginModule` uses `await import(...)` — the ESM
+    // road is the ONLY road it takes — and ESM never emits that marker, so the cell ran the ESM road,
+    // produced a message carrying an absolute path out of the person's filesystem, and passed. It was
+    // an assertion aimed at a channel the code cannot reach. Measured pre-fix on Node v24.10.0 the
+    // message read, in full:
+    //
+    //   Auth plugin package "@fixture-395-24/installed-but-broken-pkg" is installed but failed to
+    //   load: Cannot find module '/var/folders/…/plugin-loader-util-XXXX/node_modules/
+    //   @fixture-395-24/installed-but-broken-pkg/missing-entry.js' imported from
+    //   /private/var/folders/…/plugin-loader-util-XXXX/node_modules/@fixture-395-24/…. This is a
+    //   fault in the plugin or in its own dependencies, not a missing install.
+    //
+    // The zero-occurrence form below is the idiom (W7) already uses for `declarationLabel`, and it
+    // watches the channel the code actually writes to.
+    expect(
+      occurrences(message, root),
+      `the failure republished the person's filesystem:\n${message}`,
+    ).toBe(0)
+    // THE MEASURED ROAD IS THE ESM ROAD, and this measures it rather than asserting it. The loader
+    // resolves a `file://` URL and hands it to `await import(...)`; importing that same specifier
+    // here raises the ESM code, never the CJS one. Without this, the cell above could be read as a
+    // CJS reproduction whose absence of an absolute path proves nothing about the road taken.
+    const specifier = resolveModuleSpecifier({ package: INSTALLED_BUT_BROKEN_PACKAGE }, root)
+    expect(specifier.startsWith('file:'), `not a module URL: ${specifier}`).toBe(true)
+    let underlyingCode: unknown
+    try {
+      await import(specifier)
+    } catch (err) {
+      underlyingCode = (err as { code?: unknown }).code
+    }
+    expect(underlyingCode, 'the road under test is not the ESM road').toBe('ERR_MODULE_NOT_FOUND')
+    // AND THE DIAGNOSIS SURVIVES THE STRIPPING: the entry file that is not there is still named,
+    // relative to the project. A filter that deleted the underlying text would pass the line above.
+    expect(message, `the failure no longer says what went wrong:\n${message}`)
+      .toContain('missing-entry.js')
   })
 
   it('(W5-control) a genuinely absent package still gets 395-21\'s measured sentence', async () => {
@@ -172,6 +226,54 @@ describe('an installed package that fails to load is not called missing (395-24 
     expect(message).toContain(GENUINELY_ABSENT_PACKAGE)
     expect(message).toContain('is declared in agent-qa.config.yaml but is not installed')
     expect(message).toContain(`npm install ${GENUINELY_ABSENT_PACKAGE}`)
+  })
+
+  it('(W5-legibility) the stripping removes paths and leaves ordinary text alone', async () => {
+    // THE DISCRIMINATION CONTROL, and the reason CR-03's fix is not a one-line regex.
+    //
+    // A filter that deletes every run of characters containing a slash trades one defect for
+    // another: the person gets a message that no longer diagnoses anything. So this cell asserts
+    // BOTH directions over ONE produced message — the absolute path is gone, and two shapes that
+    // merely LOOK path-like survive verbatim:
+    //
+    //   `and/or`               — a slash INSIDE a word, no boundary before it
+    //   `plugins/local-auth.js` — a RELATIVE token the person themselves declared
+    //
+    // The message is produced through the real chain, not hand-composed: the fixture's own body
+    // throws an error carrying a resolution code, so `importDeclaredPluginModule` ->
+    // `resolutionFailureFor` -> the underlying-failure text is the producer under test.
+    const dir = installPackage(LEGIBILITY_PACKAGE, '{ "name": "legibility", "main": "./index.js" }')
+    const absolute = join(root, 'node_modules', 'somewhere', 'deep', 'inner.js')
+    const underlying =
+      `Loader failed for plugins/local-auth.js and/or ${absolute} while linking.`
+    writeFileSync(
+      join(dir, 'index.js'),
+      `const e = new Error(${JSON.stringify(underlying)})\n`
+      + `e.code = 'ERR_MODULE_NOT_FOUND'\n`
+      + `throw e\n`,
+    )
+
+    let thrown: unknown
+    try {
+      await importDeclaredPluginModule({ package: LEGIBILITY_PACKAGE }, root, 'auth')
+    } catch (err) {
+      thrown = err
+    }
+
+    expect(thrown).toBeInstanceOf(PluginLoadFailedError)
+    const message = (thrown as Error).message
+
+    // DIRECTION ONE — the person's filesystem does not travel.
+    expect(occurrences(message, root), `an absolute path survived:\n${message}`).toBe(0)
+    // DIRECTION TWO — ordinary text does. Both of these are reddened by an UNANCHORED path shape,
+    // which is what makes this control load-bearing rather than decorative (leg M-P2).
+    expect(message, `a slash inside a word was mauled:\n${message}`).toContain('and/or')
+    expect(message, `the person's own declared token was mauled:\n${message}`)
+      .toContain('plugins/local-auth.js')
+    // AND THE STRIPPED PATH IS STILL LOCATED, relative to the project, rather than erased.
+    expect(message, `the fault lost its own diagnosis:\n${message}`)
+      .toContain(join('node_modules', 'somewhere', 'deep', 'inner.js'))
+    expect(message).toContain('while linking')
   })
 })
 
