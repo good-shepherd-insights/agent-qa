@@ -735,6 +735,11 @@ fi
 banner 'LEG 6 — the ask road under a real pty: render before the approval prompt?'
 
 ASK_PTY="$REPO_ROOT/scripts/395-ask-road-pty.py"
+# ONE PRODUCER, TWO CALLERS (395-28 · CR-04). The other caller is
+# `scripts/395-leg6-instrument-check.sh`, which proves each refusal in `leg6_grade` fires without
+# needing a live planner. Sourced here rather than re-typed so the two can never drift.
+# shellcheck source=./395-leg6-grade.sh
+. "$REPO_ROOT/scripts/395-leg6-grade.sh"
 if ! command -v python3 >/dev/null || [ ! -f "$ASK_PTY" ]; then
   record_leg 'L6 ask road (pty)' 'SKIP' \
     "NOT RUN, AND SAYING SO: python3 or $ASK_PTY is absent, and this leg needs a real pty. The standing hermetic evidence on the identical route is (A1)/(A2) in packages/cli/src/composition/__tests__/ask-present-road.test.ts, which drive the same production composition with the confirm as a spy."
@@ -751,31 +756,32 @@ else
   L6_SUMMARY="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*summary=\([-0-9]*\).*/\1/p')"
   L6_FILES="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*files=\([-0-9]*\).*/\1/p')"
   L6_DIFF="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*diff=\([-0-9]*\).*/\1/p')"
+  # THE TWO FIELDS THE LEG USED TO EMIT AND NEVER READ (395-28 · CR-04). `declined` has been on the
+  # verdict line since the driver was written; `timedout` is new, because until this round the driver
+  # could not tell a hang from an exit at all.
+  L6_DECLINED="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*declined=\([-0-9]*\).*/\1/p')"
+  L6_TIMEDOUT="$(printf '%s' "$L6_VERDICT" | sed -n 's/.*timedout=\([-0-9]*\).*/\1/p')"
   L6_COMMITS_AFTER="$(commit_count "$P6")"
-  printf '  verdict   %s\n  commits   %s -> %s\n  transcript %s\n' \
-    "${L6_VERDICT:-<none>}" "$L6_COMMITS_BEFORE" "$L6_COMMITS_AFTER" "$TRANSCRIPTS/leg6-ask-road.txt"
+  printf '  verdict   %s\n  commits   %s -> %s\n  declined  %s\n  timedout  %s\n  transcript %s\n' \
+    "${L6_VERDICT:-<none>}" "$L6_COMMITS_BEFORE" "$L6_COMMITS_AFTER" \
+    "${L6_DECLINED:-<none>}" "${L6_TIMEDOUT:-<none>}" "$TRANSCRIPTS/leg6-ask-road.txt"
 
-  if [ -z "$L6_VERDICT" ]; then
-    record_leg 'L6 ask road (pty)' 'RED' \
-      "the pty drive produced no verdict line at all — no reading was taken. Transcript: $TRANSCRIPTS/leg6-ask-road.txt"
-  elif [ "${L6_PROMPT:--1}" -lt 0 ] \
-    && grep -q 'No capability in this build handles' "$TRANSCRIPTS/leg6-ask-road.txt" 2>/dev/null; then
-    # THE CAUSE IS KNOWABLE, SO IT IS NAMED. A leg that shrugs "nondeterminism" at a deterministic
-    # wall is the shape of measurement this phase keeps catching.
-    record_leg 'L6 ask road (pty)' 'SKIP' \
-      "THE ASK ROAD CANNOT PLAN AT ALL, AND THAT IS THIS DRIVE'S FINDING — measured, not inferred. In the SAME project shape LEG 3 drives (a real config carrying \`registry.llms\`, zero targets), \`agent-qa chat\` binds \`gpt-5.6-terra\` and routes; \`agent-qa ask\` answered *'No capability in this build handles: \"write a test for booking.com checkout\"'* — the D-08 headless refusal. \`chat.ts:253\` resolves \`resolveCliChatCapabilities\` and passes \`chatModel\`/\`chatModelFor\`/\`chatAccounting\`; \`ask.ts\` passes NONE of them, so the composition is headless and no \`authoring.draft.write\` is ever planned. CONSEQUENCE FOR 395-VERIFICATION's CR-03: its drive substituted a \`chatModel\` the shipped verb does not bind, so the blind confirm it measured is not reachable through \`agent-qa ask\` AS SHIPPED — the finding's mechanism is real and its \`ask\`-surface reachability premise was itself unmeasured. 395-22 closes the mechanism anyway at the choke point (\`turn-engine.ts\`'s displayability precondition, covering every host) and binds \`chatPresent\` here so the render is in place the day the model binding is. NOT SILENTLY WIDENED: binding a chat model on \`ask\` would make a gated in-turn apply reachable from a verb that today cannot reach it, which is a scope call for the owner and not for this plan. THE RESIDUAL BOUND: the ask road's render-before-prompt ordering is held hermetically by (A1)/(A2) in packages/cli/src/composition/__tests__/ask-present-road.test.ts — (A2) pins zero confirm invocations with no port bound, (A1) pins the render event strictly before the confirm spy's first call with it bound — over the SAME production composition and the same op. Transcript: $TRANSCRIPTS/leg6-ask-road.txt"
-  elif [ "${L6_PROMPT:--1}" -lt 0 ]; then
-    record_leg 'L6 ask road (pty)' 'SKIP' \
-      "NO APPROVAL PROMPT WAS REACHED ON THIS SINGLE DRIVE, so the ordering has nothing to be measured against — the live planner did not route this utterance to \`write_test\` (its known k=1 nondeterminism, the same SC-5's own lane lives with), or the turn refused for a reason the branch above does not recognise. THE RESIDUAL BOUND, STATED: the ask road's render-before-prompt ordering is held hermetically by (A1)/(A2) in packages/cli/src/composition/__tests__/ask-present-road.test.ts — (A2) pins zero confirm invocations with no port bound, (A1) pins the render event strictly before the confirm spy's first call with it bound — over the SAME production composition and the same op. Live k=1 did not add to it this run. Transcript: $TRANSCRIPTS/leg6-ask-road.txt"
-  elif [ "${L6_SUMMARY:--1}" -ge 0 ] && [ "${L6_SUMMARY}" -lt "${L6_PROMPT}" ] \
-    && [ "${L6_FILES:--1}" -ge 0 ] && [ "${L6_FILES}" -lt "${L6_PROMPT}" ] \
-    && [ "${L6_DIFF:--1}" -ge 0 ] && [ "${L6_DIFF}" -lt "${L6_PROMPT}" ]; then
-    record_leg 'L6 ask road (pty)' 'PASS' \
-      "SC-5's FIRST CLAUSE, MEASURED ON THE SHIPPED ONE-SHOT VERB. On a real terminal, over a live planner, the person was shown the proposal's summary line (byte $L6_SUMMARY), the config file it touches (byte $L6_FILES) and a true unified-diff hunk (byte $L6_DIFF) — all STRICTLY BEFORE the approval prompt at byte $L6_PROMPT. Round 4 measured this same road carrying exactly one line before the decision, the prompt itself. The prompt was DECLINED, and the repository is untouched: commits $L6_COMMITS_BEFORE -> $L6_COMMITS_AFTER."
-  else
-    record_leg 'L6 ask road (pty)' 'RED' \
-      "THE CR-03 STATE, ON A SHIPPED SURFACE: an approval prompt at byte $L6_PROMPT with the render markers at summary=$L6_SUMMARY files=$L6_FILES diff=$L6_DIFF — a person was asked to approve a configuration change they were not shown, or were shown it only afterwards. Transcript: $TRANSCRIPTS/leg6-ask-road.txt"
-  fi
+  # THE GRADING IS NOT HERE (395-28 · CR-04). It lives in `scripts/395-leg6-grade.sh`, sourced above,
+  # because `scripts/395-leg6-instrument-check.sh` drives THAT function with injected measurements to
+  # prove each of its refusals fires — with no live planner and in seconds. If the verdict logic were
+  # inline here, the check could only prove a RE-TYPED SIBLING falsifiable, which is the exact
+  # instrument failure this phase has spent the round removing from its own scripts.
+  #
+  # THIS BLOCK MEASURES; `leg6_grade` GRADES. Everything below the line is a reading.
+  L6_KNOWN_CAUSE=0
+  grep -q 'No capability in this build handles' "$TRANSCRIPTS/leg6-ask-road.txt" 2>/dev/null \
+    && L6_KNOWN_CAUSE=1
+
+  leg6_grade "$L6_VERDICT" "${L6_PROMPT:--1}" "${L6_SUMMARY:--1}" "${L6_FILES:--1}" \
+    "${L6_DIFF:--1}" "${L6_DECLINED:-0}" "${L6_TIMEDOUT:-0}" \
+    "$L6_COMMITS_BEFORE" "$L6_COMMITS_AFTER" \
+    "$TRANSCRIPTS/leg6-ask-road.txt" "$L6_KNOWN_CAUSE"
+  record_leg 'L6 ask road (pty)' "$L6_GRADE_VERDICT" "$L6_GRADE_WHY"
 fi
 
 # ------------------------------------------------------------------------------------------------
