@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import { createAgentQaMcpServer, type AgentQaMcpServerOptions } from './agent-qa-server.js'
 
 export const DEFAULT_MCP_HOST = '127.0.0.1'
@@ -113,7 +113,7 @@ export function createLocalMcpHttpHandler(options: McpHttpHandlerOptions = {}) {
       analyticsConfig: options.analyticsConfig,
       transport: 'http',
     })
-    const transport = new StreamableHTTPServerTransport({
+    const transport = new NodeStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     })
 

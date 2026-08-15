@@ -488,10 +488,10 @@ describe('agent-qa MCP schema references', () => {
     })
     const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     vi.resetModules()
-    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+    vi.doMock('@modelcontextprotocol/server/stdio', () => ({
       StdioServerTransport: class MockStdioServerTransport {},
     }))
-    vi.doMock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
+    vi.doMock('@modelcontextprotocol/server', () => ({
       McpServer: class MockMcpServer {
         server = {}
 

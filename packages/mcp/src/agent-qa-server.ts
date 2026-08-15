@@ -1,8 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { McpServer, type ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js'
-import type { AnySchema, ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js'
-import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
+import { McpServer } from "@modelcontextprotocol/server";
+import type { ToolCallback, ToolAnnotations } from "@modelcontextprotocol/server";
 import {
   AgentQaConfigSchema,
   buildAnalyticsEvent,
@@ -1106,7 +1105,7 @@ export function createAgentQaMcpServer(options: AgentQaMcpServerOptions = {}): M
     {
       title: 'agent-qa authoring context',
       description: 'Prompt context for agents writing agent-qa tests and suites.',
-      argsSchema: {},
+      argsSchema: z.object({}),
     },
     async () => ({
       messages: [{
