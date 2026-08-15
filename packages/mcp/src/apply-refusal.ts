@@ -64,6 +64,8 @@ import type {
 } from '@modelcontextprotocol/server'
 import { ProposalsShowOutputSchema } from '@vostride/agent-qa-schema'
 
+import { maskedToolError, maskedToolResult } from './masked-result.js'
+
 /** The read this module makes to render what a caller is about to authorise. */
 export const PROPOSALS_SHOW_OP_ID = 'proposals.show'
 
@@ -389,24 +391,15 @@ export function createApplyToolHandler(deps: ApplyToolHandlerDeps) {
     try {
       // The op's OWN contract name. `proposal_id` is wire vocabulary and stops here; what crosses
       // the function-layer wall is the object `invokeFunction` will parse and refuse on its own.
-      const output = await invoke(applyOpId, { proposalId })
-      return {
-        content: [{ type: 'text' as const, text: maskText(JSON.stringify(output)) }],
-        structuredContent: output as Record<string, unknown>,
-      }
+      // BOTH channels from ONE masked serialization (396-06): the receipt a machine reads and the
+      // text a person reads are the same bytes, so a value hidden from one cannot survive in the
+      // other. See `masked-result.ts` for the measurement that forced this.
+      return maskedToolResult(await invoke(applyOpId, { proposalId }), maskText)
     } catch (err) {
       // A refusal from the gate, the scope check or the store is a RESULT the caller can read, not
       // a transport failure — and the message is masked because an error string is precisely the
       // channel 395's credential disclosure travelled down.
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: maskText(err instanceof Error ? err.message : String(err)),
-          },
-        ],
-        isError: true,
-      }
+      return maskedToolError(err, maskText)
     }
   }
 
@@ -441,7 +434,13 @@ export function createApplyToolHandler(deps: ApplyToolHandlerDeps) {
       structuredContent: {
         status: APPLY_REFUSAL_STATUS,
         applied: false,
-        proposal_id: proposalId,
+        // MASKED LIKE EVERY OTHER FIELD, including the id the caller itself sent. 396-06's
+        // credential differential found this field carrying a planted credential to the wire while
+        // the prose beside it was masked — a caller can put anything in `proposal_id`, and what a
+        // caller sends is exactly what an echoing channel returns. The prose already renders the id
+        // masked, so an unmasked copy of it here would have been the same disclosure in the
+        // channel a machine reads.
+        proposal_id: maskText(proposalId),
         summary: maskText(parts.summary),
         instruction: maskText(parts.instruction),
       },

@@ -16,6 +16,9 @@ packages/core/src/analytics/posthog-project.ts
 .agent-qa-screenshots/
 
 # Test and report output
+# `run.test.ts` flushes working memory to a relative `dashboard-artifacts/`, so a full suite run
+# drops JSON here at whatever the cwd was (396-06).
+dashboard-artifacts/
 coverage/
 results/
 test-results/

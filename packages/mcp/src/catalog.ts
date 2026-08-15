@@ -54,6 +54,7 @@ import {
   compositionOf,
 } from './mapping.js'
 import type { ToolProjection } from './mapping.js'
+import { maskedToolError, maskedToolResult } from './masked-result.js'
 import { McpProjectionError, toRegisterToolConfig } from './projection.js'
 import type { ProjectedOpSpec } from './projection.js'
 import { registerEntityResources } from './resources.js'
@@ -215,24 +216,15 @@ function createProjectionHandler(
 ) {
   return async (args: unknown): Promise<CallToolResult> => {
     try {
-      const output = await runProjection(projection, args, invoke)
-      return {
-        content: [{ type: 'text' as const, text: maskText(JSON.stringify(output)) }],
-        structuredContent: output,
-      }
+      // BOTH channels from ONE masked serialization (396-06). `structuredContent` used to be the
+      // raw op output, and a declared credential reached the wire through it verbatim while the
+      // text beside it read `<SECRET_0>` — RESEARCH Pitfall 9's own named channel, measured.
+      return maskedToolResult(await runProjection(projection, args, invoke), maskText)
     } catch (err) {
       // A refusal is a RESULT, not a transport failure: the caller gets the reason as a tool
       // error it can read. The message is masked for the reason the whole file exists — an
       // error string is the channel 395's credential disclosure actually travelled down.
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: maskText(err instanceof Error ? err.message : String(err)),
-          },
-        ],
-        isError: true,
-      }
+      return maskedToolError(err, maskText)
     }
   }
 }
