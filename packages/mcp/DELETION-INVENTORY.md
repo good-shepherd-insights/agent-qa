@@ -114,10 +114,16 @@ The v1 `DISCOVERY.resources` list was `SCHEMA_REFERENCE_NAMES.map(name => 'agent
 | Config key `services.mcp` (`McpConfigSchema` in `packages/core/src/schema/services-schema.ts`) | **RETAINED, INERT** | **This is the plan's open-question-4 decision, and it goes the other way from RESEARCH's guess.** RESEARCH inferred from the `(config as any).services?.mcp` cast that the key was schema-invisible. It is not: `McpConfigSchema` is a real member of `ServicesSchema`, and `ServicesSchema` is `.strict()`. Deleting the key would make **every existing project that declares `services.mcp` fail to parse its configuration** — a breaking change vastly wider than the mount being removed, and in the one direction (a config that stops loading) a user cannot work around. The key therefore stays, read by nothing. Owner: M5's dashboard rebuild re-decides it (re-use for the re-derived endpoint, or retire it behind a deprecation the config loader can warn on). |
 | `packages/dashboard-server/src/__tests__/server.mcp.test.ts` | deleted | It tested the mount, the wildcard-CORS preflight and the lifecycle analytics — all three of which are the retired behaviour above. |
 
-## Overrides cleanup (D-20) — added 2026-08-15 by Task 2
+## Overrides cleanup (D-20) — dated 2026-08-15
 
-Recorded here rather than in `package.json` because JSON carries no comments.
+Recorded here rather than in the workspace-root `package.json` because JSON carries no comments.
+Every decision below is a `pnpm why <pkg> -r` reading taken AFTER the dependency swap, never an
+inference from what the retired SDK used to pull in. RESEARCH assumption A1 predicted this outcome
+and is now measured rather than assumed.
 
-| Override | Decision | `pnpm why` evidence |
+| Override | Decision | `pnpm why <pkg> -r` evidence, 2026-08-15 |
 |---|---|---|
-| _(filled in by Task 2)_ | | |
+| `path-to-regexp: 8.4.2` | **REMOVED** | Empty output — no package in the workspace depends on it at any depth. It was an `express` 5 transitive, and `express` arrived through `@modelcontextprotocol/sdk@1.29.0`'s seventeen runtime dependencies. With the v1 SDK gone the dependent is gone, and an override pinning a package nothing installs is a line that can only mislead the next reader. |
+| `fast-uri: 3.1.3` | **REMOVED** | Empty output — same reading, same reason. It was an `ajv` transitive, and `ajv` likewise arrived only through the v1 SDK. |
+| `hono: 4.12.28` | **KEPT** | Still required, and by the NEW dependency rather than the old one: `@modelcontextprotocol/node@2.0.0 -> hono 4.12.28 peer` (and again under `@hono/node-server 1.19.14 -> hono 4.12.28 peer`), reached from both `packages/mcp` and `packages/cli`. pnpm installs peers, so `hono` is in the closure even though 396 ships no `@modelcontextprotocol/hono` package — which is the honest reading of the dep collapse, not a violation of it. |
+| `@hono/node-server: 1.19.14` | **KEPT** | Still required: `@modelcontextprotocol/node@2.0.0 -> @hono/node-server 1.19.14`, reached from both `packages/mcp` and `packages/cli`. |

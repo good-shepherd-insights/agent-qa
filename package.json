@@ -45,17 +45,18 @@
     "lint:namespace": "! grep -r '@agent-qa/' packages/ --include='*.ts' --include='*.json' --include='*.js' -l --exclude-dir=node_modules --exclude-dir=dist"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "sharp"],
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ],
     "overrides": {
       "@hono/node-server": "1.19.14",
       "basic-ftp": "5.3.1",
       "brace-expansion": "5.0.7",
-      "fast-uri": "3.1.3",
       "fast-xml-builder": "1.2.1",
       "hono": "4.12.28",
       "lodash": "4.18.1",
       "monaco-editor>dompurify": "3.4.11",
-      "path-to-regexp": "8.4.2",
       "undici@7": "7.28.0",
       "webdriver>undici": "6.27.0"
     }

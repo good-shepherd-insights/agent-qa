@@ -14,6 +14,8 @@
 export { buildAgentQaMcpServer, AGENT_QA_MCP_SERVER_VERSION } from './catalog.js'
 export type { AgentQaMcpServerDeps } from './catalog.js'
 
+export { createAgentQaMcpNodeHandler } from './http.js'
+
 export { AGENT_QA_OP_CONTRACTS, AGENT_QA_TOOL_PROJECTIONS } from './mapping.js'
 export type { ToolOpContracts, ToolProjection, ToolProjectionKind } from './mapping.js'
 

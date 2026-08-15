@@ -20,6 +20,7 @@
 // advertised, the schema `invokeFunction` validated with, and the schema asserted here are one
 // object, so the cell cannot pass over a server advertising something the op does not honour.
 
+import { createServer } from 'node:http'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -27,7 +28,7 @@ import { join } from 'node:path'
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import { Client } from '@modelcontextprotocol/client'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
-import { buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
+import { buildAgentQaMcpServer, createAgentQaMcpNodeHandler } from '@vostride/agent-qa-mcp'
 import { ProposalsListOutputSchema } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -124,6 +125,52 @@ describe('the MCP tracer: one projected tool, end to end on the v2 SDK', () => {
     } finally {
       await client.close().catch(() => {})
       await handler.close().catch(() => {})
+      await host.close().catch(() => {})
+    }
+  })
+
+  // The SAME catalog over a REAL loopback socket. It exists because plan 07's conformance job
+  // cannot spawn a stdio command — `conformance server` takes a URL — so the shipped artifact it
+  // points at is this handler, and a handler nothing has ever driven is not an artifact anybody
+  // should point a conformance suite at. It also pins the prohibition the deleted v1 bridge
+  // violated: no wildcard CORS header reaches the wire from this surface.
+  it('serves the same catalog over a real loopback socket, with no wildcard CORS header', async () => {
+    const where = workspace()
+    const host = composeCliLocalAgent({
+      agentQaRoot: where.agentQaRoot,
+      configPath: where.configPath,
+      confirm: undefined,
+    })
+    const nodeHandler = createAgentQaMcpNodeHandler({
+      registry: host.registry,
+      caller: MCP_FUNCTION_CALLER,
+      maskText: (text: string) => text,
+    })
+    const server = createServer((req, res) => {
+      void nodeHandler(req, res)
+    })
+    await new Promise<void>((listening) => server.listen(0, '127.0.0.1', () => listening()))
+    const address = server.address()
+    const port = typeof address === 'object' && address !== null ? address.port : 0
+
+    const client = new Client({ name: 'agent-qa-396-tracer-http', version: '0.0.0' })
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+    )
+    try {
+      await client.connect(transport)
+      const listed = await client.listTools()
+      expect(listed.tools.map((entry) => entry.name)).toContain('agent_qa_list_proposals')
+
+      // Asserted on a raw response rather than through the client, because the client would not
+      // report a header it does not read — and the header is the whole claim.
+      const raw = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'OPTIONS',
+      })
+      expect(raw.headers.get('access-control-allow-origin')).toBeNull()
+    } finally {
+      await client.close().catch(() => {})
+      await new Promise<void>((closed) => server.close(() => closed()))
       await host.close().catch(() => {})
     }
   })
