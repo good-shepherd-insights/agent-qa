@@ -94,25 +94,33 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
     this.identity = options.identity
   }
 
+  /**
+   * There is NO try/catch here, and the absence is deliberate — measured, not assumed.
+   *
+   * 2026-08-17 (Phase 398 plan 03, mutation leg M6). This method was first written with the v1
+   * module's `try { ... } catch {}` wrapper around the body. Deleting that wrapper outright left
+   * every cell green, including the one named "never throws into the host", because there is no
+   * synchronous throw for it to catch: an `async` function body's throw — including one out of the
+   * identity resolver, the only caller-supplied code reachable from here — becomes a REJECTED
+   * PROMISE, never a synchronous exception. The wrapper read like the boundary and guarded nothing.
+   *
+   * The real boundary is the `.catch` below, attached in the same tick the promise is created so a
+   * rejection cannot become an unhandled rejection even if `flush()` is never called — which is the
+   * normal case for a host that emits on a path it does not await. Leg M8 removes that `.catch` and
+   * reds; that is the guard this method actually has.
+   */
   capture(event: TEvent): void {
-    try {
-      this.capturedSinceFlush += 1
-      // The `.catch` is attached in the same tick the promise is created, so a rejection can never
-      // become an unhandled rejection even if `flush()` is never called.
-      this.inFlight.push(
-        (async () => {
-          const identity = await this.identity()
-          await this.transport.capture({
-            distinctId: identity.distinctId,
-            ...(identity.isInternal === true ? { isInternal: true } : {}),
-            event,
-          })
-        })().catch(() => {}),
-      )
-    } catch {
-      // Best-effort: a synchronous throw out of an identity resolver is a lost event, not a
-      // host-visible failure.
-    }
+    this.capturedSinceFlush += 1
+    this.inFlight.push(
+      (async () => {
+        const identity = await this.identity()
+        await this.transport.capture({
+          distinctId: identity.distinctId,
+          ...(identity.isInternal === true ? { isInternal: true } : {}),
+          event,
+        })
+      })().catch(() => {}),
+    )
   }
 
   /**
