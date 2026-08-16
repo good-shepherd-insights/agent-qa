@@ -38,15 +38,15 @@
 // `mkdtemp` project whose configuration is planted throwaway workspace globs and nothing else — no
 // token entry, no key, no LLM block — and the child is handed a constructed environment rather than
 // this process's, so no ambient provider credential can reach it and no provider can be spent
-// against.
-//
-// THE CHAT ANCHOR IS THE NEXT COMMIT. This one carries the MCP side, the freshness guard both cells
-// share, and the guard's own controls.
+// against. The chat session the anchor drives is therefore model-unbound by construction and takes
+// the deterministic resolver route, which is the route that never touches a model at all.
 
+import { spawn } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -54,14 +54,17 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { PassThrough } from 'node:stream'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
-import { afterEach, describe, expect, it } from 'vitest'
+import { Command } from 'commander'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { createChatCommand } from '../../commands/chat.js'
 import { MCP_STDIO_STARTUP_MESSAGE } from '../../commands/mcp.js'
 import { MCP_ENUMERATION_SCOPES, enumerateMcpOpIds, expandMcpListedTools } from './adapters.js'
 
@@ -269,6 +272,134 @@ function hermeticEnv(root: string): Record<string, string> {
   }
 }
 
+// ---- The chat comparand ------------------------------------------------------------------------
+
+/**
+ * What one chat surface persisted when a conversation opened, as a comparable record.
+ *
+ * THE COMPARAND IS THE PERSISTED HEADER, and the header's `toolsetHash` is the shipped fingerprint
+ * of what the turn engine could reach: `sha256hex16` over the SORTED id set the composed registry
+ * lists for the chat caller. Sorting before hashing is what makes it an identity of the SET rather
+ * than of a walk, so equality of the two hashes is equality of the two capability sets. Neither half
+ * of this cell computes that hash — both sides let the shipped composition write it, which is the
+ * only way to compare the recipe rather than a re-spelling of it.
+ *
+ * `hashShape` exists because `chatToolsetHash` answers the sentinel `'unbound'` for a registry that
+ * never finished composing. Two sides that both answered the sentinel would agree perfectly while
+ * measuring nothing, and a cell that could pass that way is a cell that will.
+ */
+export interface ChatAnchorReading {
+  readonly sessions: number
+  readonly model: string
+  readonly toolsetHash: string
+  readonly hashShape: 'sha256hex16' | 'unbound-sentinel' | 'unrecognised'
+}
+
+function hashShape(value: string): ChatAnchorReading['hashShape'] {
+  if (/^[0-9a-f]{16}$/u.test(value)) return 'sha256hex16'
+  if (value === 'unbound') return 'unbound-sentinel'
+  return 'unrecognised'
+}
+
+/** Read whatever chat persisted under a project's runtime root. */
+function readChatAnchor(root: string): ChatAnchorReading {
+  const sessionsDir = join(root, '.agent-qa', 'sessions')
+  const files = existsSync(sessionsDir)
+    ? readdirSync(sessionsDir).filter((file) => file.endsWith('.jsonl')).sort()
+    : []
+  if (files.length !== 1) {
+    return { sessions: files.length, model: '', toolsetHash: '', hashShape: 'unrecognised' }
+  }
+  const [first] = readFileSync(join(sessionsDir, files[0]!), 'utf8').split('\n')
+  const header = JSON.parse(first ?? '{}') as { model?: unknown; toolsetHash?: unknown }
+  const toolsetHash = typeof header.toolsetHash === 'string' ? header.toolsetHash : ''
+  return {
+    sessions: files.length,
+    model: typeof header.model === 'string' ? header.model : '',
+    toolsetHash,
+    hashShape: hashShape(toolsetHash),
+  }
+}
+
+/** The utterance both halves type: the deterministic resolver route, which reaches no model. */
+const CHAT_ANCHOR_UTTERANCE = 'proposals'
+
+/**
+ * Drive the shipped chat command IN THIS PROCESS, over the same scripted-stdin idiom the spawned
+ * half uses.
+ *
+ * THE SAME COMMAND, NOT AN IMITATION OF IT. The in-process half could have composed a host and
+ * invoked `agent.ask` directly, and it would then have been comparing the binary against a path
+ * nobody ships. Driving `createChatCommand` means the only difference between the two halves is
+ * which artifact the command came out of — source here, bundle there — which is precisely the axis
+ * this anchor exists to watch.
+ */
+async function driveChatInProcess(configPath: string): Promise<{ stdout: string; stderr: string }> {
+  const stdout: string[] = []
+  const stderr: string[] = []
+  const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
+    stdout.push(values.map(String).join(' '))
+  })
+  const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+    stderr.push(values.map(String).join(' '))
+  })
+  const previousExitCode = process.exitCode
+  process.exitCode = undefined
+
+  const input = new PassThrough()
+  const output = new PassThrough()
+  output.resume()
+
+  try {
+    const program = new Command()
+      .option('--config <path>', 'config file path')
+      .addCommand(createChatCommand({ input, output, isTty: false }))
+    program.exitOverride()
+    const parsed = program.parseAsync(['node', 'agent-qa', '--config', configPath, 'chat'])
+    // A tick, so a scripted line is never delivered to a readline that does not exist yet — the
+    // shipped `chat-command.test.ts` idiom.
+    await Promise.resolve()
+    input.write(`${CHAT_ANCHOR_UTTERANCE}\n`)
+    input.end()
+    await parsed
+    return { stdout: stdout.join('\n'), stderr: stderr.join('\n') }
+  } finally {
+    log.mockRestore()
+    error.mockRestore()
+    process.exitCode = previousExitCode
+  }
+}
+
+interface SpawnOutcome {
+  readonly code: number | null
+  readonly signal: NodeJS.Signals | null
+  readonly stdout: string
+  readonly stderr: string
+}
+
+/** Drive the SHIPPED binary's chat command over a real pipe, and wait for it to exit. */
+async function driveChatSpawned(root: string, configPath: string): Promise<SpawnOutcome> {
+  const child = spawn(process.execPath, [CLI_ENTRY, '--config', configPath, 'chat'], {
+    cwd: root,
+    env: hermeticEnv(root),
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8')
+  })
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf8')
+  })
+  child.stdin.write(`${CHAT_ANCHOR_UTTERANCE}\n`)
+  child.stdin.end()
+  return await new Promise<SpawnOutcome>((settle, fail) => {
+    child.once('error', fail)
+    child.once('close', (code, signal) => settle({ code, signal, stdout, stderr }))
+  })
+}
+
 // ---- The anchors -------------------------------------------------------------------------------
 
 describe('the built-binary anchors (D-02)', () => {
@@ -353,6 +484,67 @@ describe('the built-binary anchors (D-02)', () => {
     }
   }, 120_000)
 
+  it('the shipped chat binary stamps the same toolset a chat session composed here does', async () => {
+    expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+    expect(
+      existsSync(CLI_ENTRY),
+      `the built CLI entry is missing at ${relative(PACKAGES_ROOT, CLI_ENTRY)}; ${REBUILD_INSTRUCTION}`,
+    ).toBe(true)
+
+    // TWO PROJECTS, because both halves persist into `<project>/.agent-qa/sessions` and one root
+    // would leave two sessions in one directory with nothing to attribute them by.
+    const spawnedFixture = fixtureProject('chat-binary')
+    const inProcessFixture = fixtureProject('chat-in-process')
+
+    const outcome = await driveChatSpawned(spawnedFixture.root, spawnedFixture.configPath)
+
+    // AGAIN THE SHAPE FIRST. A non-zero exit, a signal death or an empty transcript must not reach
+    // the comparison as "no session was written"; each of those is its own diagnosis and the
+    // child's own stderr is quoted so the reason is in the failure rather than in a rerun.
+    expect(
+      { code: outcome.code, signal: outcome.signal, stderr: outcome.stderr.trim().slice(0, 600) },
+      'the spawned chat binary did not exit cleanly',
+    ).toMatchObject({ code: 0, signal: null })
+    // The RECEIPT, not merely the absence of a throw: the deterministic route resolved the clause
+    // to a registry op and the shipped surface reported that op by id.
+    expect(
+      outcome.stdout,
+      `the spawned chat binary never reported a capability for "${CHAT_ANCHOR_UTTERANCE}"`,
+    ).toContain('proposals.list')
+
+    await driveChatInProcess(inProcessFixture.configPath)
+
+    const binary = readChatAnchor(spawnedFixture.root)
+    const inProcess = readChatAnchor(inProcessFixture.root)
+
+    // THE VACUITY GUARD BEFORE THE EQUALITY. `chatToolsetHash` answers the string `unbound` for a
+    // registry that never composed, and two halves that both answered it would agree exactly while
+    // proving nothing about any capability.
+    //
+    // THE SESSION COUNT TRAVELS WITH THE SHAPE, so a refusal names its own cause: a half that
+    // persisted nothing at all and a half that persisted an unstamped header are different
+    // failures, and "no usable toolset stamp" alone would report the second wording for the first
+    // situation.
+    expect(
+      { side: 'binary', sessions: binary.sessions, shape: binary.hashShape },
+      'the shipped chat binary persisted no usable toolset stamp',
+    ).toEqual({ side: 'binary', sessions: 1, shape: 'sha256hex16' })
+    expect(
+      { side: 'in-process', sessions: inProcess.sessions, shape: inProcess.hashShape },
+      'the in-process chat session persisted no usable toolset stamp',
+    ).toEqual({ side: 'in-process', sessions: 1, shape: 'sha256hex16' })
+
+    // The whole record rather than the hash alone, so a disagreement names the field it is in —
+    // a session that was never written, a model the two halves resolved differently, or the
+    // capability set itself.
+    expect(
+      binary,
+      'the shipped chat binary and an in-process chat session disagree about what a conversation '
+      + 'opened against (the hash is sha256hex16 over the sorted op-id set the composed registry '
+      + 'lists for the chat caller, so a difference here is a difference in reachable capabilities)',
+    ).toEqual(inProcess)
+  }, 180_000)
+
   it('the anchor comparator names a divergence in both directions', () => {
     // A DETECTOR NOBODY HAS SEEN FIRE IS A COMMENT. Both cells above pass today, which says nothing
     // about whether they COULD fail; this drives the comparator's disagreeing branches with
@@ -367,6 +559,51 @@ describe('the built-binary anchors (D-02)', () => {
       onlyInProcess: ['control.absent.397.07'],
     })
     expect(anchorDifference(shared, shared)).toEqual({ onlyInBinary: [], onlyInProcess: [] })
+  })
+
+  it('the chat reading distinguishes two different toolset stamps', () => {
+    // THE CHAT COMPARAND'S OWN NON-VACUITY, and it needs its own control for a structural reason
+    // worth stating: within one workspace both halves of the chat anchor read the SAME built
+    // `agent` and `agent-local` dists, and the toolset hash is a function of the registry those
+    // dists declare — so no edit to THIS package can make the two hashes differ, and the anchor's
+    // hash-difference branch is unreachable from a mutation of the source it actually guards. What
+    // that branch WOULD catch is a shipped binary composed against a different build of the
+    // function layer, which is exactly what an installed artifact is. It is driven here with two
+    // planted headers instead.
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-397-07-stamp-'))
+    roots.push(root)
+    const plant = (label: string, toolsetHash: string): string => {
+      const project = join(root, label)
+      mkdirSync(join(project, '.agent-qa', 'sessions'), { recursive: true })
+      writeFileSync(
+        join(project, '.agent-qa', 'sessions', `chat-control-397-07-${label}.jsonl`),
+        `${JSON.stringify({
+          schemaVersion: 1,
+          sessionId: `chat-control-397-07-${label}`,
+          createdAt: '2026-08-16T00:00:00.000Z',
+          model: 'unbound',
+          toolsetHash,
+        })}\n`,
+        'utf8',
+      )
+      return project
+    }
+
+    const left = readChatAnchor(plant('left', '0123456789abcdef'))
+    const right = readChatAnchor(plant('right', 'fedcba9876543210'))
+
+    expect(left).toEqual({
+      sessions: 1,
+      model: 'unbound',
+      toolsetHash: '0123456789abcdef',
+      hashShape: 'sha256hex16',
+    })
+    // The record comparison the anchor makes, driven over a real difference: same session count,
+    // same model, different capability set.
+    expect(left).not.toEqual(right)
+    // And the sentinel a never-composed registry writes is read as the sentinel rather than as a
+    // stamp, which is what stops two unbound halves from agreeing about nothing.
+    expect(readChatAnchor(plant('sentinel', 'unbound')).hashShape).toBe('unbound-sentinel')
   })
 
   it('the freshness guard refuses a missing build and a stale one, by name', () => {
