@@ -21,16 +21,25 @@
 // LOADS the committed artifact, so a manifest cell that read a live mint would be measuring a
 // second recipe rather than the shipped read path.
 
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { V1_TOOL_MIGRATION_MAP } from '@vostride/agent-qa-mcp'
 import {
+  AgentManifestSchema,
+  AgentManifestTokenRefSchema,
   CatalogMigrationArmSchema,
   canonicalJson,
   type CapabilityCatalog,
   type CatalogOpRow,
 } from '@vostride/agent-qa-schema'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
+import { buildAgentManifest } from '../../capability-catalog/manifest.js'
+import { CLI_FUNCTION_CALLER } from '../../composition/local-agent-host.js'
+import { DEFAULT_MCP_SCOPES } from '../../composition/mcp-token-resolution.js'
 import {
   CATALOG_PATH,
   CATALOG_REGEN_INSTRUCTION,
@@ -376,6 +385,231 @@ describe('the catalog\'s example calls (D-08)', () => {
 })
 
 // ---- `init --agent` (D-16) ---------------------------------------------------------------------
-//
-// Task 2 adds the manifest cells below: manifest ≡ catalog through the ONE loader, the refs-only
-// posture, and idempotence.
+
+describe('the agent manifest (D-16, XPLN-01)', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  /**
+   * A real project on disk, and the ONE place a token entry is declared in this file.
+   *
+   * The declared credential is what makes the refs-only cell a measurement rather than a shape
+   * assertion: without an entry there is no name to find and no value to fail to find.
+   */
+  const fixtureProject = (label: string, tokenEnvVar?: string): string => {
+    const root = mkdtempSync(join(tmpdir(), `agent-qa-398-08-${label}-`))
+    roots.push(root)
+    writeFileSync(
+      join(root, 'agent-qa.config.yaml'),
+      `${JSON.stringify(
+        {
+          workspace: {
+            testMatch: ['tests/**/*.yaml'],
+            testPathIgnore: [],
+            suiteMatch: ['suites/**/*.suite.yaml'],
+            hooksFile: 'hooks.yaml',
+            envFile: '.env',
+            secretsFile: '.env.secrets.local',
+          },
+          use: { mobile: { appState: 'preserve' } },
+          ...(tokenEnvVar === undefined
+            ? {}
+            : {
+                services: {
+                  mcp: {
+                    tokens: [{ name: 'ci', tokenEnvVar, scopes: ['read'] }],
+                  },
+                },
+              }),
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+    return root
+  }
+
+  it('IS the committed catalog: rows and migration map, through the ONE loader', async () => {
+    // SC-1's "the same manifest" clause, as a comparison rather than a sentence. Both sides read
+    // the committed artifact through `loadCapabilityCatalog`, which is exactly the claim — the
+    // manifest is a LOAD, so a consumer that got its rows from the manifest and a consumer that got
+    // them from the catalog cannot be looking at two different capability sets.
+    const manifest = await buildAgentManifest({
+      configPath: join(fixtureProject('identity'), 'agent-qa.config.yaml'),
+    })
+    const catalog = loadCapabilityCatalog(CATALOG_PATH)
+
+    expect(manifest.rows, 'the manifest and the committed catalog disagree about the rows')
+      .toEqual(catalog.rows)
+    expect(
+      manifest.migrationMap,
+      'the manifest and the committed catalog disagree about the migration map',
+    ).toEqual(catalog.migrationMap)
+    // The vacuity floor: two empty sides agree perfectly and prove nothing.
+    expect(manifest.rows.length, 'the manifest carried no rows').toBeGreaterThan(0)
+    expect(manifest.migrationMap.length, 'the manifest carried no migration entries')
+      .toBeGreaterThan(0)
+  })
+
+  it('emits EVERY row, unfiltered — it documents, it does not grant (D-16, P1)', async () => {
+    // THE PROHIBITION, MEASURED. The failure this refuses is a manifest that quietly applied the
+    // visibility law a second time: rows would vanish for reasons no cell states, and the two
+    // places the law lived would agree until one of them was improved. `config-write` ops are the
+    // sharpest case — they are exactly what the D-07 default grant WITHHOLDS, so a manifest that
+    // filtered by the default scope set would drop them.
+    const manifest = await buildAgentManifest({
+      configPath: join(fixtureProject('unfiltered'), 'agent-qa.config.yaml'),
+    })
+    const withheld = manifest.rows.filter(
+      (row): row is CatalogOpRow =>
+        row.kind === 'op'
+        && row.requiredScopes.some((scope) => !manifest.posture.defaultScopes.includes(scope)),
+    )
+    expect(
+      withheld.length,
+      'the manifest lists no capability outside the local default grant — either the grant widened '
+      + 'or the manifest has started filtering, and only one of those is allowed',
+    ).toBeGreaterThan(0)
+    // …and the note a reader gets says so, in the document rather than in a source file.
+    expect(manifest.$note.join(' ')).toContain('NOT A GRANT LIST')
+  })
+
+  it('reports a declared credential by env-ref NAME and never by value (T-398-17, 395 D-11)',
+    async () => {
+    // THE REFS-ONLY LAW, DRIVEN OVER A REAL SECRET. A cell that only asserted the shape of the
+    // posture would pass against a manifest that also carried the value in some field nobody
+    // thought to look at, so what is asserted is the ABSENCE OF THE BYTES from the whole
+    // serialized document — the surface a person actually reads.
+    const sentinel = 'sk-398-08-sentinel-2b41c9d7e5f60a83'
+    const tokenEnvVar = 'AGENT_QA_398_08_SENTINEL_TOKEN'
+    const configPath = join(fixtureProject('refs-only', tokenEnvVar), 'agent-qa.config.yaml')
+
+    const previous = process.env[tokenEnvVar]
+    process.env[tokenEnvVar] = sentinel
+    try {
+      const manifest = await buildAgentManifest({ configPath })
+
+      // THE CONTROL ON THE CONTROL, FIRST. The sentinel must still be readable at the moment the
+      // manifest was built, or its absence below is a property of an unset variable rather than of
+      // this product. (Measured 2026-08-17: written first as a `.then()` with a synchronous
+      // `finally`, this line caught the restore firing BEFORE the build — the absence assertion
+      // was vacuous and said nothing about it.)
+      expect(process.env[tokenEnvVar], 'the sentinel was not set during the build').toBe(sentinel)
+
+      const serialized = JSON.stringify(manifest, null, 2)
+
+      // The NAME is present — without this the absence below is satisfied by a manifest that
+      // reported nothing at all, which is the vacuous way to pass a "no secret" assertion.
+      expect(
+        manifest.posture.tokenEnvRefs,
+        'the manifest did not report the declared credential at all',
+      ).toEqual([{ name: 'ci', tokenEnvVar, scopes: ['read'] }])
+      expect(serialized, 'the env-ref NAME is missing from the serialized manifest')
+        .toContain(tokenEnvVar)
+
+      // …and the VALUE is nowhere in it. The environment variable was SET while the manifest was
+      // built, so any path from a declared name to its contents would have had one.
+      expect(
+        serialized.includes(sentinel),
+        'the serialized manifest contains the token VALUE — a declared credential reached the '
+        + 'document that documents it',
+      ).toBe(false)
+    } finally {
+      if (previous === undefined) delete process.env[tokenEnvVar]
+      else process.env[tokenEnvVar] = previous
+    }
+  })
+
+  it('refuses a token ref carrying a value, rather than passing one through', () => {
+    // THE STRUCTURAL HALF of the law above: `AgentManifestTokenRefSchema` is `.strict()`, so a
+    // member a value could occupy cannot be added by accident — it stops parsing. Driven with the
+    // input somebody in a hurry would write.
+    const refused = AgentManifestTokenRefSchema.safeParse({
+      name: 'ci',
+      tokenEnvVar: 'AGENT_QA_TOKEN',
+      scopes: ['read'],
+      token: 'sk-live-nobody-should-be-able-to-write-this',
+    })
+    expect(refused.success, 'a token ref carrying a value parsed').toBe(false)
+    // …and the same object without it is accepted, so the refusal is about the extra member.
+    expect(
+      AgentManifestTokenRefSchema.safeParse({
+        name: 'ci', tokenEnvVar: 'AGENT_QA_TOKEN', scopes: ['read'],
+      }).success,
+    ).toBe(true)
+  })
+
+  it('reads the shipped default grant and safe-mode state rather than restating them', async () => {
+    // The posture's two derived facts, tied to the constants that mint them. A literal scope list
+    // in `manifest.ts` would be right on the day it was written and silently wrong the day a
+    // seventh scope landed — 396 D-07's set is DERIVED by exclusion for exactly that reason.
+    const manifest = await buildAgentManifest({
+      configPath: join(fixtureProject('posture'), 'agent-qa.config.yaml'),
+    })
+    expect(manifest.posture.defaultScopes, 'the manifest\'s default grant is not the shipped one')
+      .toEqual([...DEFAULT_MCP_SCOPES])
+    expect(manifest.posture.defaultScopes, 'the local default grant withholds nothing')
+      .not.toContain('config-write')
+    expect(manifest.posture.safeMode, 'the manifest\'s safe-mode state is not the composed one')
+      .toBe(CLI_FUNCTION_CALLER.safeMode)
+    expect(manifest.posture.configuration, 'a resolvable config was reported unresolved')
+      .toBe('resolved')
+  })
+
+  it('tells a directory that is not a project yet from one whose config will not read', async () => {
+    // `init --agent` is what an agent runs BEFORE there is a project — that is what `init` is for —
+    // so neither state below may be an error, and neither may be reported as `resolved` with no
+    // credentials, which reads as "this workspace declares none" about a workspace nobody could
+    // read. The two are told apart by whether the FILE IS THERE, so the classification never comes
+    // from an exception's message: the message quotes the file, and the file is where credentials
+    // are declared.
+    const bare = mkdtempSync(join(tmpdir(), 'agent-qa-398-08-bare-'))
+    roots.push(bare)
+    const absent = await buildAgentManifest({ configPath: join(bare, 'agent-qa.config.yaml') })
+    expect(absent.posture.configuration, 'a directory with no config did not report `absent`')
+      .toBe('absent')
+    expect(absent.posture.tokenEnvRefs, 'a directory with no config reported credentials')
+      .toEqual([])
+    // The capability half is workspace-independent and must still be whole.
+    expect(absent.rows.length, 'a directory with no config produced no rows').toBeGreaterThan(0)
+
+    // …and a config that IS there and does not validate is the OTHER answer. `init` is the wrong
+    // advice for this one, which is why it must not share an arm with the case above.
+    const broken = mkdtempSync(join(tmpdir(), 'agent-qa-398-08-broken-'))
+    roots.push(broken)
+    const brokenPath = join(broken, 'agent-qa.config.yaml')
+    writeFileSync(brokenPath, '{ "workspace": { "testMatch": 17 } }\n', 'utf8')
+    const unresolved = await buildAgentManifest({ configPath: brokenPath })
+    expect(unresolved.posture.configuration, 'an unreadable config did not report `unresolved`')
+      .toBe('unresolved')
+    expect(unresolved.posture.tokenEnvRefs, 'an unreadable config reported credentials').toEqual([])
+    // The refusal carries no text out of the file it refused, which is the whole reason the arm is
+    // a bare enum member.
+    expect(JSON.stringify(unresolved)).not.toContain('testMatch')
+  })
+
+  it('parses against the published manifest contract, so no consumer defends against its shape',
+    async () => {
+      const manifest = await buildAgentManifest({
+        configPath: join(fixtureProject('contract'), 'agent-qa.config.yaml'),
+      })
+      const parsed = AgentManifestSchema.safeParse(JSON.parse(JSON.stringify(manifest)) as unknown)
+      expect(parsed.success ? [] : parsed.error.issues.map((issue) => issue.path.join('.')))
+        .toEqual([])
+    })
+
+  it('is idempotent: two builds are the same document', async () => {
+    // A READ, and reads repeat. If two consecutive builds could differ, every cell above would be
+    // measuring one draw from a distribution — and the anchor in `parity-anchors.test.ts`, which
+    // compares a build here against one in another process, would be measuring two.
+    const configPath = join(fixtureProject('idempotent'), 'agent-qa.config.yaml')
+    const first = await buildAgentManifest({ configPath })
+    const second = await buildAgentManifest({ configPath })
+    expect(canonicalJson(second), 'two consecutive manifest builds differ')
+      .toBe(canonicalJson(first))
+  })
+})

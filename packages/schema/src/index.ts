@@ -1286,6 +1286,9 @@ export type {
 // 398-08 (D-08 / D-14 · XPLN-03): the derived example call and the projected migration entry join
 // the same block — one artifact, one contract, one place a consumer reads its shape from.
 export {
+  AgentManifestPostureSchema,
+  AgentManifestSchema,
+  AgentManifestTokenRefSchema,
   CapabilityCatalogSchema,
   CatalogAliasRowSchema,
   CatalogExampleCallSchema,
@@ -1298,6 +1301,9 @@ export {
   catalogRowKey,
 } from './capability-catalog'
 export type {
+  AgentManifest,
+  AgentManifestPosture,
+  AgentManifestTokenRef,
   CapabilityCatalog,
   CatalogAliasRow,
   CatalogExampleCall,

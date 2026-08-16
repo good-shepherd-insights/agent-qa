@@ -874,7 +874,37 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
     )
     .option('--skip-install', 'deprecated no-op; setup commands are shown after init')
     .option('--force', 'overwrite existing files')
-    .action(async (opts) => {
+    .option(
+      '--agent',
+      'print the JSON capability manifest (catalog, v1 migration map, local posture) and exit; '
+      + 'writes nothing',
+    )
+    .action(async (opts, command: Command) => {
+      // `--agent` IS A READ, AND IT RETURNS BEFORE ANYTHING ELSE HAPPENS (D-16). Ahead of it lies
+      // the whole of init: prompts, a scaffold plan, files. Returning here rather than threading a
+      // flag through `isInteractive` is what makes "non-interactive, idempotent, writes nothing" a
+      // property of the control flow instead of a claim about it — there is no branch below this
+      // one that a manifest read can reach.
+      if (opts.agent === true) {
+        // IMPORTED HERE AND NOT AT THE TOP, deliberately. The manifest reads the local
+        // composition's posture, so its module graph reaches the agent host — and `init`'s ordinary
+        // job is to write a scaffold into a directory where no host could compose yet. A top-level
+        // import would make every `init` run (and every test of one) evaluate a composition root
+        // that only this branch has any use for. Measured 2026-08-17: it also broke `init.test.ts`,
+        // whose partial `node:fs` mock the durable-store module underneath that graph needs more of.
+        const { buildAgentManifest } = await import('../capability-catalog/manifest.js')
+        const globalOpts = command.parent?.opts<{ config?: string }>() ?? {}
+        // `--dir`-relative when no explicit `--config` was given: `init` is a command aimed at a
+        // directory, and reporting a posture read out of the caller's shell instead would describe
+        // the wrong workspace.
+        const configPath = globalOpts.config ?? join(resolve(opts.dir), 'agent-qa.config.yaml')
+        const manifest = await buildAgentManifest({ configPath })
+        // STDOUT AND NOTHING ELSE ON IT. The whole of this command's output under `--agent` is one
+        // JSON document, so it pipes into a parser without a filter in between.
+        console.log(JSON.stringify(manifest, null, 2))
+        return
+      }
+
       const dir = resolve(opts.dir)
       const force = opts.force ?? false
 
