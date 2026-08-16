@@ -28,9 +28,13 @@
 // which capabilities ask a person before they act.
 
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
+import { CHAT_RESOLVER_CALLER } from '@vostride/agent-qa-agent-local'
 import { evaluate, NO_STANDING_APPROVALS } from '@vostride/agent-qa-safety'
+import type { StandingApprovalReader } from '@vostride/agent-qa-safety'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
-import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
+import type { RiskActionDescriptor, TrustScope } from '@vostride/agent-qa-schema'
+
+import { mcpFunctionCaller } from '../../commands/mcp.js'
 
 /**
  * The one execution context every conformance policy decision is taken in.
@@ -102,6 +106,87 @@ export function refusingCallerFor(declaration: FunctionDeclaration): RefusingCal
     withheldScope,
   }
 }
+
+// ---- The two surfaces' own caller mints (397-04, legs 3 and 4) ---------------------------------
+
+/**
+ * One capability's caller, as each rostered surface would mint it for the same grant.
+ *
+ * BOTH SIDES ARE PRODUCED BY THE SURFACE THAT OWNS THEM, and that is the whole point of this type
+ * existing rather than a `surface` argument on one builder. `CHAT_RESOLVER_CALLER` is the frozen
+ * record `composeLocalAgent` spreads at its own `mint.forStage`; `mcpFunctionCaller` is the function
+ * `commands/mcp.ts` composes its server with. A parity assertion whose two comparands came out of
+ * ONE builder with a different string is a value compared to itself: it passes whatever the product
+ * does, which is precisely the vacuity 397-02 measured and handed forward.
+ */
+export interface SurfaceShapedCallers {
+  readonly chat: FunctionCaller
+  readonly mcp: FunctionCaller
+}
+
+/**
+ * The two surfaces' callers for one grant, each minted the way its own surface mints.
+ *
+ * They differ in TWO fields, and both differences are real product facts rather than fixture noise:
+ * `surface` (attribution, which nothing in the function layer may branch on — FUNC-03) and `origin`
+ * (`human` for the deterministic chat route, `agent` for MCP — 391 D-06, the self-grant rule). The
+ * origin difference is DATA the gate is entitled to answer differently on, so a cell that asserted
+ * these two must always agree would be asserting the product wrong. See
+ * {@link surfaceInertCallers} for the comparison that isolates `surface`.
+ */
+export function surfaceShapedCallers(
+  grantedScopes: readonly FunctionScope[],
+): SurfaceShapedCallers {
+  return {
+    chat: Object.freeze({ ...CHAT_RESOLVER_CALLER, grantedScopes: [...grantedScopes] }),
+    mcp: Object.freeze(mcpFunctionCaller([...grantedScopes])),
+  }
+}
+
+/**
+ * The same two callers with every field but `surface` harmonised.
+ *
+ * THIS IS FUNC-03's CLAIM, stated so it can be measured: a caller is DATA, and `surface` is
+ * attribution only. Two records that agree on grants, origin and safe mode and disagree only on
+ * which surface minted them must produce the same verdict for every capability — `if
+ * (caller.surface === 'chat')` is the anti-pattern `invoke.ts` names at its head, and this is the
+ * cell that would red on it.
+ *
+ * The harmonised origin is the CHAT mint's, taken off the shipped record rather than written here,
+ * because it is the one under which every capability is reachable: three ops declare
+ * `requiresHumanOrigin` and would refuse an agent-origin caller BEFORE the gate, which would leave
+ * the surface question unasked on exactly the capabilities that most need it answered.
+ */
+export function surfaceInertCallers(
+  grantedScopes: readonly FunctionScope[],
+): SurfaceShapedCallers {
+  const shaped = surfaceShapedCallers(grantedScopes)
+  return {
+    chat: shaped.chat,
+    mcp: Object.freeze({ ...shaped.mcp, origin: shaped.chat.origin, safeMode: shaped.chat.safeMode }),
+  }
+}
+
+/**
+ * A standing-approval reader that pre-approves whatever action it is ASKED about.
+ *
+ * BUILT FROM THE ACTION'S OWN NAME AND THE CALL'S OWN SCOPE — the produced-not-literal idiom
+ * `parity-coverage.test.ts` established for `EVERY_ASK_STANDING_APPROVED`. A reader holding a list
+ * of pre-written action classes would be a second copy of the risk names, free to fall behind the
+ * declarations and then to leave a capability's grant point silently measuring an ask instead.
+ *
+ * Its ONLY use is the grant point of an ask-capable capability: a cell that must get PAST the ask
+ * to see where dispatch lands. Every cell that measures the ask ITSELF uses
+ * {@link NO_STANDING_APPROVALS}, which is the gate's own default.
+ */
+export const EVERY_ASK_STANDING_APPROVED: StandingApprovalReader = Object.freeze({
+  // Explicitly typed rather than contextually: `Object.freeze` is generic and infers from its
+  // argument, so a member written inside it loses the annotation the interface would have supplied
+  // — the same trap `resolver-table.ts` names at its `rule()` helper.
+  grantsFor: (action: RiskActionDescriptor, actionScope: TrustScope) => [
+    { scope: actionScope, actionClass: action.name },
+  ],
+})
 
 /** The minimum an op needs to be classified: its id and the risk descriptor it declares. */
 export interface RiskClassifiable {

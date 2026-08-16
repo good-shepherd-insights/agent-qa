@@ -119,9 +119,27 @@ export function genericFnClause(opId: string, input: unknown): string {
 /**
  * A deterministic project a chat session can open in, and nothing more.
  *
- * The `chat-command.test.ts` fixture verbatim: a config file naming the four workspace globs, in a
- * fresh temp directory. No stores, no runs, no knowledge — a drive that needed any of those would
- * be measuring a fixture rather than a surface.
+ * The `chat-command.test.ts` fixture, plus the one block that makes it VALIDATE. No stores, no
+ * runs, no knowledge — a drive that needed any of those would be measuring a fixture rather than a
+ * surface.
+ *
+ * WHY `use.mobile.appState` IS HERE, recorded because it was measured rather than guessed.
+ * `AgentQaConfigSchema` requires that key unconditionally (`core/schema/config-schema.ts`), so the
+ * shipped chat fixture's config does not pass `resolveConfig` — and 40 of the 41 capabilities never
+ * notice, because nothing on their path reads the configuration before the gate refuses them. The
+ * one that does is `authoring.draft.write`: the turn engine's `routeWriteTest` pre-flight asks the
+ * host for its configured target names (`turn-engine.ts` → `configuredTargetNames`) BEFORE dispatch,
+ * so an invalid configuration killed the whole turn with an unstructured error and produced no
+ * receipt at all. A fixture that is invalid and green for 40 subjects is exactly the kind that
+ * measures nothing; this one validates.
+ *
+ * WHY ONE TARGET IS DECLARED, for the same reason and found the same way. `routeWriteTest` refuses
+ * before dispatch when `configuredTargetNames()` is EMPTY — "a project with none has nothing at
+ * all, and that is the one case where silence is unanswerable" (`write-test-route.ts`) — so an
+ * empty project is the single posture in which `authoring.draft.write` never reaches the gate at
+ * all, and a wall driven there would be measuring a routing refusal while looking like a verdict.
+ * One declared target puts the project in the ordinary posture, where the route passes through and
+ * the gate is what answers.
  */
 function fixtureWorkspace(): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-397-04-'))
@@ -135,6 +153,12 @@ function fixtureWorkspace(): string {
         hooksFile: 'hooks.yaml',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
+      },
+      use: { mobile: { appState: 'reset' } },
+      registry: {
+        targets: {
+          conformance: { platform: 'web', url: 'https://conformance.invalid' },
+        },
       },
     })}\n`,
     'utf8',
@@ -224,6 +248,12 @@ export async function driveChatDispatch(
           // `undefined` without a tty, leaving the gate's own deny-by-default confirm in place.
           isTty: false,
           chatCapabilities: async () => undefined,
+          // COLLECTED, NEVER REGISTERED. The default registration puts a SIGINT listener on the
+          // process for the life of the session, and a leg that drives 41 capabilities would leave
+          // 41 of them behind — the runner warns at eleven, and a suite that has to be read past a
+          // warning is a suite whose next real warning goes unread. Nothing here raises SIGINT, so
+          // the handler is collected and dropped.
+          onInterruptHandler: () => {},
         }),
       )
     program.exitOverride()

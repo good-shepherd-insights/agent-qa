@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { CHAT_RESOLVER_TABLE } from '@vostride/agent-qa-agent'
+import { invokeFunction, CHAT_RESOLVER_TABLE } from '@vostride/agent-qa-agent'
 import { CHAT_STAGE_SCOPES } from '@vostride/agent-qa-agent-local'
 import {
   AGENT_QA_OP_CONTRACTS,
@@ -37,6 +37,7 @@ import { MCP_DEFAULT_GRANTED_SCOPES } from '../../commands/mcp.js'
 import {
   CHAT_RESOLVER_PROBES,
   chatEnumerationOf,
+  conformanceRegistry,
   enumerateMcpOpIds,
   expandMcpListedTools,
   listMcpToolNames,
@@ -45,14 +46,20 @@ import {
   registryDeclarations,
   registryOpIds,
   withMcpClient,
+  type ConformanceRegistryOptions,
   type ResolverOpTarget,
   type SurfaceEnumeration,
 } from './adapters.js'
 import {
   ASK_CAPABLE_OP_IDS,
+  CONFORMANCE_EXECUTION_CONTEXT,
+  conformanceResolveExecutionContext,
   coveringCallerFor,
   deriveAskCapableOpIds,
+  EVERY_ASK_STANDING_APPROVED,
   refusingCallerFor,
+  surfaceInertCallers,
+  surfaceShapedCallers,
   type RiskClassifiable,
 } from './policy-fixtures.js'
 import { SURFACE_ROSTER } from './roster.js'
@@ -144,6 +151,88 @@ function commentStrippedSource(fileName: string): string {
     .filter((line) => !line.trimStart().startsWith('//'))
     .join('\n')
 }
+
+// ---- The gate wall (Phase 397 plan 04, D-11) ---------------------------------------------------
+
+/**
+ * Where one invocation stopped, as a comparable answer.
+ *
+ * A CLOSED, ORDERED VOCABULARY rather than a boolean or an error instance, because the two things
+ * the verdict legs ask are "did these two callers get the same answer" and "is that answer one that
+ * means the gate was consulted at all". A boolean can say the first and not the second, and a cell
+ * that could not say the second would report policy identity over two identical INPUT errors —
+ * which is two callers agreeing about a fixture rather than about a policy.
+ *
+ * The bands follow `invoke.ts`'s pinned order: `refused-input`/`refused-unknown` are pre-gate and
+ * pre-caller, `refused-scope`/`refused-origin` are the pre-gate CALLER band, `gate-denied` is the
+ * gate's own answer, and the two `allowed-` members are places only a call the gate ALLOWED can
+ * reach (step 6's binding check, and step 7's dispatch).
+ */
+type GateAnswerKind =
+  | 'refused-unknown'
+  | 'refused-input'
+  | 'refused-scope'
+  | 'refused-origin'
+  | 'gate-denied'
+  | 'allowed-unbound'
+  | 'allowed-dispatched'
+
+interface GateAnswer {
+  readonly kind: GateAnswerKind
+  /** The scopes the refusal named, where it named any — so a refusal is attributable. */
+  readonly missingScopes: readonly string[]
+}
+
+/**
+ * Ask the gate about one capability, on behalf of one caller, and report where the call stopped.
+ *
+ * The call is a REAL `invokeFunction` against the shipped registry: the same eight steps, in the
+ * same order, that every surface's dispatch crosses. What differs from a surface drive is only who
+ * is asking — which is the point, since this wall exists to answer independently of any surface.
+ */
+async function gateAnswerFor(
+  opId: string,
+  input: unknown,
+  caller: Parameters<typeof invokeFunction>[3],
+  options: ConformanceRegistryOptions = {
+    resolveExecutionContext: conformanceResolveExecutionContext,
+  },
+): Promise<GateAnswer> {
+  const registry = conformanceRegistry(options)
+  try {
+    await invokeFunction(registry, opId, input, caller)
+    return { kind: 'allowed-dispatched', missingScopes: [] }
+  } catch (thrown) {
+    const error = thrown as { name?: string; missingScopes?: readonly string[] }
+    switch (error.name) {
+      case 'UnknownFunctionError':
+        return { kind: 'refused-unknown', missingScopes: [] }
+      case 'FunctionInputError':
+        return { kind: 'refused-input', missingScopes: [] }
+      case 'FunctionScopeError':
+        return { kind: 'refused-scope', missingScopes: [...(error.missingScopes ?? [])] }
+      case 'FunctionOriginError':
+        return { kind: 'refused-origin', missingScopes: [] }
+      case 'FunctionDeniedError':
+        return { kind: 'gate-denied', missingScopes: [] }
+      case 'FunctionNotBoundError':
+        // The gate ALLOWED and this composition cannot run it — step 6, which is only reachable
+        // past step 5. Deliberately not lumped in with the refusals: "refused" and "allowed but
+        // unrunnable here" are the disagreement `resolveBindingStatus` exists to prevent.
+        return { kind: 'allowed-unbound', missingScopes: [] }
+      default:
+        // A dependency that is not there, reached because the gate let the call through to step 7.
+        return { kind: 'allowed-dispatched', missingScopes: [] }
+    }
+  }
+}
+
+/** The answers that mean the call reached the gate band — i.e. that a verdict was actually taken. */
+const REACHED_THE_GATE: readonly GateAnswerKind[] = Object.freeze([
+  'gate-denied',
+  'allowed-unbound',
+  'allowed-dispatched',
+])
 
 describe('the parity suite ranges the registry census over every rostered surface', () => {
   it('pins the roster at the two surfaces that exist today', () => {
@@ -857,6 +946,254 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toBe(false)
   })
 
+  // ---- LEG 3: policy identity (D-11, FUNC-03) ---------------------------------------------------
+
+  it('answers identically for two callers that differ only in which surface minted them', async () => {
+    // FUNC-03's claim, measured. `invoke.ts` reads the caller record in exactly three places and
+    // `surface` is in none of them — it is attribution. So two callers agreeing on grants, origin
+    // and safe mode and disagreeing only on `surface` must reach the same place for every one of
+    // the 41 capabilities, and `if (caller.surface === 'chat')` anywhere under the gate reds here.
+    //
+    // WHAT PRODUCES EACH SIDE: the left caller is `CHAT_RESOLVER_CALLER` — the frozen record
+    // `composeLocalAgent` spreads at its own per-stage mint — regranted to this op's declared
+    // scopes; the right is `mcpFunctionCaller(...)`, the function `commands/mcp.ts` composes its
+    // server with. Two producers in two packages, two `invokeFunction` calls, one comparison. A
+    // helper that shaped both sides would be comparing a value to itself.
+    const divergent: string[] = []
+    for (const declaration of registryDeclarations()) {
+      const row = scenarioRowFor(declaration.id as ScenarioOpId)
+      const callers = surfaceInertCallers(declaration.requiredScopes)
+      const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
+      const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
+
+      if (onChat.kind !== onMcp.kind) divergent.push(`${declaration.id}: ${onChat.kind}/${onMcp.kind}`)
+      // NON-VACUITY, in the same loop rather than in a cell somebody could delete: an identity that
+      // held over two identical INPUT errors would be two callers agreeing about a fixture. Under
+      // its own declared grants every capability must reach the gate band.
+      expect(
+        REACHED_THE_GATE,
+        `${declaration.id}: under its own declared scopes the call stopped at ${onChat.kind}, `
+          + 'before any verdict was taken — the grant point measured the pre-gate band',
+      ).toContain(onChat.kind)
+    }
+    expect(
+      divergent,
+      'capabilities whose verdict depends on WHICH SURFACE minted an otherwise identical caller — '
+        + 'caller-as-data is broken and a surface has a private policy (FUNC-03)',
+    ).toEqual([])
+  }, 120_000)
+
+  it('diverges between the surfaces\' own mints on exactly the human-origin capabilities', async () => {
+    // The other half of leg 3, and the reason the cell above harmonises `origin`. The surfaces'
+    // REAL mints differ on origin as well as on surface (391 D-06: a person typing an alias decided
+    // that call; an MCP client did not), so their answers legitimately differ — but only where an
+    // op declares it needs a human, and the divergent set is DERIVED from the declarations rather
+    // than listed here. A cell that demanded blanket agreement would be asserting the product wrong;
+    // one that never checked would let a surface acquire an exception nobody named.
+    const divergent: string[] = []
+    const declaredHumanOrigin: string[] = []
+    for (const declaration of registryDeclarations()) {
+      const row = scenarioRowFor(declaration.id as ScenarioOpId)
+      const callers = surfaceShapedCallers(declaration.requiredScopes)
+      const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
+      const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
+      if (declaration.requiresHumanOrigin === true) declaredHumanOrigin.push(declaration.id)
+      if (onChat.kind === onMcp.kind) continue
+      divergent.push(declaration.id)
+      expect(
+        onMcp.kind,
+        `${declaration.id}: the two surfaces' own mints disagree, and not on the origin axis — `
+          + 'a divergence with no declared reason is a private policy',
+      ).toBe('refused-origin')
+    }
+    expect(
+      sorted(divergent),
+      'the capabilities whose answer differs between the surfaces\' own caller mints must be '
+        + 'exactly the ones declaring requiresHumanOrigin',
+    ).toEqual(sorted(declaredHumanOrigin))
+    // …and the set is not empty, or the two directions above would both hold over nothing.
+    expect(declaredHumanOrigin.length, 'no capability declares requiresHumanOrigin, so this cell '
+      + 'asserts nothing').toBeGreaterThan(0)
+    // The join D-12 already carries: every one of those ops is unprojected over MCP, citing that
+    // very reason class. The divergence is not a hole — it is a scoping note, machine-checked.
+    for (const opId of declaredHumanOrigin) {
+      const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === opId)
+      expect(
+        entry === undefined ? undefined : unprojectedReasonKeyOf(entry.reason),
+        `${opId}: it needs a human and MCP mints an agent, so the mapping must cite that as its `
+          + 'unprojected reason rather than leaving a door the surface can never open',
+      ).toBe('requires-human-origin')
+    }
+  }, 120_000)
+
+  // ---- LEG 4: the refuse direction, two independent walls (D-11) --------------------------------
+
+  it('refuses at the GATE WALL for every capability, naming the one withheld grant', async () => {
+    // WALL ONE of two, and it is asserted alone: `invokeFunction` refuses a caller short of a
+    // required scope whatever surface that caller came from, and it says which scope.
+    //
+    // The withheld grant is DERIVED per op by `refusingCallerFor` off the declaration's own
+    // `requiredScopes` — no scope is named in this leg — so the day an op's scope set changes, the
+    // refusal this cell demands changes with it.
+    for (const declaration of registryDeclarations()) {
+      const row = scenarioRowFor(declaration.id as ScenarioOpId)
+      const refusing = refusingCallerFor(declaration)
+      const callers = surfaceInertCallers(refusing.caller.grantedScopes)
+      const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
+      const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
+
+      expect(onChat.kind, `${declaration.id} on chat (gate wall): a caller without `
+        + `${refusing.withheldScope} was not refused for want of it`).toBe('refused-scope')
+      expect(onMcp.kind, `${declaration.id} on mcp (gate wall): a caller without `
+        + `${refusing.withheldScope} was not refused for want of it`).toBe('refused-scope')
+      expect(
+        onChat.missingScopes,
+        `${declaration.id} on chat (gate wall): the refusal must name the grant that was withheld, `
+          + 'or a refusal on another axis would read as this one',
+      ).toEqual([refusing.withheldScope])
+      expect(
+        onMcp.missingScopes,
+        `${declaration.id} on mcp (gate wall): the refusal must name the grant that was withheld`,
+      ).toEqual([refusing.withheldScope])
+    }
+  }, 120_000)
+
+  it('refuses at the CHAT SURFACE WALL for every capability, through its own composed dispatch', async () => {
+    // WALL TWO of two for chat, asserted in its own cell over its own producer: no expression in
+    // this body touches `invokeFunction`, and no expression in the gate-wall cell above touches a
+    // driver. D-11 asks for two walls, and two walls averaged into one assertion is one wall.
+    //
+    // WHAT PRODUCES THIS SIDE: the shipped `agent-qa chat` REPL, typed at. The refusal observed is
+    // `FunctionDeniedError` — the class `invokeFunction` throws when and only when the gate
+    // returned `deny` — carried to the surface in the receipt a person reads, and corroborated by
+    // the gate's own execution-audit row naming the action class and the outcome that produced it.
+    // A capability rerouted around `invokeFunction` (D-14's ungated mutation) cannot be pinned: it
+    // would execute, this cell would see `executed`, and it would red by name.
+    for (const row of SCENARIO_TABLE) {
+      const outcome = await driveChatDispatch({
+        opId: row.opId,
+        input: row.input,
+        pinBefore: [pinClassFor(row.opId)],
+      })
+      expect(
+        outcome.unhandled,
+        `${row.opId} on chat (surface wall): the generic route did not resolve the clause, so this `
+          + 'drive never reached a dispatch and its refusal would be a routing failure',
+      ).toEqual([])
+      expect(
+        outcome.receipt?.status,
+        `${row.opId} on chat (surface wall): the surface did not refuse a pinned capability`,
+      ).toBe('failed')
+      expect(
+        outcome.receipt?.outcome,
+        `${row.opId} on chat (surface wall): the refusal must be the gate's own — an input or `
+          + 'unknown-id refusal would look the same to a person and mean the gate never ran',
+      ).toBe('FunctionDeniedError')
+      const denials = outcome.auditRows.filter(
+        (auditRow) => auditRow.action === pinClassFor(row.opId) && auditRow.verdict === 'deny',
+      )
+      expect(
+        denials.map((auditRow) => auditRow.outcome),
+        `${row.opId} on chat (surface wall): the gate wrote no deny row for this action class, so `
+          + 'nothing attributes the surface\'s refusal to the gate',
+      ).toContain('session-pin-denied')
+    }
+  }, 300_000)
+
+  it('refuses at the MCP SURFACE WALL for every projected capability: no door under the short grant', async () => {
+    // WALL TWO of two for MCP, over its own producer. The MCP surface CAN be handed a caller short
+    // of a scope, and its visibility law is a scope-union subset check — so the refusal this
+    // surface produces is the DOOR NOT BEING THERE, asserted in both directions: the tool is listed
+    // under a grant that covers it, and absent under the grant this op's own refusing caller holds,
+    // and a direct call on it is refused by the protocol rather than answered in band.
+    const everyScope = [...FunctionScopeSchema.options]
+    const listedUnderEveryScope = await listMcpToolNames(everyScope)
+    for (const row of SCENARIO_TABLE) {
+      if (!('reachable' in row.perSurface.mcp)) continue
+      const tool = row.perSurface.mcp.reachable.tool
+      const declaration = registryDeclarations().find((candidate) => candidate.id === row.opId)
+      const refusing = refusingCallerFor(declaration!)
+
+      expect(
+        listedUnderEveryScope,
+        `${row.opId} on mcp (surface wall): the tool that projects it is not listed even under a `
+          + 'grant holding every scope, so its absence below would say nothing',
+      ).toContain(tool)
+      const listedUnderShortGrant = await listMcpToolNames(refusing.caller.grantedScopes)
+      expect(
+        listedUnderShortGrant,
+        `${row.opId} on mcp (surface wall): the tool is still listed to a caller without `
+          + `${refusing.withheldScope} — the surface advertises a capability it must refuse`,
+      ).not.toContain(tool)
+      const called = await driveMcpCall({
+        toolName: tool,
+        args: {},
+        grantedScopes: refusing.caller.grantedScopes,
+      })
+      expect(
+        called.answered,
+        `${row.opId} on mcp (surface wall): a caller without ${refusing.withheldScope} reached the `
+          + 'tool in band — a door that is not advertised is still a door',
+      ).toBe(false)
+    }
+  }, 300_000)
+
+  it('records WHY the chat surface wall is a pin rather than a short grant', async () => {
+    // THE MEASUREMENT BEHIND THE DESIGN, pinned so it cannot go stale silently. Both chat stage
+    // callers hold `CHAT_STAGE_SCOPES`, and that constant is the WHOLE closed scope union — so "a
+    // chat caller missing a required scope" is not a state this product can be in, and the chat
+    // surface wall could not be a scope refusal however it were written. The day chat narrows its
+    // grants, this cell reds and the wall above should be revisited.
+    expect(
+      sorted(CHAT_STAGE_SCOPES),
+      'the chat stage callers no longer hold every scope — a scope-refused chat caller is now a '
+        + 'state this product can be in, and the chat surface wall should assert it directly',
+    ).toEqual(sorted(FunctionScopeSchema.options))
+    // And the pin route reaches every capability, which is what lets the wall above range the whole
+    // census: the pin is validated against the registry's own risk names.
+    for (const declaration of registryDeclarations()) {
+      expect(
+        declaration.risk.name,
+        `${declaration.id}: /pin normalises to fn:<id> and compares exact bytes, so a capability `
+          + 'whose risk name is spelled otherwise is unpinnable and unwalled',
+      ).toBe(pinClassFor(declaration.id))
+    }
+  })
+
+  it('keeps the two walls in two cells: no assertion is fed by both a surface and the gate', () => {
+    // D-11's "never averaged into one assertion", as a structural claim about this file. Splitting
+    // on `it(` is coarse but exact enough for what is being forbidden: a cell that produced both a
+    // surface answer and a gate answer could merge them, and none does.
+    const code = commentStrippedSource('parity.test.ts')
+    const gateProducers = ['gateAnswerFor']
+    const surfaceProducers = ['driveChatDispatch', 'driveMcpCall', 'listMcpToolNames']
+    // This cell's OWN body names every producer by construction — it is the sweep — so it is
+    // excluded by the one token only the sweep uses. Without that, the check would report itself.
+    const bodies = code
+      .split(/\bit\(/u)
+      .slice(1)
+      .filter((body) => !body.includes('commentStrippedSource('))
+    const merged = bodies
+      .filter((body) => gateProducers.some((name) => body.includes(name)))
+      .filter((body) => surfaceProducers.some((name) => body.includes(name)))
+    expect(
+      merged.length,
+      'a cell produces BOTH a gate answer and a surface answer, so the two walls D-11 requires to '
+        + 'be independent can be averaged into one expect',
+    ).toBe(0)
+    // Non-vacuity: both kinds of cell exist to be kept apart.
+    expect(bodies.filter((body) => body.includes('gateAnswerFor')).length).toBeGreaterThan(0)
+    expect(bodies.filter((body) => body.includes('driveChatDispatch')).length).toBeGreaterThan(0)
+    // And no scope is spelled anywhere the refuse legs could have hand-typed one: the withheld
+    // grant is derived per op or it is not derived at all.
+    for (const wallBody of bodies.filter((body) => body.includes('(gate wall)'))) {
+      for (const scope of FunctionScopeSchema.options) {
+        expect(wallBody, `the gate-wall leg spells the ${scope} scope instead of deriving it from `
+          + 'the declaration').not.toContain(`'${scope}'`)
+      }
+    }
+  })
+
   it('observes the chat surface through its own dispatch, never through the gate directly', () => {
     // PITFALL 5, AS A SOURCE ASSERTION. Every behavioural cell above would pass over a driver that
     // called `invokeFunction` itself — and such a driver is blind to D-14's ungated-op mutation by
@@ -864,7 +1201,17 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // making. Comments are stripped first so this file's own prose may name what the driver's body
     // must not.
     const code = commentStrippedSource('surface-dispatch.ts')
-    for (const forbidden of ['invokeFunction', 'evaluate(', 'composeCliLocalAgent', 'registry']) {
+    // Named identifiers rather than a bare word: the drivers' fixture config declares a
+    // `registry.targets` block, and a token scan would have read the project's own configuration
+    // vocabulary as a reach into the function registry (the rollcall's own negative control).
+    for (const forbidden of [
+      'invokeFunction',
+      'evaluate(',
+      'composeCliLocalAgent',
+      'conformanceRegistry',
+      'createFunctionRegistry',
+      'registryDeclarations',
+    ]) {
       expect(code, `surface-dispatch.ts reaches past the surface via ${forbidden}`)
         .not.toContain(forbidden)
     }

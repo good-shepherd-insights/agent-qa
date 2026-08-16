@@ -114,19 +114,61 @@ export const MCP_ENUMERATION_SCOPES: readonly FunctionScope[] = Object.freeze([
 export const MCP_ENUMERATION_CALLER: FunctionCaller = mcpFunctionCaller(MCP_ENUMERATION_SCOPES)
 
 /**
+ * The gate-facing seams a verdict leg supplies, and the whole of them (397-04).
+ *
+ * Every member is a PORT `createFunctionRegistry` already publishes, forwarded untouched. Nothing
+ * here widens what a registry is; what it does is let a cell that asks the gate a question state
+ * the conditions it is asking under instead of inheriting them from the process.
+ */
+export interface ConformanceRegistryOptions {
+  /**
+   * The context every policy decision in this registry is taken in (Pitfall 3).
+   *
+   * ABSENT MEANS THE SHIPPED AMBIENT RESOLVER, which is right for an enumeration — a listing does
+   * not consult the gate — and wrong for a verdict: `requiresFailClosed` is true for every context
+   * but `local-interactive`, so a verdict computed against the ambient resolver is one answer on a
+   * laptop and another on a runner, in cells whose entire job is to state what the verdict IS.
+   */
+  readonly resolveExecutionContext?: CreateFunctionRegistryOptions['resolveExecutionContext']
+  /** The standing-approval reader the ask arm consults. Absent leaves the gate's no-grants reader. */
+  readonly standingApprovalReader?: CreateFunctionRegistryOptions['standingApprovalReader']
+  /** The confirm the ask arm reaches. Absent leaves the gate's deny-by-default confirm. */
+  readonly confirm?: CreateFunctionRegistryOptions['confirm']
+  /** Where `evaluate()` writes its execution-audit row; absent discards it. */
+  readonly auditSink?: CreateFunctionRegistryOptions['auditSink']
+}
+
+/**
  * The built-in registry, with empty deps.
  *
  * Honest for a listing question and the precedent is `mapping-bump-guard.test.ts`: `list()` consults
  * the deps for one thing — whether an op is BOUND in this composition — and membership of the
- * catalogue is a property of the catalogue rather than of a host. Nothing here dispatches, so
- * nothing here can reach a port that is not there.
+ * catalogue is a property of the catalogue rather than of a host.
+ *
+ * EMPTY DEPS ARE THE ZERO-MUTATION GUARANTEE FOR THE VERDICT LEGS, and structurally rather than by
+ * assertion: 30 of the 41 capabilities read `unbound` in this composition and refuse by name at
+ * step 6, and the 11 that read `bound` hold no port to have an effect through, so an invocation
+ * that gets past the gate here reaches a dependency that does not exist and stops. No cell in this
+ * suite can write a file, start a run or commit anything.
  */
-export function conformanceRegistry(): FunctionRegistry {
-  const auditSink = {
+export function conformanceRegistry(options: ConformanceRegistryOptions = {}): FunctionRegistry {
+  const auditSink = options.auditSink ?? ({
     appendExecutionAudit() {},
     appendGuardrailAudit() {},
-  } as unknown as CreateFunctionRegistryOptions['auditSink']
-  return createFunctionRegistry({ deps: {} as unknown as FunctionDeps, auditSink })
+  } as unknown as CreateFunctionRegistryOptions['auditSink'])
+  return createFunctionRegistry({
+    deps: {} as unknown as FunctionDeps,
+    auditSink,
+    // Conditionally spread, on the house rule an absent dependency is an ABSENT field and never a
+    // present `undefined` one — a defaulted port here would be a second place the default lives.
+    ...(options.resolveExecutionContext === undefined
+      ? {}
+      : { resolveExecutionContext: options.resolveExecutionContext }),
+    ...(options.standingApprovalReader === undefined
+      ? {}
+      : { standingApprovalReader: options.standingApprovalReader }),
+    ...(options.confirm === undefined ? {} : { confirm: options.confirm }),
+  })
 }
 
 /** The census, as declarations. */
