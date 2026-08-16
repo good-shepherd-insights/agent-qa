@@ -39,6 +39,60 @@ export const CatalogSurfaceSchema = z.enum(['chat', 'mcp'])
 export type CatalogSurface = z.infer<typeof CatalogSurfaceSchema>
 
 /**
+ * One example call's arguments, DERIVED from the row's own params (spec §3.3, D-08).
+ *
+ * WHY IT IS AN OBJECT AND NOT A BARE RECORD. `"exampleCall": { "arguments": {} }` reads, in the
+ * committed file, as "call this with no arguments" — which is a true and useful thing to say about
+ * an op whose every property is optional. A bare `{}` in that position would read as a missing
+ * value, and the distinction between "nothing is required" and "nobody derived one" is exactly what
+ * the nullable arm plus {@link CatalogOpRowSchema.exampleCallAbsentReason} exists to keep apart.
+ *
+ * NOTHING HERE IS AUTHORED. The values come out of one pure function over the row's own JSON-Schema
+ * projection; a hand-written example is a second contract that agrees with the schema until the day
+ * the schema moves, and the agent that copied it is the one who finds out.
+ */
+export const CatalogExampleCallSchema = z.object({
+  arguments: z.record(z.string(), z.unknown()),
+}).strict()
+export type CatalogExampleCall = z.infer<typeof CatalogExampleCallSchema>
+
+/**
+ * Which of the migration map's three closed answers a retired v1 tool name gets (D-13).
+ *
+ * THIS IS A SECOND SPELLING OF `V1MigrationArm`, AND IT IS TIED RATHER THAN TRUSTED. The arm
+ * vocabulary is owned by `packages/mcp`'s migration map, which cannot be imported here: `mcp`
+ * depends on `schema`, and a DTO package that imported a surface package would invert the workspace
+ * (384 D-16). The two spellings are held together from both sides — the producer's projection
+ * function takes a `V1ToolMigrationEntry` and returns this DTO, so an arm minted in `mcp` and
+ * missing here fails to COMPILE; and a census cell asserts these options set-equal the arms the
+ * shipped map actually carries, so an arm written here that nothing uses is a named RED.
+ */
+export const CatalogMigrationArmSchema = z.enum(['renamed-to', 'retired', 'pending'])
+export type CatalogMigrationArm = z.infer<typeof CatalogMigrationArmSchema>
+
+/**
+ * One v1 tool name and its ruled disposition, projected VERBATIM from the shipped map (D-14).
+ *
+ * `.strict()` for the reason every DTO here is strict, and one more: this section is what an
+ * external agent still pinned to a v1 name reads, so a field that arrived by accident would be a
+ * sentence the product did not mean to say to a caller it cannot see.
+ */
+export const CatalogMigrationEntrySchema = z.object({
+  /** The v1 tool name, verbatim from the inventory's tool table. */
+  v1Name: z.string().min(1),
+  arm: CatalogMigrationArmSchema,
+  /** The live v2 tool carrying the capability. Present only on `renamed-to`. */
+  v2Tool: z.string().min(1).optional(),
+  /** The inventory's ruled reason, dated. */
+  note: z.string().min(1),
+  /** What to call instead. Present on `retired` and `pending`. */
+  route: z.string().min(1).optional(),
+  /** The milestone owning the absence. Present only on `pending`. */
+  owner: z.string().min(1).optional(),
+}).strict()
+export type CatalogMigrationEntry = z.infer<typeof CatalogMigrationEntrySchema>
+
+/**
  * One registry op, as a person reads it.
  *
  * `mcpUnprojectedReasonKey` is the VISIBLE ABSENCE arm (D-06): an op with no MCP door carries the
@@ -65,6 +119,19 @@ export const CatalogOpRowSchema = z.object({
   /** Present iff `docPath` is null — the dated reason there is no doc yet. */
   docAbsentReason: z.string().min(1).optional(),
   requiredScopes: z.array(FunctionScopeSchema),
+  /**
+   * A call an agent can copy, derived from `params` — or an explicit null (spec §3.3, D-08).
+   *
+   * NULL IS NOT "no arguments". An op whose properties are all optional gets
+   * `{ "arguments": {} }`, because calling it with nothing is a real call. Null means the
+   * derivation REFUSED to show a value it could not prove the shipped contract would accept, and
+   * `exampleCallAbsentReason` says which construct it refused on. An example that would be
+   * rejected on arrival is worse than none: the agent that copies it learns a shape the product
+   * does not have, and learns it from the product's own manifest.
+   */
+  exampleCall: CatalogExampleCallSchema.nullable(),
+  /** Present iff `exampleCall` is null — which construct the derivation would not guess at. */
+  exampleCallAbsentReason: z.string().min(1).optional(),
 }).strict()
 
 /**
@@ -116,6 +183,22 @@ export const CapabilityCatalogSchema = z.object({
   rowCount: z.number().int().nonnegative(),
   rowsDigest: z.string().min(1),
   rows: z.array(CatalogRowSchema),
+  /**
+   * The v1→v2 migration map, projected from `packages/mcp` (D-14, XPLN-03).
+   *
+   * It sits BESIDE the rows rather than among them because it is not a capability: an entry says
+   * a name is gone and what answers the need instead, and a row kind for it would put retired
+   * history into the set every consumer counts as "what this product can do".
+   */
+  migrationMap: z.array(CatalogMigrationEntrySchema),
+  /**
+   * The migration section's own count sentence.
+   *
+   * `rowCount` exists so a mint that produced a truncated document cannot reach the committed
+   * file; this is the same mechanical self-check for the section `rowCount` does not cover. A new
+   * section with no count is the hole `rowCount` was added to close, re-opened one field over.
+   */
+  migrationCount: z.number().int().nonnegative(),
 }).strict()
 
 export type CatalogOpRow = z.infer<typeof CatalogOpRowSchema>

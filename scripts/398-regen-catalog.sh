@@ -14,8 +14,8 @@
 #   * THE REGEN REFUSES WHILE THE SUITE IS RED FOR ANY OTHER REASON. A regeneration against a broken
 #     tree would launder the breakage into the artifact — the catalog would faithfully describe
 #     whatever the broken tree declares, and the reviewer would see a diff with no failing test
-#     beside it. The only failure allowed through the gate is the freshness cell itself, by exact
-#     name (see ALLOWED_RED).
+#     beside it. The only failures allowed through the gate are the cells whose SUBJECT is the
+#     committed artifact agreeing with the live tree, by exact name (see ALLOWED_RED_NAMES).
 #   * THE GATE IS SELF-TESTING. `--selftest` injects a deliberately failing probe into the suite and
 #     requires the refusal to fire, then requires the gate to pass again once the probe is removed.
 #     A gate nobody has seen fire is a comment.
@@ -51,15 +51,44 @@ CATALOG="$ROOT/$CATALOG_REL"
 
 # ── The pins. Every one of these is a deliberate-commit knob, not a default. ────────────────────
 #
-# The ONE failure the gate lets through, by EXACT full name. Exact rather than a pattern: a pattern
-# is a hole that widens on its own, and this list is the whole of what "refuses while red" means.
-ALLOWED_RED="the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)"
+# The failures the gate lets through, by EXACT full name, one per line. Exact rather than a pattern:
+# a pattern is a hole that widens on its own, and this list is the whole of what "refuses while red"
+# means.
+#
+# WHAT MAKES A CELL ELIGIBLE, STATED SO THE LIST CANNOT GROW BY HABIT (2026-08-17, 398-08). Every
+# member is a cell whose SUBJECT IS THE COMMITTED ARTIFACT AGREEING WITH THE LIVE TREE. Those are
+# exactly the cells a stale artifact reds, and exactly the state this script exists to let a person
+# out of — leaving them out would make the one writer unusable the moment a producer change reddened
+# more than one of them, which is the deadlock a second cell of that class introduces. A cell that
+# measures anything else — a census, a loader refusal, a parity anchor's enumeration — is NOT
+# eligible, because a regeneration performed while one of those is red records a tree nobody has
+# fixed.
+#
+# AND THE LIST CHECKS ITSELF. Every name below must MATCH A CELL THE SUITE ACTUALLY RAN; a stale
+# entry naming a renamed or deleted cell is a hole that is invisible precisely because nothing ever
+# fires through it. `classify.mjs` reports the misses and the gate FATALs on them.
+#
+# The names are vitest's `fullName`: the describe title and the cell title, joined by one space.
+#
+# A PLAIN MULTI-LINE STRING, not a heredoc inside a command substitution. Measured 2026-08-17 on the
+# bash 3.2 macOS ships: `VAR="$(cat <<'X' ... X )"` mis-parses there and the script dies at an
+# unrelated line with `arg: unbound variable`, which is the least helpful diagnosis available for
+# it. The rest of this file avoids bash-4 idioms for the same reason the header states.
+ALLOWED_RED_NAMES="the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
+the catalog's migration map projection (D-14, XPLN-03) lands in the COMMITTED artifact, entry for entry, as the shipped map declares it"
 # Vacuity floor. A gate that passed because the suite collected nothing is the CI-shaped version of
-# the failure this artifact exists to prevent. Measured 2026-08-16: 88 tests in the directory.
-FROZEN_MIN_TESTS=80
+# the failure this artifact exists to prevent. Measured 2026-08-16: 88 tests in the directory;
+# 2026-08-17 (398-08): 104, after the manifest legs joined. Raised in the same diff that added them,
+# which is the rule the knob exists for.
+FROZEN_MIN_TESTS=95
 # The artifact's own floor, so a mint that produced a truncated or empty file cannot be written.
 # Measured 2026-08-16: 41 registry ops + 5 chat op-aliases + 3 shipped skills = 49 rows.
 FROZEN_MIN_ROWS=49
+# The migration section's floor (398-08, D-14). It is SEPARATE from the row floor because it is a
+# separate section with a separate source: a mint that folded every capability correctly and dropped
+# the projected map would clear FROZEN_MIN_ROWS and write a manifest that answers no v1 caller.
+# Measured 2026-08-17: the shipped map's 33 adjudicated tool rows.
+FROZEN_MIN_MIGRATION_ENTRIES=33
 
 EMIT_FLAG="AGENT_QA_398_CATALOG_EMIT"
 EMIT_BEGIN="<<<398-01-CATALOG-BEGIN>>>"
@@ -97,11 +126,14 @@ trap cleanup EXIT
 # ── Helper programs. Written to files, never passed as shell strings: a quoted argument mangled by
 # the shell is how a harness ends up measuring an implementation nobody wrote.
 cat > "$SANDBOX/classify.mjs" <<'CLASSIFY_MJS'
-// Read vitest's JSON report and classify the failures against the ONE allowed red.
-// Prints `TOTAL=<n>` then one `UNEXPECTED <full name>` line per failure outside the allow-list, and
-// one `ALLOWED <full name>` line for each failure inside it. Decides nothing; bash decides.
+// Read vitest's JSON report and classify the failures against the allowed-red list.
+// Prints `TOTAL=<n>`, then one `UNEXPECTED <full name>` line per failure outside the list, one
+// `ALLOWED <full name>` line per failure inside it, and one `MISSINGALLOWED <full name>` line per
+// list entry naming a cell THIS RUN DID NOT CONTAIN. That last line is the list's own self-check:
+// an allow-list entry for a renamed or deleted cell is a hole nothing will ever fire through, so
+// nothing would ever reveal it. Decides nothing; bash decides.
 import { readFileSync } from 'node:fs'
-const [, , reportPath, allowed] = process.argv
+const [, , reportPath, allowedPath] = process.argv
 let report
 try {
   report = JSON.parse(readFileSync(reportPath, 'utf8'))
@@ -109,27 +141,45 @@ try {
   process.stdout.write(`UNREADABLE ${err instanceof Error ? err.message : String(err)}\n`)
   process.exit(0)
 }
+const allowed = readFileSync(allowedPath, 'utf8')
+  .split('\n')
+  .map((line) => line.trim())
+  .filter((line) => line.length > 0)
 const results = Array.isArray(report.testResults) ? report.testResults : []
 process.stdout.write(`TOTAL=${Number(report.numTotalTests ?? 0)}\n`)
+const collected = new Set()
 for (const file of results) {
   for (const assertion of file.assertionResults ?? []) {
-    if (assertion.status !== 'failed') continue
     const name = String(assertion.fullName ?? '')
-    process.stdout.write(`${name === allowed ? 'ALLOWED' : 'UNEXPECTED'} ${name}\n`)
+    collected.add(name)
+    if (assertion.status !== 'failed') continue
+    process.stdout.write(`${allowed.includes(name) ? 'ALLOWED' : 'UNEXPECTED'} ${name}\n`)
   }
+}
+for (const name of allowed) {
+  if (!collected.has(name)) process.stdout.write(`MISSINGALLOWED ${name}\n`)
 }
 CLASSIFY_MJS
 
 cat > "$SANDBOX/inspect.mjs" <<'INSPECT_MJS'
-// Answer two questions about a minted catalog with one parse: is it valid JSON at all, and how many
-// rows does it carry. A mint that produced a truncated document must never reach the committed file.
+// Answer, with ONE parse, every question a truncated mint would fail: is it valid JSON at all, how
+// many rows does it carry, and how many migration entries. Each SECTION reports its own length and
+// its own count sentence, because a document that folded one section correctly and dropped the
+// other is a document both halves of a single count would call complete.
 import { readFileSync } from 'node:fs'
 try {
   const catalog = JSON.parse(readFileSync(process.argv[2], 'utf8'))
   const rows = Array.isArray(catalog.rows) ? catalog.rows.length : -1
-  process.stdout.write(`ROWS=${rows}\nCOUNT=${Number(catalog.rowCount ?? -1)}\n`)
+  const migration = Array.isArray(catalog.migrationMap) ? catalog.migrationMap.length : -1
+  process.stdout.write(
+    `ROWS=${rows}\nCOUNT=${Number(catalog.rowCount ?? -1)}\n`
+    + `MIGRATION=${migration}\nMIGRATIONCOUNT=${Number(catalog.migrationCount ?? -1)}\n`,
+  )
 } catch (err) {
-  process.stdout.write(`ROWS=-1\nCOUNT=-1\nERROR=${err instanceof Error ? err.message : err}\n`)
+  process.stdout.write(
+    `ROWS=-1\nCOUNT=-1\nMIGRATION=-1\nMIGRATIONCOUNT=-1\n`
+    + `ERROR=${err instanceof Error ? err.message : err}\n`,
+  )
 }
 INSPECT_MJS
 
@@ -150,10 +200,10 @@ PROBE_TS
 
 # ── The gate ────────────────────────────────────────────────────────────────────────────────────
 #
-# Runs the conformance suite and refuses on any failure that is not the freshness cell. The suite is
-# NOT run with the freshness leg filtered out by the runner: the leg stays in and its failure is
-# classified by name. That is stricter than an exclusion — an exclusion would also hide a freshness
-# cell that broke for a reason having nothing to do with the artifact's contents.
+# Runs the conformance suite and refuses on any failure outside the allowed-red list. Those legs are
+# NOT filtered out by the runner: they stay in and their failures are classified by name. That is
+# stricter than an exclusion — an exclusion would also hide one of them breaking for a reason having
+# nothing to do with the artifact's contents.
 run_gate() {
   local report="$SANDBOX/results.$$.json"
   note "gate: running the conformance suite"
@@ -164,12 +214,27 @@ run_gate() {
 
   [ -f "$report" ] || fatal "the suite produced no JSON report — it did not run at all"
 
+  printf '%s\n' "$ALLOWED_RED_NAMES" > "$SANDBOX/allowed-red.txt"
+
   local classified
-  classified="$(node "$SANDBOX/classify.mjs" "$report" "$ALLOWED_RED")"
+  classified="$(node "$SANDBOX/classify.mjs" "$report" "$SANDBOX/allowed-red.txt")"
 
   case "$classified" in
     UNREADABLE*) fatal "the suite's JSON report could not be read: ${classified#UNREADABLE }" ;;
   esac
+
+  # THE ALLOW-LIST'S OWN CHECK, before any verdict is read off it. An entry naming a cell that no
+  # longer exists is a permission granted to nothing — invisible, because a hole nothing fires
+  # through never reports.
+  local missing_allowed
+  missing_allowed="$(printf '%s\n' "$classified" | sed -n 's/^MISSINGALLOWED //p')"
+  if [ -n "$missing_allowed" ]; then
+    echo "FATAL: the allowed-red list names cells this suite does not contain:" >&2
+    printf '  - %s\n' "$missing_allowed" >&2
+    echo "An allow-list entry for a renamed or deleted cell is a hole nothing can fire through." >&2
+    echo "Fix the name in ALLOWED_RED_NAMES, or remove the entry." >&2
+    exit 1
+  fi
 
   local total
   total="$(printf '%s\n' "$classified" | sed -n 's/^TOTAL=//p')"
@@ -193,9 +258,9 @@ run_gate() {
   local allowed
   allowed="$(printf '%s\n' "$classified" | sed -n 's/^ALLOWED //p')"
   if [ -n "$allowed" ]; then
-    note "gate: the freshness cell is red, as expected before a regeneration"
+    note "gate: only committed-artifact cells are red, as expected before a regeneration"
   else
-    note "gate: the freshness cell is green — the committed catalog already matches the tree"
+    note "gate: no committed-artifact cell is red — the catalog already matches the tree"
   fi
   note "gate: PASSED — no failure outside the catalog"
 }
@@ -222,14 +287,20 @@ mint_catalog() {
 
   [ -s "$out" ] || fatal "the suite printed no catalog between the sentinels — is $EMIT_FLAG still read by catalog.ts?"
 
-  local inspected rows count
+  local inspected rows count migration migration_count
   inspected="$(node "$SANDBOX/inspect.mjs" "$out")"
   rows="$(printf '%s\n' "$inspected" | sed -n 's/^ROWS=//p')"
   count="$(printf '%s\n' "$inspected" | sed -n 's/^COUNT=//p')"
+  migration="$(printf '%s\n' "$inspected" | sed -n 's/^MIGRATION=//p')"
+  migration_count="$(printf '%s\n' "$inspected" | sed -n 's/^MIGRATIONCOUNT=//p')"
   [ "$rows" -ge "$FROZEN_MIN_ROWS" ] \
     || fatal "the minted catalog carries $rows rows, fewer than the frozen floor of $FROZEN_MIN_ROWS ($(printf '%s' "$inspected" | tr '\n' ' '))"
   [ "$count" = "$rows" ] || fatal "the minted catalog's own count sentence ($count) disagrees with its rows ($rows)"
-  note "mint: $rows rows"
+  [ "$migration" -ge "$FROZEN_MIN_MIGRATION_ENTRIES" ] \
+    || fatal "the minted catalog carries $migration migration entries, fewer than the frozen floor of $FROZEN_MIN_MIGRATION_ENTRIES ($(printf '%s' "$inspected" | tr '\n' ' '))"
+  [ "$migration_count" = "$migration" ] \
+    || fatal "the minted catalog's own migration count sentence ($migration_count) disagrees with its entries ($migration)"
+  note "mint: $rows rows, $migration migration entries"
   MINTED="$out"
 }
 

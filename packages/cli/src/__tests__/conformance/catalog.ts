@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url'
 
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
 import { CHAT_RESOLVER_TABLE } from '@vostride/agent-qa-agent'
+import { V1_TOOL_MIGRATION_MAP, type V1ToolMigrationEntry } from '@vostride/agent-qa-mcp'
 import {
   canonicalJson,
   catalogRowKey,
@@ -36,6 +37,8 @@ import {
   sha256hex,
   type CapabilityCatalog,
   type CatalogAliasRow,
+  type CatalogExampleCall,
+  type CatalogMigrationEntry,
   type CatalogOpRow,
   type CatalogRow,
   type CatalogSkillRow,
@@ -112,6 +115,10 @@ export const CATALOG_NOTE: readonly string[] = Object.freeze([
   'test-runner update flag reaches this file.',
   'IT DESCRIBES, IT DOES NOT GATE. Nothing here grants or withholds a capability; per-caller',
   'filtering is enforced live at the MCP `tools/list` seam and nowhere else.',
+  '`migrationMap` is the v1 -> v2 tool-name adjudication (XPLN-03), projected verbatim from',
+  '`packages/mcp`. It is retired HISTORY, not capability: nothing in it is callable today.',
+  'Each op row\'s `exampleCall` is DERIVED from that row\'s own `params` — a null arm with a stated',
+  'reason means the contract carries a construct a placeholder could not be shown to satisfy.',
 ])
 
 // ---- Doc-path adjudication (D-07) ----------------------------------------------------------------
@@ -233,6 +240,318 @@ export function catalogDocFieldsOf(opId: string): {
     }
   }
   return { docPath: null, docAbsentReason: adjudication.absentReason }
+}
+
+// ---- Example-call derivation (spec §3.3, D-08) ---------------------------------------------------
+
+/**
+ * The JSON-Schema keywords this derivation knows how to honour.
+ *
+ * A CLOSED VOCABULARY, AND THE REASON IT IS CLOSED IS THE WHOLE DESIGN. Every example below is
+ * VALID BY CONSTRUCTION over these keywords — a placeholder is only emitted where the constraints
+ * present can be checked against it arithmetically. A keyword outside this list is REFUSED rather
+ * than ignored, because ignoring one is how a derivation produces a value that looks right and the
+ * shipped contract rejects: `format: "uuid"` silently dropped yields `"<ID>"`, an agent copies it,
+ * and the product refuses the call it just advertised. The closed list makes the open edge loud.
+ *
+ * `pattern` is IN the list and always refuses. It is known, not unknown, and the difference matters
+ * in the message a reader gets: "this op's id has a shape a placeholder cannot imitate" is a
+ * different sentence from "nobody taught this derivation what `pattern` means".
+ */
+const DERIVABLE_KEYWORDS: readonly string[] = Object.freeze([
+  '$schema', 'title', 'description',
+  'type', 'const', 'enum', 'oneOf', 'anyOf',
+  'properties', 'required', 'additionalProperties',
+  'minLength', 'maxLength', 'pattern',
+  'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum',
+  'items', 'minItems', 'maxItems',
+])
+
+/** One value the derivation could show, or the named construct it would not guess at. */
+type DerivedValue =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly why: string }
+
+function refuse(why: string): DerivedValue {
+  return { ok: false, why }
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/**
+ * The `const`-valued properties of one object branch, as canonical text.
+ *
+ * Used to decide whether a `oneOf`'s branches are DISCRIMINATED — see {@link oneOfDiscriminator}.
+ */
+function constDiscriminatorsOf(branch: unknown): ReadonlyMap<string, string> | undefined {
+  if (typeof branch !== 'object' || branch === null || Array.isArray(branch)) return undefined
+  const properties = (branch as Record<string, unknown>).properties
+  if (typeof properties !== 'object' || properties === null) return undefined
+  const found = new Map<string, string>()
+  for (const [name, schema] of Object.entries(properties as Record<string, unknown>)) {
+    if (typeof schema !== 'object' || schema === null) continue
+    if (!('const' in (schema as Record<string, unknown>))) continue
+    found.set(name, canonicalJson((schema as Record<string, unknown>).const))
+  }
+  return found
+}
+
+/**
+ * The property whose `const` tells the branches of a `oneOf` apart, if there is one.
+ *
+ * WHY THIS CHECK EXISTS RATHER THAN A COMMENT SAYING THE BRANCHES ARE EXCLUSIVE. A `oneOf` is
+ * satisfied by a value matching EXACTLY ONE branch, so taking branch 0's value is only correct if
+ * that value cannot also match branch 1. For the shipped params — projections of zod discriminated
+ * unions — a `const` discriminator makes that true, and this function is what turns "true today"
+ * into something the derivation verifies before it relies on it. An undiscriminated `oneOf` is
+ * refused, which is the honest answer: the derivation cannot show a value it cannot prove valid.
+ */
+function oneOfDiscriminator(branches: readonly unknown[]): string | undefined {
+  const maps = branches.map(constDiscriminatorsOf)
+  if (maps.some((map) => map === undefined) || maps.length < 2) return undefined
+  const present = maps as readonly ReadonlyMap<string, string>[]
+  for (const candidate of present[0]!.keys()) {
+    const values = present.map((map) => map.get(candidate))
+    if (values.some((value) => value === undefined)) continue
+    if (new Set(values).size === values.length) return candidate
+  }
+  return undefined
+}
+
+/**
+ * One example value for one declared schema, or a refusal naming the construct.
+ *
+ * PURE AND TOTAL, so the derivation cell can drive every branch — including the refusing ones —
+ * with synthetic input. A derivation whose refusals are only reachable by editing a real op is a
+ * derivation whose refusals nobody has watched.
+ *
+ * `propertyName` is where the placeholder text comes from, and it is the property's own name for a
+ * reason: `"<TESTREF>"` tells a reader what to substitute, and `"<STRING>"` tells them nothing.
+ */
+function derivedValueOf(schema: unknown, propertyName: string, path: string): DerivedValue {
+  if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
+    return refuse(`${path} is not a JSON-Schema object`)
+  }
+  const node = schema as Record<string, unknown>
+
+  const unknownKeywords = Object.keys(node).filter((key) => !DERIVABLE_KEYWORDS.includes(key)).sort()
+  if (unknownKeywords.length > 0) {
+    return refuse(
+      `${path} declares ${unknownKeywords.join(', ')}, which this derivation has no rule for — a `
+      + 'keyword silently ignored is a constraint the example would violate',
+    )
+  }
+
+  // A pinned value is the one case where the example is not a placeholder at all: it is the only
+  // value the contract accepts, so showing it is showing the truth.
+  if ('const' in node) return { ok: true, value: node.const }
+
+  if (Array.isArray(node.enum)) {
+    if (node.enum.length === 0) return refuse(`${path} declares an empty enum`)
+    return { ok: true, value: node.enum[0] }
+  }
+
+  if (Array.isArray(node.oneOf)) {
+    if (node.oneOf.length === 0) return refuse(`${path} declares an empty oneOf`)
+    if (oneOfDiscriminator(node.oneOf) === undefined) {
+      return refuse(
+        `${path} declares a oneOf whose branches carry no discriminating const — a value taken `
+        + 'from one branch cannot be shown to match exactly one, and a value matching two is '
+        + 'refused BECAUSE it matches two',
+      )
+    }
+    return derivedValueOf(node.oneOf[0], propertyName, `${path}.oneOf[0]`)
+  }
+
+  if (Array.isArray(node.anyOf)) {
+    // `anyOf` needs no discrimination: matching more than one branch satisfies it.
+    if (node.anyOf.length === 0) return refuse(`${path} declares an empty anyOf`)
+    return derivedValueOf(node.anyOf[0], propertyName, `${path}.anyOf[0]`)
+  }
+
+  const type = node.type
+  if (typeof type !== 'string') {
+    return refuse(`${path} declares no single type, so there is nothing to exemplify`)
+  }
+
+  switch (type) {
+    case 'string': {
+      if (typeof node.pattern === 'string') {
+        return refuse(
+          `${path} constrains its value with the regular expression /${node.pattern}/, and a `
+          + 'placeholder cannot be SHOWN to satisfy an arbitrary pattern — an example the shipped '
+          + 'contract would reject teaches a caller a shape this product does not have',
+        )
+      }
+      const placeholder = `<${propertyName.toUpperCase()}>`
+      const minLength = finiteNumber(node.minLength)
+      if (minLength !== undefined && placeholder.length < minLength) {
+        return refuse(
+          `${path} declares minLength ${minLength}; the ${placeholder.length}-character `
+          + `placeholder ${placeholder} would be refused by the contract that asked for it`,
+        )
+      }
+      const maxLength = finiteNumber(node.maxLength)
+      if (maxLength !== undefined && placeholder.length > maxLength) {
+        return refuse(
+          `${path} declares maxLength ${maxLength}; the ${placeholder.length}-character `
+          + `placeholder ${placeholder} does not fit`,
+        )
+      }
+      return { ok: true, value: placeholder }
+    }
+
+    case 'integer':
+    case 'number': {
+      let candidate = 0
+      const minimum = finiteNumber(node.minimum)
+      if (minimum !== undefined && candidate < minimum) candidate = minimum
+      const exclusiveMinimum = finiteNumber(node.exclusiveMinimum)
+      if (exclusiveMinimum !== undefined && candidate <= exclusiveMinimum) {
+        candidate = type === 'integer' ? Math.floor(exclusiveMinimum) + 1 : exclusiveMinimum + 1
+      }
+      if (type === 'integer' && !Number.isInteger(candidate)) {
+        return refuse(`${path} is an integer whose lower bound ${candidate} is not one`)
+      }
+      const maximum = finiteNumber(node.maximum)
+      if (maximum !== undefined && candidate > maximum) {
+        return refuse(`${path} declares maximum ${maximum}, below the ${candidate} its lower bounds force`)
+      }
+      const exclusiveMaximum = finiteNumber(node.exclusiveMaximum)
+      if (exclusiveMaximum !== undefined && candidate >= exclusiveMaximum) {
+        return refuse(
+          `${path} declares exclusiveMaximum ${exclusiveMaximum}, which the ${candidate} its `
+          + 'lower bounds force does not clear',
+        )
+      }
+      return { ok: true, value: candidate }
+    }
+
+    case 'boolean':
+      return { ok: true, value: false }
+
+    case 'null':
+      return { ok: true, value: null }
+
+    case 'array': {
+      // The empty array satisfies an array schema with no lower bound on its length, and it is an
+      // honest example: it shows the argument is a list. A schema that REQUIRES elements is
+      // refused rather than filled with a guess at what one looks like.
+      const minItems = finiteNumber(node.minItems)
+      if (minItems !== undefined && minItems > 0) {
+        return refuse(
+          `${path} declares minItems ${minItems}; deriving an element would mean guessing at a `
+          + 'value this derivation was not handed a schema for',
+        )
+      }
+      return { ok: true, value: [] }
+    }
+
+    case 'object': {
+      const required = Array.isArray(node.required) ? node.required : []
+      const properties = typeof node.properties === 'object' && node.properties !== null
+        ? node.properties as Record<string, unknown>
+        : {}
+      const derived: Record<string, unknown> = {}
+      for (const key of required) {
+        if (typeof key !== 'string') return refuse(`${path} requires a non-string property name`)
+        if (!(key in properties)) {
+          return refuse(`${path} requires "${key}" and declares no schema for it`)
+        }
+        const value = derivedValueOf(properties[key], key, `${path}.${key}`)
+        if (!value.ok) return value
+        derived[key] = value.value
+      }
+      return { ok: true, value: derived }
+    }
+
+    default:
+      return refuse(`${path} declares type "${type}", which this derivation has no rule for`)
+  }
+}
+
+/**
+ * The example-call fields of one op row, DERIVED from that op's params and nothing else (D-08).
+ *
+ * The absence arm mirrors {@link CATALOG_DOC_ABSENT_REASON}'s discipline one column over: an
+ * explicit, dated reason naming the construct, never a blank and never a guess. It is the honest
+ * answer for the four shipped ops whose ids carry a regular expression — and the census cell in
+ * `manifest.test.ts` pins that membership, so the arm cannot quietly widen into an escape hatch.
+ */
+export function catalogExampleCallOf(params: Record<string, unknown>, opId: string): {
+  readonly exampleCall: CatalogExampleCall | null
+  readonly exampleCallAbsentReason?: string
+} {
+  const derived = derivedValueOf(params, 'arguments', 'params')
+  if (!derived.ok) {
+    return {
+      exampleCall: null,
+      exampleCallAbsentReason:
+        `D-08 (dated 2026-08-17): no example call is derivable for ${opId} — ${derived.why}. The `
+        + 'explicit absence is the honest state; an example an agent copies and is refused for is '
+        + 'worse than a column that says there is none.',
+    }
+  }
+  if (typeof derived.value !== 'object' || derived.value === null || Array.isArray(derived.value)) {
+    return {
+      exampleCall: null,
+      exampleCallAbsentReason:
+        `D-08 (dated 2026-08-17): no example call is derivable for ${opId} — its params do not `
+        + 'project an object, so there is no argument set to show.',
+    }
+  }
+  return { exampleCall: { arguments: derived.value as Record<string, unknown> } }
+}
+
+// ---- The migration map projection (D-14) ---------------------------------------------------------
+
+/**
+ * One shipped map entry, as the catalog carries it.
+ *
+ * THIS SIGNATURE IS HALF OF THE ARM TIE, and it is deliberate rather than incidental: it takes the
+ * `mcp` package's own entry type and returns the `schema` package's DTO, so an arm minted in the
+ * map and absent from `CatalogMigrationArmSchema` does not COMPILE. The other half — an arm spelled
+ * in the DTO that the shipped map does not carry — is the census cell in `manifest.test.ts`. A
+ * second spelling held by neither side is the drift D-14 is about.
+ *
+ * VERBATIM, field for field. A projection free to re-word a `route` would be a second place the
+ * product answers a v1 caller, and the two would agree right up until somebody improved one.
+ */
+function catalogMigrationEntryOf(entry: V1ToolMigrationEntry): CatalogMigrationEntry {
+  return {
+    v1Name: entry.v1Name,
+    arm: entry.arm,
+    ...(entry.v2Tool === undefined ? {} : { v2Tool: entry.v2Tool }),
+    note: entry.note,
+    ...(entry.route === undefined ? {} : { route: entry.route }),
+    ...(entry.owner === undefined ? {} : { owner: entry.owner }),
+  }
+}
+
+/**
+ * The migration section, sorted by v1 name.
+ *
+ * SORTED HERE AND NOT IN THE SOURCE. The shipped map is in the inventory document's row order so
+ * the two can be read side by side; the committed artifact is byte-compared, so a source re-order
+ * that changed nothing must produce a zero-line diff here. Two orders, each right where it is.
+ */
+export function buildCatalogMigrationEntries(): readonly CatalogMigrationEntry[] {
+  const projected = V1_TOOL_MIGRATION_MAP.map(catalogMigrationEntryOf)
+  const seen = new Set<string>()
+  for (const entry of projected) {
+    if (seen.has(entry.v1Name)) {
+      throw new Error(
+        `the shipped migration map carries "${entry.v1Name}" twice — a duplicated v1 name would `
+        + 'project two answers for one call, and the both-directions census cannot see it because '
+        + 'the duplicate is on both sides',
+      )
+    }
+    seen.add(entry.v1Name)
+  }
+  return [...projected].sort((left, right) =>
+    left.v1Name < right.v1Name ? -1 : left.v1Name > right.v1Name ? 1 : 0)
 }
 
 // ---- The alias probe table (D-05) ----------------------------------------------------------------
@@ -360,6 +679,10 @@ function mcpFieldsOf(opId: string): {
 export function catalogOpRowOf(declaration: FunctionDeclaration): CatalogOpRow {
   const mcp = mcpFieldsOf(declaration.id)
   const doc = catalogDocFieldsOf(declaration.id)
+  const example = catalogExampleCallOf(
+    declaration.input as Record<string, unknown>,
+    declaration.id,
+  )
   return {
     kind: 'op',
     id: declaration.id,
@@ -376,6 +699,12 @@ export function catalogOpRowOf(declaration: FunctionDeclaration): CatalogOpRow {
     ...(doc.docAnchor === undefined ? {} : { docAnchor: doc.docAnchor }),
     ...(doc.docAbsentReason === undefined ? {} : { docAbsentReason: doc.docAbsentReason }),
     requiredScopes: [...declaration.requiredScopes].sort(),
+    // DERIVED FROM `declaration.input`, which is the same value `params` above carries — so the
+    // example and the contract it exemplifies are one document read twice, never two.
+    exampleCall: example.exampleCall,
+    ...(example.exampleCallAbsentReason === undefined
+      ? {}
+      : { exampleCallAbsentReason: example.exampleCallAbsentReason }),
   }
 }
 
@@ -593,11 +922,14 @@ export function capabilityCatalogOf(
   declarations: readonly FunctionDeclaration[],
 ): CapabilityCatalog {
   const rows = [...buildCatalogRows(declarations)]
+  const migrationMap = [...buildCatalogMigrationEntries()]
   return {
     $note: [...CATALOG_NOTE],
     rowCount: rows.length,
     rowsDigest: sha256hex(canonicalJson(rows)),
     rows,
+    migrationMap,
+    migrationCount: migrationMap.length,
   }
 }
 
