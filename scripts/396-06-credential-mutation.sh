@@ -52,7 +52,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUITE="src/__tests__/mcp-credential-surface.test.ts"
-LEGS_PY="$(mktemp -t 396credlegs).py"
 SELFTEST="${CREDENTIAL_MUTATION_SELFTEST:-}"
 
 subject_of() {
@@ -94,6 +93,18 @@ cross_of() {
 fatal() { echo "FATAL: $*" >&2; exit 1; }
 
 SNAP_DIR="$(mktemp -d)"
+# THE LEGS SCRIPT LIVES INSIDE THE SNAPSHOT DIRECTORY (2026-08-16, UAT item 3 · CR-04). This was
+# `LEGS_PY="$(mktemp -t 396credlegs).py"` at the top of the file, which has two defects in one
+# expression. `mktemp -t <prefix>` is a BSD idiom that GNU coreutils REFUSES ("too few X's in
+# template"), and under `set -euo pipefail` the assignment aborts the script — so this harness
+# could not run on the ubuntu CI runner at all. And appending `.py` names a path `mktemp` never
+# created: the exclusively-created file leaked, and the `.py` path was a predictable name in a
+# world-writable directory that a local attacker could pre-place as a symlink, through which this
+# script then writes executable Python and runs it. The directory above is made by ONE atomic
+# `mktemp -d`, is already removed by the cleanup below, and holds the snapshots — so putting the
+# generated script in it fixes both defects and adds no second thing to clean up.
+LEGS_PY="$SNAP_DIR/legs.py"
+
 
 snapshot() {
   local key="$1" file
@@ -122,7 +133,7 @@ restore_all() {
   for key in C1 C2 C3 C4 C5; do
     [[ -f "$SNAP_DIR/$key" ]] && cp "$SNAP_DIR/$key" "$(subject_of "$key")"
   done
-  rm -rf "$SNAP_DIR" "$LEGS_PY"
+  rm -rf "$SNAP_DIR"
 }
 trap restore_all EXIT
 
@@ -130,17 +141,22 @@ cat > "$LEGS_PY" <<'PYLEGS'
 import sys
 
 LEGS = {
-    # The success path stops masking entirely: both channels carry the raw serialization.
+    # BOTH RE-ANCHORED 2026-08-16 (UAT item 1). `masked-result.ts` used to serialize first and mask
+    # the SERIALIZED DOCUMENT, and both legs quoted lines from that shape. The escape-blindness of
+    # masking an escaped document with a literal-substring masker was CR-01; the module now masks the
+    # VALUE, so these legs sever the same two mechanisms where they now live.
+    #
+    # The success path stops masking entirely: both channels carry the raw value.
     "C1": (
-        "  const text = maskText(serialized)\n",
-        "  const text = serialized\n",
+        "  const masked = maskJsonDocument(output, maskText)\n",
+        "  const masked = maskJsonDocument(output, (text) => text)\n",
     ),
-    # THE SHIPPED DEFECT RESTORED: the object channel is parsed from the UNMASKED document while the
-    # text channel stays masked. This is what 396-06 measured on the wire, and the only leg that
+    # THE SHIPPED DEFECT RESTORED: the object channel is answered from the UNMASKED op output while
+    # the text channel stays masked. This is what 396-06 measured on the wire, and the only leg that
     # tells a corpus reading `structuredContent` from one reading `content` alone.
     "C2": (
-        "    structuredContent = JSON.parse(text)\n",
-        "    structuredContent = JSON.parse(serialized)\n",
+        "    structuredContent: masked.value as CallToolResult['structuredContent'],\n",
+        "    structuredContent: output as CallToolResult['structuredContent'],\n",
     ),
     # The error path stops masking — T-395-R5-10's own channel.
     "C3": (
@@ -244,7 +260,24 @@ apply_result_site="$(grep -c 'maskedToolResult(' "$APPLY" || true)"
 apply_masks="$(grep -c 'maskText(' "$APPLY" || true)"
 seed_calls="$(grep -c 'mcpTokenSecretStore(' "$MCP_CMD" || true)"
 env_seed="$(grep -c 'env: process.env' "$MCP_CMD" || true)"
-reparse="$(grep -c 'JSON.parse(text)' "$MASKED" || true)"
+# RE-STATED 2026-08-16 (UAT item 1). This used to be `grep -c 'JSON.parse(text)'`, pinning the shape
+# where the object channel was parsed back out of the MASKED DOCUMENT. That shape was CR-01: masking
+# an ESCAPED serialisation with a literal-substring masker cannot see a credential containing `"`,
+# `\` or a control character, and four such shapes reached callers verbatim on BOTH channels. The
+# property the grep defends is unchanged — ONE masking, two channels — so it now pins the two lines
+# that carry it, and a third grep forbids the defective shape itself anywhere in the package.
+one_masking="$(grep -c 'maskJsonDocument(output, maskText)' "$MASKED" || true)"
+structured_from_masked="$(grep -c 'structuredContent: masked.value' "$MASKED" || true)"
+text_from_masked="$(grep -c 'text: masked.text' "$MASKED" || true)"
+# CODE LINES ONLY. Both surviving mentions of the defective spelling are in comments that document
+# it — and a grep that cannot tell a defect from its own post-mortem is the "check that measured
+# nothing" class this family exists to catch, in the direction that cries wolf. The leading-`//`
+# and leading-`*` forms are excluded; `396-conformance.sh` keeps the same discipline at its own
+# `mktemp -t` mention. The doctored-subject proof for this grep is in the UAT note.
+# `|| true` inside the braces because ZERO MATCHES IS THE PASSING ANSWER here and `set -o pipefail`
+# takes the pipeline's status from the first failing member — a grep that finds nothing exits 1 and
+# would abort the script one line before it says so.
+escaped_mask="$({ grep -rE '^[[:space:]]*([^/*[:space:]].*)?maskText\(JSON\.stringify' "$ROOT/packages/mcp/src" || true; } | wc -l | tr -d ' ')"
 
 [[ "$raw_structured" == "0" ]] \
   || fatal "a handler sets structuredContent from the raw op output again ($raw_structured sites) — 396-06's defect"
@@ -255,9 +288,15 @@ reparse="$(grep -c 'JSON.parse(text)' "$MASKED" || true)"
   || fatal "the apply handler masks fewer channels than it composes ($apply_masks call sites)"
 [[ "$seed_calls" == "1" ]] || fatal "expected one declared-credential seeding site, saw $seed_calls"
 [[ "$env_seed" -ge "1" ]] || fatal "the masker is no longer seeded from the process environment"
-[[ "$reparse" == "1" ]] \
-  || fatal "the object channel is no longer parsed from the MASKED document ($reparse)"
+[[ "$one_masking" == "1" ]] \
+  || fatal "the tool result is no longer masked through one maskJsonDocument call ($one_masking)"
+[[ "$structured_from_masked" == "1" ]] \
+  || fatal "the object channel no longer comes from the masked value ($structured_from_masked)"
+[[ "$text_from_masked" == "1" ]] \
+  || fatal "the text channel no longer comes from the same masked value ($text_from_masked)"
+[[ "$escaped_mask" == "0" ]] \
+  || fatal "a masker is handed a JSON serialisation again ($escaped_mask sites) — CR-01's defect"
 
-echo "  raw-structured 0 · maskedToolResult 1+1 · apply-mask $apply_masks · declared-seed 1 · env-seed $env_seed · reparse 1"
+echo "  raw-structured 0 · maskedToolResult 1+1 · apply-mask $apply_masks · declared-seed 1 · env-seed $env_seed · one-masking 1 · escaped-mask 0"
 
 echo "OK — every masking channel torn separately, and each one's cells red."

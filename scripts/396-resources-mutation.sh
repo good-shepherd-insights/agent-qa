@@ -12,7 +12,7 @@
 #       answers about a test the caller never addressed.
 #   R2  a seventh template planted in the derived list — the "derived, never restated" claim.
 #   R3  the D-05 visibility gate removed, registering unconditionally.
-#   R4  maskText dropped from the contents text (T-396-07, the success channel).
+#   R4  the masker severed where the card is masked (T-396-07, the success channel).
 #   R5  the raw URI passed to the op as `ref` instead of the parsed canonical short-ID — the leg
 #       that makes the parse LOAD-BEARING rather than a check that runs before a string is
 #       forwarded untouched.
@@ -52,20 +52,41 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUBJECT="$ROOT/packages/mcp/src/resources.ts"
 SUITE="src/__tests__/resources.test.ts"
-SNAPSHOT="$(mktemp)"
-LEGS_PY="$(mktemp -t 396legs).py"
 SELFTEST="${RESOURCES_MUTATION_SELFTEST:-}"
 
 fatal() { echo "FATAL: $*" >&2; exit 1; }
 
+# THE SNAPSHOT IS POPULATED BEFORE THE TRAP IS ARMED (2026-08-16, UAT item 3 · CR-05). The order
+# used to be: `mktemp` (which creates an EMPTY file), arm `trap cleanup EXIT`, then check the
+# subject and copy. `cleanup` guarded on the snapshot EXISTING, and `mktemp` had already made it —
+# so any exit inside that window, including a Ctrl-C, copied a zero-byte file over `resources.ts`.
+# Populating first closes the window; the `-s` guard below closes it a second, independent way.
+[[ -f "$SUBJECT" ]] || fatal "subject not found: $SUBJECT"
+SNAPSHOT="$(mktemp)"
+cp "$SUBJECT" "$SNAPSHOT"
+SNAPSHOT_READY=1
+
+# PORTABLE, AND ATOMICALLY CREATED (2026-08-16, UAT item 3 · CR-04). This was
+# `LEGS_PY="$(mktemp -t 396legs).py"`, which has two defects in one expression. `mktemp -t
+# <prefix>` is a BSD idiom that GNU coreutils REFUSES ("too few X's in template"), and under
+# `set -euo pipefail` the assignment aborts the script — so this harness could not run on the
+# ubuntu CI runner at all. And appending `.py` names a path `mktemp` never created: the
+# exclusively-created file leaked, and the `.py` path was a predictable name in a world-writable
+# directory that a local attacker could pre-place as a symlink, through which this script then
+# writes executable Python and runs it. A directory made with one atomic call fixes both.
+# `396-conformance.sh` documents the same pitfall at its own `mktemp`; this is its form.
+LEGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/396reslegs.XXXXXXXX")"
+LEGS_PY="$LEGS_DIR/legs.py"
+
 cleanup() {
-  if [[ -f "$SNAPSHOT" ]]; then cp "$SNAPSHOT" "$SUBJECT"; rm -f "$SNAPSHOT"; fi
-  rm -f "$LEGS_PY"
+  # NON-EMPTY, not merely present: an empty snapshot is a snapshot that was never taken, and
+  # copying it over the subject is the truncation this ordering exists to prevent.
+  if [[ "${SNAPSHOT_READY:-0}" == "1" && -s "$SNAPSHOT" ]]; then cp "$SNAPSHOT" "$SUBJECT"; fi
+  rm -f "$SNAPSHOT"
+  rm -rf "$LEGS_DIR"
 }
 trap cleanup EXIT
 
-[[ -f "$SUBJECT" ]] || fatal "subject not found: $SUBJECT"
-cp "$SUBJECT" "$SNAPSHOT"
 PRISTINE_SHA="$(shasum -a 256 "$SNAPSHOT" | cut -d' ' -f1)"
 
 cat > "$LEGS_PY" <<'PYLEGS'
@@ -99,9 +120,15 @@ LEGS = {
         "  if (!visibleToCaller(declaration.requiredScopes, deps.caller.grantedScopes)) return []\n",
         "",
     ),
+    # RE-ANCHORED 2026-08-16 (UAT item 1): the subject line was
+    # `text: deps.maskText(JSON.stringify(card)),` — masking the ESCAPED serialisation, which is the
+    # CR-01 defect. The card is now masked as a VALUE through the shared `maskJsonDocument`, so this
+    # leg severs the masker where it is now passed rather than deleting a call that no longer exists.
+    # Handing the helper an identity function keeps every other byte of the handler intact, so the
+    # leg measures masking and nothing else.
     "R4": (
-        "          text: deps.maskText(JSON.stringify(card)),\n",
-        "          text: JSON.stringify(card),\n",
+        "    const masked = maskJsonDocument(card, deps.maskText)\n",
+        "    const masked = maskJsonDocument(card, (text) => text)\n",
     ),
     "R5": (
         "      card = await deps.invoke(ENTITIES_GET_OP_ID, { ref: parsed.shortId })\n",
@@ -139,7 +166,7 @@ restore() {
 
 run_leg() {
   local leg="$1" want_reds="$2" out status reds
-  python3 "$LEGS_PY" "$leg" "$SNAPSHOT" "$SUBJECT" "$SELFTEST" || fatal "$leg: $(true)"
+  python3 "$LEGS_PY" "$leg" "$SNAPSHOT" "$SUBJECT" "$SELFTEST" || fatal "$leg: anchor drift"
   out="$(cd "$ROOT/packages/mcp" && npx vitest run "$SUITE" 2>&1)" && status=0 || status=$?
   restore
   if [[ $status -eq 0 ]]; then

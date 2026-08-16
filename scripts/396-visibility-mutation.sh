@@ -70,7 +70,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUITE="src/__tests__/mcp-visibility-differential.test.ts"
-LEGS_PY="$(mktemp -t 396vislegs).py"
 SELFTEST="${VISIBILITY_MUTATION_SELFTEST:-}"
 
 # Per-leg metadata as CASE LOOKUPS rather than associative arrays: macOS ships bash 3.2, where
@@ -111,6 +110,18 @@ cross_of() {
 fatal() { echo "FATAL: $*" >&2; exit 1; }
 
 SNAP_DIR="$(mktemp -d)"
+# THE LEGS SCRIPT LIVES INSIDE THE SNAPSHOT DIRECTORY (2026-08-16, UAT item 3 · CR-04). This was
+# `LEGS_PY="$(mktemp -t 396vislegs).py"` at the top of the file, which has two defects in one
+# expression. `mktemp -t <prefix>` is a BSD idiom that GNU coreutils REFUSES ("too few X's in
+# template"), and under `set -euo pipefail` the assignment aborts the script — so this harness
+# could not run on the ubuntu CI runner at all. And appending `.py` names a path `mktemp` never
+# created: the exclusively-created file leaked, and the `.py` path was a predictable name in a
+# world-writable directory that a local attacker could pre-place as a symlink, through which this
+# script then writes executable Python and runs it. The directory above is made by ONE atomic
+# `mktemp -d`, is already removed by the cleanup below, and holds the snapshots — so putting the
+# generated script in it fixes both defects and adds no second thing to clean up.
+LEGS_PY="$SNAP_DIR/legs.py"
+
 
 snapshot() {
   local key="$1" file
@@ -139,7 +150,7 @@ restore_all() {
   for key in W1 W2 K1 K2; do
     [[ -f "$SNAP_DIR/$key" ]] && cp "$SNAP_DIR/$key" "$(subject_of "$key")"
   done
-  rm -rf "$SNAP_DIR" "$LEGS_PY"
+  rm -rf "$SNAP_DIR"
 }
 trap restore_all EXIT
 

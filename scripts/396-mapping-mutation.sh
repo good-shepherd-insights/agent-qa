@@ -52,20 +52,41 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUBJECT="$ROOT/packages/mcp/src/mapping.ts"
 SUITE="src/__tests__/mapping-bump-guard.test.ts"
-SNAPSHOT="$(mktemp)"
-LEGS_PY="$(mktemp -t 396maplegs).py"
 SELFTEST="${MAPPING_MUTATION_SELFTEST:-}"
 
 fatal() { echo "FATAL: $*" >&2; exit 1; }
 
+# THE SNAPSHOT IS POPULATED BEFORE THE TRAP IS ARMED (2026-08-16, UAT item 3 · CR-05). The order
+# used to be: `mktemp` (which creates an EMPTY file), arm `trap cleanup EXIT`, then check the
+# subject and copy. `cleanup` guarded on the snapshot EXISTING, and `mktemp` had already made it —
+# so any exit inside that window, including a Ctrl-C, copied a zero-byte file over `mapping.ts`.
+# Populating first closes the window; the `-s` guard below closes it a second, independent way.
+[[ -f "$SUBJECT" ]] || fatal "subject not found: $SUBJECT"
+SNAPSHOT="$(mktemp)"
+cp "$SUBJECT" "$SNAPSHOT"
+SNAPSHOT_READY=1
+
+# PORTABLE, AND ATOMICALLY CREATED (2026-08-16, UAT item 3 · CR-04). This was
+# `LEGS_PY="$(mktemp -t 396maplegs).py"`, which has two defects in one expression. `mktemp -t
+# <prefix>` is a BSD idiom that GNU coreutils REFUSES ("too few X's in template"), and under
+# `set -euo pipefail` the assignment aborts the script — so this harness could not run on the
+# ubuntu CI runner at all. And appending `.py` names a path `mktemp` never created: the
+# exclusively-created file leaked, and the `.py` path was a predictable name in a world-writable
+# directory that a local attacker could pre-place as a symlink, through which this script then
+# writes executable Python and runs it. A directory made with one atomic call fixes both.
+# `396-conformance.sh` documents the same pitfall at its own `mktemp`; this is its form.
+LEGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/396maplegs.XXXXXXXX")"
+LEGS_PY="$LEGS_DIR/legs.py"
+
 cleanup() {
-  if [[ -f "$SNAPSHOT" ]]; then cp "$SNAPSHOT" "$SUBJECT"; rm -f "$SNAPSHOT"; fi
-  rm -f "$LEGS_PY"
+  # NON-EMPTY, not merely present: an empty snapshot is a snapshot that was never taken, and
+  # copying it over the subject is the truncation this ordering exists to prevent.
+  if [[ "${SNAPSHOT_READY:-0}" == "1" && -s "$SNAPSHOT" ]]; then cp "$SNAPSHOT" "$SUBJECT"; fi
+  rm -f "$SNAPSHOT"
+  rm -rf "$LEGS_DIR"
 }
 trap cleanup EXIT
 
-[[ -f "$SUBJECT" ]] || fatal "subject not found: $SUBJECT"
-cp "$SUBJECT" "$SNAPSHOT"
 PRISTINE_SHA="$(shasum -a 256 "$SNAPSHOT" | cut -d' ' -f1)"
 
 cat > "$LEGS_PY" <<'PYLEGS'
