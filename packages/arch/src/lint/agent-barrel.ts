@@ -166,6 +166,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'ConfigProposalNotApplicableError',
   'DuplicateFunctionIdError',
   'DuplicateJobKindError',
+  // 398 D-09: `explain`'s id, on the exact footing of every `*_FUNCTION_ID` elsewhere in this list — a name a caller
+  // puts on the wire, never a dispatch handle. In SORT position: this list is compared against the
+  // barrel's sorted export set by exact positional equality.
+  'EXPLAIN_FUNCTION_ID',
   'EntityNotFoundError',
   'FunctionDeniedError',
   'FunctionInputError',
@@ -524,6 +528,12 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // which is exactly the widening this exact-equality pin exists to make a visible edit.
   'CallerMint',
   'CancelJobInput',
+  // 398 D-09/D-11: the seat a composition root fills to bind `agent.explain` — the catalog as data,
+  // the model's citation over it, and the two coverage hooks. A TYPE, so nothing crossing here can
+  // read a file or reach a model; what a host receives is the obligation, not a capability. Pinned
+  // so a fifth method — or a `citeCapabilities` that could answer a command string — is a visible
+  // edit to this list rather than a quiet widening of the one seam D-10's no-invention law rests on.
+  'CapabilityCatalogPort',
   // 388 plan 01. `ChainJobIds` is what the derivation above answers with; `ChainTerminalRecord`
   // is the optional argument the two terminal store verbs now accept, and `PostRunJobCapabilities`
   // is what a composition root implements to make analyze-run and curate-memory REAL rather than
@@ -689,6 +699,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'DraftShelfPortLike',
   'DraftStageOutcome',
   'EntityDirectoryPort',
+  // 398 D-11: the coverage record a host appends to the local log. A TYPE, and the SHAPE is the
+  // feature: a verbatim query and the deterministic closest set, and nothing that could carry it to
+  // a network sink. Pinned beside the port because a record gaining a destination field would be
+  // the free-text egress D-14 forbids, arriving as an ordinary-looking widening.
+  'ExplainAbstentionRecord',
   'FallbackContinuationInput',
   'FallbackContinuationProducer',
   'FunctionBindingStatus',

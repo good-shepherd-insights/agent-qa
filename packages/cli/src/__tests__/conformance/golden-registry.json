@@ -30,7 +30,7 @@
       }
     },
     {
-      "bindingStatusAtRoot": "unbound",
+      "bindingStatusAtRoot": "bound",
       "id": "agent.explain",
       "inputSchemaDigest": "3169adbc23aa82b15b5afa7e561ce900346fad48d88469a6ffc4e5279f5cce1e",
       "outputSchemaDigest": "aab03329c1e8662651224ab1d8a8ecf3e9409a03758c70011ce6d9d380743692",

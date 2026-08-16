@@ -41,6 +41,7 @@ import {
 import type {
   AgentJobQueue,
   AuthoringFunnelPortLike,
+  CapabilityCatalogPort,
   ChatConfigState,
   ChatDirectiveHandlers,
   ChatLanguageModel,
@@ -1503,6 +1504,22 @@ export interface ComposeLocalAgentInput {
    */
   readonly scaffoldContent?: ConfigScaffoldContentPortLike
   /**
+   * 2026-08-17 (398 D-09 / D-11 · XPLN-02): the four host halves `agent.explain` needs — the
+   * committed capability catalog as data, the model's citation over it, and the two coverage hooks.
+   *
+   * Host-supplied for the reason `scaffoldContent` is, and the boundary is harder here rather than
+   * softer: the artifact is read by `loadCapabilityCatalog` in `packages/cli`, which walks the
+   * package root and touches `fs`, and this package is host-neutral. The citation call needs the
+   * model the chat host already composed through `createModel`, which is a resolution neither this
+   * package nor `packages/agent` may perform. The coverage append is a file write.
+   *
+   * OPTIONAL, and the absence is the report. A composition that omits it lists `agent.explain`
+   * `unbound` BY NAME rather than degrading to a model-only answer — which is the one behaviour
+   * XPLN-02 exists to forbid, and the one that would be hardest to notice, because an explain
+   * answering from model memory still sounds exactly like an explain.
+   */
+  readonly capabilityCatalog?: CapabilityCatalogPort
+  /**
    * 395-04 D-09 · CFGM-02: where the construction scan's seed values come from.
    *
    * THE SOURCES AND NOT A LIST OF STRINGS, so `seedMaskingContext` — the SAME function the run
@@ -2678,6 +2695,15 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // renders the explicit no-history clause; neither is a refusal (plan 05's law).
       analysis: createAnalysisArtifactReader(input.agentQaRoot),
       recurrence: recurrence.provider,
+      // 398 D-09 (dated 2026-08-17): the catalog port `agent.explain` binds through, handed
+      // straight through from the host. Conditionally spread rather than assigned, on the
+      // `runInvocation` precedent: an absent port must be an ABSENT field and not a present
+      // `undefined` one, because the registry reads exactly this record to decide what the
+      // capability LISTS as — so the declaration and the dispatch cannot disagree about whether
+      // this composition can explain itself (D-16).
+      ...(input.capabilityCatalog === undefined
+        ? {}
+        : { capabilityCatalog: input.capabilityCatalog }),
       // 390 D-12/D-13: the three quarantine verbs, bound HERE and therefore on BOTH hosts —
       // the CLI tail and 386's daemon compose the same root, which is the whole point of
       // 385 D-15 (a second binding site is a second answer to "what is quarantined").

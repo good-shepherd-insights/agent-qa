@@ -139,6 +139,7 @@ import {
 import { listTargets, resolveTarget } from '../targets.js'
 import { invokeViaDaemon } from '../daemon/client.js'
 import { resolveCliAnalysisTokenBudget, resolveCliJobModel } from '../llm-utils.js'
+import { createCliCapabilityCatalogPort } from '../capability-catalog/explain-port.js'
 import { buildConfigVisibilityOracle } from './config-visibility.js'
 import { buildMaskedResolvedConfig } from './masked-config.js'
 
@@ -3392,6 +3393,27 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // filesystem and no repository — it is a pure render of the one producer `agent-qa init` writes
     // from — so there is no host posture in which a CLI has it unavailable.
     scaffoldContent: createScaffoldContentPort(),
+    // 398 D-09/D-11 · XPLN-02: the catalog port `agent.explain` binds through, constructed HERE
+    // and bound unconditionally — a CLI always ships beside the committed capability catalog, so
+    // there is no CLI posture in which the capability is genuinely unavailable. Binding it here is
+    // what puts `agent.explain` in every cli-hosted composition at once (385 D-15): the REPL, the
+    // conformance census caller and the daemon reach one implementation, so "what can you do" has
+    // one answer rather than one per surface.
+    //
+    // THE MODEL IS THE ONE THE CHAT HOST ALREADY RESOLVED, handed through rather than resolved
+    // again — CHAT-06's rule, which is why the field is spread from `input.chatModel` instead of
+    // calling a resolver. A second construction site would be a model call that skipped the
+    // masking middleware and the profile resolution `createModel` owns. Its absence is a real
+    // posture and not an unconfigured one: a project with no usable LLM configuration composes a
+    // host whose explain cannot cite, so it abstains and SAYS SO, which is the honest answer.
+    //
+    // The counter hooks are deliberately unbound at this commit. Plan 10 wires them to the
+    // analytics port; until then a counter nobody collects is not an error, and a stubbed one
+    // would be a number this host invented.
+    capabilityCatalog: createCliCapabilityCatalogPort({
+      agentQaRoot: input.agentQaRoot,
+      ...(input.chatModel === undefined ? {} : { model: input.chatModel }),
+    }),
     // 395-04 D-09 · CFGM-02: the construction scan's seeds, supplied by the HOST because the
     // environment is a host fact — `composeLocalAgent` is host-neutral and its own D-16 artifact
     // guard reds on a `process.env` read in that package.

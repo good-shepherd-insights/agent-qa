@@ -127,6 +127,20 @@ export { QUARANTINE_RELEASE_FUNCTION_ID } from './functions/ops/quarantine-relea
 // comparing against a string it spelled itself.
 export { AGENT_ASK_FUNCTION_ID } from './functions/ops/agent-ask.js'
 export { PROPOSALS_LIST_FUNCTION_ID } from './functions/ops/proposals-list.js'
+// 398 D-09/D-11: `explain`'s id, and the PORT TYPE a composition root must implement to bind it.
+//
+// The id is on the footing of every constant above — a name a caller puts on the wire. It is
+// published because the conformance differentials and the chat routing assertions must break when
+// this op is renamed, and a test comparing against a string it spelled itself cannot.
+//
+// The port and its record are TYPES, and what they describe is a SEAT A COMPOSITION FILLS. That is
+// the whole reason they belong here and the renderer, the scorer and the abstention templates do
+// not: publishing `renderExplainOutput` would hand a surface a second way to compose an explain
+// answer, which is the private power this layer abolishes. A host that can only IMPLEMENT the port
+// gets nothing it could run — every character a person reads is still quoted out of a catalog row
+// by code this barrel does not expose.
+export { EXPLAIN_FUNCTION_ID } from './functions/ops/explain.js'
+export type { CapabilityCatalogPort, ExplainAbstentionRecord } from './explain/index.js'
 // 393 D-01/D-02: the keep-gate evaluator's id, and the id of the sibling op its gate-runs go
 // through. Both on exactly the footing of every constant above — a name a caller puts on the wire,
 // never a dispatch handle.
