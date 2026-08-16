@@ -145,6 +145,20 @@ export {
   sweepEntityIndexProjection,
   UNCLAIMABLE_BY_PROSE_POSTURE,
 } from './composition/compose-local-agent.js'
+
+// 2026-08-16 (Phase 397 plan 01, D-03): the two callers the chat surface's stages run under, and the
+// scope set behind them. Published because 397's parity suite enumerates what the chat surface can
+// REACH, and the planner's vocabulary is whatever the registry lists to the planner's own caller —
+// so a suite that could not name that caller would have to spell an equivalent one, which is the
+// second catalogue this phase exists to make impossible. None of the three is a power: two frozen
+// caller records and a frozen scope list, carrying no dispatch and no host reach, and the layer
+// re-checks a caller's grants at the gate no matter who assembled the record.
+export {
+  CHAT_PLANNER_CALLER,
+  CHAT_RESOLVER_CALLER,
+  CHAT_STAGE_SCOPES,
+} from './composition/compose-local-agent.js'
+
 export type {
   ApplyDelegate,
   ApplyReviewResult,
