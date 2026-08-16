@@ -11,6 +11,8 @@
 
 import { PostHog } from 'posthog-node'
 import type { PostHogOptions } from 'posthog-node'
+import { maskEventForSend } from './masking-seam.js'
+import type { AnalyticsMaskingContext } from './masking-seam.js'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from './port.js'
 
 /**
@@ -62,14 +64,24 @@ export interface PosthogTransportOptions {
    * difference between measuring the product and measuring the fixture.
    */
   readonly fetch?: PostHogOptions['fetch']
+  /**
+   * The seeded masking context the send seam applies (D-19, plan 06).
+   *
+   * Absent means no masking, and that is the honest default rather than a hole: the closed union
+   * already makes a free-text field unrepresentable, so masking here is depth behind that wall, and
+   * a context nobody seeded would mask nothing anyway. The composition root binds the real one.
+   */
+  readonly maskingContext?: AnalyticsMaskingContext
   /** An already-constructed client, for tests that need to observe construction itself. */
   readonly client?: PosthogAnalyticsClient
 }
 
 class PosthogTransport implements AnalyticsTransport {
   private readonly client: PosthogAnalyticsClient
+  private readonly maskingContext: AnalyticsMaskingContext | undefined
 
   constructor(options: PosthogTransportOptions) {
+    this.maskingContext = options.maskingContext
     this.client = options.client ?? new PostHog(options.projectKey, {
       host: options.host,
       disableGeoip: options.disableGeoip ?? false,
@@ -77,15 +89,24 @@ class PosthogTransport implements AnalyticsTransport {
     })
   }
 
+  /**
+   * THE SEND CHOKE POINT. Masking is the first thing that happens here and it happens exactly once
+   * (a cell counts the call sites in shipped source and refuses any number but one).
+   *
+   * `flush`/`shutdown` are not second seams: everything they drain arrived through this method, so
+   * masking here ranges the whole queue. `$set` is stamped AFTER the mask because its only content
+   * is a boolean this file writes — there is no caller string in it to mask.
+   */
   capture(payload: AnalyticsCapturePayload): void {
-    const properties: Record<string, unknown> = { ...payload.event.properties }
-    if (payload.isInternal === true) {
+    const masked = maskEventForSend(payload, this.maskingContext)
+    const properties: Record<string, unknown> = { ...masked.event.properties }
+    if (masked.isInternal === true) {
       properties.$set = { is_internal: true }
     }
 
     this.client.capture({
-      distinctId: payload.distinctId,
-      event: payload.event.name,
+      distinctId: masked.distinctId,
+      event: masked.event.name,
       properties,
     })
   }

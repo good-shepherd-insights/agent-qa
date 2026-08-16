@@ -24,16 +24,14 @@
 // The socket arm deliberately talks to `127.0.0.1` and nothing else: a wall test that needs the
 // internet to prove itself is a wall test that fails in CI for reasons unrelated to the wall.
 
-import { createServer, type Server } from 'node:http'
 import net from 'node:net'
-import type { AddressInfo } from 'node:net'
-import { gunzipSync } from 'node:zlib'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher, type Dispatcher } from 'undici'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { composeAnalytics } from '../compose.js'
 import { AgentQaAnalyticsEventSchema, ANALYTICS_MCP_TOOL_NAMES } from '../events.js'
 import { createPosthogTransport } from '../transports.js'
+import { readOutgoingBody, startWireSink, type WireSink } from './wire-sink.js'
 import type { ComposeAnalyticsOptions } from '../compose.js'
 import type { AgentQaAnalyticsEvent } from '../events.js'
 
@@ -197,26 +195,14 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
   // -------------------------------------------------------------------------------------------
 
   describe('socket layer (net.Socket.prototype.connect, real local server)', () => {
-    let server: Server
-    let origin: string
-    let requestCount: number
+    let sink: WireSink
 
     beforeEach(async () => {
-      requestCount = 0
-      server = createServer((req, res) => {
-        requestCount += 1
-        req.resume()
-        req.on('end', () => {
-          res.writeHead(200, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ status: 1 }))
-        })
-      })
-      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-      origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+      sink = await startWireSink()
     })
 
     afterEach(async () => {
-      await new Promise<void>((resolve) => server.close(() => resolve()))
+      await sink.close()
     })
 
     interface SocketArm {
@@ -228,13 +214,13 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
       // NO MockAgent here on purpose. This arm runs on the real global dispatcher so a real socket
       // is opened to a real listener — which is what makes the spy's zero on the other arm mean
       // "nothing was dialled" rather than "something intercepted it first".
-      const before = requestCount
+      const before = sink.requests.length
       const socketSpy = vi.spyOn(net.Socket.prototype, 'connect')
       try {
-        await driveEmitAndFlush({ env, projectKey: PROJECT_KEY, projectHost: origin })
+        await driveEmitAndFlush({ env, projectKey: PROJECT_KEY, projectHost: sink.origin })
         return {
           socketConnects: socketSpy.mock.calls.length,
-          serverRequests: requestCount - before,
+          serverRequests: sink.requests.length - before,
         }
       } finally {
         socketSpy.mockRestore()
@@ -251,15 +237,15 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
 
     it('the config privacy flag walls the socket exactly as DO_NOT_TRACK does', async () => {
       const socketSpy = vi.spyOn(net.Socket.prototype, 'connect')
-      const before = requestCount
+      const before = sink.requests.length
       await driveEmitAndFlush({
         env: {},
         config: { analytics: { privacy: true } },
         projectKey: PROJECT_KEY,
-        projectHost: origin,
+        projectHost: sink.origin,
       })
       const optedOutConnects = socketSpy.mock.calls.length
-      const optedOutRequests = requestCount - before
+      const optedOutRequests = sink.requests.length - before
       socketSpy.mockRestore()
 
       const optedIn = await runArm({})
@@ -272,18 +258,18 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
     // has to be true.
     it('DO_NOT_TRACK=0 beside config privacy still dials nothing (deny wins)', async () => {
       const socketSpy = vi.spyOn(net.Socket.prototype, 'connect')
-      const before = requestCount
+      const before = sink.requests.length
       await driveEmitAndFlush({
         env: { DO_NOT_TRACK: '0' },
         config: { analytics: { privacy: true } },
         projectKey: PROJECT_KEY,
-        projectHost: origin,
+        projectHost: sink.origin,
       })
       const connects = socketSpy.mock.calls.length
       socketSpy.mockRestore()
 
       expect(connects).toBe(0)
-      expect(requestCount - before).toBe(0)
+      expect(sink.requests.length - before).toBe(0)
     })
   })
 
@@ -314,7 +300,7 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
             createPosthogTransport({
               ...transportOptions,
               fetch: async (url: string, init: { body?: unknown }) => {
-                calls.push({ url, body: await readSinkBody(init.body) })
+                calls.push({ url, body: await readOutgoingBody(init.body) })
                 return new Response(JSON.stringify({ status: 1 }), {
                   status: 200,
                   headers: { 'content-type': 'application/json' },
@@ -344,25 +330,3 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
     })
   })
 })
-
-/**
- * The bytes as posthog-node hands them to `fetch`: a gzip `Blob` by default, a JSON string when
- * compression is unavailable. Read as bytes and decompressed, never read off the event object —
- * the point of a wire assertion is that it is made on what leaves.
- */
-export async function readSinkBody(body: unknown): Promise<string> {
-  if (typeof body === 'string') return body
-  if (body instanceof Blob) {
-    const bytes = Buffer.from(await body.arrayBuffer())
-    return isGzip(bytes) ? gunzipSync(bytes).toString('utf8') : bytes.toString('utf8')
-  }
-  if (body instanceof Uint8Array) {
-    const bytes = Buffer.from(body)
-    return isGzip(bytes) ? gunzipSync(bytes).toString('utf8') : bytes.toString('utf8')
-  }
-  return String(body ?? '')
-}
-
-function isGzip(bytes: Buffer): boolean {
-  return bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b
-}

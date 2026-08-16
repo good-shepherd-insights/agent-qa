@@ -28,6 +28,7 @@
 import { createAnalyticsPort, resolveAnonymousIdentity } from './port.js'
 import { createPosthogTransport, NoopTransport } from './transports.js'
 import { AGENT_QA_POSTHOG_HOST, AGENT_QA_POSTHOG_KEY } from './posthog-project.js'
+import type { AnalyticsMaskingContext } from './masking-seam.js'
 import type {
   AnalyticsEventEnvelope,
   AnalyticsIdentityResolver,
@@ -53,6 +54,13 @@ export interface ComposeAnalyticsOptions {
   readonly identity?: AnalyticsIdentityResolver
   readonly projectKey?: string
   readonly projectHost?: string
+  /**
+   * The seeded masking context the send seam applies (D-19, plan 06).
+   *
+   * It reaches only the opted-IN arm, and that is not a gap: the deny arm's transport sends nothing
+   * at all, so there is no payload for a seam to stand in front of.
+   */
+  readonly maskingContext?: AnalyticsMaskingContext
   /** Replaces the transport on the OPTED-IN arm only. Never consulted once the answer is deny. */
   readonly transportOverride?: AnalyticsTransport
   /** Replaces the PostHog transport CONSTRUCTOR, so a cell can observe whether it was called. */
@@ -146,6 +154,7 @@ function enabledTransport(options: ComposeAnalyticsOptions): {
       projectKey,
       host: options.projectHost ?? AGENT_QA_POSTHOG_HOST,
       disableGeoip: false,
+      ...(options.maskingContext ? { maskingContext: options.maskingContext } : {}),
     }),
     transportKind: 'posthog',
   }

@@ -54,6 +54,7 @@
   "dependencies": {
     "@vostride/agent-qa-ids": "workspace:*",
     "@vostride/agent-qa-mcp": "workspace:*",
+    "@vostride/agent-qa-safety": "workspace:*",
     "posthog-node": "5.33.2",
     "zod": "4.4.2"
   },

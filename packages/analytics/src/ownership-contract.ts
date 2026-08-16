@@ -66,11 +66,17 @@ export const AGENT_QA_ANALYTICS_EXTERNAL_DEPENDENCIES = [
 // and nothing would say so.
 //
 // This list is checked against the package's REAL imports, so an entry added in anticipation of a
-// later plan is an offender rather than a placeholder. `@vostride/agent-qa-safety` therefore
-// arrives with the masking seam in plan 06, not here.
+// later plan is an offender rather than a placeholder.
+//
+// 2026-08-17 (Phase 398 plan 06, D-19). `safety` arrives here with the send seam, exactly as plan 03
+// said it would. It supplies `createMaskingContext` and `seedMaskingContext` — the SAME two
+// functions the run masking context is built from, not a copy. That direction is the whole point:
+// a masking vocabulary written inside this package would be a second answer to "what is a secret",
+// living in the package least likely to be updated when the first answer changes.
 export const AGENT_QA_ANALYTICS_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-ids',
   '@vostride/agent-qa-mcp',
+  '@vostride/agent-qa-safety',
 ] as const
 
 export const AGENT_QA_ANALYTICS_OWNERSHIP_CONTRACT = {
