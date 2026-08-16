@@ -18,25 +18,31 @@
 // than about a fresh one that might differ — which would make a disagreement between two cells
 // unattributable.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { invokeFunction, CHAT_RESOLVER_TABLE } from '@vostride/agent-qa-agent'
-import { CHAT_STAGE_SCOPES } from '@vostride/agent-qa-agent-local'
+import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
+import {
+  CHAT_PLANNER_CALLER,
+  CHAT_RESOLVER_CALLER,
+  CHAT_STAGE_SCOPES,
+} from '@vostride/agent-qa-agent-local'
 import {
   AGENT_QA_OP_CONTRACTS,
   AGENT_QA_TOOL_PROJECTIONS,
   UNPROJECTED_OPS,
 } from '@vostride/agent-qa-mcp'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import { committedFileText, FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
-import { MCP_DEFAULT_GRANTED_SCOPES } from '../../commands/mcp.js'
+import { MCP_DEFAULT_GRANTED_SCOPES, mcpFunctionCaller } from '../../commands/mcp.js'
 import {
   CHAT_RESOLVER_PROBES,
   chatEnumerationOf,
+  CONFORMANCE_CENSUS_CALLER,
   conformanceRegistry,
   enumerateMcpOpIds,
   expandMcpListedTools,
@@ -62,6 +68,24 @@ import {
   surfaceShapedCallers,
   type RiskClassifiable,
 } from './policy-fixtures.js'
+import {
+  buildGoldenRows,
+  emitGoldenText,
+  GOLDEN_FILE_NAME,
+  GOLDEN_PATH,
+  GOLDEN_REGEN_INSTRUCTION,
+  GOLDEN_REGEN_SCRIPT,
+  goldenEmitRequested,
+  goldenFieldsThatMoved,
+  goldenFileOf,
+  goldenFileText,
+  goldenFindings,
+  goldenPartitionOf,
+  unaccountedGoldenFields,
+  withGoldenRootRegistry,
+  type GoldenFile,
+  type GoldenRow,
+} from './golden.js'
 import { SURFACE_ROSTER } from './roster.js'
 import {
   driveChatDispatch,
@@ -118,9 +142,30 @@ const SYNTHETIC_LOCAL_OP_ID = 'fn:control.local.397.03'
  */
 const SYNTHETIC_DRIVER_ABSENT_OP_ID = 'control.absent.397.04'
 
+/**
+ * Plan 06's own synthetic fixtures, named for the plan that plants them.
+ *
+ * Same rule the three blocks above follow: 397-09's mutation script tells a plan's deliberate
+ * fixtures from the strays it plants by NAME, so nothing here reuses another plan's constant.
+ */
+const SYNTHETIC_GOLDEN_STRAY_OP_ID = 'control.golden.stray.397.06'
+const SYNTHETIC_GOLDEN_UNCATALOGUED_OP_ID = 'control.golden.uncatalogued.397.06'
+const SYNTHETIC_GOLDEN_STRAY_FIELD = 'controlGoldenField39706'
+
 const enumerations = new Map<string, SurfaceEnumeration>()
 let censusIds: readonly string[] = []
 let censusIdSet: ReadonlySet<string> = new Set()
+
+/**
+ * The composition root's own listing, and each surface host's, taken from ONE composition (D-08).
+ *
+ * ONE COMPOSITION FOR ALL FOUR READS, because the question these cells ask is whether the root and
+ * a host that runs over it can disagree — and four separately composed hosts would make a
+ * disagreement unattributable to anything but the composing. The listings are inert frozen data, so
+ * they outlive the host they were taken from without carrying a handle on it.
+ */
+let rootDeclarations: readonly FunctionDeclaration[] = []
+const rootHostListings = new Map<string, readonly FunctionDeclaration[]>()
 
 beforeAll(async () => {
   censusIds = registryOpIds()
@@ -128,6 +173,22 @@ beforeAll(async () => {
   for (const entry of SURFACE_ROSTER) {
     enumerations.set(entry.id, await entry.adapter.enumerateOpIds())
   }
+  await withGoldenRootRegistry((registry) => {
+    rootDeclarations = registry.list(CONFORMANCE_CENSUS_CALLER)
+    // The callers each shipped surface host actually lists under — the chat host's two stage mints
+    // (392) and the MCP host's two grants (396's default, which withholds `config-write`, and the
+    // every-scope grant an operator can start the server with). Read off the SAME registry object
+    // the shipped commands hand their surface, which is what makes a disagreement here a fact about
+    // the product rather than about this file's assembly.
+    rootHostListings.set('chat:planner', registry.list(CHAT_PLANNER_CALLER))
+    rootHostListings.set('chat:resolver', registry.list(CHAT_RESOLVER_CALLER))
+    rootHostListings.set('mcp:every-scope', registry.list(mcpFunctionCaller([
+      ...FunctionScopeSchema.options,
+    ])))
+    rootHostListings.set('mcp:default-grant', registry.list(mcpFunctionCaller(
+      MCP_DEFAULT_GRANTED_SCOPES,
+    )))
+  })
 })
 
 /** The enumeration for one roster id, or a failure that says which surface never produced one. */
@@ -143,13 +204,18 @@ const sorted = (ids: Iterable<string>): readonly string[] => [...ids].sort()
 /** This directory, so a source assertion reads the file it names rather than a path it guessed. */
 const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url))
 
-/** A source file with its comments removed, so a header may name what its body must not contain. */
-function commentStrippedSource(fileName: string): string {
-  return readFileSync(join(CONFORMANCE_DIR, fileName), 'utf8')
+/** A source file at an absolute path, with its comments removed. */
+function commentStrippedFile(path: string): string {
+  return readFileSync(path, 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
     .filter((line) => !line.trimStart().startsWith('//'))
     .join('\n')
+}
+
+/** A source file with its comments removed, so a header may name what its body must not contain. */
+function commentStrippedSource(fileName: string): string {
+  return commentStrippedFile(join(CONFORMANCE_DIR, fileName))
 }
 
 // ---- The gate wall (Phase 397 plan 04, D-11) ---------------------------------------------------
@@ -1429,5 +1495,362 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // The context is injected there too, on policy-fixtures.ts's rule (Pitfall 3).
     expect(code, 'surface-dispatch.ts must inject the execution context it decides under')
       .toContain('setActiveExecutionContextResolver')
+  })
+
+  // ---- The golden capability ledger (plan 06 — FUNC-05 leg 6, D-05/D-06/D-07/D-08) --------------
+  //
+  // WHAT THIS SECTION ADDS THAT NOTHING ABOVE HAS. Every leg above is a statement about the tree as
+  // it stands: what is reachable, what refuses, what agrees. All of them stay green while a scope is
+  // widened, a risk tier is lowered or a capability is moved out of the MCP partition, because each
+  // of those leaves a self-consistent tree. The ledger is the one artifact that compares the product
+  // against its own past, and the comparison is readable: one line per field per capability.
+
+  it('matches the committed golden registry, op by op and field by field', () => {
+    // A MISSING LEDGER IS A RED, NEVER A SKIP. Until the file is minted this is the only cell in the
+    // directory that fails, and it fails saying exactly what to do about it.
+    expect(
+      existsSync(GOLDEN_PATH),
+      `the committed capability ledger ${GOLDEN_FILE_NAME} does not exist — ${GOLDEN_REGEN_INSTRUCTION}`,
+    ).toBe(true)
+
+    const committedText = readFileSync(GOLDEN_PATH, 'utf8')
+    const committed = JSON.parse(committedText) as GoldenFile
+    const live = goldenFileOf(rootDeclarations)
+
+    // Non-vacuity first: a comparison over zero rows passes for the wrong reason, and this cell is
+    // the one most able to. The census leg above owns the registry ≡ scenario-table equality; the
+    // ledger joins that same denominator rather than starting a third.
+    expect(live.rows.length, 'the ledger was minted over no capabilities at all').toBe(
+      censusIds.length,
+    )
+    expect(live.rows.length, 'the registry census read back empty').toBeGreaterThan(0)
+    expect(
+      sorted(live.rows.map((row) => row.id)),
+      'the ledger and the registry census must range the same capabilities',
+    ).toEqual(sorted(censusIds))
+    expect(
+      sorted(committed.rows.map((row) => row.id)),
+      'the COMMITTED ledger and the scenario table must range the same capabilities, in both '
+        + `directions — a capability with no ledger row is a capability nobody reviewed; ${GOLDEN_REGEN_INSTRUCTION}`,
+    ).toEqual(sorted(scenarioTableOpIds()))
+
+    const findings = goldenFindings(live.rows, committed.rows)
+    const committedById = new Map(committed.rows.map((row) => [row.id, row]))
+
+    // PER OP, STRUCTURALLY. The label names the capability and the FIELDS that moved; the diff
+    // vitest prints under it is the structure itself. A bare digest inequality — "expected 9f3a… to
+    // be 71bc…" — is what D-06 forbids, and it is what a comparison of two hashes can only ever say.
+    for (const row of live.rows) {
+      const moved = goldenFieldsThatMoved(findings, row.id)
+      const label = moved.length === 0
+        ? `${row.id}: the golden pins a different declaration projection`
+        : `${row.id}: the golden pins a different ${moved.join(', ')} — if this change is `
+          + `intended, ${GOLDEN_REGEN_INSTRUCTION}`
+      expect(row, label).toEqual(committedById.get(row.id))
+    }
+
+    // The whole-set view, so a run reports every disagreement rather than the first one.
+    expect(
+      findings.map((finding) => finding.message),
+      `the live registry and the committed ledger disagree; ${GOLDEN_REGEN_INSTRUCTION}`,
+    ).toEqual([])
+
+    expect(committed.opCount, 'the ledger\'s own count sentence disagrees with its rows')
+      .toBe(committed.rows.length)
+    expect(committed.$note, `the ledger's note was edited by hand; ${GOLDEN_REGEN_INSTRUCTION}`)
+      .toEqual(live.$note)
+
+    // LAST, AND ONLY AFTER EVERY NAMED COMPARISON ABOVE: the bytes. This catches a reformat, a lost
+    // trailing newline or a key order the canonical serializer would not have produced — real drift
+    // in the committed artifact that a structural comparison cannot see. It runs last so that a
+    // genuine field change is named by the loop above rather than reported as a 40 kB text diff.
+    expect(
+      goldenFileText(live) === committedText,
+      'the ledger\'s BYTES differ from the canonical serialization while every field agrees — the '
+        + `file was reformatted or hand-edited; ${GOLDEN_REGEN_INSTRUCTION}`,
+    ).toBe(true)
+
+    // AND THE INSTRUCTION IS FOLLOWABLE. Every message above tells a reader to run one script; a
+    // message naming a file that does not exist is worse than no message. Asserted here, where the
+    // instruction is written, rather than in the prohibition cell below — so a missing ledger and a
+    // missing regen script are one red rather than two saying the same thing.
+    expect(
+      existsSync(join(CONFORMANCE_DIR, '..', '..', '..', '..', '..', GOLDEN_REGEN_SCRIPT)),
+      `${GOLDEN_REGEN_SCRIPT} is named by every ledger failure message but does not exist`,
+    ).toBe(true)
+  })
+
+  it('mints the ledger deterministically, and offers the regen script a print rather than a write', async () => {
+    // TWO INDEPENDENT COMPOSITIONS, in two different temp workspaces, compared byte for byte. That
+    // is a stronger claim than calling the projection twice on one listing: it rules out a
+    // workspace path, a clock or a per-composition identity reaching a digest, which is the way a
+    // generated ledger becomes a file that reds on every regeneration and is therefore never
+    // regenerated.
+    const fresh = await withGoldenRootRegistry((registry) =>
+      goldenFileText(goldenFileOf(registry.list(CONFORMANCE_CENSUS_CALLER))),
+    )
+    expect(fresh, 'two compositions of the one root minted two different ledgers').toBe(
+      goldenFileText(goldenFileOf(rootDeclarations)),
+    )
+
+    // The committed SHAPE: pretty canonical JSON, sorted keys at every level, exactly one trailing
+    // newline. Asserted as idempotence under the workspace's own serializer rather than by
+    // inspecting the string, so this cell cannot disagree with the file the script writes.
+    expect(committedFileText(JSON.parse(fresh)), 'the ledger text is not in canonical committed form')
+      .toBe(fresh)
+    expect(fresh.endsWith('\n'), 'the ledger must end in exactly one newline').toBe(true)
+    expect(fresh.endsWith('\n\n'), 'the ledger must end in exactly one newline').toBe(false)
+
+    // THE EMIT PORT (D-07). The regen script runs this suite with the flag set and lifts the text
+    // out from between the sentinels; the SCRIPT then writes the file, after its own refuse-while-red
+    // gate. Nothing here writes anything — see the source assertion two cells below.
+    if (goldenEmitRequested()) emitGoldenText(fresh)
+  })
+
+  it('projects every declaration field into the ledger, or excludes it with a stated reason', () => {
+    // THE NO-SILENT-DROP REGISTER. A projection that lists what it carries loses the next field
+    // somebody adds, silently and forever: the ledger keeps its 41 identical rows and the column a
+    // reviewer would have wanted never exists. Both sides are accounted, so a new declaration field
+    // reds here by name instead of vanishing.
+    expect(
+      unaccountedGoldenFields(rootDeclarations).map(
+        (field) => `${field.opId}: ${field.on}.${field.key}`,
+      ),
+      'declaration fields the ledger would drop without saying so — project them in golden.ts or '
+        + 'add them to the excluded list WITH the reason they are not change-control surface',
+    ).toEqual([])
+
+    // The register is over a real census rather than an empty one.
+    expect(rootDeclarations.length, 'the field register ranged no declarations').toBe(
+      censusIds.length,
+    )
+
+    // …and it can fire. A synthetic declaration carrying a key nobody wrote, on each side.
+    const sample = rootDeclarations[0]
+    expect(sample, 'the census read back empty').toBeDefined()
+    const withStrayDeclarationKey = {
+      ...(sample as FunctionDeclaration),
+      [SYNTHETIC_GOLDEN_STRAY_FIELD]: true,
+    } as unknown as FunctionDeclaration
+    const withStrayRiskKey = {
+      ...(sample as FunctionDeclaration),
+      risk: { ...(sample as FunctionDeclaration).risk, [SYNTHETIC_GOLDEN_STRAY_FIELD]: 'x' },
+    } as unknown as FunctionDeclaration
+    expect(
+      unaccountedGoldenFields([withStrayDeclarationKey]).map((field) => `${field.on}.${field.key}`),
+      'the register cannot see a new declaration field',
+    ).toEqual([`declaration.${SYNTHETIC_GOLDEN_STRAY_FIELD}`])
+    expect(
+      unaccountedGoldenFields([withStrayRiskKey]).map((field) => `${field.on}.${field.key}`),
+      'the register cannot see a new risk-descriptor field',
+    ).toEqual([`risk.${SYNTHETIC_GOLDEN_STRAY_FIELD}`])
+  })
+
+  it('control: the ledger comparator names the op and the field that moved', () => {
+    // THE NAMED-RED REQUIREMENT, DRIVEN. D-06/D-07 ask that a mismatch identify the capability and
+    // the field rather than announce that two hashes differ. Proving that by breaking the committed
+    // file would be a mutation of a shipped artifact; the comparator is pure, so the three changes
+    // D-05 exists to make visible — a widened scope, a lowered tier, a moved partition — are driven
+    // over real rows here, plus the two presence columns and the two digests.
+    const rows = buildGoldenRows(rootDeclarations)
+    expect(goldenFindings(rows, rows), 'a ledger compared against itself must report nothing')
+      .toEqual([])
+
+    const subject = rows[0] as GoldenRow
+    const mutations: readonly (readonly [string, GoldenRow])[] = [
+      ['requiredScopes', { ...subject, requiredScopes: [...subject.requiredScopes, 'config-write'] }],
+      ['risk', { ...subject, risk: { ...subject.risk, declaredTier: 'readOnly' } }],
+      ['partition', { ...subject, partition: { kind: 'unprojected', reason: 'not-mid-flight-read' } }],
+      ['discloses', { ...subject, discloses: true }],
+      ['requiresHumanOrigin', { ...subject, requiresHumanOrigin: true }],
+      ['inputSchemaDigest', { ...subject, inputSchemaDigest: 'f'.repeat(64) }],
+      ['bindingStatusAtRoot', { ...subject, bindingStatusAtRoot: 'unbound' }],
+    ]
+    for (const [field, mutated] of mutations) {
+      const findings = goldenFindings([mutated, ...rows.slice(1)], rows)
+      expect(findings.map((finding) => finding.field), `a moved ${field} must be named`)
+        .toEqual([field])
+      expect(findings[0]?.opId, `a moved ${field} must name the capability`).toBe(subject.id)
+      expect(findings[0]?.message, `a moved ${field} must name the capability and the field`)
+        .toContain(`${subject.id}.${field}`)
+    }
+
+    // Row presence, both directions — the two shapes a capability change takes.
+    const strayRow: GoldenRow = { ...subject, id: SYNTHETIC_GOLDEN_STRAY_OP_ID }
+    expect(
+      goldenFindings(rows, [...rows, strayRow]).map((finding) => finding.opId),
+      'a ledger row for a capability the registry no longer declares must be named',
+    ).toEqual([SYNTHETIC_GOLDEN_STRAY_OP_ID])
+    expect(
+      goldenFindings([...rows, strayRow], rows).map((finding) => finding.opId),
+      'a capability with no ledger row must be named',
+    ).toEqual([SYNTHETIC_GOLDEN_STRAY_OP_ID])
+  })
+
+  it('control: the partition join answers all three states, including the uncatalogued one', () => {
+    // Pitfall 11's shape at the partition. The third state is reachable only through a synthetic
+    // mapping — which is exactly why it is driven here rather than left as a branch nobody has seen.
+    const projectingTool = new Map([[SYNTHETIC_GOLDEN_STRAY_OP_ID, 'agent_qa_control_397_06']])
+    expect(goldenPartitionOf(SYNTHETIC_GOLDEN_STRAY_OP_ID, projectingTool, [])).toEqual({
+      kind: 'projected',
+      tool: 'agent_qa_control_397_06',
+    })
+    expect(
+      goldenPartitionOf(SYNTHETIC_GOLDEN_UNCATALOGUED_OP_ID, new Map(), [
+        { opId: SYNTHETIC_GOLDEN_UNCATALOGUED_OP_ID, reason: 'a mid-flight workflow read' },
+      ]),
+    ).toEqual({ kind: 'unprojected', reason: 'not-mid-flight-read' })
+    expect(
+      goldenPartitionOf(SYNTHETIC_GOLDEN_UNCATALOGUED_OP_ID, new Map(), []),
+      'a capability in neither half of the mapping must read uncatalogued, never a missing key',
+    ).toEqual({ kind: 'uncatalogued' })
+
+    // …and no LIVE capability sits in that third state.
+    for (const row of buildGoldenRows(rootDeclarations)) {
+      expect(
+        row.partition.kind,
+        `${row.id}: the declared mapping neither projects this capability nor declares it `
+          + 'unprojected — it is catalogued nowhere',
+      ).not.toBe('uncatalogued')
+    }
+  })
+
+  it('censuses binding status at the one shipped composition root, spelling the third state', () => {
+    // D-08. THE COLUMN IS A FACT ABOUT A COMPOSITION, not about the catalogue, and that is what
+    // makes reading it off the RIGHT composition load-bearing. `composeCliLocalAgent` — the function
+    // every shipped CLI surface composes through — binds all 41; this suite's own enumeration
+    // registry supplies empty deps and binds 11. Same 41 capabilities, different answers.
+    for (const declaration of rootDeclarations) {
+      expect(
+        ['bound', 'unbound'],
+        `${declaration.id}: binding status at the root must be one of the two spelled states, `
+          + 'never absent (Pitfall 11: the third state is data)',
+      ).toContain(declaration.bindingStatus)
+    }
+
+    const suiteRegistryStatuses = new Map(
+      registryDeclarations().map((declaration) => [declaration.id, declaration.bindingStatus]),
+    )
+    expect(
+      sorted(suiteRegistryStatuses.keys()),
+      'the two compositions must declare the same capabilities — binding is not membership',
+    ).toEqual(sorted(rootDeclarations.map((declaration) => declaration.id)))
+
+    // MEASURED 2026-08-16: 41 bound at the CLI root, 11 bound under empty deps, so 30 disagree. The
+    // assertion is that the disagreement is NON-EMPTY rather than that it is thirty, because the
+    // claim is "this column describes a composition" and a host binding one more capability is not
+    // a reason for this cell to red. A ledger built off the suite's own registry instead of the
+    // root would make this set empty, which is the mistake it exists to catch.
+    const disagree = rootDeclarations.filter(
+      (declaration) => suiteRegistryStatuses.get(declaration.id) !== declaration.bindingStatus,
+    )
+    expect(
+      disagree.length,
+      'the composition root and the empty-deps enumeration registry agree on every capability, so '
+        + 'the ledger\'s binding column may be reading the wrong composition',
+    ).toBeGreaterThan(0)
+
+    // THE COLUMN HAS ONE PRODUCER, AND IT IS A READ. A hand-typed op → status map would satisfy
+    // every assertion above on the day it was written and describe a composition nobody builds a
+    // week later; `golden.ts` therefore spells neither status anywhere in its code. Comments are
+    // stripped first, so its own docstrings may explain the states it must not literalise.
+    const goldenCode = commentStrippedSource('golden.ts')
+    expect(goldenCode, 'the ledger\'s binding column must be READ off the root\'s declaration')
+      .toContain('bindingStatusAtRoot: declaration.bindingStatus')
+    for (const status of ['bound', 'unbound']) {
+      expect(goldenCode, `golden.ts spells the binding status '${status}' instead of reading it`)
+        .not.toContain(`'${status}'`)
+    }
+
+    // The ledger's column is the ROOT's answer, per op.
+    const rowById = new Map(buildGoldenRows(rootDeclarations).map((row) => [row.id, row]))
+    for (const declaration of rootDeclarations) {
+      expect(rowById.get(declaration.id)?.bindingStatusAtRoot, `${declaration.id}: ledger column`)
+        .toBe(declaration.bindingStatus)
+    }
+  })
+
+  it('agrees with the composition root on every capability each surface host can see', () => {
+    // D-08's DIVERGENCE ASSERTION: "lists bound here, refuses there" is the disagreement
+    // `resolveBindingStatus` exists to prevent, and the only way it can arise is a surface host that
+    // composes a registry of its own. Each shipped host's listing — the chat host's two stage mints,
+    // the MCP host's default and every-scope grants — is compared to the root's answer per
+    // capability. The cell below pins the structural reason this holds.
+    const rootStatus = new Map(
+      rootDeclarations.map((declaration) => [declaration.id, declaration.bindingStatus]),
+    )
+    let compared = 0
+    for (const [host, listing] of rootHostListings) {
+      expect(listing.length, `${host}: the host listed no capabilities at all`).toBeGreaterThan(0)
+      for (const declaration of listing) {
+        expect(
+          declaration.bindingStatus,
+          `${declaration.id}: lists ${declaration.bindingStatus} on the ${host} host and `
+            + `${rootStatus.get(declaration.id)} at the composition root`,
+        ).toBe(rootStatus.get(declaration.id))
+        compared += 1
+      }
+    }
+    // Non-vacuity, and the shape of the roster's own claim: four listings, none of them empty.
+    expect(rootHostListings.size, 'no surface host listing was taken').toBe(4)
+    expect(compared, 'the divergence cell compared nothing').toBeGreaterThan(censusIds.length)
+  })
+
+  it('pins that neither surface host composes a registry of its own', () => {
+    // WHY THIS CELL EXISTS BESIDE THE ONE ABOVE. That comparison is taken over the registry object
+    // the shipped hosts hand their surface, so it can only stay meaningful while that remains true.
+    // A host that built its own registry would answer its own questions consistently and diverge
+    // from the root invisibly. Comments are stripped so this file may name what those files must not
+    // contain.
+    for (const command of ['mcp.ts', 'chat.ts']) {
+      const code = commentStrippedFile(join(CONFORMANCE_DIR, '..', '..', 'commands', command))
+      expect(code, `commands/${command} read back empty`).toContain('composeCliLocalAgent')
+      expect(
+        code,
+        `commands/${command} composes a function registry of its own instead of taking the `
+          + 'composition root\'s — a host with its own registry can list bound and refuse',
+      ).not.toContain('createFunctionRegistry')
+    }
+  })
+
+  it('never writes the golden ledger: the only writer is the regen script (D-07)', () => {
+    // THE PROHIBITION, AS SOURCE. "A capability ledger must not be one keystroke from silently
+    // blessed" is a claim about what this directory CAN do, not about what it happens to do today,
+    // so the sweep ranges every file in the directory — including one added tomorrow — rather than
+    // a list written now.
+    const files = readdirSync(CONFORMANCE_DIR).filter((name) => name.endsWith('.ts'))
+    expect(files.length, 'the conformance directory read back empty').toBeGreaterThan(4)
+
+    // ASSEMBLED FROM FRAGMENTS, on `compose-authority-topology.test.ts`'s precedent and for its
+    // reason: the sweep ranges every `.ts` file in this directory, THIS FILE INCLUDED, so a
+    // forbidden token written out here would be the sweep reading its own prohibition as the defect.
+    // Measured: it did, the first time this cell ran.
+    const forbidden: readonly string[] = [
+      ['toMatch', 'Snapshot'].join(''),
+      ['toMatch', 'File', 'Snapshot'].join(''),
+      ['toMatch', 'Inline', 'Snapshot'].join(''),
+      ['writeFileSync(', 'GOLDEN_PATH'].join(''),
+      ['writeFile(', 'GOLDEN_PATH'].join(''),
+      ['appendFileSync(', 'GOLDEN_PATH'].join(''),
+    ]
+    let nameMentions = 0
+    for (const file of files) {
+      const code = commentStrippedSource(file)
+      nameMentions += code.split(GOLDEN_FILE_NAME).length - 1
+      for (const token of forbidden) {
+        expect(code, `${file} carries a path that could bless the ledger: ${token}`)
+          .not.toContain(token)
+      }
+    }
+    // The ledger's own file name appears exactly once in the directory — as the constant golden.ts
+    // resolves the read path from. A second spelling is a second place a writer could open it.
+    expect(nameMentions, `${GOLDEN_FILE_NAME} is spelled more than once in the conformance sources`)
+      .toBe(1)
+
+    // …and the sweep is not vacuous: every forbidden shape is recognised in a control that carries
+    // it, so a fragment assembled wrong cannot leave the sweep quietly searching for nothing.
+    for (const token of forbidden) {
+      expect(`prefix ${token} suffix`, `the sweep no longer recognises ${token}`).toContain(token)
+    }
   })
 })
