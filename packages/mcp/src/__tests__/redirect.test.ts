@@ -50,9 +50,12 @@ import type { FunctionDeclaration, FunctionRegistry } from '@vostride/agent-qa-a
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
-import { buildAgentQaMcpServer } from '../catalog.js'
+import { buildAgentQaMcpServer, v1RedirectFor, v1RedirectMessage } from '../catalog.js'
 import { AGENT_QA_TOOL_PROJECTIONS } from '../mapping.js'
+import type { ToolProjection } from '../mapping.js'
 import { V1_TOOL_MIGRATION_MAP } from '../migration-map.js'
+import type { V1ToolMigrationEntry } from '../migration-map.js'
+import { visibleToCaller } from '../visibility.js'
 
 // ---------------------------------------------------------------------------------------------
 // The fixture composition
@@ -321,6 +324,275 @@ describe('membership is exact byte equality (edge XPLN-03/encoding)', () => {
       await driven.close()
     }
   })
+})
+
+// ---------------------------------------------------------------------------------------------
+// The three walls
+// ---------------------------------------------------------------------------------------------
+
+const RENAMED_ENTRIES = V1_TOOL_MIGRATION_MAP.filter((entry) => entry.arm === 'renamed-to')
+const RETIRED_OR_PENDING = V1_TOOL_MIGRATION_MAP.filter((entry) => entry.arm !== 'renamed-to')
+
+function targetProjection(entry: V1ToolMigrationEntry): ToolProjection | undefined {
+  return AGENT_QA_TOOL_PROJECTIONS.find((projection) => projection.name === entry.v2Tool)
+}
+
+/**
+ * The scope set the target tool requires IN THIS FIXTURE — the union across the fold's arms.
+ *
+ * Computed here the same way `catalog.ts` computes it, so the cells below can re-derive the
+ * visibility verdict independently of the server and compare the two. That comparison is what says
+ * the redirect is asking the LISTING's question rather than a question of its own.
+ */
+function targetScopeUnion(entry: V1ToolMigrationEntry): readonly FunctionScope[] {
+  const projection = targetProjection(entry)
+  if (projection === undefined) return []
+  return [...new Set(projection.ops.flatMap((op) => FIXTURE_OP_SCOPES[op] ?? []))]
+}
+
+const READ_ONLY: readonly FunctionScope[] = ['read']
+
+/** A renamed-to entry whose target a read-only caller MAY see, and one it may not. Derived. */
+const SIGHTED_FOR_READER = RENAMED_ENTRIES.find((entry) =>
+  visibleToCaller(targetScopeUnion(entry), READ_ONLY),
+)
+const HIDDEN_FROM_READER = RENAMED_ENTRIES.find(
+  (entry) => !visibleToCaller(targetScopeUnion(entry), READ_ONLY),
+)
+
+describe('the redirect fires on exact members, and only errors (D-15 · T-398-12)', () => {
+  // Complete set, both callers: all thirty-three, never a hand-picked example of each arm. A
+  // one-per-arm corpus cannot see an entry whose own text or arm is wrong.
+  it.each(V1_TOOL_MIGRATION_MAP.map((entry) => [entry.v1Name, entry] as const))(
+    'answers %s with a teaching error and never a result',
+    async (_name, entry) => {
+      for (const grants of [ALL_FIXTURE_SCOPES, READ_ONLY, [] as readonly FunctionScope[]]) {
+        const driven = await drive(grants)
+        try {
+          const outcome = await callOutcome(driven.client, entry.v1Name)
+
+          // THREW, not returned. A handler reached — the only way an op could be invoked — answers
+          // with a CallToolResult, so this single assertion is also the no-invocation wall: there
+          // is no path from a v1 name to `invokeFunction` that could produce a thrown error here.
+          expect(outcome.threw).toBe(true)
+          expect(outcome.name).toBe('ProtocolError')
+          // The same error CLASS the SDK gives an unknown name. Only the sentence differs, and a
+          // sentence is history.
+          expect(outcome.code).toBe(MEASURED_UNKNOWN_TOOL_CODE)
+          expect(outcome.message).not.toBe(measuredUnknownToolMessage(entry.v1Name))
+          expect(outcome.message).toContain(entry.v1Name)
+          // Nothing from the function layer: `invokeFunction` over this fixture registry answers
+          // `Unknown function: <op>`, so its absence says no op was reached.
+          expect(outcome.serialized).not.toContain('Unknown function')
+        } finally {
+          await driven.close()
+        }
+      }
+    },
+  )
+})
+
+describe('the sighted wall: the v2 name is spoken to a caller who may see it', () => {
+  it('has a renamed-to entry on each side of the read-only caller, so the split is measurable', () => {
+    expect(RENAMED_ENTRIES.length).toBeGreaterThan(0)
+    expect(SIGHTED_FOR_READER).toBeDefined()
+    expect(HIDDEN_FROM_READER).toBeDefined()
+  })
+
+  it.each(RENAMED_ENTRIES.map((entry) => [entry.v1Name, entry] as const))(
+    'names the v2 tool for %s when the caller is granted its scope union',
+    async (_name, entry) => {
+      const driven = await drive(ALL_FIXTURE_SCOPES)
+      try {
+        const outcome = await callOutcome(driven.client, entry.v1Name)
+        const target = targetProjection(entry)
+
+        expect(target).toBeDefined()
+        expect(outcome.message).toContain(`\`${entry.v2Tool!}\``)
+        // The input-shape note, which is the half a rename alone does not carry: v1's tool and v2's
+        // take different arguments, and a caller told only the new name will call it wrong.
+        expect(outcome.message).toContain('input shape')
+        expect(outcome.message).toContain('tools/list')
+      } finally {
+        await driven.close()
+      }
+    },
+  )
+})
+
+describe('the unsighted wall: the v2 name is withheld (T-398-11)', () => {
+  // The complete set under a caller granted nothing: every renamed-to target is unsighted, and the
+  // scan is over the WHOLE serialized answer rather than the message field somebody remembered to
+  // look at. 395 round 2 is the reason: ten cells passed while the leak travelled a sibling channel.
+  it.each(RENAMED_ENTRIES.map((entry) => [entry.v1Name, entry] as const))(
+    'leaks no tool name for %s to a caller granted nothing',
+    async (_name, entry) => {
+      const driven = await drive([])
+      try {
+        const outcome = await callOutcome(driven.client, entry.v1Name)
+
+        expect(outcome.serialized.split(entry.v2Tool!).length - 1).toBe(0)
+        expect(outcome.message).toContain('tools/list')
+        expect(outcome.message).toContain('init --agent')
+      } finally {
+        await driven.close()
+      }
+    },
+  )
+
+  // THE SHARP ONE. Same caller, same arm, two entries: the split is a property of the TARGET's
+  // scopes, not of the caller being poor. A redirect that answered "sighted" whenever the caller
+  // had any grant at all, or "unsighted" whenever it lacked any, passes every cell above and reds
+  // here — one of these two answers would be wrong.
+  it('names one target and withholds another for the SAME read-only caller', async () => {
+    const sighted = SIGHTED_FOR_READER!
+    const hidden = HIDDEN_FROM_READER!
+    const driven = await drive(READ_ONLY)
+    try {
+      const named = await callOutcome(driven.client, sighted.v1Name)
+      const withheld = await callOutcome(driven.client, hidden.v1Name)
+
+      expect(named.message).toContain(`\`${sighted.v2Tool!}\``)
+      expect(withheld.serialized.split(hidden.v2Tool!).length - 1).toBe(0)
+    } finally {
+      await driven.close()
+    }
+  })
+
+  // The redirect's verdict IS the listing's verdict, re-derived through the one predicate and
+  // compared. If these ever disagreed, one of `tools/list` and the redirect would be lying.
+  it.each(RENAMED_ENTRIES.map((entry) => [entry.v1Name, entry] as const))(
+    'speaks the target for %s exactly when visibleToCaller admits it and it is listed',
+    async (_name, entry) => {
+      for (const grants of [ALL_FIXTURE_SCOPES, READ_ONLY, [] as readonly FunctionScope[]]) {
+        const driven = await drive(grants)
+        try {
+          const predicate = visibleToCaller(targetScopeUnion(entry), grants)
+          const listed = (await driven.client.listTools()).tools.map((tool) => tool.name)
+          const outcome = await callOutcome(driven.client, entry.v1Name)
+          const spoken = outcome.serialized.includes(entry.v2Tool!)
+
+          expect(spoken).toBe(predicate)
+          expect(spoken).toBe(listed.includes(entry.v2Tool!))
+        } finally {
+          await driven.close()
+        }
+      }
+    },
+  )
+})
+
+describe('caller-invariance on the retired and pending arms (T-398-13 · Pitfall 8)', () => {
+  // Complete set again, and byte equality on the whole serialized answer. These arms describe
+  // HISTORY; a scope-dependent word in either would make the seam an oracle in the one place it is
+  // supposed to be a constant.
+  it.each(RETIRED_OR_PENDING.map((entry) => [entry.v1Name, entry] as const))(
+    'answers %s identically under three different scope sets',
+    async (_name, entry) => {
+      const answers: string[] = []
+      for (const grants of [ALL_FIXTURE_SCOPES, READ_ONLY, [] as readonly FunctionScope[]]) {
+        const driven = await drive(grants)
+        try {
+          answers.push((await callOutcome(driven.client, entry.v1Name)).serialized)
+        } finally {
+          await driven.close()
+        }
+      }
+      expect(new Set(answers).size).toBe(1)
+      // Non-vacuity: an empty or missing answer would also be "identical three times".
+      expect(answers[0]!).toContain(entry.v1Name)
+    },
+  )
+
+  it('covers both arms, so the invariance claim is not about one of them', () => {
+    expect(RETIRED_OR_PENDING.some((entry) => entry.arm === 'retired')).toBe(true)
+    expect(RETIRED_OR_PENDING.some((entry) => entry.arm === 'pending')).toBe(true)
+  })
+})
+
+describe('v1RedirectFor: a live handler always wins (the ordering, given a bar)', () => {
+  // WHY THIS IS DRIVEN DIRECTLY. Through the server this ordering is observationally inert: the
+  // migration map and the live vocabulary are disjoint, so no name reaches it from both sides, and
+  // mutation leg M9 (dropping the check entirely) reds nothing at the wire. A doctored `registered`
+  // set is the only way to state the claim as something that can fail — and it is worth stating,
+  // because it is what makes the disjointness cell's failure a missed redirect rather than a live
+  // tool shadowed by an error.
+  it('answers undefined for a map member that IS registered on this instance', () => {
+    const member = V1_MEMBER_NAMES[0]!
+    expect(v1RedirectFor(member, new Set())).toBeDefined()
+    expect(v1RedirectFor(member, new Set([member]))).toBeUndefined()
+  })
+
+  it('answers the entry for a member no handler serves, and nothing for a non-member', () => {
+    const member = V1_MEMBER_NAMES[0]!
+    expect(v1RedirectFor(member, new Set(LIVE_TOOL_NAMES))?.v1Name).toBe(member)
+    expect(v1RedirectFor(NON_MEMBER_NAME, new Set(LIVE_TOOL_NAMES))).toBeUndefined()
+  })
+
+  it('is byte-exact on the name (a case-variant is not a member)', () => {
+    const member = V1_MEMBER_NAMES[0]!
+    expect(v1RedirectFor(member.toUpperCase(), new Set())).toBeUndefined()
+  })
+
+  // The invariant the ordering is insurance for, asserted here too so this file states the premise
+  // its own inertness argument rests on rather than borrowing it silently from another file.
+  it('has nothing in both vocabularies today', () => {
+    expect(V1_MEMBER_NAMES.filter((name) => LIVE_TOOL_NAMES.includes(name))).toEqual([])
+  })
+})
+
+describe('v1RedirectMessage, driven directly', () => {
+  // The withholding is in the SIGNATURE — there is no target to leak when none is passed — and this
+  // cell is what says the sighted text is not reachable by accident from the unsighted call.
+  it.each(RENAMED_ENTRIES.map((entry) => [entry.v1Name, entry] as const))(
+    'writes no tool name at all for %s without a visible target',
+    (_name, entry) => {
+      const message = v1RedirectMessage(entry)
+      for (const live of LIVE_TOOL_NAMES) expect(message).not.toContain(live)
+      expect(message).toContain(entry.v1Name)
+    },
+  )
+
+  // THE BAR for the input-shape note: a derivation that answered the same sentence for every tool
+  // reds here, because a fold's line has to carry the discriminant and every arm — the field v1's
+  // one-tool-per-verb vocabulary has no equivalent for, and the single likeliest thing a migrating
+  // caller gets wrong.
+  it('derives a fold target’s note from its declared discriminant and arms', () => {
+    const foldEntry = RENAMED_ENTRIES.find((entry) => targetProjection(entry)?.discriminant)
+    expect(foldEntry).toBeDefined()
+    const fold = targetProjection(foldEntry!)!
+    const message = v1RedirectMessage(foldEntry!, fold)
+
+    expect(message).toContain(fold.discriminant!)
+    for (const op of fold.ops) expect(message).toContain(op)
+  })
+
+  it('derives a single-op target’s note without inventing a discriminant', () => {
+    const singleEntry = RENAMED_ENTRIES.find((entry) => {
+      const projection = targetProjection(entry)
+      return projection !== undefined && projection.ops.length === 1
+    })
+    expect(singleEntry).toBeDefined()
+    const single = targetProjection(singleEntry!)!
+    const message = v1RedirectMessage(singleEntry!, single)
+
+    expect(message).toContain(`\`${single.name}\``)
+    expect(message).toContain('one input object')
+  })
+
+  // Every entry's own ruled text reaches the caller on the arms where it is safe to speak it. A
+  // redirect that answered a generic sentence per arm would pass the wall cells and red here.
+  it.each(RETIRED_OR_PENDING.map((entry) => [entry.v1Name, entry] as const))(
+    'carries %s’s own ruled note and route',
+    (_name, entry) => {
+      const message = v1RedirectMessage(entry)
+      expect(message).toContain(entry.note)
+      if (entry.route !== undefined) expect(message).toContain(entry.route)
+      if (entry.owner !== undefined && entry.arm === 'pending') {
+        expect(message).toContain(entry.owner)
+      }
+    },
+  )
 })
 
 describe('the listing is what it was (D-15: no v1 name is resurrected)', () => {
