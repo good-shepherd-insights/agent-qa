@@ -241,10 +241,14 @@ export function expandMcpListedTools(
 export async function withMcpClient<Answer>(
   body: (client: Client) => Promise<Answer>,
   grantedScopes: readonly FunctionScope[] = MCP_ENUMERATION_SCOPES,
+  // The gate-facing ports of the registry this server is built over (397-04). Absent for a LISTING,
+  // which consults no gate; supplied by anything that CALLS, so an MCP verdict states the context
+  // it was taken in rather than inheriting the process's (Pitfall 3).
+  registryOptions: ConformanceRegistryOptions = {},
 ): Promise<Answer> {
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
-      registry: conformanceRegistry(),
+      registry: conformanceRegistry(registryOptions),
       caller: mcpFunctionCaller(grantedScopes),
       maskText: (text: string) => text,
     }),

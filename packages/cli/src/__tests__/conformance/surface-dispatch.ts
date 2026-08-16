@@ -353,7 +353,10 @@ export async function driveMcpCall(input: {
   readonly toolName: string
   readonly args: Record<string, unknown>
   readonly grantedScopes: readonly FunctionScope[]
+  /** The context this call's policy decision is taken in. Injected, never ambient (Pitfall 3). */
+  readonly executionContext?: ExecutionContext
 }): Promise<McpCallOutcome> {
+  const executionContext = input.executionContext ?? CONFORMANCE_EXECUTION_CONTEXT
   return withMcpClient(async (client: Client): Promise<McpCallOutcome> => {
     try {
       const result = await client.callTool({ name: input.toolName, arguments: input.args })
@@ -375,5 +378,5 @@ export async function driveMcpCall(input: {
         code: typeof asError.code === 'number' ? asError.code : undefined,
       }
     }
-  }, input.grantedScopes)
+  }, input.grantedScopes, { resolveExecutionContext: () => executionContext })
 }

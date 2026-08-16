@@ -1194,6 +1194,215 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
+  // ---- The ASK points: verdict parity, handling per contract (2026-08-16, D-11) -----------------
+  //
+  // THE DIVERGENCE BELOW IS DESIGNED, AND IT IS ASSERTED RATHER THAN AVERAGED AWAY. D-11's clause
+  // is verdict parity, NOT handling parity: the gate must reach the same `ask` for a capability
+  // whichever surface asks, and then each surface answers it the way its own contract says. Chat
+  // pauses at a confirm seam and refuses when there is nobody to ask; MCP's apply tools refuse and
+  // TEACH the second call (396 D-11), and its other ask-tier tools refuse in band off the gate.
+  // A cell that demanded one shared HANDLING would be asserting a false symmetry, and the way it
+  // would be satisfied is by removing one of the two contracts.
+
+  it('reaches the ask for every ask-capable capability, identically on both surfaces\' callers', async () => {
+    // VERDICT PARITY (D-11's third policy point), at the gate. `evaluate` never RETURNS the string
+    // `ask` — it resolves one — so "the verdict is ask" is only readable off behaviour: the confirm
+    // port is reached on exactly the path where the base verdict was `ask` and no trust, credential
+    // or standing grant satisfied it. Each side is a separate `invokeFunction` call under its own
+    // surface's caller record.
+    const askCapable = new Set(ASK_CAPABLE_OP_IDS)
+    for (const declaration of registryDeclarations()) {
+      const row = scenarioRowFor(declaration.id as ScenarioOpId)
+      const callers = surfaceInertCallers(declaration.requiredScopes)
+      const consulted = { chat: false, mcp: false }
+      const answers = {
+        chat: await gateAnswerFor(declaration.id, row!.input, callers.chat, {
+          resolveExecutionContext: conformanceResolveExecutionContext,
+          confirm: () => { consulted.chat = true; return false },
+        }),
+        mcp: await gateAnswerFor(declaration.id, row!.input, callers.mcp, {
+          resolveExecutionContext: conformanceResolveExecutionContext,
+          confirm: () => { consulted.mcp = true; return false },
+        }),
+      }
+      expect(
+        consulted.mcp,
+        `${declaration.id}: the two surfaces disagree about whether this capability asks a person `
+          + 'first — an ask on one surface and a silent proceed on the other is the divergence D-11 '
+          + 'forbids',
+      ).toBe(consulted.chat)
+      // …and which way that shared answer went is the derived ask set, in both directions, so the
+      // cell cannot pass by never reaching a confirm at all.
+      expect(
+        consulted.chat,
+        `${declaration.id}: the shipped classifier's ask set and the confirm this call reached `
+          + 'disagree',
+      ).toBe(askCapable.has(declaration.id))
+      if (askCapable.has(declaration.id)) {
+        // Nothing approved it, so the ask resolves to a denial — and the capability does not run.
+        expect(answers.chat.kind, `${declaration.id} on chat: an unapproved ask must not proceed`)
+          .toBe('gate-denied')
+        expect(answers.mcp.kind, `${declaration.id} on mcp: an unapproved ask must not proceed`)
+          .toBe('gate-denied')
+      }
+    }
+  }, 120_000)
+
+  it('gets PAST the ask on a standing approval, identically on both surfaces\' callers', async () => {
+    // The ask set's own GRANT point. A capability whose every measurement stops at an unapproved ask
+    // has had its dispatch path measured nowhere, so this is the cell that proves the gate ALLOWS —
+    // through the standing-approval arm, built from the action's own name rather than a list.
+    //
+    // THE CONFIRM THROWS. If the grant did not cover the action and the ladder fell through to the
+    // prompt, this cell would otherwise report an allow that a confirm had produced.
+    // THE CONFIRM RECORDS RATHER THAN THROWS, deliberately: a throw here would be swallowed by
+    // `gateAnswerFor`'s dispatch-time arm and read as an ALLOW, which is the answer this guard
+    // exists to refuse. The flag is checked after each call.
+    for (const opId of ASK_CAPABLE_OP_IDS) {
+      const declaration = registryDeclarations().find((candidate) => candidate.id === opId)
+      const row = scenarioRowFor(opId as ScenarioOpId)
+      const callers = surfaceInertCallers(declaration!.requiredScopes)
+      const consulted = { chat: false, mcp: false }
+      const optionsFor = (side: 'chat' | 'mcp'): ConformanceRegistryOptions => ({
+        resolveExecutionContext: conformanceResolveExecutionContext,
+        // A RESOLVER, which is the port's shape — a reader handed in directly is not callable and
+        // `invokeFunction` would throw where the gate expects a value, which this suite's own
+        // classifier would then read as a dispatch. Measured, not assumed: that was the first
+        // spelling here and it made the cell green for the wrong reason.
+        standingApprovalReader: () => EVERY_ASK_STANDING_APPROVED,
+        confirm: () => { consulted[side] = true; return false },
+      })
+      const onChat = await gateAnswerFor(opId, row!.input, callers.chat, optionsFor('chat'))
+      const onMcp = await gateAnswerFor(opId, row!.input, callers.mcp, optionsFor('mcp'))
+      expect(
+        consulted,
+        `${opId}: the standing approval did not cover this action class, so the ladder fell through `
+          + 'to the confirm — this cell would have measured a prompt while claiming a grant',
+      ).toEqual({ chat: false, mcp: false })
+      // WHERE a call that got past the ask lands is DERIVED from this composition's own binding
+      // status, not asserted loosely as "somewhere past the gate". The looser form is what let the
+      // first spelling of this cell pass while the reader port was mis-shaped: a gate port that
+      // throws surfaces here as a dispatch-time error, i.e. as `allowed-dispatched`, and a cell
+      // that accepted either answer accepted a broken gate as a granted one.
+      const pastAsk = declaration!.bindingStatus === 'unbound'
+        ? 'allowed-unbound'
+        : 'allowed-dispatched'
+      expect(
+        onChat.kind,
+        `${opId} on chat: a standing approval covering this action class did not get the call past `
+          + `the ask and on to step ${pastAsk === 'allowed-unbound' ? '6' : '7'}`,
+      ).toBe(pastAsk)
+      expect(onMcp.kind, `${opId}: the two surfaces resolve the same ask differently under the same `
+        + 'standing approval').toBe(onChat.kind)
+    }
+  }, 120_000)
+
+  it('handles the ask on CHAT by pausing at its confirm seam, never by executing', async () => {
+    // Chat's own contract. Driven through the shipped REPL with NO pin, so what refuses is the ask
+    // arm itself: on a host with no terminal `createChatConfirmPort` binds nothing and the gate's
+    // deny-by-default confirm answers, which is `prompted-denied` — the ladder REACHED the seam.
+    //
+    // The comparand a person sees is the receipt; the attribution is the gate's own audit row.
+    for (const opId of ASK_CAPABLE_OP_IDS) {
+      const row = scenarioRowFor(opId as ScenarioOpId)
+      const outcome = await driveChatDispatch({ opId, input: row!.input })
+      expect(outcome.unhandled, `${opId} on chat (ask): the clause did not route`).toEqual([])
+      expect(
+        outcome.receipt?.status,
+        `${opId} on chat (ask): an ask-tier capability EXECUTED with nobody asked`,
+      ).toBe('failed')
+      expect(outcome.receipt?.outcome, `${opId} on chat (ask): the refusal is not the gate's`)
+        .toBe('FunctionDeniedError')
+      expect(
+        outcome.auditRows
+          .filter((auditRow) => auditRow.action === pinClassFor(opId))
+          .map((auditRow) => auditRow.outcome),
+        `${opId} on chat (ask): the gate did not record reaching the confirm seam`,
+      ).toContain('prompted-denied')
+    }
+  }, 300_000)
+
+  it('control: the same chat ask under the fail-closed context observes the other posture', async () => {
+    // Pitfall 3, as a behaviour rather than an argument. The ONLY thing that changes between this
+    // cell and the one above is the injected context — and the observation changes with it, from
+    // "the seam was reached and declined" to "the seam was never reachable". A drive that read the
+    // ambient context would report whichever of these the machine happened to be, and the cell
+    // above would be green on a runner for a reason nobody chose.
+    for (const opId of ASK_CAPABLE_OP_IDS) {
+      const row = scenarioRowFor(opId as ScenarioOpId)
+      const outcome = await driveChatDispatch({ opId, input: row!.input, executionContext: 'ci' })
+      expect(
+        outcome.auditRows
+          .filter((auditRow) => auditRow.action === pinClassFor(opId))
+          .map((auditRow) => auditRow.outcome),
+        `${opId} on chat (ask, fail-closed context): the verdict did not follow the injected `
+          + 'context, so the context is not what this suite is deciding under',
+      ).toContain('fail-closed-denied')
+      expect(outcome.receipt?.status, `${opId} on chat (ask, fail-closed context): it executed`)
+        .toBe('failed')
+    }
+  }, 300_000)
+
+  it('handles the ask on MCP per ITS contract — refuse-and-teach, or refuse in band', async () => {
+    // MCP's own contract, and WHICH contract is DERIVED from the mapping's own `kind` rather than
+    // picked per op: an `apply` tool is D-11's refuse-and-teach front door, and every other tool
+    // crosses the generic handler and gets the gate's own answer back in band. Neither executes on
+    // a blind first call, which is the property the two shapes share and the only one that is
+    // averaged here.
+    const everyScope = [...FunctionScopeSchema.options]
+    let applyTools = 0
+    let bandRefusals = 0
+    for (const opId of ASK_CAPABLE_OP_IDS) {
+      const projection = AGENT_QA_TOOL_PROJECTIONS.find((candidate) => candidate.ops.includes(opId))
+      if (projection === undefined) {
+        // Unprojected: this surface's handling is ABSENCE, already asserted by 397-03's D-12 leg.
+        // What is asserted here is that the absence is the one the divergence above explains.
+        const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === opId)
+        expect(
+          entry === undefined ? undefined : unprojectedReasonKeyOf(entry.reason),
+          `${opId} on mcp (ask): it can ask, this surface does not project it, and the mapping `
+            + 'gives no reason a reader can classify',
+        ).toBe('requires-human-origin')
+        continue
+      }
+      const row = scenarioRowFor(opId as ScenarioOpId)
+      const args = projection.kind === 'apply'
+        // The apply door's own argument name, read off the op's contract rather than typed: its
+        // input carries exactly one field and the tool spells it in snake case.
+        ? { proposal_id: (row!.input as { proposalId: string }).proposalId }
+        : (row!.input as Record<string, unknown>)
+      const answered = await driveMcpCall({ toolName: projection.name, args, grantedScopes: everyScope })
+      expect(answered.answered, `${opId} on mcp (ask): the protocol refused the call outright`)
+        .toBe(true)
+      const inBand = answered as Extract<typeof answered, { answered: true }>
+      if (projection.kind === 'apply') {
+        applyTools += 1
+        expect(inBand.isError, `${opId} on mcp (ask): refuse-and-teach is an ANSWER, not an error `
+          + '— a caller told this is an error has been taught nothing').toBe(false)
+        expect(
+          inBand.structured?.['status'],
+          `${opId} on mcp (ask): a first apply call must come back needing confirmation`,
+        ).toBe('confirmation-required')
+        expect(inBand.structured?.['applied'], `${opId} on mcp (ask): a first apply call committed`)
+          .toBe(false)
+        expect(
+          String(inBand.structured?.['instruction'] ?? ''),
+          `${opId} on mcp (ask): the teach must name the exact second call, or it is a refusal `
+            + 'with no door behind it',
+        ).toContain('confirmed')
+      } else {
+        bandRefusals += 1
+        expect(inBand.isError, `${opId} on mcp (ask): an ask-tier capability answered without the `
+          + 'gate refusing it').toBe(true)
+        expect(inBand.text, `${opId} on mcp (ask): the in-band refusal must name the capability`)
+          .toContain(opId)
+      }
+    }
+    // Both arms were exercised, or one of the two contracts is asserted by nothing.
+    expect(applyTools, 'no ask-capable op reached the refuse-and-teach arm').toBeGreaterThan(0)
+    expect(bandRefusals, 'no ask-capable op reached the in-band refusal arm').toBeGreaterThan(0)
+  }, 300_000)
+
   it('observes the chat surface through its own dispatch, never through the gate directly', () => {
     // PITFALL 5, AS A SOURCE ASSERTION. Every behavioural cell above would pass over a driver that
     // called `invokeFunction` itself — and such a driver is blind to D-14's ungated-op mutation by
