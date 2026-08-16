@@ -14,6 +14,15 @@
 // resolved to "one exported predicate, two callers"), so the generalization lives here and the
 // registry keeps answering exactly what it answered yesterday.
 //
+// WHERE THE ANSWER MAY LIVE, per the wire. SEP-2567 removed per-connection list variance, so this
+// predicate's per-caller answer is produced by a per-REQUEST server instance built from that
+// request's own granted scopes — never by a connection remembering who it is talking to. SEP-2549
+// then makes `tools/list` a `CacheableResult` carrying `ttlMs` and `cacheScope`, and the two SEPs
+// read together are the hazard: a shared cache could serve one caller's filtered list to another,
+// disclosing the presence or absence of tools by scope. The shipped server answers `ttlMs: 0` with
+// `cacheScope: 'private'` for exactly that reason (measured 2026-08-16), which is what keeps this
+// predicate's output attributable to the caller it was computed for.
+//
 // COSMETIC, AND THAT IS THE POINT. This predicate decides what a caller can SEE. It decides nothing
 // about what a caller can DO: `invokeFunction` re-checks the same subset relation server-side and
 // throws `FunctionScopeError` regardless of what any surface listed (D-08's second wall). The two

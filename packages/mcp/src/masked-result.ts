@@ -28,7 +28,11 @@
 // not merely one that replaced a value — the result becomes a tool error naming the condition. The
 // alternative is returning the unmasked object, which is the defect this module exists to close.
 //
-// THE COST, STATED: a masked value can violate the tool's advertised `outputSchema`, and the SDK
+// THE COST, STATED — and the reason it is a REAL cost rather than a theoretical one: SEP-2106
+// loosened `inputSchema`/`outputSchema` to full JSON Schema 2020-12, so an advertised output
+// contract can now say things precise enough for a masked value to violate them (a `format`, a
+// `pattern`, a `minLength`). A masked value can therefore violate the tool's advertised
+// `outputSchema`, and the SDK
 // then refuses the result. That is the correct direction. An op output that contains a declared
 // credential is a leak; turning a leak into a refusal a caller can see is a better answer than
 // serving it, and it happens only when a legitimate value is byte-equal to a credential this host

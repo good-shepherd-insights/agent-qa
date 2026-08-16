@@ -26,9 +26,12 @@ export const AGENT_QA_MCP_FORBIDDEN_RESPONSIBILITIES = [
 ] as const
 // D-20's 16 -> 2 collapse, enforced by `validate:arch` and by nothing bespoke. Both entries are
 // protocol packages: `/server` carries `McpServer`, `registerTool` and the stdio serving entry;
-// `/node` carries the Node adapter for the loopback HTTP surface. A validator library is
-// deliberately absent — the tools' schemas are the ops' OWN contracts, imported from the schema
-// package, and the SDK converts them itself.
+// `/node` carries the Node adapter for the loopback HTTP surface. Both speak the stateless wire
+// SEP-2575 defines, which is the whole reason the v1 family could not be migrated in place.
+// A validator library is deliberately absent — the tools' schemas are the ops' OWN contracts,
+// imported from the schema package, and the SDK converts them itself under SEP-2106's full JSON
+// Schema 2020-12 posture, so a second conversion recipe here would be a second answer to a question
+// the SDK already answers.
 export const AGENT_QA_MCP_EXTERNAL_DEPENDENCIES = [
   '@modelcontextprotocol/node',
   '@modelcontextprotocol/server',

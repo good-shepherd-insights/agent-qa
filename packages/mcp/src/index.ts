@@ -6,6 +6,13 @@
 // recorded row by row in `DELETION-INVENTORY.md` beside this file; nothing was dropped without a
 // row. Nothing v1 survives here.
 //
+// THE V1 ENTRY POINTS ARE GONE RATHER THAN RENAMED, because the wire has no place left for them.
+// `startMcpServer` served one long-lived session; SEP-2575 removed the `initialize` handshake, the
+// `Mcp-Session-Id` header and SSE resumability outright, so a session is no longer a thing a server
+// can hold on this revision. What replaces it is a per-request factory plus the declared data
+// behind it, with every cross-call handle travelling as an ordinary tool argument (SEP-2567) — this
+// product's `proposal_id` is exactly that pattern, and it is why nothing below mints state.
+//
 // What a HOST needs is the factory and the data behind it. What a TEST needs is the two predicates,
 // so they can be driven directly rather than only observed through a running server — the layers
 // below `buildAgentQaMcpServer` are exported for that reason and not because anything else calls
