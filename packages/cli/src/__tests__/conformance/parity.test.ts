@@ -19,8 +19,11 @@
 // unattributable.
 
 import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { CHAT_RESOLVER_TABLE } from '@vostride/agent-qa-agent'
+import { CHAT_STAGE_SCOPES } from '@vostride/agent-qa-agent-local'
 import {
   AGENT_QA_OP_CONTRACTS,
   AGENT_QA_TOOL_PROJECTIONS,
@@ -53,6 +56,12 @@ import {
   type RiskClassifiable,
 } from './policy-fixtures.js'
 import { SURFACE_ROSTER } from './roster.js'
+import {
+  driveChatDispatch,
+  driveMcpCall,
+  genericFnClause,
+  pinClassFor,
+} from './surface-dispatch.js'
 import {
   censusDiff,
   OP_INPUT_CONTRACTS,
@@ -94,6 +103,14 @@ const SYNTHETIC_ASKING_OP_ID = 'fn:control.asking.397.03'
 const SYNTHETIC_NON_ASKING_OP_ID = 'fn:control.reading.397.03'
 const SYNTHETIC_LOCAL_OP_ID = 'fn:control.local.397.03'
 
+/**
+ * Plan 04's own synthetic fixtures, named for the plan that plants them.
+ *
+ * 397-09's mutation script tells a plan's deliberate strays from the ones IT plants by name, so
+ * each plan's constants carry its number and no plan reuses another's.
+ */
+const SYNTHETIC_DRIVER_ABSENT_OP_ID = 'control.absent.397.04'
+
 const enumerations = new Map<string, SurfaceEnumeration>()
 let censusIds: readonly string[] = []
 let censusIdSet: ReadonlySet<string> = new Set()
@@ -115,6 +132,18 @@ function enumerationOf(surfaceId: string): SurfaceEnumeration {
 }
 
 const sorted = (ids: Iterable<string>): readonly string[] => [...ids].sort()
+
+/** This directory, so a source assertion reads the file it names rather than a path it guessed. */
+const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url))
+
+/** A source file with its comments removed, so a header may name what its body must not contain. */
+function commentStrippedSource(fileName: string): string {
+  return readFileSync(join(CONFORMANCE_DIR, fileName), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n')
+}
 
 describe('the parity suite ranges the registry census over every rostered surface', () => {
   it('pins the roster at the two surfaces that exist today', () => {
@@ -739,5 +768,110 @@ describe('the parity suite ranges the registry census over every rostered surfac
           + 'one withheld grant — a wider gap would refuse on an axis nobody named',
       ).toEqual([...declaration.requiredScopes].sort())
     }
+  })
+
+  // ---- Plan 04: the surface drivers (FUNC-05 legs 3 and 4) --------------------------------------
+
+  it('drives a capability through the chat surface\'s own composed dispatch, model-free', async () => {
+    // The plan-04 tracer. `proposals.list` is the safe subject: read-only, bound in this host, and
+    // its declared input is the empty object, so nothing about the drive depends on a store having
+    // anything in it.
+    //
+    // WHAT PRODUCES THIS ANSWER is the shipped REPL: a typed clause, split by the shipped splitter,
+    // routed by the shipped resolver's `/fn` branch, minted a caller by the composition, and
+    // dispatched through the composed `ChatInvokeBinding`. The receipt read back is the record the
+    // printed line renders.
+    const row = scenarioRowFor('proposals.list')
+    expect(row, 'the scenario table no longer carries proposals.list').toBeDefined()
+
+    const outcome = await driveChatDispatch({ opId: 'proposals.list', input: row!.input })
+
+    expect(
+      outcome.unhandled,
+      'the generic /fn route failed to resolve the clause the driver typed — the surface never '
+        + 'reached a dispatch, so nothing below is a statement about a verdict',
+    ).toEqual([])
+    expect(outcome.receipt?.status, 'proposals.list on chat: the surface reached a definitive '
+      + 'outcome').toBe('executed')
+    // ORIGIN IS THE MODEL-FREE PROOF, and it is a fact the surface recorded rather than a promise
+    // this file makes: the deterministic route mints `human` and the planner route mints `agent`
+    // (391 D-06), so a receipt stamped `human` cannot have been planned by a model.
+    expect(outcome.receipt?.origin, 'proposals.list on chat: the receipt must come from the '
+      + 'deterministic route, or a model planned this call').toBe('human')
+    // The gate saw it. One row per dispatched invocation is `invokeFunction`'s uniform-gating
+    // promise (D-11), and this is the observation the D-14 ungated mutation has to be able to break.
+    expect(
+      outcome.auditRows.filter((auditRow) => auditRow.action === pinClassFor('proposals.list')),
+      'proposals.list on chat: the surface dispatched and the gate wrote no audit row — a '
+        + 'capability outside the gate is exactly this phase\'s subject',
+    ).not.toEqual([])
+  })
+
+  it('drives the chat surface with no provider credential in the environment at all', async () => {
+    // ZERO PROVIDER SPEND, asserted as behaviour rather than argued. Every environment variable
+    // whose name could carry a model credential is removed for the duration of the drive; the
+    // deterministic route still routes, because `chatCapabilities` resolves to the shipped HEADLESS
+    // posture and the resolver table never touches a model.
+    const removed: [string, string][] = []
+    for (const [name, value] of Object.entries(process.env)) {
+      if (/(_API_KEY|_TOKEN|_SECRET|_KEY)$/u.test(name) && value !== undefined) {
+        removed.push([name, value])
+        delete process.env[name]
+      }
+    }
+    try {
+      const outcome = await driveChatDispatch({ opId: 'proposals.list', input: {} })
+      expect(
+        outcome.receipt?.status,
+        `proposals.list on chat: the drive needed one of the ${removed.length} credential-shaped `
+          + 'environment variables it was denied',
+      ).toBe('executed')
+    } finally {
+      for (const [name, value] of removed) process.env[name] = value
+    }
+  })
+
+  it('drives a tool through the MCP surface\'s real protocol door', async () => {
+    // The MCP half of the tracer, over the same `withMcpClient` wiring every enumeration leg reads
+    // through — so an enumeration and a call in this suite cannot be talking to two servers.
+    const answered = await driveMcpCall({
+      toolName: 'agent_qa_list_proposals',
+      args: {},
+      grantedScopes: [...FunctionScopeSchema.options],
+    })
+    expect(
+      answered.answered,
+      'agent_qa_list_proposals on mcp: the protocol refused a tool the mapping projects',
+    ).toBe(true)
+    // The discriminating half: the SAME call shape against a name no server registers is refused
+    // by the protocol rather than answered in band, which is what makes an absence probe a probe.
+    const absent = await driveMcpCall({
+      toolName: plausibleMcpToolSpelling(SYNTHETIC_DRIVER_ABSENT_OP_ID),
+      args: {},
+      grantedScopes: [...FunctionScopeSchema.options],
+    })
+    expect(
+      absent.answered,
+      'the MCP driver answered in band for a tool that does not exist — it cannot tell an absent '
+        + 'door from a present one that declined',
+    ).toBe(false)
+  })
+
+  it('observes the chat surface through its own dispatch, never through the gate directly', () => {
+    // PITFALL 5, AS A SOURCE ASSERTION. Every behavioural cell above would pass over a driver that
+    // called `invokeFunction` itself — and such a driver is blind to D-14's ungated-op mutation by
+    // construction, because the thing the mutation removes is the very call the driver would be
+    // making. Comments are stripped first so this file's own prose may name what the driver's body
+    // must not.
+    const code = commentStrippedSource('surface-dispatch.ts')
+    for (const forbidden of ['invokeFunction', 'evaluate(', 'composeCliLocalAgent', 'registry']) {
+      expect(code, `surface-dispatch.ts reaches past the surface via ${forbidden}`)
+        .not.toContain(forbidden)
+    }
+    // …and the sweep is over the real file rather than an empty string.
+    expect(code, 'the surface-dispatch source read back empty').toContain('createChatCommand')
+    // The context is injected there too, on policy-fixtures.ts's rule (Pitfall 3).
+    expect(code, 'surface-dispatch.ts must inject the execution context it decides under')
+      .toContain('setActiveExecutionContextResolver')
   })
 })

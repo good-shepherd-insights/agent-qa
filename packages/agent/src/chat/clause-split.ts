@@ -102,6 +102,34 @@ function isQuoteCharacter(character: string): character is QuoteCharacter {
 }
 
 /**
+ * The bracket pairs that protect a span, the way a quote pair does (2026-08-16, Phase 397 plan 04).
+ *
+ * WHY A SECOND KIND OF PROTECTED SPAN EXISTS. `/help` advertises `/fn <op> [json]` as "invoke any
+ * registered function by id — every capability, one branch", and D-06 rests the thin table's whole
+ * argument on that claim. A JSON object with more than one member carries a STRUCTURAL comma, and
+ * that comma is outside every quoted span by construction — it sits between one value's closing
+ * quote and the next key's opening one. `,` is a pinned separator, so
+ * `/fn config.target.create {"name":"shop","platform":"web","url":"…"}` was torn into three pieces,
+ * none of which parses as `/fn`'s body, and a person who typed exactly what the help text told them
+ * to type was answered "No capability in this build handles …". Measured over Phase 397's scenario
+ * table: 14 of the 41 registered capabilities have an input whose smallest valid JSON encoding
+ * carries a structural comma, so for a third of the catalogue the reach lever did not reach.
+ *
+ * IT ADDS NO TOKEN AND REMOVES NONE. {@link CONJUNCTION_TOKENS} is untouched; what changes is where
+ * a token is looked for, which is the same change quote protection already makes. The asymmetry is
+ * the file head's: an unquoted bracket in English prose is rare and costs at most a clause that
+ * could have been split, while the alternative manufactures a phantom clause and a spurious refusal
+ * on a documented, deterministic route. Pitfall 5 says which way to be wrong.
+ *
+ * QUOTE STATE WINS. A bracket INSIDE a quoted span is a character in a sentence, not the start of a
+ * document, so it never opens a depth — otherwise `write a test for "the { key" and status` would
+ * swallow its own conjunction.
+ */
+const BRACKET_PAIRS: Readonly<Record<string, string>> = Object.freeze({ '{': '}', '[': ']' })
+
+const CLOSING_BRACKETS: readonly string[] = Object.freeze(Object.values(BRACKET_PAIRS))
+
+/**
  * The separator starting at `at`, or nothing.
  *
  * Case-insensitive on the word tokens, because `run X AND status` is the same request as its
@@ -121,7 +149,8 @@ function separatorAt(utterance: string, at: number): string | undefined {
  * Pure, total and host-free: no clock, no config, no I/O, and no input throws. An unterminated
  * quote is not an error a person should have to hear about — it protects to end-of-utterance,
  * which over-protects (one clause where two were meant) rather than under-protects (a phantom
- * clause and a spurious refusal). Pitfall 5 says which way to be wrong.
+ * clause and a spurious refusal). Pitfall 5 says which way to be wrong. An unterminated BRACKET
+ * gets the identical answer for the identical reason (see {@link BRACKET_PAIRS}).
  *
  * Empty pieces are elided rather than preserved, so `status,,proposals` and `status, proposals`
  * are the same request. A clause whose text is empty could name nothing in a refusal, and D-08
@@ -131,6 +160,7 @@ export function splitClauses(utterance: string): readonly ChatClause[] {
   const pieces: string[] = []
   let current = ''
   let openQuote: QuoteCharacter | undefined
+  let bracketDepth = 0
   let at = 0
 
   while (at < utterance.length) {
@@ -147,6 +177,32 @@ export function splitClauses(utterance: string): readonly ChatClause[] {
 
     if (isQuoteCharacter(character)) {
       openQuote = character
+      current += character
+      at += 1
+      continue
+    }
+
+    // The bracket depth is maintained HERE — after the quote arm above has already `continue`d —
+    // which is what makes "quote state wins" a property of the control flow rather than a rule.
+    if (BRACKET_PAIRS[character] !== undefined) {
+      bracketDepth += 1
+      current += character
+      at += 1
+      continue
+    }
+
+    if (CLOSING_BRACKETS.includes(character)) {
+      // FLOORED AT ZERO. A stray `}` must not drive the counter negative, or a later `{` would
+      // leave it at zero and the protection would silently stop working for the rest of the scan —
+      // a guard defeated by a character a person typed by accident is not a guard.
+      bracketDepth = Math.max(0, bracketDepth - 1)
+      current += character
+      at += 1
+      continue
+    }
+
+    if (bracketDepth > 0) {
+      // Inside a bracketed span nothing separates, exactly as inside a quoted one.
       current += character
       at += 1
       continue

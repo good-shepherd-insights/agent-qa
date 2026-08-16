@@ -96,6 +96,77 @@ describe('splitClauses — quote protection (RESEARCH Pitfall 5)', () => {
   })
 })
 
+/**
+ * Bracket protection — `/fn`'s JSON body (2026-08-16, Phase 397 plan 04).
+ *
+ * FOUND BY DRIVING THE SHIPPED REPL, not by reading the file. `/help` advertises
+ * `/fn <op> [json]` as "invoke any registered function by id — every capability, one branch", and
+ * D-06 rests the whole thin-table design on that claim. But a JSON object with more than one member
+ * carries a STRUCTURAL comma — outside any quoted span, because it sits between a value's closing
+ * quote and the next key's opening one — and `,` is a pinned separator. So
+ * `/fn config.target.create {"name":"shop","platform":"web","url":"https://shop.example.com"}` was
+ * torn into three pieces, none of which parses as `/fn`'s body, and a person who typed exactly what
+ * the help text told them to type was answered "No capability in this build handles …".
+ *
+ * Measured over Phase 397's scenario table: 14 of the 41 registered capabilities have an input
+ * whose smallest valid JSON encoding contains a structural comma. For those 14 the reach lever did
+ * not reach.
+ *
+ * THE FIX IS THE MODULE'S OWN RULE APPLIED TO A SECOND KIND OF SPAN. A quoted span already protects
+ * its separators; a bracketed span now does the same, on exactly the asymmetry the file's head
+ * states — over-protection costs a clause that could have been split, under-protection manufactures
+ * a phantom clause and a spurious refusal. It adds no token to {@link CONJUNCTION_TOKENS} and takes
+ * none away, so no utterance that split before splits differently unless it contains an unquoted
+ * bracket, which is JSON and not English.
+ */
+describe('splitClauses — bracket protection (397-04)', () => {
+  it('keeps a multi-member JSON object whole, so `/fn` reaches every capability', () => {
+    expect(texts('/fn config.field.set {"path":"workspace.testMatch","value":"x"}')).toEqual([
+      '/fn config.field.set {"path":"workspace.testMatch","value":"x"}',
+    ])
+  })
+
+  it('protects every pinned separator inside a bracketed span, not just the comma', () => {
+    expect(texts('/fn q.add {"a":"x; y and z"; "b":1, "c":[1, 2]}')).toEqual([
+      '/fn q.add {"a":"x; y and z"; "b":1, "c":[1, 2]}',
+    ])
+  })
+
+  it('keeps a nested object whole — depth, not a single flag', () => {
+    expect(
+      texts('/fn authoring.draft.write {"intent":"sign in","scope":{"tier":"product","key":"k"}}'),
+    ).toEqual(['/fn authoring.draft.write {"intent":"sign in","scope":{"tier":"product","key":"k"}}'])
+  })
+
+  it('still splits on a separator OUTSIDE the brackets in the same utterance', () => {
+    expect(texts('/fn runs.list {"limit":1, "status":"passed"} and status')).toEqual([
+      '/fn runs.list {"limit":1, "status":"passed"}',
+      'status',
+    ])
+  })
+
+  it('tolerates an unterminated bracket by protecting to end-of-utterance, never throwing', () => {
+    // The same answer an unterminated quote gets, for the same reason.
+    expect(() => splitClauses('/fn x {"a":1, "b"')).not.toThrow()
+    expect(texts('/fn x {"a":1, "b"')).toEqual(['/fn x {"a":1, "b"'])
+  })
+
+  it('never lets a stray closing bracket open a protected span', () => {
+    // Depth floors at zero: `}` with nothing open must not drive the counter negative, or a later
+    // `{` would leave it at zero and the protection would silently stop working.
+    expect(texts('a} and b, c')).toEqual(['a}', 'b', 'c'])
+  })
+
+  it('does not protect a bracket that is itself inside a quoted span', () => {
+    // Quote state wins: the `{` here is a character in a sentence, not the start of a document,
+    // so it must not leave a depth behind that swallows the rest of the utterance.
+    expect(texts('write a test for "the { key" and status')).toEqual([
+      'write a test for "the { key"',
+      'status',
+    ])
+  })
+})
+
 describe('splitClauses — word boundaries and empty pieces', () => {
   it('never splits on a token embedded in a word', () => {
     expect(texts('run sandbox tests')).toEqual(['run sandbox tests'])
