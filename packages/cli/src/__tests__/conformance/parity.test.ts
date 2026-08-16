@@ -859,6 +859,63 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
+  it('refuses by NAME every capability this composition cannot run — covered, not missing', async () => {
+    // PITFALL 11, re-derived here from the retired 384 stub (397-08, D-10). `unbound` is
+    // COVERED-BUT-UNBOUND, not missing: a declared-but-unbound capability has a contract, a listing
+    // row, a gate verdict and an audit trail, and reading it as a hole in the API is the silent gap
+    // `bindingStatus` exists to prevent. The claim it carries is that the refusal is ATTRIBUTABLE —
+    // the error names the op, so a caller can tell "this host cannot run that" from "that does not
+    // exist" and from "you were not granted it".
+    //
+    // WHY IT LANDS HERE RATHER THAN STAYING IN `packages/agent`. It needs an input per op — and the
+    // scenario table is the ONE place those live now. Restating them agent-side would have rebuilt
+    // the second denominator this plan just retired.
+    //
+    // The caller is minted per declaration off its own `requiredScopes` with a human origin, and the
+    // ask tier is standing-approved, so nothing here can be refused on an axis that precedes the
+    // binding check and be mistaken for a binding refusal (the 387-08 measurement).
+    const registry = conformanceRegistry({
+      resolveExecutionContext: conformanceResolveExecutionContext,
+      standingApprovalReader: () => EVERY_ASK_STANDING_APPROVED,
+    })
+    const unbound = registry
+      .list(CONFORMANCE_CENSUS_CALLER)
+      .filter((declaration) => declaration.bindingStatus === 'unbound')
+
+    // Not an assertion that the count stays where it is — that the state EXISTS and is refused
+    // distinctly. A composition binding everything would pass the loop below on zero iterations.
+    expect(unbound.length, 'no capability reads unbound here, so this cell measured nothing')
+      .toBeGreaterThan(0)
+
+    for (const declaration of unbound) {
+      const row = scenarioRowFor(declaration.id)
+      expect(row, `${declaration.id}: no scenario row, so no input to reach the binding check with`)
+        .toBeDefined()
+
+      let thrown: unknown
+      try {
+        await invokeFunction(
+          registry,
+          declaration.id,
+          (row as { input: unknown }).input,
+          coveringCallerFor(declaration),
+        )
+      } catch (error) {
+        thrown = error
+      }
+
+      // ASSERTED ON THE SHAPE OF THE ANSWER, never on "it threw": 397-04 measured a cell passing
+      // because a `TypeError` was read as a dispatch. Both fields are checked, because the name
+      // alone would not say WHICH capability the host refused.
+      const error = thrown as { name?: string; functionId?: string } | undefined
+      expect(
+        { name: error?.name, functionId: error?.functionId },
+        `${declaration.id}: an unbound capability must refuse by name at the binding check — a `
+          + 'refusal on any other axis certifies nothing about binding',
+      ).toEqual({ name: 'FunctionNotBoundError', functionId: declaration.id })
+    }
+  })
+
   // ---- D-12: per-surface row data, joined to the shipped tables in BOTH directions -------------
 
   it('joins every row MCP expectation to the declared mapping, in both directions', () => {
