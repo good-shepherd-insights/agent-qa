@@ -47,7 +47,8 @@
 // four of five shapes leaking verbatim on both channels, including a `*_CREDENTIALS`-style JSON
 // blob — an entirely ordinary environment value (a password with a quote in it, a service-account
 // blob). The corpus in place at the time could not see it: every credential plant was alphanumeric,
-// so no cell could distinguish "masks raw values" from "masks the serialized form".
+// so no cell could tell masking of raw values apart from masking of the serialized form. (Phrased
+// without quoted-string-after-`from`: the arch dep lint reads that shape as an import specifier.)
 //
 // SO THE MASKER IS NEVER HANDED A SERIALIZATION. `maskJsonDocument` below walks the JSON value and
 // masks every STRING LEAF and every OBJECT KEY — the raw bytes an operator's environment actually
