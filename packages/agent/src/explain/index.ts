@@ -6,4 +6,12 @@
 // hand a surface a second way to compose an explain answer, which is the same mistake the function
 // layer's barrel note refuses for `invoke`.
 
+export {
+  EXPLAIN_ABSTENTION_TEMPLATES,
+  catalogRowId,
+  invocationForRow,
+  renderExplainOutput,
+} from './renderer.js'
+export type { ExplainRenderContext } from './renderer.js'
+export { DEFAULT_CLOSEST_COUNT, closestCapabilities, compareRowIds } from './scorer.js'
 export type { CapabilityCatalogPort, ExplainAbstentionRecord } from './port.js'
