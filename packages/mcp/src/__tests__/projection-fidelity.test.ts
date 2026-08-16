@@ -48,6 +48,17 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { APPLY_REFUSAL_JSON_SCHEMA } from '../apply-refusal.js'
 import { buildAgentQaMcpServer } from '../catalog.js'
+// 2026-08-16 (Phase 397 D-06): the three normalisations this file authored now live beside the
+// package's other source, because 397's conformance suite compares the same two sides from
+// `packages/cli` and may not reach into another package's tests. They are consumed here rather
+// than kept here so exactly ONE lens exists — the copy that drifts looser is the copy that passes
+// over real drift, and nothing would have compared two copies to each other. Their docstrings
+// travelled with them; read those before widening any of the three.
+import {
+  armWithoutDiscriminant,
+  type JsonDocument,
+  withoutDialect,
+} from '../conformance-support.js'
 import {
   advertisedContracts,
   AGENT_QA_OP_CONTRACTS,
@@ -55,8 +66,6 @@ import {
   compositionOf,
   DEGRADED_OUTPUT_CONTRACTS,
 } from '../mapping.js'
-
-type JsonDocument = Record<string, unknown>
 
 interface AdvertisedTool {
   readonly name: string
@@ -125,59 +134,6 @@ function declarations(): ReadonlyMap<string, FunctionDeclaration> {
       .list(callerWith(EVERY_SCOPE))
       .map((declaration) => [declaration.id, declaration]),
   )
-}
-
-/**
- * Drop `$schema`, which the SDK's conversion stamps and the registry's projection does not.
- *
- * A DIALECT MARKER, not content: it says which JSON Schema draft the document speaks and describes
- * nothing about the contract. Removing it is the one normalisation this file performs, and it is
- * called out rather than buried because a normalisation that removed content would be the way to
- * make a drift cell pass over real drift.
- */
-function withoutDialect(document: unknown): JsonDocument {
-  const { $schema: _dialect, ...rest } = (document ?? {}) as JsonDocument
-  return stripRedundantObjectStamp(rest)
-}
-
-/**
- * Drop the `type: "object"` the SDK stamps onto a COMPOSITION root.
- *
- * The second and last normalisation, and it is as narrow as the first. `standardSchemaToJsonSchema`
- * stamps `type: "object"` on a typeless root it can prove is object-shaped — a `oneOf` whose every
- * member is `type: "object"`, which is exactly what a zod discriminated union emits. The SDK's own
- * comment calls the stamp "redundant-but-valid", and a document is not changed by adding a
- * constraint every one of its branches already imposes.
- *
- * IT IS GATED ON THE COMPOSITION KEYWORD, so a genuine `type` disagreement still reds: the only
- * case dropped is a root that carries `oneOf`/`anyOf` AND the stamp, which is the one case the SDK
- * manufactures. An ungated `delete document.type` would have made the whole drift cell blind to a
- * contract whose root type actually moved.
- */
-function stripRedundantObjectStamp(document: JsonDocument): JsonDocument {
-  const composed = document.oneOf !== undefined || document.anyOf !== undefined
-  if (!composed || document.type !== 'object') return document
-  const { type: _stamp, ...rest } = document
-  return rest
-}
-
-/**
- * One advertised union arm, with the fold's discriminant taken back out.
- *
- * `required: []` is DROPPED rather than kept, and the case is real rather than defensive:
- * `config.undo.propose` takes an all-optional input, so its own projection carries no `required`
- * key at all while the extended arm carries `['action']` — and removing the discriminant from that
- * leaves an empty array where the other side has nothing. JSON Schema reads an absent `required`
- * and an empty one identically, so the two documents agree; keeping the empty array would have
- * failed the cell on a difference that describes no difference.
- */
-function armWithoutDiscriminant(arm: JsonDocument, discriminant: string): JsonDocument {
-  const properties = { ...((arm.properties ?? {}) as JsonDocument) }
-  delete properties[discriminant]
-  const required = ((arm.required ?? []) as readonly string[]).filter((key) => key !== discriminant)
-  const rebuilt: JsonDocument = { ...arm, properties, required }
-  if (required.length === 0) delete rebuilt.required
-  return rebuilt
 }
 
 describe('the advertised catalogue is what the mapping declares', () => {

@@ -24,6 +24,20 @@ export type { AgentQaMcpServerDeps } from './catalog.js'
 export { createAgentQaMcpNodeHandler } from './http.js'
 export type { AgentQaMcpDepsResolver } from './http.js'
 
+// 2026-08-16 (Phase 397 D-06): the schema-comparison lens, published for the SAME reason the two
+// predicates above it are — so it can be driven directly rather than only observed through a
+// running server. Three pure normalisations over plain objects; nothing here builds, converts or
+// reaches anything, so publishing them hands a consumer no capability. They are on the barrel
+// because 397's conformance suite compares an advertised document against the function layer's own
+// projection from a different package, and the alternative to sharing this object is a second
+// conversion recipe for one comparison — which D-06 rules out by name.
+export {
+  armWithoutDiscriminant,
+  stripRedundantObjectStamp,
+  withoutDialect,
+} from './conformance-support.js'
+export type { JsonDocument } from './conformance-support.js'
+
 export {
   advertisedContracts,
   AGENT_QA_COMPOSED_CONTRACTS,
