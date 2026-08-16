@@ -132,6 +132,12 @@ importers:
       '@vostride/agent-qa-safety':
         specifier: workspace:*
         version: link:../safety
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
+      id-agent:
+        specifier: 1.0.3
+        version: 1.0.3
       posthog-node:
         specifier: 5.33.2
         version: 5.33.2

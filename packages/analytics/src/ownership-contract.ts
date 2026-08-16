@@ -25,6 +25,14 @@ export const AGENT_QA_ANALYTICS_ALLOWED_RESPONSIBILITIES = [
   'the opt-out decision: resolving the do-not-track environment convention or the config privacy '
     + 'flag ONCE, at composition, to a transport — never inside a send path',
   'masking composed at the send seam, before any serialization-dependent matching',
+  // 2026-08-17 (Phase 398 plan 06 task 3, D-17). Both lines describe things MOVED here from
+  // `packages/core/src/analytics/`, and both are stated as contract-preserving on purpose: the
+  // identity record is already on disk in every install, and the subscriber's bus-facing shape is
+  // what a host attaches. Owning them means owning the promise that neither drifts silently.
+  'the anonymous identity store: the persisted distinct id, its scheme, and its exactly-two-key '
+    + 'record — never a field that identifies a machine, a user or a working directory',
+  'the run-completion bus subscriber: accumulating a run\'s member outcomes, step tallies and '
+    + 'suite aggregate from the envelope stream and emitting the completion members once',
 ] as const
 // The forbidden lines are the three v1 defects and the one boundary that keeps this package a host
 // concern. `no function-layer imports` is the load-bearing one: analytics is something a HOST does
@@ -48,7 +56,11 @@ export const AGENT_QA_ANALYTICS_FORBIDDEN_RESPONSIBILITIES = [
 // so `validate:arch` reds on any straggler import at exactly the moment there is a straggler.
 // `zod` is the vocabulary the closed event union is written in; it is not a validator of
 // convenience here, it IS the no-free-text mechanism.
+// 2026-08-17 (Phase 398 plan 06 task 3, D-17). `id-agent` arrives with the identity store, pinned
+// at the SAME 1.0.3 `packages/ids` and `packages/core` already resolve — the id scheme is the thing
+// existing installs are keyed on, so the generator moving packages must not also move versions.
 export const AGENT_QA_ANALYTICS_EXTERNAL_DEPENDENCIES = [
+  'id-agent',
   'posthog-node',
   'zod',
 ] as const
@@ -73,10 +85,17 @@ export const AGENT_QA_ANALYTICS_EXTERNAL_DEPENDENCIES = [
 // functions the run masking context is built from, not a copy. That direction is the whole point:
 // a masking vocabulary written inside this package would be a second answer to "what is a secret",
 // living in the package least likely to be updated when the first answer changes.
+//
+// 2026-08-17 (Phase 398 plan 06 task 3, D-17). `schema` arrives with the run subscriber, and it is
+// a TYPE-ONLY read of the frozen bus envelope (§2.2) — the subscriber consumes a projection the
+// runner publishes and reaches nothing that produces it. Restating the envelope shape here would be
+// a second declaration of the wire contract, in the package least likely to be updated when the
+// first one changes; the direction (adapter → schema) is the one the other adapters already take.
 export const AGENT_QA_ANALYTICS_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-ids',
   '@vostride/agent-qa-mcp',
   '@vostride/agent-qa-safety',
+  '@vostride/agent-qa-schema',
 ] as const
 
 export const AGENT_QA_ANALYTICS_OWNERSHIP_CONTRACT = {

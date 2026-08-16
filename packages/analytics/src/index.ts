@@ -77,6 +77,39 @@ export type { AgentQaAnalyticsEvent, AnalyticsEventName } from './events.js'
 export { createAnalyticsMaskingContext, maskEventForSend } from './masking-seam.js'
 export type { AnalyticsMaskingContext } from './masking-seam.js'
 
+// The anonymous identity store, re-homed from `core` with its mechanics intact (plan 06, D-17).
+// The store functions are published rather than hidden behind `resolveAnalyticsIdentity` because a
+// host that wants to REPORT the identity (a doctor command, a `--verbose` line) should read the
+// same record the resolver reads instead of re-deriving the path its own way.
+export {
+  ANALYTICS_USER_ID_PREFIX,
+  ANALYTICS_USER_ID_WORDS,
+  generateAnalyticsUserId,
+  getAnalyticsIdentityPath,
+  readAnalyticsIdentity,
+  resolveAnalyticsAgentProduct,
+  resolveAnalyticsIdentity,
+  writeAnalyticsIdentity,
+} from './identity.js'
+export type {
+  AnalyticsAgentProduct,
+  AnalyticsIdentityStore,
+  AnalyticsRuntimeContext,
+  ResolveAnalyticsIdentityOptions,
+  ResolvedAnalyticsIdentity,
+} from './identity.js'
+
+// The run-completion bus subscriber. Its `{ handler, flush }` shape is the one plan 10 attaches at
+// the CLI root, unchanged from the module it replaces so the rewire is an import and nothing else.
+export { createAnalyticsRunSubscriber } from './run-subscriber.js'
+export type {
+  AnalyticsRunner,
+  AnalyticsRunStandardProperties,
+  AnalyticsRunSubscriber,
+  AnalyticsRunSubscriberOptions,
+  AnalyticsTriggerSource,
+} from './run-subscriber.js'
+
 export { createPosthogTransport, NoopTransport } from './transports.js'
 export type {
   PosthogAnalyticsClient,
