@@ -26,6 +26,27 @@ The two dispositions are:
   397's parity/conformance walk adjudicates which absences are real gaps deserving function-layer
   ops — which chat then gets for free, because the function layer is the one door.
 
+## The 397 column — every pending row ruled (2026-08-16, D-17 / D-20)
+
+Phase 397 was the adjudicator every `dropped-pending-397-adjudication` row pointed at, and this is
+where it answers. Each row below now carries a **`Disposition (397, 2026-08-16)`** cell in one of
+three closed forms, and nothing is left blank:
+
+- **`gap → <owner>`** — a real absence, routed to the milestone that owns the work. **7 rows.**
+- **`not-a-gap → <reason>`** — the capability did not go missing; it is answered elsewhere, or its
+  absence is a rule. **22 rows.**
+- **`n/a → projected by 396`** — the row was never pending. **11 rows.**
+
+**Zero registry ops were minted here, and the census stayed frozen at 41 for the whole phase.** That
+is D-17's law binding the adjudicator: a phase whose golden snapshot and mutation proof both range
+over the registry cannot also grow it, and "we found a gap" is not a licence to close it in the file
+where it was found. A ruled gap is routed; the owning milestone mints the op function-layer-first,
+and chat gets it free because the function layer is the one door.
+
+The rulings are machine-checked. `packages/cli/src/__tests__/conformance/adjudications.test.ts`
+parses these tables and reds by row on a pending row with no ruling, on a ruling outside the three
+forms above, and on a count sentence that disagrees with the rows it counts.
+
 Recovery pointer: everything deleted is in git history at the parent of the deletion commit. The
 three deleted test files (`agent-qa-server.test.ts`, `agent-qa-server-masking.test.ts`,
 `credential-surface-parity.test.ts`) carried real masking and credential-surface protections;
@@ -37,62 +58,67 @@ threat T-396-01), not dropped. Read them out of history when writing that plan.
 The names are quoted verbatim from the v1 `DISCOVERY.tools` list at `agent-qa-server.ts:66-98`.
 The requirement text said 37; the measured list was 33.
 
-| # | v1 tool | Disposition | Registry op / reason |
-|---|---------|-------------|----------------------|
-| 1 | `agent_qa_discover` | dropped-pending-397-adjudication | No op. The protocol answers this itself now — `tools/list` plus `server/discover` (SEP-2575). A hand-written catalogue tool beside them would be a second, drifting answer to one question. |
-| 2 | `agent_qa_get_config` | projected-by-396-tool | `config.get` (`['read']`) — the masked config read, already a registered op. |
-| 3 | `agent_qa_schema_reference` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. The static schema tables it served (`schema-reference.ts`) are deleted with it; op contracts are advertised mechanically as each tool's `inputSchema`/`outputSchema` instead (D-16), so a caller reads the live contract rather than a hand-kept copy of it. |
-| 4 | `agent_qa_validate_definition` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. |
-| 5 | `agent_qa_generate_id` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. Minting a canonical id on a surface is the thing 394-11 removed from the CLI for the same reason. |
-| 6 | `agent_qa_validate_id` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. |
-| 7 | `agent_qa_list_tests` | dropped-pending-397-adjudication | No op. `entities.resolve` resolves a reference to an entity; nothing in the registry enumerates the test corpus. A real gap for 397 to adjudicate. |
-| 8 | `agent_qa_read_test` | projected-by-396-tool | `entities.get` (`['read']`) — D-02's universal entity read, kind `TST`. |
-| 9 | `agent_qa_validate_test` | dropped-pending-397-adjudication | No op. Validation reaches a caller as the authoring funnel's own verdict (`authoring.draft.verify`), never as a standalone linter over arbitrary text. |
-| 10 | `agent_qa_create_test` | projected-by-396-tool | `authoring.draft.write` (`['test-write','run','read']`) — workflow-coarse, and the propose+apply path rather than v1's blind write. |
-| 11 | `agent_qa_update_test` | projected-by-396-tool | `authoring.draft.edit` (`['test-write','read']`). |
-| 12 | `agent_qa_delete_test` | dropped-pending-397-adjudication | No op, and **MCPS-02 forbids a delete tool for irreversible deletes** regardless. Not a gap to close; a rule. |
-| 13 | `agent_qa_list_suites` | dropped-pending-397-adjudication | No op. |
-| 14 | `agent_qa_read_suite` | dropped-pending-397-adjudication | No op. `ENTITY_KINDS` has no suite kind, so D-02's universal read does not cover it. |
-| 15 | `agent_qa_validate_suite` | dropped-pending-397-adjudication | No op. |
-| 16 | `agent_qa_create_suite` | dropped-pending-397-adjudication | No op. |
-| 17 | `agent_qa_update_suite` | dropped-pending-397-adjudication | No op. |
-| 18 | `agent_qa_delete_suite` | dropped-pending-397-adjudication | No op; same MCPS-02 rule as row 12. |
-| 19 | `agent_qa_list_hooks` | dropped-pending-397-adjudication | No op. |
-| 20 | `agent_qa_read_hook` | dropped-pending-397-adjudication | No op. Hooks are visible inside the masked config read (row 2), not as their own read verb. |
-| 21 | `agent_qa_create_hook` | projected-by-396-tool | `config.hook.add` (`['config-write']`) — through the propose+apply path, so a hook arrives as a reviewable diff instead of a written file. |
-| 22 | `agent_qa_update_hook` | dropped-pending-397-adjudication | No op. `config.hook.add` adds; editing an existing hook has no registered verb. |
-| 23 | `agent_qa_delete_hook` | dropped-pending-397-adjudication | No op; same MCPS-02 rule as row 12. |
-| 24 | `agent_qa_run_hook` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. |
-| 25 | `agent_qa_enqueue_test_run` | projected-by-396-tool | `runs.start` (`['run']`) — workflow-coarse. |
-| 26 | `agent_qa_enqueue_suite_run` | projected-by-396-tool | `runs.start` (`['run']`), suite scope — the same op, which is why D-01 allows one tool over both. |
-| 27 | `agent_qa_get_run` | projected-by-396-tool | `runs.get` (`['read']`). |
-| 28 | `agent_qa_get_run_steps` | projected-by-396-tool | `runs.get` / `runs.events` (`['read']`) — plan 04 decides which, and whether it folds with rows 27/29/30. |
-| 29 | `agent_qa_get_run_logs` | projected-by-396-tool | `runs.events` (`['read']`). |
-| 30 | `agent_qa_get_run_execution_logs` | projected-by-396-tool | `runs.events` (`['read']`). |
-| 31 | `agent_qa_get_run_artifact` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. Artifact bytes over a tool result is also a disclosure surface nobody has scoped (T-396-01's class). |
-| 32 | `agent_qa_cancel_run` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly — `runs.cancel` is 397's leading adjudication candidate. |
-| 33 | `agent_qa_classify_failure` | dropped-pending-397-adjudication | No op with this contract. Named by D-15 explicitly. `analysis.get` reads an analysis the pipeline produced; it does not classify on demand from dashboard-fetched data the way v1's tool did. |
+| # | v1 tool | Disposition | Registry op / reason | Disposition (397, 2026-08-16) |
+|---|---------|-------------|----------------------|---|
+| 1 | `agent_qa_discover` | dropped-pending-397-adjudication | No op. The protocol answers this itself now — `tools/list` plus `server/discover` (SEP-2575). A hand-written catalogue tool beside them would be a second, drifting answer to one question. | not-a-gap → the protocol answers discovery itself (`tools/list` plus SEP-2575 `server/discover`), and 398's build-time capability catalog owns the human-facing version. A registry op here would be a third answer to one question. |
+| 2 | `agent_qa_get_config` | projected-by-396-tool | `config.get` (`['read']`) — the masked config read, already a registered op. | n/a → projected by 396; nothing pends here. |
+| 3 | `agent_qa_schema_reference` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. The static schema tables it served (`schema-reference.ts`) are deleted with it; op contracts are advertised mechanically as each tool's `inputSchema`/`outputSchema` instead (D-16), so a caller reads the live contract rather than a hand-kept copy of it. | not-a-gap → 396 D-16 advertises every op's LIVE contract as that tool's own `inputSchema`/`outputSchema`. A served copy of the contract is exactly the drift the advertisement replaced. |
+| 4 | `agent_qa_validate_definition` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. | not-a-gap → validation reaches a caller as `authoring.draft.verify`'s verdict inside the funnel. A standalone linter over arbitrary text is a second validator that can disagree with the one that gates writes. |
+| 5 | `agent_qa_generate_id` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. Minting a canonical id on a surface is the thing 394-11 removed from the CLI for the same reason. | not-a-gap → died with the CRUD model. Ids are minted host-side where the entity is written, which is what 394-11 removed from the CLI for this same reason. |
+| 6 | `agent_qa_validate_id` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. | not-a-gap → died with the CRUD model. The one URI codec (`packages/schema/src/entity/uri.ts`) validates at every parse point, so a standalone validator would be a second answer to a question already answered everywhere. |
+| 7 | `agent_qa_list_tests` | dropped-pending-397-adjudication | No op. `entities.resolve` resolves a reference to an entity; nothing in the registry enumerates the test corpus. A real gap for 397 to adjudicate. | gap → M5 (live view & run invocation): an `entities.list` enumeration verb beside `entities.get`, over `ENTITY_KINDS`. M5's dashboard rebuild is the first surface that cannot render without it, and it belongs in the function layer so chat gets it free. Row 13 folds into this ONE verb. |
+| 8 | `agent_qa_read_test` | projected-by-396-tool | `entities.get` (`['read']`) — D-02's universal entity read, kind `TST`. | n/a → projected by 396; nothing pends here. |
+| 9 | `agent_qa_validate_test` | dropped-pending-397-adjudication | No op. Validation reaches a caller as the authoring funnel's own verdict (`authoring.draft.verify`), never as a standalone linter over arbitrary text. | not-a-gap → row 4's ruling. `authoring.draft.verify` is the only validator, and it validates a draft in the funnel rather than arbitrary text a caller pasted. |
+| 10 | `agent_qa_create_test` | projected-by-396-tool | `authoring.draft.write` (`['test-write','run','read']`) — workflow-coarse, and the propose+apply path rather than v1's blind write. | n/a → projected by 396; nothing pends here. |
+| 11 | `agent_qa_update_test` | projected-by-396-tool | `authoring.draft.edit` (`['test-write','read']`). | n/a → projected by 396; nothing pends here. |
+| 12 | `agent_qa_delete_test` | dropped-pending-397-adjudication | No op, and **MCPS-02 forbids a delete tool for irreversible deletes** regardless. Not a gap to close; a rule. | not-a-gap → a rule, not an absence, exactly as the reason beside it says. MCPS-02 forbids a surface delete verb for irreversible deletes; removing a committed test is a repository edit a person makes and reviews. |
+| 13 | `agent_qa_list_suites` | dropped-pending-397-adjudication | No op. | gap → M5, FOLDED INTO ROW 7's verb: enumerating the corpus answers "which tests exist, and in which files". A suite is a file, so this is not a second registry to build. |
+| 14 | `agent_qa_read_suite` | dropped-pending-397-adjudication | No op. `ENTITY_KINDS` has no suite kind, so D-02's universal read does not cover it. | not-a-gap → there is no suite RECORD to read. `ENTITY_KINDS` has no suite kind and a suite is a committed file addressed by workspace path; the TST records inside it are `entities.get`'s job. |
+| 15 | `agent_qa_validate_suite` | dropped-pending-397-adjudication | No op. | not-a-gap → row 4's ruling. |
+| 16 | `agent_qa_create_suite` | dropped-pending-397-adjudication | No op. | not-a-gap → a suite is a committed file the authoring funnel writes — `authoring.draft.write` names the suite file a draft joins. A blind create is the v1 write the propose+apply path replaced. |
+| 17 | `agent_qa_update_suite` | dropped-pending-397-adjudication | No op. | not-a-gap → row 16's ruling, through `authoring.draft.edit`. |
+| 18 | `agent_qa_delete_suite` | dropped-pending-397-adjudication | No op; same MCPS-02 rule as row 12. | not-a-gap → row 12's MCPS-02 rule. |
+| 19 | `agent_qa_list_hooks` | dropped-pending-397-adjudication | No op. | gap → M7 (skills layer), where the hook and sandbox execution model is re-opened. **Correction, measured 2026-08-16:** the 396 reason for rows 19/20 overstates `config.get`, which projects the resolved CONFIG's leaves; hook definitions live in the separate `workspace.hooksFile` under `HooksFileSchema`, so no registered op reads them today. |
+| 20 | `agent_qa_read_hook` | dropped-pending-397-adjudication | No op. Hooks are visible inside the masked config read (row 2), not as their own read verb. | gap → M7, with row 19 — ONE hook-read verb, not two. The same correction to the 396 reason applies: what `config.get` shows is `workspace.hooksFile`, the path, not the hooks. |
+| 21 | `agent_qa_create_hook` | projected-by-396-tool | `config.hook.add` (`['config-write']`) — through the propose+apply path, so a hook arrives as a reviewable diff instead of a written file. | n/a → projected by 396; nothing pends here. |
+| 22 | `agent_qa_update_hook` | dropped-pending-397-adjudication | No op. `config.hook.add` adds; editing an existing hook has no registered verb. | gap → M7, with rows 19/20. `config.field.set` reaches any schema-addressable CONFIG path (D-03, deliberately no whitelist), and the hooks file is not one — so an existing hook has no edit verb. Minting `config.hook.edit` now would pin an edit shape to a contract M7 revisits. |
+| 23 | `agent_qa_delete_hook` | dropped-pending-397-adjudication | No op; same MCPS-02 rule as row 12. | not-a-gap → row 12's MCPS-02 rule. |
+| 24 | `agent_qa_run_hook` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. | not-a-gap → a hook's whole contract is "runs at this lifecycle point". Invoking one by name from a surface is arbitrary script execution decoupled from the lifecycle that gives it meaning — the private-power shape M4 abolished. |
+| 25 | `agent_qa_enqueue_test_run` | projected-by-396-tool | `runs.start` (`['run']`) — workflow-coarse. | n/a → projected by 396; nothing pends here. |
+| 26 | `agent_qa_enqueue_suite_run` | projected-by-396-tool | `runs.start` (`['run']`), suite scope — the same op, which is why D-01 allows one tool over both. | n/a → projected by 396; nothing pends here. |
+| 27 | `agent_qa_get_run` | projected-by-396-tool | `runs.get` (`['read']`). | n/a → projected by 396; nothing pends here. |
+| 28 | `agent_qa_get_run_steps` | projected-by-396-tool | `runs.get` / `runs.events` (`['read']`) — plan 04 decides which, and whether it folds with rows 27/29/30. | n/a → projected by 396; nothing pends here. |
+| 29 | `agent_qa_get_run_logs` | projected-by-396-tool | `runs.events` (`['read']`). | n/a → projected by 396; nothing pends here. |
+| 30 | `agent_qa_get_run_execution_logs` | projected-by-396-tool | `runs.events` (`['read']`). | n/a → projected by 396; nothing pends here. |
+| 31 | `agent_qa_get_run_artifact` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly. Artifact bytes over a tool result is also a disclosure surface nobody has scoped (T-396-01's class). | gap → M5's artifact-resolution route, which owns the disclosure scoping this row names (T-396-01's class) as well as the read itself. Not minted here: an artifact read without that scoping is the gap made worse. |
+| 32 | `agent_qa_cancel_run` | dropped-pending-397-adjudication | No op. Named by D-15 explicitly — `runs.cancel` is 397's leading adjudication candidate. | gap → M5's live-view control arbiter, as `runs.cancel`. The leading candidate this row named is ruled a REAL gap and routed to its owner rather than minted in 397 (D-17 binds the adjudicator too). |
+| 33 | `agent_qa_classify_failure` | dropped-pending-397-adjudication | No op with this contract. Named by D-15 explicitly. `analysis.get` reads an analysis the pipeline produced; it does not classify on demand from dashboard-fetched data the way v1's tool did. | not-a-gap → `analysis.get` reads the verdict the `analyze-run` job produced. Classification on demand over dashboard-fetched data is the private data path M4 abolished, not a capability that went missing. |
 
-**Counts:** 33 rows — **12 `projected-by-396-tool`**, **21 `dropped-pending-397-adjudication`**.
+**Counts (corrected 2026-08-16, Phase 397):** 33 rows — **11 `projected-by-396-tool`**, **22
+`dropped-pending-397-adjudication`**. The line as first written on 2026-08-15 said 12 and 21; the
+rows themselves never moved (this file has two commits, both from 396 plan 01), so that sentence was
+off by one in each direction from the day it was written, and 397's RESEARCH copied it forward. The
+numbers above are the tally of the column, and `adjudications.test.ts` in the conformance suite now
+asserts the tally against the rows so the sentence cannot rot again.
 
 ## Prompt (1 row)
 
-| v1 capability | Disposition | Reason |
-|---|---|---|
-| prompt `agent_qa_authoring_context` | dropped-pending-397-adjudication | **D-14: no prompts on the new server.** The authoring brief reaches callers as data through the authoring-funnel tool, and 398's build-time capability catalog owns discoverability. Revisit there if at all. |
+| v1 capability | Disposition | Reason | Disposition (397, 2026-08-16) |
+|---|---|---|---|
+| prompt `agent_qa_authoring_context` | dropped-pending-397-adjudication | **D-14: no prompts on the new server.** The authoring brief reaches callers as data through the authoring-funnel tool, and 398's build-time capability catalog owns discoverability. Revisit there if at all. | not-a-gap → D-14 stands: no prompts on this server. The authoring brief travels as data through `authoring.funnel.get`, and 398's capability catalog owns discoverability. |
 
 ## Resource scheme (6 rows)
 
 The v1 `DISCOVERY.resources` list was `SCHEMA_REFERENCE_NAMES.map(name => 'agent-qa://schema/' + name)`.
 
-| v1 resource URI | Disposition | Reason |
-|---|---|---|
-| `agent-qa://schema/config` | dropped-pending-397-adjudication | The whole `agent-qa://schema/…` **scheme** dies with `schema-reference.ts`. It is a different scheme from 387's `agentqa://<kind>/<id>`, which D-13 ships as entity Resource Templates resolving through `entities.get`; the two were never the same surface. Contracts now travel as advertised tool schemas (D-16). |
-| `agent-qa://schema/test` | dropped-pending-397-adjudication | as above |
-| `agent-qa://schema/suite` | dropped-pending-397-adjudication | as above |
-| `agent-qa://schema/hooks` | dropped-pending-397-adjudication | as above |
-| `agent-qa://schema/ids` | dropped-pending-397-adjudication | as above |
-| scheme `agent-qa://` itself | dropped-pending-397-adjudication | Retired. `agentqa://` (no hyphen, D-13) is the surviving entity scheme, parsed by the ONE codec at `packages/schema/src/entity/uri.ts`. |
+| v1 resource URI | Disposition | Reason | Disposition (397, 2026-08-16) |
+|---|---|---|---|
+| `agent-qa://schema/config` | dropped-pending-397-adjudication | The whole `agent-qa://schema/…` **scheme** dies with `schema-reference.ts`. It is a different scheme from 387's `agentqa://<kind>/<id>`, which D-13 ships as entity Resource Templates resolving through `entities.get`; the two were never the same surface. Contracts now travel as advertised tool schemas (D-16). | not-a-gap → the scheme died with `schema-reference.ts`; contracts travel as advertised tool schemas (396 D-16). Same ruling as row 3. |
+| `agent-qa://schema/test` | dropped-pending-397-adjudication | as above | not-a-gap → the scheme died with `schema-reference.ts`; contracts travel as advertised tool schemas (396 D-16). Same ruling as row 3. |
+| `agent-qa://schema/suite` | dropped-pending-397-adjudication | as above | not-a-gap → the scheme died with `schema-reference.ts`; contracts travel as advertised tool schemas (396 D-16). Same ruling as row 3. |
+| `agent-qa://schema/hooks` | dropped-pending-397-adjudication | as above | not-a-gap → the scheme died with `schema-reference.ts`; contracts travel as advertised tool schemas (396 D-16). Same ruling as row 3. |
+| `agent-qa://schema/ids` | dropped-pending-397-adjudication | as above | not-a-gap → the scheme died with `schema-reference.ts`; contracts travel as advertised tool schemas (396 D-16). Same ruling as row 3. |
+| scheme `agent-qa://` itself | dropped-pending-397-adjudication | Retired. `agentqa://` (no hyphen, D-13) is the surviving entity scheme, parsed by the ONE codec at `packages/schema/src/entity/uri.ts`. | not-a-gap → retired in favour of `agentqa://` (D-13), which resolves through `entities.get` and is parsed by the one codec. A retired URI scheme is a naming decision, not a lost capability. |
 
 ## Retired module exports and defaults
 

@@ -424,6 +424,17 @@ export interface OutputSchemaDegradation {
 }
 
 export const DEGRADED_OUTPUT_CONTRACTS: readonly OutputSchemaDegradation[] = Object.freeze([
+  // 397 DISPOSITION (2026-08-16 · D-20): keep-degraded. `agent_qa_start_run` advertises no
+  // `outputSchema` and keeps it that way. The cause is a property of the CONTRACT, not of this
+  // surface — a branded run id is `z.string().transform(asRunId)`, and the converter refuses a
+  // transform because there is no true JSON-Schema for "and then this function runs". The two ways
+  // out are both worse: advertising the input-mode document is the second-recipe lie D-16 forbids,
+  // and un-branding the id to please a converter would spend a type-safety property of the whole
+  // codebase on one surface's listing. 397 rules the degradation ADJUDICATED and CLOSED rather than
+  // pending; re-opening it means changing the contract, which is a golden-diff-visible act. The
+  // absence itself is not re-pinned here — `projection.ts` probes the conversion both ways and the
+  // shipped projection suite owns that fact (RESEARCH Pitfall 9); the conformance suite asserts
+  // only the join.
   Object.freeze({
     tool: 'agent_qa_start_run',
     opId: 'runs.start',
@@ -431,6 +442,13 @@ export const DEGRADED_OUTPUT_CONTRACTS: readonly OutputSchemaDegradation[] = Obj
     measured: 'Transforms cannot be represented in JSON Schema',
     adjudication: '397',
   }),
+  // 397 DISPOSITION (2026-08-16 · D-20): keep-degraded, on the row above's reasoning and not by
+  // appeal to it. `agent_qa_list_runs` degrades one level down — the transform sits inside
+  // `RunSummarySchema`, an element of the array this op returns — so a caller loses the shape of a
+  // LIST rather than of a single acknowledgement. That is the more tempting one to paper over with
+  // a hand-written array schema, and the same objection answers it: a shape derived by a second
+  // recipe is no longer the object `invokeFunction` validates, and advertising it would make this
+  // tool the one place a client could be told something the gate does not enforce.
   Object.freeze({
     tool: 'agent_qa_list_runs',
     opId: 'runs.list',
