@@ -26,6 +26,8 @@ const TIED_ROWS: readonly CatalogRow[] = Object.freeze([
     docPath: null,
     docAbsentReason: 'fixture',
     requiredScopes: ['read'],
+    // 398-08: `params` declares no required property, so the derived example is the empty call.
+    exampleCall: { arguments: {} },
   }),
   CatalogRowSchema.parse({
     kind: 'alias',
