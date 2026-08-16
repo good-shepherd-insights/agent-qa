@@ -125,13 +125,35 @@ MARKER_B="MUTATION_397_09_LEG_B_UNGATED"
 
 # ── The suite's OWN deliberate control fixtures. Named here so this script's strays can never be
 # confused with them, and so a leg that reds only a control cell is visible as the wrong leg.
-# (397-01, 397-03, 397-04, 397-08 each plant their own; every one is plan-numbered.)
+#
+# DERIVED, NOT REMEMBERED. This is the complete set as of 2026-08-16, read off the conformance
+# directory rather than copied from the plans that planted them:
+#
+#   grep -rhoE "'[a-z0-9_.-]*(397[._]?0[1-8])[a-z0-9_.-]*'" packages/cli/src/__tests__/conformance/*.ts
+#
+# Every plan in the phase numbers its own fixtures, which is what makes that grep exhaustive and
+# what makes this script's `397_09` names unmistakably its own.
 SUITE_OWN_FIXTURES="agent_qa_control_uncatalogued_397_01
 control.stray.397.01
 control.uncarried.397.03
 control.stray.row.397.03
 control.absent.397.03
+control 397-03: prose in no declared class
+fn:control.asking.397.03
+fn:control.reading.397.03
+fn:control.local.397.03
 control.absent.397.04
+control.row.397.05.2
+control.scope.397.05
+control_degraded_397_05_a
+control_degraded_397_05_b
+control_degraded_397_05_c
+agent_qa_control_397_06
+control.golden.stray.397.06
+control.golden.uncatalogued.397.06
+controlGoldenField39706
+control.absent.397.07
+control.stray.397.07
 controluncatalogued39708.probe
 controlmemberless39708
 controlreserved39708"
@@ -203,8 +225,17 @@ CLASSIFY_MJS
 # the list follows the measurement and the disagreement is recorded in the phase SUMMARY as a
 # finding — a list edited to match a run is only honest when the edit is BY NAME.
 
+# A1's fan-out is THREE, and the third one was a measurement rather than a prediction. This list was
+# first written with two entries — the in-process reverse-completeness cell and the shipped binary's
+# anchor — and the run reported a third: the config-write listing delta cell asserts `strays` empty
+# under the REDUCED grant as well. That is not a leg reaching too far; it is the sharper half of the
+# finding. A tool registered outside the declared mapping is not scope-filtered by anything, because
+# the visibility law runs inside the loop the plant sits after — so the uncatalogued door is served
+# to a caller holding the DEFAULT grant too, and this cell is the only one that asks that question.
+# The list follows the measurement, BY NAME. It was never widened to any-red.
 cat > "$WORK/allowed.A1" <<'ALLOWED_A1'
 the parity suite ranges the registry census over every rostered surface reaches, on every rostered surface, only capabilities the registry declares
+the parity suite ranges the registry census over every rostered surface pins the config-write listing delta between the every-scope and the default MCP grant
 the built-binary anchors (D-02) the shipped MCP binary lists exactly the op ids the in-process adapter does
 ALLOWED_A1
 
@@ -214,6 +245,17 @@ the parity suite ranges the registry census over every rostered surface enumerat
 the parity suite ranges the registry census over every rostered surface joins every row chat expectation to the live chat enumeration, in both directions
 ALLOWED_A2
 
+# B's fan-out is TWO, and the second entry is here because the RUN FOUND THE SUITE VACUOUS AND THE
+# SUITE WAS FIXED — the leg was not narrowed to match it. On its first run leg B reddened exactly
+# one cell, the chat surface wall, which is 397-04's measured fan-out and would have been an honest
+# place to stop. It was not, because the tracer cell claims in as many words to be "the observation
+# the D-14 ungated mutation has to be able to break", and it was not breaking. The reason was
+# measured: `chat/banner.ts` reads `proposals.list` through the gate when a session OPENS, so an
+# `fn:proposals.list` audit row exists on every drive whatever the clause does, and a presence check
+# over that row cannot see a clause that dispatched outside the gate. The cell now compares against
+# a second drive of a capability the banner does not read, and reds under this leg. Recorded as a
+# deviation touching 397-04's file, because a leg list edited to match a vacuous cell would have
+# left the phase's own thesis untested on the surface it is about.
 cat > "$WORK/allowed.B" <<'ALLOWED_B'
 the parity suite ranges the registry census over every rostered surface refuses at the CHAT SURFACE WALL for every capability, through its own composed dispatch
 the parity suite ranges the registry census over every rostered surface drives a capability through the chat surface's own composed dispatch, model-free
@@ -402,7 +444,10 @@ assert_dist_marker () {
   local dist marker seen
   dist="$(dist_of "$leg")"
   marker="$(marker_of "$leg")"
-  seen="$(grep -oF -- "$marker" "$ROOT/$dist" 2>/dev/null | wc -l | tr -d ' ')"
+  # `pipefail` is on and `grep` exits 1 when it matches nothing — which is the EXPECTED reading
+  # after a restore. Without the `|| true` the absent case would kill the script under `set -e`
+  # before it could report the count it was asked for.
+  seen="$( { grep -oF -- "$marker" "$ROOT/$dist" 2>/dev/null || true; } | wc -l | tr -d ' ')"
   note "  dist marker '$marker' in $dist: $seen occurrence(s) (expected $expectation)"
   case "$expectation" in
     present)
@@ -422,16 +467,27 @@ assert_dist_marker () {
 RUN_TOTAL=0
 RUN_FAILED=""
 RUN_MESSAGES=""
+RUN_STDOUT=""
 run_suite () {
   local label="$1"
   local report="$WORK/report.$label.json"
   RUN_FAILED="$WORK/failed.$label"
   RUN_MESSAGES="$WORK/messages.$label"
+  RUN_STDOUT="$WORK/run.$label.stdout"
   rm -f "$report" "$RUN_FAILED" "$RUN_MESSAGES"
+  # TWO REPORTERS, AND THE SECOND ONE IS NOT DECORATION. Classification needs the JSON report's
+  # exact `fullName`s. But the NAME of a stray does not survive into `failureMessages`: chai
+  # truncates a deep diff to `expected [ Array(1) ] to deeply equal []`, and the actual member is
+  # printed only in the unified diff the DEFAULT reporter renders. SC-3 asks for a NAMED red, and
+  # the surface a person actually reads is the console — so both are captured and the name is
+  # required in either. (Measured 2026-08-16: with the json reporter alone, all three of leg A1's
+  # reds were correct and none of them contained the planted tool name.)
+  #
   # The exit code is read from the process, never through a pipe; a red suite is EXPECTED under a
   # mutation, so the run itself must not abort the script under `set -e`.
-  (cd "$CLI_DIR" && npx vitest run "$SUITE_REL" --reporter=json --outputFile="$report") \
-    > "$WORK/run.$label.stdout" 2>&1 || true
+  (cd "$CLI_DIR" && npx vitest run "$SUITE_REL" \
+      --reporter=default --reporter=json --outputFile.json="$report") \
+    > "$RUN_STDOUT" 2>&1 || true
   [ -f "$report" ] || { tail -40 "$WORK/run.$label.stdout" >&2; fatal "the suite produced no JSON report for $label — it did not run at all"; }
 
   local classified
@@ -505,10 +561,14 @@ run_leg () {
   [ "$unexpected" -eq 0 ] && [ "$missing" -eq 0 ] \
     || fatal "leg $leg failed exact discrimination (see above). No leg is ever widened to accept any-red."
 
-  # THE RED MUST NAME THE THING. SC-3 asks for NAMED reds: a cell that reds without the stray id or
-  # the escaped op id in its message would tell a reviewer that something is wrong and not what.
-  grep -Fq -- "$needle" "$RUN_MESSAGES" \
-    || { sed -n '1,80p' "$RUN_MESSAGES" >&2; fatal "leg $leg red the right cells but no failure message NAMES '$needle' — an unnamed red is not the proof SC-3 asks for"; }
+  # THE RED MUST NAME THE THING, ON THE SURFACE A PERSON READS. SC-3 asks for NAMED reds: a cell
+  # that reds without the stray id or the escaped op id anywhere in its output tells a reviewer that
+  # something is wrong and not what. Both channels are searched — the assertion message and the
+  # console diff — because the name lands in whichever one the value's depth allows.
+  if ! grep -Fq -- "$needle" "$RUN_MESSAGES" && ! grep -Fq -- "$needle" "$RUN_STDOUT"; then
+    sed -n '1,80p' "$RUN_MESSAGES" >&2
+    fatal "leg $leg red the right cells but nothing in its output NAMES '$needle' — an unnamed red is not the proof SC-3 asks for"
+  fi
   note "  the red names '$needle'"
 
   # And it must be THIS script's stray, not one of the suite's own deliberate control fixtures.
@@ -520,9 +580,14 @@ run_leg () {
     fi
   done <<< "$SUITE_OWN_FIXTURES"
 
-  echo "  --- verbatim, the leg's own red ---"
-  sed -n '1,40p' "$RUN_MESSAGES" | sed 's/^/  | /'
-  echo "  -----------------------------------"
+  # VERBATIM, BOTH CHANNELS. The assertion messages say which claim broke; the console section says
+  # WHICH MEMBER broke it. A run that printed only the first would be asking the reader to take the
+  # naming on trust, which is the whole thing SC-3 refuses to do.
+  echo "  --- verbatim, the assertion messages ---"
+  sed -n '1,60p' "$RUN_MESSAGES" | sed 's/^/  | /'
+  echo "  --- verbatim, the console's own diff (the surface a person reads) ---"
+  awk '/Failed Tests/ { seen = 1 } seen' "$RUN_STDOUT" | sed -n '1,120p' | sed 's/^/  | /'
+  echo "  --------------------------------------------------------------------"
 
   # ── Restore, prove it, and return to green ───────────────────────────────────────────────────
   cp "$snapshot" "$ROOT/$subject"
