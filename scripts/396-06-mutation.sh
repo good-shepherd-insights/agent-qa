@@ -117,6 +117,7 @@ cleanup() {
 trap cleanup EXIT
 
 cat > "$LEGS_PY" <<'PYLEGS'
+import re
 import sys
 
 LEGS = {
@@ -138,31 +139,61 @@ LEGS = {
         "  return (declared as { elicitation?: unknown }).elicitation !== undefined\n",
         "  return declared === declared\n",
     ),
+}
+
+# A4 IS ANCHORED AS A REGION, NOT AS BYTES — and that is a repair, dated 2026-08-16 (CR-04 review,
+# UAT item 2). This leg used to spell its anchor as the seven literal lines of the object literal,
+# including `proposal_id: proposalId,`. Commit 13b584d7 masked that field and wrote a six-line
+# comment INSIDE the literal, so the anchor stopped occurring at all: the leg `sys.exit`ed, the
+# shell turned that into `fatal`, and the script exited 1 on A4 every run from that commit onward.
+# The `A4 RED(5)` figure in 396-06-SUMMARY.md was measured before it and did not reproduce.
+#
+# The lesson is the anchor's SHAPE, not the one edit that broke it: an anchor that quotes prose is
+# invalidated by editing prose, which is the one thing this repository does constantly. The region
+# below is delimited by the object's own opening and closing lines, so any body — fields, comments,
+# masking calls — is deleted whole and no comment edit can silence the leg.
+REGION_LEGS = {
     # The structured refusal deleted. `content` still carries the whole teach, so a reader would
     # call this a tidy-up — and the advertised outputSchema then has nothing to validate.
     "A4": (
-        "      structuredContent: {\n"
-        "        status: APPLY_REFUSAL_STATUS,\n"
-        "        applied: false,\n"
-        "        proposal_id: proposalId,\n"
-        "        summary: maskText(parts.summary),\n"
-        "        instruction: maskText(parts.instruction),\n"
-        "      },\n",
-        "",
+        re.compile(r"\n      structuredContent: \{\n.*?\n      \},\n", re.DOTALL),
+        "\n",
     ),
 }
 
+
+def mutate(leg, src, neutered):
+    """Return the mutated source, or exit naming the drift. Never silently edits nothing."""
+    if leg in REGION_LEGS:
+        pattern, replacement = REGION_LEGS[leg]
+        found = pattern.findall(src)
+        if len(found) != 1:
+            sys.exit("anchor for %s matches %d regions in the subject, expected exactly 1"
+                     % (leg, len(found)))
+        if neutered:
+            return src
+        return pattern.sub(lambda _match: replacement, src, count=1)
+
+    anchor, replacement = LEGS[leg]
+    if neutered:
+        replacement = anchor
+    # An anchor that no longer occurs exactly once FATALs rather than silently mutating nothing: a
+    # leg that edited no bytes and then saw a green suite would read as a passing measurement.
+    n = src.count(anchor)
+    if n != 1:
+        sys.exit("anchor for %s occurs %d times in the subject, expected exactly 1" % (leg, n))
+    return src.replace(anchor, replacement)
+
+
+# `--check <leg> <snapshot>` resolves the anchor and writes nothing. The pre-flight below runs it
+# for every leg BEFORE any mutation, so anchor rot reds at the top of the run rather than three legs
+# in — which is how CR-04 stayed invisible: A1..A3 passed and the script died on the fourth.
+if sys.argv[1] == "--check":
+    mutate(sys.argv[2], open(sys.argv[3]).read(), False)
+    sys.exit(0)
+
 leg, snapshot, subject, neutered = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "neutered"
-anchor, replacement = LEGS[leg]
-if neutered:
-    replacement = anchor
-src = open(snapshot).read()
-# An anchor that no longer occurs exactly once FATALs rather than silently mutating nothing: a leg
-# that edited no bytes and then saw a green suite would read as a passing measurement.
-n = src.count(anchor)
-if n != 1:
-    sys.exit("anchor for %s occurs %d times in the subject, expected exactly 1" % (leg, n))
-open(subject, "w").write(src.replace(anchor, replacement))
+open(subject, "w").write(mutate(leg, open(snapshot).read(), neutered))
 PYLEGS
 
 run_wire() {
@@ -230,10 +261,23 @@ run_leg() {
 
 echo "396-06 MCPS-03 apply-path mutation legs"
 
-run_leg A1
-run_leg A2
-run_leg A3
-run_leg A4
+# PRE-FLIGHT: every leg's anchor must resolve before any leg runs (2026-08-16, UAT item 2).
+# An anchor that stops matching is the same failure as a grep that cannot see what it forbids, and
+# it is silent in exactly the way that matters: the legs before it still pass and the run still
+# prints their numbers. Resolving all four first makes anchor rot the FIRST thing the run says.
+for leg in A1 A2 A3 A4; do
+  python3 "$LEGS_PY" --check "$leg" "$SNAP_DIR/subject" \
+    || fatal "$leg: anchor drift (pre-flight) — the leg cannot be applied to the live subject"
+done
+echo "  pre-flight: A1 A2 A3 A4 anchors each resolve exactly once"
+
+# APPLY_MUTATION_LEGS selects which legs run. The default is all four; the knob exists so the
+# `neutered` self-test can be pointed at ONE leg. Without it the self-test can only ever prove that
+# the FIRST leg fatals when it edits nothing, which is the same "measures one thing" trap the legs
+# themselves are here to catch (2026-08-16, UAT item 2).
+for leg in ${APPLY_MUTATION_LEGS:-A1 A2 A3 A4}; do
+  run_leg "$leg"
+done
 
 # THE WIRING GREPS, EACH MEASURED ON BOTH SIDES OF THE LINE IT DRAWS.
 #
