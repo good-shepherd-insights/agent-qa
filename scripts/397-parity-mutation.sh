@@ -32,6 +32,14 @@
 #       session pin is consulted and no audit row is written — and the shipped types are all still
 #       satisfied. This is the class the whole "no private powers" claim is about.
 #
+#   C   A CAPABILITY WITH NO SCENARIO ROW — SC-4's own rule, measured rather than assumed. One row
+#       deleted from the typed scenario table, which is the state a repository is in the moment a
+#       new op ships and nobody adds a row for it. D-15 says SC-4's CI rule IS the census-equality
+#       leg running inside `turbo run test`, and a rule nobody has seen fire is a comment. This leg
+#       is here because the run MEASURED that D-14's expectation about A1/A2 was wrong: a
+#       SURFACE-side stray touches neither the registry nor the table, so it cannot red the census,
+#       and the census red SC-4 rests on had to be produced by the shape the census is about.
+#
 # A GREEN SUITE UNDER ANY LEG IS A FAILURE OF THIS SCRIPT, NOT A PASS. So is a red naming a cell
 # outside the leg's allowed list, and so is an allowed cell that stayed green. Discrimination is
 # enforced in BOTH directions (D-13) and no leg is ever widened to accept any-red.
@@ -114,6 +122,7 @@ cd "$ROOT"
 SUBJECT_A1="packages/mcp/src/catalog.ts"
 SUBJECT_A2="packages/agent/src/chat/resolver-table.ts"
 SUBJECT_B="packages/agent/src/chat/turn-engine.ts"
+SUBJECT_C="packages/cli/src/__tests__/conformance/scenario-table.ts"
 
 DIST_MCP="packages/mcp/dist/index.js"
 DIST_AGENT="packages/agent/dist/index.js"
@@ -172,11 +181,13 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/397parity.XXXXXXXX")"
 SNAP_A1="$WORK/catalog.ts.snapshot"
 SNAP_A2="$WORK/resolver-table.ts.snapshot"
 SNAP_B="$WORK/turn-engine.ts.snapshot"
+SNAP_C="$WORK/scenario-table.ts.snapshot"
 
 restore_all () {
   if [ -f "$SNAP_A1" ]; then cp "$SNAP_A1" "$ROOT/$SUBJECT_A1" 2>/dev/null || true; fi
   if [ -f "$SNAP_A2" ]; then cp "$SNAP_A2" "$ROOT/$SUBJECT_A2" 2>/dev/null || true; fi
   if [ -f "$SNAP_B" ]; then cp "$SNAP_B" "$ROOT/$SUBJECT_B" 2>/dev/null || true; fi
+  if [ -f "$SNAP_C" ]; then cp "$SNAP_C" "$ROOT/$SUBJECT_C" 2>/dev/null || true; fi
   return 0
 }
 # The subjects are restored FIRST and unconditionally on any exit path — an interrupted run must not
@@ -261,6 +272,24 @@ the parity suite ranges the registry census over every rostered surface refuses 
 the parity suite ranges the registry census over every rostered surface drives a capability through the chat surface's own composed dispatch, model-free
 ALLOWED_B
 
+# C's list is MEASURED, and it is the list SC-4 rests on. 397-03 measured FOUR cells for this shape;
+# this tree reports EIGHT, and the difference is the phase itself: 397-04's policy-identity, ask and
+# gate-wall legs and 397-06's golden diff all range the same denominator, so a capability the table
+# stopped carrying now goes unasserted on eight independent axes at once. The one cell 397-03 named
+# that does NOT red is `types every scenario input against the contract …`: it iterates the TABLE,
+# so a table one row short simply has one less row to type-check — correct, and exactly the kind of
+# asymmetry a measured list preserves and a guessed one flattens.
+cat > "$WORK/allowed.C" <<'ALLOWED_C'
+the parity suite ranges the registry census over every rostered surface carries exactly one scenario row per registered capability, in both directions
+the parity suite ranges the registry census over every rostered surface joins every row MCP expectation to the declared mapping, in both directions
+the parity suite ranges the registry census over every rostered surface joins every row chat expectation to the live chat enumeration, in both directions
+the parity suite ranges the registry census over every rostered surface answers identically for two callers that differ only in which surface minted them
+the parity suite ranges the registry census over every rostered surface diverges between the surfaces' own mints on exactly the human-origin capabilities
+the parity suite ranges the registry census over every rostered surface refuses at the GATE WALL for every capability, naming the one withheld grant
+the parity suite ranges the registry census over every rostered surface reaches the ask for every ask-capable capability, identically on both surfaces' callers
+the parity suite ranges the registry census over every rostered surface matches the committed golden registry, op by op and field by field
+ALLOWED_C
+
 # ── The mutations ───────────────────────────────────────────────────────────────────────────────
 #
 # APPLIED BY EXACT STRING REPLACEMENT with a single-occurrence assertion per edit, rather than by a
@@ -338,6 +367,20 @@ MUTATIONS = {
             "          )\n",
         ),
     ]),
+    # C — one scenario row deleted. The table is a typed literal array, so removing a member keeps
+    # the file compiling and keeps every other row correlated to its own op's contract; what is left
+    # is exactly the state a repository is in the moment a capability ships without a row for it.
+    'C': ('packages/cli/src/__tests__/conformance/scenario-table.ts', [
+        (
+            "  scenario({\n"
+            "    opId: 'runs.list',\n"
+            "    input: {},\n"
+            "    perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_list_runs' } } },\n"
+            "    policyPoints: { grant: 'allow', refuse: 'deny' },\n"
+            "  }),\n",
+            "",
+        ),
+    ]),
 }
 
 if name not in MUTATIONS:
@@ -362,6 +405,7 @@ subject_of () {
     A1) echo "$SUBJECT_A1" ;;
     A2) echo "$SUBJECT_A2" ;;
     B)  echo "$SUBJECT_B" ;;
+    C)  echo "$SUBJECT_C" ;;
     *)  fatal "unknown leg $1" ;;
   esac
 }
@@ -371,6 +415,7 @@ snapshot_of () {
     A1) echo "$SNAP_A1" ;;
     A2) echo "$SNAP_A2" ;;
     B)  echo "$SNAP_B" ;;
+    C)  echo "$SNAP_C" ;;
     *)  fatal "unknown leg $1" ;;
   esac
 }
@@ -380,6 +425,7 @@ marker_of () {
     A1) echo "$MARKER_A1" ;;
     A2) echo "$MARKER_A2" ;;
     B)  echo "$MARKER_B" ;;
+    C)  echo "" ;;
     *)  fatal "unknown leg $1" ;;
   esac
 }
@@ -388,6 +434,7 @@ dist_of () {
   case "$1" in
     A1) echo "$DIST_MCP" ;;
     A2|B) echo "$DIST_AGENT" ;;
+    C)  echo "" ;;
     *)  fatal "unknown leg $1" ;;
   esac
 }
@@ -444,6 +491,15 @@ assert_dist_marker () {
   local dist marker seen
   dist="$(dist_of "$leg")"
   marker="$(marker_of "$leg")"
+  # A LEG WHOSE SUBJECT NO DIST CARRIES SAYS SO, rather than grepping an artifact that could never
+  # hold its marker and reading the inevitable 0 as evidence. Leg C's subject is a TEST file, which
+  # vitest loads straight from `packages/cli/src` — there is no build step between the edit and the
+  # measurement, so there is nothing a rebuild proof could add. The freshness guard is unaffected:
+  # it excludes `__tests__` from its scan by design.
+  if [ -z "$marker" ]; then
+    note "  no dist carries leg $leg's subject (a test file, loaded from source) — no rebuild proof to make"
+    return 0
+  fi
   # `pipefail` is on and `grep` exits 1 when it matches nothing — which is the EXPECTED reading
   # after a restore. Without the `|| true` the absent case would kill the script under `set -e`
   # before it could report the count it was asked for.
@@ -620,7 +676,7 @@ if [ -n "$DIRTY" ]; then
 fi
 note "working tree clean (this script's own file excluded)"
 
-for pair in "A1|$SUBJECT_A1" "A2|$SUBJECT_A2" "B|$SUBJECT_B"; do
+for pair in "A1|$SUBJECT_A1" "A2|$SUBJECT_A2" "B|$SUBJECT_B" "C|$SUBJECT_C"; do
   leg="${pair%%|*}"; path="${pair##*|}"
   [ -f "$ROOT/$path" ] || fatal "leg $leg's subject is missing: $path"
   cp "$ROOT/$path" "$(snapshot_of "$leg")"
@@ -629,7 +685,7 @@ done
 
 rebuild_dists
 note "dists rebuilt in dependency order"
-for leg in A1 A2 B; do assert_dist_marker "$leg" absent; done
+for leg in A1 A2 B C; do assert_dist_marker "$leg" absent; done
 
 run_suite preflight
 if [ -s "$RUN_FAILED" ]; then
@@ -650,6 +706,7 @@ esac
 run_leg A1 "uncatalogued capability, MCP: a live tool registered outside mapping.ts" "$MARKER_A1"
 run_leg A2 "uncatalogued capability, chat: a resolver row repointed at a literal non-registry id" "$MARKER_A2"
 run_leg B  "ungated capability: one op answered inside packages/agent, around invokeFunction" "proposals.list"
+run_leg C  "SC-4's own rule: a registered capability that no scenario row carries" "runs.list"
 
 # ── The close ───────────────────────────────────────────────────────────────────────────────────
 
@@ -664,7 +721,9 @@ echo "PASS — a capability registered outside the declared MCP catalogue is nam
 echo "       completeness cell AND by the shipped binary's own anchor; a resolver alias repointed at"
 echo "       a literal id no registry op declares is named on three independent axes; and ONE op"
 echo "       answered around invokeFunction inside packages/agent is named by the chat surface wall"
-echo "       and by the missing gate audit row. Every leg observed RED on exactly its allowed cells"
-echo "       and no others, every red NAMED the stray, every subject restored byte-identically by"
+echo "       and by the missing gate audit row; and a capability the registry declares that no"
+echo "       scenario row carries is named by the census leg CI runs on every PR (SC-4). Every leg"
+echo "       observed RED on exactly its allowed cells"
+echo "       and no others, every red NAMED the subject, every restore was byte-identical by"
 echo "       sha256, every leg proved its rebuild took, and reverting each mutation returned the"
 echo "       suite to green."
