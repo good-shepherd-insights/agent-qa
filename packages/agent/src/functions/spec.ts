@@ -164,8 +164,16 @@ export class FunctionNotBoundError extends Error {
  * The scalar metadata every capability carries, shared by the public view and the
  * internal spec.
  *
- * `id` is dot-namespaced `domain.verb` (D-15) over the fixed domain taxonomy
- * (tests · runs · memory · analysis · eval · gates · config · agent).
+ * `id` is dot-namespaced `domain.verb` (D-15) over ONE canonical domain taxonomy.
+ *
+ * 2026-08-16 (397 D-18): this docstring used to repeat D-15's original eight domains
+ * (tests · runs · memory · analysis · eval · gates · config · agent), and six later phases
+ * shipped ids in domains that list does not contain — so the sentence had been false for a
+ * month by the time anyone checked it. The taxonomy is now DATA rather than prose, pinned in
+ * the conformance suite's `domain-list.ts` with a one-line charter apiece and censused
+ * against this registry in both directions. An id in an unpinned domain is a named RED
+ * there; widening the taxonomy is a reviewed one-line diff to that table. Ids are never
+ * renamed to suit it — they are the shipped, locked contract, and the taxonomy serves them.
  *
  * The two CONTRACT fields are deliberately NOT here. They are the one place the view and
  * the spec must differ in kind — a projection on one, a live validator on the other — and

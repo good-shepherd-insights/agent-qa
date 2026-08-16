@@ -91,6 +91,13 @@ import {
   type GoldenFile,
   type GoldenRow,
 } from './golden.js'
+import {
+  CANONICAL_ID_DOMAINS,
+  domainCensus,
+  domainOf,
+  OP_ID_GRAMMAR,
+  type CanonicalDomain,
+} from './domain-list.js'
 import { SURFACE_ROSTER } from './roster.js'
 import {
   driveChatDispatch,
@@ -153,6 +160,18 @@ const SYNTHETIC_DRIVER_ABSENT_OP_ID = 'control.absent.397.04'
  * Same rule the three blocks above follow: 397-09's mutation script tells a plan's deliberate
  * fixtures from the strays it plants by NAME, so nothing here reuses another plan's constant.
  */
+/**
+ * Plan 08's own synthetic fixtures, named for the plan that plants them.
+ *
+ * Same rule every block above follows: 397-09's mutation script tells a plan's deliberate fixtures
+ * from the strays it plants by NAME, so nothing here reuses another plan's constant. The domain
+ * spellings are deliberately not real English domain words — a control that planted `billing` would
+ * read, to a person scanning the taxonomy, like a domain someone meant to add.
+ */
+const SYNTHETIC_UNCATALOGUED_DOMAIN_OP_ID = 'controluncatalogued39708.probe'
+const SYNTHETIC_MEMBERLESS_DOMAIN = 'controlmemberless39708'
+const SYNTHETIC_RESERVED_DOMAIN = 'controlreserved39708'
+
 const SYNTHETIC_GOLDEN_STRAY_OP_ID = 'control.golden.stray.397.06'
 const SYNTHETIC_GOLDEN_UNCATALOGUED_OP_ID = 'control.golden.uncatalogued.397.06'
 const SYNTHETIC_GOLDEN_STRAY_FIELD = 'controlGoldenField39706'
@@ -654,6 +673,132 @@ describe('the parity suite ranges the registry census over every rostered surfac
       censusDiff(census, [...census, SYNTHETIC_STRAY_ROW_OP_ID]).stray,
       'a row naming a capability the registry does not declare must be named on the stray side',
     ).toEqual([SYNTHETIC_STRAY_ROW_OP_ID])
+  })
+
+  // ---- The taxonomy census: ONE canonical domain list, both directions (397-08, D-18) ----------
+
+  it('names every capability over the ONE canonical domain list, in both directions', () => {
+    // THE MANDATORY DIRECTION IS ids → list. A capability whose domain is absent from
+    // `domain-list.ts` is a named RED here, by op id and by domain — which is what makes the pinned
+    // list a thing the product is checked against rather than a comment nobody reads. This is the
+    // duty the retired 384 stub's `ALLOWED_ID_DOMAINS` sweep carried, re-derived off the census.
+    //
+    // THE REVERSE DIRECTION IS ASSERTED TOO, because a taxonomy is exactly the kind of table that
+    // quietly accumulates members nothing uses. A member matching no op must carry a dated
+    // `reserved` sentence saying who holds the name and against what; a member carrying one while
+    // ops exist is a reservation somebody forgot to retire. Both are named, neither is counted.
+    const census = domainCensus(registryOpIds())
+
+    expect(
+      census.uncatalogued,
+      'capabilities whose id domain is on no row of domain-list.ts — add the domain there with a '
+        + 'one-line charter (D-18: ids are the locked contract, the taxonomy serves them, and a '
+        + 'widening is a reviewed one-line diff rather than a silent Set.add)',
+    ).toEqual([])
+    expect(
+      census.memberless,
+      'domains pinned in domain-list.ts that no shipped capability uses and that carry no dated '
+        + 'reserved marker — either an op was deleted, or the row is decoration',
+    ).toEqual([])
+    expect(
+      census.staleReservations,
+      'domains carrying a dated `reserved` marker that shipped capabilities now use — the marker '
+        + 'says the name is merely held, and it is not',
+    ).toEqual([])
+
+    // …and neither side was empty, which every assertion above would pass on.
+    expect(CANONICAL_ID_DOMAINS.length, 'the canonical domain list read back empty')
+      .toBeGreaterThan(0)
+    expect(new Set(registryOpIds().map(domainOf)).size, 'the census produced no domains at all')
+      .toBeGreaterThan(0)
+
+    // The list is a SET of domains, not a bag: two rows for one domain is how the retired stub's
+    // literal came to hold fifteen entries for fourteen distinct domains (see the fold note).
+    const domains = CANONICAL_ID_DOMAINS.map((entry) => entry.domain)
+    expect(sorted(new Set(domains)), 'domain-list.ts repeats a domain').toEqual(domains)
+
+    // Every row states what it owns, so "add a domain" is a claim a reviewer can refuse.
+    for (const entry of CANONICAL_ID_DOMAINS) {
+      expect(entry.charter.trim(), `${entry.domain}: the row states no charter`).not.toBe('')
+      expect(entry.domain, `${entry.domain}: a domain is one lowercase id segment`)
+        .toMatch(/^[a-z]+$/)
+    }
+  })
+
+  it('spells every capability id in the grammar both surfaces can carry (D-15)', () => {
+    // Carried across from the retired 384 stub, and it is not cosmetic: `chat/tool-names.ts` maps
+    // `.` ↔ `_` as a bijection and refuses an id carrying the separator it maps onto, so an id with
+    // an underscore is an id the chat surface cannot reach. `authoring.draft.verify` is spelled
+    // that way — rather than `authoring.verify_draft` — for exactly this reason.
+    const ids = registryOpIds()
+    expect(ids.length, 'the census read back empty').toBeGreaterThan(0)
+    for (const opId of ids) {
+      expect(opId, `${opId}: not a lowercase dot-namespaced id`).toMatch(OP_ID_GRAMMAR)
+    }
+    // The grammar is not vacuous: the two spellings it exists to refuse are refused.
+    expect('authoring.verify_draft', 'the grammar stopped refusing an underscore')
+      .not.toMatch(OP_ID_GRAMMAR)
+    expect('Runs.Get', 'the grammar stopped refusing an uppercase segment').not.toMatch(OP_ID_GRAMMAR)
+  })
+
+  it('control: the domain census fires on an uncatalogued domain, a memberless row and a stale reservation', () => {
+    // Driven over the PURE core with synthetic taxonomies, so every branch is exercised without
+    // mutating a shipped table and without a skip — and a CLEAN input is fed in the same cell,
+    // because a self-check that fires on everything certifies as little as one that fires on
+    // nothing (the 394 Edge-Coverage-Register lesson, made mechanical).
+    const live = registryOpIds()
+
+    expect(domainCensus(live), 'the shipped taxonomy must diff to nothing against the live ids')
+      .toEqual({ uncatalogued: [], memberless: [], staleReservations: [] })
+
+    // (a) an id whose domain is on no row.
+    expect(
+      domainCensus([...live, SYNTHETIC_UNCATALOGUED_DOMAIN_OP_ID]).uncatalogued,
+      'an op carrying a domain the list does not pin must be named on the uncatalogued side',
+    ).toEqual([SYNTHETIC_UNCATALOGUED_DOMAIN_OP_ID])
+
+    // (b) a row no id matches, carrying no reserved marker.
+    const withAMemberlessRow: readonly CanonicalDomain[] = [
+      ...CANONICAL_ID_DOMAINS,
+      { domain: SYNTHETIC_MEMBERLESS_DOMAIN, charter: 'control 397-08: a row nothing uses' },
+    ]
+    expect(
+      domainCensus(live, withAMemberlessRow).memberless,
+      'a pinned domain no capability uses, with no reserved marker, must be named',
+    ).toEqual([SYNTHETIC_MEMBERLESS_DOMAIN])
+    // …and the SAME row goes quiet once it carries a marker, which is the marker's whole job.
+    expect(
+      domainCensus(live, [
+        ...CANONICAL_ID_DOMAINS,
+        {
+          domain: SYNTHETIC_MEMBERLESS_DOMAIN,
+          charter: 'control 397-08: a row nothing uses',
+          reserved: 'control 397-08: held deliberately',
+        },
+      ]).memberless,
+      'a dated reserved marker must silence the memberless side for that row and no other',
+    ).toEqual([])
+
+    // (c) a reservation the ids have overtaken.
+    expect(
+      domainCensus([...live, `${SYNTHETIC_RESERVED_DOMAIN}.probe`], [
+        ...CANONICAL_ID_DOMAINS,
+        {
+          domain: SYNTHETIC_RESERVED_DOMAIN,
+          charter: 'control 397-08: a held name',
+          reserved: 'control 397-08: held, but an op arrived',
+        },
+      ]).staleReservations,
+      'a reserved row that shipped ids now use must be named on the stale side',
+    ).toEqual([SYNTHETIC_RESERVED_DOMAIN])
+
+    // …and dropping a real domain from the taxonomy reds the mandatory side, which is the case a
+    // list-shaped guard is most likely to be silently wrong about.
+    const withRunsDropped = CANONICAL_ID_DOMAINS.filter((entry) => entry.domain !== 'runs')
+    expect(
+      domainCensus(live, withRunsDropped).uncatalogued.map(domainOf),
+      'deleting a live domain from the list must name every op that used it',
+    ).toEqual(live.filter((opId) => domainOf(opId) === 'runs').map(() => 'runs'))
   })
 
   // ---- The rows are typed against the ops' OWN contracts, and it is checkable (D-09) -----------
