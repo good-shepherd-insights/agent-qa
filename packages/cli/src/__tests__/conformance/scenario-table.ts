@@ -309,7 +309,7 @@ export const SCENARIO_TABLE = Object.freeze([
       scope: { tier: 'product', key: 'nothing-in-this-fixture' },
     },
     perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_write_test' } } },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 394-07 D-12: the window is REQUIRED and closed, so `{}` would report an input error.
   // `all-time` is the arm with no further field, which is the honest sample for a fixture that has
@@ -372,7 +372,7 @@ export const SCENARIO_TABLE = Object.freeze([
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_apply_config_proposal' } },
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 395-05 D-01: PARSING inputs on the rows above reasoning.
   scenario({
@@ -433,7 +433,7 @@ export const SCENARIO_TABLE = Object.freeze([
     opId: 'grants.revoke',
     input: { grantId: 'grant_0123456789abcdef' },
     perSurface: { chat: { reachable: true }, mcp: { unprojected: 'requires-human-origin' } },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 387-08: valid INPUTS for capabilities most compositions cannot run — `invokeFunction` validates
   // before it consults the binding.
@@ -476,7 +476,7 @@ export const SCENARIO_TABLE = Object.freeze([
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_apply_proposal' } },
     },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 387: the record id names nothing in this fixture and the typed miss is the correct answer.
   scenario({
@@ -519,7 +519,7 @@ export const SCENARIO_TABLE = Object.freeze([
     opId: 'proposals.accept',
     input: { proposalId: 'prop_0123456789ab' },
     perSurface: { chat: { reachable: true }, mcp: { unprojected: 'requires-human-origin' } },
-    policyPoints: { grant: 'allow', refuse: 'deny' },
+    policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 391 PROP-03: `list` genuinely takes the empty query — both filters are optional and absent means
   // everything.

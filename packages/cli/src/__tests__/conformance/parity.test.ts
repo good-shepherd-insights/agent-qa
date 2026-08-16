@@ -18,12 +18,15 @@
 // than about a fresh one that might differ — which would make a disagreement between two cells
 // unattributable.
 
+import { readFileSync } from 'node:fs'
+
 import { CHAT_RESOLVER_TABLE } from '@vostride/agent-qa-agent'
 import {
   AGENT_QA_OP_CONTRACTS,
   AGENT_QA_TOOL_PROJECTIONS,
   UNPROJECTED_OPS,
 } from '@vostride/agent-qa-mcp'
+import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -42,6 +45,13 @@ import {
   type ResolverOpTarget,
   type SurfaceEnumeration,
 } from './adapters.js'
+import {
+  ASK_CAPABLE_OP_IDS,
+  coveringCallerFor,
+  deriveAskCapableOpIds,
+  refusingCallerFor,
+  type RiskClassifiable,
+} from './policy-fixtures.js'
 import { SURFACE_ROSTER } from './roster.js'
 import {
   censusDiff,
@@ -80,6 +90,9 @@ const SYNTHETIC_UNCARRIED_OP_ID = 'control.uncarried.397.03'
 const SYNTHETIC_STRAY_ROW_OP_ID = 'control.stray.row.397.03'
 const SYNTHETIC_ABSENT_OP_ID = 'control.absent.397.03'
 const SYNTHETIC_UNCLASSIFIABLE_REASON = 'control 397-03: prose in no declared class'
+const SYNTHETIC_ASKING_OP_ID = 'fn:control.asking.397.03'
+const SYNTHETIC_NON_ASKING_OP_ID = 'fn:control.reading.397.03'
+const SYNTHETIC_LOCAL_OP_ID = 'fn:control.local.397.03'
 
 const enumerations = new Map<string, SurfaceEnumeration>()
 let censusIds: readonly string[] = []
@@ -604,5 +617,127 @@ describe('the parity suite ranges the registry census over every rostered surfac
           + 'above would fire on every tool in the catalogue',
       ).not.toContain('not found')
     })
+  })
+
+  // ---- D-11: the ask set is PRODUCED by the shipped classifier, then pinned -------------------
+
+  it('pins an ask-capable set equal to a fresh run of the shipped gate over the census', async () => {
+    // T-397-07. The pin exists so a reader can see which capabilities stop and ask a person before
+    // they act; this cell exists so the pin cannot quietly stop being true. A lexicon edit, a
+    // declared-tier change or a new op arriving at `mutating-shared` reds HERE, by op id, rather
+    // than silently re-scoping the ask points 397-04's verdict legs are driven from.
+    const derived = await deriveAskCapableOpIds(registryDeclarations())
+    expect(
+      derived,
+      'the pinned ask-capable set no longer equals what the shipped gate produces over the census',
+    ).toEqual([...ASK_CAPABLE_OP_IDS].sort())
+    expect(derived.length, 'no capability in this product can ask anyone anything').toBeGreaterThan(
+      0,
+    )
+    expect(
+      derived.length,
+      'every capability asks, which would make the ask point say nothing about any of them',
+    ).toBeLessThan(registryOpIds().length)
+
+    // …and the injected context is LOAD-BEARING rather than decorative, which is the whole of
+    // Pitfall 3 stated as a measurement: under any other context the gate fails closed before an
+    // ask can be observed, so a fixture that read the ambient environment would report an EMPTY ask
+    // set on precisely the machine (a CI runner) this suite exists to be believed on.
+    expect(
+      await deriveAskCapableOpIds(registryDeclarations(), 'ci'),
+      'the derivation is indifferent to its execution context, so injecting one measures nothing',
+    ).toEqual([])
+  })
+
+  it('control: the ask derivation tells an asking risk class from a non-asking one', () => {
+    // The derivation reports an ABSENCE for 36 of 41 ops, and an absence is what a derivation that
+    // cannot detect anything also reports. Synthetic descriptors drive both branches: a tier that
+    // reaches the confirm port and two that do not, under the same injected context.
+    const probes = [
+      {
+        id: SYNTHETIC_ASKING_OP_ID,
+        risk: { name: SYNTHETIC_ASKING_OP_ID, recognized: true, declaredTier: 'mutating-shared' },
+      },
+      {
+        id: SYNTHETIC_NON_ASKING_OP_ID,
+        risk: { name: SYNTHETIC_NON_ASKING_OP_ID, recognized: true, readOnly: true },
+      },
+      {
+        id: SYNTHETIC_LOCAL_OP_ID,
+        risk: { name: SYNTHETIC_LOCAL_OP_ID, recognized: true, declaredTier: 'mutating-local' },
+      },
+    ] as const satisfies readonly RiskClassifiable[]
+
+    return expect(deriveAskCapableOpIds(probes)).resolves.toEqual([SYNTHETIC_ASKING_OP_ID])
+  })
+
+  it('carries an ask policy point on exactly the ops that can ask, in both directions', () => {
+    const rowsWithAsk = SCENARIO_TABLE.filter((row) => row.policyPoints.ask !== undefined)
+      .map((row) => row.opId)
+      .sort()
+    expect(
+      rowsWithAsk,
+      'the rows declaring an ask policy point must be exactly the derived ask-capable set — a row '
+        + 'short is a verdict nobody asserts, a row over is a verdict that cannot happen',
+    ).toEqual([...ASK_CAPABLE_OP_IDS].sort())
+    // …and the other direction is a different statement: every ask-capable op has a ROW at all.
+    for (const opId of ASK_CAPABLE_OP_IDS) {
+      expect(
+        scenarioRowFor(opId)?.policyPoints.ask,
+        `${opId}: the shipped classifier can ask for this capability and no scenario row says so`,
+      ).toBe('ask')
+    }
+  })
+
+  it('derives its policy fixtures from the declarations, and never from the ambient environment', () => {
+    // Pitfall 3, as a source assertion rather than a hope. The gate branches on
+    // `requiresFailClosed(ctx)`, and the shipped resolver answers `ci` wherever CI markers are set —
+    // so a fixture that read the ambient context would compute one ask set on a laptop and a
+    // different one on the PR that is supposed to be checking it. Comments are stripped BEFORE the
+    // sweep, because the file's own header names these very identifiers to explain why it avoids
+    // them, and a grep that counted prose would make the header unwritable.
+    const source = readFileSync(new URL('./policy-fixtures.ts', import.meta.url), 'utf8')
+    const code = source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .join('\n')
+
+    for (const forbidden of ['getActiveExecutionContext', 'process.env', 'isTTY', 'isatty']) {
+      expect(code, `policy-fixtures.ts reads the ambient environment through ${forbidden}`).not
+        .toContain(forbidden)
+    }
+    // …and the sweep is over the real file rather than an empty string.
+    expect(code, 'the policy fixtures source read back empty').toContain('deriveAskCapableOpIds')
+    // The covering and refusing callers are DERIVED: no scope literal appears in the file at all.
+    for (const scope of FunctionScopeSchema.options) {
+      expect(code, `policy-fixtures.ts spells the ${scope} scope instead of reading it off the `
+        + 'declaration').not.toContain(`'${scope}'`)
+    }
+  })
+
+  it('derives a covering and a refusing caller for every capability, from its own declaration', () => {
+    for (const declaration of registryDeclarations()) {
+      const covering = coveringCallerFor(declaration)
+      expect(
+        [...covering.grantedScopes].sort(),
+        `${declaration.id}: the covering caller must hold exactly this op's declared scopes`,
+      ).toEqual([...declaration.requiredScopes].sort())
+
+      const refusing = refusingCallerFor(declaration)
+      expect(
+        declaration.requiredScopes,
+        `${declaration.id}: the withheld scope must be one this op actually requires`,
+      ).toContain(refusing.withheldScope)
+      expect(
+        refusing.caller.grantedScopes,
+        `${declaration.id}: the refusing caller still holds ${refusing.withheldScope}`,
+      ).not.toContain(refusing.withheldScope)
+      expect(
+        [...refusing.caller.grantedScopes, refusing.withheldScope].sort(),
+        `${declaration.id}: the refusing caller must differ from the covering one by exactly the `
+          + 'one withheld grant — a wider gap would refuse on an axis nobody named',
+      ).toEqual([...declaration.requiredScopes].sort())
+    }
   })
 })
