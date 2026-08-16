@@ -130,6 +130,111 @@ export const CATALOG_DOC_ABSENT_REASON =
   + 'the honest state — a guessed path would existence-check green and mislead a reader — and the '
   + 'abstention coverage log is the demand signal for writing one.'
 
+/** A row's doc: a real page, or a dated reason there is none. The third state does not exist. */
+export type CatalogDocAdjudication =
+  | { readonly path: string; readonly anchor?: string }
+  | { readonly absentReason: string }
+
+/**
+ * Every registry op's doc adjudication, one entry each (D-07).
+ *
+ * WHY A DECLARED TABLE AND NOT A DERIVATION. There is nothing in a `FunctionSpec` that says which
+ * page documents it, and there is no honest way to guess: a path assembled from an op id would
+ * existence-check green for exactly as long as somebody happened to have named a file that way. So
+ * the adjudication is written, and the census below forces it to be MADE — an op that lands without
+ * an entry here is a named RED, which is the only mechanism that keeps "we will document it later"
+ * from becoming a column of silent blanks.
+ *
+ * THE HONEST DEFAULT IS ABSENCE. The shipped doc surface is four pages; almost no capability has a
+ * canonical one. Filling this column by writing pages to fit it would invert the demand signal —
+ * XPLN-02's abstention coverage log is what says which docs a person actually wanted.
+ */
+export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudication])[] =
+  Object.freeze([
+    // The two real links. Both are pages that document the CAPABILITY, not pages that mention it.
+    Object.freeze([
+      'runs.start',
+      // The README's CLI section is the one shipped page that shows a person starting a run.
+      Object.freeze({ path: 'README.md', anchor: 'CLI' } as const),
+    ] as const),
+    Object.freeze([
+      'runs.postprocessing',
+      // The op reads chip statuses out of durable job state; `docs/queues.md` is where that
+      // substrate — the agent job queue — is the subject rather than an aside.
+      Object.freeze({ path: 'docs/queues.md', anchor: 'agent job queue' } as const),
+    ] as const),
+
+    // …and the explicit absences, one per remaining op.
+    Object.freeze(['agent.ask', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['analysis.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['authoring.draft.edit', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['authoring.draft.verify', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['authoring.draft.write', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['authoring.funnel.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['config.auth.set', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['config.field.set', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['config.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['config.hook.add', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['config.project.scaffold', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['config.proposal.apply', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['config.target.create', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['config.target.edit', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['config.undo.propose', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['entities.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['entities.resolve', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['grants.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['grants.revoke', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['knowledge.accept.propose', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['knowledge.brief.why', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['knowledge.bundles.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['knowledge.forget.propose', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['knowledge.proposal.apply', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['knowledge.record.show', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['knowledge.records.diff', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['knowledge.records.inspect', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['knowledge.reject.propose', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['proposals.accept', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['proposals.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['proposals.reject', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['proposals.show', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['quarantine.add', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['quarantine.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['quarantine.release', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['runs.digest', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['runs.events', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['runs.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    Object.freeze(['runs.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+  ])
+
+/**
+ * The doc fields of one row, from the adjudication table.
+ *
+ * REFUSES on an unadjudicated op rather than defaulting to absence: a default would make the census
+ * cell the only thing standing between a new capability and a silent blank, and the producer would
+ * happily mint the blank in the meantime.
+ */
+export function catalogDocFieldsOf(opId: string): {
+  readonly docPath: string | null
+  readonly docAnchor?: string
+  readonly docAbsentReason?: string
+} {
+  const entry = CATALOG_DOC_PATHS.find(([id]) => id === opId)
+  if (entry === undefined) {
+    throw new Error(
+      `${opId} has no entry in CATALOG_DOC_PATHS — every registry op adjudicates its doc presence, `
+      + 'either a repo-relative path or a dated reason there is none (D-07)',
+    )
+  }
+  const adjudication = entry[1]
+  if ('path' in adjudication) {
+    return {
+      docPath: adjudication.path,
+      ...(adjudication.anchor === undefined ? {} : { docAnchor: adjudication.anchor }),
+    }
+  }
+  return { docPath: null, docAbsentReason: adjudication.absentReason }
+}
+
 // ---- The alias probe table (D-05) ----------------------------------------------------------------
 
 /**
@@ -215,7 +320,19 @@ export const CHAT_ALIAS_PROBES: readonly ChatAliasProbe[] = Object.freeze([
 
 // ---- The projection ------------------------------------------------------------------------------
 
-/** The MCP half of an op row, folded out of the SAME partition the golden ledger records. */
+/**
+ * The MCP half of an op row, folded out of the SAME partition the golden ledger records.
+ *
+ * 2026-08-16 — THE SURFACE VOCABULARY IS THE ROSTER, AND IT FLOWS (D-06). `chat` and `mcp` are the
+ * two surfaces `roster.ts` pins and `parity.test.ts` measures. A THIRD rostered surface does not
+ * need a change here beyond its own arm: the catalog's job is to never claim a surface the parity
+ * suite does not measure, and the way that stays true is that this function reads the shipped
+ * partition rather than a list of surfaces written in this file.
+ *
+ * THE CLI STAYS OUT, deliberately (397 D-03). Its handlers are not a measured surface — they
+ * compose the same registry the chat host does — so a `cli` member here would be the catalog
+ * asserting a parity claim nobody checks.
+ */
 function mcpFieldsOf(opId: string): {
   readonly surfaces: readonly CatalogSurface[]
   readonly mcpTool?: string
@@ -242,6 +359,7 @@ function mcpFieldsOf(opId: string): {
  */
 export function catalogOpRowOf(declaration: FunctionDeclaration): CatalogOpRow {
   const mcp = mcpFieldsOf(declaration.id)
+  const doc = catalogDocFieldsOf(declaration.id)
   return {
     kind: 'op',
     id: declaration.id,
@@ -254,8 +372,9 @@ export function catalogOpRowOf(declaration: FunctionDeclaration): CatalogOpRow {
     ...(mcp.mcpUnprojectedReasonKey === undefined
       ? {}
       : { mcpUnprojectedReasonKey: mcp.mcpUnprojectedReasonKey }),
-    docPath: null,
-    docAbsentReason: CATALOG_DOC_ABSENT_REASON,
+    docPath: doc.docPath,
+    ...(doc.docAnchor === undefined ? {} : { docAnchor: doc.docAnchor }),
+    ...(doc.docAbsentReason === undefined ? {} : { docAbsentReason: doc.docAbsentReason }),
     requiredScopes: [...declaration.requiredScopes].sort(),
   }
 }
@@ -335,13 +454,18 @@ export function buildCatalogAliasRows(
         + 'does not declare — an alias naming a non-registry target is a broken door, not a row',
       )
     }
+    // The alias INHERITS its target's doc adjudication rather than getting one of its own: `run`
+    // and `runs.start` are one capability reached two ways, and a second doc column for the alias
+    // would be a second place the deep link could go stale.
+    const doc = catalogDocFieldsOf(resolved.functionId)
     rows.push({
       kind: 'alias',
       alias: rule.alias,
       targetOpId: resolved.functionId,
       description,
-      docPath: null,
-      docAbsentReason: CATALOG_DOC_ABSENT_REASON,
+      docPath: doc.docPath,
+      ...(doc.docAnchor === undefined ? {} : { docAnchor: doc.docAnchor }),
+      ...(doc.docAbsentReason === undefined ? {} : { docAbsentReason: doc.docAbsentReason }),
     })
   }
 
@@ -373,6 +497,19 @@ function frontmatterOf(skillMarkdownPath: string): SkillFrontmatter {
     throw new Error(`${skillMarkdownPath} carries no YAML frontmatter block`)
   }
   return (parseYaml(match[1] ?? '') ?? {}) as SkillFrontmatter
+}
+
+/**
+ * The shipped skills, as DIRECTORIES — the census's other side.
+ *
+ * A skill row's `name` comes from its SKILL.md frontmatter; this is the directory the file sits in.
+ * They are two different sources for one identity, which is exactly why the census compares them:
+ * a skill whose frontmatter name drifted from its directory is a skill two consumers would disagree
+ * about, and neither of them would notice.
+ */
+export function shippedSkillDirectoryNames(): readonly string[] {
+  const resolved = resolveAgentQaSkillsDirectory(CONFORMANCE_DIR)
+  return resolved.source === 'missing' ? [] : listSkillDirectories(resolved.path)
 }
 
 /** The skill rows, from the shipped skills directory the CLI's own resolution finds. */

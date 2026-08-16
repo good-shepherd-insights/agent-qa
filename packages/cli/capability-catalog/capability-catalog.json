@@ -31,8 +31,8 @@
     {
       "alias": "run",
       "description": "Start a test run and acknowledge the run a caller can then read or stream.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
+      "docAnchor": "CLI",
+      "docPath": "README.md",
       "kind": "alias",
       "targetOpId": "runs.start"
     },
@@ -1531,8 +1531,8 @@
     },
     {
       "description": "Read one run's post-processing chip statuses from durable job state.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
+      "docAnchor": "agent job queue",
+      "docPath": "docs/queues.md",
       "id": "runs.postprocessing",
       "kind": "op",
       "mcpUnprojectedReasonKey": "not-mid-flight-read",
@@ -1558,8 +1558,8 @@
     },
     {
       "description": "Start a test run and acknowledge the run a caller can then read or stream.",
-      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
-      "docPath": null,
+      "docAnchor": "CLI",
+      "docPath": "README.md",
       "id": "runs.start",
       "kind": "op",
       "mcpTool": "agent_qa_start_run",
@@ -1648,5 +1648,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "94c9dee18afcdf9177da67167c49ae5557d764427816b8c7ae8c59267092ba60"
+  "rowsDigest": "bbdefb3b07e25335b0b16435fb8c45b8b1a8fb6b43d246fe9c293220edb0a912"
 }

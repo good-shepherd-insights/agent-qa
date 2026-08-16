@@ -17,6 +17,27 @@
 // A surface without a row is not "not yet covered" — it is a surface the parity claim silently
 // excludes itself from, which is worse than an uncovered one because the suite still reads green.
 //
+// 2026-08-17 — THE CAPABILITY CATALOGUE IS NOT A SURFACE (Phase 398, D-02). The first of the three
+// anticipated arrivals above has landed, and the answer to its "if it enumerates" condition is NO
+// ROW. A surface is an INVOCATION DOOR: dispatch, policy, and gate verdicts. The catalogue
+// (`packages/cli/capability-catalog/capability-catalog.json`, produced by `catalog.ts`) invokes
+// nothing — it is committed build-time data describing what exists — so legs 3 and 4 of every
+// rostered surface would be vacuous for it, and a roster row whose policy legs assert nothing is
+// exactly the skip-list 397 D-12 refuses to start keeping.
+//
+// WHAT ANSWERS THE ENUMERATION OBLIGATION INSTEAD. The condition the note above was really about is
+// "can a capability be reached, or advertised, without this suite seeing it". For the catalogue
+// that is answered by census rather than by dispatch: `catalog.test.ts` asserts its op rows against
+// the committed golden ledger, its alias rows against the shipped resolver table, and its skill
+// rows against the skills directory — each set-equal in BOTH directions. A capability the catalogue
+// advertised and the registry did not declare is a named RED there, which is the same guarantee a
+// roster row would have bought and the only one it could have.
+//
+// THIS CLOSES THE RESERVATION FOR THE CATALOGUE ONLY. The M5 dashboard and any post-v2.0 REST or
+// SDK surface are unaffected: both dispatch, so both arrive with a row and an adapter. And if the
+// catalogue ever grows a read ENDPOINT — a caller asking a running process what exists, rather than
+// reading committed bytes — that endpoint is a door, and this note does not cover it.
+//
 // THE ROW NAMES ITS ADAPTER RATHER THAN INLINING ONE. What a surface IS (a member of the roster) and
 // HOW it is read (a wire round trip, a projection walk) are different questions with different
 // reasons to change, and the enumeration mechanics carry enough reasoning to want their own module.
