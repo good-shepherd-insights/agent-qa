@@ -29,6 +29,36 @@
 // measured rather than argued.
 //
 // A GREEN SUITE UNDER ANY LEG IS A FAILURE OF THE GUARD, NOT A PASS.
+//
+// ---- THE SECOND PINNED SET: THE MIGRATION MAP (2026-08-17, Phase 398 plan 02 · D-14) ------------
+//
+// ONE LAW, TWO PINNED SETS. `migration-map.ts` beside `mapping.ts` carries the thirty-three RETIRED
+// v1 tool names and the arm each one was ruled onto, and it is pinned here for the same reason and
+// by the same idiom as the live catalogue above: the two tables together are this package's whole
+// tool-name vocabulary — the names that exist and the names that used to — and a bump to either is
+// a change to what every downstream consumer binds against.
+//
+// WHY A COUNT WOULD NOT HAVE DONE HERE EITHER, and the map makes the argument sharper than the
+// catalogue does. Its members are already censused against `DELETION-INVENTORY.md` in both
+// directions (`migration-map.test.ts`), so the SET cannot drift while the document holds still.
+// What that census cannot see is an ARM: rule `agent_qa_cancel_run` retired instead of pending and
+// every census cell stays green, because the name is still there and the document still has its
+// row — while an external agent calling the retired name is now told the capability is answered
+// elsewhere when in truth it is owed by M5. So the pin is the exact sorted NAME list WITH ITS ARM,
+// and a swapped arm is a visible diff in this file rather than a silent change in behaviour.
+//
+// THE TARGETS ARE PINNED TOO, and that is one step past D-14's letter, taken for D-14's reason. The
+// `renamed-to` targets are already joined LIVE against `AGENT_QA_TOOL_PROJECTIONS`, so a target
+// naming a tool that does not exist reds there. What neither that join nor the arm pin can see is a
+// target swapped for a DIFFERENT LIVE tool — `agent_qa_read_test` pointed at `agent_qa_list_runs`
+// passes the join (it is a real tool), passes the arm pin (still `renamed-to`) and sends every v1
+// caller of the read door to the run list. That is exactly the cancelling change M2 above exists to
+// refuse, seen from the map's side, so it is pinned by name here.
+//
+// THE PARTITION SIZES ARE DERIVED ON BOTH SIDES. The counts below are computed from
+// `V1_TOOL_MIGRATION_MAP` and compared against counts computed from the PIN's own groupings —
+// never against an integer typed into this file, which could be edited to agree with a drift in one
+// keystroke and would then read as a measurement.
 
 import {
   createFunctionRegistry,
@@ -49,6 +79,7 @@ import {
   DEGRADED_OUTPUT_CONTRACTS,
   UNPROJECTED_OPS,
 } from '../mapping.js'
+import { V1_TOOL_MIGRATION_MAP, type V1MigrationArm } from '../migration-map.js'
 
 /**
  * The registry, listing only.
@@ -126,6 +157,69 @@ const PINNED_TOOL_OPS: Readonly<Record<string, readonly string[]>> = {
   agent_qa_show_proposal: ['proposals.show'],
   agent_qa_start_run: ['runs.start'],
   agent_qa_write_test: ['authoring.draft.write'],
+}
+
+/**
+ * D-14's pin: every retired v1 name, sorted, with the arm it was ruled onto.
+ *
+ * The second restatement in this file, and deliberate for the same reason as the first — this IS
+ * the pin. A name added, removed or renamed reds the membership cell; an arm swapped reds the arm
+ * cell by that name.
+ */
+const PINNED_V1_MIGRATION_ARMS: Readonly<Record<string, V1MigrationArm>> = {
+  agent_qa_cancel_run: 'pending',
+  agent_qa_classify_failure: 'retired',
+  agent_qa_create_hook: 'renamed-to',
+  agent_qa_create_suite: 'retired',
+  agent_qa_create_test: 'renamed-to',
+  agent_qa_delete_hook: 'retired',
+  agent_qa_delete_suite: 'retired',
+  agent_qa_delete_test: 'retired',
+  agent_qa_discover: 'retired',
+  agent_qa_enqueue_suite_run: 'renamed-to',
+  agent_qa_enqueue_test_run: 'renamed-to',
+  agent_qa_generate_id: 'retired',
+  agent_qa_get_config: 'retired',
+  agent_qa_get_run: 'retired',
+  agent_qa_get_run_artifact: 'pending',
+  agent_qa_get_run_execution_logs: 'retired',
+  agent_qa_get_run_logs: 'retired',
+  agent_qa_get_run_steps: 'retired',
+  agent_qa_list_hooks: 'pending',
+  agent_qa_list_suites: 'pending',
+  agent_qa_list_tests: 'pending',
+  agent_qa_read_hook: 'pending',
+  agent_qa_read_suite: 'retired',
+  agent_qa_read_test: 'renamed-to',
+  agent_qa_run_hook: 'retired',
+  agent_qa_schema_reference: 'retired',
+  agent_qa_update_hook: 'pending',
+  agent_qa_update_suite: 'retired',
+  agent_qa_update_test: 'renamed-to',
+  agent_qa_validate_definition: 'retired',
+  agent_qa_validate_id: 'retired',
+  agent_qa_validate_suite: 'retired',
+  agent_qa_validate_test: 'retired',
+}
+
+/**
+ * The other half, and the one the live join cannot supply: WHICH live tool each `renamed-to` name
+ * was pointed at. A remap onto a different real tool reds here and nowhere else.
+ */
+const PINNED_V1_RENAMED_TARGETS: Readonly<Record<string, string>> = {
+  agent_qa_create_hook: 'agent_qa_propose_config_change',
+  agent_qa_create_test: 'agent_qa_write_test',
+  agent_qa_enqueue_suite_run: 'agent_qa_start_run',
+  agent_qa_enqueue_test_run: 'agent_qa_start_run',
+  agent_qa_read_test: 'agent_qa_get_entity',
+  agent_qa_update_test: 'agent_qa_refine_test',
+}
+
+/** Arm -> how many names carry it, computed from a table. Used on BOTH sides of the size cell. */
+function armSizes(entries: readonly (readonly [string, V1MigrationArm])[]): Record<string, number> {
+  const sizes: Record<string, number> = { 'renamed-to': 0, retired: 0, pending: 0 }
+  for (const [, arm] of entries) sizes[arm] = (sizes[arm] ?? 0) + 1
+  return sizes
 }
 
 /** MCPS-02's stated band. Asserted AT the bound, not implied by the exact pin above it. */
@@ -316,6 +410,64 @@ describe('the composed fold contracts answer for the ops the mapping declares', 
         projection.kind === 'apply',
       )
     }
+  })
+})
+
+describe('the pinned migration map (D-14)', () => {
+  it('declares exactly the pinned sorted v1-name list', () => {
+    const names = V1_TOOL_MIGRATION_MAP.map((entry) => entry.v1Name).sort()
+    expect(names).toEqual(Object.keys(PINNED_V1_MIGRATION_ARMS).sort())
+  })
+
+  it('declares exactly the pinned arm for every v1 name', () => {
+    const actual: Record<string, V1MigrationArm> = {}
+    for (const entry of V1_TOOL_MIGRATION_MAP) actual[entry.v1Name] = entry.arm
+    expect(actual).toEqual(PINNED_V1_MIGRATION_ARMS)
+  })
+
+  it('declares exactly the pinned renamed-to target for every renamed name', () => {
+    const actual: Record<string, string> = {}
+    for (const entry of V1_TOOL_MIGRATION_MAP) {
+      if (entry.arm !== 'renamed-to') continue
+      actual[entry.v1Name] = entry.v2Tool as string
+    }
+    expect(actual).toEqual(PINNED_V1_RENAMED_TARGETS)
+  })
+
+  // The partition, derived on both sides. The module's own enumeration versus the pin's own
+  // groupings — so this cell measures agreement between two tables rather than agreement between a
+  // table and an integer somebody typed beside it.
+  it('partitions the map into the arm sizes the pin groups', () => {
+    const fromModule = armSizes(V1_TOOL_MIGRATION_MAP.map((entry) => [entry.v1Name, entry.arm]))
+    const fromPin = armSizes(Object.entries(PINNED_V1_MIGRATION_ARMS))
+    expect(fromModule).toEqual(fromPin)
+
+    // Integrity: every arm is actually populated, so the equality above is three real comparisons
+    // rather than one real one and two matching zeroes.
+    for (const [arm, size] of Object.entries(fromModule)) {
+      expect(size, `arm ${arm} has no members`).toBeGreaterThan(0)
+    }
+    expect(Object.values(fromModule).reduce((a, b) => a + b, 0)).toBe(V1_TOOL_MIGRATION_MAP.length)
+  })
+
+  // The two vocabularies are DISJOINT, and that is the whole point of keeping both. A name that is
+  // both live and retired would make `tools/list` and the redirect disagree about whether it exists
+  // — and the redirect's teaching error would be handed to a caller whose call could have worked.
+  it('shares no name with the live catalogue', () => {
+    const live = new Set(AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name))
+    const overlap = V1_TOOL_MIGRATION_MAP
+      .map((entry) => entry.v1Name)
+      .filter((name) => live.has(name))
+    expect(overlap, 'names declared BOTH live and retired').toEqual([])
+  })
+
+  // The admitted/rejected pair, as above. A near-miss spelling of a retired name must match
+  // NOTHING, or the redirect would answer for names it was never given.
+  it('matches nothing for a near-miss retired name', () => {
+    const retired = new Set(V1_TOOL_MIGRATION_MAP.map((entry) => entry.v1Name))
+    expect(retired.has('agent_qa_cancel_run')).toBe(true)
+    expect(retired.has('agent_qa_cancel_runs')).toBe(false)
+    expect(retired.has('agent_qa_cancel')).toBe(false)
   })
 })
 
