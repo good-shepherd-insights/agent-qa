@@ -19,8 +19,13 @@
 // unattributable.
 
 import { CHAT_RESOLVER_TABLE } from '@vostride/agent-qa-agent'
-import { AGENT_QA_TOOL_PROJECTIONS, UNPROJECTED_OPS } from '@vostride/agent-qa-mcp'
+import {
+  AGENT_QA_OP_CONTRACTS,
+  AGENT_QA_TOOL_PROJECTIONS,
+  UNPROJECTED_OPS,
+} from '@vostride/agent-qa-mcp'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 
 import { MCP_DEFAULT_GRANTED_SCOPES } from '../../commands/mcp.js'
 import {
@@ -28,13 +33,26 @@ import {
   chatEnumerationOf,
   enumerateMcpOpIds,
   expandMcpListedTools,
+  listMcpToolNames,
+  plausibleMcpToolSpelling,
   probeResolverTable,
   registryDeclarations,
   registryOpIds,
+  withMcpClient,
   type ResolverOpTarget,
   type SurfaceEnumeration,
 } from './adapters.js'
 import { SURFACE_ROSTER } from './roster.js'
+import {
+  censusDiff,
+  OP_INPUT_CONTRACTS,
+  SCENARIO_TABLE,
+  scenarioRowFor,
+  scenarioTableOpIds,
+  UNPROJECTED_REASON_SIGNATURES,
+  unprojectedReasonKeyOf,
+  type ScenarioOpId,
+} from './scenario-table.js'
 
 /**
  * What the control cells plant, and it exists nowhere else in this product.
@@ -50,6 +68,18 @@ const SYNTHETIC_STRAY_ALIAS_TARGET: ResolverOpTarget = Object.freeze({
   alias: 'control-stray-397-01',
   functionId: 'control.stray.397.01',
 })
+
+/**
+ * Plan 03's own synthetic fixtures, named for THIS plan (never reusing 397-01's).
+ *
+ * Same reason the 397-01 constants above carry their plan number: 397-09's mutation script has to
+ * tell each plan's deliberate fixtures from the strays it plants, and a shared name would make one
+ * suite's control cell read as another suite's defect.
+ */
+const SYNTHETIC_UNCARRIED_OP_ID = 'control.uncarried.397.03'
+const SYNTHETIC_STRAY_ROW_OP_ID = 'control.stray.row.397.03'
+const SYNTHETIC_ABSENT_OP_ID = 'control.absent.397.03'
+const SYNTHETIC_UNCLASSIFIABLE_REASON = 'control 397-03: prose in no declared class'
 
 const enumerations = new Map<string, SurfaceEnumeration>()
 let censusIds: readonly string[] = []
@@ -277,5 +307,302 @@ describe('the parity suite ranges the registry census over every rostered surfac
       sorted([...defaultGrant.opIds].filter((opId) => !everyScope.opIds.has(opId))),
       'ops visible ONLY to the reduced grant, which no scope filter can produce',
     ).toEqual([])
+  })
+
+  // ---- The census: ONE denominator, asserted in both directions (397-03, D-10 / D-15) ----------
+
+  it('carries exactly one scenario row per registered capability, in both directions', () => {
+    // 2026-08-16 · D-15: THIS CELL IS SC-4's CI RULE. The suite is an ordinary vitest suite inside
+    // `turbo run test`, so it already runs in the workspace CI job on every PR — which means "a new
+    // capability landed without a parity scenario" is a structurally named RED there, by op id, in
+    // the existing job. There is deliberately no second mechanism: a diff-parsing check would be a
+    // rule about what a patch looks like rather than about what the product contains, and the two
+    // would disagree the first time a capability arrived by any route the parser did not model.
+    //
+    // BOTH DIRECTIONS, because a census that only checks one is the register that never notices it
+    // has stopped growing (D-10). `censusDiff`'s ability to fire on each side is proven by the
+    // control cell below rather than assumed from this cell's green.
+    const diff = censusDiff(registryOpIds(), scenarioTableOpIds())
+    expect(
+      diff.missing,
+      'capabilities the registry declares that no scenario row carries — add a row to the scenario '
+        + 'table (this is SC-4: a capability without a scenario is not shippable)',
+    ).toEqual([])
+    expect(
+      diff.stray,
+      'scenario rows naming a capability the registry no longer declares — delete the row',
+    ).toEqual([])
+    // …and the census is not empty, which every line above would pass on.
+    expect(scenarioTableOpIds().length, 'the scenario table is empty').toBeGreaterThan(0)
+  })
+
+  it('control: the census self-check fires on a missing row AND on a stray row', () => {
+    // The Edge-Coverage-Register lesson, made mechanical. Each side is driven with synthetic input
+    // so the branch is exercised without mutating a shipped file and without a skip, and a CLEAN
+    // input is fed in the same cell — a self-check that fires on everything certifies as little as
+    // one that fires on nothing.
+    const census = registryOpIds()
+
+    expect(censusDiff(census, census), 'identical id sets must diff to nothing').toEqual({
+      missing: [],
+      stray: [],
+    })
+
+    const withARowMissing = census.filter((id) => id !== census[0])
+    expect(
+      censusDiff([...census, SYNTHETIC_UNCARRIED_OP_ID], census).missing,
+      'a registered capability carried by no row must be named on the missing side',
+    ).toEqual([SYNTHETIC_UNCARRIED_OP_ID])
+    expect(
+      censusDiff(census, withARowMissing).missing,
+      'a row deleted from the table must be named on the missing side',
+    ).toEqual([census[0]])
+
+    expect(
+      censusDiff(census, [...census, SYNTHETIC_STRAY_ROW_OP_ID]).stray,
+      'a row naming a capability the registry does not declare must be named on the stray side',
+    ).toEqual([SYNTHETIC_STRAY_ROW_OP_ID])
+  })
+
+  // ---- The rows are typed against the ops' OWN contracts, and it is checkable (D-09) -----------
+
+  it('types every scenario input against the contract the registry itself published for that op', () => {
+    // The compile-time guarantee D-09 chose TypeScript for is only worth what the PAIRING is worth:
+    // a row typed against the wrong op's schema would compile happily and certify nothing. So the
+    // pairing is asserted two ways, and neither is a re-derivation of a contract.
+    //
+    // (a) OBJECT IDENTITY, wherever a published handle exists. `AGENT_QA_OP_CONTRACTS` names the
+    //     live schemas for the 22 projected ops; `toBe` is the strongest available statement that
+    //     the table holds the same object rather than a lookalike.
+    // (b) For all 41, the PROJECTION relation: the schema the table paired, projected the way the
+    //     registry projects it, must equal the projection the registry itself published on the
+    //     declaration. That reaches the 19 ops no surface publishes a handle for.
+    const declarations = registryDeclarations()
+    let identityChecked = 0
+
+    for (const declaration of declarations) {
+      const paired = OP_INPUT_CONTRACTS[declaration.id as ScenarioOpId]
+      expect(paired, `${declaration.id}: the scenario table pairs no input contract`).toBeDefined()
+
+      const published = AGENT_QA_OP_CONTRACTS[declaration.id]
+      if (published !== undefined) {
+        expect(
+          paired as unknown,
+          `${declaration.id}: the table's contract must BE the object the MCP mapping projects, `
+            + 'not an equal-looking copy',
+        ).toBe(published.input as unknown)
+        identityChecked += 1
+      }
+
+      expect(
+        z.toJSONSchema(paired, { io: 'input' }),
+        `${declaration.id}: the paired contract projects to a different document than the one the `
+          + 'registry published on this declaration — the table is typed against another op',
+      ).toEqual(declaration.input)
+    }
+
+    // …and the identity half actually ran over the projected partition rather than zero ops.
+    expect(
+      identityChecked,
+      'no op contract was checked by identity, which the projected partition makes impossible',
+    ).toBe(Object.keys(AGENT_QA_OP_CONTRACTS).length)
+  })
+
+  it('holds an invocation fixture every op would accept — the 384 samples, still valid', () => {
+    // D-10's fold made the scenario row the invocation sample, so the sample's original obligation
+    // travels with it: `invokeFunction` validates input BEFORE it consults binding, and a fixture
+    // that stopped parsing would make 397-04's refusal legs report an input error while looking
+    // like they had measured a policy verdict.
+    for (const row of SCENARIO_TABLE) {
+      const parsed = OP_INPUT_CONTRACTS[row.opId].safeParse(row.input)
+      expect(
+        parsed.success ? '' : JSON.stringify(parsed.error.issues),
+        `${row.opId}: the scenario input no longer satisfies this op's own input contract`,
+      ).toBe('')
+    }
+  })
+
+  // ---- D-12: per-surface row data, joined to the shipped tables in BOTH directions -------------
+
+  it('joins every row MCP expectation to the declared mapping, in both directions', () => {
+    const toolByOpId = new Map<string, string>()
+    for (const projection of AGENT_QA_TOOL_PROJECTIONS) {
+      for (const opId of projection.ops) toolByOpId.set(opId, projection.name)
+    }
+    const unprojectedByOpId = new Map(UNPROJECTED_OPS.map((entry) => [entry.opId, entry]))
+
+    // Direction 1 — every row's claim must be true of the mapping.
+    for (const row of SCENARIO_TABLE) {
+      const mcp = row.perSurface.mcp
+      if ('unprojected' in mcp) {
+        expect(
+          toolByOpId.get(row.opId),
+          `${row.opId} on mcp: the row claims unprojected, but the mapping projects it through a tool`,
+        ).toBeUndefined()
+        const shipped = unprojectedByOpId.get(row.opId)
+        expect(
+          shipped?.reason,
+          `${row.opId} on mcp: the row claims unprojected, but the mapping carries no reason for it`,
+        ).toBeDefined()
+        expect(
+          unprojectedReasonKeyOf(shipped!.reason),
+          `${row.opId} on mcp: the row cites the ${mcp.unprojected} class, and the mapping's own `
+            + 'reason is no longer written in it — scoping drift',
+        ).toBe(mcp.unprojected)
+      } else {
+        expect(
+          unprojectedByOpId.has(row.opId),
+          `${row.opId} on mcp: the row claims a tool, but the mapping declares it unprojected`,
+        ).toBe(false)
+        expect(
+          toolByOpId.get(row.opId),
+          `${row.opId} on mcp: the row names a tool the mapping does not project it through`,
+        ).toBe(mcp.reachable.tool)
+      }
+    }
+
+    // Direction 2 — every mapping row must be true of the table. A row silently deleted, or one
+    // whose partition moved without its row following, is named here rather than in a shortfall.
+    for (const projection of AGENT_QA_TOOL_PROJECTIONS) {
+      for (const opId of projection.ops) {
+        expect(
+          scenarioRowFor(opId)?.perSurface.mcp,
+          `${opId} on mcp: projected by ${projection.name}, and its scenario row does not say so`,
+        ).toEqual({ reachable: { tool: projection.name } })
+      }
+    }
+    for (const entry of UNPROJECTED_OPS) {
+      const mcp = scenarioRowFor(entry.opId)?.perSurface.mcp
+      expect(
+        mcp !== undefined && 'unprojected' in mcp,
+        `${entry.opId} on mcp: declared unprojected by the mapping, and its scenario row claims reach`,
+      ).toBe(true)
+    }
+  })
+
+  it('classifies every shipped unprojected reason into exactly one declared class', () => {
+    // The register's own self-check on the reason vocabulary. An unprojected op written with prose
+    // outside the declared classes must RED rather than be filed under whichever class happened to
+    // match last — "we scoped this out" and "this can never work here" are the two answers a reader
+    // needs to be able to tell apart, and the second is the one D-03 wrote for `agent.ask`.
+    const unclassifiable = UNPROJECTED_OPS.filter(
+      (entry) => unprojectedReasonKeyOf(entry.reason) === undefined,
+    ).map((entry) => entry.opId)
+    expect(
+      unclassifiable,
+      'unprojected ops whose reason falls into no declared class — extend the vocabulary in '
+        + 'scenario-table.ts, or write the reason in an existing class',
+    ).toEqual([])
+    expect(UNPROJECTED_OPS.length, 'the mapping declares no unprojected op at all').toBeGreaterThan(
+      0,
+    )
+  })
+
+  it('control: the reason classifier answers per class, and refuses prose it does not know', () => {
+    for (const [key, signature] of UNPROJECTED_REASON_SIGNATURES) {
+      expect(
+        unprojectedReasonKeyOf(`a reason mentioning ${signature} and nothing else`),
+        `${key}: its own signature must classify as it`,
+      ).toBe(key)
+    }
+    expect(
+      unprojectedReasonKeyOf(SYNTHETIC_UNCLASSIFIABLE_REASON),
+      'prose in no declared class must classify as nothing rather than as the last class tried',
+    ).toBeUndefined()
+    // …and precedence is a DECISION rather than an accident of iteration order: a reason carrying
+    // two signatures answers with the stronger one, which is what `grants.revoke` relies on.
+    expect(
+      unprojectedReasonKeyOf('declares requiresHumanOrigin. Not a mid-flight workflow write.'),
+      'a reason in two classes must answer with the higher-precedence one',
+    ).toBe('requires-human-origin')
+  })
+
+  it('joins every row chat expectation to the live chat enumeration, in both directions', () => {
+    const chatReach = enumerationOf('chat').opIds
+    for (const row of SCENARIO_TABLE) {
+      expect(
+        chatReach.has(row.opId),
+        `${row.opId} on chat: the row claims reachable=${String(row.perSurface.chat.reachable)}, `
+          + 'and the live composition disagrees',
+      ).toBe(row.perSurface.chat.reachable)
+    }
+    for (const opId of sorted(chatReach)) {
+      expect(
+        scenarioRowFor(opId)?.perSurface.chat.reachable,
+        `${opId} on chat: reachable in the live composition and claimed by no row`,
+      ).toBe(true)
+    }
+  })
+
+  // ---- D-12: the ASSERTED absences. No skip-list — a skip asserts nothing --------------------
+
+  it('asserts the absence of every unprojected op over MCP: no fold, and no door of its own', async () => {
+    const listed = await listMcpToolNames()
+    const projectedOpIds = new Set(AGENT_QA_TOOL_PROJECTIONS.flatMap((p) => [...p.ops]))
+    const unprojectedRows = SCENARIO_TABLE.filter((row) => 'unprojected' in row.perSurface.mcp)
+
+    // The loop's own non-vacuity: it must range the whole declared unprojected partition, so a
+    // table that quietly stopped claiming absences cannot make this cell pass by iterating nothing.
+    expect(
+      unprojectedRows.map((row) => row.opId).sort(),
+      'the rows claiming unprojected must be exactly the mapping unprojected partition',
+    ).toEqual(UNPROJECTED_OPS.map((entry) => entry.opId).sort())
+
+    await withMcpClient(async (client) => {
+      for (const row of unprojectedRows) {
+        const mcp = row.perSurface.mcp as { readonly unprojected: string }
+        const label = `${row.opId} on mcp (${mcp.unprojected})`
+
+        // Wall 1: nothing the surface lists folds to it.
+        expect(
+          projectedOpIds.has(row.opId),
+          `${label}: declared unprojected and reachable through a listed tool`,
+        ).toBe(false)
+
+        // Wall 2: the door does not exist under the spelling a caller would reach for. Read off the
+        // REAL client/handler round trip rather than inferred from the mapping — the mapping is one
+        // of the two artifacts this cell is comparing, so believing it about itself would be the
+        // comparison of a table against itself the whole suite refuses.
+        const spelling = plausibleMcpToolSpelling(row.opId)
+        expect(
+          listed,
+          `${label}: the probe spelling collides with a live tool, so this cell would be calling a `
+            + 'capability rather than probing an absence',
+        ).not.toContain(spelling)
+        await expect(
+          client.callTool({ name: spelling, arguments: {} }),
+          `${label}: a direct tools/call must answer unknown-tool`,
+        ).rejects.toThrow(`Tool ${spelling} not found`)
+      }
+    })
+  })
+
+  it('control: the unknown-tool probe tells an absent door from a present one', async () => {
+    // An asserted absence is worth exactly what the probe's ability to see a PRESENCE is worth. The
+    // same call shape is sent to a name that exists and to one that does not, and the two answers
+    // are different in kind: a registered tool answers in-band (an input-validation result), an
+    // unregistered one is refused by the protocol before any tool is reached.
+    const listed = await listMcpToolNames()
+    const present = listed[0]
+    expect(present, 'the live server listed no tool at all').toBeDefined()
+
+    await withMcpClient(async (client) => {
+      const absent = plausibleMcpToolSpelling(SYNTHETIC_ABSENT_OP_ID)
+      expect(listed, 'the synthetic absent name must not be a live tool').not.toContain(absent)
+      await expect(
+        client.callTool({ name: absent, arguments: {} }),
+        'a name no tool carries must be refused as unknown',
+      ).rejects.toThrow(`Tool ${absent} not found`)
+
+      const answered = await client.callTool({
+        name: present!,
+        arguments: { agent_qa_control_397_03: true },
+      })
+      expect(
+        JSON.stringify(answered),
+        `${present}: a REGISTERED tool must not answer the unknown-tool refusal, or the probe `
+          + 'above would fire on every tool in the catalogue',
+      ).not.toContain('not found')
+    })
   })
 })

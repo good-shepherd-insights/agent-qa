@@ -638,6 +638,39 @@ type UncoveredOpId = Exclude<ScenarioOpId, (typeof SCENARIO_TABLE)[number]['opId
 const EVERY_TYPED_OP_HAS_A_ROW: [UncoveredOpId] extends [never] ? true : UncoveredOpId = true
 void EVERY_TYPED_OP_HAS_A_ROW
 
+/** The two ways a table and a registry can disagree about what exists. */
+export interface CensusDiff {
+  /** Declared by the registry, carried by no row — a capability nobody wrote a scenario for. */
+  readonly missing: readonly string[]
+  /** Carried by a row, declared by no registry entry — a scenario for a capability that is gone. */
+  readonly stray: readonly string[]
+}
+
+/**
+ * The census self-check, as a PURE function of two id lists (D-10).
+ *
+ * TWO-DIRECTIONAL BY CONSTRUCTION. A one-directional census — "every row names a real op" — passes
+ * forever on a table that has simply stopped growing, which is the exact failure mode two registers
+ * over one universe produce and the reason D-10 folds them into one. Both sides are returned as
+ * NAMED ids rather than counts, because the failure a person needs to read is "which capability",
+ * not "one too few".
+ *
+ * Pure and total so `parity.test.ts` can drive it with a synthetic table missing a row and a
+ * synthetic table carrying a stray, and OBSERVE each side fire. A register whose self-check has
+ * never been seen to fire is a register that certifies its own arithmetic and nothing else.
+ */
+export function censusDiff(
+  registryIds: readonly string[],
+  tableOpIds: readonly string[],
+): CensusDiff {
+  const inTable = new Set(tableOpIds)
+  const inRegistry = new Set(registryIds)
+  return {
+    missing: [...registryIds].filter((id) => !inTable.has(id)).sort(),
+    stray: [...tableOpIds].filter((id) => !inRegistry.has(id)).sort(),
+  }
+}
+
 /** The table's census, as ids — the comparand `registry.ids()` is asserted set-equal against. */
 export function scenarioTableOpIds(): readonly string[] {
   return SCENARIO_TABLE.map((row) => row.opId)

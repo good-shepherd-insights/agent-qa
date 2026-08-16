@@ -184,19 +184,22 @@ export function expandMcpListedTools(
 }
 
 /**
- * A real `tools/list`, off a real server, for one grant.
+ * One connected protocol client against a real server, for the duration of one body.
  *
  * The SDK's own in-process handler driver, exactly as `projection-fidelity.test.ts` uses it: the
  * only thing replaced is the socket. `maskText` is passed by name and never defaulted — a masker
  * that can be omitted is a masker that will be — and the identity function is the right one here
- * because this read's subject is WHICH tools exist rather than what their text says.
+ * because these reads' subject is WHICH tools exist rather than what their text says.
  *
- * The client is closed in a `finally` rather than in a suite hook, so this helper leaves nothing
- * open for a caller to remember to drain.
+ * The connection is scoped to the callback and closed in a `finally`, so nothing is left open for a
+ * caller to remember to drain — and the callback shape is what lets the 397-03 absence probes ask
+ * nineteen questions of ONE server instance rather than of nineteen freshly built ones, which would
+ * make a disagreement between two answers unattributable.
  */
-export async function listMcpToolNames(
+export async function withMcpClient<Answer>(
+  body: (client: Client) => Promise<Answer>,
   grantedScopes: readonly FunctionScope[] = MCP_ENUMERATION_SCOPES,
-): Promise<readonly string[]> {
+): Promise<Answer> {
   const handler = createMcpHandler(() =>
     buildAgentQaMcpServer({
       registry: conformanceRegistry(),
@@ -204,7 +207,7 @@ export async function listMcpToolNames(
       maskText: (text: string) => text,
     }),
   )
-  const client = new Client({ name: 'agent-qa-397-01-conformance', version: '0.0.0' })
+  const client = new Client({ name: 'agent-qa-397-conformance', version: '0.0.0' })
   try {
     await client.connect(
       new StreamableHTTPClientTransport(new URL('http://conformance.local/mcp'), {
@@ -212,11 +215,36 @@ export async function listMcpToolNames(
           handler.fetch(new Request(url, init))) as typeof fetch,
       }),
     )
-    const listed = await client.listTools()
-    return listed.tools.map((tool) => tool.name)
+    return await body(client)
   } finally {
     await client.close().catch(() => {})
   }
+}
+
+/** A real `tools/list`, off a real server, for one grant. */
+export async function listMcpToolNames(
+  grantedScopes: readonly FunctionScope[] = MCP_ENUMERATION_SCOPES,
+): Promise<readonly string[]> {
+  return withMcpClient(async (client) => {
+    const listed = await client.listTools()
+    return listed.tools.map((tool) => tool.name)
+  }, grantedScopes)
+}
+
+/**
+ * The wire name an unprojected op WOULD carry if this surface projected it, derived from its id.
+ *
+ * DERIVED RATHER THAN INVENTED PER OP, because the point of the D-12 absence probe is that the door
+ * is not there under any spelling a caller would reach for, and nineteen hand-picked guesses would
+ * be nineteen chances to pick a name nobody would ever try. The shipped prefix plus the op's own id
+ * is the spelling a caller who knows the capability exists would attempt first.
+ *
+ * `parity.test.ts` asserts that the produced name is ABSENT from the live listing before it calls
+ * it. Without that check, a derived spelling that happened to collide with a real tool would turn
+ * an absence probe into a call against a live capability while still looking like a probe.
+ */
+export function plausibleMcpToolSpelling(opId: string): string {
+  return `agent_qa_${opId.replace(/\./g, '_')}`
 }
 
 /** The MCP surface's op-id reach for one grant, read off the wire and folded through the mapping. */
