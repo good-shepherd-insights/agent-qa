@@ -78,8 +78,9 @@ ALLOWED_RED_NAMES="the capability catalog regenerates byte-identically from the 
 the catalog's migration map projection (D-14, XPLN-03) lands in the COMMITTED artifact, entry for entry, as the shipped map declares it"
 # Vacuity floor. A gate that passed because the suite collected nothing is the CI-shaped version of
 # the failure this artifact exists to prevent. Measured 2026-08-16: 88 tests in the directory;
-# 2026-08-17 (398-08): 113, after the manifest legs and the `init --agent` cells joined. Raised in
-# the same diff that added them, which is the rule the knob exists for.
+# 2026-08-17 (398-08): 115, after the manifest legs, the `init --agent` cells and the two shipped-
+# binary anchors joined. Raised in the same diff that added them, which is the rule the knob is for;
+# the margin is the original's, about nine per cent under the measurement.
 FROZEN_MIN_TESTS=105
 # The artifact's own floor, so a mint that produced a truncated or empty file cannot be written.
 # Measured 2026-08-16: 41 registry ops + 5 chat op-aliases + 3 shipped skills = 49 rows.

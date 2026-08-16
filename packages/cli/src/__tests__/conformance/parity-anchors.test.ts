@@ -61,11 +61,14 @@ import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
+import { AgentManifestSchema } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
 import { createChatCommand } from '../../commands/chat.js'
 import { MCP_STDIO_STARTUP_MESSAGE } from '../../commands/mcp.js'
+import { DEFAULT_MCP_SCOPES } from '../../composition/mcp-token-resolution.js'
 import { MCP_ENUMERATION_SCOPES, enumerateMcpOpIds, expandMcpListedTools } from './adapters.js'
 
 const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url))
@@ -226,7 +229,19 @@ afterEach(() => {
  * declares workspace globs and one boolean. That is stronger than planting a throwaway credential,
  * because a value that does not exist cannot be printed by a diagnostic nobody anticipated.
  */
-function fixtureProject(label: string): { root: string; configPath: string } {
+function fixtureProject(
+  label: string,
+  /**
+   * Declared MCP token ENTRIES — names, never values (398-08).
+   *
+   * Empty for every 397 anchor, which is the posture the paragraph above argues for. The 398-08
+   * refs-only cell passes entries because its claim is the opposite one: that a credential which
+   * DOES exist is not printed, which nothing can measure without one. An entry here still carries
+   * no value — `McpTokenEntrySchema` has no member one could occupy — so what is written into the
+   * fixture is a variable NAME, and the value travels only in a constructed child environment.
+   */
+  tokens: readonly { name: string; tokenEnvVar: string; scopes: readonly string[] }[] = [],
+): { root: string; configPath: string } {
   const root = mkdtempSync(join(tmpdir(), `agent-qa-397-07-${label}-`))
   roots.push(root)
   const configPath = join(root, 'agent-qa.config.yaml')
@@ -243,7 +258,12 @@ function fixtureProject(label: string): { root: string; configPath: string } {
           secretsFile: '.env.secrets.local',
         },
         use: { mobile: { appState: 'preserve' } },
-        services: { mcp: { stdio: { grantConfigWrite: true } } },
+        services: {
+          mcp: {
+            stdio: { grantConfigWrite: true },
+            ...(tokens.length === 0 ? {} : { tokens }),
+          },
+        },
       },
       null,
       2,
@@ -375,6 +395,55 @@ interface SpawnOutcome {
   readonly signal: NodeJS.Signals | null
   readonly stdout: string
   readonly stderr: string
+}
+
+/**
+ * Run a program to completion with a CONSTRUCTED environment, collecting both streams.
+ *
+ * Factored out of the chat driver rather than written twice: the 398-08 anchors need the same
+ * hermetic spawn with an extra declared variable, and a second copy of this plumbing would be a
+ * second answer to "what did the child inherit" — which is the one property these cells depend on.
+ */
+async function spawnCollecting(
+  root: string,
+  args: readonly string[],
+  extraEnv: Readonly<Record<string, string>> = {},
+): Promise<SpawnOutcome> {
+  const child = spawn(process.execPath, [...args], {
+    cwd: root,
+    env: { ...hermeticEnv(root), ...extraEnv },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8')
+  })
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf8')
+  })
+  return await new Promise<SpawnOutcome>((settle, fail) => {
+    child.once('error', fail)
+    child.once('close', (code, signal) => settle({ code, signal, stdout, stderr }))
+  })
+}
+
+/** Drive the SHIPPED binary's `init --agent` against a project directory (398-08, D-16). */
+async function spawnAgentManifest(
+  root: string,
+  args: readonly string[],
+  extraEnv: Readonly<Record<string, string>> = {},
+): Promise<SpawnOutcome> {
+  return await spawnCollecting(root, [CLI_ENTRY, 'init', '--agent', '--dir', root, ...args], extraEnv)
+}
+
+/** Run a one-liner in a child with the same constructed environment — the sentinel's own control. */
+async function spawnNodeInline(
+  root: string,
+  source: string,
+  extraEnv: Readonly<Record<string, string>> = {},
+): Promise<SpawnOutcome> {
+  return await spawnCollecting(root, ['-e', source], extraEnv)
 }
 
 /** Drive the SHIPPED binary's chat command over a real pipe, and wait for it to exit. */
@@ -544,6 +613,135 @@ describe('the built-binary anchors (D-02)', () => {
       + 'lists for the chat caller, so a difference here is a difference in reachable capabilities)',
     ).toEqual(inProcess)
   }, 180_000)
+
+  it('the shipped init --agent manifest is the committed catalog, row for row (398-08, D-16)',
+    async () => {
+      // WHAT THIS CELL CAN SEE THAT NOTHING IN `manifest.test.ts` CAN. That file drives
+      // `buildAgentManifest` in this process, which is the right fidelity for the manifest's own
+      // laws and leaves one question unanswerable from inside: whether the thing a person installs,
+      // running its own argument parsing and its own bundled command path, hands an agent the same
+      // capability set. A cell that passed against a test-composed manifest and never against the
+      // shipped artifact would prove nothing about what a user gets.
+      //
+      // THE STALE-DIST GUARD IS THE FIRST LINE, for this file's standing reason: an anchor spawned
+      // against yesterday's build passes and certifies the wrong artifact.
+      expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+      expect(
+        existsSync(CLI_ENTRY),
+        `the built CLI entry is missing at ${relative(PACKAGES_ROOT, CLI_ENTRY)}; ${REBUILD_INSTRUCTION}`,
+      ).toBe(true)
+
+      const fixture = fixtureProject('398-08-manifest')
+      const outcome = await spawnAgentManifest(fixture.root, [])
+
+      // THE SHAPE OF THE ANSWER BEFORE ANY COMPARISON OF IT. A command that refused to start, or
+      // exited non-zero, would otherwise fold to an unparseable string — and the diagnosis for
+      // that is the child's own stderr, quoted here rather than found in a rerun.
+      expect(
+        { code: outcome.code, signal: outcome.signal, stderr: outcome.stderr.trim().slice(0, 600) },
+        'the spawned `init --agent` did not exit cleanly',
+      ).toMatchObject({ code: 0, signal: null })
+
+      // THE WHOLE OF STDOUT IS THE DOCUMENT. Not "contains JSON" — parsed outright, because the
+      // claim D-16 makes is that this is a machine entry point, and a machine entry point that
+      // needs a filter in front of it to parse is a claim with a caveat.
+      const parsed = AgentManifestSchema.safeParse(JSON.parse(outcome.stdout) as unknown)
+      expect(
+        parsed.success ? [] : parsed.error.issues.map((issue) => issue.path.join('.')),
+        'the shipped manifest does not parse against the published contract',
+      ).toEqual([])
+      if (!parsed.success) return
+      const manifest = parsed.data
+
+      const committed = loadCapabilityCatalog()
+      expect(
+        manifest.rows,
+        'the shipped `init --agent` and the committed catalog disagree about the capability rows',
+      ).toEqual(committed.rows)
+      expect(
+        manifest.migrationMap,
+        'the shipped `init --agent` and the committed catalog disagree about the migration map',
+      ).toEqual(committed.migrationMap)
+
+      // The two comparisons above are vacuous against two empty documents, so each side's
+      // denominator is asserted on its own line.
+      expect(manifest.rows.length, 'the shipped manifest carried no rows').toBeGreaterThan(0)
+      expect(manifest.migrationMap.length, 'the shipped manifest carried no migration entries')
+        .toBeGreaterThan(0)
+
+      // THE POSTURE IS SHAPE-ASSERTED, NOT BYTE-PINNED, and that is the honest bar: it is a fact
+      // about the workspace the binary ran in — a temporary directory here — so pinning its bytes
+      // would pin the fixture. What must hold is that the section is WHOLE and reports the shipped
+      // default grant rather than a list this cell wrote down.
+      expect(manifest.posture.defaultScopes, 'the shipped posture is not the shipped default grant')
+        .toEqual([...DEFAULT_MCP_SCOPES])
+      expect(manifest.posture.configuration, 'the fixture project\'s config did not resolve')
+        .toBe('resolved')
+      expect(typeof manifest.posture.safeMode, 'the shipped posture has no safe-mode state')
+        .toBe('boolean')
+    }, 120_000)
+
+  it('the shipped init --agent prints a declared credential\'s NAME and never its value (398-08, T-398-17)',
+    async () => {
+      // THE REFS-ONLY LAW, ON THE SURFACE A PERSON ACTUALLY SEES. `manifest.test.ts` proves the
+      // value is absent from the OBJECT this process builds; this proves it is absent from the
+      // BYTES a shipped process writes — both streams, including any diagnostic nobody
+      // anticipated. Those are different claims, and a suite that only made the first one has
+      // shipped a leak through the second before (395: the assertion read `error.message` while
+      // the live channel was the error's serialization).
+      //
+      // ON PLANTING A VALUE AT ALL. This file's other fixtures deliberately plant NOTHING, on the
+      // reasoning that a value which does not exist cannot be printed. That reasoning is right for
+      // an enumeration anchor and is exactly backwards for this one: refs-only is the claim that a
+      // value which DOES exist is not printed, and it is unmeasurable without one. The sentinel
+      // below is minted here, authenticates nothing anywhere, and travels only in the constructed
+      // environment of a child this cell kills.
+      expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+
+      const sentinel = 'sk-398-08-anchor-sentinel-6f21ba9c04d7e358'
+      const tokenEnvVar = 'AGENT_QA_398_08_ANCHOR_TOKEN'
+      const fixture = fixtureProject('398-08-refs-only', [
+        { name: 'ci', tokenEnvVar, scopes: ['read'] },
+      ])
+
+      const outcome = await spawnAgentManifest(fixture.root, [], { [tokenEnvVar]: sentinel })
+
+      expect(
+        { code: outcome.code, signal: outcome.signal },
+        'the spawned `init --agent` did not exit cleanly',
+      ).toEqual({ code: 0, signal: null })
+
+      const manifest = AgentManifestSchema.parse(JSON.parse(outcome.stdout) as unknown)
+
+      // THE NAME IS THERE — without this, the absence below is satisfied by a binary that reported
+      // no credential at all, which is the vacuous way to pass a "no secret" assertion.
+      expect(
+        manifest.posture.tokenEnvRefs,
+        'the shipped manifest did not report the declared credential',
+      ).toEqual([{ name: 'ci', tokenEnvVar, scopes: ['read'] }])
+
+      // …and the VALUE is on neither stream. The variable was set in the child's environment, so a
+      // path from a declared name to its contents would have had one.
+      expect(
+        outcome.stdout.includes(sentinel),
+        'the shipped manifest printed the token VALUE on stdout',
+      ).toBe(false)
+      expect(
+        outcome.stderr.includes(sentinel),
+        'the shipped `init --agent` printed the token VALUE on stderr',
+      ).toBe(false)
+
+      // THE CONTROL ON THE CONTROL: the child really could read the sentinel. Without this the two
+      // absences above are properties of an unset variable rather than of this product, and the
+      // whole cell measures nothing. Driven by asking the same binary to echo its own environment
+      // — through a command that is allowed to, rather than by trusting the plumbing.
+      const echoed = await spawnNodeInline(
+        fixture.root,
+        `process.stdout.write(String(process.env[${JSON.stringify(tokenEnvVar)}] ?? ''))`,
+        { [tokenEnvVar]: sentinel },
+      )
+      expect(echoed.stdout, 'the sentinel never reached the child environment').toBe(sentinel)
+    }, 120_000)
 
   it('the anchor comparator names a divergence in both directions', () => {
     // A DETECTOR NOBODY HAS SEEN FIRE IS A COMMENT. Both cells above pass today, which says nothing
