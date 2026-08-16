@@ -61,3 +61,35 @@ export function findContractlessWorkspaceOffenders(
     .map(memberDir => `${memberDir}: workspace package missing src/ownership-contract.ts`)
     .sort()
 }
+
+/**
+ * The manifest and the filesystem agree, in BOTH directions.
+ *
+ * 2026-08-17 (Phase 398 plan 03). Found by mutation while registering `packages/analytics`:
+ * deleting the new contract from `ARCH_MANIFEST` left `validate:arch` fully green, 41 of 41. The
+ * reason is that the rule above reads the FILESYSTEM — a `src/ownership-contract.ts` that exists
+ * satisfies it whether or not anything imports the file. So the package with the contract nobody
+ * registered is the package whose class rules, dependency reconciliation and cycle position are
+ * never checked, and the suite says so by staying quiet. Writing a contract was enforced; putting
+ * it where the validator ranges was not.
+ *
+ * Both directions, because either alone is satisfiable by a wrong tree: a contract absent from the
+ * manifest is an unchecked package, and a manifest entry whose contract file is gone is a rule set
+ * being applied to a directory that no longer declares it.
+ */
+export function findUnregisteredContractOffenders(
+  contractDirs: readonly string[],
+  manifestDirs: readonly string[],
+): string[] {
+  const manifestDirSet = new Set(manifestDirs)
+  const contractDirSet = new Set(contractDirs)
+
+  return [
+    ...contractDirs
+      .filter(contractDir => !manifestDirSet.has(contractDir))
+      .map(contractDir => `${contractDir}: ownership contract not registered in ARCH_MANIFEST`),
+    ...manifestDirs
+      .filter(manifestDir => !contractDirSet.has(manifestDir))
+      .map(manifestDir => `${manifestDir}: ARCH_MANIFEST entry has no src/ownership-contract.ts`),
+  ].sort()
+}

@@ -82,7 +82,10 @@ function validateBrandingInAgentFiles(rootDir, errors) {
 }
 
 export function validateAgentInstructions(rootDir = root, options = {}) {
-  const expectedPackageCount = options.expectedPackageCount ?? 22
+  // 2026-08-17 (Phase 398 plan 03): 22 -> 23 for `packages/analytics`. The count is pinned rather
+  // than derived on purpose — a package arriving without an AGENTS.md is meant to red here — so a
+  // new workspace member is a deliberate bump plus its own instructions file, never a silent one.
+  const expectedPackageCount = options.expectedPackageCount ?? 23
   const errors = []
   const rootAgentsPath = join(rootDir, 'AGENTS.md')
 

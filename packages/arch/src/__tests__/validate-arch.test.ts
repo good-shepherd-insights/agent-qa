@@ -48,6 +48,7 @@ import {
 import {
   contractBearingDirs,
   findContractlessWorkspaceOffenders,
+  findUnregisteredContractOffenders,
   workspaceMemberDirs,
 } from '../lint/workspace-members.js'
 import {
@@ -243,6 +244,12 @@ describe('validate:arch (LINT-01..05)', () => {
         contractBearingDirs(repoRoot),
       ),
     )
+    offenders.push(
+      ...findUnregisteredContractOffenders(
+        contractBearingDirs(repoRoot),
+        contracts.map(contract => contract.packageDir),
+      ),
+    )
 
     expect(offenders).toEqual([])
     // Walks and scans every contract-bearing package in the workspace, so its cost tracks
@@ -261,6 +268,55 @@ describe('validate:arch held-out fixtures', () => {
     ).toEqual([
       'packages/without-contract: workspace package missing src/ownership-contract.ts',
     ])
+  })
+
+  // 2026-08-17 (Phase 398 plan 03). The mutation that motivated the rule: deleting
+  // `AGENT_QA_ANALYTICS_OWNERSHIP_CONTRACT` from ARCH_MANIFEST left the aggregate green at 41/41,
+  // because the contract-less check reads the filesystem and the file was still there. An unranged
+  // package is one whose dep set and class rules are taken on trust, so the omission is the thing
+  // that has to red.
+  it('held-out registration check fails in both drift directions', () => {
+    expect(
+      findUnregisteredContractOffenders(
+        ['packages/registered', 'packages/analytics'],
+        ['packages/registered', 'packages/analytics'],
+      ),
+    ).toEqual([])
+
+    expect(
+      findUnregisteredContractOffenders(
+        ['packages/registered', 'packages/analytics'],
+        ['packages/registered'],
+      ),
+    ).toEqual([
+      'packages/analytics: ownership contract not registered in ARCH_MANIFEST',
+    ])
+
+    expect(
+      findUnregisteredContractOffenders(
+        ['packages/registered'],
+        ['packages/registered', 'packages/deleted'],
+      ),
+    ).toEqual([
+      'packages/deleted: ARCH_MANIFEST entry has no src/ownership-contract.ts',
+    ])
+  })
+
+  // The rule the case above proves is only worth anything if the aggregate calls it, and a rule
+  // nobody invokes keeps its own unit tests passing forever. Source-anchored on this file, the
+  // convention the composition carve-out already uses one describe block down.
+  it('the aggregate invokes the registration check against the real manifest', () => {
+    const aggregateSource = readFileSync(fileURLToPath(import.meta.url), 'utf8')
+    const aggregate = aggregateSource.slice(
+      aggregateSource.indexOf('every contract-bearing package satisfies'),
+      aggregateSource.indexOf('expect(offenders).toEqual([])'),
+    )
+
+    expect(aggregate).toContain('findUnregisteredContractOffenders(')
+    expect(contractBearingDirs(repoRoot)).toContain('packages/analytics')
+    expect(ARCH_MANIFEST.packages.map(contract => contract.packageDir)).toContain(
+      'packages/analytics',
+    )
   })
 
   it('held-out provider firewall rejects provider SDKs and accepts the ai substrate', () => {

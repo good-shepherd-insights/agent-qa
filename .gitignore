@@ -9,6 +9,11 @@ dist/
 .env*
 agent-qa.local.yaml
 packages/core/src/analytics/posthog-project.ts
+# 2026-08-17 (Phase 398 plan 03, D-17/D-20): the same generated key file at its new home. Both
+# entries stand until plan 11 deletes `core/src/analytics` and re-points the release scripts here;
+# dropping core's line early would un-ignore a file that still exists and still holds a real key
+# in a release checkout.
+packages/analytics/src/posthog-project.ts
 
 # agent-qa runtime output
 .agent-qa/
