@@ -482,6 +482,12 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
     // the verb out of its listing and `invokeFunction` refusing it cannot disagree (D-16). The
     // filter is UX; this field's enforcement is one check in the dispatch path.
     ...(spec.requiresHumanOrigin === undefined ? {} : { requiresHumanOrigin: true as const }),
+    // 397 D-05: the PRESENCE of a disclosure, projected the way the line above projects the
+    // origin requirement — the same conditional spread, so absent stays absent. The method
+    // itself never crosses: what a listing receives is the boolean fact that a confirm prompt
+    // for this op will say what the invocation costs, and the golden capability snapshot reads
+    // that column off here instead of off somebody's reading of the op source.
+    ...(spec.disclose === undefined ? {} : { discloses: true as const }),
     resultKind: spec.resultKind,
     bindingStatus: resolveBindingStatus(spec, deps),
     input: toSchemaProjection(spec.input),

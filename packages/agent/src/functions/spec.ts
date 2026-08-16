@@ -234,6 +234,31 @@ export interface FunctionDeclaration extends FunctionMetadata {
    * `unbound` from one that did not, and `invokeFunction` refuses on exactly that answer.
    */
   bindingStatus: FunctionBindingStatus
+  /**
+   * This op composes an invocation-specific disclosure for the gate (2026-08-16, Phase 397 D-05).
+   *
+   * PRESENCE, AS DATA — never the callable. {@link FunctionSpec.disclose} stays exactly where it
+   * is and why it is: a function-valued field on {@link FunctionMetadata} would put something
+   * runnable back on every listing, which BL-01 abolishes. What crosses to a listing here is one
+   * boolean fact about the op — whether a person confirming it will be shown what this particular
+   * invocation costs — and reading that fact tells a caller nothing it could run.
+   *
+   * IT IS ON THE DECLARATION AND NOT ON THE SHARED BASE, so it cannot be authored. A spec states
+   * `disclose`; the registry states `discloses`. Were it on the base, a spec could claim the flag
+   * without the method, or omit it while carrying one, and the golden registry snapshot that pins
+   * this column would be recording a claim rather than a fact.
+   *
+   * WHY IT EXISTS AT ALL: 397's conformance suite lives in `packages/cli`, where neither the spec
+   * type nor the internals seam is reachable by construction. Without this projection the golden's
+   * disclose column would be hand-typed from reading op source files — a literal that rots the
+   * first time an op gains or loses a disclosure, silently, because nothing would compare it to
+   * anything.
+   *
+   * `true` is the only value, for `requiresHumanOrigin`'s reason: `false` and an absent key would
+   * be two spellings of one fact, and a present `undefined` would make a golden column that reads
+   * `null` for an op that simply discloses nothing.
+   */
+  discloses?: true
   /** Inert JSON-Schema projection of the runtime input contract (D-14). */
   input: FunctionSchemaProjection
   /**

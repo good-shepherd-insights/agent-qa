@@ -30,8 +30,8 @@ import { describe, expect, it } from 'vitest'
 
 import { FunctionInputError, FunctionScopeError, invokeFunction } from '../functions/invoke.js'
 import { configGetSpec } from '../functions/ops/config-get.js'
-import { createFunctionRegistry } from '../functions/registry.js'
-import type { FunctionDeclaration, FunctionDeps } from '../functions/spec.js'
+import { createFunctionRegistry, registryInternals } from '../functions/registry.js'
+import type { FunctionDeclaration, FunctionDeps, FunctionSpec } from '../functions/spec.js'
 import { CONTRACTS_BY_ID, expectProjectionDerivedFrom } from './projection-relation.js'
 
 const FIXED_CONTEXT: () => ExecutionContext = () => 'local-interactive'
@@ -239,6 +239,81 @@ describe('the listed view is inert (BL-01)', () => {
     await expect(
       invokeFunction(buildRegistry(), 'runs.list', {}, FULLY_GRANTED),
     ).resolves.toEqual([])
+  })
+})
+
+// Phase 397 (D-05, research Pitfall 1): the golden registry snapshot pins a disclose flag per op,
+// and the suite that writes it lives in `packages/cli`, where neither `FunctionSpec` nor the
+// internals seam is reachable. The declaration therefore carries the ANSWER as data. These two
+// cells are the relation between the two artifacts — every op's declaration and the spec it was
+// projected from — so a hand-maintained flag, or a projection that drifts off the spec, reds here
+// rather than rotting into a golden nobody can falsify.
+describe('the disclose presence flag is projected from the spec (D-05)', () => {
+  function specsOf(registry: ReturnType<typeof buildRegistry>): ReadonlyMap<string, FunctionSpec> {
+    const internals = registryInternals(registry)
+    if (internals === undefined) throw new Error('the registry exposes no internals')
+    return internals.specs
+  }
+
+  it('lists discloses: true for exactly the ops whose spec defines disclose', () => {
+    const registry = buildRegistry()
+    const specs = specsOf(registry)
+    const declarations = registry.list(FULLY_GRANTED)
+
+    // Both sides produced: the expectation is read off the spec table, never written out. An op-id
+    // list here would be the hand-typed literal this field exists to replace.
+    const definesDisclose = declarations
+      .filter((declaration) => typeof specs.get(declaration.id)?.disclose === 'function')
+      .map((declaration) => declaration.id)
+    const flagged = declarations
+      .filter((declaration) => declaration.discloses === true)
+      .map((declaration) => declaration.id)
+
+    // Non-vacuity, both directions: a registry where nothing disclosed, or where everything did,
+    // would let the cell above pass while measuring one branch.
+    expect(
+      definesDisclose.length,
+      'no registered spec defines disclose — the partition below is vacuous',
+    ).toBeGreaterThan(0)
+    expect(
+      definesDisclose.length,
+      'every registered spec defines disclose — the absent branch is unmeasured',
+    ).toBeLessThan(declarations.length)
+
+    expect(
+      flagged,
+      'the ops listing discloses: true are exactly the ops whose spec defines disclose',
+    ).toEqual(definesDisclose)
+  })
+
+  it('omits the key entirely for an op with no disclose — absent, never false or undefined', () => {
+    const registry = buildRegistry()
+    const specs = specsOf(registry)
+    const declarations = registry.list(FULLY_GRANTED)
+
+    // `requiresHumanOrigin`'s rule, applied to the second presence field: `false` and an absent key
+    // would be two spellings of the same fact, and a present `undefined` would make a golden column
+    // that reads `null` for an op that simply discloses nothing.
+    let present = 0
+    let absent = 0
+    for (const declaration of declarations) {
+      const spec = specs.get(declaration.id)
+      expect(spec, `${declaration.id} is listed by a registry that registered no such spec`)
+        .toBeDefined()
+      const label = `${declaration.id}: the discloses presence field`
+      if (spec!.disclose === undefined) {
+        expect(Object.hasOwn(declaration, 'discloses'), `${label} must be ABSENT`).toBe(false)
+        absent += 1
+      } else {
+        expect(Object.hasOwn(declaration, 'discloses'), `${label} must be present`).toBe(true)
+        expect(declaration.discloses, `${label} carries true and nothing else`).toBe(true)
+        present += 1
+      }
+    }
+
+    expect(present, 'the present branch went unexercised').toBeGreaterThan(0)
+    expect(absent, 'the absent branch went unexercised').toBeGreaterThan(0)
+    expect(present + absent).toBe(declarations.length)
   })
 })
 
