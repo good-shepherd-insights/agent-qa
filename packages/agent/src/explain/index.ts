@@ -1,0 +1,9 @@
+// `explain`'s deterministic core (Phase 398 plan 04 — XPLN-02, D-10 / D-11 / D-12).
+//
+// A LOCAL barrel, deliberately not the package barrel. `packages/agent/src/index.ts` is pinned by
+// the arch export assertion and is the surface a host may reach; the op that plan 07 registers is
+// what belongs there, not the parts it is assembled from. Exporting the renderer publicly would
+// hand a surface a second way to compose an explain answer, which is the same mistake the function
+// layer's barrel note refuses for `invoke`.
+
+export type { CapabilityCatalogPort, ExplainAbstentionRecord } from './port.js'

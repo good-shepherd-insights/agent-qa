@@ -1300,3 +1300,28 @@ export type {
   CatalogSkillRow,
   CatalogSurface,
 } from './capability-catalog'
+
+// 398-04 (D-10 / D-11 · XPLN-02): the `explain` contract — the binary answer|abstention union with
+// no confidence member, and the closed citation shape that is the whole of the model's output
+// contract. Minted here per 384 D-16: the deterministic renderer lives in `packages/agent` and the
+// op's host binding in `packages/agent-local`, so the shape they agree on belongs to neither.
+export {
+  ExplainAbstentionSchema,
+  ExplainAnswerSchema,
+  ExplainCitationSchema,
+  ExplainCitedCapabilitySchema,
+  ExplainCitedRowKindSchema,
+  ExplainInputSchema,
+  ExplainOutputSchema,
+  ExplainProseSegmentSchema,
+} from './explain'
+export type {
+  ExplainAbstention,
+  ExplainAnswer,
+  ExplainCitation,
+  ExplainCitedCapability,
+  ExplainCitedRowKind,
+  ExplainInput,
+  ExplainOutput,
+  ExplainProseSegment,
+} from './explain'
