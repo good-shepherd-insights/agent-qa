@@ -55,6 +55,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type { EntityKind, FunctionCaller } from '@vostride/agent-qa-schema'
 
+import { maskJsonDocument } from './masked-result.js'
 import { visibleToCaller } from './visibility.js'
 
 /**
@@ -165,6 +166,23 @@ export function createEntityResourceReadHandler(
       )
     }
 
+    // MASKED AS A VALUE, NEVER AS A SERIALIZATION (CR-01, 2026-08-16). This line used to read
+    // `deps.maskText(JSON.stringify(card))`, which handed a literal-substring masker an ESCAPED
+    // document: a stored value containing `"`, `\` or a control character does not occur in it, so
+    // the masker matched nothing and the card reached the caller verbatim. `maskJsonDocument` walks
+    // the card and masks its string leaves and keys instead — the same one masking `masked-result.
+    // ts` performs for tool results, shared rather than restated, because two answers to "how is a
+    // JSON payload masked" is exactly how one channel drifts open while the other looks closed.
+    const masked = maskJsonDocument(card, deps.maskText)
+    if (masked === undefined) {
+      // FAILS CLOSED, like the tool channel: a card whose masked form would not be the same kind of
+      // value is withheld rather than served. The message names the condition and quotes nothing.
+      throw new EntityResourceReadError(
+        'This entity could not be returned: part of its card could not be masked in place, so the '
+        + 'unmasked record was withheld rather than served.',
+      )
+    }
+
     return {
       contents: [
         {
@@ -172,7 +190,7 @@ export function createEntityResourceReadHandler(
           // the canonical one, so `agentqa://memory/MEM-1` answers about `MEM-001` and says so.
           uri: formatEntityUri(parsed.kind, parsed.shortId),
           mimeType: ENTITY_RESOURCE_MIME_TYPE,
-          text: deps.maskText(JSON.stringify(card)),
+          text: masked.text,
         },
       ],
     }

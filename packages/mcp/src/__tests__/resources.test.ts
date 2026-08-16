@@ -212,22 +212,31 @@ describe('the read handler resolves through entities.get (D-13 · D-02)', () => 
   // directly, so it never passes through `catalog.ts`'s one generic masking handler — the masker is
   // a required dep here for the same reason it is one there. Asserted on the text a caller reads
   // AND on what the masker was actually handed, so a masker called on the wrong string still reds.
-  it('masks the serialised card, and hands the masker the raw serialisation', async () => {
-    const seen: string[] = []
-    const recorder = recordingInvoke({ token: 'sk-live-SECRET' })
-    const read = createEntityResourceReadHandler({
-      invoke: recorder.invoke,
-      maskText: (text) => {
-        seen.push(text)
-        return text.replaceAll('sk-live-SECRET', '[redacted]')
-      },
+  //
+  // WHAT THE MASKER IS HANDED IS THE ASSERTION THAT MOVED (CR-01, 2026-08-16). This cell used to
+  // require `seen` to be the whole SERIALISATION — and that requirement was the defect written down
+  // as a bar: a literal-substring masker handed an escaped document cannot find a value containing
+  // `"`, `\` or a control character, and four such shapes reached callers verbatim. The handler now
+  // masks the card's raw string LEAVES AND KEYS, so `seen` is those raw strings. The escape classes
+  // themselves are pinned in `masked-serialization.test.ts`; what this cell keeps is the narrower
+  // property it always carried — the masker really is called, on the card's own bytes.
+  it('masks the card and hands the masker its RAW string leaves, never an escaped serialisation',
+    async () => {
+      const seen: string[] = []
+      const recorder = recordingInvoke({ token: 'sk-live-SECRET' })
+      const read = createEntityResourceReadHandler({
+        invoke: recorder.invoke,
+        maskText: (text) => {
+          seen.push(text)
+          return text.replaceAll('sk-live-SECRET', '[redacted]')
+        },
+      })
+
+      const result = await read(new URL('agentqa://memory/MEM-001'))
+
+      expect(textContentAt(result, 0)).toBe('{"token":"[redacted]"}')
+      expect(seen).toEqual(['token', 'sk-live-SECRET'])
     })
-
-    const result = await read(new URL('agentqa://memory/MEM-001'))
-
-    expect(textContentAt(result, 0)).toBe('{"token":"[redacted]"}')
-    expect(seen).toEqual(['{"token":"sk-live-SECRET"}'])
-  })
 
   // A refusal from the op is an output channel too — the message is what a caller reads.
   it('masks an op refusal rather than letting it out verbatim', async () => {
