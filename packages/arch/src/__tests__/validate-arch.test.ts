@@ -18,7 +18,7 @@ import {
   type SpecifierHit,
 } from '../lint/extract-specifiers.js'
 import { applyLedger, transitionalLeaks } from '../lint/apply-ledger.js'
-import { findDepReconciliationOffenders } from '../lint/reconcile-deps.js'
+import { findDepReconciliationOffenders, findSetMismatchOffenders } from '../lint/reconcile-deps.js'
 import { AGENT_QA_CORE_MIGRATION_LEDGER } from '../../../core/src/ownership-contract.js'
 import { findCycleOffenders } from '../lint/walk-dag.js'
 import { findDirectionOffenders } from '../lint/direction.js'
@@ -48,7 +48,6 @@ import {
 import {
   contractBearingDirs,
   findContractlessWorkspaceOffenders,
-  findUnregisteredContractOffenders,
   workspaceMemberDirs,
 } from '../lint/workspace-members.js'
 import {
@@ -244,10 +243,21 @@ describe('validate:arch (LINT-01..05)', () => {
         contractBearingDirs(repoRoot),
       ),
     )
+    // 2026-08-17 (Phase 398 plan 03). The aggregate above ranges ARCH_MANIFEST, so a package whose
+    // contract exists but is NOT registered has its class rules, dep reconciliation and cycle
+    // position taken on trust — and the contract-less rule cannot see it, because that rule reads
+    // the FILESYSTEM and the file is right there. Found by mutation: deleting the analytics entry
+    // from the manifest left `pnpm validate:arch` green at 41/41.
+    //
+    // `manifest.test.ts` already asserts exactly this equality, so the rule is REUSED rather than
+    // restated — a second census of the same two sets is the drift the census idiom exists to
+    // prevent. What was missing was not a rule; it was this script CALLING it. `validate:arch` is
+    // what `release.yml` runs, and it runs this file alone.
     offenders.push(
-      ...findUnregisteredContractOffenders(
-        contractBearingDirs(repoRoot),
+      ...findSetMismatchOffenders(
+        'manifest vs on-disk contracts',
         contracts.map(contract => contract.packageDir),
+        contractBearingDirs(repoRoot),
       ),
     )
 
@@ -270,49 +280,39 @@ describe('validate:arch held-out fixtures', () => {
     ])
   })
 
-  // 2026-08-17 (Phase 398 plan 03). The mutation that motivated the rule: deleting
-  // `AGENT_QA_ANALYTICS_OWNERSHIP_CONTRACT` from ARCH_MANIFEST left the aggregate green at 41/41,
+  // 2026-08-17 (Phase 398 plan 03). The mutation that motivated the CALL: deleting
+  // `AGENT_QA_ANALYTICS_OWNERSHIP_CONTRACT` from ARCH_MANIFEST left this file green at 41/41,
   // because the contract-less check reads the filesystem and the file was still there. An unranged
-  // package is one whose dep set and class rules are taken on trust, so the omission is the thing
-  // that has to red.
-  it('held-out registration check fails in both drift directions', () => {
+  // package is one whose dep set and class rules are taken on trust, so the omission has to red
+  // HERE — `validate:arch` is what the release pipeline runs, and it runs this file alone.
+  it('held-out registration equality fails in both drift directions', () => {
     expect(
-      findUnregisteredContractOffenders(
-        ['packages/registered', 'packages/analytics'],
+      findSetMismatchOffenders(
+        'manifest vs on-disk contracts',
+        ['packages/registered'],
         ['packages/registered', 'packages/analytics'],
       ),
-    ).toEqual([])
+    ).toEqual(['manifest vs on-disk contracts: missing packages/analytics'])
 
     expect(
-      findUnregisteredContractOffenders(
-        ['packages/registered', 'packages/analytics'],
-        ['packages/registered'],
-      ),
-    ).toEqual([
-      'packages/analytics: ownership contract not registered in ARCH_MANIFEST',
-    ])
-
-    expect(
-      findUnregisteredContractOffenders(
-        ['packages/registered'],
+      findSetMismatchOffenders(
+        'manifest vs on-disk contracts',
         ['packages/registered', 'packages/deleted'],
+        ['packages/registered'],
       ),
-    ).toEqual([
-      'packages/deleted: ARCH_MANIFEST entry has no src/ownership-contract.ts',
-    ])
+    ).toEqual(['manifest vs on-disk contracts: unexpected packages/deleted'])
   })
 
-  // The rule the case above proves is only worth anything if the aggregate calls it, and a rule
-  // nobody invokes keeps its own unit tests passing forever. Source-anchored on this file, the
-  // convention the composition carve-out already uses one describe block down.
-  it('the aggregate invokes the registration check against the real manifest', () => {
+  // A rule nobody invokes keeps its own unit tests passing forever. Source-anchored on this file,
+  // the convention the composition carve-out already uses one describe block down.
+  it('the aggregate invokes the registration equality against the real manifest', () => {
     const aggregateSource = readFileSync(fileURLToPath(import.meta.url), 'utf8')
     const aggregate = aggregateSource.slice(
       aggregateSource.indexOf('every contract-bearing package satisfies'),
       aggregateSource.indexOf('expect(offenders).toEqual([])'),
     )
 
-    expect(aggregate).toContain('findUnregisteredContractOffenders(')
+    expect(aggregate).toContain("findSetMismatchOffenders(\n        'manifest vs on-disk contracts'")
     expect(contractBearingDirs(repoRoot)).toContain('packages/analytics')
     expect(ARCH_MANIFEST.packages.map(contract => contract.packageDir)).toContain(
       'packages/analytics',
