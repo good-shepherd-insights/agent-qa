@@ -25,7 +25,7 @@
 // string field a query could occupy, which is D-14's no-free-text law expressed as a type rather
 // than as a rule somebody remembers at the send seam.
 
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { generateText } from 'ai'
@@ -121,45 +121,87 @@ export interface CreateCliCapabilityCatalogPortOptions {
   readonly catalogPath?: string
 }
 
+/**
+ * Whether the log's last byte is a newline — i.e. whether the previous append completed.
+ *
+ * ONE BYTE, read at the end. The whole file is deliberately not read: this runs on every abstention
+ * and the log grows without bound in v2.0 (no rotation), so a read-the-file check would make the
+ * cheapest possible append cost more the longer a project has been used.
+ *
+ * A file that is missing or empty answers `true`, because there is no unterminated line to fix.
+ */
+function endsWithNewline(path: string): boolean {
+  let size: number
+  try {
+    size = statSync(path).size
+  } catch {
+    return true
+  }
+  if (size === 0) return true
+
+  const handle = openSync(path, 'r')
+  try {
+    const last = Buffer.alloc(1)
+    readSync(handle, last, 0, 1, size - 1)
+    return last[0] === 0x0a
+  } finally {
+    closeSync(handle)
+  }
+}
+
 /** Where this project's coverage log lives. Found from the runtime root, never guessed. */
 export function resolveExplainCoverageLogPath(agentQaRoot: string): string {
   return join(agentQaRoot, EXPLAIN_COVERAGE_LOG_FILE_NAME)
 }
 
+/** What a read of the coverage log found, including what it could not read. */
+export interface ExplainCoverageLog {
+  readonly records: readonly ExplainCoverageRecord[]
+  /**
+   * Lines that did not parse. Counted rather than thrown on, and REPORTED rather than swallowed.
+   *
+   * A reader that REFUSED the file would let one process killed mid-write poison the coverage
+   * signal permanently — the demand signal SURF-FUT-02 reads would be unavailable forever because
+   * of a laptop that slept once. A reader that skipped SILENTLY would be a coverage number quietly
+   * missing records nobody was told about. Counting is the answer to both.
+   */
+  readonly skippedLines: number
+}
+
 /**
- * Every complete record in the log, with a malformed TAIL skipped (edge XPLN-02/concurrency).
+ * Every complete record in the log, with unparseable lines skipped and counted (edge
+ * XPLN-02/concurrency).
  *
- * WHY THE TAIL AND NOT EVERY BAD LINE. A record is written by ONE `appendFileSync` of one line, so
- * the only line that can be half-present is the last one — a process killed mid-write. Skipping
- * arbitrary malformed lines anywhere in the file would also swallow a genuinely corrupt log, and
- * those are different facts: a torn tail is normal operation, a corrupt middle is not. A line that
- * fails to parse anywhere but at the end therefore still stops the read, by throwing.
+ * THERE IS EXACTLY ONE WAY A LINE HERE CAN BE MALFORMED, which is what makes skipping safe rather
+ * than lax: a record is written by ONE `appendFileSync` of one whole line, so nothing in this
+ * design can produce a half-written line except a process dying mid-write. That line is the tail at
+ * the moment it is torn — and it stops being the tail as soon as the next abstention appends, which
+ * is why the rule is stated over ANY line rather than over the last one. (Measured 2026-08-17,
+ * 398-07: a first draft that skipped only the tail was correct for a file nobody wrote to again,
+ * and the cell that appended after a torn line caught it.)
  *
  * A missing file reads as an empty log. That is not an error: a project where nothing has ever
  * abstained has no coverage to report, which is exactly what zero records says.
  */
-export function readExplainCoverageLog(path: string): readonly ExplainCoverageRecord[] {
+export function readExplainCoverageLog(path: string): ExplainCoverageLog {
   let text: string
   try {
     text = readFileSync(path, 'utf8')
   } catch {
-    return []
+    return { records: [], skippedLines: 0 }
   }
 
-  const lines = text.split('\n')
   const records: ExplainCoverageRecord[] = []
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? ''
+  let skippedLines = 0
+  for (const line of text.split('\n')) {
     if (line.trim().length === 0) continue
-    const isLastNonEmpty = lines.slice(index + 1).every((rest) => rest.trim().length === 0)
     try {
       records.push(JSON.parse(line) as ExplainCoverageRecord)
-    } catch (error) {
-      if (isLastNonEmpty) break
-      throw error
+    } catch {
+      skippedLines += 1
     }
   }
-  return records
+  return { records, skippedLines }
 }
 
 /**
@@ -294,8 +336,16 @@ export function createCliCapabilityCatalogPort(
       // process killed mid-append can leave at most an incomplete FINAL line — never an interleaved
       // or half-overwritten earlier record. That is the whole of the concurrency posture, and
       // `readExplainCoverageLog` is the other half of it.
+      //
+      // THE LEADING NEWLINE IS A REAL FIX, NOT A BELT-AND-BRACES ONE (measured 2026-08-17, 398-07).
+      // A torn tail has no terminator, so a plain append CONCATENATED the new record onto it and
+      // produced ONE corrupt line where there should have been a bad line and a good one — the new
+      // record was silently lost, which is worse than the torn write that caused it. Terminating
+      // the tail costs nothing, stays inside the SAME single write, and is what makes "a torn write
+      // never corrupts another record" true in both directions rather than only backwards.
       mkdirSync(dirname(logPath), { recursive: true })
-      appendFileSync(logPath, `${JSON.stringify(line)}\n`, 'utf8')
+      const separator = endsWithNewline(logPath) ? '' : '\n'
+      appendFileSync(logPath, `${separator}${JSON.stringify(line)}\n`, 'utf8')
 
       options.onAbstained?.({
         suggestedRowCount: record.closestRowIds.length,

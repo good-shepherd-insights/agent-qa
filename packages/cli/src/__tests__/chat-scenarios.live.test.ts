@@ -156,8 +156,20 @@ describe('the live lane announces which lane actually ran (T-392-32)', () => {
     // together is what lets a later reader say which of the three movements happened — a flip, an
     // admission, or the forbidden one where a gap round quietly grows the denominator for work
     // being done — without reconstructing it from the diff.
-    expect(LIVE_CORPUS.length).toBe(7)
-    expect(LIVE_DENOMINATOR).toBe(6)
+    //
+    // 9 AND 8 AS OF CORPUS v9 (398-07), AND BOTH MOVED BY TWO — an admission again, on v8's shape.
+    // `agent.explain` did not exist in v8's build, so "what can you do" had no reachable op and no
+    // cell was ever admitted that could flip; `planner/what-can-you-do` and
+    // `planner/how-do-i-explain` join together because XPLN-02 names two SHAPES of question (an
+    // enumeration and a request for one capability's command) and a planner that routed the first
+    // and answered the second from model memory is a real, reachable half-failure.
+    //
+    // NEITHER HAD MET A MODEL AT THE COMMIT THAT ADMITTED THEM. `AGENT_QA_LIVE_CHAT_CONFIG` was
+    // unset in that session, so this very cell announced the skip and the two rows are pinned but
+    // unmeasured. That is exactly the state this announcement exists to make impossible to mistake
+    // for a pass.
+    expect(LIVE_CORPUS.length).toBe(9)
+    expect(LIVE_DENOMINATOR).toBe(8)
   })
 })
 

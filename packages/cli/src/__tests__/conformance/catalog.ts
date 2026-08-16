@@ -933,19 +933,40 @@ export function buildCatalogRows(
   ].sort(catalogRowOrder)
 }
 
-export function capabilityCatalogOf(
-  declarations: readonly FunctionDeclaration[],
+/**
+ * THE document recipe, over an explicit row set.
+ *
+ * SPLIT OUT OF {@link capabilityCatalogOf} BY 398-07, and the reason is SC-2 rather than tidiness.
+ * D-12 requires the empty-catalog abstention to be proven against a catalog that came out of the
+ * PRODUCER and back through the loader — not a typed literal, which can prove things about inputs
+ * the producer could never emit. There was no seam that could mint a zero-row document: the row
+ * builder always contributes the shipped skills and the resolver table's aliases, so
+ * `capabilityCatalogOf([])` is not an empty catalog, it is a catalog missing its ops.
+ *
+ * Taking the rows as an ARGUMENT is what makes the fixture produced: `rowCount` and `rowsDigest`
+ * are minted here by the one recipe, and `capabilityCatalogText` serializes it, so the zero-row
+ * bytes the differential writes are bytes this producer emits. Respelling
+ * `sha256hex(canonicalJson(rows))` in a test would have been the second spelling of the digest
+ * rule, and a fixture whose digest was computed by a copy proves nothing about the original.
+ */
+export function capabilityCatalogDocumentOf(
+  rows: readonly CatalogRow[],
+  migrationMap: readonly CatalogMigrationEntry[],
 ): CapabilityCatalog {
-  const rows = [...buildCatalogRows(declarations)]
-  const migrationMap = [...buildCatalogMigrationEntries()]
   return {
     $note: [...CATALOG_NOTE],
     rowCount: rows.length,
     rowsDigest: sha256hex(canonicalJson(rows)),
-    rows,
-    migrationMap,
+    rows: [...rows],
+    migrationMap: [...migrationMap],
     migrationCount: migrationMap.length,
   }
+}
+
+export function capabilityCatalogOf(
+  declarations: readonly FunctionDeclaration[],
+): CapabilityCatalog {
+  return capabilityCatalogDocumentOf(buildCatalogRows(declarations), buildCatalogMigrationEntries())
 }
 
 /** THE recipe, shared by the regen script and the freshness leg. */

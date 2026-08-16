@@ -98,12 +98,35 @@ import type { ScenarioClass, ScenarioExpectationKind, ScenarioLane } from '@vost
  *      rate reported after this commit is a rate about a DIFFERENT corpus, which is the sentence
  *      this version number exists to let a reader say.
  *
- * DENOMINATORS AT THIS VERSION: 11 hermetic, 6 live. One canonical line, parsed by
+ * v9 — 398 plan 07, THE EXPLAIN ARRIVAL, and it is an ADMISSION on v8's shape rather than a flip.
+ *      `agent.explain` did not exist in v8's build: "what can you do" had no reachable op, so the
+ *      only honest outcomes were prose out of model memory or `mark_unhandled`, and no cell was
+ *      ever admitted that could flip. Two `planner/` cells join — `what-can-you-do` and
+ *      `how-do-i-explain` — taking the corpus to 26 and the live denominator to 8.
+ *
+ *      TWO CELLS AND NOT ONE, because XPLN-02 names two SHAPES of question rather than two
+ *      wordings: an enumeration and a request for one capability's command. A planner that routed
+ *      the first and answered the second from model memory is a real, reachable half-failure, and a
+ *      corpus carrying only the enumeration form could not see it.
+ *
+ *      THE DENOMINATOR MOVES BY TWO, WHICH IS THE MOVEMENT THE TREADMILL LAW WATCHES. Stated rather
+ *      than slipped through, on v8's own terms: these are not gap-round cells authored `fail_closed`
+ *      to leave the ratio alone — they are a capability that did not exist in v8's build and does in
+ *      this one. Every rate reported after this commit is a rate about a DIFFERENT corpus, which is
+ *      the sentence this version number exists to let a reader say.
+ *
+ *      BOTH WERE UNRUN AT THE COMMIT THAT ADMITTED THEM. `AGENT_QA_LIVE_CHAT_CONFIG` was unset in
+ *      that session, so the live gate announced its skip and neither utterance has met a model. The
+ *      rows are corpus-pinned, not yet measured; the first live execution is the measurement, and
+ *      if it routes to prose the UTTERANCE is what gets re-authored (392-09's precedent), never the
+ *      assertion.
+ *
+ * DENOMINATORS AT THIS VERSION: 11 hermetic, 8 live. One canonical line, parsed by
  * `scenario-manifest.test.ts` and compared against the counts the list below actually has, so this
  * header cannot go on claiming numbers the corpus stopped having. Every other assertion in that
  * file reads the LIST, which is exactly why the header needed its own.
  */
-export const SCENARIO_CORPUS_VERSION = 8
+export const SCENARIO_CORPUS_VERSION = 9
 
 /**
  * One admitted scenario.
@@ -171,6 +194,14 @@ export const SCENARIO_CORPUS: readonly ScenarioCorpusEntry[] = Object.freeze([
   // schema-addressable path; it deliberately stops short of `config.proposal.apply`, which is the
   // verb that changes a person's git history and the only one in the family that is gated.
   entry({ id: 'config-edit-timeout', class: 'planner', lane: 'live', kind: 'should_execute' }),
+  // --- planner: 398's explain arrival, ADMITTED (398-07) -----------------------------------------
+  // The corpus's second admission for a capability rather than for a defect, and the first pair.
+  // `agent.explain` answers a question about what this product can do BY CITING the committed
+  // capability catalog, so these two cells are what make "never from model memory" checkable at the
+  // routing level: a turn that answered either utterance in prose completes without executing
+  // anything, and `planned == executed == 1` on the op id is what tells the two apart.
+  entry({ id: 'what-can-you-do', class: 'planner', lane: 'live', kind: 'should_execute' }),
+  entry({ id: 'how-do-i-explain', class: 'planner', lane: 'live', kind: 'should_execute' }),
   // --- compound: the canon pair, live lane (392-02) ---------------------------------------------
   entry({ id: 'run-42-and-digest', class: 'compound', lane: 'live', kind: 'should_execute' }),
   // The spec's own example, FLIPPED (394-11). Both clauses are routable now, so D-10's pre-flight

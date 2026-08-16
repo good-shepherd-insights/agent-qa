@@ -86,8 +86,11 @@ ALLOWED_RED_NAMES="the parity suite ranges the registry census over every roster
 the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
 the capability catalog census carries exactly the capabilities the committed golden ledger records (D-01)"
 # Vacuity floor. A gate that passed because the suite collected nothing is the CI-shaped version of
-# the failure this whole phase exists to prevent. Measured 2026-08-16: 71 tests in the directory.
-FROZEN_MIN_TESTS=60
+# the failure this whole phase exists to prevent. Measured 2026-08-16: 71 tests in the directory;
+# 2026-08-17 (398-07): 133, after 398's manifest, catalog and explain cells joined the same suite.
+# Raised in the same diff that added the last of them, at this knob's own ~15% margin. A floor that
+# stayed at 60 while the suite tripled would pass a run that lost half the directory.
+FROZEN_MIN_TESTS=113
 # The ledger's own floor, so a mint that produced a truncated or empty file cannot be written.
 # Measured 2026-08-16: the registry census is 41 capabilities and is frozen for this phase (D-17).
 # Raised 2026-08-17 (398-07, D-09): 397's freeze was 397's — the census is 42 now that

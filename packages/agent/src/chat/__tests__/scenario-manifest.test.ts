@@ -37,6 +37,7 @@ import { parse } from 'yaml'
 import { CHAT_RESOLVER_TABLE, resolveClause } from '../resolver-table.js'
 import { splitClauses } from '../clause-split.js'
 import { parseScenario, scenarioRelativePath } from '../scenario-loader.js'
+import { EXPLAIN_FUNCTION_ID } from '../../functions/ops/explain.js'
 import { SCENARIO_CORPUS, SCENARIO_CORPUS_VERSION } from '../scenarios/manifest.js'
 
 const SCENARIOS_ROOT = fileURLToPath(new URL('../scenarios', import.meta.url))
@@ -86,8 +87,12 @@ describe('the corpus manifest is versioned and internally coherent', () => {
     // denominator. Reading the two numbers in one assertion is the only thing that distinguishes
     // "a capability arrived" from "a cell changed its mind", and after this commit a reader can say
     // which happened without reconstructing it from the diff.
-    expect(SCENARIO_CORPUS.length).toBe(24)
-    expect(SCENARIO_CORPUS_VERSION).toBe(8)
+    //
+    // v9 IS 398-07's EXPLAIN ARRIVAL, an admission on v8's shape: two `planner/` cells for a
+    // capability that did not exist in v8's build, so the size rises to 26 AND the live denominator
+    // rises to 8 — both, together, which is what distinguishes this from a flip.
+    expect(SCENARIO_CORPUS.length).toBe(26)
+    expect(SCENARIO_CORPUS_VERSION).toBe(9)
     // The denominators the ceiling is computed over, pinned per lane. Every gap-round cell is
     // `fail_closed` precisely so these two numbers did NOT move — a corpus round that quietly grew
     // the denominator would report a better rate for having done work (the treadmill law). What
@@ -100,7 +105,7 @@ describe('the corpus manifest is versioned and internally coherent', () => {
       SCENARIO_CORPUS.filter((entry) => entry.lane === lane && entry.kind === 'should_execute')
         .length
     expect(denominator('hermetic')).toBe(11)
-    expect(denominator('live')).toBe(6)
+    expect(denominator('live')).toBe(8)
   })
 
   it('states denominators in its own header that are the ones the list actually has', () => {
@@ -156,6 +161,34 @@ describe('the corpus manifest is versioned and internally coherent', () => {
     expect(admitted?.class).toBe('planner')
     expect(admitted?.lane).toBe('live')
     expect(admitted?.kind).toBe('should_execute')
+  })
+
+  it('records 398s explain arrival by name: TWO admitted live cells, one per question shape', () => {
+    // THE SAME LAW AS 395's ROW ABOVE, applied to a pair. The size pin says the corpus grew by two;
+    // this says WHAT it grew by, so a build that dropped either cell reds naming the shape of
+    // question it stopped covering rather than reporting an off-by-one about a set.
+    //
+    // BOTH ARE ASSERTED TO BE ADMISSIONS. `find` answering undefined is the shape a flip would have
+    // left — a cell that already existed and changed arm — so the presence assertions are what make
+    // these rows about admissions at all.
+    //
+    // AND THE OP ID IS IMPORTED, NEVER SPELLED. The scenario files are DATA and carry the id as a
+    // literal like every other row; this cell is the tie back to the registry, so renaming
+    // `agent.explain` reds here instead of leaving two corpus rows pointing at a capability that no
+    // longer exists — which is the failure a corpus of literals cannot see about itself.
+    for (const id of ['what-can-you-do', 'how-do-i-explain']) {
+      const admitted = SCENARIO_CORPUS.find((entry) => entry.id === id)
+      expect(admitted, `${id} is not in the corpus`).toBeDefined()
+      expect(admitted?.class).toBe('planner')
+      expect(admitted?.lane).toBe('live')
+      expect(admitted?.kind).toBe('should_execute')
+
+      const path = join(SCENARIOS_ROOT, 'planner', `${id}.yml`)
+      const scenario = parse(readFileSync(path, 'utf8')) as {
+        readonly expect?: { readonly ops?: readonly string[] }
+      }
+      expect(scenario.expect?.ops, `${id} must name the explain op`).toEqual([EXPLAIN_FUNCTION_ID])
+    }
   })
 
   it('assigns each class its D-13 lane, with every exception NAMED', () => {
