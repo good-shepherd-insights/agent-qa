@@ -32,8 +32,13 @@ import {
 import {
   AGENT_QA_OP_CONTRACTS,
   AGENT_QA_TOOL_PROJECTIONS,
+  armWithoutDiscriminant,
+  compositionOf,
+  DEGRADED_OUTPUT_CONTRACTS,
   UNPROJECTED_OPS,
+  withoutDialect,
 } from '@vostride/agent-qa-mcp'
+import type { JsonDocument, ToolProjection } from '@vostride/agent-qa-mcp'
 import { committedFileText, FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -299,6 +304,96 @@ const REACHED_THE_GATE: readonly GateAnswerKind[] = Object.freeze([
   'allowed-unbound',
   'allowed-dispatched',
 ])
+
+// ---- Leg 2: structural schema equality, per OP, through the one lens (plan 06, D-06) -----------
+//
+// THE UNIVERSE HERE IS PER-OP, AND THAT IS THE WHOLE DIFFERENCE from the fidelity suite in
+// `packages/mcp`. That suite ranges the twelve TOOLS and asks whether each advertisement matches
+// the contracts behind it; this leg ranges the twenty-two projected OPS and asks, of each
+// capability, whether the shape a caller is shown for it is the shape `invokeFunction` validates it
+// with. The two universes answer different questions — a fold's arm is one tool and several
+// capabilities — and the per-op reading is the one FUNC-05 makes ("per spec × per surface"). Neither
+// cell is duplicated: what is shared is the LENS, imported from the mcp barrel, never re-derived
+// (D-06; a second normaliser drifts looser and the looser copy is the one that passes over drift).
+
+/**
+ * Why one op's schema is not compared byte for byte on one side, from a CLOSED vocabulary.
+ *
+ * Encoded as data with a reason apiece rather than as `if` branches, so the set of exemptions is
+ * enumerable, each one is exercised (asserted below), and a new one has to be declared here rather
+ * than added as a condition nobody counts. No skip-lists: every op is either compared or carries one
+ * of these keys, and the arithmetic is pinned.
+ */
+type Leg2ExceptionKey =
+  | 'apply-door-wire-envelope'
+  | 'pipeline-downstream-op'
+  | 'degraded-output-contract'
+
+const LEG2_EXCEPTIONS: readonly (readonly [Leg2ExceptionKey, string])[] = Object.freeze([
+  Object.freeze([
+    'apply-door-wire-envelope',
+    'the two apply doors advertise 396 D-11\'s wire vocabulary on the way IN — a `confirmed` '
+      + 'envelope around the op\'s own input — because a tool call is one round trip with nobody to '
+      + 'ask. The op\'s own document is still what the RECEIPT arm is, and that is compared',
+  ] as const),
+  Object.freeze([
+    'pipeline-downstream-op',
+    'a pipeline tool advertises its FIRST op\'s shapes; the downstream op runs inside the resolved '
+      + 'arm and contributes no shape of its own. A document carrying one would mean the tool had '
+      + 'invented a result envelope, which is the one thing a pure projection may not do',
+  ] as const),
+  Object.freeze([
+    'degraded-output-contract',
+    'the two tools whose result contract contains a branded transform advertise NO outputSchema '
+      + '(mapping.ts DEGRADED_OUTPUT_CONTRACTS). The absence is ASSERTED rather than skipped, in '
+      + 'both directions, together with the sentence that tells a caller about it',
+  ] as const),
+])
+
+/** What this leg does with one op on one side of the comparison. */
+type Leg2Plan =
+  | { readonly kind: 'whole' }
+  | { readonly kind: 'arm'; readonly at: number }
+  | { readonly kind: 'exception'; readonly key: Leg2ExceptionKey }
+
+/**
+ * PURE, over the declared mapping — so the plan for every op is derived from the shipped tables
+ * rather than from a per-op list this file would have to keep in step with them.
+ */
+function leg2InputPlan(projection: ToolProjection, opId: string): Leg2Plan {
+  if (projection.kind === 'apply') return { kind: 'exception', key: 'apply-door-wire-envelope' }
+  const composition = compositionOf(projection)
+  if (composition === 'union') return { kind: 'arm', at: projection.ops.indexOf(opId) }
+  if (composition === 'pipeline' && projection.ops[0] !== opId) {
+    return { kind: 'exception', key: 'pipeline-downstream-op' }
+  }
+  return { kind: 'whole' }
+}
+
+function leg2OutputPlan(projection: ToolProjection, opId: string): Leg2Plan {
+  if (DEGRADED_OUTPUT_CONTRACTS.some((entry) => entry.tool === projection.name)) {
+    return { kind: 'exception', key: 'degraded-output-contract' }
+  }
+  const composition = compositionOf(projection)
+  if (composition === 'pipeline' && projection.ops[0] !== opId) {
+    return { kind: 'exception', key: 'pipeline-downstream-op' }
+  }
+  return { kind: 'whole' }
+}
+
+/** The advertised output documents an op's own projection may equal: the doc, or the union's arms. */
+function advertisedOutputMembers(advertised: JsonDocument): readonly JsonDocument[] {
+  const arms = advertised.anyOf as readonly JsonDocument[] | undefined
+  return arms === undefined ? [advertised] : arms
+}
+
+/** One listed tool, as `tools/list` describes it. */
+interface AdvertisedTool {
+  readonly name: string
+  readonly description?: string
+  readonly inputSchema: JsonDocument
+  readonly outputSchema?: JsonDocument
+}
 
 describe('the parity suite ranges the registry census over every rostered surface', () => {
   it('pins the roster at the two surfaces that exist today', () => {
@@ -1852,5 +1947,218 @@ describe('the parity suite ranges the registry census over every rostered surfac
     for (const token of forbidden) {
       expect(`prefix ${token} suffix`, `the sweep no longer recognises ${token}`).toContain(token)
     }
+  })
+
+  // ---- FUNC-05 leg 2: structural schema equality, per OP, through ONE lens (D-06) ---------------
+
+  it('advertises, for every projected capability, the very shape the gate validates it with', async () => {
+    const advertised = new Map(
+      (await withMcpClient(async (client) => (await client.listTools()).tools)).map(
+        (tool) => [tool.name, tool as unknown as AdvertisedTool],
+      ),
+    )
+    const declared = new Map(registryDeclarations().map((row) => [row.id, row]))
+
+    let inputsCompared = 0
+    let outputsCompared = 0
+    const exceptionsTaken = new Map<Leg2ExceptionKey, number>()
+    const takeException = (key: Leg2ExceptionKey): void => {
+      exceptionsTaken.set(key, (exceptionsTaken.get(key) ?? 0) + 1)
+    }
+
+    for (const projection of AGENT_QA_TOOL_PROJECTIONS) {
+      const tool = advertised.get(projection.name)
+      expect(tool, `${projection.name}: declared by the mapping but not advertised`).toBeDefined()
+      const composition = compositionOf(projection)
+
+      for (const opId of projection.ops) {
+        const declaration = declared.get(opId)
+        expect(declaration, `${opId}: projected by ${projection.name} but not declared`).toBeDefined()
+        const ownInput = withoutDialect(declaration!.input)
+        const ownOutput = withoutDialect(declaration!.output)
+
+        // ---- the input side --------------------------------------------------------------------
+        const inputPlan = leg2InputPlan(projection, opId)
+        if (inputPlan.kind === 'exception') {
+          takeException(inputPlan.key)
+        } else if (inputPlan.kind === 'arm') {
+          // THE UNION-ARM NORMALISATION, through the lens's own function: the fold adds a
+          // discriminant key whose value is the op id, and taking it back out is what makes the
+          // advertised arm and the op's own document the same claim.
+          const arms = (withoutDialect(tool!.inputSchema).oneOf ?? []) as readonly JsonDocument[]
+          expect(arms.length, `${projection.name}: fold arms vs declared ops`)
+            .toBe(projection.ops.length)
+          expect(
+            armWithoutDiscriminant(arms[inputPlan.at]!, projection.discriminant!),
+            `${opId} on mcp (input, arm ${inputPlan.at} of ${projection.name}): the advertised `
+              + 'shape is not this capability\'s own contract',
+          ).toEqual(ownInput)
+          inputsCompared += 1
+        } else {
+          expect(
+            withoutDialect(tool!.inputSchema),
+            `${opId} on mcp (input, via ${projection.name}): the advertised shape is not this `
+              + 'capability\'s own contract',
+          ).toEqual(ownInput)
+          inputsCompared += 1
+        }
+
+        // ---- the output side -------------------------------------------------------------------
+        const outputPlan = leg2OutputPlan(projection, opId)
+        if (outputPlan.kind === 'exception') {
+          takeException(outputPlan.key)
+          if (outputPlan.key === 'degraded-output-contract') {
+            // PITFALL 9: the ABSENCE is asserted, never skipped — a skip asserts nothing, and the
+            // one thing a degraded tool must never do is quietly start advertising a stand-in.
+            const entry = DEGRADED_OUTPUT_CONTRACTS.find((row) => row.tool === projection.name)!
+            expect(
+              tool!.outputSchema,
+              `${opId} on mcp (output): ${projection.name} is a declared degradation and must `
+                + 'advertise NO outputSchema',
+            ).toBeUndefined()
+            expect(
+              tool!.description,
+              `${opId} on mcp (output): the degradation must travel in the one channel that `
+                + 'reaches the caller — the tool description',
+            ).toContain('advertises no outputSchema')
+            expect(
+              tool!.description,
+              `${opId} on mcp (output): the description must name the contract that degraded`,
+            ).toContain(entry.schema)
+          }
+          continue
+        }
+
+        const advertisedOutput = withoutDialect(tool!.outputSchema ?? {})
+        expect(
+          tool!.outputSchema,
+          `${opId} on mcp (output): ${projection.name} advertises no outputSchema and is not a `
+            + 'declared degradation',
+        ).toBeDefined()
+        const members = advertisedOutputMembers(advertisedOutput)
+
+        if (projection.kind === 'apply') {
+          // The apply door's result is `op outcome OR refusal`. The RECEIPT arm is the op's own
+          // document; the refusal arm is this surface's authored wire vocabulary (396 D-11) and is
+          // owned by the fidelity suite, which compares it against the authored constant.
+          expect(members.length, `${projection.name}: the apply door's output arms`).toBe(2)
+          expect(
+            members[0],
+            `${opId} on mcp (output, receipt arm of ${projection.name}): the advertised receipt is `
+              + 'not this capability\'s own contract',
+          ).toEqual(ownOutput)
+          outputsCompared += 1
+          continue
+        }
+
+        if (composition === 'union') {
+          // A fold whose arms answer one shape advertises that shape; the one whose arms differ
+          // advertises an `anyOf`. Either way this capability's own document must BE one of them.
+          expect(
+            members.map((member) => JSON.stringify(member)),
+            `${opId} on mcp (output, via ${projection.name}): this capability's own contract is not `
+              + 'among the shapes the fold advertises',
+          ).toContain(JSON.stringify(ownOutput))
+          // …and the advertised set is exactly the fold's distinct arm outputs, so membership
+          // cannot be satisfied by a sibling arm's shape while this op's own went unadvertised.
+          const distinct = [
+            ...new Set(
+              projection.ops.map((armOpId) =>
+                JSON.stringify(withoutDialect(declared.get(armOpId)!.output)),
+              ),
+            ),
+          ]
+          expect(
+            sorted(members.map((member) => JSON.stringify(member))),
+            `${projection.name}: the advertised output set is not the fold's own distinct arms`,
+          ).toEqual(sorted(distinct))
+          outputsCompared += 1
+          continue
+        }
+
+        expect(members.length, `${projection.name}: a 1:1 tool advertises one output shape`).toBe(1)
+        expect(
+          members[0],
+          `${opId} on mcp (output, via ${projection.name}): the advertised shape is not this `
+            + 'capability\'s own contract',
+        ).toEqual(ownOutput)
+        outputsCompared += 1
+      }
+    }
+
+    // THE ARITHMETIC, so a future reader can tell a real change from a loop that stopped ranging.
+    // Twenty-two projected capabilities, on each side, every one of them either compared or
+    // carrying a declared exception:
+    //   inputs  — 22 less the 2 apply doors and the 1 pipeline downstream op        = 19
+    //   outputs — 22 less the 2 degraded contracts and the 1 pipeline downstream op = 19
+    const projectedOpCount = AGENT_QA_TOOL_PROJECTIONS.reduce(
+      (total, projection) => total + projection.ops.length,
+      0,
+    )
+    const exceptionTotal = [...exceptionsTaken.values()].reduce((total, at) => total + at, 0)
+    expect(inputsCompared, 'leg 2 compared a different number of inputs').toBe(19)
+    expect(outputsCompared, 'leg 2 compared a different number of outputs').toBe(19)
+    expect(
+      inputsCompared + outputsCompared + exceptionTotal,
+      'every projected capability must be compared or excepted on BOTH sides — no skip-lists',
+    ).toBe(projectedOpCount * 2)
+
+    // Every declared exception is EXERCISED. An exemption nothing takes is dead prose that will
+    // outlive the reason it was written for.
+    for (const [key] of LEG2_EXCEPTIONS) {
+      expect(exceptionsTaken.get(key) ?? 0, `the declared exception '${key}' is taken by nothing`)
+        .toBeGreaterThan(0)
+    }
+    expect(
+      sorted(exceptionsTaken.keys()),
+      'an exception was taken that the declared vocabulary does not contain',
+    ).toEqual(sorted(LEG2_EXCEPTIONS.map(([key]) => key)))
+  }, 120_000)
+
+  it('joins the declared output degradations to the live listing, in both directions', () => {
+    // The REVERSE direction of the absence assertion above, and the one that keeps the exception
+    // vocabulary from becoming a place to hide: a tool that advertises no output schema and is not
+    // declared degraded is a caller being told less than the contract says, silently.
+    return withMcpClient(async (client) => {
+      const tools = (await client.listTools()).tools as unknown as readonly AdvertisedTool[]
+      expect(tools.length, 'the listing read back empty').toBeGreaterThan(0)
+      const undeclaredSilent = tools
+        .filter((tool) => tool.outputSchema === undefined)
+        .map((tool) => tool.name)
+      expect(
+        sorted(undeclaredSilent),
+        'tools advertising no outputSchema must be exactly the declared degradations',
+      ).toEqual(sorted(DEGRADED_OUTPUT_CONTRACTS.map((entry) => entry.tool)))
+    })
+  })
+
+  it('looks through the ONE published lens, and defines no normaliser of its own', () => {
+    // D-06's one-lens rule, as a source assertion (397-02 extracted the three normalisers to
+    // `packages/mcp/src/conformance-support.ts` precisely so this leg would not have to re-derive
+    // them). A second copy fails SILENTLY: the looser one passes over real drift, and nothing
+    // compares the two copies to each other. Comments stripped so this file may name what its body
+    // must not define.
+    const definitionKeywords = ['function ', 'const ']
+    for (const file of readdirSync(CONFORMANCE_DIR).filter((name) => name.endsWith('.ts'))) {
+      const code = commentStrippedSource(file)
+      for (const normaliser of [
+        'withoutDialect',
+        'stripRedundantObjectStamp',
+        'armWithoutDiscriminant',
+      ]) {
+        for (const keyword of definitionKeywords) {
+          expect(code, `${file} defines its own ${normaliser} instead of importing the one lens`)
+            .not.toContain(`${keyword}${normaliser}`)
+        }
+      }
+    }
+    // …and the lens IS reached, from the barrel rather than from a path into another package.
+    const code = commentStrippedSource('parity.test.ts')
+    expect(code, 'the leg-2 comparison no longer imports the lens').toContain('withoutDialect')
+    expect(code, 'the lens must come from the mcp barrel').toContain('@vostride/agent-qa-mcp')
+    // Assembled from fragments for the reason the ledger sweep's tokens are: this cell reads its
+    // own file, so a token written out here is the sweep finding its own prohibition.
+    expect(code, 'the lens must be reached through the barrel, never by a path into its module')
+      .not.toContain(['conformance', '-support.js'].join(''))
   })
 })
