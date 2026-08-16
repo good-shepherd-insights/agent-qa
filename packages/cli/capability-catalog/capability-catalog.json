@@ -1,0 +1,1652 @@
+{
+  "$note": [
+    "GENERATED — the capability catalog for Phase 398 (XPLN-01, D-01/D-03/D-05).",
+    "One row per registry capability, per chat alias and per shipped skill. This artifact is the ONE",
+    "data source behind `init --agent`, the chat `/` type-ahead, the starter prompts and `explain`.",
+    "DO NOT EDIT BY HAND: regenerate with \"bash scripts/398-regen-catalog.sh --write\" and commit the",
+    "result as a deliberate, reviewed change. The script refuses to run while any other leg of the",
+    "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
+    "test-runner update flag reaches this file.",
+    "IT DESCRIBES, IT DOES NOT GATE. Nothing here grants or withholds a capability; per-caller",
+    "filtering is enforced live at the MCP `tools/list` seam and nowhere else."
+  ],
+  "rowCount": 49,
+  "rows": [
+    {
+      "alias": "digest",
+      "description": "Compose one run's digest: verdicts, chain, proposals awaiting a decision, counts.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "kind": "alias",
+      "targetOpId": "runs.digest"
+    },
+    {
+      "alias": "proposals",
+      "description": "List every proposal awaiting, or already carrying, a human decision.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "kind": "alias",
+      "targetOpId": "proposals.list"
+    },
+    {
+      "alias": "run",
+      "description": "Start a test run and acknowledge the run a caller can then read or stream.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "kind": "alias",
+      "targetOpId": "runs.start"
+    },
+    {
+      "alias": "status",
+      "description": "List the completed runs recorded for this project.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "kind": "alias",
+      "targetOpId": "runs.list"
+    },
+    {
+      "alias": "test-ref",
+      "description": "Resolve any entity reference to a card, a disambiguation set, or an honest miss.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "kind": "alias",
+      "targetOpId": "entities.resolve"
+    },
+    {
+      "description": "The chat entry point: begin ONE new conversational turn from outside a conversation. Surfaces (a REPL, the ask verb, an MCP client) call this to START a turn — it is not a way to carry out a request while a turn is already running. It routes the utterance, executes what it resolves to, and answers with per-clause receipts.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "agent.ask",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "agent-ask-delegation-deferral",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "message": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Read one run's resolved verdicts, rendered sentences and failure clusters.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "analysis.get",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Express a requested change to an existing test as a proposal carrying its diff.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "authoring.draft.edit",
+      "kind": "op",
+      "mcpTool": "agent_qa_refine_test",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "intent": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "testRef": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "testRef",
+          "intent"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read",
+        "test-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Evaluate a draft test against the four keep-gates and return its receipt.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "authoring.draft.verify",
+      "kind": "op",
+      "mcpTool": "agent_qa_refine_test",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "draftMode": {
+            "const": true,
+            "type": "boolean"
+          },
+          "draftPath": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "sessionRef": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "targetSuitePath": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "draftPath"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read",
+        "run"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Author a test for an intent, verify it against the keep-gates, and return its receipt.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "authoring.draft.write",
+      "kind": "op",
+      "mcpTool": "agent_qa_write_test",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "draftMode": {
+            "const": true,
+            "type": "boolean"
+          },
+          "intent": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "global",
+                  "product",
+                  "suite",
+                  "test"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "tier",
+              "key"
+            ],
+            "type": "object"
+          },
+          "sessionRef": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read",
+        "run",
+        "test-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Report the authoring funnel for a window — built, passed stably, added value, accepted — and flag a keep rate above the ceiling as the loop failing to filter.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "authoring.funnel.get",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "window": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "scope": {
+                    "const": "session",
+                    "type": "string"
+                  },
+                  "sessionRef": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "scope",
+                  "sessionRef"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "scope": {
+                    "const": "all-time",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "scope"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "n": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "scope": {
+                    "const": "last-n",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "scope",
+                  "n"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "window"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Propose pointing a target at a stored auth state or an auth plugin, by NAME only.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "config.auth.set",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_config_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "authStateName": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "envVarName": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "pluginPackage": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "target": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "config-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Propose setting one configuration field, as a reviewable diff awaiting a decision.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "config.field.set",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_config_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "value"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "config-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Read the resolved project configuration with secret-bearing values masked.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "config.get",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Propose declaring a hook in the hooks file, as a reviewable diff awaiting a decision.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "config.hook.add",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_config_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "network": {
+            "type": "boolean"
+          },
+          "runtime": {
+            "enum": [
+              "node",
+              "bun",
+              "python",
+              "bash"
+            ],
+            "type": "string"
+          },
+          "timeout": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "runtime",
+          "file"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "config-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Propose configuring this project for a site from zero — config, hooks and gitignore as one reviewable diff.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "config.project.scaffold",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_config_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "config-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Apply an accepted configuration proposal as one commit in this repository.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "config.proposal.apply",
+      "kind": "op",
+      "mcpTool": "agent_qa_apply_config_proposal",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "proposalId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposalId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "config-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Propose adding a web target to the registry, as a reviewable diff awaiting a decision.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "config.target.create",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_config_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "authStateName": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "platform": {
+            "const": "web",
+            "type": "string"
+          },
+          "url": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "platform",
+          "url"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "config-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Propose changing a configured target's URL or auth binding, as a reviewable diff.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "config.target.edit",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_config_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "additionalProperties": false,
+            "properties": {
+              "authStateName": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "url": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "changes"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "config-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Propose reversing the last agent-qa configuration commit, as a reviewable diff awaiting a decision.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "config.undo.propose",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_config_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "requiredScopes": [
+        "config-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Render the entity card for one exact short-ID or agentqa:// URI.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "entities.get",
+      "kind": "op",
+      "mcpTool": "agent_qa_get_entity",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ref": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Resolve any entity reference to a card, a disambiguation set, or an honest miss.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "entities.resolve",
+      "kind": "op",
+      "mcpTool": "agent_qa_get_entity",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ref": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "List the standing approvals currently in force, with their provenance.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "grants.list",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Withdraw one standing approval, recording the withdrawal permanently.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "grants.revoke",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "requires-human-origin",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "grantId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "grantId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "approval-write"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Compute what accepting a knowledge candidate would change, committing nothing.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "knowledge.accept.propose",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_knowledge_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "grain": {
+                    "const": "record",
+                    "type": "string"
+                  },
+                  "recordId": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "grain",
+                  "recordId"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "grain": {
+                    "const": "bundle",
+                    "type": "string"
+                  },
+                  "shortId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "grain",
+                  "shortId"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "knowledge-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Explain why a served brief said what it said, from the trace written at serve time.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "knowledge.brief.why",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "recordId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "runId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "stepIndex": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "testId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "stepIndex"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "List the committed knowledge bundles with their derived trust state.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "knowledge.bundles.list",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Compute exactly what forgetting a record or bundle would remove, removing nothing.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "knowledge.forget.propose",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_knowledge_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "grain": {
+                    "const": "record",
+                    "type": "string"
+                  },
+                  "recordId": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "grain",
+                  "recordId"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "grain": {
+                    "const": "bundle",
+                    "type": "string"
+                  },
+                  "shortId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "grain",
+                  "shortId"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "knowledge-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Apply a minted knowledge proposal through the Curator's one commit path.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "knowledge.proposal.apply",
+      "kind": "op",
+      "mcpTool": "agent_qa_apply_proposal",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "proposalId": {
+            "minLength": 10,
+            "pattern": "^prop_[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposalId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "knowledge-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Show one committed knowledge record with its provenance.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "knowledge.record.show",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "recordId": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "recordId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "List every committed knowledge record change since a build ordinal.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "knowledge.records.diff",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "sinceOrdinal": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sinceOrdinal"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Inspect committed knowledge records through a closed structural filter.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "knowledge.records.inspect",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "filter": {
+            "additionalProperties": false,
+            "properties": {
+              "anchor": {
+                "type": "string"
+              },
+              "asOfBuild": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "fact",
+                  "procedure",
+                  "caution",
+                  "unknown",
+                  "policy"
+                ],
+                "type": "string"
+              },
+              "product": {
+                "type": "string"
+              },
+              "recordId": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "active",
+                  "candidate",
+                  "superseded",
+                  "deprecated"
+                ],
+                "type": "string"
+              },
+              "unresolvedOnly": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "filter"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Compute what rejecting a knowledge candidate would change, committing nothing.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "knowledge.reject.propose",
+      "kind": "op",
+      "mcpTool": "agent_qa_propose_knowledge_change",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "runId": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "grain": {
+                    "const": "record",
+                    "type": "string"
+                  },
+                  "recordId": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "grain",
+                  "recordId"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "grain": {
+                    "const": "bundle",
+                    "type": "string"
+                  },
+                  "shortId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "grain",
+                  "shortId"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "required": [
+          "target",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "knowledge-write"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Apply a pending proposal, optionally recording a standing approval for its kind.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "proposals.accept",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "requires-human-origin",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "always": {
+            "const": true,
+            "type": "boolean"
+          },
+          "proposalId": {
+            "minLength": 10,
+            "pattern": "^prop_[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposalId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "approval-write",
+        "knowledge-write"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "List every proposal awaiting, or already carrying, a human decision.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "proposals.list",
+      "kind": "op",
+      "mcpTool": "agent_qa_list_proposals",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "knowledge",
+              "test-draft",
+              "finding",
+              "config"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "applied",
+              "rejected",
+              "expired"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Decline a pending proposal, recording the decision permanently.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "proposals.reject",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "requires-human-origin",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "proposalId": {
+            "minLength": 10,
+            "pattern": "^prop_[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposalId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "approval-write"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Show one proposal in full — its payload, evidence refs and decision trail.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "proposals.show",
+      "kind": "op",
+      "mcpTool": "agent_qa_show_proposal",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "proposalId": {
+            "minLength": 10,
+            "pattern": "^prop_[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposalId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Quarantine one test by hand, renewing and claiming an existing entry.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "quarantine.add",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-write",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expiresAt": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "filePath": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "owner": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "product": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "testName": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "product",
+          "filePath",
+          "testName"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "knowledge-write"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "List every quarantined test with its owner, expiry and lifecycle state.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "quarantine.list",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Release one test from quarantine — the manual half of the exit path.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "quarantine.release",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-write",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "filePath": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "product": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "testName": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "product",
+          "filePath",
+          "testName"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "knowledge-write"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Compose one run's digest: verdicts, chain, proposals awaiting a decision, counts.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "runs.digest",
+      "kind": "op",
+      "mcpTool": "agent_qa_get_run_digest",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Stream one run's recorded events in seq order, resuming after lastEventId.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "runs.events",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "lastEventId": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Read one completed run in full, including its member-test outcomes.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "runs.get",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "List the completed runs recorded for this project.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "runs.list",
+      "kind": "op",
+      "mcpTool": "agent_qa_list_runs",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Read one run's post-processing chip statuses from durable job state.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "runs.postprocessing",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "not-mid-flight-read",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Start a test run and acknowledge the run a caller can then read or stream.",
+      "docAbsentReason": "D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is the honest state — a guessed path would existence-check green and mislead a reader — and the abstention coverage log is the demand signal for writing one.",
+      "docPath": null,
+      "id": "runs.start",
+      "kind": "op",
+      "mcpTool": "agent_qa_start_run",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "configPath": {
+            "type": "string"
+          },
+          "excludedFromOutcomes": {
+            "const": true,
+            "type": "boolean"
+          },
+          "executionContext": {
+            "enum": [
+              "local-interactive",
+              "local-headless",
+              "ci",
+              "cloud"
+            ],
+            "type": "string"
+          },
+          "gateRun": {
+            "const": true,
+            "type": "boolean"
+          },
+          "patterns": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "tier": {
+                "enum": [
+                  "global",
+                  "product",
+                  "suite",
+                  "test"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "tier",
+              "key"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "requiredScopes": [
+        "run"
+      ],
+      "surfaces": [
+        "chat",
+        "mcp"
+      ]
+    },
+    {
+      "description": "Use when creating, editing, validating, or running agent-qa tests, suites, or hooks. Prefer agent-qa MCP tools, enforce canonical agent-qa IDs, and use the bundled schema reference to avoid hallucinated config keys or YAML fields.",
+      "docPath": "packages/cli/skills/agent-qa-authoring/SKILL.md",
+      "kind": "skill",
+      "name": "agent-qa-authoring",
+      "shortDescription": "Author agent-qa tests safely"
+    },
+    {
+      "description": "Use after an agent-qa run has failed and you need to debug, patch, and verify the issue using MCP evidence, logs, artifacts, and local code changes instead of generated fix suggestions.",
+      "docPath": "packages/cli/skills/agent-qa-debug-fix/SKILL.md",
+      "kind": "skill",
+      "name": "agent-qa-debug-fix",
+      "shortDescription": "Debug and fix failed agent-qa runs"
+    },
+    {
+      "description": "Use when investigating failed agent-qa runs, inspecting artifacts, classifying failures, or comparing recent runs. Prefer agent-qa MCP run/artifact tools and produce evidence-backed triage.",
+      "docPath": "packages/cli/skills/agent-qa-result-triage/SKILL.md",
+      "kind": "skill",
+      "name": "agent-qa-result-triage",
+      "shortDescription": "Triage agent-qa run failures"
+    }
+  ],
+  "rowsDigest": "94c9dee18afcdf9177da67167c49ae5557d764427816b8c7ae8c59267092ba60"
+}

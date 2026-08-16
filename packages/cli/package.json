@@ -64,6 +64,7 @@
   },
   "files": [
     "dist",
+    "capability-catalog",
     "skills",
     "README.md",
     "LICENSE.md",

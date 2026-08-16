@@ -1279,3 +1279,24 @@ export type {
   ConfigChangeFoldInput,
   KnowledgeChangeFoldInput,
 } from './functions/index'
+
+// 398-01 (D-05 / D-08 · XPLN-01): the capability-catalog row DTOs. Minted here per 384 D-16 —
+// the artifact is produced in `packages/cli` and read back by the CLI's runtime loader, so the
+// contract between the producer and every consumer belongs in the package neither of them owns.
+export {
+  CapabilityCatalogSchema,
+  CatalogAliasRowSchema,
+  CatalogOpRowSchema,
+  CatalogRowSchema,
+  CatalogSkillRowSchema,
+  CatalogSurfaceSchema,
+  catalogRowKey,
+} from './capability-catalog'
+export type {
+  CapabilityCatalog,
+  CatalogAliasRow,
+  CatalogOpRow,
+  CatalogRow,
+  CatalogSkillRow,
+  CatalogSurface,
+} from './capability-catalog'
