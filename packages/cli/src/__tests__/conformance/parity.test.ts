@@ -1250,13 +1250,37 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // (391 D-06), so a receipt stamped `human` cannot have been planned by a model.
     expect(outcome.receipt?.origin, 'proposals.list on chat: the receipt must come from the '
       + 'deterministic route, or a model planned this call').toBe('human')
-    // The gate saw it. One row per dispatched invocation is `invokeFunction`'s uniform-gating
-    // promise (D-11), and this is the observation the D-14 ungated mutation has to be able to break.
+    // THE GATE SAW *THIS* CALL — and that is a differential, not a presence check.
+    //
+    // 397-09 MEASURED THE PRESENCE CHECK VACUOUS FOR THIS OP, which is why it is written this way.
+    // The first spelling asserted only that SOME `fn:proposals.list` row existed after the drive,
+    // and called that "the observation the D-14 ungated mutation has to be able to break". It could
+    // not break it: `chat/banner.ts` invokes `proposals.list` (with `{ status: 'pending' }`)
+    // through the same gate when the session OPENS, so a row for this action class is written on
+    // every drive whatever the clause does. Rerouting the clause's dispatch around `invokeFunction`
+    // left that row untouched and the cell stayed green — a capability outside the gate, with this
+    // cell reporting that the gate had seen it. The cell was green for a reason nobody chose.
+    //
+    // The fix is a two-drive differential rather than a bigger claim about one drive: a drive of a
+    // DIFFERENT capability establishes what the session's own opening reads write by themselves,
+    // and this drive must write STRICTLY MORE. `config.get` is the baseline subject because the
+    // banner's three opening reads are `proposals.list`, `runs.list` and `runs.digest`, and it is
+    // none of them — so its drive contributes nothing to the count being compared.
+    const baselineRow = scenarioRowFor('config.get')
+    expect(baselineRow, 'the scenario table no longer carries config.get').toBeDefined()
+    const baselineDrive = await driveChatDispatch({
+      opId: 'config.get',
+      input: baselineRow!.input,
+    })
+    const rowsFrom = (drive: typeof outcome): number =>
+      drive.auditRows.filter((auditRow) => auditRow.action === pinClassFor('proposals.list')).length
+    const openingReads = rowsFrom(baselineDrive)
     expect(
-      outcome.auditRows.filter((auditRow) => auditRow.action === pinClassFor('proposals.list')),
-      'proposals.list on chat: the surface dispatched and the gate wrote no audit row — a '
-        + 'capability outside the gate is exactly this phase\'s subject',
-    ).not.toEqual([])
+      rowsFrom(outcome),
+      `proposals.list on chat: this drive must add a gate row of its own beyond the `
+        + `${openingReads} the session's opening reads write by themselves — otherwise the clause `
+        + 'dispatched outside the gate and this cell would still be green',
+    ).toBeGreaterThan(openingReads)
   })
 
   it('drives the chat surface with no provider credential in the environment at all', async () => {
