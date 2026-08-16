@@ -1,3 +1,6 @@
+import type { AgentQaAnalyticsEvent } from './events.js'
+import type { AnalyticsPort } from './port.js'
+
 // The `@vostride/agent-qa-analytics` public surface (Phase 398 plan 03, D-17 · ANLY-01).
 //
 // WHAT IS DELIBERATELY ABSENT. There is no `getAnalytics()`, no `captureAnalytics()`, no
@@ -33,9 +36,49 @@ export type {
   AnalyticsTransport,
 } from './port.js'
 
+// The closed union, its vocabularies, and the range guard. `assertNoUnconstrainedStrings` is
+// published rather than kept private for the same reason the two MCP predicates are: it is a pure
+// walk over schemas that grants a consumer no capability, and a later phase adding a member wants
+// to range its own union with the SAME checker rather than a second, kinder one.
+export {
+  AgentQaAnalyticsEventSchema,
+  ANALYTICS_AGENT_PRODUCTS,
+  ANALYTICS_CHAT_END_REASONS,
+  ANALYTICS_DAEMON_JOB_KINDS,
+  ANALYTICS_DAEMON_JOB_OUTCOMES,
+  ANALYTICS_EMITTING_HOSTS,
+  ANALYTICS_EVENT_MEMBERS,
+  ANALYTICS_EVENT_NAMES,
+  ANALYTICS_EVENT_SCHEMA_BY_NAME,
+  ANALYTICS_FAILURE_CATEGORIES,
+  ANALYTICS_INIT_MODES,
+  ANALYTICS_INIT_OUTCOMES,
+  ANALYTICS_KNOWN_ID_MARKER,
+  ANALYTICS_MCP_ERROR_CATEGORIES,
+  ANALYTICS_MCP_SERVER_STATES,
+  ANALYTICS_MCP_TOOL_NAMES,
+  ANALYTICS_MCP_TOOL_STATUSES,
+  ANALYTICS_MCP_TRANSPORTS,
+  ANALYTICS_PLATFORMS,
+  ANALYTICS_RUN_STATUSES,
+  ANALYTICS_RUNNERS,
+  ANALYTICS_RUNTIME_CONTEXTS,
+  ANALYTICS_SUITE_EXECUTION_MODES,
+  ANALYTICS_TRIGGER_SOURCES,
+  ANALYTICS_VOCABULARY_META_KEY,
+  assertNoUnconstrainedStrings,
+  RETIRED_V33_EVENT_NAMES,
+} from './events.js'
+export type { AgentQaAnalyticsEvent, AnalyticsEventName } from './events.js'
+
 export { createPosthogTransport, NoopTransport } from './transports.js'
 export type {
   PosthogAnalyticsClient,
   PosthogTransportFactory,
   PosthogTransportOptions,
 } from './transports.js'
+
+// The port as a HOST should hold it: parameterised by the closed union, so `capture` refuses an
+// event that is not a member at the call site, before any parse. `AnalyticsPort` on its own is the
+// structural floor the transports are written against; this is the type with the union in it.
+export type AgentQaAnalyticsPort = AnalyticsPort<AgentQaAnalyticsEvent>

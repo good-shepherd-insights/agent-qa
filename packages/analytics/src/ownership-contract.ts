@@ -19,8 +19,11 @@ export const AGENT_QA_ANALYTICS_ALLOWED_RESPONSIBILITIES = [
     + 'telemetry failure from reaching the host',
   'the closed typed event union: which events exist, what each one carries, and the range guard '
     + 'that refuses an unconstrained string field',
-  'the opt-out decision: resolving DO_NOT_TRACK or the config privacy flag ONCE, at composition, '
-    + 'to a transport — never inside a send path',
+  // The variable is described rather than named here on purpose: the cell asserting a single
+  // decision site scans string literals as well as code, so spelling it out in this declaration
+  // would make the contract itself the second reader of the thing it forbids reading twice.
+  'the opt-out decision: resolving the do-not-track environment convention or the config privacy '
+    + 'flag ONCE, at composition, to a transport — never inside a send path',
   'masking composed at the send seam, before any serialization-dependent matching',
 ] as const
 // The forbidden lines are the three v1 defects and the one boundary that keeps this package a host
@@ -47,13 +50,28 @@ export const AGENT_QA_ANALYTICS_FORBIDDEN_RESPONSIBILITIES = [
 // convenience here, it IS the no-free-text mechanism.
 export const AGENT_QA_ANALYTICS_EXTERNAL_DEPENDENCIES = [
   'posthog-node',
+  'zod',
 ] as const
-// Deliberately empty at plan 03. Every entry this list will ever carry is checked against the
-// package's real imports by `findDepReconciliationOffenders`, so a dependency declared in
-// anticipation of a later plan is an offender, not a placeholder. `@vostride/agent-qa-safety`
-// arrives with the masking seam (plan 06); `@vostride/agent-qa-mcp` and `@vostride/agent-qa-ids`
-// arrive with the event union's tool-name enum and known-id codecs (plan 03 task 3).
-export const AGENT_QA_ANALYTICS_INTERNAL_DEPENDENCIES = [] as const
+// 2026-08-17 (Phase 398 plan 03 task 3, D-18). Both entries exist for ONE reason each, and both are
+// reads of declared data rather than of behaviour.
+//
+// `ids` supplies the canonical-id predicates the known-id codecs refine against — `isCanonicalRunId`
+// and friends. Restating those shapes as regexes here would be a second definition of what a run id
+// is, in the package least likely to be updated when the first one changes.
+//
+// `mcp` supplies the twelve tool NAMES, which are the closed vocabulary the tool-invocation event's
+// `tool_name` field draws from. Note the direction: analytics reads the projection table as data
+// and reaches nothing in the server. A hand-copied list would be the drift the produced-not-literal
+// law exists to prevent — a renamed tool would keep reporting under its old name indefinitely,
+// and nothing would say so.
+//
+// This list is checked against the package's REAL imports, so an entry added in anticipation of a
+// later plan is an offender rather than a placeholder. `@vostride/agent-qa-safety` therefore
+// arrives with the masking seam in plan 06, not here.
+export const AGENT_QA_ANALYTICS_INTERNAL_DEPENDENCIES = [
+  '@vostride/agent-qa-ids',
+  '@vostride/agent-qa-mcp',
+] as const
 
 export const AGENT_QA_ANALYTICS_OWNERSHIP_CONTRACT = {
   packageName: AGENT_QA_ANALYTICS_PACKAGE_NAME,

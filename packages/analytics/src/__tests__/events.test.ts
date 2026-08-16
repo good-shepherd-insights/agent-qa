@@ -1,6 +1,3 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
@@ -13,16 +10,7 @@ import {
   assertNoUnconstrainedStrings,
   RETIRED_V33_EVENT_NAMES,
 } from '../events.js'
-
-const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..')
-
-function sourceFilesUnderSrc(dir: string = srcDir): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name)
-    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFilesUnderSrc(path)
-    return entry.name.endsWith('.ts') ? [path] : []
-  })
-}
+import { sourceModulesContaining, withoutComments } from './source-scan.js'
 
 describe('the closed event union — membership is the D-18 list, exactly (ANLY-01)', () => {
   it('is the D-18 membership and nothing else, pinned by equality', () => {
@@ -176,11 +164,32 @@ describe('every member REFUSES an unknown key (.strict, never .strip)', () => {
     }
   })
 
-  it('no module in this package uses .strip()', () => {
-    const strippers = sourceFilesUnderSrc()
-      .filter((file) => readFileSync(file, 'utf8').includes('.strip('))
-      .map((file) => file.slice(srcDir.length + 1))
+  // Prose about `.strip()` is not a call to it — four comments in this package explain why the v1
+  // schemas used it and this one does not, and a raw substring search reported every one of them.
+  // The scanner reads code.
+  it('no module in this package calls .strip()', () => {
+    expect(sourceModulesContaining('.strip(')).toEqual([])
+  })
 
-    expect(strippers).toEqual([])
+  // The scanner is itself a detector, so it gets the same treatment as the rules that use it: a
+  // token in a comment is invisible, a token in a string literal is a hit, and a `//` inside a URL
+  // does not start a comment. Without this, a scanner that returned '' would satisfy every cell
+  // above by finding nothing anywhere.
+  it('the source scanner drops comments, keeps string literals, and survives a URL', () => {
+    const stripped = withoutComments(
+      [
+        '// a comment naming .strip( and DO_NOT_TRACK',
+        '/* a block comment naming .strip( too */',
+        'const host = "https://us.i.posthog.com" // trailing',
+        "const literal = 'DO_NOT_TRACK'",
+        'const call = schema.strip()',
+      ].join('\n'),
+    )
+
+    expect(stripped).not.toContain('a comment naming')
+    expect(stripped).not.toContain('a block comment')
+    expect(stripped).toContain('https://us.i.posthog.com')
+    expect(stripped).toContain("'DO_NOT_TRACK'")
+    expect(stripped).toContain('schema.strip()')
   })
 })

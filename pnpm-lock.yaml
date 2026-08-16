@@ -123,9 +123,18 @@ importers:
 
   packages/analytics:
     dependencies:
+      '@vostride/agent-qa-ids':
+        specifier: workspace:*
+        version: link:../ids
+      '@vostride/agent-qa-mcp':
+        specifier: workspace:*
+        version: link:../mcp
       posthog-node:
         specifier: 5.33.2
         version: 5.33.2
+      zod:
+        specifier: 4.4.2
+        version: 4.4.2
     devDependencies:
       '@types/node':
         specifier: ~24.12.2

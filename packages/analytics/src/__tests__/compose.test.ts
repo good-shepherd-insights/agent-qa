@@ -1,13 +1,9 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { composeAnalytics, isDoNotTrack } from '../compose.js'
 import { NoopTransport } from '../transports.js'
+import { sourceModulesContaining } from './source-scan.js'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from '../port.js'
 import type { PosthogTransportFactory, PosthogTransportOptions } from '../transports.js'
-
-const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** A transport that records what reached it, so "zero attempts" is observed rather than assumed. */
 class CountingSink implements AnalyticsTransport {
@@ -55,22 +51,6 @@ function spyingPosthogFactory(): { factory: PosthogTransportFactory; calls: Post
 }
 
 const ENABLED_KEY = 'phc_test_key'
-
-function sourceFilesUnderSrc(dir: string = srcDir): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      // `__tests__` is excluded for the same reason `packages/arch`'s own scanner excludes it: a
-      // cell that drives the decision has to name the variable the decision reads.
-      return entry.name === '__tests__' ? [] : sourceFilesUnderSrc(path)
-    }
-    // `ownership-contract.ts` is the architectural DECLARATION, not runtime code — it is the file
-    // that states the rule, so it names the variable the rule is about. `packages/arch` drops the
-    // same file from its own specifier scan for the same reason.
-    if (!entry.name.endsWith('.ts') || entry.name === 'ownership-contract.ts') return []
-    return [path]
-  })
-}
 
 describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () => {
   // THE RESOLUTION TABLE. Two independent inputs, and deny wins over both: either one alone opts
@@ -183,13 +163,11 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
   })
 
   // THE DECISION SITE IS SINGULAR, asserted over the package's own source rather than promised in a
-  // comment. A second file reading the variable is a second answer to the question.
+  // comment. A second file reading the variable is a second answer to the question. The scan reads
+  // CODE — comments discussing the convention are not reads of it — so no file needs excluding, and
+  // in particular the ownership contract is not exempted from the rule it declares.
   it('no module outside compose.ts reads the opt-out environment variable', () => {
-    const readers = sourceFilesUnderSrc()
-      .filter((file) => readFileSync(file, 'utf8').includes('DO_NOT_TRACK'))
-      .map((file) => file.slice(srcDir.length + 1))
-
-    expect(readers).toEqual(['compose.ts'])
+    expect(sourceModulesContaining('DO_NOT_TRACK')).toEqual(['compose.ts'])
   })
 })
 
