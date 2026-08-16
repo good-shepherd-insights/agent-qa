@@ -84,6 +84,10 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // requires a non-empty message, so the `{}` default would fail validation and turn an unbound
   // refusal into an input error, which the parity case below reads as `dispatched`.
   'agent.ask': { message: 'proposals' },
+  // 398 D-09: a PARSING input, on its neighbour's reasoning exactly — `query` is required and
+  // non-empty, so the `{}` default would fail validation and this case would read the input error
+  // as `dispatched`, certifying nothing about the binding it exists to measure.
+  'agent.explain': { query: 'what can you do' },
   // 389 D-11: a PARSING input, because validation precedes the binding check — the empty
   // default fails the contract and reports an input error, certifying nothing about binding.
   'analysis.get': { runId: 'run-alpha' },

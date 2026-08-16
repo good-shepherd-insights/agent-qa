@@ -55,6 +55,7 @@ import type {
   ConfigUndoSourcePortLike,
   ConfigValidatePortLike,
 } from '../config-mutation/ports.js'
+import type { CapabilityCatalogPort } from '../explain/port.js'
 import type { EvaluateDraftPorts } from '../authoring/verify-draft.js'
 import type {
   AuthoringProposalsWritePortLike,
@@ -139,6 +140,7 @@ export type OptionalFunctionDepKey =
   | 'configScan'
   | 'configUndoSource'
   | 'scaffoldContent'
+  | 'capabilityCatalog'
 
 /**
  * The capability is declared, but no implementation is bound in THIS composition (D-09).
@@ -1023,6 +1025,21 @@ export interface FunctionDeps {
    * absence makes exactly one op unavailable, and it says so by name.
    */
   scaffoldContent?: ConfigScaffoldContentPortLike
+  /**
+   * 2026-08-17 (398 D-09/D-11 · XPLN-02): the four host halves one `explain` needs — the committed
+   * catalog as data, the model's citation over it, and the two coverage hooks.
+   *
+   * ONE PORT AND NOT FOUR DEPS, on the `draftEvaluation` bundle's stated reasoning: a host that
+   * could load the catalog but not cite over it would list `agent.explain` as `bound` and then
+   * answer every question with a ghost citation, which abstains — safe, and useless, and reported
+   * nowhere. "Can this host explain itself" is one fact.
+   *
+   * OPTIONAL for the reason `analysis` is, and the honest absence is unusually load-bearing here.
+   * `packages/agent` is storageNeutral: it cannot read the committed artifact, so a composition
+   * that omitted the port and got a degraded answer would be answering FROM MODEL MEMORY, which is
+   * the single behaviour XPLN-02 exists to make impossible. The op refuses BY NAME instead.
+   */
+  capabilityCatalog?: CapabilityCatalogPort
 }
 
 /**

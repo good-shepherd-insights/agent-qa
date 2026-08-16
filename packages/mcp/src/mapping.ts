@@ -7,10 +7,15 @@
 // module is where that data lives so a single artifact can be pinned by the bump guard and ranged
 // over by 397's parity suite. Anything that is not data belongs in `projection.ts` or `catalog.ts`.
 //
-// THE SET IS COMPLETE AS OF PLAN 04. Twelve tools over twenty-two registry ops; the other nineteen
-// ops are listed below in `UNPROJECTED_OPS` with a reason each. Twenty-two plus nineteen is the
+// THE SET IS COMPLETE AS OF PLAN 04. Twelve tools over twenty-two registry ops; the other TWENTY
+// ops are listed below in `UNPROJECTED_OPS` with a reason each. Twenty-two plus twenty is the
 // registry's own count, and `__tests__/mapping-bump-guard.test.ts` asserts that partition against
 // the registry's enumeration rather than against the arithmetic in this sentence.
+//
+// 2026-08-17 (398 D-09): the unprojected side moved from nineteen to twenty when `agent.explain`
+// was registered. This sentence is prose and the guard is the mechanism — but the prose is updated
+// in the same change-set anyway, because a header that goes on stating a partition the code stopped
+// having is the class of untruth the ops' own docstrings were caught in (397 D-18).
 //
 // Protocol grounding: SEP-2567 removed per-connection list variance, so the tool NAMES a caller can
 // see are a property of the caller's grants and of this table — never of a session. SEP-2549 makes
@@ -480,8 +485,17 @@ export const DEGRADED_OUTPUT_CONTRACTS: readonly OutputSchemaDegradation[] = Obj
 export interface UnprojectedOp {
   readonly opId: string
   readonly reason: string
-  /** Who decides whether this absence is a real gap. Always 397 (D-15). */
-  readonly adjudication: '397'
+  /**
+   * Who decided this absence is not a gap.
+   *
+   * 397 for every op that existed when 397's parity walk ruled the whole register (D-15). WIDENED
+   * to admit `'398'` on 2026-08-17 for `agent.explain`, and the widening is the honest move rather
+   * than a convenience: 397 could not have adjudicated an op that did not exist, and stamping this
+   * one `'397'` to keep a literal green would have made the field record a ruling nobody made — the
+   * one thing a provenance column is for. The vocabulary is a CLOSED set and the bump guard pins
+   * which entries carry which adjudicator by name, so it cannot widen again by habit.
+   */
+  readonly adjudication: '397' | '398'
 }
 
 export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
@@ -594,5 +608,21 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
     opId: 'knowledge.records.inspect',
     reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
     adjudication: '397',
+  }),
+  // 398 D-09 (dated 2026-08-17): the twentieth entry, and the FIRST op ever dispositioned here that
+  // 397 did not rule on — because it did not exist then. Its exclusion is argued rather than scoped,
+  // which is why it does not take the mid-flight line: `agent.explain` answers "what can you do",
+  // and DELETION-INVENTORY row 1 already ruled that question NOT a gap on this surface, because the
+  // protocol answers machine discovery itself. Projecting it anyway would be the third answer that
+  // row refuses.
+  Object.freeze({
+    opId: 'agent.explain',
+    reason:
+      'D-09 (dated 2026-08-17): the protocol answers machine discovery itself — `tools/list` plus '
+      + 'SEP-2575 `server/discover` — and 398\'s `init --agent` manifest answers agent discovery '
+      + 'from the committed catalog. This op answers a PERSON asking in prose, which is a third '
+      + 'question with a third audience. DELETION-INVENTORY row 1 ruled a discovery TOOL not-a-gap '
+      + 'on exactly this reasoning; projecting the op would reinstate it under a new name.',
+    adjudication: '398',
   }),
 ] as const satisfies readonly UnprojectedOp[])

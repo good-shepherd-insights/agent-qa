@@ -84,7 +84,10 @@ the catalog's migration map projection (D-14, XPLN-03) lands in the COMMITTED ar
 FROZEN_MIN_TESTS=105
 # The artifact's own floor, so a mint that produced a truncated or empty file cannot be written.
 # Measured 2026-08-16: 41 registry ops + 5 chat op-aliases + 3 shipped skills = 49 rows.
-FROZEN_MIN_ROWS=49
+# Raised 2026-08-17 (398-07, D-09): `agent.explain` is the 42nd registry op, so 50. This is the knob
+# working as designed — a plan that adds a row raises the floor in the SAME diff, and a plan that
+# lowers one is doing something that needs an argument.
+FROZEN_MIN_ROWS=50
 # The migration section's floor (398-08, D-14). It is SEPARATE from the row floor because it is a
 # separate section with a separate source: a mint that folded every capability correctly and dropped
 # the projected map would clear FROZEN_MIN_ROWS and write a manifest that answers no v1 caller.

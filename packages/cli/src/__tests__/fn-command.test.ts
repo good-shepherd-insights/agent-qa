@@ -533,6 +533,11 @@ describe('agent-qa fn (generic function invoker)', () => {
       // claim made observable: `agent-qa ask` reaches the turn through the same registry listing
       // this test reads, so the REPL holds no capability the catalogue does not declare.
       'agent.ask': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      // 398 D-09: the catalog explainer. UNBOUND at this commit and that is the honest reading of
+      // this host, not a placeholder — the op binds through `capabilityCatalog`, and 398-07 Task 1
+      // registers the capability while Task 2 supplies the port. The row moving to `bound` is the
+      // observable arrival of the binding, which is exactly what `bindingStatus` is for.
+      'agent.explain': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
       // 389 D-11: THE analysis read — verdicts + sentences + clusters. BOUND since plan 06:
       // the composition root binds the artifact reader over `agentQaRoot` in every local
       // composition, so an artifact-less run answers the floor rather than a refusal.

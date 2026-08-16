@@ -51,6 +51,7 @@ import {
   ConfigUndoProposeInputSchema,
   EntitiesGetInputSchema,
   EntitiesResolveInputSchema,
+  ExplainInputSchema,
   GrantsListInputSchema,
   GrantsRevokeInputSchema,
   KnowledgeAcceptProposeInputSchema,
@@ -92,6 +93,7 @@ import type { z } from 'zod'
  */
 export const OP_INPUT_CONTRACTS = {
   'agent.ask': AgentAskInputSchema,
+  'agent.explain': ExplainInputSchema,
   'analysis.get': AnalysisGetInputSchema,
   'authoring.draft.edit': AuthoringDraftEditInputSchema,
   'authoring.draft.verify': AuthoringVerifyDraftInputSchema,
@@ -155,6 +157,13 @@ export type ScenarioInput<Id extends ScenarioOpId> = z.input<(typeof OP_INPUT_CO
 export type UnprojectedReasonKey =
   | 'agent-ask-delegation-deferral'
   | 'requires-human-origin'
+  // 2026-08-17 (398 D-09). The FOURTH class, and it is admitted rather than folded because the
+  // vocabulary's whole job is to keep genuinely different facts apart. `agent.explain` is not
+  // scoped out of a workflow and is not a door that cannot open — the question it answers is one
+  // the PROTOCOL already answers for machines, which DELETION-INVENTORY row 1 ruled not-a-gap on
+  // exactly that ground. Filing it under `not-mid-flight-read` would have been the available
+  // shortcut and would have recorded a scoping decision where an argued one was made.
+  | 'discovery-answered-by-protocol'
   | 'not-mid-flight-write'
   | 'not-mid-flight-read'
 
@@ -171,6 +180,11 @@ export const UNPROJECTED_REASON_SIGNATURES: readonly (readonly [UnprojectedReaso
   Object.freeze([
     Object.freeze(['agent-ask-delegation-deferral', 'nested-agent delegation'] as const),
     Object.freeze(['requires-human-origin', 'requiresHumanOrigin'] as const),
+    // 398 D-09. Placed ABOVE the two mid-flight lines because its reason is the stronger fact, on
+    // the precedence rule this list already states: a question the protocol answers is a different
+    // thing from a read that was scoped out of a workflow, and the shipped prose for
+    // `agent.explain` deliberately contains neither mid-flight phrase.
+    Object.freeze(['discovery-answered-by-protocol', 'answers machine discovery'] as const),
     Object.freeze(['not-mid-flight-write', 'mid-flight workflow write'] as const),
     Object.freeze(['not-mid-flight-read', 'mid-flight workflow read'] as const),
   ])
@@ -270,6 +284,20 @@ export const SCENARIO_TABLE = Object.freeze([
     opId: 'agent.ask',
     input: { message: 'nothing in this fixture can answer this' },
     perSurface: { chat: { reachable: true }, mcp: { unprojected: 'agent-ask-delegation-deferral' } },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
+  // 398 D-09: `query` is the whole input and it must be non-empty, so `{}` would report an INPUT
+  // error exactly where a binding refusal is wanted. The question is a real one a person asks and
+  // is deliberately NOT a phrase this fixture's rows answer — the honest outcome under any
+  // composition that runs it is the abstention arm, which is the arm this capability exists to be
+  // able to give. Unprojected over MCP on the one exclusion 398 argued rather than scoped.
+  scenario({
+    opId: 'agent.explain',
+    input: { query: 'what can you do' },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'discovery-answered-by-protocol' },
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 389 D-11: a PARSING input for a capability most compositions cannot run — validation precedes

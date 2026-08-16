@@ -15,8 +15,9 @@
 #   * THE REGEN REFUSES WHILE THE SUITE IS RED FOR ANY OTHER REASON. A regeneration run against a
 #     broken tree would launder the breakage into the ledger — the ledger would faithfully record
 #     whatever the broken tree declares, and the reviewer would see a diff with no failing test
-#     beside it. The only failure allowed through the gate is the golden-diff cell itself, by exact
-#     name (see ALLOWED_RED).
+#     beside it. The only failures allowed through the gate are the cells whose SUBJECT is a
+#     committed conformance artifact disagreeing with the live tree, by exact name and with a
+#     written eligibility rule (see ALLOWED_RED_NAMES).
 #   * THE GATE IS SELF-TESTING. `--selftest` injects a deliberately failing probe into the suite and
 #     requires the refusal to fire, then requires the gate to pass again once the probe is removed.
 #     A gate nobody has seen fire is a comment.
@@ -52,15 +53,47 @@ GOLDEN="$ROOT/$GOLDEN_REL"
 
 # ── The pins. Every one of these is a deliberate-commit knob, not a default. ────────────────────
 #
-# The ONE failure the gate lets through, by EXACT full name. Exact rather than a pattern: a pattern
-# is a hole that widens on its own, and this list is the whole of what "refuses while red" means.
-ALLOWED_RED="the parity suite ranges the registry census over every rostered surface matches the committed golden registry, op by op and field by field"
+# The failures the gate lets through, by EXACT full name, one per line. Exact rather than a pattern:
+# a pattern is a hole that widens on its own, and this list is the whole of what "refuses while red"
+# means.
+#
+# WHAT MAKES A CELL ELIGIBLE (2026-08-17, 398-07). Every member is a cell whose SUBJECT IS A
+# COMMITTED CONFORMANCE ARTIFACT DISAGREEING WITH THE LIVE TREE — this ledger's own freshness, and
+# the freshness of the artifacts that are census-tied to it.
+#
+# THE WIDENING FROM ONE NAME TO THREE WAS FORCED, and the fact that forced it is worth stating
+# because it is not going away. Since 398-01 the committed golden ledger and the committed
+# capability catalog are census-tied TO EACH OTHER: the catalog's op rows must equal the golden's
+# rows in both directions. So registering an op reds THREE cells at once — this ledger's freshness,
+# the catalog's freshness, and the census between the two — and NEITHER artifact's one writer can
+# run first, because each refuses on the other's staleness. A gate that cannot be satisfied in the
+# exact situation it exists for is not a gate, it is a wall, and the way out of a wall is a hand
+# edit. Measured 2026-08-17 while registering `agent.explain`.
+#
+# WHAT IS NOT ELIGIBLE IS UNCHANGED, AND IS THE WHOLE DISCIPLINE. A parity anchor, a loader refusal,
+# a policy leg, a surface census, a scenario-table census — anything measuring the TREE rather than
+# an artifact's agreement with it — is NOT eligible, because a regeneration performed while one of
+# those is red records a tree nobody has fixed.
+#
+# AND THE LIST CHECKS ITSELF (the 398-08 mechanism, ported, and driven RED in 398-07). Every name
+# below must MATCH A CELL THE SUITE ACTUALLY RAN; an entry naming a renamed or deleted cell is a
+# hole that is invisible precisely because nothing ever fires through it. `classify.mjs` reports the
+# misses and the gate FATALs on them.
+#
+# A PLAIN MULTI-LINE STRING, not a heredoc inside a command substitution — measured on the bash 3.2
+# macOS ships, where the heredoc form dies at an unrelated line with `arg: unbound variable`.
+ALLOWED_RED_NAMES="the parity suite ranges the registry census over every rostered surface matches the committed golden registry, op by op and field by field
+the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
+the capability catalog census carries exactly the capabilities the committed golden ledger records (D-01)"
 # Vacuity floor. A gate that passed because the suite collected nothing is the CI-shaped version of
 # the failure this whole phase exists to prevent. Measured 2026-08-16: 71 tests in the directory.
 FROZEN_MIN_TESTS=60
 # The ledger's own floor, so a mint that produced a truncated or empty file cannot be written.
 # Measured 2026-08-16: the registry census is 41 capabilities and is frozen for this phase (D-17).
-FROZEN_MIN_ROWS=41
+# Raised 2026-08-17 (398-07, D-09): 397's freeze was 397's — the census is 42 now that
+# `agent.explain` is registered, which is the first movement since the ledger was minted and is
+# exactly the movement this ledger exists to make a one-line reviewable diff.
+FROZEN_MIN_ROWS=42
 
 EMIT_FLAG="AGENT_QA_397_GOLDEN_EMIT"
 EMIT_BEGIN="<<<397-06-GOLDEN-BEGIN>>>"
@@ -98,11 +131,14 @@ trap cleanup EXIT
 # ── Helper programs. Written to files, never passed as shell strings: a quoted argument mangled by
 # the shell is how a harness ends up measuring an implementation nobody wrote.
 cat > "$SANDBOX/classify.mjs" <<'CLASSIFY_MJS'
-// Read vitest's JSON report and classify the failures against the ONE allowed red.
-// Prints `TOTAL=<n>` then one `UNEXPECTED <full name>` line per failure outside the allow-list, and
-// one `ALLOWED <full name>` line for each failure inside it. Decides nothing; bash decides.
+// Read vitest's JSON report and classify the failures against the allowed-red list.
+// Prints `TOTAL=<n>`, then one `UNEXPECTED <full name>` line per failure outside the list, one
+// `ALLOWED <full name>` line per failure inside it, and one `MISSINGALLOWED <full name>` line per
+// list entry naming a cell THIS RUN DID NOT CONTAIN. That last line is the list's own self-check:
+// an allow-list entry for a renamed or deleted cell is a hole nothing will ever fire through, so
+// nothing would ever reveal it. Decides nothing; bash decides.
 import { readFileSync } from 'node:fs'
-const [, , reportPath, allowed] = process.argv
+const [, , reportPath, allowedPath] = process.argv
 let report
 try {
   report = JSON.parse(readFileSync(reportPath, 'utf8'))
@@ -110,14 +146,23 @@ try {
   process.stdout.write(`UNREADABLE ${err instanceof Error ? err.message : String(err)}\n`)
   process.exit(0)
 }
+const allowed = readFileSync(allowedPath, 'utf8')
+  .split('\n')
+  .map((line) => line.trim())
+  .filter((line) => line.length > 0)
 const results = Array.isArray(report.testResults) ? report.testResults : []
 process.stdout.write(`TOTAL=${Number(report.numTotalTests ?? 0)}\n`)
+const collected = new Set()
 for (const file of results) {
   for (const assertion of file.assertionResults ?? []) {
-    if (assertion.status !== 'failed') continue
     const name = String(assertion.fullName ?? '')
-    process.stdout.write(`${name === allowed ? 'ALLOWED' : 'UNEXPECTED'} ${name}\n`)
+    collected.add(name)
+    if (assertion.status !== 'failed') continue
+    process.stdout.write(`${allowed.includes(name) ? 'ALLOWED' : 'UNEXPECTED'} ${name}\n`)
   }
+}
+for (const name of allowed) {
+  if (!collected.has(name)) process.stdout.write(`MISSINGALLOWED ${name}\n`)
 }
 CLASSIFY_MJS
 
@@ -165,12 +210,27 @@ run_gate() {
 
   [ -f "$report" ] || fatal "the suite produced no JSON report — it did not run at all"
 
+  printf '%s\n' "$ALLOWED_RED_NAMES" > "$SANDBOX/allowed-red.txt"
+
   local classified
-  classified="$(node "$SANDBOX/classify.mjs" "$report" "$ALLOWED_RED")"
+  classified="$(node "$SANDBOX/classify.mjs" "$report" "$SANDBOX/allowed-red.txt")"
 
   case "$classified" in
     UNREADABLE*) fatal "the suite's JSON report could not be read: ${classified#UNREADABLE }" ;;
   esac
+
+  # THE ALLOW-LIST'S OWN CHECK, before any verdict is read off it. An entry naming a cell that no
+  # longer exists is a permission granted to nothing — invisible, because a hole nothing fires
+  # through never reports.
+  local missing_allowed
+  missing_allowed="$(printf '%s\n' "$classified" | sed -n 's/^MISSINGALLOWED //p')"
+  if [ -n "$missing_allowed" ]; then
+    echo "FATAL: the allowed-red list names cells this suite does not contain:" >&2
+    printf '  - %s\n' "$missing_allowed" >&2
+    echo "An allow-list entry for a renamed or deleted cell is a hole nothing can fire through." >&2
+    echo "Fix the name in ALLOWED_RED_NAMES, or remove the entry." >&2
+    exit 1
+  fi
 
   local total
   total="$(printf '%s\n' "$classified" | sed -n 's/^TOTAL=//p')"
@@ -194,11 +254,12 @@ run_gate() {
   local allowed
   allowed="$(printf '%s\n' "$classified" | sed -n 's/^ALLOWED //p')"
   if [ -n "$allowed" ]; then
-    note "gate: the golden-diff cell is red, as expected before a regeneration"
+    note "gate: committed-artifact freshness cells are red, as expected before a regeneration:"
+    printf '  - %s\n' "$allowed" >&2
   else
-    note "gate: the golden-diff cell is green — the committed ledger already matches the tree"
+    note "gate: every freshness cell is green — the committed ledger already matches the tree"
   fi
-  note "gate: PASSED — no failure outside the ledger"
+  note "gate: PASSED — no failure outside the committed artifacts"
 }
 
 # ── The mint ────────────────────────────────────────────────────────────────────────────────────

@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 49,
+  "rowCount": 50,
   "rows": [
     {
       "alias": "digest",
@@ -289,6 +289,39 @@
         },
         "required": [
           "message"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
+      "description": "Answer a question about what this product can do by citing the capability catalog, or say plainly that the catalog does not ground an answer.",
+      "docAbsentReason": "no shipped page documents this capability (dated 2026-08-17, 398 D-07). It is the op whose abstention log IS the demand signal for writing docs, so a guessed link here would be the invention the whole feature refuses.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "query": "<QUERY>"
+        }
+      },
+      "id": "agent.explain",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "discovery-answered-by-protocol",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
         ],
         "type": "object"
       },
@@ -2062,5 +2095,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "33529b6226c08fd135fb224ecd4bded7741bfb8cd5af2f4b50b5801479ea9738"
+  "rowsDigest": "9f756af7df78a2404b34cc2eaf31c15dbe9203b2d005ae0891b2c02c3b7d4675"
 }

@@ -146,6 +146,13 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // only because the content lives in `packages/cli` beside `init`'s own write path, which is D-04's
 // no-drift claim expressed as a module boundary — the alternative is a second copy of the scaffold
 // in this package, failing silently the first time either one is edited.
+// 398 D-09 extends it a TWENTY-SECOND time, by name: `capabilityCatalog` — the committed catalog as
+// data, the model's citation over it, and the two coverage hooks, as ONE port. One and not four on
+// the `draftEvaluation` bundle's reasoning: a host that could load the catalog but not cite over it
+// would list `agent.explain` as `bound` and answer every question with a ghost citation, which
+// abstains safely and uselessly and reports nothing. Its absence makes exactly one op unavailable,
+// and the op says so BY NAME — which matters more here than anywhere else in this union, because a
+// degraded explain is an explain answering from model memory, the one behaviour XPLN-02 forbids.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'runInvocation'
@@ -171,6 +178,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'configScan'
     | 'configUndoSource'
     | 'scaffoldContent'
+    | 'capabilityCatalog'
   >()
 
 // Every member of that union must actually be an optional member of the deps record — the half

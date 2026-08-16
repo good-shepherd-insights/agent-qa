@@ -197,6 +197,10 @@ const ALL_FUNCTION_IDS = [
   // safe mode is: the listing filter is cosmetic, so hiding the turn entry would hide the door
   // without closing it while every clause a turn runs stays gated server-side on its own scopes.
   'agent.ask',
+  // 398 D-09: the `agent.` domain's second member, in SORT position (`agent.explain` follows
+  // `agent.ask`). READ-tier, so it survives safe-mode filtering — deliberately, because a person
+  // who has locked the agent down to reads is exactly the person most likely to ask what is left.
+  'agent.explain',
   // 389 D-11: read-tier, so it survives safe-mode filtering like its analysis-domain-first
   // siblings never had to — the non-read drop-out set stays exactly `runs.start` plus the
   // four knowledge-write verbs.

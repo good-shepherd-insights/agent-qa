@@ -173,6 +173,21 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
 
     // …and the explicit absences, one per remaining op.
     Object.freeze(['agent.ask', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    // 2026-08-17 (398 D-07/D-09): an EXPLICIT, DATED absence for the op that was added this phase,
+    // and the reason is its own rather than the shared constant. `agent.explain` is the capability
+    // whose abstentions FEED the coverage log that decides which docs get written — so pointing it
+    // at a page that does not exist would be this file guessing at the very artifact the feature
+    // exists to stop guessing about. It documents itself by answering; when the log shows demand
+    // for a written page, this row is where the link lands.
+    Object.freeze([
+      'agent.explain',
+      Object.freeze({
+        absentReason:
+          'no shipped page documents this capability (dated 2026-08-17, 398 D-07). It is the op '
+          + 'whose abstention log IS the demand signal for writing docs, so a guessed link here '
+          + 'would be the invention the whole feature refuses.',
+      }),
+    ] as const),
     Object.freeze(['analysis.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['authoring.draft.edit', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['authoring.draft.verify', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),

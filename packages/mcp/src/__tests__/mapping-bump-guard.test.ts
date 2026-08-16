@@ -10,8 +10,10 @@
 // EVERYTHING ELSE IS PRODUCED, NOT LITERAL. The registry's own enumeration is the denominator: the
 // partition law below ranges over `registry.list(...)` rather than over a number written here, so
 // "how many ops are there" is answered by the catalogue rather than by this file's opinion of it.
-// MEASURED 2026-08-16: the registry declares 41 ops. 22 are projected by the twelve tools; the
-// other 19 are dispositioned in `UNPROJECTED_OPS`. That settles the 41-vs-43 discrepancy the phase
+// MEASURED 2026-08-17 (398 D-09): the registry declares 42 ops. 22 are projected by the twelve
+// tools; the other 20 are dispositioned in `UNPROJECTED_OPS`. Was 41/22/19 as measured 2026-08-16;
+// `agent.explain` is the arrival, and it lands on the unprojected side with its own dated reason.
+// The original measurement settles the 41-vs-43 discrepancy the phase
 // context carried — whatever the registry answers IS the denominator, and this suite reds if the
 // two sets ever stop covering it exactly.
 //
@@ -87,7 +89,7 @@ import { V1_TOOL_MIGRATION_MAP, type V1MigrationArm } from '../migration-map.js'
  * `deps` is EMPTY and cast, which is honest for exactly this question: `list()` consults the deps
  * for one thing — whether an op is bound in this composition — and membership of the catalogue is a
  * property of the catalogue, not of a host. A fixture supplying rich fakes would list the same
- * forty-one ids and take fifty lines to do it. Nothing here dispatches, so nothing here can reach a
+ * forty-two ids and take fifty lines to do it. Nothing here dispatches, so nothing here can reach a
  * port that is not there.
  */
 function builtInRegistry(): FunctionRegistry {
@@ -341,9 +343,9 @@ describe('the partition law (D-03 / D-15)', () => {
   it('measures the registry at the count this suite header records', () => {
     // The denominator, stated where a reader can see it move. Not a rule — a MEASUREMENT, and the
     // sentence in the header is only true while this cell is green.
-    expect(declarations().length).toBe(41)
+    expect(declarations().length).toBe(42)
     expect(projectedOpIds().length).toBe(22)
-    expect(UNPROJECTED_OPS.length).toBe(19)
+    expect(UNPROJECTED_OPS.length).toBe(20)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -351,11 +353,28 @@ describe('the partition law (D-03 / D-15)', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('gives every unprojected op a non-empty reason and 397 as its adjudicator', () => {
+  it('gives every unprojected op a non-empty reason and a NAMED adjudicator', () => {
+    // 2026-08-17 (398 D-09). This cell used to assert `'397'` for every entry, and that literal was
+    // right for exactly as long as 397 was the last phase to add an op. `agent.explain` arrived in
+    // 398, so a phase that could not have ruled on it would have been recorded as having done so —
+    // which is the one failure a provenance column has.
+    //
+    // WIDENED AS A PIN, NOT AS A RELAXATION. The vocabulary is a closed two-member set AND the
+    // membership is spelled by op id below, so a later entry stamped `'398'` because it was easier
+    // reds here rather than joining a set that has quietly become "any phase number".
+    const ADJUDICATED_BY_398 = new Set(['agent.explain'])
     for (const entry of UNPROJECTED_OPS) {
       expect(entry.reason.length, entry.opId).toBeGreaterThan(20)
-      expect(entry.adjudication, entry.opId).toBe('397')
+      expect(entry.adjudication, entry.opId).toBe(
+        ADJUDICATED_BY_398.has(entry.opId) ? '398' : '397',
+      )
     }
+    // The set is not vacuous in either direction: an id that left the register would leave this
+    // pin naming nothing, which is the hole an allow-list-shaped literal always has.
+    expect(
+      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_398.has(entry.opId)).map((e) => e.opId),
+      'the 398-adjudicated pin names entries the scoping note does not carry',
+    ).toEqual([...ADJUDICATED_BY_398])
   })
 
   // D-03's own note leads the list, and the ORDER is part of the decision: a reader scanning the

@@ -23,6 +23,7 @@ import { expect } from 'vitest'
 import type { z } from 'zod'
 
 import { agentAskSpec } from '../functions/ops/agent-ask.js'
+import { explainSpec } from '../functions/ops/explain.js'
 import { analysisGetSpec } from '../functions/ops/analysis-get.js'
 import { authoringDraftEditSpec } from '../functions/ops/authoring-draft-edit.js'
 import { authoringDraftWriteSpec } from '../functions/ops/authoring-draft-write.js'
@@ -104,6 +105,12 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // the layer without its contracts being reachable for the projection relation.
   'authoring.funnel.get': authoringFunnelGetSpec,
   'agent.ask': agentAskSpec,
+  // 398 D-09. Paired the day it is registered (the growth seam working as designed). Its OUTPUT is
+  // a DISCRIMINATED UNION over two strict arms, which is the shape this map had not carried before
+  // and exactly the one a careless projection collapses. Collapsing it would leave a catalogue
+  // unable to say that an answer and an abstention are different results — and "the abstention is
+  // a typed arm, not a flag on an answer" is the whole of XPLN-02's honesty claim.
+  'agent.explain': explainSpec,
   // 389 D-11. Paired the day it is registered (the growth seam working as designed): its
   // output is the first here carrying two parallel per-test arrays plus a nested cluster
   // list, so an unchecked projection would be where a `sentences` member could quietly stop

@@ -33,6 +33,7 @@ import { configProjectScaffoldSpec } from './ops/config-project-scaffold.js'
 import { configUndoProposeSpec } from './ops/config-undo-propose.js'
 import { configTargetEditSpec } from './ops/config-target-edit.js'
 import { entitiesGetSpec } from './ops/entities-get.js'
+import { explainSpec } from './ops/explain.js'
 import { entitiesResolveSpec } from './ops/entities-resolve.js'
 import { grantsListSpec } from './ops/grants-list.js'
 import { grantsRevokeSpec } from './ops/grants-revoke.js'
@@ -230,6 +231,19 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // until a consumer exists: a registered entry nothing drives would still oblige 397's parity
   // suite to stub it on every surface.
   agentAskSpec as FunctionSpec,
+  // 2026-08-17 (398 D-09 · XPLN-02): the SECOND member of the `agent.` domain, and the first op
+  // this project has added since the 397 conformance suite closed. Registering it is the decision
+  // rather than a filing choice: "what can you do" is a question every surface wants to answer, and
+  // a surface that answered it privately would be a capability the catalogue does not list — the
+  // private-power pattern §3's L10 law abolishes and the census exists to make impossible. As a
+  // registered op it is chat-reachable through the 1:1 planner binding and `/fn` with no harness
+  // change, adjudicated in `mapping.ts` like every op, and walked by the parity suite for free.
+  //
+  // Bound through the OPTIONAL `capabilityCatalog` port, whose binding site is `composeLocalAgent()`
+  // (385 D-15 — therefore both the CLI and the daemon). A host with no catalog lists it `unbound` BY
+  // NAME rather than answering from model memory, which is the exact failure XPLN-02 exists to
+  // forbid: an explain that quietly lost its grounding data still SOUNDS like an explain.
+  explainSpec as FunctionSpec,
   // 2026-08-10 (393 D-01): a new `authoring.` domain, and the keep-filter's entry point. The four
   // gates that decide whether a generated test is worth keeping are a CATALOGUED capability rather
   // than a private power of whatever writes tests — so 393's corpus proof drives the real gated
