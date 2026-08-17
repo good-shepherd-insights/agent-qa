@@ -41,13 +41,22 @@ export class NoopTransport implements AnalyticsTransport {
   }
 }
 
-/** The subset of the PostHog client this transport uses. */
+/**
+ * The subset of the PostHog client this transport uses.
+ *
+ * `flush` is REQUIRED, not optional, and that is the whole content of the fix (398-15, CR-01): the
+ * interface previously declared only `capture`/`shutdown`, so the type system could not express the
+ * correct per-boundary call and the transport reached for `shutdown` instead. An optional member
+ * with a shutdown fallback would reinstate the same defect behind a spelling. posthog-node 5.33.2
+ * exposes both. The contract being honoured is stated at `port.ts:49-51`.
+ */
 export interface PosthogAnalyticsClient {
   capture(input: {
     distinctId: string
     event: string
     properties: Record<string, unknown>
   }): void
+  flush(): void | Promise<void>
   shutdown(): void | Promise<void>
 }
 
@@ -112,7 +121,7 @@ class PosthogTransport implements AnalyticsTransport {
   }
 
   async flush(): Promise<void> {
-    await this.client.shutdown()
+    await this.client.flush()
   }
 
   async shutdown(): Promise<void> {

@@ -2455,6 +2455,30 @@ export function createRunCommand(): Command {
     )
     .action(async (patterns: string[], opts: RunOptions, command: Command) => {
       let _crashDb: any
+
+      // 398-15 (WR-06, paired with CR-01): DRAIN THE MEMOISED ANALYTICS HOST BEFORE THIS ACTION
+      // EXITS. Declared out here, beside `_crashDb`, because the third terminal exit is in the
+      // CATCH below and a binding inside the `try` is not in scope there.
+      //
+      // Until CR-01 the transport's flush tore the PostHog client down, so this command's
+      // per-session flush was the only thing releasing it; with flush now a flush, an undrained
+      // exit leaks a live client with an armed flush timer. ONCE-ONLY: a path that composed nothing
+      // is a no-op and a second call cannot happen.
+      //
+      // A `finally` is not the fix — `process.exit` does not run one — so this is awaited
+      // immediately before each of the ACTION's three terminal exits. IT COVERS THOSE THREE AND
+      // NOTHING ELSE: the four cancellation exits carried by the two shutdown controllers (this
+      // action's own at :3483/:3486 and `executeSuites`' at :1184/:1187) are knowingly NOT drained
+      // — they are user-initiated cancels where telemetry loss is the accepted failure direction,
+      // and awaiting a drain inside a signal path would trade that for an unbounded Ctrl+C.
+      let composedAnalytics: CliAnalyticsHost | undefined
+      let analyticsDrained = false
+      const drainAnalytics = async (): Promise<void> => {
+        if (analyticsDrained || composedAnalytics === undefined) return
+        analyticsDrained = true
+        await composedAnalytics.shutdown()
+      }
+
       try {
         const modeFlags = [opts.test, opts.suite, opts.all].filter(Boolean).length
         if (modeFlags > 1) {
@@ -2488,7 +2512,7 @@ export function createRunCommand(): Command {
         // return without starting a run, and composing would resolve the identity store — writing
         // `~/.agent-qa/analytics.json` on a machine that has none — for an invocation that emits
         // nothing. The first attach site pays for it; there is never a second.
-        let composedAnalytics: CliAnalyticsHost | undefined
+        // `composedAnalytics` and its once-only drain are declared above the `try` (398-15, WR-06).
         const analytics = async (): Promise<CliAnalyticsHost> => (
           composedAnalytics ??= await composeAnalyticsHost({ surface: 'cli', config })
         )
@@ -2661,6 +2685,7 @@ export function createRunCommand(): Command {
               cwd: process.cwd(),
             })
           }
+          await drainAnalytics() // 398-15 (WR-06): terminal exit 1 of 3 — the suite-only path.
           process.exit(exitCode)
         }
 
@@ -3731,6 +3756,7 @@ export function createRunCommand(): Command {
           liveEvents: process.env.AGENT_QA_LIVE_EVENTS,
           cwd: process.cwd(),
         })
+        await drainAnalytics() // 398-15 (WR-06): terminal exit 2 of 3 — the verdict path.
         process.exit(exitCode)
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err)
@@ -3778,6 +3804,7 @@ export function createRunCommand(): Command {
         if (_crashDb) {
           try { _crashDb.close() } catch {}
         }
+        await drainAnalytics() // 398-15 (WR-06): terminal exit 3 of 3 — the action's error path.
         process.exit(2)
       }
     })

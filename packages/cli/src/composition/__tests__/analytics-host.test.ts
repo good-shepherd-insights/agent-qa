@@ -285,6 +285,9 @@ describe('composeAnalyticsHost', () => {
         ...options,
         client: {
           capture: (input) => sent.push({ distinctId: input.distinctId, event: input.event }),
+          // 398-15 (CR-01): `flush` is a REQUIRED member of the client interface now — this cell
+          // measures masking, so both lifecycle calls are inert here.
+          flush: () => {},
           shutdown: () => {},
         },
       }),

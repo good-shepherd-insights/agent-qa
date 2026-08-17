@@ -93,6 +93,17 @@ async function sendPayloadThroughTransport(
   })
   transport.capture(payload)
   await transport.flush()
+  // THE DRAIN, and why it is `shutdown` rather than another flush (398-15, CR-01). Measured against
+  // posthog-node 5.33.2: `PostHog.capture()` is asynchronous — it registers
+  // `prepareEventMessage(...).then(captureStateless)` on the client's PENDING promise queue — and
+  // `flush()` sends only what is ALREADY enqueued, without joining that queue. `shutdown()` joins it
+  // (`await this.promiseQueue.join()`, then flushes until the queue is empty), which is why the
+  // pre-CR-01 transport, whose `flush()` called `client.shutdown()`, delivered a same-tick
+  // capture-then-flush. Nothing is lost in the product — a later boundary flush, the 10s flush timer
+  // or the exit shutdown carries it — but a cell that reads the wire in the same tick has to drain
+  // the way a host's exit does. The sibling helper above goes through the port, whose flush awaits
+  // its own in-flight captures first, so it is not in this race.
+  await transport.shutdown()
   return sink.requests.at(-1)?.text ?? ''
 }
 
