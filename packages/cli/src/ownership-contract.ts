@@ -33,6 +33,12 @@ export const AGENT_QA_CLI_INTERNAL_DEPENDENCIES = [
   // 2026-07-29 (Phase 385 plan 08, D-13): the local composition root. The CLI no longer builds a
   // run session itself; it supplies presentation ports and delegates.
   '@vostride/agent-qa-agent-local',
+  // 2026-08-17 (Phase 398 plan 10, D-17/D-20): the bounded analytics package. Every host in this
+  // surface binds it at its own composition root through `composition/analytics-host.ts`, which is
+  // the only file here that names `composeAnalytics`. It arrives on THIS list rather than staying
+  // an implementation detail of `core` because the whole point of D-17 is that telemetry is a
+  // dependency a host declares, not an ambient capability any file can reach.
+  '@vostride/agent-qa-analytics',
   '@vostride/agent-qa-android',
   '@vostride/agent-qa-core',
   '@vostride/agent-qa-dashboard',
