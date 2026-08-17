@@ -123,9 +123,28 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
 // 390-08: `workspaceRelativeIdentityPath` is pulled from the REAL module rather than stubbed — it
 // decides the bytes the committed quarantine ledger keys on, and a stub would leave these pins
 // measuring the test's idea of identity instead of the shipped one.
+// 398-10: the run command composes its analytics at the root now, and the binding stamps
+// `agent_qa_version` on every event from the SHIPPED reader. Passed through from the real module for
+// the same reason `workspaceRelativeIdentityPath` is — a stub would be a second answer to a question
+// the product already answers, and here it would be a version the closed union's semver refuses.
+// 398-10 (D-17/D-20): the run-completion subscriber comes from the analytics package now; only that
+// factory is replaced, so this command's composition root still makes the real opt-out decision.
+vi.mock('@vostride/agent-qa-analytics', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-analytics')>()
+  return { ...actual, createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber }
+})
+
 vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   workspaceRelativeIdentityPath:
     (await importOriginal<typeof import('@vostride/agent-qa-core')>()).workspaceRelativeIdentityPath,
+  getAgentQaVersion:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).getAgentQaVersion,
+  // The two run-attribute KEYS, from the real module: `run.ts` reads the resolved attributes to
+  // tell the subscriber this run's trigger and runner, and a stubbed key would silently look up
+  // nothing — the subscriber would then normalise a missing value to `unknown` and this file would
+  // be measuring that rather than the wiring.
+  ATTR_TRIGGER: (await importOriginal<typeof import('@vostride/agent-qa-core')>()).ATTR_TRIGGER,
+  ATTR_RUNNER: (await importOriginal<typeof import('@vostride/agent-qa-core')>()).ATTR_RUNNER,
   DEFAULT_AGENT_QA_ARTIFACTS_DIR: '.agent-qa/artifacts',
   // 395-08: `commands/scaffold-content.ts` — D-04's one scaffold producer — reads this, and it is
   // now in this command's module graph through the composition root.
@@ -236,7 +255,6 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   JUnitReporter: vi.fn(function () { return {} }),
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
   createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
-  createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber,
   resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
     path.resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
   generateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
