@@ -1,5 +1,5 @@
-// The help ↔ catalog census and the help text's argument contract
-// (Phase 398 plan 09 — XPLN-01, D-01 / SC-1).
+// The help ↔ catalog census, the help text's argument contract, and the skills' command vocabulary
+// (Phase 398 plan 09 — XPLN-01, D-01 / SC-1 / Pitfall 5).
 //
 // WHAT THESE LEGS ARE FOR. `resolver-table.ts`'s header states a law in prose: help text kept
 // anywhere other than the canon it documents is a second list of what chat understands, free to
@@ -34,9 +34,11 @@ import {
   CHAT_RESOLVER_TABLE,
   resolveClause,
 } from '@vostride/agent-qa-agent'
+import { AGENT_QA_TOOL_PROJECTIONS, V1_TOOL_MIGRATION_MAP } from '@vostride/agent-qa-mcp'
 import { describe, expect, it } from 'vitest'
 
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
+import { resolveAgentQaSkillsDirectory } from '../../commands/skills.js'
 import { agentQaRoot, CHAT_ALIAS_PROBES } from './catalog.js'
 
 /** Sorted, so a named RED reads the same on every machine. */
@@ -275,6 +277,114 @@ describe('no second list of what chat understands', () => {
       findings,
       'a CLI module has started enumerating the chat directive vocabulary — the one list lives in '
       + 'CHAT_HELP_ENTRIES beside the table that routes it, and every consumer renders THAT',
+    ).toEqual([])
+  })
+})
+
+/**
+ * Every file a shipped skill DIRECTORY carries, not just its SKILL.md.
+ *
+ * MEASURED, AND THE REASON THIS IS NOT SCOPED TO SKILL.md (2026-08-17). The first version of the
+ * guard read only the three SKILL.md files, and it would have passed while
+ * `agent-qa-authoring/references/agent-qa-contracts.json` — a file the skill's own step 3 tells an
+ * agent to LOAD — still instructed `agent_qa_generate_id`. A guard scoped to one file of a
+ * multi-file input class certifies that file, not the class. The universe here is the whole
+ * directory the CLI's own resolution finds, minus binaries.
+ */
+function shippedSkillFiles(): readonly { name: string; path: string }[] {
+  const resolved = resolveAgentQaSkillsDirectory(dirname(fileURLToPath(import.meta.url)))
+  if (resolved.source === 'missing') return []
+  const found: { name: string; path: string }[] = []
+  for (const skill of readdirSync(resolved.path)) {
+    const skillDir = join(resolved.path, skill)
+    if (!statSync(skillDir).isDirectory()) continue
+    for (const file of filesUnderSkill(skillDir)) {
+      found.push({ name: `${skill}/${relative(skillDir, file)}`, path: file })
+    }
+  }
+  return found.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+}
+
+/** Every file under a skill directory, recursively — the whole of what a skill ships. */
+function filesUnderSkill(root: string): readonly string[] {
+  const found: string[] = []
+  for (const entry of readdirSync(root)) {
+    const candidate = join(root, entry)
+    if (statSync(candidate).isDirectory()) {
+      found.push(...filesUnderSkill(candidate))
+      continue
+    }
+    found.push(candidate)
+  }
+  return found
+}
+
+/**
+ * Every `agent_qa_*` identifier a document mentions.
+ *
+ * TOKENISED, NOT SUBSTRING-MATCHED, and the difference is the cell rather than a nicety:
+ * `agent_qa_get_run` is a retired v1 name AND a prefix of the live `agent_qa_get_run_digest`, so a
+ * `body.includes(v1Name)` guard would red on the correct replacement and stay red until somebody
+ * "fixed" it by putting the retired name back. The scan reads whole identifiers and asks about
+ * membership.
+ */
+function toolTokensIn(body: string): readonly string[] {
+  return sorted(body.match(/agent_qa_[a-z0-9_]+/gu) ?? [])
+}
+
+describe('the shipped skills quote only live commands', () => {
+  it('names no member of the v1 migration map (the list produced from the module)', () => {
+    // THE FORBIDDEN SET IS THE MODULE'S, READ AT TEST TIME. Spelling the retired names here would
+    // be a copy that stops covering the map the day it grows — and the map growing is precisely
+    // when a skill is most likely to be quoting something that just died.
+    const retired = new Set(V1_TOOL_MIGRATION_MAP.map((entry) => entry.v1Name))
+    expect(retired.size, 'the migration map is empty — this cell would forbid nothing')
+      .toBeGreaterThan(0)
+
+    const files = shippedSkillFiles()
+    expect(files.length, 'no shipped skill file was found — the cell would range nothing')
+      .toBeGreaterThan(0)
+
+    const findings: string[] = []
+    for (const file of files) {
+      for (const token of toolTokensIn(readFileSync(file.path, 'utf8'))) {
+        if (retired.has(token)) findings.push(`${file.name}: ${token}`)
+      }
+    }
+
+    expect(
+      findings,
+      'a shipped skill instructs a RETIRED v1 tool name — the skills are doc links in the '
+      + 'capability catalog, so a skill quoting a dead command is the product telling an agent to '
+      + 'call something that answers unknown-tool (Pitfall 5)',
+    ).toEqual([])
+  })
+
+  it('every tool a skill names is one the shipped mapping actually projects', () => {
+    // THE STRONGER RULE, AND WHY BOTH ARE HERE. The cell above refuses what the migration map can
+    // NAME, so a tool renamed in some future phase without an inventory row would slip past it.
+    // This one asks the opposite question at the choke point — is this name LIVE — which needs no
+    // list of what is forbidden and cannot be defeated by a name nobody wrote down.
+    const live = new Set(AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name))
+    expect(live.size, 'the shipped mapping projects no tools — this cell would allow anything')
+      .toBeGreaterThan(0)
+
+    const findings: string[] = []
+    let scanned = 0
+    for (const file of shippedSkillFiles()) {
+      for (const token of toolTokensIn(readFileSync(file.path, 'utf8'))) {
+        scanned += 1
+        if (!live.has(token)) findings.push(`${file.name}: ${token}`)
+      }
+    }
+    // Not vacuous: skills that named no tool at all would pass this cell by saying nothing, and a
+    // skill set that stopped naming tools is a skill set that stopped being useful.
+    expect(scanned, 'no shipped skill names a tool — the cell certifies nothing').toBeGreaterThan(0)
+
+    expect(
+      findings,
+      'a shipped skill names a tool the MCP mapping does not project — every command a skill '
+      + "quotes has to be one a caller can actually invoke today (SC-2's premise)",
     ).toEqual([])
   })
 })

@@ -82,7 +82,9 @@ the catalog's migration map projection (D-14, XPLN-03) lands in the COMMITTED ar
 # binary anchors joined. 2026-08-17 (398-07): 133, after the eighteen explain differentials joined.
 # Raised in the same diff that added them, which is the rule the knob is for; the margin is the
 # original's, about nine per cent under the measurement.
-FROZEN_MIN_TESTS=122
+# 2026-08-17 (398-09): 140, after the seven help-census / second-list / skills-vocabulary cells
+# joined. Raised in the same diff that added them; the margin stays the original's.
+FROZEN_MIN_TESTS=129
 # The artifact's own floor, so a mint that produced a truncated or empty file cannot be written.
 # Measured 2026-08-16: 41 registry ops + 5 chat op-aliases + 3 shipped skills = 49 rows.
 # Raised 2026-08-17 (398-07, D-09): `agent.explain` is the 42nd registry op, so 50. This is the knob

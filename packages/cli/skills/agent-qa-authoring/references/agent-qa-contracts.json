@@ -2,7 +2,7 @@
   "version": 1,
   "source": "packages/mcp/references/agent-qa-contracts.json",
   "ids": {
-    "instruction": "Generate IDs with agent_qa_generate_id or `agent-qa ids generate <type>`; never hand-write IDs.",
+    "instruction": "Never mint or hand-write an ID. IDs are minted host-side where the entity is written; read the id back off the entity card `agent_qa_get_entity` returns.",
     "contracts": [
       { "type": "test", "prefix": "t", "prefixWithSeparator": "t_", "words": 10 },
       { "type": "suite", "prefix": "s", "prefixWithSeparator": "s_", "words": 10 },
