@@ -3,7 +3,7 @@
 # 398-catalog-mutation.sh — the acceptance bar for the capability catalog's guard set (Phase 398,
 # D-04, plan 12).
 #
-# WHAT THIS PROVES, AND WHY 145 GREEN CELLS DO NOT PROVE IT. `packages/cli/src/__tests__/conformance/`
+# WHAT THIS PROVES, AND WHY 148 GREEN CELLS DO NOT PROVE IT. `packages/cli/src/__tests__/conformance/`
 # passing says that, on this tree, the committed `capability-catalog.json` agrees with the live
 # seams, `/help` is one list, the skills census closes and the v1→v2 migration map projects entry for
 # entry. It does NOT say those cells would CATCH the edits that break each of those claims. A
@@ -12,7 +12,7 @@
 # forbade (398-07 leg M6, 398-09 leg M2, 398-10 legs M4–M7, 398-11's existsSync-guarded cross-check
 # reporting `18 passed` while asserting nothing).
 #
-# THE FIVE LEGS, each an edit a careless commit could plausibly produce, chosen PER DETECTOR:
+# THE SIX LEGS, each an edit a careless commit could plausibly produce, chosen PER DETECTOR:
 #
 #   A  ONE HELP LINE RENAMED. `CHAT_HELP_ENTRIES` in `resolver-table.ts` is the list a person reads;
 #      `CHAT_RESOLVER_TABLE` beside it is the list that actually routes. Renaming the alias on the
@@ -34,6 +34,13 @@
 #   E  ONE OP ROW'S `surfaces` ARRAY HAND-EDITED IN THE COMMITTED ARTIFACT. C proves the freshness
 #      leg sees a row LEAVE; E proves it sees a FIELD MOVE inside a row that is still there, and
 #      that the red names the row AND the field rather than saying "the catalog is stale".
+#
+#   F  THE EXPLAIN ANSWER CHANNEL REVERTED AT ONE LINE (398-13, D-21). `turn-engine.ts` collects
+#      `agent.explain`'s rendered lines onto the turn's `answer` field, which is the ONLY path by
+#      which a grounded capability answer reaches a person's terminal — 398-12 measured the state
+#      where it did not exist, and the whole of what a person saw was `agent.explain completed`.
+#      Handing the collector an op id that exists nowhere restores exactly that state: it compiles,
+#      it type-checks, it ships, and the answer is composed and discarded again.
 #
 # A GREEN SUITE UNDER ANY LEG IS A FAILURE OF THIS SCRIPT, NOT A PASS. So is a red naming a cell
 # outside the leg's allowed list, and so is an allowed cell that stayed green. Discrimination runs in
@@ -139,6 +146,13 @@ SUBJECT_B="packages/cli/skills/agent-qa-result-triage/SKILL.md"
 SUBJECT_C="packages/cli/capability-catalog/capability-catalog.json"
 SUBJECT_D="packages/mcp/src/migration-map.ts"
 SUBJECT_E="packages/cli/capability-catalog/capability-catalog.json"
+SUBJECT_F="packages/agent/src/chat/turn-engine.ts"
+
+# THE ONE LIST OF LEGS. `restore_all`, the preflight snapshot loop, the at-rest dist-marker loop and
+# the run loop all read it, so a leg that is added without being restored is not expressible (IN-04:
+# `restore_all` used to name SNAP_A..SNAP_D by hand and silently omitted SNAP_E, which was harmless
+# only because leg E's subject happened to equal leg C's).
+LEGS="A B C D E F"
 
 DIST_AGENT="packages/agent/dist/index.js"
 DIST_MCP="packages/mcp/dist/index.js"
@@ -154,13 +168,23 @@ DIST_MCP="packages/mcp/dist/index.js"
 # for `agent.explain`, so the dist carried it whether or not the rebuild took. A marker that is not
 # unique to its leg's subject is a rebuild proof that proves the wrong file. `agent_qa_discover` is
 # the entry's own `v1Name` and occurs exactly once in the built artifact at rest.
+# Leg F's marker is a STRING LITERAL rather than an identifier, and deliberately: the bundler strips
+# comments and may rename locals, but it cannot rename a literal out from under the leg. The token
+# names no op that exists anywhere, so it is unambiguously the mutation's own footprint.
 MARKER_A="runs-status"          # introduced: 0 before, >=1 under the mutation
 MARKER_D="agent_qa_discover"    # removed:    1 before, 0 under the mutation
+MARKER_F="398F-no-such-op"      # introduced: 0 before, >=1 under the mutation
 
 # ── Vacuity floors. Measured 2026-08-17. A leg that passed because the suite collected nothing is
 # not a leg. The MCP floor is 267 rather than the baseline 270 because leg D legitimately collects
 # three fewer — the three cells named in `vanished.D` below, generated per map entry.
-FROZEN_MIN_CLI_TESTS=145
+#
+# The cli floor moved 145 -> 148 on 2026-08-17 (398-13, gap round 1), READ OFF the measured
+# post-change `npx vitest run src/__tests__/conformance/` total rather than computed as 145 + 3. At
+# 145 a future deletion of the three cells that plan added — the only guards on the explain answer
+# channel — would still clear the floor, and every leg would keep passing over a suite that no
+# longer collects them. A floor that does not follow the cells it exists to protect is not a floor.
+FROZEN_MIN_CLI_TESTS=148
 FROZEN_MIN_MCP_TESTS=267
 
 fatal() { echo "FATAL: $*" >&2; exit 1; }
@@ -175,12 +199,21 @@ SNAP_B="$WORK/SKILL.md.snapshot"
 SNAP_C="$WORK/capability-catalog.C.snapshot"
 SNAP_D="$WORK/migration-map.ts.snapshot"
 SNAP_E="$WORK/capability-catalog.E.snapshot"
+SNAP_F="$WORK/turn-engine.ts.snapshot"
 
+# DRIVEN FROM `$LEGS`, never from a hand-written list of snapshot names (IN-04). It reads only the
+# `SUBJECT_*` / `SNAP_*` variables above it, so it is safe on every exit path including one taken
+# before the `*_of` lookups further down have been defined; a snapshot that does not exist yet is
+# skipped rather than restored from nothing.
 restore_all () {
-  if [ -f "$SNAP_A" ]; then cp "$SNAP_A" "$ROOT/$SUBJECT_A" 2>/dev/null || true; fi
-  if [ -f "$SNAP_B" ]; then cp "$SNAP_B" "$ROOT/$SUBJECT_B" 2>/dev/null || true; fi
-  if [ -f "$SNAP_C" ]; then cp "$SNAP_C" "$ROOT/$SUBJECT_C" 2>/dev/null || true; fi
-  if [ -f "$SNAP_D" ]; then cp "$SNAP_D" "$ROOT/$SUBJECT_D" 2>/dev/null || true; fi
+  local leg snap subj
+  for leg in $LEGS; do
+    eval "snap=\${SNAP_$leg:-}"
+    eval "subj=\${SUBJECT_$leg:-}"
+    if [ -n "$snap" ] && [ -n "$subj" ] && [ -f "$snap" ]; then
+      cp "$snap" "$ROOT/$subj" 2>/dev/null || true
+    fi
+  done
   return 0
 }
 # The subjects are restored FIRST and unconditionally on any exit path — an interrupted run must not
@@ -289,6 +322,20 @@ cat > "$WORK/allowed.E" <<'ALLOWED_E'
 cli::the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
 ALLOWED_E
 
+# F's fan-out is THREE, and all three are 398-13's own cells — the standing acceptance bar for the
+# explain ANSWER CHANNEL. The mutation reverts the channel at exactly one line (the collector is
+# handed an op id that exists nowhere, so it never matches and no line is collected), which is the
+# revert a careless refactor would produce and which leaves a build that compiles and ships.
+#
+# READ OUT OF THE HARNESS'S OWN JSON REPORT (`$WORK/names.*`), never hand-composed: `fullName` is
+# the describe and the test joined, and a hand-written name is how an allowed list becomes a
+# description of a different tree. `vanished.F` is empty — this mutation deletes no cell.
+cat > "$WORK/allowed.F" <<'ALLOWED_F'
+cli::the built-binary anchors (D-02) the shipped chat binary PRINTS a capability line quoted out of the committed catalog (398-13, D-21)
+cli::the grounded explain answer rides the turn a person reads (398-13, D-21) puts the cited row's OWN rendered line on the turn's answer field
+cli::the grounded explain answer rides the turn a person reads (398-13, D-21) leaves the receipt the MAP, and no model prose anywhere on the turn
+ALLOWED_F
+
 # ── The cells each leg may make VANISH ──────────────────────────────────────────────────────────
 #
 # Empty for every leg but D. See the header: `redirect.test.ts` generates three cells per migration
@@ -303,6 +350,7 @@ mcp::caller-invariance on the retired and pending arms (T-398-13 · Pitfall 8) a
 mcp::v1RedirectMessage, driven directly carries agent_qa_discover’s own ruled note and route
 VANISHED_D
 : > "$WORK/vanished.E"
+: > "$WORK/vanished.F"
 
 # ── The mutations ───────────────────────────────────────────────────────────────────────────────
 #
@@ -413,12 +461,25 @@ E_REPLACEMENT = '''      "id": "runs.list",
       ]
 '''
 
+# F — the explain ANSWER CHANNEL reverted at one line (398-13, D-21). The collector is handed a
+# string literal naming an op that exists nowhere instead of the step's own function id, so it never
+# matches, no rendered lines are collected, and the turn's `answer` field goes back to what it was
+# before the channel existed. It compiles, it type-checks, it ships — and no person can read a
+# grounded capability answer again, which is exactly the state 398-12 measured and this leg guards.
+F_ANCHOR = (
+    "        answerLines.push(...explainAnswerLines(step.functionId, answered))\n"
+)
+F_REPLACEMENT = (
+    "        answerLines.push(...explainAnswerLines('398F-no-such-op', answered))\n"
+)
+
 MUTATIONS = {
     'A': ('packages/agent/src/chat/resolver-table.ts', [(A_ANCHOR, A_REPLACEMENT)]),
     'B': ('packages/cli/skills/agent-qa-result-triage/SKILL.md', [(B_ANCHOR, B_REPLACEMENT)]),
     'C': ('packages/cli/capability-catalog/capability-catalog.json', [(C_ANCHOR, '')]),
     'D': ('packages/mcp/src/migration-map.ts', [(D_ANCHOR, '')]),
     'E': ('packages/cli/capability-catalog/capability-catalog.json', [(E_ANCHOR, E_REPLACEMENT)]),
+    'F': ('packages/agent/src/chat/turn-engine.ts', [(F_ANCHOR, F_REPLACEMENT)]),
 }
 
 if name not in MUTATIONS:
@@ -447,6 +508,7 @@ subject_of () {
     C) echo "$SUBJECT_C" ;;
     D) echo "$SUBJECT_D" ;;
     E) echo "$SUBJECT_E" ;;
+    F) echo "$SUBJECT_F" ;;
     *) fatal "unknown leg $1" ;;
   esac
 }
@@ -458,6 +520,7 @@ snapshot_of () {
     C) echo "$SNAP_C" ;;
     D) echo "$SNAP_D" ;;
     E) echo "$SNAP_E" ;;
+    F) echo "$SNAP_F" ;;
     *) fatal "unknown leg $1" ;;
   esac
 }
@@ -466,6 +529,7 @@ marker_of () {
   case "$1" in
     A) echo "$MARKER_A" ;;
     D) echo "$MARKER_D" ;;
+    F) echo "$MARKER_F" ;;
     *) echo "" ;;
   esac
 }
@@ -475,6 +539,7 @@ marker_polarity_of () {
   case "$1" in
     A) echo "introduced" ;;
     D) echo "removed" ;;
+    F) echo "introduced" ;;
     *) echo "" ;;
   esac
 }
@@ -483,6 +548,7 @@ dist_of () {
   case "$1" in
     A) echo "$DIST_AGENT" ;;
     D) echo "$DIST_MCP" ;;
+    F) echo "$DIST_AGENT" ;;
     *) echo "" ;;
   esac
 }
@@ -494,6 +560,7 @@ needle_of () {
     C) echo "op:runs.list.row" ;;
     D) echo "agent_qa_discover" ;;
     E) echo "op:runs.list.surfaces" ;;
+    F) echo "op:runs.start" ;;
     *) fatal "unknown leg $1" ;;
   esac
 }
@@ -505,6 +572,7 @@ label_of () {
     C) echo "one op row hand-deleted from the COMMITTED catalog" ;;
     D) echo "one entry deleted from the shipped v1 -> v2 migration map" ;;
     E) echo "one committed op row's surfaces array hand-edited" ;;
+    F) echo "the explain answer channel reverted at one line (D-21)" ;;
     *) fatal "unknown leg $1" ;;
   esac
 }
@@ -817,7 +885,7 @@ if [ -n "$DIRTY" ]; then
 fi
 note "working tree clean (this script's own file excluded)"
 
-for leg in A B C D E; do
+for leg in $LEGS; do
   path="$(subject_of "$leg")"
   [ -f "$ROOT/$path" ] || fatal "leg $leg's subject is missing: $path"
   cp "$ROOT/$path" "$(snapshot_of "$leg")"
@@ -826,7 +894,7 @@ done
 
 rebuild_dists
 note "dists rebuilt in dependency order"
-for leg in A B C D E; do assert_dist_marker "$leg" at-rest; done
+for leg in $LEGS; do assert_dist_marker "$leg" at-rest; done
 
 run_suites baseline
 if [ -s "$RUN_FAILED" ]; then
@@ -847,11 +915,7 @@ esac
 
 # ── The legs ────────────────────────────────────────────────────────────────────────────────────
 
-run_leg A
-run_leg B
-run_leg C
-run_leg D
-run_leg E
+for leg in $LEGS; do run_leg "$leg"; done
 
 # ── The close ───────────────────────────────────────────────────────────────────────────────────
 
@@ -865,7 +929,7 @@ fi
 echo "=== RUN SUMMARY"
 cat "$SUMMARY"
 
-echo "PASS — five per-detector mutations, each RED on exactly its allowed cells in BOTH suites and"
+echo "PASS — six per-detector mutations, each RED on exactly its allowed cells in BOTH suites and"
 echo "       on no others, each red NAMING the member that moved, each denominator change pinned by"
 echo "       name, every subject restored byte-identically by sha256, every rebuild proven by a dist"
 echo "       marker in the direction its leg moves it, and every revert returning both suites to"
