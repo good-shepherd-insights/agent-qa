@@ -34,10 +34,6 @@ vi.mock('@/lib/api', () => ({
   fetchTestFiles: appHarness.fetchTestFiles,
 }))
 
-vi.mock('@/lib/analytics', () => ({
-  trackDashboardOpenedOnce: vi.fn(),
-}))
-
 vi.mock('@/pages/runs', () => ({
   default: () => (
     <div data-testid="runs-page">

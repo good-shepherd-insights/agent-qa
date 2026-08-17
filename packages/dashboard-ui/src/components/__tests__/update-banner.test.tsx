@@ -20,10 +20,6 @@ vi.mock('@/lib/api', () => ({
   fetchAppMetadata: apiMock.fetchAppMetadata,
 }))
 
-vi.mock('@/lib/analytics', () => ({
-  trackDashboardOpenedOnce: vi.fn(),
-}))
-
 vi.mock('@/pages/runs', () => ({ default: () => <div data-testid="runs-page">Runs Page</div> }))
 vi.mock('@/pages/run-detail', () => ({
   default: () => <div data-testid="run-detail-page">Run Detail Page</div>,

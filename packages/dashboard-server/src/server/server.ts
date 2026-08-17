@@ -14,9 +14,6 @@ import { WebSocketServer } from 'ws'
 import { SessionManager } from '../live-editor/session-manager.js'
 import { createSessionHandler } from '../live-editor/ws-handler.js'
 import {
-  buildAnalyticsEvent,
-  captureAnalytics,
-  resolveAnalyticsStandardProperties,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
 import type { DashboardLLMConfig } from '../llm-model-mapping.js'

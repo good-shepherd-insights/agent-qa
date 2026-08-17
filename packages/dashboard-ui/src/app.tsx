@@ -9,7 +9,6 @@ import {
 } from "react-router"
 import { routes } from "@/lib/routes"
 import { fetchAppMetadata, type AppMetadataResponse } from "@/lib/api"
-import { trackDashboardOpenedOnce } from "@/lib/analytics"
 import { ThemeProvider } from "@/components/theme-provider"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
@@ -64,10 +63,6 @@ function AppLayout() {
   const [updateDismissal, setUpdateDismissal] = useState<UpdateBannerDismissal | null>(() =>
     readUpdateBannerDismissalCookie(),
   )
-
-  useEffect(() => {
-    trackDashboardOpenedOnce()
-  }, [])
 
   useEffect(() => {
     let active = true

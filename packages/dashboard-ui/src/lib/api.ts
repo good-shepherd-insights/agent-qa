@@ -1,4 +1,3 @@
-import { trackDashboardEntityCreated, trackDashboardLiveModeStarted } from '@/lib/analytics'
 
 export interface RunRow {
   id: string
@@ -489,7 +488,6 @@ export async function fetchTestFile(testId: string): Promise<{ path: string; con
 
 export async function createTestFile(filePath: string, content: string): Promise<{ path: string; created: boolean }> {
   const result = await postJson<{ path: string; created: boolean }>('/api/tests', { path: filePath, content })
-  trackDashboardEntityCreated('test')
   return result
 }
 
@@ -526,7 +524,6 @@ export async function fetchSuiteFile(suiteId: string): Promise<{ path: string; c
 
 export async function createSuiteFile(filePath: string, content: string): Promise<{ path: string; created: boolean }> {
   const result = await postJson<{ path: string; created: boolean }>('/api/suites', { path: filePath, content })
-  trackDashboardEntityCreated('suite')
   return result
 }
 
@@ -1190,7 +1187,6 @@ export async function fetchHookDetail(hookId: string): Promise<HookDetailRespons
 
 export async function createHook(payload: HookMutationRequest): Promise<HookDetailResponse> {
   const result = await postJson<HookDetailResponse>('/api/hooks', payload)
-  trackDashboardEntityCreated('hook')
   return result
 }
 
@@ -1294,10 +1290,6 @@ export async function createLiveEditorSession(
     sessionId: body.sessionId,
     sessionNumber: typeof body.sessionNumber === 'number' ? body.sessionNumber : null,
   }
-  trackDashboardLiveModeStarted({
-    platform: opts.platform,
-    entityType: opts.entity?.type,
-  })
   return result
 }
 

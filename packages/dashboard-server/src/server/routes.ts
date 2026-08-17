@@ -12,8 +12,8 @@ import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
-import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
+import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
@@ -40,18 +40,12 @@ const REMOTE_LLM_CONNECTION_TEST_TIMEOUT_MS = 10_000
 const LOCAL_COMPATIBLE_LLM_CONNECTION_TEST_TIMEOUT_MS = 120_000
 const LOCAL_COMPATIBLE_LLM_PROVIDERS = new Set(['openai-compatible', 'anthropic-compatible'])
 const PLUGIN_OAUTH_SESSION_TTL_MS = 10 * 60 * 1000
-const DASHBOARD_PRODUCT_EVENT_NAMES = [
-  'agent-qa.dashboard.opened',
-  'agent-qa.dashboard.live_mode.started',
-  'agent-qa.dashboard.entity.created',
-] as const
-type DashboardProductEventName = typeof DASHBOARD_PRODUCT_EVENT_NAMES[number]
-const DASHBOARD_PRODUCT_EVENT_NAME_SET = new Set<DashboardProductEventName>(DASHBOARD_PRODUCT_EVENT_NAMES)
-const DASHBOARD_PRODUCT_EVENT_PROPERTY_KEYS = {
-  'agent-qa.dashboard.opened': [],
-  'agent-qa.dashboard.live_mode.started': ['platform', 'entity_type'],
-  'agent-qa.dashboard.entity.created': ['entity_type', 'outcome'],
-} as const satisfies Record<DashboardProductEventName, readonly string[]>
+// 2026-08-17 (Phase 398 plan 11, D-18/D-20): the three v33 dashboard product events, the
+// `POST /api/analytics/events` ingest route that took them and the core-analytics bridge it
+// captured through are all GONE. `routes.analytics-events.test.ts` holds the drop: the path 404s
+// and this file is pinned against the capture vocabulary returning. The dashboard's own run-history
+// reporting under `/api/analytics/tests|suites|breakdowns` is unrelated and stays. M5's dashboard
+// rebuild decides what it wants to emit, against the new `AnalyticsPort`.
 
 type DashboardExecutionTimeoutSource =
   | 'test.use.timeout.test'
@@ -518,39 +512,6 @@ function buildAuthStateSaveErrorMessage(
     status: 500,
     message: `Could not save auth state "${stateName}" for target "${targetName}".`,
   }
-}
-
-function isDashboardProductEventName(value: unknown): value is DashboardProductEventName {
-  return typeof value === 'string' && DASHBOARD_PRODUCT_EVENT_NAME_SET.has(value as DashboardProductEventName)
-}
-
-function filterDashboardProductEventProperties(
-  name: DashboardProductEventName,
-  properties: Record<string, unknown>,
-): Record<string, unknown> {
-  const allowedKeys = DASHBOARD_PRODUCT_EVENT_PROPERTY_KEYS[name]
-  const filtered: Record<string, unknown> = {}
-  for (const key of allowedKeys) {
-    if (Object.prototype.hasOwnProperty.call(properties, key)) {
-      filtered[key] = properties[key]
-    }
-  }
-  return filtered
-}
-
-async function readAnalyticsServiceConfig(configManager: ConfigManager | undefined): Promise<AnalyticsServiceConfig> {
-  if (!configManager) return {}
-
-  try {
-    const config = await configManager.read() as { analytics?: { privacy?: unknown } } | undefined
-    if (config?.analytics?.privacy === true) {
-      return { analytics: { privacy: true } }
-    }
-  } catch {
-    // Fail closed for telemetry while keeping the HTTP route non-blocking.
-    return { analytics: { privacy: true } }
-  }
-  return {}
 }
 
 function getPathInsideDir(candidatePath: string, rootDir: string): string | null {
@@ -1365,11 +1326,6 @@ interface RouterDeps {
   llmConfig?: DashboardRuntimeLLMConfig
   authFetch?: typeof globalThis.fetch
   sessionManager?: import('../live-editor/session-manager.js').SessionManager
-  analyticsBridge?: {
-    buildAnalyticsEvent: typeof buildAnalyticsEvent
-    captureAnalytics: typeof captureAnalytics
-    resolveAnalyticsStandardProperties: typeof resolveAnalyticsStandardProperties
-  }
 }
 
 export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: ServerResponse) => void
@@ -1380,11 +1336,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
     : { db: dbOrDeps as DashboardDatabase, artifactsDir }
   const { db, testRunner, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
   const pluginOAuthSessions = new Map<string, PluginOAuthSession>()
-  const analyticsBridge = deps.analyticsBridge ?? {
-    buildAnalyticsEvent,
-    captureAnalytics,
-    resolveAnalyticsStandardProperties,
-  }
   const ssDir = deps.artifactsDir ? join(deps.artifactsDir, 'screenshots') : undefined
   const vidDir = deps.artifactsDir ? join(deps.artifactsDir, 'videos') : undefined
 
@@ -1417,52 +1368,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           json(res, { error: 'Could not list auth states.' }, 500)
         }
       })()
-      return
-    }
-
-    // POST /api/analytics/events — best-effort dashboard product analytics bridge
-    if (path === '/api/analytics/events' && req.method === 'POST') {
-      readJsonBody<{ name?: unknown; properties?: unknown }>(req)
-        .then((body) => {
-          if (
-            !isPlainRecord(body)
-            || !isDashboardProductEventName(body.name)
-            || (
-              Object.prototype.hasOwnProperty.call(body, 'properties')
-              && body.properties !== undefined
-              && !isPlainRecord(body.properties)
-            )
-          ) {
-            json(res, { error: 'Invalid analytics event' }, 400)
-            return
-          }
-
-          const name = body.name
-          const browserProperties = isPlainRecord(body.properties) ? body.properties : {}
-          json(res, { accepted: true }, 202)
-
-          void (async () => {
-            try {
-              const config = await readAnalyticsServiceConfig(configManager)
-              if (config.analytics?.privacy === true) {
-                return
-              }
-
-              const standardProperties = await analyticsBridge.resolveAnalyticsStandardProperties({ surface: 'dashboard-ui' })
-              const event = analyticsBridge.buildAnalyticsEvent({
-                name,
-                properties: {
-                  ...filterDashboardProductEventProperties(name, browserProperties),
-                  ...standardProperties,
-                },
-              })
-              await analyticsBridge.captureAnalytics(event, { config })
-            } catch {
-              // Analytics is intentionally best-effort and invisible to dashboard users.
-            }
-          })()
-        })
-        .catch(() => json(res, { error: 'Invalid analytics event' }, 400))
       return
     }
 
