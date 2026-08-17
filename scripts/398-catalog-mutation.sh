@@ -211,7 +211,7 @@ restore_all () {
     eval "snap=\${SNAP_$leg:-}"
     eval "subj=\${SUBJECT_$leg:-}"
     if [ -n "$snap" ] && [ -n "$subj" ] && [ -f "$snap" ]; then
-      cp "$snap" "$ROOT/$subj" 2>/dev/null || true
+      cp -p "$snap" "$ROOT/$subj" 2>/dev/null || true
     fi
   done
   return 0
@@ -851,7 +851,13 @@ run_leg () {
   } >> "$SUMMARY"
 
   # ── Restore, prove it, and return to green ───────────────────────────────────────────────────
-  cp "$snapshot" "$ROOT/$subject"
+  # `-p`, and the reason is a real residue this script used to leave behind (measured 2026-08-17,
+  # 398-13). A plain `cp` gives every restored subject a mtime of NOW; the EXIT trap re-restores all
+  # of them AFTER the last rebuild, so a person who ran this script and then ran the conformance
+  # suite met six spurious reds from `parity-anchors.test.ts`'s stale-dist guard — a byte-identical
+  # tree that reads as an unbuilt one. Preserving the snapshot's timestamps restores the file's
+  # ORIGINAL mtime along with its bytes, which is what "restored" was always meant to mean.
+  cp -p "$snapshot" "$ROOT/$subject"
   restored="$(sha_of "$ROOT/$subject")"
   [ "$restored" = "$baseline" ] || fatal "$subject was not restored byte-identically ($restored, expected $baseline)"
   note "  subject restored byte-identically (sha256 $restored)"
@@ -888,7 +894,7 @@ note "working tree clean (this script's own file excluded)"
 for leg in $LEGS; do
   path="$(subject_of "$leg")"
   [ -f "$ROOT/$path" ] || fatal "leg $leg's subject is missing: $path"
-  cp "$ROOT/$path" "$(snapshot_of "$leg")"
+  cp -p "$ROOT/$path" "$(snapshot_of "$leg")"
   note "snapshot $path  sha256 $(sha_of "$(snapshot_of "$leg")")"
 done
 
