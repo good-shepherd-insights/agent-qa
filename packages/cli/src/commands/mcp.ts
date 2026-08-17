@@ -338,6 +338,23 @@ export function createMcpCommand(): Command {
           // daemon. Supplying one here would be a second transport for one job (D-09).
         })
 
+        // 2026-08-17 (Phase 398 plan 10, D-18): `agent-qa.mcp.tool.invoked` HAS NO EMITTER YET, and
+        // saying so here is more honest than a half-wired one.
+        //
+        // There is no seam this host can reach. A tool call is dispatched inside
+        // `buildAgentQaMcpServer`, and the two things a host holds — the registry and the caller —
+        // cannot observe it: the registry's internals are keyed by object identity in a `WeakMap`,
+        // so a decorating wrapper is simply an object `invokeFunction` finds no specs on, and the
+        // caller is a credential rather than an invoke. Wrapping the SDK's `tools/call` dispatch is
+        // possible and is exactly what `installV1NameRedirect` does — inside `packages/mcp`, which
+        // is where a hook belongs.
+        //
+        // WHAT IT NEEDS: an optional `onToolInvoked` observation on `AgentQaMcpServerDeps`, called
+        // at the two `registerTool` sites with the tool name, a duration and a success/error verdict
+        // — counts and closed vocabularies, nothing a caller supplied. This host then maps it onto
+        // the union member and captures it through the port already composed above. That is a
+        // change to `packages/mcp`, which this plan does not own; it is filed in
+        // `.planning/.../deferred-items.md`.
         const overHttp = options.http !== undefined && options.http !== false
         const mcpTransport = overHttp ? 'http' as const : 'stdio' as const
         // The lifecycle pair is emitted from ONE place for each half, and `onServing` is what makes
