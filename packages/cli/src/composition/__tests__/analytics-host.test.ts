@@ -16,6 +16,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { composeAnalyticsHost, analyticsEvent } from '../analytics-host.js'
+import { createPosthogTransport } from '@vostride/agent-qa-analytics'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from '@vostride/agent-qa-analytics'
 
 function recordingTransport(): AnalyticsTransport & { readonly sent: AnalyticsCapturePayload[] } {
@@ -105,6 +106,30 @@ describe('composeAnalyticsHost', () => {
     expect(host.properties.agent_product).toBeUndefined()
   })
 
+  it('mints NO identity file on a blank-key checkout either — the v1 `disabled` set included it', async () => {
+    // Not an opt-out (`optedOut` is false and must stay false: a developer who never configured
+    // PostHog did not decline tracking). But nothing sends, so nothing needs an identity, and the
+    // v1 module wrote none in this state. A rewire gated on `optedOut` alone would start writing
+    // `~/.agent-qa/analytics.json` on every checkout that runs a test.
+    const resolveIdentity = vi.fn(async () => ({
+      distinctId: 'u_should-never-be-resolved',
+      runtimeContext: 'user' as const,
+    }))
+
+    const host = await composeAnalyticsHost({
+      surface: 'cli',
+      env: {},
+      projectKey: '   ',
+      resolveIdentity,
+    })
+    host.port.capture(analyticsEvent(host, 'agent-qa.explain.answered', { cited_row_count: 1 }))
+    await host.flush()
+
+    expect(host.optedOut).toBe(false)
+    expect(host.transportKind).toBe('noop')
+    expect(resolveIdentity).not.toHaveBeenCalled()
+  })
+
   it('resolves the identity ONCE on the opted-in arm and stamps it on every event', async () => {
     const transport = recordingTransport()
     const resolveIdentity = vi.fn(async () => ({
@@ -138,6 +163,44 @@ describe('composeAnalyticsHost', () => {
     expect(host.properties.agent_product).toBe('claude_code')
     expect(host.properties.surface).toBe('mcp')
     expect(host.properties.$process_person_profile).toBe(false)
+  })
+
+  it('masks through the context bound AFTER composition — the run masker does not exist yet at the root', async () => {
+    // THE SHIPPED TRANSPORT, over a fake PostHog client. `transportOverride` would replace the very
+    // seam under measurement, so this cell constructs the real `PosthogTransport` instead — the
+    // masking call it makes is the one a user's events cross.
+    const sent: { distinctId: string; event: string }[] = []
+    const host = await composeAnalyticsHost({
+      surface: 'cli',
+      env: {},
+      projectKey: 'phc_test_key',
+      posthogTransportFactory: (options) => createPosthogTransport({
+        ...options,
+        client: {
+          capture: (input) => sent.push({ distinctId: input.distinctId, event: input.event }),
+          shutdown: () => {},
+        },
+      }),
+      resolveIdentity: async () => ({
+        distinctId: 'hunter2-the-secret',
+        runtimeContext: 'user' as const,
+      }),
+    })
+    const transport = { sent }
+
+    // Before the bind: nothing is seeded, so nothing is masked. This is the honest state, not a
+    // gap — a host that has not built its run masking context knows no secrets to hide.
+    host.port.capture(analyticsEvent(host, 'agent-qa.explain.answered', { cited_row_count: 1 }))
+    await host.flush()
+    expect(transport.sent[0]?.distinctId).toBe('hunter2-the-secret')
+
+    host.bindMaskingContext({
+      mask: (text) => text.replaceAll('hunter2-the-secret', '***'),
+    })
+    host.port.capture(analyticsEvent(host, 'agent-qa.explain.answered', { cited_row_count: 1 }))
+    await host.flush()
+
+    expect(transport.sent[1]?.distinctId).toBe('***')
   })
 
   it('builds events that carry the standard properties beside the member fields', async () => {

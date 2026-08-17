@@ -45,9 +45,12 @@ import {
 } from '@vostride/agent-qa-agent-local'
 import {
   attachRunSubscribers,
+  buildAnalyticsRunSubscriber,
   buildRunSafetyHooks,
   createLivePauseController,
 } from '../run-session-composition.js'
+import { composeAnalyticsHost } from '../composition/analytics-host.js'
+import type { CliAnalyticsHost } from '../composition/analytics-host.js'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
   defaultGuardrailPolicyInput,
@@ -483,6 +486,27 @@ function resolveCliRunAttributes(
     buildInternalRunAttributes({ trigger: trigger ?? 'cli', runner }),
     inheritedUserAttributes,
   )
+}
+
+/**
+ * The two run attributes the analytics subscriber is told, read off the SAME resolved attributes
+ * this command already stamps on the run (398-10).
+ *
+ * The v1 subscriber parsed `AGENT_QA_RUN_ATTRIBUTES_JSON` for itself, which put an environment read
+ * inside a module a run drives and let the two answers drift. These are read here, once, from the
+ * object that produced that environment variable in the first place. Values the union does not
+ * recognise normalise to `unknown` inside the subscriber — this function does not police them,
+ * because the vocabulary belongs to the union and a second gate here would be a second list.
+ */
+function analyticsRunAttribution(
+  attributes: RunAttributes,
+): { triggerSource?: string; runner?: string } {
+  const triggerSource = attributes[ATTR_TRIGGER]
+  const runner = attributes[ATTR_RUNNER]
+  return {
+    ...(typeof triggerSource === 'string' ? { triggerSource } : {}),
+    ...(typeof runner === 'string' ? { runner } : {}),
+  }
 }
 
 function writeRunAttributesToEnv(attributes: RunAttributes): void {
@@ -1054,10 +1078,13 @@ async function executeSuites(
     inheritedRunAttributes?: RunAttributes
   },
   hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions },
+  // 398-10: the invocation's analytics, composed ONCE at the command root and handed down. It is a
+  // memoised resolver rather than a value for the reason `--list` and `--dry-run` exist: composing
+  // resolves the identity store, and a command that never starts a run should not mint one. The
+  // memo is what keeps "lazily" from becoming "twice".
+  analytics?: () => Promise<CliAnalyticsHost>,
 ): Promise<number> {
-  const { parseSuiteFile, parseTestFile, patchTestForSuite,
-    createAnalyticsRunSubscriber,
-  } = await import('@vostride/agent-qa-core')
+  const { parseSuiteFile, parseTestFile, patchTestForSuite } = await import('@vostride/agent-qa-core')
   const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
   const { readFile } = await import('node:fs/promises')
   const path = await import('node:path')
@@ -2277,7 +2304,22 @@ async function executeSuites(
     })
     if (dashboardSubscriber) extraSubscribers.push(dashboardSubscriber)
   }
-  extraSubscribers.push(createAnalyticsRunSubscriber({ config, surface: 'cli' }))
+  // 398-10 (D-17/D-20): the re-homed subscriber over the port this command composed at its root.
+  // `config` is NOT passed — the opt-out posture is already expressed by which transport that port
+  // holds, and a subscriber that re-read it would be the second decision site D-19 abolished.
+  if (analytics) {
+    const analyticsHost = await analytics()
+    extraSubscribers.push(buildAnalyticsRunSubscriber({
+      analytics: analyticsHost,
+      ...analyticsRunAttribution(resolveCliRunAttributes(
+        variableContext?.userRunAttributes ?? {},
+        'local',
+        variableContext?.inheritedRunAttributes,
+      )),
+    }))
+    // The run's masking context now exists; point the send seam at it (`bindMaskingContext`).
+    analyticsHost.bindMaskingContext(maskingContext)
+  }
 
   const exitCode = await runSafetyScope({ maskingContext, auditSink, executionContext }, async () => {
     try {
@@ -2437,6 +2479,20 @@ export function createRunCommand(): Command {
           loadAuthPlugins: !(opts.dryRun || opts.listTests),
         })
 
+        // 398-10 (D-17/D-19/D-20): THIS COMMAND'S ANALYTICS COMPOSITION ROOT. One decision, one
+        // identity, one port for the whole invocation — including a `--all` run that drives the
+        // suite path and then the direct path, which shared a process-global service in v1 and
+        // shares a memoised object now.
+        //
+        // MEMOISED RATHER THAN EAGER. `--list-tests`, `--dry-run` and every validation-only path
+        // return without starting a run, and composing would resolve the identity store — writing
+        // `~/.agent-qa/analytics.json` on a machine that has none — for an invocation that emits
+        // nothing. The first attach site pays for it; there is never a second.
+        let composedAnalytics: CliAnalyticsHost | undefined
+        const analytics = async (): Promise<CliAnalyticsHost> => (
+          composedAnalytics ??= await composeAnalyticsHost({ surface: 'cli', config })
+        )
+
         // Read raw config file content for cache key scoping
         const configFilePath = resolvePath(globalOpts.config ?? 'agent-qa.config.yaml')
         const workspacePaths = resolveWorkspacePaths({
@@ -2595,7 +2651,7 @@ export function createRunCommand(): Command {
 
         // Handle suite execution (early return)
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length === 0) {
-          const exitCode = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined)
+          const exitCode = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics)
           const suiteReporterSelection = resolveReporterSelection(opts, Boolean(config.services?.dashboard)).selection
           if (suiteReporterSelection) {
             await maybePrintPostRunUpdateNotice({
@@ -2611,7 +2667,7 @@ export function createRunCommand(): Command {
         // Handle --all: run suites first, then fall through to test execution
         let suitesFailed = false
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length > 0) {
-          suitesFailed = (await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined)) !== 0
+          suitesFailed = (await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, inheritedRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics)) !== 0
         }
 
         const files = discoveredTestFiles
@@ -2789,9 +2845,6 @@ export function createRunCommand(): Command {
 
         // Actual execution
         const startTime = Date.now()
-        const {
-          createAnalyticsRunSubscriber,
-        } = await import('@vostride/agent-qa-core')
         const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
 
         const recordingEnabled = opts.record ?? config.services?.recording?.enabled ?? false
@@ -3561,7 +3614,16 @@ export function createRunCommand(): Command {
           })
           if (dashboardSubscriber) singleExtraSubscribers.push(dashboardSubscriber)
         }
-        singleExtraSubscribers.push(createAnalyticsRunSubscriber({ config, surface: 'cli' }))
+        // 398-10: same factory, same composed port — Pitfall 8's rule applied to analytics.
+        const singleAnalytics = await analytics()
+        singleExtraSubscribers.push(buildAnalyticsRunSubscriber({
+          analytics: singleAnalytics,
+          ...analyticsRunAttribution(
+            resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
+          ),
+        }))
+        singleAnalytics.bindMaskingContext(maskingContext)
+
 
         const singleExit = await runSafetyScope({ maskingContext, auditSink, executionContext: singleExecutionContext }, async () => {
           try {

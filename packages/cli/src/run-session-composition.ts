@@ -27,6 +27,8 @@ import type {
   RunMaskingContext,
   RunSubscriberHandle,
 } from '@vostride/agent-qa-agent-local'
+import { createAnalyticsRunSubscriber } from '@vostride/agent-qa-analytics'
+import type { CliAnalyticsHost } from './composition/analytics-host.js'
 import {
   createConsoleReporter,
   createJunitReporter,
@@ -129,6 +131,40 @@ export function buildRunSafetyHooks(input: {
         ? (timedConfirm) => buildUnmaskingConfirm({ base: timedConfirm, maskingContext, live: input.live })
         : undefined,
     },
+  })
+}
+
+/**
+ * The run-completion analytics subscriber, built from the host's composed port (398-10, D-17/D-20).
+ *
+ * IT LIVES HERE, BESIDE `attachRunSubscribers`, FOR THE REASON THAT HELPER DOES: `run.ts` has two
+ * `startRun` sites (Pitfall 8) and a subscriber constructed separately at each is a subscriber that
+ * can be configured differently at each. One factory, both sites.
+ *
+ * WHAT MOVED IN THE REWIRE, and it is only the wiring: the subscriber now comes from
+ * `@vostride/agent-qa-analytics` rather than `@vostride/agent-qa-core`, and it is handed a PORT the
+ * command composed instead of a `config` it would consult itself. The bus-facing shape —
+ * `{ handler, flush }` — is byte-for-byte the one `attachRunSubscribers` already subscribes.
+ *
+ * THREE FACTS THE V1 SUBSCRIBER READ FOR ITSELF ARE PASSED IN NOW. The trigger source and the
+ * runner came from `AGENT_QA_RUN_ATTRIBUTES_JSON`, parsed inside a module a run drives; they are
+ * facts about how this process was started, so the caller — which resolved those attributes to put
+ * them on the run in the first place — states them. The privacy posture came from a second read of
+ * the config; it is now expressed by which transport the composed port holds.
+ */
+export function buildAnalyticsRunSubscriber(input: {
+  /** The invocation's composed analytics. Opted out ⇒ this subscriber emits into a noop transport. */
+  analytics: CliAnalyticsHost
+  /** `agent-qa.trigger` off the resolved run attributes. Anything unrecognised normalises to `unknown`. */
+  triggerSource?: string
+  /** `agent-qa.runner` off the same attributes, on the same normalisation. */
+  runner?: string
+}): RunSubscriberHandle {
+  return createAnalyticsRunSubscriber({
+    port: input.analytics.port,
+    standardProperties: input.analytics.properties,
+    ...(input.triggerSource === undefined ? {} : { triggerSource: input.triggerSource }),
+    ...(input.runner === undefined ? {} : { runner: input.runner }),
   })
 }
 

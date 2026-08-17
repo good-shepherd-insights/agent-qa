@@ -184,6 +184,16 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   },
 }))
 
+// 398-10 (D-17/D-20): the run-completion subscriber comes from `@vostride/agent-qa-analytics` now.
+// ONLY that factory is replaced — `composeAnalytics`, the port, the transports and the closed union
+// are the REAL ones, so this command's composition root still makes the real opt-out decision and
+// still refuses an event the union does not declare. Mocking the package wholesale would have made
+// every analytics claim in this file a claim about the mock.
+vi.mock('@vostride/agent-qa-analytics', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-analytics')>()
+  return { ...actual, createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber }
+})
+
 vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   class MockMobileSetupError extends Error {
     category: string
@@ -206,6 +216,11 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   // second answer about where the cache and the auth states live.
   DEFAULT_AGENT_QA_AUTH_STATES_DIR: actual.DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   workspaceRelativeIdentityPath: actual.workspaceRelativeIdentityPath,
+  // 398-10: the shipped version reader, FROM THE REAL MODULE for the same reason as the two above.
+  // `composition/analytics-host.ts` stamps `agent_qa_version` on every event this command emits,
+  // and the union constrains that field to a semver — a stubbed string here would let a cell pass
+  // on a value the schema would refuse in production.
+  getAgentQaVersion: actual.getAgentQaVersion,
   parseAllTests: mockParseAllTests,
   parseAllTestBindings: vi.fn(async (filePaths: string[]) => {
     const result = await mockParseAllTests(filePaths)
@@ -450,7 +465,6 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   }),
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
   createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
-  createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber,
   resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
     resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
   generateRunId: mockGenerateRunId,
@@ -2414,12 +2428,17 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    // 363-09 (D-16): analytics rides the bus now — the v1 AnalyticsRunReporter is replaced by the
-    // core-owned envelope subscriber, attached at the startRun site and flushed after session.done.
+    // 398-10 (D-17/D-20): the subscriber is built from the PORT this command composed at its root
+    // and is handed the trigger/runner the command already resolved — no `config` reaches it, and
+    // it reads no environment of its own. `surface` moved onto the standard properties, where it is
+    // stamped once for every event of the invocation rather than per subscriber.
     expect(mockCreateAnalyticsRunSubscriber).toHaveBeenCalledWith(expect.objectContaining({
-      config: expect.objectContaining({ workspace: expect.any(Object) }),
-      surface: 'cli',
+      port: expect.objectContaining({ capture: expect.any(Function) }),
+      triggerSource: 'cli',
+      runner: 'local',
+      standardProperties: expect.objectContaining({ surface: 'cli' }),
     }))
+    expect(mockCreateAnalyticsRunSubscriber.mock.calls[0]?.[0]).not.toHaveProperty('config')
     expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
     expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
   })
@@ -2462,11 +2481,11 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    // 363-09 (D-16): the suite path attaches the analytics bus subscriber at the run-level startRun
-    // site (no reporter threaded into executeSuiteMember's config — the runner emits envelopes now).
+    // 363-09 (D-16) / 398-10: the suite path attaches the same subscriber at the run-level startRun
+    // site, built by the SAME factory over the SAME composed port as the direct path (Pitfall 8).
     expect(mockCreateAnalyticsRunSubscriber).toHaveBeenCalledWith(expect.objectContaining({
-      config: expect.objectContaining({ workspace: expect.any(Object) }),
-      surface: 'cli',
+      port: expect.objectContaining({ capture: expect.any(Function) }),
+      standardProperties: expect.objectContaining({ surface: 'cli' }),
     }))
     expect(mockRunMemberTest).toHaveBeenCalled()
     expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
@@ -2491,6 +2510,20 @@ describe('run command — reporter integration', () => {
       }),
     }))
     expect(exitSpy).toHaveBeenCalledWith(exitCode)
+  })
+
+  it('composes analytics ONCE for a --all invocation — both subscribers hold the same port (D-19)', async () => {
+    // THE CLAIM IS OBJECT IDENTITY, not "both were configured the same way". `--all` drives the
+    // suite path and then the direct path in one process; a rewire that composed at each attach
+    // site would produce two ports, two opt-out decisions and two identity resolutions, and every
+    // property assertion in this file would still pass. Only the identity check sees it.
+    const { configPath } = await setupAllRun()
+
+    await runCommandWithGlobalArgs(['--config', configPath], '--all')
+
+    const ports = mockCreateAnalyticsRunSubscriber.mock.calls.map((call) => call[0].port)
+    expect(ports).toHaveLength(2)
+    expect(ports[0]).toBe(ports[1])
   })
 
   it('prints the update notice once after --all suites and direct tests finish', async () => {

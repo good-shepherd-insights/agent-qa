@@ -45,6 +45,7 @@ import type {
   AnalyticsRunStandardProperties,
   AnalyticsTransport,
   AnalyticsTransportKind,
+  PosthogTransportFactory,
 } from '@vostride/agent-qa-analytics'
 import { getAgentQaVersion } from '@vostride/agent-qa-core'
 
@@ -63,14 +64,28 @@ export interface ComposeAnalyticsHostInput {
   /** This host's environment slice. Defaults to `process.env`; passed in so a cell can drive it. */
   env?: Readonly<Record<string, string | undefined>>
   /**
-   * The run/session masking context, when the host already built one.
+   * The run/session masking context, when the host already has one AT COMPOSITION TIME.
    *
-   * Handed straight through to the package's send seam. A host never masks an event itself — that
-   * would be a second masking site, and the seam exists so there is one.
+   * Most do not: a run's masking context is seeded from that run's secret store and captured auth
+   * state, which do not exist when the command's composition root runs. `bindMaskingContext` on the
+   * returned host is how the seam learns about it later — see the note there.
+   *
+   * Either way the host never masks an event itself. That would be a second masking site, and the
+   * package's send seam exists so there is exactly one.
    */
   maskingContext?: AnalyticsMaskingContext
   /** Cell seam: replaces the transport on the opted-IN arm only (the package's own rule). */
   transportOverride?: AnalyticsTransport
+  /**
+   * Cell seams that drive the SHIPPED send path rather than a stand-in beside it.
+   *
+   * `transportOverride` above replaces the transport wholesale, which also replaces the masking
+   * seam that lives inside it — fine for a cell asserting attribution, useless for one asserting
+   * masking. These two let a cell construct the real `PosthogTransport` over a fake client, so the
+   * seam being measured is the one a user's events cross.
+   */
+  projectKey?: string
+  posthogTransportFactory?: PosthogTransportFactory
   /** Cell seam: replaces the identity resolution so a suite never touches a real home directory. */
   resolveIdentity?: typeof resolveAnalyticsIdentity
 }
@@ -88,6 +103,19 @@ export interface CliAnalyticsHost {
   readonly optedOut: boolean
   readonly optOutReasons: readonly AnalyticsOptOutReason[]
   readonly transportKind: AnalyticsTransportKind
+  /**
+   * Point the send seam at this invocation's masking context, once it exists.
+   *
+   * THE SEAM IS INSTALLED AT COMPOSITION AND ONLY ITS TARGET MOVES. The transport is handed a
+   * forwarding context whose `mask` reads whatever is bound at CALL time, so an event emitted
+   * before anything is bound passes through unmasked (there is nothing seeded to mask it with) and
+   * every event after is masked by the run's real context. The alternative — composing analytics
+   * late enough to have the masker — would put the opt-out decision after the work it governs.
+   *
+   * Binding twice replaces the target rather than layering: a process has one live run masking
+   * context at a time, and two would be two answers to "what is a secret here".
+   */
+  bindMaskingContext(context: AnalyticsMaskingContext): void
   flush(): Promise<void>
   shutdown(): Promise<void>
 }
@@ -104,12 +132,19 @@ export async function composeAnalyticsHost(
   // Assigned below, before anything can capture: the port resolves the identity lazily, at the
   // first `capture()`, and there is no capture between this line and the assignment.
   let identity: AnalyticsIdentity = ANONYMOUS_ANALYTICS_IDENTITY
+  let masking: AnalyticsMaskingContext | undefined = input.maskingContext
 
   const composed = composeAnalytics<AgentQaAnalyticsEvent>({
     env: input.env ?? process.env,
     ...(input.config === undefined ? {} : { config: input.config }),
-    ...(input.maskingContext === undefined ? {} : { maskingContext: input.maskingContext }),
+    // The forwarding seam — see `bindMaskingContext`. Always supplied, so the send path's masking
+    // call exists from the first event whether or not anything has been seeded yet.
+    maskingContext: { mask: (text) => masking?.mask(text) ?? text },
     ...(input.transportOverride === undefined ? {} : { transportOverride: input.transportOverride }),
+    ...(input.projectKey === undefined ? {} : { projectKey: input.projectKey }),
+    ...(input.posthogTransportFactory === undefined
+      ? {}
+      : { posthogTransportFactory: input.posthogTransportFactory }),
     identity: () => identity,
   })
 
@@ -120,7 +155,15 @@ export async function composeAnalyticsHost(
     $process_person_profile: false,
   }
 
-  if (!composed.optedOut) {
+  // THE GATE IS "IS THERE A TRANSPORT THAT SENDS", NOT MERELY "DID THEY OPT OUT".
+  //
+  // A checkout with a blank project key composes a `noop` transport while reporting `optedOut:
+  // false` — deliberately, because a developer who never configured PostHog is not a user who
+  // declined tracking. But the file this resolution WRITES is real either way, and the v1 module
+  // never wrote it in that state: its `disabled` flag was `privacy || no project key`, so
+  // `capture()` returned before any identity existed. Gating on the transport keeps that exact
+  // behaviour — an identity is minted when, and only when, something is going to send it.
+  if (composed.transportKind === 'posthog') {
     const resolve = input.resolveIdentity ?? resolveAnalyticsIdentity
     const resolved = await resolve({ env: { ...(input.env ?? process.env) } })
     identity = {
@@ -137,6 +180,9 @@ export async function composeAnalyticsHost(
     optedOut: composed.optedOut,
     optOutReasons: composed.optOutReasons,
     transportKind: composed.transportKind,
+    bindMaskingContext: (context) => {
+      masking = context
+    },
     flush: () => composed.port.flush(),
     shutdown: () => composed.port.shutdown(),
   }

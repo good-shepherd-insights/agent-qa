@@ -217,7 +217,7 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
     'utf8',
   )
 
-  it('exports exactly the four presentation symbols and nothing else', () => {
+  it('exports exactly the presentation symbols and nothing else', () => {
     const declared = [...moduleSource.matchAll(/^export (?:async )?(?:function|const|interface|type|class)\s+(\w+)/gm)]
       .map(match => match[1])
       .sort()
@@ -225,6 +225,12 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
     expect(declared).toEqual([
       'AttachRunSubscribersInput',
       'attachRunSubscribers',
+      // 2026-08-17 (398-10): the run-completion analytics subscriber factory. It belongs beside
+      // `attachRunSubscribers` for that helper's own reason — `run.ts` has two `startRun` sites
+      // (Pitfall 8), and a subscriber constructed separately at each is one that can be configured
+      // differently at each. It is presentation in the same sense the reporters are: something a
+      // host attaches to the bus and flushes, which a headless drainer would substitute.
+      'buildAnalyticsRunSubscriber',
       'buildRunSafetyHooks',
       'buildUnmaskingConfirm',
       'createLivePauseController',
