@@ -54,12 +54,12 @@ import {
 import type { AuthInfo } from '@modelcontextprotocol/server'
 import { buildAgentQaMcpServer, createAgentQaMcpNodeHandler } from '@vostride/agent-qa-mcp'
 import { buildRunMaskingContext } from '@vostride/agent-qa-agent-local'
-import { flushAnalytics } from '@vostride/agent-qa-core'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { dirname, resolve } from 'node:path'
 
+import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-host.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 import {
   DEFAULT_MCP_SCOPES,
@@ -303,6 +303,19 @@ export function createMcpCommand(): Command {
         const masking = composeMcpMasking({ tokens, env: process.env })
         const maskText = (text: string) => masking.mask(text)
 
+        // 398-10 (D-17/D-19/D-20): THIS COMMAND'S ANALYTICS COMPOSITION ROOT. Composed after the
+        // masking context above and pointed at it immediately, because this process's declared
+        // credentials are exactly the values that must never ride an event off the machine.
+        //
+        // `config` may be `undefined` here — the read above is tolerant on purpose — and that is a
+        // real posture rather than a gap: with no config there is no `analytics.privacy` to honour,
+        // and `DO_NOT_TRACK` is read inside `composeAnalytics` either way.
+        const analytics = await composeAnalyticsHost({
+          surface: 'mcp',
+          ...(config === undefined ? {} : { config }),
+          maskingContext: { mask: maskText },
+        })
+
         const host = composeCliLocalAgent({
           agentQaRoot,
           configPath,
@@ -319,25 +332,51 @@ export function createMcpCommand(): Command {
           // daemon. Supplying one here would be a second transport for one job (D-09).
         })
 
+        const overHttp = options.http !== undefined && options.http !== false
+        const mcpTransport = overHttp ? 'http' as const : 'stdio' as const
+        // The lifecycle pair is emitted from ONE place for each half, and `onServing` is what makes
+        // the `started` half a fact rather than an intention: it fires where each serving entry
+        // writes its own startup line — after the socket is bound / the stdio entry is live — so an
+        // `agent-qa mcp` that failed to bind reports nothing rather than a server that never was.
+        const emitLifecycle = (state: 'started' | 'stopped'): void => {
+          analytics.port.capture(analyticsEvent(analytics, 'agent-qa.mcp.server.lifecycle', {
+            mcp_server_state: state,
+            mcp_transport: mcpTransport,
+            // `mcp_tool_count` is DELIBERATELY ABSENT and the field stays optional for this reason.
+            // How many tools exist is `visibleToCaller`'s verdict, computed inside
+            // `buildAgentQaMcpServer` per caller — and under HTTP there is one instance per REQUEST,
+            // so there is no single number for the process. Counting here would mean re-running the
+            // visibility law outside the file that owns it: a second census of a security rule, to
+            // put a number on a chart. Retune: when the builder reports its own registered count,
+            // that number can ride here.
+          }))
+        }
+
         try {
-          if (options.http !== undefined && options.http !== false) {
+          if (overHttp) {
             await serveOverHttp({
-              port: httpPort(options.http),
+              port: httpPort(options.http as string | boolean),
               registry: host.registry,
               maskText,
               tokens,
+              onServing: () => emitLifecycle('started'),
             })
           } else {
             await serveOverStdio({
               registry: host.registry,
               maskText,
               grantConfigWrite: config?.services?.mcp?.stdio?.grantConfigWrite === true,
+              onServing: () => emitLifecycle('started'),
             })
           }
         } finally {
+          emitLifecycle('stopped')
           await host.close().catch(() => {})
           masking.dispose()
-          await flushAnalytics(config ? { config } : undefined).catch(() => {})
+          // The PORT's shutdown, not an ambient `flushAnalytics({ config })`. The v1 call drained a
+          // process-global service this command never captured through; this one drains the object
+          // this command composed, and releases the transport's timers so the process can exit.
+          await analytics.shutdown()
         }
       } catch (err) {
         console.error(
@@ -365,6 +404,8 @@ async function serveOverStdio(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
   grantConfigWrite: boolean
+  /** Fired once the entry is live — see the lifecycle note at the call site. */
+  onServing?: () => void
 }): Promise<void> {
   // D-07's second half: stdio has no header to carry an exception, so `config-write` arrives only
   // through the config opt-in, which defaults to false.
@@ -377,6 +418,7 @@ async function serveOverStdio(input: {
   // stderr, never stdout — see the file header. Written after the serving entry is live so the line
   // is a fact about a running server rather than an intention.
   process.stderr.write(`${MCP_STDIO_STARTUP_MESSAGE}\n`)
+  input.onServing?.()
   // The process serves until its stdin closes, which is how a spawning client stops it.
   await new Promise<void>((settle) => {
     process.stdin.once('end', () => settle())
@@ -390,6 +432,8 @@ async function serveOverHttp(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
   tokens: readonly ResolvedMcpToken[]
+  /** Fired once the socket is bound — see the lifecycle note at the call site. */
+  onServing?: () => void
 }): Promise<void> {
   const server = createServer(
     createMcpHttpRequestListener({
@@ -414,6 +458,7 @@ async function serveOverHttp(input: {
     `agent-qa MCP server listening on http://${MCP_HTTP_BIND_HOST}:${bound}/. `
     + `Stateless: one server instance per request, no session id.\n`,
   )
+  input.onServing?.()
   await new Promise<void>((settle) => {
     process.once('SIGINT', () => settle())
     process.once('SIGTERM', () => settle())

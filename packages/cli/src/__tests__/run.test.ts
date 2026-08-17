@@ -78,7 +78,12 @@ const {
   }
   return {
     mockAnalyticsRunSubscriberInstance: analyticsRunSubscriber,
-    mockCreateAnalyticsRunSubscriber: vi.fn(function () { return analyticsRunSubscriber }),
+    // 398-10: the options argument is TYPED because two cells read it — the port-identity check
+    // for `--all` needs `calls[n][0].port`, and an untyped `vi.fn()` records a zero-length tuple
+    // that `tsc` refuses to index (vitest's own typecheck lane does not see this file's calls).
+    mockCreateAnalyticsRunSubscriber: vi.fn(function (_options: { port: unknown }) {
+      return analyticsRunSubscriber
+    }),
     mockDashboardRunIngestInstance: dashboardRunIngest,
     mockCreateDashboardRunIngest: vi.fn(function () { return dashboardRunIngest }),
     mockGlob: vi.fn(),
