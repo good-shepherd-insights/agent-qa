@@ -99,3 +99,84 @@ describe('the transport lifecycle on ONE composition (398-15, CR-01)', () => {
     expect(client.counts).toEqual({ capture: 0, flush: 0, shutdown: 0 })
   })
 })
+
+// The shutdown TIME BOUND (Phase 398 security gate, T-398-35 · review WR-02).
+//
+// WHY THIS EXISTS. T-398-35 is the high-severity DoS "`agent-qa run` exiting while holding a live
+// client with an armed flush". Plan 15 mitigated it by draining at every terminal exit — and the
+// drain was `await composedAnalytics.shutdown()` with NO bound, which routes to the port's
+// `shutdown` below. posthog-node's own `shutdown` defaults to a 30 000 ms wait and races retriable
+// flushes against it, so on a released build an offline or proxied machine held every
+// `agent-qa run` at exit for up to half a minute, the error path included. The mitigation had
+// re-admitted the threat class it closed, one layer down.
+//
+// The bound lives HERE, at the port, and not at `run.ts`'s drain, because the port is the choke
+// point every host's shutdown already funnels through (run, chat, daemon, mcp, init). A bound at
+// the drain would protect the one door that was named in the review and leave the other four
+// hosts holding an unbounded await.
+//
+// A client that never resolves is the acceptance bar rather than a slow one: a threshold cell
+// against a slow client measures the threshold, while a cell against a client that NEVER settles
+// can only pass if the bound genuinely releases the caller.
+describe('the port bounds its own shutdown (T-398-35 / WR-02)', () => {
+  function hangingClient(): PosthogAnalyticsClient & { counts: { shutdown: number } } {
+    const counts = { shutdown: 0 }
+    return {
+      counts,
+      capture() {},
+      flush() {},
+      shutdown() {
+        counts.shutdown += 1
+        // Never settles. A real client does this whenever the network is unreachable and its
+        // retries are still pending.
+        return new Promise<void>(() => {})
+      },
+    }
+  }
+
+  it('returns from shutdown even when the client never settles', async () => {
+    const client = hangingClient()
+    const port = createAnalyticsPort({
+      transport: createPosthogTransport({ projectKey: 'phc_bound_cell', host: 'http://127.0.0.1:1', client }),
+      identity: () => ({ distinctId: 'u_bound-cell' }),
+      shutdownTimeoutMs: 250,
+    })
+    port.capture({ name: 'agent-qa.explain.answered', properties: {} } as never)
+
+    const startedAt = Date.now()
+    await port.shutdown()
+    const elapsed = Date.now() - startedAt
+
+    // The claim is release, and the budget is the evidence it was released rather than lucky.
+    expect(
+      elapsed,
+      `port.shutdown() took ${elapsed}ms against a client that never settles — the caller is still `
+      + 'held, so a terminal exit still waits on the network (T-398-35 / WR-02)',
+    ).toBeLessThan(3000)
+    // It still ASKED the client to wind down — the bound releases the caller, it does not skip
+    // the drain. Losing in-flight events to the bound is the trade; never attempting is not.
+    expect(client.counts.shutdown).toBe(1)
+  })
+
+  it('does not truncate a client that settles inside the budget', async () => {
+    const counts = { shutdown: 0 }
+    const prompt: PosthogAnalyticsClient = {
+      capture() {},
+      flush() {},
+      async shutdown() {
+        counts.shutdown += 1
+      },
+    }
+    const port = createAnalyticsPort({
+      transport: createPosthogTransport({ projectKey: 'phc_bound_cell', host: 'http://127.0.0.1:1', client: prompt }),
+      identity: () => ({ distinctId: 'u_bound-cell' }),
+      shutdownTimeoutMs: 250,
+    })
+    port.capture({ name: 'agent-qa.explain.answered', properties: {} } as never)
+
+    await port.shutdown()
+
+    // The control. Without it the cell above would pass on a port that skipped shutdown entirely.
+    expect(counts.shutdown).toBe(1)
+  })
+})

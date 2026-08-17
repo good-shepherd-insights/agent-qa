@@ -73,7 +73,22 @@ export interface AnalyticsPort<TEvent extends AnalyticsEventEnvelope = Analytics
 export interface AnalyticsPortOptions {
   readonly transport: AnalyticsTransport
   readonly identity: AnalyticsIdentityResolver
+  /**
+   * How long `shutdown` will wait for the transport before releasing its caller (T-398-35 / WR-02).
+   *
+   * A host calls `shutdown` on its way OUT — at a terminal exit, in a `finally`, on the error path.
+   * Whatever it waits for is time a person spends looking at a terminal that has already finished
+   * its work. posthog-node's own shutdown defaults to 30 000 ms and races retriable flushes against
+   * it, so an unreachable network turns a completed run into half a minute of dead prompt.
+   *
+   * The default is deliberately small. This is the LAST thing a process does; delivering the final
+   * batch is worth a couple of seconds and no more.
+   */
+  readonly shutdownTimeoutMs?: number
 }
+
+/** See `AnalyticsPortOptions.shutdownTimeoutMs`. */
+export const DEFAULT_ANALYTICS_SHUTDOWN_TIMEOUT_MS = 2_000
 
 /**
  * The only `AnalyticsPort` implementation, and the best-effort boundary itself.
@@ -86,12 +101,14 @@ export interface AnalyticsPortOptions {
 class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements AnalyticsPort<TEvent> {
   private readonly transport: AnalyticsTransport
   private readonly identity: AnalyticsIdentityResolver
+  private readonly shutdownTimeoutMs: number
   private inFlight: Promise<void>[] = []
   private capturedSinceFlush = 0
 
   constructor(options: AnalyticsPortOptions) {
     this.transport = options.transport
     this.identity = options.identity
+    this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_ANALYTICS_SHUTDOWN_TIMEOUT_MS
   }
 
   /**
@@ -151,11 +168,29 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
    * timer because the session happened to be silent" keeps a process alive.
    */
   async shutdown(): Promise<void> {
+    // THE TIME BOUND (T-398-35 / review WR-02). Everything below is still best-effort; what the
+    // race adds is that "best effort" cannot mean "forever". The transport is ASKED to wind down
+    // and given its budget — the bound releases the CALLER, it does not skip the drain, and events
+    // still in flight when the budget expires are lost exactly as the package's stated trade says.
+    //
+    // The timer is `unref`'d: a bound that itself keeps the event loop alive would hold the very
+    // exit it exists to release.
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      await this.flush()
-      await this.transport.shutdown()
+      await Promise.race([
+        (async () => {
+          await this.flush()
+          await this.transport.shutdown()
+        })(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, this.shutdownTimeoutMs)
+          if (typeof timer.unref === 'function') timer.unref()
+        }),
+      ])
     } catch {
       // Best-effort.
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
     }
   }
 }
