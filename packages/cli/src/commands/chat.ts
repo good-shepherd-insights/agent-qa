@@ -47,7 +47,7 @@ import {
   createChatCompleter,
 } from '../capability-catalog/chat-discovery.js'
 import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
-import { resolveConfig } from '../config.js'
+import { readAnalyticsPrivacyDeclaration, resolveConfig } from '../config.js'
 import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-host.js'
 import type { CliAnalyticsHost } from '../composition/analytics-host.js'
 import {
@@ -302,9 +302,15 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         } catch {
           config = undefined
         }
+        // F-1 / CR-01: a document that fails VALIDATION can still carry a privacy DECLARATION, and
+        // discarding it transmitted against a user who had set the flag. Reading is not validating,
+        // so the availability posture above is untouched — this cannot refuse the surface, it can
+        // only ever add an opt-out. Same path expression, so it reads the file the validator read.
+        const analyticsConfig = config
+          ?? await readAnalyticsPrivacyDeclaration(globalOptions(command).config)
         analytics = await (deps.composeAnalytics ?? composeAnalyticsHost)({
           surface: 'chat',
-          ...(config === undefined ? {} : { config }),
+          ...(analyticsConfig === undefined ? {} : { config: analyticsConfig }),
         })
 
         // CHAT-06, and the one place in this file that reaches a provider resolution — once, when

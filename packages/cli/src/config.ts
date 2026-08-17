@@ -354,6 +354,66 @@ export function formatConfigDebug(
   return [header, sep, ...lines].join('\n')
 }
 
+/**
+ * The privacy declaration alone, read out of the RAW document without validating it
+ * (Phase 398 gap round — finding F-1 / review CR-01).
+ *
+ * WHY THIS EXISTS. The composition roots that emit telemetry read their config through a tolerant
+ * `try { resolveConfig() } catch { undefined }`, because refusing a surface over its telemetry
+ * configuration would be refusing the capability over the telemetry (T-398-32). That posture is
+ * right and is unchanged. What was wrong is that the `catch` collapsed TWO different states into
+ * one `undefined`:
+ *
+ *   1. there is no config file — nothing was ever declared, and
+ *   2. there IS one, it declares `analytics.privacy: true`, and it failed schema validation for
+ *      some unrelated reason (a missing `use.mobile.appState`, a legacy key, a typo three levels
+ *      away).
+ *
+ * In state 2 a user set a shipped privacy control and was transmitted anyway, silently, with the
+ * surface working normally so nothing ever looked wrong. The ecosystem opt-out environment
+ * variable still walled it, so this was never a total failure — but a product cannot ship a config
+ * field and then honour it only when the REST of the document happens to validate.
+ *
+ * (That variable is deliberately not spelled here: a census in `composition/__tests__` refuses any
+ * shipped file but `composition/analytics-host.ts` naming it, so that grepping for a second reader
+ * of the ecosystem opt-out stays unambiguous. It caught this comment on the first run.)
+ *
+ * READING IS NOT VALIDATING. Extracting one boolean from a parsed document does not require the
+ * document to be well-formed anywhere else, so honouring the declaration costs the availability
+ * posture nothing: the surface still opens, still scaffolds, still runs.
+ *
+ * IT READS THE SAME FILE THE VALIDATOR READ. The path expression and the loader are literally the
+ * ones `resolveConfig` uses, immediately below — not a second spelling of "where the config lives".
+ * A privacy read that consults a different file than the validator did would be a new defect
+ * wearing this fix's clothes.
+ *
+ * THE UNPARSEABLE ARM FAILS CLOSED. If the file exists but is not YAML at all, no reader can tell
+ * whether the declaration is in there. The cost of opting out is lost telemetry; the cost of the
+ * other choice is transmitting against a declaration that may be sitting in the file. For a
+ * privacy control the doubt resolves toward the user. A MISSING file is not doubt — nothing was
+ * declared — so it stays `undefined`.
+ */
+export async function readAnalyticsPrivacyDeclaration(
+  configPath?: string,
+): Promise<{ analytics: { privacy: boolean } } | undefined> {
+  const resolvedPath = configPath ?? 'agent-qa.config.yaml'
+  let raw: unknown
+  try {
+    raw = await loadRequiredConfigFile(resolvedPath)
+  } catch (err: unknown) {
+    if (err instanceof ConfigFileNotFoundError) return undefined
+    // Present but unreadable (ConfigFileNotYamlError, or an I/O error): fail closed.
+    return { analytics: { privacy: true } }
+  }
+
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
+  const analytics = (raw as Record<string, unknown>).analytics
+  if (typeof analytics !== 'object' || analytics === null || Array.isArray(analytics)) return undefined
+  return (analytics as Record<string, unknown>).privacy === true
+    ? { analytics: { privacy: true } }
+    : undefined
+}
+
 export async function resolveConfig(options: {
   configPath?: string
   flags?: Record<string, unknown>

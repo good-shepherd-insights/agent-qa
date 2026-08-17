@@ -967,7 +967,10 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         // scaffold over a telemetry read would be refusing the capability over the telemetry
         // (`mcp.ts`'s ratified try/catch). `resolveConfig` is imported lazily for the same measured
         // reason the analytics binding is — see the type-only import up top.
-        const { resolveConfig } = await import('../config.js')
+        // Both readers come from the SAME lazy import — the module-graph reason above applies to
+        // the pair, and taking them together also makes it structurally impossible for the raw
+        // privacy read to drift onto a different module than the validating read.
+        const { readAnalyticsPrivacyDeclaration, resolveConfig } = await import('../config.js')
         let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
         try {
           config = await resolveConfig({
@@ -977,9 +980,13 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         } catch {
           config = undefined
         }
+        // F-1 / CR-01, at init's root: see the note at chat.ts's composition. `analyticsConfigPath`
+        // is reused verbatim, so the declaration is read from the same file this action already
+        // decided its config lives in — including the `--config` case.
+        const analyticsConfig = config ?? await readAnalyticsPrivacyDeclaration(analyticsConfigPath)
         const analytics = await (hooks.composeAnalytics ?? composeAnalyticsHost)({
           surface: 'cli',
-          ...(config === undefined ? {} : { config }),
+          ...(analyticsConfig === undefined ? {} : { config: analyticsConfig }),
         })
         try {
           const createdCount = results.filter((result) => result.outcome === 'created').length

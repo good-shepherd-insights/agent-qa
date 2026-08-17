@@ -80,6 +80,52 @@ function fixtureProject(
   return { dir, configPath }
 }
 
+/**
+ * A project whose config DECLARES privacy and is REJECTED by `resolveConfig` for an unrelated
+ * reason (Phase 398 gap round, finding F-1 / review CR-01).
+ *
+ * `use.mobile.appState` is omitted deliberately — that is the exact rejection `fixtureProject`'s
+ * own header records as measured (`use.mobile.appState is required and must be one of:
+ * preserve | reset`), so this fixture reaches the tolerant read's failure branch by the same door
+ * a real user's typo does, rather than by a rejection invented for the cell.
+ *
+ * The declaration itself is untouched and unambiguous: `analytics.privacy: true` sits in the
+ * document exactly where the shipped schema puts it. The whole question is whether a root that
+ * cannot VALIDATE the document is still able to READ that one boolean.
+ */
+function invalidConfigDeclaringPrivacy(
+  roots: string[],
+  options: { readonly privacy?: boolean; readonly unparseable?: boolean } = {},
+): { dir: string; configPath: string } {
+  const dir = mkdtempSync(join(tmpdir(), 'agent-qa-root-optout-invalid-'))
+  roots.push(dir)
+  const configPath = join(dir, 'agent-qa.config.yaml')
+
+  if (options.unparseable === true) {
+    // Not YAML at all: the document exists but no reader can extract a declaration from it.
+    writeFileSync(configPath, 'workspace: [unclosed\n  : : :\n', 'utf8')
+    return { dir, configPath }
+  }
+
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      workspace: {
+        testMatch: ['tests/**/*.test.yaml'],
+        suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      // `use.mobile.appState` OMITTED — this is what makes `resolveConfig` throw.
+      use: { mobile: {} },
+      ...(options.privacy === true ? { analytics: { privacy: true } } : {}),
+    })}\n`,
+    'utf8',
+  )
+  return { dir, configPath }
+}
+
 interface RecordedComposition {
   /** Exactly what the ROOT handed the binding. The argument is what is under measurement. */
   readonly inputs: ComposeAnalyticsHostInput[]
@@ -225,6 +271,62 @@ describe('the chat composition root honours analytics.privacy (398-14, D-19)', (
     expect(recorder.hosts).toHaveLength(1)
     expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
   })
+
+  // ── Finding F-1 / review CR-01 (Phase 398 gap round) ──────────────────────────────────────
+  //
+  // The tolerant read collapsed TWO states into one `undefined`: "there is no config" and "there
+  // is a config, it declares privacy, and it failed validation for an unrelated reason". The
+  // second is a user who set a shipped privacy control and was transmitted anyway, silently.
+  //
+  // Availability is NOT the thing being traded here, and these cells assert that too: the session
+  // still opens on a document that cannot be validated. Reading one boolean out of a document is
+  // not the same act as validating it, and only the second one was ever failing.
+
+  it('honours analytics.privacy: true even when the config FAILS validation (F-1)', async () => {
+    const { configPath } = invalidConfigDeclaringPrivacy(roots, { privacy: true })
+    const recorder = recordingCompose()
+
+    const result = await runChat(configPath, ['/quit'], { composeAnalytics: recorder.compose })
+
+    expect(recorder.hosts).toHaveLength(1)
+    const host = recorder.hosts[0]
+    expect(
+      host?.optOutReasons,
+      `${CHAT_ROOT} composed a host that does not report the config opt-out reason, on a config `
+      + 'that DECLARES analytics.privacy: true and merely fails schema validation for an '
+      + 'unrelated reason. The declaration was discarded and telemetry was composed against it.',
+    ).toContain('config-privacy')
+    expect(host?.transportKind).toBe('noop')
+    // And the surface still opened — the fix reads the document, it does not start refusing it.
+    expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
+  })
+
+  it('does NOT report the config reason when an INVALID config declares no privacy (F-1 control)', async () => {
+    const { configPath } = invalidConfigDeclaringPrivacy(roots)
+    const recorder = recordingCompose()
+
+    await runChat(configPath, ['/quit'], { composeAnalytics: recorder.compose })
+
+    // The discriminator. Without this arm the cell above would pass on a root that opted every
+    // invalid config out — which would honour nothing and merely break telemetry.
+    expect(recorder.hosts).toHaveLength(1)
+    expect(recorder.hosts[0]?.optOutReasons).not.toContain('config-privacy')
+    expect(recorder.hosts[0]?.transportKind).toBe('posthog')
+  })
+
+  it('fails CLOSED when a config file exists but cannot be parsed at all (F-1)', async () => {
+    const { configPath } = invalidConfigDeclaringPrivacy(roots, { unparseable: true })
+    const recorder = recordingCompose()
+
+    const result = await runChat(configPath, ['/quit'], { composeAnalytics: recorder.compose })
+
+    // A document we cannot read MIGHT carry the declaration. The cost of opting out is lost
+    // telemetry; the cost of the other choice is transmitting against a declaration that may be
+    // sitting right there. For a privacy control the doubt resolves toward the user.
+    expect(recorder.hosts).toHaveLength(1)
+    expect(recorder.hosts[0]?.optOutReasons).toContain('config-privacy')
+    expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
+  })
 })
 
 const INIT_ROOT = 'packages/cli/src/commands/init.ts'
@@ -289,6 +391,41 @@ describe('the init composition root honours analytics.privacy (398-14, D-19)', (
     expect(host?.optOutReasons).not.toContain('config-privacy')
     expect(host?.optedOut).toBe(false)
     expect(host?.transportKind).toBe('posthog')
+  })
+
+  // Finding F-1 / review CR-01, at the second root. `init` matters here for a reason chat does
+  // not: it is frequently the FIRST command a user runs against a directory they have just hand-
+  // edited, which is exactly when a config is most likely to be both privacy-declaring and
+  // schema-invalid.
+  it('honours analytics.privacy: true even when the config FAILS validation (F-1)', async () => {
+    const { dir } = invalidConfigDeclaringPrivacy(roots, { privacy: true })
+    const recorder = recordingCompose()
+
+    const result = await runInit(dir, { composeAnalytics: recorder.compose })
+
+    expect(recorder.hosts).toHaveLength(1)
+    const host = recorder.hosts[0]
+    expect(
+      host?.optOutReasons,
+      `${INIT_ROOT} composed a host that does not report the config opt-out reason, on a config `
+      + 'that DECLARES analytics.privacy: true and merely fails schema validation for an '
+      + 'unrelated reason. The declaration was discarded and init events were composed against it.',
+    ).toContain('config-privacy')
+    expect(host?.optedOut).toBe(true)
+    expect(host?.transportKind).toBe('noop')
+    // Availability half: it still scaffolded.
+    expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
+  })
+
+  it('does NOT report the config reason when an INVALID config declares no privacy (F-1 control)', async () => {
+    const { dir } = invalidConfigDeclaringPrivacy(roots)
+    const recorder = recordingCompose()
+
+    await runInit(dir, { composeAnalytics: recorder.compose })
+
+    expect(recorder.hosts).toHaveLength(1)
+    expect(recorder.hosts[0]?.optOutReasons).not.toContain('config-privacy')
+    expect(recorder.hosts[0]?.transportKind).toBe('posthog')
   })
 
   it('still scaffolds and still emits in a FRESH directory with no config yet', async () => {
