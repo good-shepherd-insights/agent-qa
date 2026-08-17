@@ -7,17 +7,26 @@ export const publicPackageNames = [
   '@vostride/agent-qa-schema',
   '@vostride/agent-qa-safety',
   '@vostride/agent-qa-runner',
+  '@vostride/agent-qa-runner-local',
+  '@vostride/agent-qa-eval',
   '@vostride/agent-qa-agent',
   '@vostride/agent-qa-model',
   '@vostride/agent-qa-agent-local',
   '@vostride/agent-qa-knowledge-local',
   '@vostride/agent-qa-tools-local',
   '@vostride/agent-qa-safety-local',
+  '@vostride/agent-qa-eval-local',
   '@vostride/agent-qa-core',
   '@vostride/agent-qa-web',
   '@vostride/agent-qa-android',
   '@vostride/agent-qa-ios',
   '@vostride/agent-qa-mcp',
+  // 2026-08-17 (Phase 398 plan 11): after `mcp`, which it depends on. `packages/analytics` has
+  // shipped `"private": false` with public publishConfig since 398-06 and the published `agent-qa`
+  // binary depends on it, so leaving it out of the order published a CLI whose install could not
+  // resolve. `eval`, `eval-local` and `runner-local` above are the same pre-existing defect, older
+  // and unrelated to this phase; all four are placed after every internal dependency they declare.
+  '@vostride/agent-qa-analytics',
   '@vostride/agent-qa-dashboard-ui',
   '@vostride/agent-qa-dashboard',
   'agent-qa',

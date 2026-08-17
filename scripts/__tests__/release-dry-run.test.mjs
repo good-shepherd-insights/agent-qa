@@ -55,6 +55,7 @@ test('builds a non-mutating patch release dry-run plan', () => {
   assert.equal(plan.npm.publishCommands.at(-1).package, 'agent-qa')
   assert.equal(plan.npm.publishCommands.at(-1).command, 'npm publish --access public')
   assert.equal(plan.posthog.requiredSecret, 'POSTHOG_PROJECT_KEY')
+  assert.equal(plan.posthog.generatedFile, 'packages/analytics/src/posthog-project.ts')
   assert.match(plan.posthog.preview, /\[redacted POSTHOG_PROJECT_KEY\]/)
   assert.doesNotMatch(plan.posthog.preview, /POSTHOG_TEST_PROJECT_KEY_PLACEHOLDER/)
   assert.equal(plan.docker.images.length, 6)

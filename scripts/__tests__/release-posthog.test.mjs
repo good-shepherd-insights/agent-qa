@@ -12,14 +12,17 @@ import {
   validatePosthogReleaseArtifacts,
 } from '../release/posthog.mjs'
 
-function createPosthogFixture(rootDir, distKey = 'phc_test_key', packagePath = 'packages/core') {
-  const sourceDir = join(rootDir, packagePath, 'src/analytics')
+// 398-11 (D-20): the fixture builds the key artifacts at the analytics package's paths, because
+// that is where the release now writes and validates them. `compose.ts` stands in for the source
+// the validator reads — the composition root that owns both the baked key and the deny arm.
+function createPosthogFixture(rootDir, distKey = 'phc_test_key', packagePath = 'packages/analytics') {
+  const sourceDir = join(rootDir, packagePath, 'src')
   const distDir = join(rootDir, packagePath, 'dist')
   mkdirSync(sourceDir, { recursive: true })
   mkdirSync(distDir, { recursive: true })
   writeFileSync(
-    join(sourceDir, 'service.ts'),
-    'import { NoopAnalyticsTransport } from "./transport.js"\nexport const marker = "noop transport stays local"\n',
+    join(sourceDir, 'compose.ts'),
+    'import { NoopTransport } from "./transports.js"\nexport const marker = "the deny arm stays local"\n',
   )
   const runtimeText = `var AGENT_QA_POSTHOG_KEY = "${distKey}"\nvar AGENT_QA_POSTHOG_HOST = "https://us.i.posthog.com"\n`
   writeFileSync(join(distDir, 'index.js'), runtimeText)
@@ -57,15 +60,15 @@ test('validates built PostHog release artifacts and raw secret leakage', async (
   }
 })
 
-test('validates staged core package PostHog runtime artifacts', async () => {
+test('validates staged analytics package PostHog runtime artifacts', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'agent-qa-release-posthog-staged-root-'))
   const stagedDir = await mkdtemp(join(tmpdir(), 'agent-qa-release-posthog-staged-packages-'))
   try {
     createPosthogFixture(rootDir)
-    createPosthogFixture(stagedDir, 'phc_test_key', 'core')
+    createPosthogFixture(stagedDir, 'phc_test_key', 'analytics')
     assert.doesNotThrow(() => validatePosthogReleaseArtifacts({ rootDir, stagedDir, projectKey: 'phc_test_key' }))
 
-    createPosthogFixture(stagedDir, '', 'core')
+    createPosthogFixture(stagedDir, '', 'analytics')
     assert.throws(() => validatePosthogReleaseArtifacts({ rootDir, stagedDir, projectKey: 'phc_test_key' }), /PostHog dist key is empty/)
   } finally {
     await rm(rootDir, { recursive: true, force: true })
@@ -85,7 +88,7 @@ test('parses and dispatches node scripts/release/posthog.mjs --write', async () 
       env: { POSTHOG_PROJECT_KEY: 'phc_test_key' },
       log: () => {},
     })
-    const target = join(rootDir, 'packages/core/src/analytics/posthog-project.ts')
+    const target = join(rootDir, 'packages/analytics/src/posthog-project.ts')
     assert.equal(existsSync(target), true)
     assert.match(readFileSync(target, 'utf8'), /AGENT_QA_POSTHOG_KEY = "phc_test_key"/)
     assert.match(readFileSync(target, 'utf8'), /AGENT_QA_POSTHOG_HOST = "https:\/\/us\.i\.posthog\.com"/)

@@ -83,7 +83,7 @@ export function buildReleaseDryRunPlan(options = {}) {
     },
     posthog: {
       requiredSecret: 'POSTHOG_PROJECT_KEY',
-      generatedFile: 'packages/core/src/analytics/posthog-project.ts',
+      generatedFile: 'packages/analytics/src/posthog-project.ts',
       preview: redactedPosthogPreview(projectKey),
       secretValueIncluded: false,
     },

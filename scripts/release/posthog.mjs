@@ -1,8 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+// 2026-08-17 (Phase 398 plan 11, D-20): the generated key file moved out of
+// core's deleted analytics module and into `packages/analytics/`, together with the transport that
+// reads it. Every path below moved in the same change — a release that writes the key into a file
+// nothing imports leaves the shipped binary silently keyless, and no build step would say so.
 const host = 'https://us.i.posthog.com'
-const coreRuntimeArtifacts = [
+const keyFilePath = 'packages/analytics/src/posthog-project.ts'
+const analyticsRuntimeArtifacts = [
   'dist/index.js',
   'dist/index.cjs',
 ]
@@ -23,11 +28,11 @@ export function redactSecret(value) {
 export async function writePosthogProjectFile(options = {}) {
   const rootDir = options.rootDir ?? process.cwd()
   const projectKey = options.projectKey ?? options.env?.POSTHOG_PROJECT_KEY ?? process.env.POSTHOG_PROJECT_KEY
-  const target = join(rootDir, 'packages/core/src/analytics/posthog-project.ts')
+  const target = join(rootDir, keyFilePath)
   const content = renderPosthogProjectFile(projectKey)
   mkdirSync(dirname(target), { recursive: true })
   writeFileSync(target, content, 'utf8')
-  ;(options.log ?? console.log)(`Wrote packages/core/src/analytics/posthog-project.ts with ${redactSecret(projectKey)}`)
+  ;(options.log ?? console.log)(`Wrote ${keyFilePath} with ${redactSecret(projectKey)}`)
   return target
 }
 
@@ -39,9 +44,9 @@ function validateRuntimeArtifact(path, projectKey) {
   if (!distText.includes(projectKey)) throw new Error(`PostHog dist key does not match POSTHOG_PROJECT_KEY: ${path}`)
 }
 
-function corePackageRoots(rootDir, stagedDir) {
-  const roots = [join(rootDir, 'packages/core')]
-  if (stagedDir) roots.push(join(stagedDir, 'core'))
+function analyticsPackageRoots(rootDir, stagedDir) {
+  const roots = [join(rootDir, 'packages/analytics')]
+  if (stagedDir) roots.push(join(stagedDir, 'analytics'))
   return roots
 }
 
@@ -50,18 +55,21 @@ export function validatePosthogReleaseArtifacts(options = {}) {
   const projectKey = options.projectKey ?? options.env?.POSTHOG_PROJECT_KEY ?? process.env.POSTHOG_PROJECT_KEY
   if (!projectKey?.trim()) throw new Error('POSTHOG_PROJECT_KEY is required')
 
-  for (const packageRoot of corePackageRoots(rootDir, options.stagedDir)) {
-    for (const artifact of coreRuntimeArtifacts) {
+  for (const packageRoot of analyticsPackageRoots(rootDir, options.stagedDir)) {
+    for (const artifact of analyticsRuntimeArtifacts) {
       validateRuntimeArtifact(join(packageRoot, artifact), projectKey)
     }
   }
   if ((options.logText ?? '').includes(projectKey)) throw new Error('raw POSTHOG_PROJECT_KEY leaked in logs')
 
-  const servicePath = join(rootDir, 'packages/core/src/analytics/service.ts')
-  if (!existsSync(servicePath)) throw new Error('analytics service source is missing')
-  const serviceText = readFileSync(servicePath, 'utf8')
-  if (!serviceText.includes('NoopAnalyticsTransport')) throw new Error('analytics service must preserve NoopAnalyticsTransport')
-  if (serviceText.includes('process.env.AGENT_QA_POSTHOG_KEY')) {
+  // The opt-out arm and the build-time-only key, asserted on the composition root that now owns
+  // both. `compose.ts` is where the baked key is read and where the deny arm picks its transport,
+  // so it is the file whose regression would ship a release that always talks to PostHog.
+  const composePath = join(rootDir, 'packages/analytics/src/compose.ts')
+  if (!existsSync(composePath)) throw new Error('analytics composition source is missing')
+  const composeText = readFileSync(composePath, 'utf8')
+  if (!composeText.includes('NoopTransport')) throw new Error('analytics composition must preserve NoopTransport')
+  if (composeText.includes('process.env.AGENT_QA_POSTHOG_KEY')) {
     throw new Error('analytics runtime must not read process.env.AGENT_QA_POSTHOG_KEY')
   }
 }
