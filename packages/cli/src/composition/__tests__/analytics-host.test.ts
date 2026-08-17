@@ -384,4 +384,46 @@ describe('the composition-root census (398-14, D-19 · ANLY-01)', () => {
     // Non-vacuity: the two assertions above are trivially true over an empty scan.
     expect(sites.length).toBe(PINNED_COMPOSITION_ROOTS.length)
   })
+
+  // ---- 398-15 (WR-06): THE RUN COMMAND'S DRAIN ------------------------------------------------
+  //
+  // A SOURCE-SHAPE DETECTOR, AND IT SAYS SO. The behavioural version would have to drive a full
+  // `agent-qa run` to a terminal `process.exit` inside a vitest worker and observe the composed
+  // client's shutdown count afterwards — a bigger instrument than this item warrants. What this
+  // cell buys is that the drain cannot be silently deleted: removing one awaited call reds here
+  // with the count named.
+  it("drains the memoised analytics host before the run action's terminal exits (398-15, WR-06)", () => {
+    const runCommand = shippedSourceFiles(CLI_SRC).find(
+      (file) => file.slice(CLI_SRC.length) === 'commands/run.ts',
+    )
+    expect(runCommand, 'commands/run.ts was not reached by the shipped source walk').toBeDefined()
+    const source = readFileSync(runCommand as string, 'utf8')
+
+    const declarations = source.match(/\bconst\s+drainAnalytics\s*=/gu) ?? []
+    const awaitedCalls = source.match(/\bawait\s+drainAnalytics\s*\(\s*\)/gu) ?? []
+
+    expect(
+      declarations.length,
+      'commands/run.ts must declare the once-only analytics drain `drainAnalytics` EXACTLY once — '
+      + `found ${declarations.length}. Two declarations mean two drains, and the once-only guard `
+      + 'stops being once-only.',
+    ).toBe(1)
+    // SCOPE, STATED IN THE MESSAGE ITSELF. The subject is the run ACTION's three terminal exits
+    // (the suite-only path, the verdict path, the catch). It is NOT "every process.exit in this
+    // file": run.ts carries ~28 of them, a dozen upstream of `executeSuites` where nothing is
+    // composed yet, plus FOUR cancellation exits this round knowingly leaves undrained —
+    // `run.ts:1184`/`:1187` inside `executeSuites`' shutdown controller and `run.ts:3483`/`:3486`
+    // inside the one the action installs. A message implying the file's exit set is complete would
+    // be false the moment a reader trusted it.
+    expect(
+      awaitedCalls.length,
+      'At least three of the run ACTION\'s terminal exits must await the once-only analytics drain '
+      + `\`await drainAnalytics()\` — found ${awaitedCalls.length}. This cell ranges the ACTION's `
+      + 'three terminal exits (the suite-only path, the verdict path, the catch) and NOT the file\'s '
+      + 'whole process.exit set: the four cancellation exits carried by the two shutdown '
+      + 'controllers are deliberately out of scope, because they are user-initiated cancels where '
+      + 'telemetry loss is the accepted failure direction and a drain awaited in a signal handler '
+      + 'would unbound Ctrl+C.',
+    ).toBeGreaterThanOrEqual(3)
+  })
 })
