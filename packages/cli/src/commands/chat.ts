@@ -47,6 +47,7 @@ import {
   createChatCompleter,
 } from '../capability-catalog/chat-discovery.js'
 import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
+import { resolveConfig } from '../config.js'
 import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-host.js'
 import type { CliAnalyticsHost } from '../composition/analytics-host.js'
 import {
@@ -275,13 +276,36 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         // returned. A listing composes no host and emits nothing, and composing here would resolve
         // the identity store for a read that never opened a conversation.
         //
-        // `config` is NOT read for this: chat resolves its configuration lazily through the masked
-        // reader inside the composition, and a second `resolveConfig` here to find one boolean
-        // would be a second config read on the open path. The ecosystem opt-out variable is
-        // honoured regardless (unspelled here on purpose — see the census in analytics-host.ts) —
-        // it is read inside `composeAnalytics`. RETUNE: when this surface has a resolved config in
-        // hand at open, pass it, and `analytics.privacy` starts being honoured here too.
-        analytics = await (deps.composeAnalytics ?? composeAnalyticsHost)({ surface: 'chat' })
+        // THE CONFIG IS READ HERE AND HANDED OVER (398-14, closing D-19's live hole). The earlier
+        // note here deferred this read as "a second config read on the open path", and that
+        // deferral WAS the defect: `analytics.privacy` is a shipped, user-settable field, and a
+        // root that composes without a config drops it silently while the decision that reads it
+        // stays correct one layer below. `daemon` and `mcp` already pay this same read at open.
+        //
+        // TOLERANT, on `mcp.ts`'s ratified posture: a project whose configuration will not resolve
+        // still gets a conversation. Refusing a surface over its telemetry configuration would be
+        // refusing the capability over the telemetry. `undefined` is then passed as ABSENT rather
+        // than as a hole, so the binding's own default posture applies.
+        //
+        // `loadAuthPlugins: false` because this read exists for one boolean: a telemetry read has
+        // no business executing a project's auth plugins as a side effect.
+        //
+        // The ecosystem opt-out variable is honoured regardless and is read inside
+        // `composeAnalytics` — deliberately unspelled in this file; see the census in
+        // `composition/analytics-host.ts`, which cannot tell prose from code and is stronger for it.
+        let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
+        try {
+          config = await resolveConfig({
+            configPath: globalOptions(command).config,
+            loadAuthPlugins: false,
+          })
+        } catch {
+          config = undefined
+        }
+        analytics = await (deps.composeAnalytics ?? composeAnalyticsHost)({
+          surface: 'chat',
+          ...(config === undefined ? {} : { config }),
+        })
 
         // CHAT-06, and the one place in this file that reaches a provider resolution — once, when
         // a conversation opens, after `--list` has already returned. It answers `undefined` on a
