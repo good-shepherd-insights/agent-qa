@@ -298,7 +298,46 @@ export function resolveClause(table: ChatResolverTable, clause: string): ChatRes
 }
 
 /**
- * What `/help` prints (Phase 392 plan 08, D-06).
+ * One line of `/help`, in a shape a census can read (Phase 398 plan 09).
+ *
+ * WHY THE ENTRIES ARE STRUCTURED AND THE STRING IS DERIVED. `CHAT_HELP_TEXT` used to be ten
+ * hand-aligned sentences, and a sentence is not something a test can join to anything: the only
+ * assertion available over it was a substring match somebody remembered to write. The fields below
+ * are the join keys — `alias` names the row of `CHAT_RESOLVER_TABLE` the line documents, and
+ * `syntax` is the FORM A PERSON TYPES, first token and all — so "the help text agrees with what
+ * chat understands" became a set comparison and "this line claims an argument is optional" became a
+ * probe of the shipped rule.
+ *
+ * THE CENSUS-TIE DECISION (398 plan 09, planned 2026-08-16, executed 2026-08-17 · D-01/SC-1).
+ * The discretion call was whether help re-derives from the committed capability catalog or stays
+ * here with a mechanical tie. It stays HERE. `packages/agent` is storage-neutral — it cannot read a
+ * committed artifact off disk without acquiring a filesystem dependency the whole package is built
+ * to not have — so re-deriving at runtime would move help out of the package that owns the
+ * vocabulary and into the one that ships bytes. The tie gives the same guarantee without the move:
+ * `packages/cli/src/__tests__/conformance/help-census.test.ts` set-equals these aliases against the
+ * catalog's alias rows plus the shipped directives plus the passthrough, in BOTH directions, so a
+ * help line with no capability behind it and a capability with no help line are each a named RED.
+ * The header's one-list law is unchanged; what changed is that it is now enforced rather than
+ * asked for.
+ */
+export interface ChatHelpEntry {
+  /** The `CHAT_RESOLVER_TABLE` row this line documents. The census's join key. */
+  readonly alias: string
+  /**
+   * What a person types, verbatim, including the leading `/` where there is one.
+   *
+   * `<angle>` marks a REQUIRED argument and `[square]` an optional one, and the distinction is
+   * load-bearing rather than typographic: a conformance cell reads it and drives the shipped rule
+   * with the bare verb, so a line promising that a verb works alone when the rule refuses it — the
+   * exact drift this plan found on `digest` — is a failure rather than a reading.
+   */
+  readonly syntax: string
+  /** What the line says the verb does. */
+  readonly summary: string
+}
+
+/**
+ * What `/help` prints, one entry per row of the table above (Phase 392 plan 08, D-06).
  *
  * IT LIVES BESIDE THE TABLE, and that is the point rather than the filing: the canon a person can
  * type is `CHAT_RESOLVER_TABLE`, and help text kept anywhere else would be a second list of what
@@ -306,17 +345,50 @@ export function resolveClause(table: ChatResolverTable, clause: string): ChatRes
  * because it is the reach lever — every registry op is one deterministic branch away, which is why
  * the alias set stays thin (D-06).
  */
+export const CHAT_HELP_ENTRIES: readonly ChatHelpEntry[] = Object.freeze([
+  Object.freeze({ alias: 'run', syntax: 'run <test>', summary: 'start a run for a test' }),
+  Object.freeze({ alias: 'status', syntax: 'status', summary: 'the recent runs' }),
+  Object.freeze({ alias: 'test-ref', syntax: 'test <n>', summary: 'show a test by reference' }),
+  // 2026-08-17 (398 plan 09): this line used to read `digest` / "the latest run digest", and both
+  // halves were false. The rule fifteen lines up requires a reference and treats a bare `digest` as
+  // a near-miss precisely so the table never guesses which run somebody meant — so the help text
+  // was advertising a guess the resolver refuses to make. The argument-contract cell in
+  // `help-census.test.ts` is what now holds the two together.
+  Object.freeze({ alias: 'digest', syntax: 'digest <run>', summary: "that run's digest" }),
+  Object.freeze({ alias: 'proposals', syntax: 'proposals', summary: 'the pending-decision inbox' }),
+  Object.freeze({
+    alias: 'fn',
+    syntax: '/fn <op> [json]',
+    summary: 'invoke any registered function by id — every capability, one branch',
+  }),
+  Object.freeze({
+    alias: 'model',
+    syntax: '/model <name>',
+    summary: 'switch the model for this session',
+  }),
+  Object.freeze({
+    alias: 'pin',
+    syntax: '/pin <class>',
+    summary: 'deny an action class for the rest of this session (never loosens)',
+  }),
+  Object.freeze({ alias: 'help', syntax: '/help', summary: 'this list' }),
+  Object.freeze({ alias: 'quit', syntax: '/quit', summary: 'end the session' }),
+] as const satisfies readonly ChatHelpEntry[])
+
+/** The column the summaries start in — a reading convenience, pinned once. */
+const HELP_SYNTAX_COLUMN = 20
+
+/**
+ * What `/help` prints, RENDERED from the entries rather than spelled a second time.
+ *
+ * The string is still the export `composeLocalAgent`'s directive handler returns, because a person
+ * types `/help` and reads sentences. What is gone is the possibility of the sentences and the join
+ * keys disagreeing: there is one list, and this is a projection of it.
+ */
 export const CHAT_HELP_TEXT = [
   'What I understand deterministically:',
-  '  run <test>          start a run for a test',
-  '  status              the recent runs',
-  '  test <n>            show a test by reference',
-  '  digest              the latest run digest',
-  '  proposals           the pending-decision inbox',
-  '  /fn <op> [json]     invoke any registered function by id — every capability, one branch',
-  '  /model <name>       switch the model for this session',
-  '  /pin <class>        deny an action class for the rest of this session (never loosens)',
-  '  /help               this list',
-  '  /quit               end the session',
+  ...CHAT_HELP_ENTRIES.map(
+    (entry) => `  ${entry.syntax.padEnd(HELP_SYNTAX_COLUMN)}${entry.summary}`,
+  ),
   'Anything else is planned by the model and reconciled against the table before anything runs.',
 ].join('\n')

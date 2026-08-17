@@ -265,7 +265,17 @@ export type {
   SuiteOutcomeHistoryPortLike,
 } from './authoring/funnel.js'
 export { createTurnEngine } from './chat/turn-engine.js'
-export { CHAT_HELP_TEXT, CHAT_RESOLVER_TABLE, resolveClause } from './chat/resolver-table.js'
+// 398 plan 09: `CHAT_DIRECTIVES` and `CHAT_HELP_ENTRIES` join the two that were already here
+// because the help ↔ catalog census lives in `packages/cli` and has to be able to NAME the three
+// classes a help line can belong to — a capability alias, a session directive, the passthrough —
+// without re-spelling any of them. Both are frozen data and neither dispatches anything.
+export {
+  CHAT_DIRECTIVES,
+  CHAT_HELP_ENTRIES,
+  CHAT_HELP_TEXT,
+  CHAT_RESOLVER_TABLE,
+  resolveClause,
+} from './chat/resolver-table.js'
 export { deterministicOverrideStrategy, unhandledReason } from './chat/reconcile.js'
 // 392 plan 10, D-16: the two halves of the dotted-id ↔ provider-safe tool-name mapping that a
 // reader of a MODEL PLAN needs. Published because plan 10's mutation proof composes the real host
@@ -401,6 +411,7 @@ export type {
 // one. `ChatDirectiveName` rides along because the entry union names it.
 export type {
   ChatDirectiveName,
+  ChatHelpEntry,
   ChatResolution,
   ChatResolverEntry,
   ChatResolverRule,

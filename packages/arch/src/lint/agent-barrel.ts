@@ -133,6 +133,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // constant — it dispatches nothing — and it is pinned because help text kept anywhere other than
   // the canon it documents becomes a second list of what chat understands, free to drift from the
   // one that actually routes.
+  // 398 plan 09, D-01/SC-1: the two halves the help ↔ catalog census joins on. `CHAT_DIRECTIVES`
+  // is the closed set of forms that map to NO capability and `CHAT_HELP_ENTRIES` is what `/help`
+  // prints in a shape a census can read. Both are frozen data; `CHAT_HELP_TEXT` below is now a
+  // projection of the entries rather than a second spelling of them.
+  'CHAT_DIRECTIVES',
+  'CHAT_HELP_ENTRIES',
   'CHAT_HELP_TEXT',
   'CHAT_MINIMUM_CONTEXT',
   'CHAT_RESOLVER_TABLE',
@@ -571,6 +577,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // a quiet widening of the one clause class that never crosses the function layer.
   'ChatDirectiveHandlers',
   'ChatDirectiveName',
+  // 398 plan 09: one line of `/help`, as a census reads it. A TYPE over frozen data — the shape is
+  // the join key (`alias`) plus the form a person types (`syntax`), and pinning it is what makes a
+  // help line growing a field the census cannot read a visible edit.
+  'ChatHelpEntry',
   'ChatInvokeBinding',
   // 392 plan 07, CHAT-06: a model OBJECT, never a model id. The SDK's own `LanguageModel` type also
   // admits a bare id it resolves by constructing a client, which is a second door to the thing the
