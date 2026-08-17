@@ -927,6 +927,12 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       const initStartedAt = Date.now()
       const dir = resolve(opts.dir)
       const force = opts.force ?? false
+      // 398-14 (D-19): the ONE path the opt-out read consults, resolved once. Same derivation the
+      // `--agent` branch above already uses — `--dir`-relative unless an explicit `--config` was
+      // given — because `init` is a command aimed at a directory, and honouring a declaration out
+      // of the caller's shell instead would be honouring the wrong project's.
+      const analyticsConfigPath =
+        command.parent?.opts<{ config?: string }>().config ?? join(dir, 'agent-qa.config.yaml')
 
       const isInteractive = !opts.platform
 
@@ -952,7 +958,29 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         const { analyticsEvent, composeAnalyticsHost } = await import(
           '../composition/analytics-host.js'
         )
-        const analytics = await (hooks.composeAnalytics ?? composeAnalyticsHost)({ surface: 'cli' })
+        // 398-14 (D-19): the config THIS COMMAND IS OPERATING ON is read here and handed to the one
+        // opt-out decision — `analyticsConfigPath` above, i.e. the global `--config` when given and
+        // otherwise the target directory's own config file, resolved once at the top of the action.
+        //
+        // An absent or unresolvable config yields `undefined`, and that is a real posture rather
+        // than a gap: a fresh directory genuinely has no declaration to honour yet, and refusing to
+        // scaffold over a telemetry read would be refusing the capability over the telemetry
+        // (`mcp.ts`'s ratified try/catch). `resolveConfig` is imported lazily for the same measured
+        // reason the analytics binding is — see the type-only import up top.
+        const { resolveConfig } = await import('../config.js')
+        let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
+        try {
+          config = await resolveConfig({
+            configPath: analyticsConfigPath,
+            loadAuthPlugins: false,
+          })
+        } catch {
+          config = undefined
+        }
+        const analytics = await (hooks.composeAnalytics ?? composeAnalyticsHost)({
+          surface: 'cli',
+          ...(config === undefined ? {} : { config }),
+        })
         try {
           const createdCount = results.filter((result) => result.outcome === 'created').length
           const updatedCount = results.filter((result) => result.outcome === 'updated').length

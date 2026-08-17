@@ -19,7 +19,7 @@
 // control arm, and asserts `transportKind` beside it — with a non-blank `projectKey` injected
 // wherever the seam admits one, so the transport assertion is load-bearing too.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -28,6 +28,9 @@ import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createChatCommand } from '../commands/chat.js'
+import { createDaemonCommand } from '../commands/daemon.js'
+import type { DaemonCommandDeps } from '../commands/daemon.js'
+import { createInitCommand } from '../commands/init.js'
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import type {
   CliAnalyticsHost,
@@ -221,5 +224,166 @@ describe('the chat composition root honours analytics.privacy (398-14, D-19)', (
     // capability over the telemetry. An unresolvable config is a real posture, not a failure.
     expect(recorder.hosts).toHaveLength(1)
     expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
+  })
+})
+
+const INIT_ROOT = 'packages/cli/src/commands/init.ts'
+
+/** Drive the SHIPPED init command, non-interactively (no prompts on the `--platform` arm). */
+async function runInit(
+  dir: string,
+  extraHooks: Parameters<typeof createInitCommand>[0] = {},
+): Promise<{ exitCode: number | string | undefined }> {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const previousExitCode = process.exitCode
+  process.exitCode = undefined
+  try {
+    const parent = new Command().option('--config <path>', 'config file path')
+    parent.addCommand(createInitCommand(extraHooks))
+    parent.exitOverride()
+    await parent.parseAsync([
+      'node', 'agent-qa', 'init', '--dir', dir, '--platform', 'web', '--skip-install',
+    ])
+    return { exitCode: process.exitCode }
+  } finally {
+    process.exitCode = previousExitCode
+    log.mockRestore()
+    error.mockRestore()
+  }
+}
+
+describe('the init composition root honours analytics.privacy (398-14, D-19)', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  it('walls the host when the directory already carries analytics.privacy: true', async () => {
+    const { dir } = fixtureProject(roots, { privacy: true })
+    const recorder = recordingCompose()
+
+    await runInit(dir, { composeAnalytics: recorder.compose })
+
+    expect(recorder.hosts).toHaveLength(1)
+    const host = recorder.hosts[0]
+    expect(
+      host?.optOutReasons,
+      `${INIT_ROOT}'s emitInitCompleted composed a host that does not report the config opt-out `
+      + 'reason — the declaration in the directory it is scaffolding never reached composeAnalytics',
+    ).toContain('config-privacy')
+    expect(host?.optedOut).toBe(true)
+    expect(host?.transportKind).toBe('noop')
+    expect(recorder.inputs[0]?.config).toBeDefined()
+  })
+
+  it('does NOT report the config reason when the existing config declares no analytics block', async () => {
+    const { dir } = fixtureProject(roots)
+    const recorder = recordingCompose()
+
+    await runInit(dir, { composeAnalytics: recorder.compose })
+
+    expect(recorder.hosts).toHaveLength(1)
+    const host = recorder.hosts[0]
+    expect(host?.optOutReasons).not.toContain('config-privacy')
+    expect(host?.optedOut).toBe(false)
+    expect(host?.transportKind).toBe('posthog')
+  })
+
+  it('still scaffolds and still emits in a FRESH directory with no config yet', async () => {
+    // The ordinary first run. There is genuinely no declaration to honour before the scaffold
+    // writes one, so the absence of the config reason here is the honest posture, not a gap — and
+    // the availability half of T-398-32: the tolerant read cannot turn a missing config into a
+    // refusal to scaffold.
+    const { dir } = fixtureProject(roots, { withConfig: false })
+    const recorder = recordingCompose()
+
+    const result = await runInit(dir, { composeAnalytics: recorder.compose })
+
+    expect(recorder.hosts).toHaveLength(1)
+    expect(recorder.hosts[0]?.optOutReasons).not.toContain('config-privacy')
+    expect(existsSync(join(dir, 'agent-qa.config.yaml'))).toBe(true)
+    expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
+  })
+})
+
+/**
+ * THE CONTROL ON THE ASSERTION ITSELF.
+ *
+ * `daemon.ts` already resolves its config and already hands it to `composeAnalyticsHost`. Both arms
+ * below are therefore expected to pass UNAIDED, on their first run and with no product change —
+ * which is what shows the same assertion that RED'd at chat and init discriminates ROOTS rather
+ * than tracking something incidental to the harness. If this pair failed to discriminate it would
+ * be a finding about the assertion, not about the daemon.
+ *
+ * No `vi.mock` of the analytics binding: the composed host is read straight off the shipped root
+ * through the `runHost` dep it is handed to. The transport is `noop` on BOTH arms here (the
+ * committed project key is blank and this root admits no key seam), which is exactly why
+ * `optOutReasons` and not `transportKind` is the discriminator.
+ */
+function daemonDepsCapturing(captured: { analytics?: unknown }): DaemonCommandDeps {
+  const unused = (name: string) => () => {
+    throw new Error(`daemon dep ${name} must not be reached by the bare 'daemon' action`)
+  }
+  return {
+    runHost: (options) => {
+      captured.analytics = options.analytics
+      return Promise.resolve(0)
+    },
+    resolvePaths: unused('resolvePaths'),
+    readRegistration: unused('readRegistration'),
+    processIsAlive: unused('processIsAlive'),
+    readIdentity: unused('readIdentity'),
+    readWriterLease: unused('readWriterLease'),
+    countPendingCurationJobs: unused('countPendingCurationJobs'),
+    signalProcess: unused('signalProcess'),
+    now: () => 1_700_000_000_000,
+  } as DaemonCommandDeps
+}
+
+async function runDaemon(configPath: string): Promise<CliAnalyticsHost | undefined> {
+  const captured: { analytics?: unknown } = {}
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const previousExitCode = process.exitCode
+  process.exitCode = undefined
+  try {
+    const program = new Command().name('agent-qa').option('--config <path>').exitOverride()
+    const daemon = createDaemonCommand(daemonDepsCapturing(captured))
+    daemon.exitOverride()
+    program.addCommand(daemon)
+    await program.parseAsync(['node', 'agent-qa', '--config', configPath, 'daemon'])
+    return captured.analytics as CliAnalyticsHost | undefined
+  } finally {
+    process.exitCode = previousExitCode
+    log.mockRestore()
+    error.mockRestore()
+  }
+}
+
+describe('the daemon root — the control that shows the assertion discriminates (398-14)', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  it('walls the host it hands runHost when the project declares analytics.privacy: true', async () => {
+    const { configPath } = fixtureProject(roots, { privacy: true })
+
+    const host = await runDaemon(configPath)
+
+    expect(host?.optOutReasons).toContain('config-privacy')
+    expect(host?.optedOut).toBe(true)
+    expect(host?.transportKind).toBe('noop')
+  })
+
+  it('does NOT report the config reason when no analytics block is declared', async () => {
+    const { configPath } = fixtureProject(roots)
+
+    const host = await runDaemon(configPath)
+
+    expect(host?.optOutReasons).not.toContain('config-privacy')
   })
 })
