@@ -53,6 +53,98 @@ function shippedSourceFiles(dir: string, out: string[] = []): string[] {
 
 const CLI_SRC = new URL('../../', import.meta.url).pathname
 
+// ---- 398-14 (D-19): THE COMPOSITION-ROOT CENSUS ---------------------------------------------
+//
+// The behavioural cells in `__tests__/analytics-root-optout.test.ts` drive three roots. This
+// census covers the input set those cells cannot range — `mcp` and `run` today, and every root
+// nobody has written yet — and it is pinned to the COMPLETE set, so a sixth root reds by ABSENCE
+// from the pin rather than sitting silently outside the guard.
+//
+// THE OBVIOUS PREDICATE IS WRONG, AND IT WAS MEASURED WRONG BEFORE THIS ONE WAS WRITTEN.
+// "the identifier followed by `(`" returns three files — `daemon`, `mcp`, `run` — and MISSES
+// `chat.ts` and `init.ts`, which are the two roots this round exists to fix: both spell the call
+// through a deps fallback, `(deps.composeAnalytics ?? composeAnalyticsHost)({ … })`, where the
+// identifier is followed by `)`. A census blind to exactly the roots it is meant to guard is worse
+// than none, so the walk below consumes that fallback close before requiring the invocation's open
+// paren. (The sibling census above uses `/\bcomposeAnalytics\s*[<(]/u` — a DIFFERENT identifier,
+// deliberately not matching this one. It is a shape to copy, not a predicate to reuse.)
+const COMPOSE_HOST_IDENTIFIER = 'composeAnalyticsHost'
+
+/**
+ * The declaring file, excluded BY PATH and deliberately.
+ *
+ * The census's subject is the CALLERS of that function; its own declaration and header prose are
+ * not roots. Doing it by path rather than by "the preceding token is `function`" makes the
+ * exclusion legible as a decision instead of an emergent property of a regex.
+ */
+const COMPOSE_HOST_DECLARING_FILE = 'composition/analytics-host.ts'
+
+/** The five shipped composition roots. Discovered by scanning; pinned here so a sixth reds. */
+const PINNED_COMPOSITION_ROOTS = [
+  'commands/chat.ts',
+  'commands/daemon.ts',
+  'commands/init.ts',
+  'commands/mcp.ts',
+  'commands/run.ts',
+]
+
+interface CompositionRootCallSite {
+  readonly file: string
+  /** The invocation's argument text, from its open paren to the matching close. */
+  readonly argumentText: string
+}
+
+function sourceLineAt(source: string, index: number): string {
+  const start = source.lastIndexOf('\n', index - 1) + 1
+  const end = source.indexOf('\n', index)
+  return source.slice(start, end === -1 ? source.length : end)
+}
+
+/** From the open paren to its matching close, counting parens, braces and brackets. */
+function balancedArgumentText(source: string, openIndex: number): string {
+  let depth = 0
+  for (let i = openIndex; i < source.length; i += 1) {
+    const character = source[i]
+    if (character === '(' || character === '{' || character === '[') depth += 1
+    else if (character === ')' || character === '}' || character === ']') {
+      depth -= 1
+      if (depth === 0) return source.slice(openIndex, i + 1)
+    }
+  }
+  return ''
+}
+
+/** Every shipped call site of `composeAnalyticsHost` in this package, with its argument text. */
+function compositionRootCallSites(): CompositionRootCallSite[] {
+  const sites: CompositionRootCallSite[] = []
+  for (const file of shippedSourceFiles(CLI_SRC)) {
+    const relative = file.slice(CLI_SRC.length)
+    if (relative === COMPOSE_HOST_DECLARING_FILE) continue
+    const source = readFileSync(file, 'utf8')
+    const pattern = new RegExp(`\\b${COMPOSE_HOST_IDENTIFIER}\\b`, 'gu')
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(source)) !== null) {
+      // A BINDING IS NOT A ROOT. Any occurrence on a line that also carries `import` covers the
+      // four static imports, `init.ts`'s type-only alias and its dynamic-import destructure; a
+      // `typeof` before it covers `chat.ts`'s deps-type reference.
+      if (sourceLineAt(source, match.index).includes('import')) continue
+      if (/\btypeof$/u.test(source.slice(0, match.index).trimEnd())) continue
+
+      let cursor = match.index + COMPOSE_HOST_IDENTIFIER.length
+      while (/\s/u.test(source[cursor] ?? '')) cursor += 1
+      // THE STEP THE NAIVE PREDICATE LACKS: the `??`-fallback close.
+      if (source[cursor] === ')') {
+        cursor += 1
+        while (/\s/u.test(source[cursor] ?? '')) cursor += 1
+      }
+      if (source[cursor] !== '(') continue
+
+      sites.push({ file: relative, argumentText: balancedArgumentText(source, cursor) })
+    }
+  }
+  return sites
+}
+
 describe('composeAnalyticsHost', () => {
   it('is the ONLY shipped call site of composeAnalytics in this package', () => {
     const callers = shippedSourceFiles(CLI_SRC)
@@ -243,5 +335,50 @@ describe('composeAnalyticsHost', () => {
         outcome: 'completed',
       },
     })
+  })
+})
+
+describe('the composition-root census (398-14, D-19 · ANLY-01)', () => {
+  it('discovers EXACTLY the five shipped composition roots — a sixth reds by absence', () => {
+    const discovered = compositionRootCallSites()
+      .map((site) => site.file)
+      .sort()
+
+    expect(
+      discovered,
+      'The set of shipped call sites of composeAnalyticsHost changed. Adding a composition root '
+      + 'means adding its path to PINNED_COMPOSITION_ROOTS here AND verifying it hands over a '
+      + 'config (the cell below); a root that is renamed or moved must be renamed here too. This '
+      + 'list is what makes "every root honours analytics.privacy" a claim about ALL of them.',
+    ).toEqual(PINNED_COMPOSITION_ROOTS)
+  })
+
+  it('every composition root hands a config to the one opt-out decision', () => {
+    // THE DEFECT THIS RANGES, IN ONE SENTENCE: `analytics.privacy` is a shipped, user-settable
+    // field, and a root that composes without passing its config drops the declaration silently
+    // while the decision that reads it stays correct one layer below. `packages/analytics`'s
+    // zero-network differential cannot see that, because it enters below the dropped argument.
+    const sites = compositionRootCallSites()
+    const missing = sites
+      .filter((site) => !/\bconfig\b/u.test(site.argumentText))
+      .map((site) => site.file)
+    // A root that satisfies the key by writing the HOLE is the same defect with a spelling.
+    const bound = sites
+      .filter((site) => /\bconfig\s*:\s*undefined\b/u.test(site.argumentText))
+      .map((site) => site.file)
+
+    expect(
+      missing,
+      'These composition roots call composeAnalyticsHost without handing over a config, so a '
+      + "user's analytics.privacy declaration never reaches the decision that reads it: "
+      + `${missing.join(', ')}`,
+    ).toEqual([])
+    expect(
+      bound,
+      'These composition roots bind config to the absent value, which is the same defect with a '
+      + `spelling — pass the resolved config, or omit the key entirely: ${bound.join(', ')}`,
+    ).toEqual([])
+    // Non-vacuity: the two assertions above are trivially true over an empty scan.
+    expect(sites.length).toBe(PINNED_COMPOSITION_ROOTS.length)
   })
 })
