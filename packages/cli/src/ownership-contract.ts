@@ -46,6 +46,14 @@ export const AGENT_QA_CLI_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-eval',
   '@vostride/agent-qa-eval-local',
   '@vostride/agent-qa-ios',
+  // 2026-08-17 (Phase 398 plan 10, D-18): the ids package STAYED off this list, and the round trip
+  // is worth recording. `daemon/host.ts` needs to know whether a dispatched run's id is canonical
+  // before it can ride the analytics union's `run_id` — a known-id codec, and nothing parses an
+  // event on the way to the transport. The first attempt imported `isCanonicalRunId` here and was
+  // refused by the FUNC-02 surface firewall, correctly: a surface may not name the ids package.
+  // The filter is published by `@vostride/agent-qa-analytics` instead (`analyticsRunId`), which is
+  // the package that owns the field, already depends on ids, and is admitted by the firewall.
+  //
   // 2026-08-12 (Phase 394 plan 11, FUNC-02): the ids package is GONE from this list for exactly
   // the reason recorded below it. `create-test` and `create-suite` were the CLI's only shipped
   // source naming it — they minted a test or suite id locally to stamp into a scaffolded YAML file

@@ -66,6 +66,28 @@ const AgentQaVersionSchema = z
   .regex(SEMVER_PATTERN, 'expected a semver version')
   .meta({ [ANALYTICS_VOCABULARY_META_KEY]: ANALYTICS_KNOWN_ID_MARKER, analyticsCodec: 'semver' })
 
+/**
+ * The known-id fields' guards, as FUNCTIONS a host can call (398-10).
+ *
+ * Published beside the schemas because an emitter has to make the same decision the schema makes
+ * and has to make it BEFORE capture: nothing parses an event on the way to the transport, so a
+ * foreign string put on `run_id` is not refused, it is SENT — and `run_id` is a known-id codec
+ * precisely so that cannot happen. A host filtering ids for itself would need `@vostride/agent-qa-ids`,
+ * which the surface firewall does not admit; asking the package that owns the union is the route
+ * that exists. Anything that is not a canonical id becomes an absence, which every field allows.
+ */
+export function analyticsRunId(value: unknown): string | undefined {
+  return typeof value === 'string' && isCanonicalRunId(value) ? value : undefined
+}
+
+export function analyticsTestId(value: unknown): string | undefined {
+  return typeof value === 'string' && isCanonicalTestId(value) ? value : undefined
+}
+
+export function analyticsSuiteId(value: unknown): string | undefined {
+  return typeof value === 'string' && isCanonicalSuiteId(value) ? value : undefined
+}
+
 const RunIdSchema = knownId('run', isCanonicalRunId)
 const TestIdSchema = knownId('test', isCanonicalTestId)
 const SuiteIdSchema = knownId('suite', isCanonicalSuiteId)

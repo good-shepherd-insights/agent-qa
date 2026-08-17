@@ -47,7 +47,11 @@ import type {
   AnalyticsTransportKind,
   PosthogTransportFactory,
 } from '@vostride/agent-qa-analytics'
-import { getAgentQaVersion } from '@vostride/agent-qa-core'
+// The shipped version, through this package's own barrel rather than by naming
+// `@vostride/agent-qa-core` here. The FUNC-02 surface firewall admits three internal packages
+// without a ledger entry and core is not one of them; `src/index.ts` is where this surface already
+// reads its version (it is what `--version` prints), so there is one answer rather than two.
+import { VERSION } from '../index.js'
 
 /**
  * Which process is emitting, taken from the subscriber's own standard-properties type rather than
@@ -149,7 +153,7 @@ export async function composeAnalyticsHost(
   })
 
   const properties: AnalyticsRunStandardProperties = {
-    agent_qa_version: getAgentQaVersion(),
+    agent_qa_version: VERSION,
     surface: input.surface,
     // PostHog's own directive; see the union's base properties. Set on every event this CLI emits.
     $process_person_profile: false,

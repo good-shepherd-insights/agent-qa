@@ -15,6 +15,7 @@ import type {
 import { Command } from 'commander'
 import pc from 'picocolors'
 
+import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import { createMaskedConfigReader } from '../composition/local-agent-host.js'
 import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import { buildCuratorAuthor } from '../curation/curator-author.js'
@@ -174,7 +175,13 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
         const configPath = configPathFor(command)
         const configDir = dirname(configPath)
         const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+        // 398-10 (D-17/D-19): THIS COMMAND'S ANALYTICS COMPOSITION ROOT. The daemon is a standing
+        // process, so it composes eagerly — unlike `run`, there is no early-returning path here for
+        // a lazy composition to protect, and the host it is handed to emits from the moment it
+        // starts dispatching work.
+        const analytics = await composeAnalyticsHost({ surface: 'daemon', config })
         const exitCode = await deps.runHost({
+          analytics,
           agentQaRoot: resolve(configDir, '.agent-qa'),
           knowledgeRoot: resolveConfiguredKnowledgeRoot(config, configDir),
           configPath,
@@ -199,6 +206,10 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
           author: () => resolveDaemonCuratorAuthor(configPath),
           policy: LOCAL_DAEMON_CAPABILITIES.loadDefaultGuardrailPolicy(),
         })
+        // The daemon runs until a signal closes it, so this is the one drain point: everything it
+        // captured while dispatching is flushed here, and the transport's timers are released so
+        // the process can actually exit.
+        await analytics.shutdown()
         process.exitCode = exitCode
       } catch (error) {
         console.error(pc.red(`Daemon error: ${error instanceof Error ? error.message : String(error)}`))

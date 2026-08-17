@@ -66,6 +66,9 @@ export {
   ANALYTICS_SUITE_EXECUTION_MODES,
   ANALYTICS_TRIGGER_SOURCES,
   ANALYTICS_VOCABULARY_META_KEY,
+  analyticsRunId,
+  analyticsSuiteId,
+  analyticsTestId,
   assertNoUnconstrainedStrings,
   RETIRED_V33_EVENT_NAMES,
 } from './events.js'

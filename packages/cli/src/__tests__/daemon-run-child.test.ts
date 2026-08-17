@@ -138,15 +138,18 @@ async function runDirectChild(): Promise<void> {
 if (isDirectRunChild()) {
   await runDirectChild()
 } else {
-  const [vitest, hostModule, clientModule, eventsModule, runnerLocal] = await Promise.all([
-    import('vitest'),
-    import('../daemon/host.js'),
-    import('../daemon/client.js'),
-    import('../daemon/events.js'),
-    import('@vostride/agent-qa-runner-local'),
-  ])
+  const [vitest, hostModule, clientModule, eventsModule, runnerLocal, analyticsHostModule] =
+    await Promise.all([
+      import('vitest'),
+      import('../daemon/host.js'),
+      import('../daemon/client.js'),
+      import('../daemon/events.js'),
+      import('@vostride/agent-qa-runner-local'),
+      import('../composition/analytics-host.js'),
+    ])
   const { afterEach, describe, expect, it, vi } = vitest
   const { runDaemonHost } = hostModule
+  const { composeAnalyticsHost } = analyticsHostModule
   const { invokeViaDaemon } = clientModule
   const { DAEMON_EVENTS_FILE } = eventsModule
   const { slugBranch } = runnerLocal
@@ -353,6 +356,84 @@ if (isDirectRunChild()) {
         expect(event).not.toHaveProperty('stderr')
       }
       expect(hostErrors).toEqual([])
+
+      signals.signal('SIGTERM')
+      await expect(running).resolves.toBe(0)
+    })
+
+    // 398-10 (D-18): the daemon's job-outcome member, measured through the REAL daemon host with a
+    // REAL spawned child and the REAL composed port.
+    //
+    // WHY IT IS DRIVEN AND NOT UNIT-BUILT. The failure this cell exists to catch is the one this
+    // phase has hit twice already: production assembles the right event and then never emits it,
+    // while a cell that calls the builder itself stays green. Nothing here calls the builder — the
+    // events counted below are whatever crossed the port during a dispatched run.
+    it('emits one daemon job-outcome per dispatched run, through the composed port', async () => {
+      const paths = fixturePaths()
+      const signals = signalHarness()
+      let started = false
+      const sent: { name: string; properties: Record<string, unknown> }[] = []
+
+      // The SHIPPED composition, with only the transport replaced — the opt-out decision, the
+      // identity gate and the closed union underneath are the real ones.
+      const analytics = await composeAnalyticsHost({
+        surface: 'daemon',
+        env: {},
+        transportOverride: {
+          capture: (payload) => { sent.push(payload.event as typeof sent[number]) },
+          flush: () => {},
+          shutdown: () => {},
+        },
+        resolveIdentity: async () => ({ distinctId: 'u_daemon-cell', runtimeContext: 'user' }),
+      })
+
+      const running = runDaemonHost({
+        agentQaRoot: paths.agentQaRoot,
+        knowledgeRoot: paths.knowledgeRoot,
+        configPath: paths.configPath,
+        cliEntry: FIXTURE_ENTRY,
+        config: testConfig(paths.configPath),
+        model: () => TEST_MODEL,
+        operations: signals.operations,
+        analytics,
+        logger: { info: () => { started = true }, error: () => {} },
+      })
+      await waitUntil(() => started, 'daemon did not finish starting')
+
+      const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+      let acknowledged: unknown
+      try {
+        acknowledged = await invokeViaDaemon({
+          agentQaRoot: paths.agentQaRoot,
+          functionId: 'runs.start',
+          input: { patterns: ['tests/analytics.yaml'] },
+        })
+      } finally {
+        stdoutWrite.mockRestore()
+      }
+
+      const runId = (acknowledged as { runId: string }).runId
+      await analytics.flush()
+
+      const jobEvents = sent.filter((event) => event.name === 'agent-qa.daemon.job.completed')
+      expect(jobEvents).toHaveLength(1)
+      expect(jobEvents[0]?.properties).toMatchObject({
+        job_kind: 'run',
+        outcome: 'completed',
+        run_id: runId,
+        surface: 'daemon',
+      })
+      // Counters and enums only — the whole payload is drawn from closed vocabularies, and the one
+      // string on it is the canonical run id the union's known-id codec admits.
+      expect(Object.keys(jobEvents[0]?.properties ?? {}).sort()).toEqual([
+        '$process_person_profile',
+        'agent_qa_version',
+        'job_kind',
+        'outcome',
+        'run_id',
+        'runtime_context',
+        'surface',
+      ])
 
       signals.signal('SIGTERM')
       await expect(running).resolves.toBe(0)

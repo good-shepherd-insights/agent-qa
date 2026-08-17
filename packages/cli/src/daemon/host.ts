@@ -42,6 +42,10 @@ import {
   type GuardrailPolicy,
 } from '@vostride/agent-qa-schema'
 
+import { analyticsRunId } from '@vostride/agent-qa-analytics'
+
+import { analyticsEvent } from '../composition/analytics-host.js'
+import type { CliAnalyticsHost } from '../composition/analytics-host.js'
 import { createShutdownController } from '../commands/shutdown-controller.js'
 import {
   completedRunDir,
@@ -285,6 +289,15 @@ export interface DaemonHostOptions {
   cliEntry?: string
   /** Plan 05 binds the recorded path to the live invoke server. */
   socketPath?: string
+  /**
+   * The invocation's composed analytics (398-10, D-17/D-18).
+   *
+   * A PARAMETER, like every other capability this host is handed. `commands/daemon.ts` composes it
+   * once at its root; this module emits through the port it is given and composes nothing, which is
+   * what keeps the opt-out decision in one place for the process. Absent means a host with no
+   * analytics — every legacy and test caller — and the emission sites below are then no-ops.
+   */
+  analytics?: CliAnalyticsHost
   logger?: DaemonHostLogger
   /** Test-only operations table. Production callers omit it. */
   operations?: Partial<DaemonHostOperations>
@@ -595,6 +608,28 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
           runId: closed.runId,
           exitCode: closed.exitCode,
         })
+        // 398-10 (D-18): the daemon's job-outcome member, emitted at the ONE place a dispatched run
+        // is known to have finished — the child's close, beside the durable event that records it.
+        //
+        // `job_kind: 'run'` and no other arm. The union's kinds are run/suite/recovery/unknown, and
+        // the curation drain — this daemon's other queue — is none of them: it is neither a run nor
+        // a suite, and reporting it as `unknown` would put a number on a chart that says a job of an
+        // unnamed kind happened, which is worse than silence. Retune: when the union grows a
+        // `curation` arm, `drainCuration`'s session end is the seam that fills it.
+        //
+        // `duration_ms` is absent because nothing here measured one: the launcher reports a closed
+        // child, not an interval, and a duration derived from the callback's own clock would be the
+        // time since this process noticed rather than the time the run took.
+        input.analytics?.port.capture(
+          analyticsEvent(input.analytics, 'agent-qa.daemon.job.completed', {
+            job_kind: 'run',
+            outcome: closed.exitCode === 0 ? 'completed' : 'failed',
+            // Through the union's OWN filter: `run_id` is a known-id codec, nothing parses an
+            // event on the way to the transport, and a foreign string here would be sent rather
+            // than refused. A non-canonical id becomes an absence.
+            ...(analyticsRunId(closed.runId) === undefined ? {} : { run_id: closed.runId }),
+          }),
+        )
       }),
     })
   }

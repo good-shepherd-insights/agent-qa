@@ -27,7 +27,6 @@
 // Best-effort is unchanged and load-bearing: every handler body and the flush body swallow their
 // own errors, because a malformed envelope must never be able to fail the run it is describing.
 
-import { isCanonicalRunId, isCanonicalSuiteId, isCanonicalTestId } from '@vostride/agent-qa-ids'
 import type {
   RunEventEnvelope,
   RunFinishedPayload,
@@ -37,6 +36,9 @@ import type {
   VerdictPayload,
 } from '@vostride/agent-qa-schema'
 import {
+  analyticsRunId,
+  analyticsSuiteId,
+  analyticsTestId,
   ANALYTICS_AGENT_PRODUCTS,
   ANALYTICS_EMITTING_HOSTS,
   ANALYTICS_RUNNERS,
@@ -213,7 +215,7 @@ export function createAnalyticsRunSubscriber(
     const payloadSuiteId = readString(payload.suiteId)
     if (payloadSuiteId) {
       sawSuite = true
-      if (isCanonicalSuiteId(payloadSuiteId)) suiteId = payloadSuiteId
+      suiteId = analyticsSuiteId(payloadSuiteId) ?? suiteId
     }
     liveSteps.set(testIndex, emptyStepTally())
   }
@@ -257,9 +259,7 @@ export function createAnalyticsRunSubscriber(
 
   function captureTestRun(record: MemberRecord): void {
     const status = outcomeToAnalyticsStatus(record.outcome)
-    const testId = record.testId !== undefined && isCanonicalTestId(record.testId)
-      ? record.testId
-      : undefined
+    const testId = analyticsTestId(record.testId)
     const properties = definedProperties({
       ...standard,
       run_id: runId,
@@ -300,7 +300,7 @@ export function createAnalyticsRunSubscriber(
   return {
     handler(envelope: RunEventEnvelope): void {
       try {
-        runId = isCanonicalRunId(envelope.runId) ? envelope.runId : undefined
+        runId = analyticsRunId(envelope.runId)
         switch (envelope.type) {
           case 'testStarted':
             handleTestStarted(envelope.payload as TestStartedPayload)

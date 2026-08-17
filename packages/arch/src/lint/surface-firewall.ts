@@ -35,6 +35,17 @@ export const FIREWALLED_SURFACE_DIRS = ['packages/cli', 'packages/mcp'] as const
 export const SURFACE_ALLOWED_INTERNAL_PACKAGES = [
   '@vostride/agent-qa-agent',
   '@vostride/agent-qa-agent-local',
+  // 2026-08-17 (Phase 398 plan 10, D-17): the bounded analytics package, admitted on the SAME
+  // reasoning as the composition root above and for the same reason it is not a ledger entry —
+  // a ledger entry means debt to be cleared, and this edge is the end state.
+  //
+  // D-17 puts telemetry on the HOST by name: a host composes it at its composition root and holds
+  // a port. Before the package existed, the alternative shape was the one being deleted — ambient
+  // `captureAnalytics`/`flushAnalytics` helpers reachable from any file in the process, carrying
+  // whatever privacy decision the first constructor happened to make. This edge is what replaces
+  // that, and the reach it grants is bounded by what the package publishes: a port, a closed event
+  // union with no free-text field, and one opt-out decision site.
+  '@vostride/agent-qa-analytics',
   '@vostride/agent-qa-schema',
 ] as const
 

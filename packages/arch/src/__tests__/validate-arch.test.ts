@@ -778,12 +778,18 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
     }
   })
 
-  // D-13/D-15 widened the firewall allow-list by exactly one entry. Pinned by equality so a fourth
-  // private power cannot join by looking like it belongs.
-  it('the surface allow-list is exactly the function layer, the vocabulary and the composition root', () => {
+  // D-13/D-15 widened the firewall allow-list by exactly one entry; 398-10 (D-17) by exactly one
+  // more. Pinned by equality so a private power cannot join by looking like it belongs — every
+  // arrival is a line in this file with a phase attached to it.
+  it('the surface allow-list is exactly the function layer, the vocabulary, the composition root and analytics', () => {
     expect([...SURFACE_ALLOWED_INTERNAL_PACKAGES]).toEqual([
       '@vostride/agent-qa-agent',
       '@vostride/agent-qa-agent-local',
+      // 2026-08-17 (Phase 398 plan 10, D-17): telemetry is a HOST concern a host composes at its
+      // root and holds a port for. What this edge replaces is the ambient
+      // `captureAnalytics`/`flushAnalytics` pair reachable from any file in the process, so the
+      // widening narrows what can emit rather than widening it.
+      '@vostride/agent-qa-analytics',
       '@vostride/agent-qa-schema',
     ])
   })

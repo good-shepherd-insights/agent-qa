@@ -138,12 +138,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
   },
   {
     file: 'packages/cli/src/commands/mcp.ts',
-    specifier: '@vostride/agent-qa-core',
-    clearedBy: '396',
-    reason: 'spawns the v1 MCP server; rewritten with the SDK re-derivation',
-  },
-  {
-    file: 'packages/cli/src/commands/mcp.ts',
     specifier: '@vostride/agent-qa-mcp',
     clearedBy: '396',
     reason: 'spawns the v1 MCP server; rewritten with the SDK re-derivation',
