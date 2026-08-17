@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const {
   mockResolveConfig,
@@ -265,7 +266,10 @@ describe('createDashboardCommand', () => {
     expect(exitSpy).not.toHaveBeenCalled()
   })
 
-  it('flushes analytics best-effort during signal shutdown', async () => {
+  it('emits and flushes NO analytics during signal shutdown (398-10, D-18: the dashboard events drop)', async () => {
+    // THE MOCK IS KEPT AS A WITNESS. `flushAnalytics` still exists on `@vostride/agent-qa-core`
+    // until plan 11 deletes that module, so "never called" is a measurable claim here rather than
+    // an absent one — deleting the mock would have made this cell pass by having nothing to check.
     const config = makeDashboardConfig({ analytics: { privacy: true } })
     const close = vi.fn()
     const signalHandlers = new Map<string | symbol, (...args: any[]) => unknown>()
@@ -274,7 +278,6 @@ describe('createDashboardCommand', () => {
       return process
     }) as typeof process.on)
     mockResolveConfig.mockResolvedValueOnce(config)
-    mockFlushAnalytics.mockRejectedValueOnce(new Error('analytics flush failed'))
     mockStartServer.mockResolvedValueOnce({
       server: {},
       port: 3470,
@@ -294,7 +297,7 @@ describe('createDashboardCommand', () => {
       expect(shutdown).toBeDefined()
       await expect(Promise.resolve(shutdown?.())).rejects.toThrow('process.exit')
       expect(close).toHaveBeenCalledOnce()
-      expect(mockFlushAnalytics).toHaveBeenCalledWith({ config })
+      expect(mockFlushAnalytics).not.toHaveBeenCalled()
       expect(exitSpy).toHaveBeenCalledWith(0)
     } finally {
       processOnSpy.mockRestore()
@@ -375,10 +378,37 @@ describe('createServeCommand', () => {
       await expect(Promise.resolve(shutdown?.())).rejects.toThrow('process.exit')
       expect(close).toHaveBeenCalledOnce()
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Shutting down local services'))
-      expect(mockFlushAnalytics).toHaveBeenCalled()
+      expect(mockFlushAnalytics).not.toHaveBeenCalled()
       expect(exitSpy).toHaveBeenCalledWith(0)
     } finally {
       processOnSpy.mockRestore()
     }
+  })
+})
+
+// ---- 398-10 (D-18 / D-20): the drop, pinned at the source ------------------------------------
+//
+// The behavioural cells above measure that nothing is FLUSHED. This one measures that nothing can
+// be: a `flushAnalytics` re-added to this command would satisfy "never called" in any test that did
+// not reach the shutdown path, and the whole point of the drop is that the analytics vocabulary is
+// absent from this file until M5 re-adds it against the port.
+describe('the dashboard command names no analytics at all (398-10)', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('../commands/dashboard.ts', import.meta.url)),
+    'utf8',
+  )
+
+  it('imports nothing from the analytics package and calls no flush helper', () => {
+    expect(source).not.toMatch(/from '@vostride\/agent-qa-analytics'/u)
+    expect(source).not.toMatch(/\bflushAnalytics\b/u)
+    expect(source).not.toMatch(/\bcaptureAnalytics\b/u)
+    expect(source).not.toMatch(/\bcomposeAnalytics/u)
+  })
+
+  it('records WHY the three v33 dashboard events are gone, dated', () => {
+    expect(source).toMatch(/2026-08-17.*Phase 398 plan 10/u)
+    expect(source).toContain('dashboard.opened')
+    expect(source).toContain('dashboard.live_mode.started')
+    expect(source).toContain('dashboard.entity.created')
   })
 })

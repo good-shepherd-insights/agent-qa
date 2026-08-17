@@ -2,7 +2,7 @@ import { Command } from 'commander'
 import { resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import pc from 'picocolors'
-import { flushAnalytics, resolveWorkspacePaths } from '@vostride/agent-qa-core'
+import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import { resolveConfig } from '../config.js'
 import { applyResolvedAuthToModelConfig, resolveModelAuth, type LLMConfigLike } from '../llm-utils.js'
@@ -112,7 +112,19 @@ async function startDashboardBackedServices(
       shuttingDown = true
       console.log(pc.dim(`\nShutting down ${labels.shutdown}...`))
       close()
-      await flushAnalytics({ config }).catch(() => {})
+      // 2026-08-17 (Phase 398 plan 10, D-18/D-20): THE DASHBOARD EMITS NO ANALYTICS, and the flush
+      // that used to stand here is gone with the events it drained.
+      //
+      // The three v33 members — `dashboard.opened`, `dashboard.live_mode.started`,
+      // `dashboard.entity.created` — are dropped rather than ported, because the dashboard is being
+      // rebuilt: carrying the v1 answers forward would pre-decide what a rebuilt dashboard is worth
+      // measuring. They are listed in the analytics package's `RETIRED_V33_EVENT_NAMES` so their
+      // absence is a decision on the record rather than an omission, and a cell asserts that set is
+      // disjoint from the live membership. M5 re-adds what it needs against the `AnalyticsPort`.
+      //
+      // Nothing replaces the flush either. This process captured nothing — the v1 call drained a
+      // process-global service that other commands filled, which is exactly the ambient reach D-17
+      // removed. A host that emits nothing has nothing to drain.
       process.exit(0)
     }
 
