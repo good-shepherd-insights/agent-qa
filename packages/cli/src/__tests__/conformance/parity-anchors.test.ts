@@ -60,8 +60,9 @@ import { fileURLToPath } from 'node:url'
 
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { EXPLAIN_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
-import { AgentManifestSchema } from '@vostride/agent-qa-schema'
+import { AgentManifestSchema, catalogRowKey } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -345,6 +346,16 @@ function readChatAnchor(root: string): ChatAnchorReading {
 const CHAT_ANCHOR_UTTERANCE = 'proposals'
 
 /**
+ * The 398-13 answer-channel utterance: the `/fn` passthrough, so stage 1 resolves it (D-06).
+ *
+ * NOTHING ABOUT THIS STRING IS ASSERTED. It is the deterministic route and only that — a braced
+ * JSON body the clause splitter keeps as one clause, naming the explain op and a question whose
+ * words overlap real catalog rows. No model and no credential are involved, which is what lets a
+ * hermetic child answer at all.
+ */
+const CHAT_EXPLAIN_UTTERANCE = `/fn ${EXPLAIN_FUNCTION_ID} {"query": "how do I start a run"}`
+
+/**
  * Drive the shipped chat command IN THIS PROCESS, over the same scripted-stdin idiom the spawned
  * half uses.
  *
@@ -446,8 +457,18 @@ async function spawnNodeInline(
   return await spawnCollecting(root, ['-e', source], extraEnv)
 }
 
-/** Drive the SHIPPED binary's chat command over a real pipe, and wait for it to exit. */
-async function driveChatSpawned(root: string, configPath: string): Promise<SpawnOutcome> {
+/**
+ * Drive the SHIPPED binary's chat command over a real pipe, and wait for it to exit.
+ *
+ * THE UTTERANCE IS A PARAMETER, NOT A SECOND DRIVER (this file's no-second-copy law). A second
+ * spawn helper would be a second answer to "what did the child inherit", which is the one property
+ * every cell here depends on.
+ */
+async function driveChatSpawned(
+  root: string,
+  configPath: string,
+  utterance: string = CHAT_ANCHOR_UTTERANCE,
+): Promise<SpawnOutcome> {
   const child = spawn(process.execPath, [CLI_ENTRY, '--config', configPath, 'chat'], {
     cwd: root,
     env: hermeticEnv(root),
@@ -461,7 +482,7 @@ async function driveChatSpawned(root: string, configPath: string): Promise<Spawn
   child.stderr.on('data', (chunk: Buffer) => {
     stderr += chunk.toString('utf8')
   })
-  child.stdin.write(`${CHAT_ANCHOR_UTTERANCE}\n`)
+  child.stdin.write(`${utterance}\n`)
   child.stdin.end()
   return await new Promise<SpawnOutcome>((settle, fail) => {
     child.once('error', fail)
@@ -613,6 +634,80 @@ describe('the built-binary anchors (D-02)', () => {
       + 'lists for the chat caller, so a difference here is a difference in reachable capabilities)',
     ).toEqual(inProcess)
   }, 180_000)
+
+  it('the shipped chat binary PRINTS a capability line quoted out of the committed catalog (398-13, D-21)',
+    async () => {
+      // THE CELL THAT WOULD HAVE CAUGHT THE GAP. 398-12 measured the whole of what a grounded
+      // explain turn showed a person: the receipt line `agent.explain completed`, and nothing else.
+      // Every cell in the phase asserted on the op's RETURN VALUE, which was correct and complete,
+      // and none of them asked whether any byte of it reached a terminal. This one spawns the
+      // shipped binary, types one turn, and reads the child's stdout.
+      //
+      // THE VACUITY TRAP, NAMED RATHER THAN AVOIDED BY LUCK. `chat.ts` prints three STARTER PROMPTS
+      // at open and each starter is a catalog row's own description — so committed row text is
+      // already in this child's stdout before any turn runs. A cell that asked "does some row
+      // description appear in stdout" would pass on the unwired build and prove nothing. The search
+      // therefore runs over the stdout slice AFTER the single receipt marker, and the marker's
+      // uniqueness is asserted so the slice cannot be silently widened by a second occurrence.
+      expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+      expect(
+        existsSync(CLI_ENTRY),
+        `the built CLI entry is missing at ${relative(PACKAGES_ROOT, CLI_ENTRY)}; ${REBUILD_INSTRUCTION}`,
+      ).toBe(true)
+
+      const fixture = fixtureProject('398-13-explain-answer')
+      const outcome = await driveChatSpawned(
+        fixture.root,
+        fixture.configPath,
+        CHAT_EXPLAIN_UTTERANCE,
+      )
+
+      // THE SHAPE OF THE ANSWER BEFORE ANY SEARCH OF IT. A child that died folds to "no rows
+      // quoted", which is a red for the wrong reason wearing this cell's failure message — so the
+      // exit code is its own assertion and the child's stderr travels with it.
+      expect(
+        { code: outcome.code, signal: outcome.signal, stderr: outcome.stderr.trim().slice(0, 600) },
+        'the spawned chat binary did not exit cleanly',
+      ).toMatchObject({ code: 0, signal: null })
+
+      const marker = `${EXPLAIN_FUNCTION_ID} completed`
+      const markerIndex = outcome.stdout.indexOf(marker)
+      expect(
+        markerIndex,
+        `the spawned chat binary never reported "${marker}" for "${CHAT_EXPLAIN_UTTERANCE}"; its `
+        + `stdout was ${JSON.stringify(outcome.stdout.slice(0, 800))} and its stderr `
+        + `${JSON.stringify(outcome.stderr.trim().slice(0, 400))}`,
+      ).toBeGreaterThanOrEqual(0)
+      expect(
+        outcome.stdout.lastIndexOf(marker),
+        `"${marker}" occurs more than once in the child's stdout, so the post-marker slice this `
+        + 'cell searches is not the one turn it means',
+      ).toBe(markerIndex)
+
+      // The answer channel's whole territory: everything the person read AFTER the receipt.
+      const answerSlice = outcome.stdout.slice(markerIndex + marker.length)
+
+      // THE EXPECTED TEXT IS READ THROUGH THE ONE SHIPPED LOADER, never spelled here — an
+      // assertion carrying its own copy of a row's description is an assertion that keeps passing
+      // after the artifact it claims to be about has changed.
+      const committed = loadCapabilityCatalog()
+      const quotedRowIds = committed.rows
+        .filter((row) => answerSlice.includes(row.description))
+        .map((row) => `${row.kind}:${catalogRowKey(row)}`)
+
+      expect(
+        quotedRowIds.length,
+        'the spawned chat binary printed NOTHING quoted out of the committed catalog after '
+        + `"${marker}" — a grounded or abstention explain answer must reach the person, e.g. as `
+        + `the row op:runs.start's own description. rows found: [${quotedRowIds.join(', ')}]; `
+        + `post-marker stdout: ${JSON.stringify(answerSlice.slice(0, 800))}; child stderr: `
+        + `${JSON.stringify(outcome.stderr.trim().slice(0, 400))}`,
+      ).toBeGreaterThan(0)
+
+      // The denominator on the other side, so the search above cannot be vacuous against a catalog
+      // that carried no rows to find.
+      expect(committed.rows.length, 'the committed catalog carried no rows').toBeGreaterThan(0)
+    }, 180_000)
 
   it('the shipped init --agent manifest is the committed catalog, row for row (398-08, D-16)',
     async () => {

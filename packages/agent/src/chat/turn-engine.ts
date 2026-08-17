@@ -33,7 +33,11 @@
 // and it is the thing the function layer exists to abolish; what varies per stage here is the
 // ORIGIN the composition minted, which is a fact about who is acting, not about where from.
 
-import { FanOutReportSchema, renderFanOutReport } from '@vostride/agent-qa-schema'
+import {
+  ExplainOutputSchema,
+  FanOutReportSchema,
+  renderFanOutReport,
+} from '@vostride/agent-qa-schema'
 import type {
   AgentAskInput,
   AgentAskResult,
@@ -48,6 +52,7 @@ import type {
 import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../functions/ops/authoring-draft-write.js'
 import { CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID } from '../functions/ops/config-project-scaffold.js'
 import { CONFIG_PROPOSAL_APPLY_FUNCTION_ID } from '../functions/ops/config-proposal-apply.js'
+import { EXPLAIN_FUNCTION_ID } from '../functions/ops/explain.js'
 import {
   WRITE_TEST_UNCONFIGURED_DETAIL,
   resolveWriteTestRoute,
@@ -236,6 +241,25 @@ function summariseOutcome(functionId: string, result: unknown): string {
   const carried = (result as { readonly fanOut?: unknown } | null | undefined)?.fanOut
   const report = FanOutReportSchema.safeParse(carried)
   return report.success ? `${line} — ${renderFanOutReport(report.data)}` : line
+}
+
+/**
+ * `agent.explain`'s rendered lines, on their way to the turn's `answer` field (398-13 · D-21).
+ *
+ * THE RECEIPT CHARTER ABOVE IS UNTOUCHED, and that is the whole reason this function exists here
+ * rather than as a second exception inside `summariseOutcome`. The receipt stays the MAP — the
+ * plain `agent.explain completed` line — and the territory travels on the field `renderTurn`
+ * already prints and `ask` already shares. A second carrier on the receipt would put the answer
+ * inside the map, which is the prohibition that function argues for at length.
+ *
+ * PARSED, NEVER CAST, and a parse failure renders NOTHING extra: the same posture `summariseOutcome`
+ * takes for its own field. Every character of `renderedLines` was quoted out of a committed catalog
+ * row by the renderer (D-10), so nothing a model wrote can ride this channel.
+ */
+function explainAnswerLines(functionId: string, result: unknown): readonly string[] {
+  if (functionId !== EXPLAIN_FUNCTION_ID) return []
+  const parsed = ExplainOutputSchema.safeParse(result)
+  return parsed.success ? parsed.data.renderedLines : []
 }
 
 // The stamped vocabulary now lives in `session-stamps.ts`, because the model-facing projection in
@@ -954,6 +978,9 @@ async function runTurnThrough(
   // there is no plan to walk until the verdict has produced one.
   const receipts: ClauseReceipt[] = []
   let failed = false
+  // 398-13 (D-21): what the ops PRODUCED, on its way to the turn's `answer` field. The receipt
+  // charter is untouched — see `explainAnswerLines`.
+  const answerLines: string[] = []
   // The sentence the route wants a refused turn to carry, set by `routeWriteTest` before it answers
   // `stop`. A field rather than a return value so the refusal below reads as the one `refuse()` call
   // it is, and so a route that stopped without a reason still gets D-15's default sentence.
@@ -1004,6 +1031,7 @@ async function runTurnThrough(
           status: 'executed',
           outcome: summariseOutcome(step.functionId, answered),
         }
+        answerLines.push(...explainAnswerLines(step.functionId, answered))
       } catch (error) {
         failed = true
         receipt = {
@@ -1035,7 +1063,9 @@ async function runTurnThrough(
   // utterance order this whole engine preserves, and because a `/model` confirmation printed
   // after the receipts of the clauses that ran under the old model would misreport which model
   // ran them.
-  const answer = [...directiveLines, verdict.answer].filter(
+  // 398-13 (D-21): directives lead (the existing law), then what the OPS produced, then the
+  // planner's prose. An explain answer that reached nobody was XPLN-02's last unwired inch.
+  const answer = [...directiveLines, ...answerLines, verdict.answer].filter(
     (line): line is string => line !== undefined && line !== '',
   )
   return finish(failed ? 'failed' : 'completed', {
