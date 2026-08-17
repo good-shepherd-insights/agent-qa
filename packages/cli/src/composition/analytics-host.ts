@@ -47,11 +47,7 @@ import type {
   AnalyticsTransportKind,
   PosthogTransportFactory,
 } from '@vostride/agent-qa-analytics'
-// The shipped version, through this package's own barrel rather than by naming
-// `@vostride/agent-qa-core` here. The FUNC-02 surface firewall admits three internal packages
-// without a ledger entry and core is not one of them; `src/index.ts` is where this surface already
-// reads its version (it is what `--version` prints), so there is one answer rather than two.
-import { VERSION } from '../index.js'
+import { createRequire } from 'node:module'
 
 /**
  * Which process is emitting, taken from the subscriber's own standard-properties type rather than
@@ -59,6 +55,43 @@ import { VERSION } from '../index.js'
  * carrying a second spelling of a vocabulary the union owns.
  */
 export type CliAnalyticsSurface = NonNullable<AnalyticsRunStandardProperties['surface']>
+
+/**
+ * The shipped version, read from THIS package's own manifest.
+ *
+ * TWO ROUTES WERE TRIED FIRST AND BOTH ARE WORSE.
+ *
+ *   `getAgentQaVersion()` from `@vostride/agent-qa-core` is where the rest of this repo reads it,
+ *   and the FUNC-02 surface firewall does not admit core: a surface may name the function layer,
+ *   the vocabulary, the composition root and this analytics package, and nothing else.
+ *
+ *   `VERSION` from this package's own barrel (`src/index.ts`) has core's ledger entry and compiles
+ *   — but the barrel re-exports the whole host, and pulling it in here puts the local-agent
+ *   composition (and its durable filesystem layer) into the module graph of every command that
+ *   composes analytics. Measured 2026-08-17: `init.test.ts`, whose partial `node:fs` mock does not
+ *   carry `openSync`, fails at import on that graph — the same weight the `--agent` branch of
+ *   `init.ts` already dodges with a lazy import.
+ *
+ * So it is read here, the same way core reads it: `require('../package.json').version`. That is a
+ * SECOND reader of a version, which is a real cost, and `analytics-host.test.ts` pays it down by
+ * pinning this constant equal to `getAgentQaVersion()` — a drift between the two reds rather than
+ * shipping a version field that disagrees with `--version`.
+ */
+const require = createRequire(import.meta.url)
+
+function readCliPackageVersion(): string {
+  try {
+    const manifest = require('../../package.json') as { version?: unknown }
+    if (typeof manifest.version === 'string' && manifest.version.trim()) {
+      return manifest.version.trim()
+    }
+  } catch {
+    // Same posture as core's reader: a missing manifest must never fail a command.
+  }
+  return '0.0.0'
+}
+
+export const CLI_ANALYTICS_AGENT_QA_VERSION = readCliPackageVersion()
 
 export interface ComposeAnalyticsHostInput {
   /** Which process is emitting. A host names itself; nothing infers it. */
@@ -153,7 +186,7 @@ export async function composeAnalyticsHost(
   })
 
   const properties: AnalyticsRunStandardProperties = {
-    agent_qa_version: VERSION,
+    agent_qa_version: CLI_ANALYTICS_AGENT_QA_VERSION,
     surface: input.surface,
     // PostHog's own directive; see the union's base properties. Set on every event this CLI emits.
     $process_person_profile: false,

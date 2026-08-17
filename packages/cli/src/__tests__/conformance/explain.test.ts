@@ -500,3 +500,87 @@ describe('the grounding obligation, driven through the SHIPPED model path (398-0
     expect(output.kind).toBe('answer')
   })
 })
+
+// ---- 398-10 (D-11 / D-18): the counter hooks, BOUND to a composed analytics port ---------------
+//
+// The two cells above prove the hooks FIRE. This one proves the CLI composition root actually ties
+// them to something — the failure mode is a host that builds a perfectly good port and never hands
+// it to `createCliCapabilityCatalogPort`, which every hook cell above would still pass.
+//
+// It composes the SHIPPED CLI host (`composeCliLocalAgent`) and dispatches through the SHIPPED
+// registry, with only the analytics transport substituted.
+describe('the composition root binds the counter hooks to the analytics port (398-10)', () => {
+  it('turns an abstention into exactly one counter event carrying no query text', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-398-10-explain-'))
+    const configPath = join(root, 'agent-qa.config.yaml')
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({
+        workspace: {
+          testMatch: ['tests/**/*.test.yaml'],
+          suiteMatch: ['suites/**/*.suite.yaml'],
+          hooksFile: 'hooks.yaml',
+          envFile: '.env',
+          secretsFile: '.env.secrets.local',
+        },
+      })}\n`,
+      'utf8',
+    )
+
+    const sent: { name: string; properties: Record<string, unknown> }[] = []
+    const [{ composeAnalyticsHost }, { composeCliLocalAgent, CLI_FUNCTION_CALLER }] =
+      await Promise.all([
+        import('../../composition/analytics-host.js'),
+        import('../../composition/local-agent-host.js'),
+      ])
+
+    const analytics = await composeAnalyticsHost({
+      surface: 'chat',
+      env: {},
+      transportOverride: {
+        capture: (payload) => { sent.push(payload.event as typeof sent[number]) },
+        flush: () => {},
+        shutdown: () => {},
+      },
+      resolveIdentity: async () => ({ distinctId: 'u_explain-cell', runtimeContext: 'user' }),
+    })
+
+    const host = composeCliLocalAgent({
+      agentQaRoot: join(root, '.agent-qa'),
+      configPath,
+      analytics,
+    })
+
+    try {
+      // No chat model was composed, so this host's explain cannot cite — which is a REAL posture
+      // and the honest one for a project with no LLM configuration. It abstains, and the abstention
+      // is what the counter reports.
+      const output = await invokeFunction(
+        host.registry,
+        EXPLAIN_FUNCTION_ID,
+        { query: 'zzzz qqqq wwww' },
+        CLI_FUNCTION_CALLER,
+      ) as ExplainOutput
+
+      expect(output.kind).toBe('abstention')
+      await analytics.flush()
+
+      const abstained = sent.filter((event) => event.name === 'agent-qa.explain.abstained')
+      expect(abstained).toHaveLength(1)
+      expect(sent.filter((event) => event.name === 'agent-qa.explain.answered')).toEqual([])
+      expect(abstained[0]?.properties).toMatchObject({
+        catalog_empty: false,
+        surface: 'chat',
+      })
+      expect(typeof abstained[0]?.properties.suggested_row_count).toBe('number')
+
+      // T-398-15 over the WIRE this time, not over the hook's payload: the query is a distinctive
+      // string and it may not appear anywhere in what crossed the port.
+      expect(JSON.stringify(sent)).not.toContain('zzzz')
+    } finally {
+      await host.close()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+

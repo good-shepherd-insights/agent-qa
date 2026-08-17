@@ -47,6 +47,8 @@ import {
   createChatCompleter,
 } from '../capability-catalog/chat-discovery.js'
 import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
+import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-host.js'
+import type { CliAnalyticsHost } from '../composition/analytics-host.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -96,6 +98,16 @@ export interface ChatCommandDeps {
    * every tested invocation that does not substitute it takes that path.
    */
   chatCapabilities?: (configPath: string) => Promise<CliChatCapabilities | undefined>
+  /**
+   * How this invocation composes its analytics (398-10).
+   *
+   * On the list for the same reason `chatCapabilities` is: the default is the production path, and
+   * on a configured machine it resolves the real identity store and constructs a live client. A
+   * suite that could not substitute it would either touch a real home directory or be unable to
+   * observe an emission at all — and an emission nothing observes is the defect this phase keeps
+   * finding, where a host builds the right event and drops it.
+   */
+  composeAnalytics?: typeof composeAnalyticsHost
 }
 
 function globalOptions(command: Command): { config?: string } {
@@ -240,6 +252,14 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
     .action(async (options: ChatOptions, command: Command) => {
       const composition = compositionInput(command)
       let host: LocalAgentHost | undefined
+      let analytics: CliAnalyticsHost | undefined
+      // The session aggregate, accumulated as the loop runs and read once at close. Every one of
+      // these is a COUNT: what a person typed and what the turn answered are theirs, and the union
+      // has no field either could ride (D-18).
+      const startedAt = Date.now()
+      let turnCount = 0
+      let functionCallCount = 0
+      let endReason: 'exit' | 'interrupt' | 'error' | 'unknown' = 'exit'
       try {
         if (options.list === true) {
           // A READ that exits. Composing a host here would create the runtime root — and a
@@ -250,6 +270,18 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         }
 
         const sessionId = resolveSessionId(composition.agentQaRoot, options)
+
+        // 398-10 (D-17/D-19): THIS COMMAND'S ANALYTICS COMPOSITION ROOT, after `--list` has already
+        // returned. A listing composes no host and emits nothing, and composing here would resolve
+        // the identity store for a read that never opened a conversation.
+        //
+        // `config` is NOT read for this: chat resolves its configuration lazily through the masked
+        // reader inside the composition, and a second `resolveConfig` here to find one boolean
+        // would be a second config read on the open path. The ecosystem opt-out variable is
+        // honoured regardless (unspelled here on purpose — see the census in analytics-host.ts) —
+        // it is read inside `composeAnalytics`. RETUNE: when this surface has a resolved config in
+        // hand at open, pass it, and `analytics.privacy` starts being honoured here too.
+        analytics = await (deps.composeAnalytics ?? composeAnalyticsHost)({ surface: 'chat' })
 
         // CHAT-06, and the one place in this file that reaches a provider resolution — once, when
         // a conversation opens, after `--list` has already returned. It answers `undefined` on a
@@ -263,6 +295,8 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
 
         host = composeCliLocalAgent({
           ...composition,
+          // 398-10: the explain counter hooks bind against this port inside the composition root.
+          analytics,
           ...(chatModel === undefined
             ? {}
             : {
@@ -308,6 +342,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         // `aborted` event for whatever is in flight and is a no-op between turns; the hard-kill
         // arm needs nothing, because a torn tail is repaired on the next open.
         const interrupt = async (): Promise<void> => {
+          endReason = 'interrupt'
           await chat.abortActiveTurn()
         }
         if (deps.onInterruptHandler !== undefined) {
@@ -378,6 +413,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
             continue
           }
 
+          const turnStartedAt = Date.now()
           try {
             const result = (await invokeFunction(
               host.registry,
@@ -387,6 +423,19 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
                 : { message: utterance, sessionId: activeSessionId },
               CLI_FUNCTION_CALLER,
             )) as AgentAskResult
+
+            // 398-10 (D-18): the turn aggregate. `tool_call_count` is the number of CLAUSE RECEIPTS
+            // the turn produced — the capabilities it actually invoked — read off the result rather
+            // than counted here, so it cannot disagree with what the person was shown. Tokens are
+            // absent because this surface is not told any: `AgentAskResult` carries no accounting,
+            // and a zero would be a measurement nobody made.
+            turnCount += 1
+            functionCallCount += result.receipts.length
+            analytics?.port.capture(analyticsEvent(analytics, 'agent-qa.chat.turn.completed', {
+              duration_ms: Date.now() - turnStartedAt,
+              tool_call_count: result.receipts.length,
+              errored: result.status === 'fail_closed',
+            }))
 
             activeSessionId = result.sessionId
             if (!announced) {
@@ -399,6 +448,15 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
             // A refused or failed TURN ends the turn, never the conversation. The person is still
             // here and their next line is still a request; exiting on a refusal would make one
             // unroutable clause cost them the session.
+            //
+            // IT IS STILL A TURN, and it is counted as one. A session aggregate that only counted
+            // turns that succeeded would report a conversation that went smoothly no matter how it
+            // actually went, which is the one thing a usage number must not do.
+            turnCount += 1
+            analytics?.port.capture(analyticsEvent(analytics, 'agent-qa.chat.turn.completed', {
+              duration_ms: Date.now() - turnStartedAt,
+              errored: true,
+            }))
             reportError(error)
             process.exitCode = undefined
           }
@@ -416,8 +474,28 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         }
         prompt.close()
       } catch (error) {
+        endReason = 'error'
         reportError(error)
       } finally {
+        // ONE session event per invocation that opened a conversation, emitted where the host is
+        // closed so it cannot be missed by a path that returns early. A `--list` never reaches
+        // here with analytics composed, and an invocation that refused an unknown session id
+        // composed none either — neither opened a session, so neither reports one.
+        //
+        // `slash_command_count` IS DELIBERATELY ABSENT. Counting it here would mean matching a `/`
+        // prefix in this file, and this surface's own law (see the header) is that it never
+        // recognises one: the canon is a resolver table entry, consulted where it routes. A second
+        // reading of what chat understands, kept here for a chart, is exactly the drift that law
+        // exists to prevent. RETUNE: the count belongs wherever the turn is routed.
+        if (analytics !== undefined) {
+          analytics.port.capture(analyticsEvent(analytics, 'agent-qa.chat.session.completed', {
+            duration_ms: Date.now() - startedAt,
+            turn_count: turnCount,
+            function_call_count: functionCallCount,
+            end_reason: endReason,
+          }))
+          await analytics.shutdown()
+        }
         await host?.close()
       }
     })

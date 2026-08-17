@@ -309,7 +309,10 @@ export function createMcpCommand(): Command {
         //
         // `config` may be `undefined` here — the read above is tolerant on purpose — and that is a
         // real posture rather than a gap: with no config there is no `analytics.privacy` to honour,
-        // and `DO_NOT_TRACK` is read inside `composeAnalytics` either way.
+        // and the ecosystem opt-out variable is read inside `composeAnalytics` either way. (That
+        // variable is deliberately not SPELLED anywhere in this file: a census over this package's
+        // shipped source refuses any mention of it outside the one binding that explains the rule,
+        // and a census that had to tell prose from code would be a weaker census.)
         const analytics = await composeAnalyticsHost({
           surface: 'mcp',
           ...(config === undefined ? {} : { config }),
@@ -317,6 +320,9 @@ export function createMcpCommand(): Command {
         })
 
         const host = composeCliLocalAgent({
+          // 398-10 (D-11/D-18): the explain counter hooks bind against this port inside the
+          // composition root, so `agent.explain` is countable over MCP exactly as it is in chat.
+          analytics,
           agentQaRoot,
           configPath,
           // 396-01 D-09: the confirm port is REFUSED, not merely unsupplied. The field is present

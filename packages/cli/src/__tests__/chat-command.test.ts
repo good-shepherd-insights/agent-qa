@@ -26,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildStarterPrompts } from '../capability-catalog/chat-discovery.js'
 import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
 import { createChatCommand } from '../commands/chat.js'
+import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import { receiptLine } from '../commands/receipt-line.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -61,6 +62,7 @@ async function runChat(
   configPath: string,
   args: string[],
   typed: readonly string[] = [],
+  extraDeps: Partial<Parameters<typeof createChatCommand>[0]> = {},
 ): Promise<InvocationResult> {
   const stdout: string[] = []
   const stderr: string[] = []
@@ -79,7 +81,7 @@ async function runChat(
   try {
     const program = new Command()
       .option('--config <path>', 'config file path')
-      .addCommand(createChatCommand({ input, output, isTty: false }))
+      .addCommand(createChatCommand({ input, output, isTty: false, ...extraDeps }))
     program.exitOverride()
     const parsed = program.parseAsync([
       'node',
@@ -122,6 +124,60 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
   afterEach(() => {
     process.exitCode = originalExitCode
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  // ---- 398-10 (D-18): the chat aggregates, over the REAL loop ------------------------------
+  //
+  // DRIVEN, NOT BUILT. The only substitution is the transport under the composed port — the
+  // composition root, the opt-out decision, the identity gate and the closed union are all the
+  // shipped ones, and every event counted below is one that actually crossed the port during a
+  // scripted conversation. A host that assembled these events and never captured them would pass
+  // any cell that called the builder itself, and reds this one.
+  it('emits one session aggregate and one turn aggregate per turn, carrying no text', async () => {
+    const configPath = fixtureWorkspace(roots)
+    const sent: { name: string; properties: Record<string, unknown> }[] = []
+    const compose = async (): Promise<Awaited<ReturnType<typeof composeAnalyticsHost>>> =>
+      composeAnalyticsHost({
+        surface: 'chat',
+        env: {},
+        transportOverride: {
+          capture: (payload) => { sent.push(payload.event as typeof sent[number]) },
+          flush: () => {},
+          shutdown: () => {},
+        },
+        resolveIdentity: async () => ({ distinctId: 'u_chat-cell', runtimeContext: 'user' }),
+      })
+
+    await runChat(configPath, [], ['proposals', 'nonsense that routes nowhere', '/quit'], {
+      composeAnalytics: compose,
+    })
+
+    const turns = sent.filter((event) => event.name === 'agent-qa.chat.turn.completed')
+    const sessions = sent.filter((event) => event.name === 'agent-qa.chat.session.completed')
+
+    expect(turns).toHaveLength(3)
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0]?.properties).toMatchObject({
+      turn_count: 3,
+      end_reason: 'exit',
+      surface: 'chat',
+    })
+
+    // THE NO-TEXT CLAIM, asserted over what was actually sent rather than over the schema. The
+    // utterances above are distinctive strings; none of them, and no part of any answer, may appear
+    // anywhere in the emitted payloads.
+    const wire = JSON.stringify(sent)
+    expect(wire).not.toContain('nonsense that routes nowhere')
+    expect(wire).not.toContain('proposals')
+
+    // Every property is a count, a boolean, or a value from a closed vocabulary.
+    for (const event of sent) {
+      for (const [key, value] of Object.entries(event.properties)) {
+        if (typeof value !== 'string') continue
+        expect(['agent_qa_version', 'surface', 'runtime_context', 'agent_product', 'end_reason'])
+          .toContain(key)
+      }
+    }
   })
 
   it('runs one turn end to end and closes on /quit', async () => {

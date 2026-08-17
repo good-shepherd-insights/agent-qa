@@ -31,6 +31,12 @@ import {
   type PlatformCapability,
   type Platform,
 } from './scaffold-content.js'
+// TYPE-ONLY at the top, VALUE lazily below — the same rule the `--agent` branch follows and for the
+// same measured reason: this module's graph is loaded by every `init` run and by every test of one,
+// and the analytics binding reaches this package's barrel (for the shipped version) which reaches
+// far more of the host than a scaffold writer needs. Measured 2026-08-17: a top-level import breaks
+// `init.test.ts`, whose partial `node:fs` mock does not carry every export that graph consumes.
+import type { composeAnalyticsHost as ComposeAnalyticsHost } from '../composition/analytics-host.js'
 import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL } from '../model-defaults.js'
 import {
   KNOWLEDGE_GITIGNORE_PROBES,
@@ -680,6 +686,14 @@ function initNextSteps(platform: InitPlatformInput): Array<{ command: string; de
 export interface InitCommandHooks {
   afterWrite?: (result: InitFileResult, boundary: number) => void
   onComplete?: (outcomes: readonly InitFileResult[]) => void
+  /**
+   * How this invocation composes its analytics (398-10).
+   *
+   * A seam for the same reason the two hooks above are: `init` writes into a directory, and the
+   * production composition resolves the real identity store. A suite substitutes it to observe the
+   * one event this command emits without touching a home directory.
+   */
+  composeAnalytics?: typeof ComposeAnalyticsHost
 }
 
 function scaffoldFilePlan(
@@ -902,13 +916,56 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         // STDOUT AND NOTHING ELSE ON IT. The whole of this command's output under `--agent` is one
         // JSON document, so it pipes into a parser without a filter in between.
         console.log(JSON.stringify(manifest, null, 2))
+        // 2026-08-17 (Phase 398 plan 10, D-16/D-18): AND NOTHING IS EMITTED ON THIS PATH. `--agent`
+        // is a READ — it writes no file, creates no project, and returns before any scaffold exists
+        // — so there is no init to report the completion of. Reporting one would count every
+        // manifest read a coding agent makes as a project being initialised, which is the single
+        // number this member exists to get right.
         return
       }
 
+      const initStartedAt = Date.now()
       const dir = resolve(opts.dir)
       const force = opts.force ?? false
 
       const isInteractive = !opts.platform
+
+      /**
+       * The init/scaffold member (398-10, D-18), emitted from the ONE place that knows how the run
+       * ended — which is why it is a function called from two sites rather than a line at one.
+       *
+       * The outcome is DERIVED from the file outcomes, never assumed: anything created makes this a
+       * `created`, anything only rewritten an `updated`, and a run that changed nothing an
+       * `unchanged`. `preserved` is the filesystem layer's word for a file left alone, and it is
+       * what makes the third arm reachable — including through the "already initialized, use
+       * --force" answer below, which is the common way a person reaches it.
+       *
+       * `failed` is not emitted from here and cannot be: a scaffold that throws never reaches
+       * either call site. Retune: a `failed` arm needs a catch around the whole write phase, which
+       * is a change to how this command reports errors, not to what it measures.
+       *
+       * The binding is imported LAZILY for the reason recorded at the type-only import up top.
+       */
+      const emitInitCompleted = async (
+        results: readonly { readonly outcome: InitFileResult['outcome'] }[],
+      ): Promise<void> => {
+        const { analyticsEvent, composeAnalyticsHost } = await import(
+          '../composition/analytics-host.js'
+        )
+        const analytics = await (hooks.composeAnalytics ?? composeAnalyticsHost)({ surface: 'cli' })
+        try {
+          const createdCount = results.filter((result) => result.outcome === 'created').length
+          const updatedCount = results.filter((result) => result.outcome === 'updated').length
+          analytics.port.capture(analyticsEvent(analytics, 'agent-qa.init.completed', {
+            init_mode: isInteractive ? 'interactive' : 'scaffold',
+            outcome: createdCount > 0 ? 'created' : updatedCount > 0 ? 'updated' : 'unchanged',
+            created_file_count: createdCount,
+            duration_ms: Date.now() - initStartedAt,
+          }))
+        } finally {
+          await analytics.shutdown()
+        }
+      }
 
       let platform: InitPlatformInput
       let provider = 'anthropic-subscription'
@@ -984,6 +1041,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         console.log(pc.yellow(`Project is already initialized at ${dir}. Use --force to rebuild it.`))
         printOutcomeSummary(dir, completed)
         hooks.onComplete?.(completed)
+        await emitInitCompleted(completed)
         return
       }
 
@@ -1086,6 +1144,10 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
 
       recordOutcome(writeConfigMarkerLast(configPlan, {}))
       hooks.onComplete?.([...outcomes])
+
+      // AFTER the config marker — the scaffold's last write — so the event describes a project
+      // that exists rather than one being attempted.
+      await emitInitCompleted(outcomes)
 
       console.log('')
       console.log(pc.green(pc.bold('✓ agent-qa project initialized!')))

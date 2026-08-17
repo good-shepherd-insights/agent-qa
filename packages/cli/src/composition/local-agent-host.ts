@@ -140,6 +140,8 @@ import { listTargets, resolveTarget } from '../targets.js'
 import { invokeViaDaemon } from '../daemon/client.js'
 import { resolveCliAnalysisTokenBudget, resolveCliJobModel } from '../llm-utils.js'
 import { createCliCapabilityCatalogPort } from '../capability-catalog/explain-port.js'
+import { analyticsEvent } from './analytics-host.js'
+import type { CliAnalyticsHost } from './analytics-host.js'
 import { buildConfigVisibilityOracle } from './config-visibility.js'
 import { buildMaskedResolvedConfig } from './masked-config.js'
 
@@ -521,6 +523,15 @@ export interface ComposeCliLocalAgentInput {
   chatReconcile?: ComposeLocalAgentInput['chatReconcile']
   /** The configuration file this invocation resolves against. */
   configPath: string
+  /**
+   * The invocation's composed analytics, when this host has any (398-10, D-11/D-18).
+   *
+   * PASSED IN, never composed here, for the reason every other capability on this interface is:
+   * the opt-out decision belongs to the command's composition root and there is one per process.
+   * Absent is a real posture — `agent-qa fn --list` composes a host and emits nothing — and the
+   * counter hooks below are then simply unbound, which is what they were built to tolerate.
+   */
+  analytics?: CliAnalyticsHost
   /**
    * How this invocation executes a run (D-16). Defaults to re-entering `agent-qa run`; a test
    * substitutes the child launcher so the whole path — gate, binding, evidence, acknowledgment
@@ -3354,6 +3365,9 @@ export function createChatConfirmPort(
 }
 
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {
+  // Narrowed once, here, so the hook closures below close over a value TypeScript knows is present
+  // rather than re-reading an optional field at call time.
+  const analytics = input.analytics
   const knowledgeRoot = async (): Promise<string> => {
     const config = await resolveConfig({ configPath: input.configPath, loadAuthPlugins: false })
     return resolveKnowledgeRoot(config.knowledge, dirname(resolve(input.configPath)))
@@ -3407,12 +3421,29 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // posture and not an unconfigured one: a project with no usable LLM configuration composes a
     // host whose explain cannot cite, so it abstains and SAYS SO, which is the honest answer.
     //
-    // The counter hooks are deliberately unbound at this commit. Plan 10 wires them to the
-    // analytics port; until then a counter nobody collects is not an error, and a stubbed one
-    // would be a number this host invented.
+    // 398-10 (D-11/D-18): the counter hooks, bound to the composed port when this host has one.
+    //
+    // COUNTS ONLY, AND THE PORT'S SHAPE IS WHAT MAKES THAT TRUE RATHER THAN THIS COMMENT.
+    // `onAnswered` takes nothing at all — `recordAnswered()` has no parameters, so this host is
+    // never told how many rows were cited and cannot report a number nobody counted; the union's
+    // `cited_row_count` is optional precisely so the omission is representable. `onAbstained` is
+    // handed two values and neither is text: a suggestion count and whether the catalog loaded
+    // empty. The QUERY does not reach here and there is no field it could reach — it stays in the
+    // local coverage log under `.agent-qa/`, which is the whole of D-11's arrangement.
     capabilityCatalog: createCliCapabilityCatalogPort({
       agentQaRoot: input.agentQaRoot,
       ...(input.chatModel === undefined ? {} : { model: input.chatModel }),
+      ...(analytics === undefined ? {} : {
+        onAnswered: () => {
+          analytics.port.capture(analyticsEvent(analytics, 'agent-qa.explain.answered', {}))
+        },
+        onAbstained: (counts) => {
+          analytics.port.capture(analyticsEvent(analytics, 'agent-qa.explain.abstained', {
+            suggested_row_count: counts.suggestedRowCount,
+            catalog_empty: counts.catalogEmpty,
+          }))
+        },
+      }),
     }),
     // 395-04 D-09 · CFGM-02: the construction scan's seeds, supplied by the HOST because the
     // environment is a host fact — `composeLocalAgent` is host-neutral and its own D-16 artifact

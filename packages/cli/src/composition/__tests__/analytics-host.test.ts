@@ -15,7 +15,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { composeAnalyticsHost, analyticsEvent } from '../analytics-host.js'
+import { getAgentQaVersion } from '@vostride/agent-qa-core'
+
+import {
+  analyticsEvent,
+  CLI_ANALYTICS_AGENT_QA_VERSION,
+  composeAnalyticsHost,
+} from '../analytics-host.js'
 import { createPosthogTransport } from '@vostride/agent-qa-analytics'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from '@vostride/agent-qa-analytics'
 
@@ -67,6 +73,15 @@ describe('composeAnalyticsHost', () => {
     // source including comments, so the file that explains the rule is allowed to mention it and
     // nothing else may. A read would be `env.DO_NOT_TRACK`, which this pattern also catches.
     expect(readers.filter((file) => file !== 'composition/analytics-host.ts')).toEqual([])
+  })
+
+  it('reads the same version --version prints — the second reader cannot drift', () => {
+    // `analytics-host.ts` reads this package's own manifest rather than calling core's reader,
+    // because the surface firewall does not admit core and the barrel that does is too heavy to
+    // pull into every command (both reasons are written out at the constant). A second reader is a
+    // real cost, and this is what pays it down: the day the two disagree, this reds instead of a
+    // version field quietly disagreeing with what `agent-qa --version` prints.
+    expect(CLI_ANALYTICS_AGENT_QA_VERSION).toBe(getAgentQaVersion())
   })
 
   it('opts out on DO_NOT_TRACK and reports the reason without re-reading the variable', async () => {

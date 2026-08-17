@@ -1866,4 +1866,85 @@ skills/.staging/
       actualFs.rmSync(projectDir, { recursive: true, force: true })
     }
   }, 60_000)
+
+  // ---- 398-10 (D-16 / D-18): the init/scaffold member -----------------------------------------
+  //
+  // REAL FILESYSTEM, REAL COMMAND, REAL COMPOSED PORT — only the transport is substituted. The
+  // three arms below are the three answers this member can give, and each is produced by actually
+  // running `init` rather than by constructing an outcome list: a fresh directory (`created`), the
+  // same directory again (`unchanged`, because the scaffold preserves what it finds), and the
+  // `--agent` manifest read, which writes nothing and must therefore report nothing.
+  it('emits one init member per scaffold, and none for the --agent read', async () => {
+    vi.resetModules()
+    vi.doUnmock('node:fs')
+    vi.doUnmock('node:child_process')
+    vi.doUnmock('../commands/init-filesystem.js')
+
+    const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const actualInit =
+      await vi.importActual<typeof import('../commands/init.js')>('../commands/init.js')
+    const { composeAnalyticsHost } =
+      await vi.importActual<typeof import('../composition/analytics-host.js')>(
+        '../composition/analytics-host.js',
+      )
+
+    const sent: { name: string; properties: Record<string, unknown> }[] = []
+    const composeAnalytics = async (): ReturnType<typeof composeAnalyticsHost> =>
+      composeAnalyticsHost({
+        surface: 'cli',
+        env: {},
+        transportOverride: {
+          capture: (payload) => { sent.push(payload.event as typeof sent[number]) },
+          flush: () => {},
+          shutdown: () => {},
+        },
+        resolveIdentity: async () => ({ distinctId: 'u_init-cell', runtimeContext: 'user' }),
+      })
+
+    const dir = actualFs.mkdtempSync(join(tmpdir(), 'agent-qa-init-analytics-'))
+    const runRealInit = async (args: string[]): Promise<void> => {
+      const parent = new Command()
+      parent.addCommand(actualInit.createInitCommand({ composeAnalytics }))
+      await parent.parseAsync(['node', 'test', 'init', ...args])
+    }
+
+    try {
+      await runRealInit(['--dir', dir, '--platform', 'web', '--skip-install'])
+      const first = sent.filter((event) => event.name === 'agent-qa.init.completed')
+      expect(first).toHaveLength(1)
+      expect(first[0]?.properties).toMatchObject({
+        init_mode: 'scaffold',
+        outcome: 'created',
+        surface: 'cli',
+      })
+      expect(first[0]?.properties.created_file_count).toBeGreaterThan(0)
+
+      // The same directory again. `init` answers "already initialized, use --force" and returns —
+      // and that IS an init outcome, so it reports one: `unchanged`, nothing created. A member that
+      // only fired on the write path would count first-time scaffolds and silently drop every
+      // re-run, which is the shape of a usage number that flatters itself.
+      sent.length = 0
+      await runRealInit(['--dir', dir, '--platform', 'web', '--skip-install'])
+      const second = sent.filter((event) => event.name === 'agent-qa.init.completed')
+      expect(second).toHaveLength(1)
+      expect(second[0]?.properties).toMatchObject({
+        outcome: 'unchanged',
+        created_file_count: 0,
+      })
+
+      // `--agent` is a read. It returns before the scaffold exists, so there is no init to report —
+      // and counting one would make every manifest read a coding agent performs look like a project
+      // being initialised.
+      sent.length = 0
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+      try {
+        await runRealInit(['--dir', dir, '--agent'])
+      } finally {
+        log.mockRestore()
+      }
+      expect(sent).toEqual([])
+    } finally {
+      actualFs.rmSync(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
 })
