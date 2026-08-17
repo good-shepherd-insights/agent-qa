@@ -37,6 +37,13 @@ import {
 import { AGENT_QA_TOOL_PROJECTIONS, V1_TOOL_MIGRATION_MAP } from '@vostride/agent-qa-mcp'
 import { describe, expect, it } from 'vitest'
 
+import {
+  buildStarterPrompts,
+  completionCandidatesFor,
+  passthroughFormOf,
+  STARTER_PROMPT_COUNT,
+  typedVerbs,
+} from '../../capability-catalog/chat-discovery.js'
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
 import { resolveAgentQaSkillsDirectory } from '../../commands/skills.js'
 import { agentQaRoot, CHAT_ALIAS_PROBES } from './catalog.js'
@@ -282,7 +289,19 @@ describe('no second list of what chat understands', () => {
 })
 
 /**
- * Every file a shipped skill DIRECTORY carries, not just its SKILL.md.
+ * The AUTHORED skills tree, which is not the one that ships.
+ *
+ * MEASURED THE HARD WAY (2026-08-17). `packages/cli/skills` is a GENERATED COPY: the CLI package's
+ * `prepack` runs `copy:skills`, which deletes that directory and rebuilds it from this one. A guard
+ * that read only the resolved (packaged) directory would certify a reconciliation that the next
+ * `prepack` silently undoes — which is exactly what happened while this plan was being written, and
+ * `validate:publish` is what surfaced it. Both trees are ranged, so a fix applied to one and not the
+ * other is a named RED rather than a regression waiting for the next release.
+ */
+const SKILLS_SOURCE_DIR = 'skills'
+
+/**
+ * Every file a skill DIRECTORY carries, not just its SKILL.md.
  *
  * MEASURED, AND THE REASON THIS IS NOT SCOPED TO SKILL.md (2026-08-17). The first version of the
  * guard read only the three SKILL.md files, and it would have passed while
@@ -293,13 +312,18 @@ describe('no second list of what chat understands', () => {
  */
 function shippedSkillFiles(): readonly { name: string; path: string }[] {
   const resolved = resolveAgentQaSkillsDirectory(dirname(fileURLToPath(import.meta.url)))
-  if (resolved.source === 'missing') return []
+  const roots = [join(agentQaRoot(), SKILLS_SOURCE_DIR)]
+  if (resolved.source !== 'missing') roots.push(resolved.path)
+
   const found: { name: string; path: string }[] = []
-  for (const skill of readdirSync(resolved.path)) {
-    const skillDir = join(resolved.path, skill)
-    if (!statSync(skillDir).isDirectory()) continue
-    for (const file of filesUnderSkill(skillDir)) {
-      found.push({ name: `${skill}/${relative(skillDir, file)}`, path: file })
+  for (const root of roots) {
+    if (!existsSync(root)) continue
+    for (const skill of readdirSync(root)) {
+      const skillDir = join(root, skill)
+      if (!statSync(skillDir).isDirectory()) continue
+      for (const file of filesUnderSkill(skillDir)) {
+        found.push({ name: relative(agentQaRoot(), file), path: file })
+      }
     }
   }
   return found.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
@@ -386,5 +410,94 @@ describe('the shipped skills quote only live commands', () => {
       'a shipped skill names a tool the MCP mapping does not project — every command a skill '
       + "quotes has to be one a caller can actually invoke today (SC-2's premise)",
     ).toEqual([])
+  })
+})
+
+describe('the chat host\'s discovery UX is a projection of the catalog', () => {
+  it('offers every alias row in the form the shipped resolver actually answers', () => {
+    // THE ACCEPTANCE CRITERION, DRIVEN. Every alias the catalog carries must be reachable by
+    // typing its first letter — and the candidate that comes back must be a form the table
+    // answers, which is asserted rather than assumed: an offered word the resolver refuses is a
+    // surface inventing a vocabulary, and it would look exactly like this cell passing.
+    const rows = loadCapabilityCatalog().rows
+    const aliasRows = rows.filter((row) => row.kind === 'alias')
+    expect(aliasRows.length, 'the catalog carries no alias rows').toBeGreaterThan(0)
+
+    const bareVerbs = typedVerbs(CHAT_HELP_ENTRIES).bareVerbs
+    const findings: string[] = []
+    for (const row of aliasRows) {
+      const syntax = CHAT_HELP_ENTRIES.find((entry) => entry.alias === row.alias)?.syntax
+      if (syntax === undefined) {
+        findings.push(`${row.alias}: no help entry carries a typed form for it`)
+        continue
+      }
+      const verb = syntax.trim().split(/\s+/u)[0] ?? ''
+      if (!bareVerbs.includes(verb) && !verb.startsWith('/')) {
+        findings.push(`${row.alias}: "${verb}" is in neither half of the typed vocabulary`)
+        continue
+      }
+      const offered = completionCandidatesFor(verb.slice(0, 1), rows, CHAT_HELP_ENTRIES)
+      if (!offered.includes(verb)) {
+        findings.push(`${row.alias}: typing "${verb.slice(0, 1)}" does not offer "${verb}"`)
+      }
+    }
+    expect(findings, 'an alias row the completer cannot surface').toEqual([])
+  })
+
+  it('reaches every catalogued op through the passthrough, and binds the op it names', () => {
+    // The catalog earning its place: the resolver table is a CAP of five aliases, so this is the
+    // only way a person finds the other capabilities. Each candidate is then driven through the
+    // SHIPPED resolver, so a candidate that reads plausibly and binds nothing is a RED.
+    const rows = loadCapabilityCatalog().rows
+    const passthrough = passthroughFormOf(CHAT_HELP_ENTRIES)
+    expect(passthrough, 'no shipped rule behaves as the generic passthrough').toBeDefined()
+
+    const offered = completionCandidatesFor(passthrough ?? '', rows, CHAT_HELP_ENTRIES)
+    const opRows = rows.filter((row) => row.kind === 'op')
+    expect(opRows.length, 'the catalog carries no op rows').toBeGreaterThan(0)
+    expect(offered.length, 'the passthrough offers a different number of ops than the catalog has')
+      .toBe(opRows.length)
+
+    const findings: string[] = []
+    for (const candidate of offered) {
+      const resolution = resolveClause(CHAT_RESOLVER_TABLE, candidate)
+      if (resolution.kind !== 'resolved' || resolution.entry.kind !== 'op') {
+        findings.push(`${candidate}: the shipped table binds nothing`)
+        continue
+      }
+      // Hoisted, because a second read of `resolution.entry` loses the narrowing under `tsc` even
+      // though `vitest --typecheck` accepts it — 398-04's trap, measured again here.
+      const bound = resolution.entry.functionId
+      if (!rows.some((row) => row.kind === 'op' && row.id === bound)) {
+        findings.push(`${candidate}: binds ${bound}, which has no catalog row`)
+      }
+    }
+    expect(findings, 'a passthrough candidate the shipped resolver does not answer').toEqual([])
+  })
+
+  it('offers nothing mid-sentence — a chat line is an utterance, not a command line', () => {
+    const rows = loadCapabilityCatalog().rows
+    expect(completionCandidatesFor('why did the checkout ', rows, CHAT_HELP_ENTRIES)).toEqual([])
+    expect(completionCandidatesFor('', rows, CHAT_HELP_ENTRIES).length).toBeGreaterThan(0)
+  })
+
+  it('renders the same starter prompts from the same rows, every time', () => {
+    const rows = loadCapabilityCatalog().rows
+    const first = buildStarterPrompts(rows, CHAT_HELP_ENTRIES)
+    const second = buildStarterPrompts([...rows].reverse(), CHAT_HELP_ENTRIES)
+
+    expect(first.length, 'a session opens with no suggestions').toBe(STARTER_PROMPT_COUNT)
+    // SAME ROWS, SAME PROMPTS — including when the rows arrive in a different order, which is the
+    // property that makes the selection deterministic rather than incidental.
+    expect(second, 'the starter prompts depend on the order the rows arrived in').toEqual(first)
+
+    // Every line is CATALOG TEXT, not a sentence this surface wrote.
+    const descriptions = rows.filter((row) => row.kind === 'alias').map((row) => row.description)
+    for (const prompt of first) {
+      expect(
+        descriptions.some((description) => prompt.includes(description)),
+        `a starter prompt carries text no catalog row provided: ${prompt}`,
+      ).toBe(true)
+    }
   })
 })

@@ -19,9 +19,12 @@ import { dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
+import { CHAT_HELP_ENTRIES } from '@vostride/agent-qa-agent'
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { buildStarterPrompts } from '../capability-catalog/chat-discovery.js'
+import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
 import { createChatCommand } from '../commands/chat.js'
 import { receiptLine } from '../commands/receipt-line.js'
 
@@ -164,6 +167,26 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     const result = await runChat(configPath, [], ['/help', '/quit'])
 
     expect(result.stdout).toContain('/fn')
+  })
+
+  it('opens with starter prompts RENDERED FROM the committed catalog (398-09, SC-1)', async () => {
+    // THE CELL THAT WATCHES WHAT IS SENT (398-07's M6 lesson, applied here before it could bite).
+    // `conformance/help-census.test.ts` proves the builders return catalog text; every one of those
+    // cells would still be green if this command never called them, because they call the builders
+    // themselves. This one drives the REAL command and reads its REAL output, so "built but never
+    // wired" is a state something can see.
+    const configPath = fixtureWorkspace(roots)
+    const result = await runChat(configPath, [], ['/quit'])
+
+    expect(result.stderr).toBe('')
+    const catalog = loadCapabilityCatalog()
+    const expected = buildStarterPrompts(catalog.rows, CHAT_HELP_ENTRIES)
+    expect(expected.length).toBeGreaterThan(0)
+    for (const line of expected) {
+      // Trimmed, because the render pads for alignment and the console spy joins on spaces — what
+      // is pinned is that the CATALOG'S OWN TEXT reached a person's terminal.
+      expect(result.stdout).toContain(line.trim())
+    }
   })
 
   it('--list reports the sessions and the files it could not read', async () => {

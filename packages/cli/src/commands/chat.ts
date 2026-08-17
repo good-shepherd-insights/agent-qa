@@ -30,6 +30,7 @@ import { createInterface } from 'node:readline'
 
 import {
   AGENT_ASK_FUNCTION_ID,
+  CHAT_HELP_ENTRIES,
   composeBanner,
   createMaskingContext,
   invokeFunction,
@@ -41,6 +42,11 @@ import type { AgentAskResult } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import pc from 'picocolors'
 
+import {
+  buildStarterPrompts,
+  createChatCompleter,
+} from '../capability-catalog/chat-discovery.js'
+import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -324,11 +330,32 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         )
         if (banner !== undefined) emitHuman(banner)
 
+        // 398 plan 09, D-01/SC-1: the ONE catalog, loaded ONCE, feeding both discovery features.
+        // It is loaded here rather than lazily because the loader FAILS LOUD — a missing artifact
+        // is a broken install, and the named error carrying the regen instruction is what a person
+        // needs, not a session that quietly knows nothing. This surface parses nothing itself; a
+        // `JSON.parse` at this call site would be the second read path SC-1 exists to prevent.
+        const catalog = loadCapabilityCatalog()
+
         const prompt = createInterface({
           input: deps.input ?? process.stdin,
           output: deps.output ?? process.stdout,
           prompt: '> ',
+          // A3's primary path. Every candidate is a form the shipped resolver answers — the
+          // completer derives them from the catalog's rows and the census-tied typed forms, and
+          // has no list of its own. On a stream that cannot complete (a piped stdin, which is what
+          // the suite drives) readline simply never calls it, so the degrade is silence rather
+          // than a wrong suggestion.
+          completer: createChatCompleter(catalog.rows, CHAT_HELP_ENTRIES),
         })
+
+        // The starter prompts: three suggestions rendered from catalog rows, deterministic in
+        // sorted alias order. No sentence about any capability is written here — the text is each
+        // row's own description, which is the op's declared summary.
+        const starters = buildStarterPrompts(catalog.rows, CHAT_HELP_ENTRIES)
+        if (starters.length > 0) {
+          emitHuman([pc.dim('Try one of these, or just ask:'), ...starters].join('\n'))
+        }
 
         // Readline CLOSES when its input ends, which for a scripted stdin happens while a turn is
         // still in flight. Prompting a closed interface throws, so the state is tracked rather than
