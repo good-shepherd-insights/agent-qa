@@ -44,8 +44,6 @@ const {
   mockFsActionCache,
   mockFsStorageStateStore,
   mockResolveBranch,
-  mockAnalyticsRunReporterInstance,
-  mockCreateAnalyticsRunReporter,
   mockAnalyticsRunSubscriberInstance,
   mockCreateAnalyticsRunSubscriber,
   mockDashboardRunIngestInstance,
@@ -62,10 +60,6 @@ const {
     onHookEnd: vi.fn().mockResolvedValue(undefined),
     onStepStart: vi.fn().mockResolvedValue(undefined),
     onStepEnd: vi.fn().mockResolvedValue(undefined),
-  }
-  const analyticsRunReporter = {
-    onRunEnd: vi.fn().mockResolvedValue(undefined),
-    flush: vi.fn().mockResolvedValue(undefined),
   }
   // 363-09: the bus-subscriber successors — analytics + dashboard ingest ride the run session bus.
   const analyticsRunSubscriber = {
@@ -124,8 +118,6 @@ const {
     mockFsActionCache: vi.fn(function () { return { get: vi.fn(), set: vi.fn(), invalidate: vi.fn() } }),
     mockFsStorageStateStore: vi.fn(function () { return { save: vi.fn(), load: vi.fn() } }),
     mockResolveBranch: vi.fn(() => ({ currentBranch: 'main', defaultBranch: 'main' })),
-    mockAnalyticsRunReporterInstance: analyticsRunReporter,
-    mockCreateAnalyticsRunReporter: vi.fn(function () { return analyticsRunReporter }),
     mockShouldPrintAgentQaUpdateNotice: vi.fn(() => true),
     mockPrintAgentQaUpdateNoticeIfNeeded: vi.fn().mockResolvedValue(undefined),
   }
@@ -469,7 +461,6 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
     return mockStdoutLiveReporterInstance
   }),
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
-  createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
   resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
     resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
   generateRunId: mockGenerateRunId,
@@ -2444,7 +2435,6 @@ describe('run command — reporter integration', () => {
       standardProperties: expect.objectContaining({ surface: 'cli' }),
     }))
     expect(mockCreateAnalyticsRunSubscriber.mock.calls[0]?.[0]).not.toHaveProperty('config')
-    expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
     expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
   })
 
@@ -2630,7 +2620,6 @@ describe('run command — reporter integration', () => {
     })
     await runCommand('tests/**/*.yaml')
 
-    expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
     expect(mockRunMemberTest).not.toHaveBeenCalled()
   })
 
@@ -2694,10 +2683,10 @@ describe('run command — reporter integration', () => {
 
     // 363-09 (D-16): a mobile setup failure occurs BEFORE the runner emits a testFinished envelope, so
     // its telemetry is no longer captured (the v1 per-result analytics capture is gone; analytics now
-    // rides the bus). The failure is still surfaced as a clean framework-error exit 2, and the run does
-    // NOT construct the removed v1 AnalyticsRunReporter.
+    // rides the bus). The failure is still surfaced as a clean framework-error exit 2. The companion
+    // "never constructed the v1 reporter" assertion retired in 398-11 with the module itself: there is
+    // no longer a symbol to construct, so the claim is now enforced by the compiler, not by a mock.
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
   })
 
   it.each(['android', 'ios'] as const)('emits cli/local analytics attributes for standalone %s setup failures', async (platform) => {
@@ -2732,7 +2721,6 @@ describe('run command — reporter integration', () => {
     // 363-09 (D-16): pre-runner mobile setup-failure telemetry is dropped with the v1 analytics reporter
     // (analytics rides the bus). The failure still surfaces as a clean framework-error exit 2.
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
   })
 
   // 363-09 (D-01 clean cut): the CLI no longer constructs v1 core Reporters (ConsoleReporter /

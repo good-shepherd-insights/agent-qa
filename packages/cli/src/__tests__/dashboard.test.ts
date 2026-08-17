@@ -10,7 +10,6 @@ const {
   mockDashboardDatabase,
   mockResolveDashboardDbPath,
   mockStartServer,
-  mockFlushAnalytics,
 } = vi.hoisted(() => ({
   mockResolveConfig: vi.fn(),
   mockDashboardDatabase: vi.fn(),
@@ -18,7 +17,6 @@ const {
     configuredDbPath || '.agent-qa/runs.db',
   ),
   mockStartServer: vi.fn(),
-  mockFlushAnalytics: vi.fn(),
 }))
 
 vi.mock('../config.js', () => ({
@@ -35,7 +33,6 @@ vi.mock('@vostride/agent-qa-core', async importOriginal => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-core')>()
   return {
     ...actual,
-    flushAnalytics: mockFlushAnalytics,
     resolveLLMAuth: vi.fn(async () => ({
       kind: 'api-key',
       credentialKey: 'default',
@@ -95,7 +92,6 @@ beforeEach(() => {
     },
   }))
   mockDashboardDatabase.mockImplementation(function () { return { close: vi.fn() } })
-  mockFlushAnalytics.mockResolvedValue(undefined)
   mockStartServer.mockResolvedValue({
     server: {},
     port: 3470,
@@ -266,10 +262,15 @@ describe('createDashboardCommand', () => {
     expect(exitSpy).not.toHaveBeenCalled()
   })
 
-  it('emits and flushes NO analytics during signal shutdown (398-10, D-18: the dashboard events drop)', async () => {
-    // THE MOCK IS KEPT AS A WITNESS. `flushAnalytics` still exists on `@vostride/agent-qa-core`
-    // until plan 11 deletes that module, so "never called" is a measurable claim here rather than
-    // an absent one — deleting the mock would have made this cell pass by having nothing to check.
+  it('shuts down cleanly on a signal with no telemetry step left in the path (398-10/398-11, D-18/D-20)', async () => {
+    // THE WITNESS RETIRED IN 398-11, DELIBERATELY. This cell used to mock core's `flushAnalytics`
+    // and assert it was never called; that was measurable only while the export existed. D-20 has
+    // now deleted `core/src/analytics` outright, so the mock would have been a `vi.fn()` standing in
+    // for nothing and "never called" would have passed by having nothing to check — the exact
+    // vacuity the original comment warned about. What carries the claim instead: the compiler (there
+    // is no `flushAnalytics`/`captureAnalytics` symbol left to call) and the two source pins at the
+    // bottom of this file, which refuse the vocabulary back into `commands/dashboard.ts`. What this
+    // cell still measures on its own is the shutdown path itself — a clean close and exit 0.
     const config = makeDashboardConfig({ analytics: { privacy: true } })
     const close = vi.fn()
     const signalHandlers = new Map<string | symbol, (...args: any[]) => unknown>()
@@ -297,7 +298,6 @@ describe('createDashboardCommand', () => {
       expect(shutdown).toBeDefined()
       await expect(Promise.resolve(shutdown?.())).rejects.toThrow('process.exit')
       expect(close).toHaveBeenCalledOnce()
-      expect(mockFlushAnalytics).not.toHaveBeenCalled()
       expect(exitSpy).toHaveBeenCalledWith(0)
     } finally {
       processOnSpy.mockRestore()
@@ -378,7 +378,6 @@ describe('createServeCommand', () => {
       await expect(Promise.resolve(shutdown?.())).rejects.toThrow('process.exit')
       expect(close).toHaveBeenCalledOnce()
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Shutting down local services'))
-      expect(mockFlushAnalytics).not.toHaveBeenCalled()
       expect(exitSpy).toHaveBeenCalledWith(0)
     } finally {
       processOnSpy.mockRestore()
@@ -386,12 +385,13 @@ describe('createServeCommand', () => {
   })
 })
 
-// ---- 398-10 (D-18 / D-20): the drop, pinned at the source ------------------------------------
+// ---- 398-10 / 398-11 (D-18 / D-20): the drop, pinned at the source ---------------------------
 //
-// The behavioural cells above measure that nothing is FLUSHED. This one measures that nothing can
-// be: a `flushAnalytics` re-added to this command would satisfy "never called" in any test that did
-// not reach the shutdown path, and the whole point of the drop is that the analytics vocabulary is
-// absent from this file until M5 re-adds it against the port.
+// These two cells are now the WHOLE behavioural claim for the drop, and they were always the
+// stronger half: a `flushAnalytics` re-added to this command would satisfy "never called" in any
+// test that did not reach the shutdown path. The mock-based counterpart retired in 398-11 with the
+// module it stood in for (see the note in the signal-shutdown cell above) — a `vi.fn()` mocking an
+// export that no longer exists asserts nothing.
 describe('the dashboard command names no analytics at all (398-10)', () => {
   const source = readFileSync(
     fileURLToPath(new URL('../commands/dashboard.ts', import.meta.url)),

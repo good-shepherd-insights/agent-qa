@@ -7,8 +7,10 @@
 //   1. The id scheme drifts. If the re-homed generator mints a different SHAPE of id, every
 //      existing install silently becomes a new person on the next run — the analytics equivalent
 //      of dropping the table. So the scheme is asserted on a PRODUCED id (parsed back through
-//      `id-agent`, the same parser the ids package uses) rather than restated as a literal, and
-//      cross-checked against the source core still carries while it still carries it.
+//      `id-agent`, the same parser the ids package uses) rather than restated as a literal, AND
+//      against a frozen literal of the carried constants. Plan 06 additionally cross-checked core's
+//      surviving copy of the scheme; 398-11 deleted that copy, so that cell is gone — see the note
+//      on the scheme cell below for why it was removed rather than left standing.
 //   2. The record widens. The stored record is two keys, and prohibition P3 says it stays two
 //      keys — no hostname, no username, no cwd, no repo, no path. The key-set pin below reads the
 //      record BACK OFF DISK and parses it, because the object handed to the writer is not the
@@ -18,7 +20,6 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { generateRunId, generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import type { RunEventEnvelope, RunEventPayload, RunEventType } from '@vostride/agent-qa-schema'
 import { parse } from 'id-agent'
@@ -38,43 +39,34 @@ import { createAnalyticsPort } from '../port.js'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from '../port.js'
 import { createAnalyticsRunSubscriber } from '../run-subscriber.js'
 
-const CORE_IDENTITY_SOURCE = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  '..',
-  'core',
-  'src',
-  'analytics',
-  'identity.ts',
-)
-
 async function tempDataHome(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'agent-qa-analytics-identity-'))
 }
 
 describe('the re-homed distinct-id scheme', () => {
-  it('mints the SAME id shape core mints — prefix and word count read off a produced id', () => {
+  it('mints the id shape the deleted core module minted — prefix and word count, frozen', () => {
+    // WHERE 'u' AND 10 COME FROM, AND WHY THEY ARE WRITTEN OUT HERE (398-11).
+    //
+    // Plan 06 anchored this claim TWICE: on a produced id, and on the literal
+    // `idAgent({ prefix: 'u', words: 10 })` still spelled in `packages/core/src/analytics/
+    // identity.ts` — the definition this module was carried from. Plan 11 deleted that file, and
+    // the second cell was guarded by `existsSync`, so it did not fail when its subject vanished:
+    // it RETURNED EARLY AND REPORTED A PASS. Measured before the deletion landed, the file reports
+    // `Tests 18 passed (18)` both with core's `identity.ts` present and with it absent — a cell
+    // asserting nothing, indistinguishable from a cell asserting something.
+    //
+    // So it was deleted rather than left standing, and the claim is re-anchored here on a FROZEN
+    // LITERAL: 'u' and 10 are the exact values core spelled at the moment of its deletion, copied
+    // into this file so that the scheme now has an origin written down instead of a second live
+    // definition to agree with. The pair of claims below still catches drift in either direction —
+    // a changed constant reds the frozen literal, a generator that stops reading the constants reds
+    // the produced id.
     const parsed = parse(generateAnalyticsUserId())
 
     expect(parsed?.prefix).toBe('u')
     expect(parsed?.wordCount).toBe(10)
-    // The exported constants are what the generator is written against, so a drift in either
-    // direction (constant changed, call site changed) is caught by the pair of claims together.
     expect(ANALYTICS_USER_ID_PREFIX).toBe('u')
     expect(ANALYTICS_USER_ID_WORDS).toBe(10)
-  })
-
-  it('carries the scheme core still spells out, for as long as core still spells it out', async () => {
-    // Plans 10/11 delete core's module. Until they do, this is the strongest available statement
-    // that the move preserved the scheme: the two sources agree on the literal, not on a comment
-    // claiming they agree. Once core's file is gone the produced-id cell above is the whole claim,
-    // and by then there is no second definition left to drift from.
-    if (!existsSync(CORE_IDENTITY_SOURCE)) return
-
-    const coreSource = await readFile(CORE_IDENTITY_SOURCE, 'utf8')
-
-    expect(coreSource).toContain("idAgent({ prefix: 'u', words: 10 })")
   })
 
   it('resolves the store path by the carried contract: XDG_DATA_HOME override, else ~/.agent-qa', () => {

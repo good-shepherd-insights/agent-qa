@@ -16,7 +16,6 @@ const {
   mockLLMPlanner,
   mockLLMVerifier,
   mockMultiReporterInstance,
-  mockCreateAnalyticsRunReporter,
   mockCreateAnalyticsRunSubscriber,
   mockWebAdapterCleanup,
   mockFsEventLog,
@@ -36,9 +35,6 @@ const {
     onStepStart: vi.fn().mockResolvedValue(undefined),
     onStepEnd: vi.fn().mockResolvedValue(undefined),
   }
-  const analyticsRunReporter = {
-    flush: vi.fn().mockResolvedValue(undefined),
-  }
   const analyticsRunSubscriber = {
     handler: vi.fn(),
     flush: vi.fn().mockResolvedValue(undefined),
@@ -57,7 +53,6 @@ const {
     mockLLMPlanner: vi.fn(function () { return {} }),
     mockLLMVerifier: vi.fn(function () { return {} }),
     mockMultiReporterInstance: multiReporter,
-    mockCreateAnalyticsRunReporter: vi.fn(function () { return analyticsRunReporter }),
     mockWebAdapterCleanup: vi.fn(),
     // Phase 361 Plan 11: the single-test path now composes startRun with runner-local persistence
     // ports (FsEventLog/FsHandoffStore/nextBuildOrdinal) + the cache/storage stores. Mock the module
@@ -254,7 +249,6 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   ConsoleReporter: vi.fn(function () { return {} }),
   JUnitReporter: vi.fn(function () { return {} }),
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
-  createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
   resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
     path.resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
   generateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),

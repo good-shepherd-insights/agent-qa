@@ -11,5 +11,4 @@ export const AGENT_QA_CORE_HOST_BASELINE = [
   'node:path',
   'node:url',
   'playwright-core',
-  'posthog-node',
 ] as const satisfies readonly string[]
