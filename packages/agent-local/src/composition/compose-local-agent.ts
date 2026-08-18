@@ -339,7 +339,7 @@ export interface LocalDaemonCapabilities {
 function resolveEmbedderWorkerEntryPath(): string {
   const requireBase = typeof __filename === 'string'
     ? __filename
-    : (process.argv[1] ?? join(process.cwd(), 'package.json'))
+    : import.meta.url
   const knowledgeEntry = createRequire(requireBase).resolve('@vostride/agent-qa-knowledge-local')
   return join(dirname(knowledgeEntry), 'embedder-worker', 'worker-entry.js')
 }

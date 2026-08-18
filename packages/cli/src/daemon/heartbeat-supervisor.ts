@@ -1,5 +1,4 @@
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 
 import type { HeartbeatLeaseOutcome } from '@vostride/agent-qa-agent-local'
@@ -169,7 +168,7 @@ export function startHeartbeatSupervisor(
 ): Promise<HeartbeatSupervisorHandle> {
   const requireBase = typeof __filename === 'string'
     ? __filename
-    : (process.argv[1] ?? join(process.cwd(), 'package.json'))
+    : import.meta.url
   const agentLocalEntryPath = createRequire(requireBase).resolve(
     '@vostride/agent-qa-agent-local',
   )
