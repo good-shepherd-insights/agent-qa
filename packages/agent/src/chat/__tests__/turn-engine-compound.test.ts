@@ -218,7 +218,14 @@ function harness(options: HarnessOptions = {}): Harness {
       ordering.push(`invoke:${functionId}`)
       invocations.push({ functionId, input, caller })
       if (functionId === options.failOn) return Promise.reject(new FunctionDeniedError('denied'))
-      return Promise.resolve(options.results?.[functionId] ?? { ok: true })
+      // 399.1: the envelope, with the LEGACY verdict every unclassified op reports. These cells are
+      // about ordering, atomicity and receipt COUNTS; scripting a verdict here would make them
+      // about the classifier instead, which the render anchors measure against the real thing.
+      return Promise.resolve({
+        payload: options.results?.[functionId] ?? { ok: true },
+        verdict: { status: 'executed' as const, outcome: '' },
+        foldLines: [],
+      })
     },
     ...(planner === undefined ? {} : { planner }),
     ...(options.directives === true

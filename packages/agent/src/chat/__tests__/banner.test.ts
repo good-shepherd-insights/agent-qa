@@ -59,7 +59,10 @@ async function run(
     calls.push(functionId)
     const answer = answers[functionId]
     if (answer === undefined) throw new Error(`FunctionNotBoundError: ${functionId}`)
-    return answer()
+    // The classified envelope the seam answers with since 399.1, carrying the LEGACY verdict — the
+    // one an op that declares no classifier produces. The banner reads the payload and nothing
+    // else, so a scripted verdict here would be a fact this cell is not about.
+    return { payload: answer(), verdict: { status: 'executed', outcome: '' }, foldLines: [] }
   }
   const line = await composeBanner(invoke, CALLER)
   return { calls, line }

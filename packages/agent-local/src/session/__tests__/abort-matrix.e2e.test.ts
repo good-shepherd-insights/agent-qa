@@ -342,7 +342,9 @@ describe('CHAT-05: the compaction pass is handed an already-repaired conversatio
       reconcile: deterministicOverrideStrategy,
       sessionLog,
       mint: { forStage: () => HUMAN },
-      invoke: () => Promise.resolve({}),
+      // 399.1: the classified envelope, with the legacy verdict. This cell is about ABORT and
+      // replay; what an op returned is not its subject.
+      invoke: () => Promise.resolve({ payload: {}, verdict: { status: 'executed' as const, outcome: '' }, foldLines: [] }),
       compaction: ({ replay }) => {
         seen.push(replay)
       },

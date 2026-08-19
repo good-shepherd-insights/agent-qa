@@ -475,7 +475,9 @@ function harness(options: {
       }
       const answer = await answerFor(functionId, input)
       answers.push({ functionId, answer })
-      return answer
+      // 399.1: the envelope, carrying the legacy verdict — these cells are about the write-test
+      // ROUTE, and the payload is the only member the route reads.
+      return { payload: answer, verdict: { status: 'executed' as const, outcome: '' }, foldLines: [] }
     },
     planner,
     // 395-13 D-14: the surface a person reads mid-turn. BOUND BY DEFAULT, because the host under

@@ -43,7 +43,12 @@ async function readOrNothing(
   caller: FunctionCaller,
 ): Promise<unknown> {
   try {
-    return await invoke(functionId, input, caller)
+    // THE PAYLOAD ONLY (399.1). The seam answers a classified envelope now, and the banner is the
+    // one consumer that legitimately wants none of it: it composes a greeting out of two reads, it
+    // reports no receipt, and a verdict has nowhere on a banner to go. The fragments below parse
+    // what they read, so a payload that is not what they expect renders nothing — the posture this
+    // function already had for a read that threw.
+    return (await invoke(functionId, input, caller)).payload
   } catch {
     return undefined
   }

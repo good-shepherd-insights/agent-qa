@@ -14,7 +14,16 @@ export type {
 // absent from this barrel: exporting any of them would hand a surface a dispatch path
 // that skips the gate (T-384-01). The arch barrel assertion pins this exact export set.
 export { createFunctionRegistry, DuplicateFunctionIdError } from './functions/registry.js'
+// 399.1 D-01/D-03: the result fold, published because the composition root is the ONE place that
+// holds both a registry and the invoke call — the chat subtree may not, by construction. It runs a
+// spec's declared classifier and render fold and answers with DATA; it dispatches nothing, and a
+// caller holding it can run no capability it could not already run through `invokeFunction`.
+export { foldFunctionResult } from './functions/classify.js'
+export type { FunctionResultFold } from './functions/classify.js'
 export type { CreateFunctionRegistryOptions, FunctionRegistry } from './functions/registry.js'
+// 399.1 D-01/D-02: what a classifier answers. A two-field DATA type a receipt is built from; the
+// classifier itself stays on the spec, which never leaves `functions/`.
+export type { ClauseVerdict } from './functions/spec.js'
 export {
   invokeFunction,
   FunctionDeniedError,
@@ -436,6 +445,7 @@ export type {
   ChatBindingStage,
   ChatClause,
   ChatDirectiveHandlers,
+  ChatInvokeAnswer,
   ChatInvokeBinding,
   ChatModelDirectiveOutcome,
   ChatTurnStateSink,

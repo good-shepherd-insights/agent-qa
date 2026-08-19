@@ -33,6 +33,7 @@ import {
   CHAT_HELP_ENTRIES,
   composeBanner,
   createMaskingContext,
+  foldFunctionResult,
   invokeFunction,
   unmaskForHumanOutput,
 } from '@vostride/agent-qa-agent'
@@ -388,9 +389,15 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         // D-23: ONE read on open, at most one line, and silence when there is nothing to say. It
         // runs through the same invoke binding a turn dispatches through, with this surface's own
         // caller, because opening a chat is a person asking.
+        // 399.1: the same classified envelope the composition root's binding answers with, built
+        // the same way — `foldFunctionResult` over the same registry the call dispatched through.
+        // A banner binding that skipped the fold would be a second, quieter answer to "what does
+        // this seam return", which is the shape this phase is removing rather than adding to.
         const banner = await composeBanner(
-          (functionId, input, caller) =>
-            invokeFunction(host!.registry, functionId, input, caller),
+          async (functionId, input, caller) => {
+            const payload = await invokeFunction(host!.registry, functionId, input, caller)
+            return { payload, ...foldFunctionResult(host!.registry, functionId, payload) }
+          },
           CLI_FUNCTION_CALLER,
         )
         if (banner !== undefined) emitHuman(banner)

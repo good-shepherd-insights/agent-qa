@@ -32,6 +32,7 @@ import {
   createRealJobKindRegistry,
   createTurnEngine,
   deterministicOverrideStrategy,
+  foldFunctionResult,
   invokeFunction,
   projectPlannerTools,
   RUNS_START_FUNCTION_ID,
@@ -2394,11 +2395,21 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         sessionId,
       }),
     },
-    invoke: (functionId, invokeInput, caller) => {
+    // 399.1 D-01/D-03/D-05: the classified envelope, built HERE because this closure is the one
+    // place in the system holding both the registry and the invoke call. The chat subtree cannot
+    // reach a spec by construction (384 FUNC-03), so the verdict and the render fold have to arrive
+    // as data on this return — which is what `ChatInvokeAnswer` is. `foldFunctionResult` owns the
+    // fail-closed rule so both composition roots get the same one rather than a copy each.
+    //
+    // THE PAYLOAD CROSSES MASKED, exactly as `invokeFunction` returned it. Nothing unmasks on this
+    // path: it becomes `results[]` on the turn contract and reaches the session log in that form,
+    // and `unmaskForHumanOutput` runs at each surface's emit.
+    invoke: async (functionId, invokeInput, caller) => {
       if (composedRegistry === undefined) {
         throw new TypeError('a chat turn ran before its registry finished composing')
       }
-      return invokeFunction(composedRegistry, functionId, invokeInput, caller)
+      const payload = await invokeFunction(composedRegistry, functionId, invokeInput, caller)
+      return { payload, ...foldFunctionResult(composedRegistry, functionId, payload) }
     },
     ...(chatPlanner === undefined ? {} : { planner: chatPlanner }),
     ...(chatCompaction === undefined ? {} : { compaction: chatCompaction }),

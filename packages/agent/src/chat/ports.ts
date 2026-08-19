@@ -21,6 +21,7 @@ import type {
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
 
+import type { ClauseVerdict } from '../functions/spec.js'
 import type { ChatDirectiveName } from './resolver-table.js'
 import type { SessionReplay } from './session-repair.js'
 
@@ -227,7 +228,43 @@ export type ChatInvokeBinding = (
   functionId: string,
   input: unknown,
   caller: FunctionCaller,
-) => Promise<unknown>
+) => Promise<ChatInvokeAnswer>
+
+/**
+ * What an op answered, classified — the seam's return type since 399.1 (D-01/D-03/D-04/D-05).
+ *
+ * WHY THE VERDICT ARRIVES AS DATA RATHER THAN BEING COMPUTED HERE. The engine cannot classify a
+ * result: the fold that knows which arm of an op's union is a refusal lives on that op's SPEC, and
+ * this seam is deliberately not a registry handle (the paragraph above, 384 FUNC-03). The one place
+ * in the system holding both the registry and this call is the composition root that mints the
+ * binding, so that is where the fold runs and this is how its answer travels. The engine reads three
+ * fields; it reaches for nothing.
+ *
+ * THIS TYPE IS WHY THE SEAM CHANGED AT ALL. `Promise<unknown>` was a seam that could carry the
+ * RESULT and nothing about it, so the engine's only available derivation for a receipt status was
+ * throw-versus-return — and every arm of a typed refusal returns. G-399-2 is that gap measured: a
+ * credential-blocked config mutation reported `executed` in green.
+ */
+export interface ChatInvokeAnswer {
+  /**
+   * The op's own result, placeholder-masked as the function layer returned it.
+   *
+   * NEVER UNMASKED ON THIS PATH. It reaches `results[]` on the turn contract, the session log and
+   * every `agent.ask` client in this form; `unmaskForHumanOutput` runs at each surface's emit and
+   * nowhere else.
+   */
+  readonly payload: unknown
+  /**
+   * The classifier's answer, or the legacy verdict when the op declares no classifier.
+   *
+   * FAIL-CLOSED (D-03): a fold that throws, or answers something that is not a verdict, yields
+   * `failed` with a named outcome — never `executed`. An unreadable result might be a refusal, and
+   * success is the one claim a receipt must not default to.
+   */
+  readonly verdict: ClauseVerdict
+  /** The op's declared render fold, or `[]`. ADDITIVE — these lines never replace the payload. */
+  readonly foldLines: readonly string[]
+}
 
 /**
  * CHAT-04's degrade pass, as a seam the tracer leaves empty.

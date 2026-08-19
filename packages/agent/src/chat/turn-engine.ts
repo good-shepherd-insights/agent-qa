@@ -44,6 +44,7 @@ import type {
   ChatSessionEvent,
   ChatSessionHandle,
   ClauseReceipt,
+  ClauseResult,
   ChatTurnStatus,
   FunctionCaller,
   SessionLogPort,
@@ -539,14 +540,21 @@ async function runTurnThrough(
 
   const finish = async (
     status: ChatTurnStatus,
-    result: Omit<AgentAskResult, 'sessionId' | 'turnId' | 'status'>,
+    // 399.1 D-05: `results` is REQUIRED on the contract and DEFAULTED here to the empty list,
+    // because every arm that reaches this without one is an arm where nothing ran — a refusal, a
+    // fail-closed turn, a turn answered in prose. Making each of them spell `results: []` would be
+    // making them state the fact twice; making the field optional would have made 'nothing ran' and
+    // 'this build does not report results' the same bytes, which is the ambiguity `receipts` was
+    // required for in the first place.
+    result: Omit<AgentAskResult, 'sessionId' | 'turnId' | 'status' | 'results'>
+      & { results?: readonly ClauseResult[] },
   ): Promise<AgentAskResult> => {
     await append({ kind: 'turn_complete', turnId, at: deps.now(), status })
     // The fsync point (D-19). Per TURN, so the loss bound is exactly the in-flight turn —
     // the case the next-turn repair already knows how to handle.
     await opened.turnBoundary()
     state?.endTurn({ turnId, status, receipts: result.receipts, ...(result.answer === undefined ? {} : { answer: result.answer }) })
-    return { sessionId, turnId, status, ...refusedLineCount, ...result }
+    return { sessionId, turnId, status, ...refusedLineCount, ...result, results: [...result.results ?? []] }
   }
   /**
    * The ONE way this engine refuses a turn (D-08 / D-10 / D-15).
@@ -977,6 +985,10 @@ async function runTurnThrough(
   // ordering of these statements in which a side effect happens before the verdict, because
   // there is no plan to walk until the verdict has produced one.
   const receipts: ClauseReceipt[] = []
+  // 399.1 (D-05): what the ops RETURNED, the sibling channel `receipts` was never allowed to be.
+  // Appended inside the loop, so its order is the execution order — which is the utterance order
+  // this engine preserves everywhere else — and its length is the number of clauses that ran.
+  const results: ClauseResult[] = []
   let failed = false
   // 398-13 (D-21): what the ops PRODUCED, on its way to the turn's `answer` field. The receipt
   // charter is untouched — see `explainAnswerLines`.
@@ -1017,8 +1029,11 @@ async function runTurnThrough(
       return refuse(step.clause.text, writeTestRefusal ?? WRITE_TEST_UNCONFIGURED_DETAIL)
     } else {
       try {
-        // The result is CAPTURED rather than discarded (394-14). It reaches exactly one reader —
-        // `summariseOutcome`, which looks at one field of one op and parses it before rendering.
+        // The result arrives CLASSIFIED (399.1, D-01/D-03/D-05). It used to arrive as `unknown`,
+        // read by `summariseOutcome` alone, and the status below was the literal `'executed'` — so
+        // the only fact this receipt could report about a returning op was that it had returned.
+        // Every arm of a typed refusal returns, which is how a credential-blocked config mutation
+        // came to render `executed` in green over a file that was never written (G-399-2).
         const answered = await deps.invoke(
           step.functionId,
           stampSessionFacts(step.functionId, step.args, sessionId),
@@ -1028,10 +1043,27 @@ async function runTurnThrough(
           clause: step.clause.text,
           functionId: step.functionId,
           origin: caller.origin,
-          status: 'executed',
-          outcome: summariseOutcome(step.functionId, answered),
+          // THE OP'S OWN VERDICT, not a derivation from how the call ended. Fail-closed upstream:
+          // a fold that could not read its result answered `failed`, never `executed`.
+          status: answered.verdict.status,
+          // An empty outcome means the op's fold had nothing to add, and the line this engine has
+          // always printed is the honest answer for it — the same line an op with no fold gets.
+          outcome: answered.verdict.outcome === ''
+            ? summariseOutcome(step.functionId, answered.payload)
+            : answered.verdict.outcome,
         }
-        answerLines.push(...explainAnswerLines(step.functionId, answered))
+        // WHAT THE OP PRODUCED, ON THE CHANNEL D-05 GAVE IT. One entry per clause that ran, in
+        // execution order, carrying the payload EXACTLY as the function layer returned it —
+        // placeholder-masked. Nothing unmasks here: this value reaches the session log and every
+        // `agent.ask` client, and `unmaskForHumanOutput` belongs at each surface's emit.
+        //
+        // ITS ARRIVAL IS WHY `explainAnswerLines` IS NOW THE NARROW CASE RATHER THAN THE CHANNEL.
+        // 399.1 plan 03 migrates it and `summariseOutcome`'s fan-out case onto the registry-declared
+        // folds below and deletes both id-matches; they stay here in this plan so the tracer changes
+        // one path rather than every path at once.
+        results.push({ functionId: step.functionId, payload: answered.payload })
+        answerLines.push(...answered.foldLines)
+        answerLines.push(...explainAnswerLines(step.functionId, answered.payload))
       } catch (error) {
         failed = true
         receipt = {
@@ -1070,6 +1102,7 @@ async function runTurnThrough(
   )
   return finish(failed ? 'failed' : 'completed', {
     receipts,
+    results,
     ...(answer.length === 0 ? {} : { answer: answer.join('\n') }),
   })
 }

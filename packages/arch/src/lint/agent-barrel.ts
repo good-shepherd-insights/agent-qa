@@ -337,6 +337,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // points it sits beside stay off this list on purpose, so widening a lexicon remains an edit
   // inside the module that carries its retune comment.
   'evaluateAssertionStrength',
+  // 399.1 D-01/D-03: the result fold the composition root runs on the invoke return path — it
+  // executes a spec's declared classifier and render fold and answers with DATA. It is on this list
+  // because it is the ONE published function that touches a spec, and a reader has to be able to
+  // see that it dispatches nothing: it takes a registry it did not construct, runs no capability,
+  // reaches no port, and a caller holding it can run nothing it could not already run through
+  // `invokeFunction`. In ASCII SORT position; this list is compared positionally.
+  'foldFunctionResult',
   'fromToolName',
   // 394-07 plan 07, D-12/D-14: the funnel projection, the mixed-verdict stability gather and the
   // pure window scope — this entry and `projectAuthoringFunnel` / `scopeReceiptsToWindow` below,
@@ -581,6 +588,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // the join key (`alias`) plus the form a person types (`syntax`), and pinning it is what makes a
   // help line growing a field the census cannot read a visible edit.
   'ChatHelpEntry',
+  // 399.1 D-01/D-05: what that binding now ANSWERS — payload, verdict, fold lines. Pinned beside
+  // the binding itself because the two are one contract: the seam used to answer `unknown`, which
+  // is why the engine's only derivation for a receipt status was throw-versus-return, and a member
+  // leaving this envelope is exactly the kind of quiet narrowing that gap was made of.
+  'ChatInvokeAnswer',
   'ChatInvokeBinding',
   // 392 plan 07, CHAT-06: a model OBJECT, never a model id. The SDK's own `LanguageModel` type also
   // admits a bare id it resolves by constructing a client, which is a second door to the thing the
@@ -633,6 +645,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   // caller with, which a consumer re-deriving it would have to guess at by matching op ids.
   'ClauseAction',
   'ClauseSplitter',
+  // 399.1 D-02/D-03: what an op's classifier answers about its own result. A two-field TYPE, and it
+  // is pinned because its STATUS SET is the subject of a decision — three members a classifier may
+  // return, deliberately excluding `not-run`, which describes a clause the engine never attempted
+  // and which no op may claim.
+  'ClauseVerdict',
   'ClockPort',
   'CompactionHook',
   // 392 plan 06: what a pass is asked and what it answers. `CompactionPass` carries `messages` on
@@ -720,6 +737,9 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'FunctionDeclaration',
   'FunctionDeps',
   'FunctionRegistry',
+  // 399.1 D-01/D-04: what `foldFunctionResult` answers — the verdict and the op's extra lines. A
+  // TYPE over data; pinned in sort position beside the function that produces it.
+  'FunctionResultFold',
   'FunctionResultKind',
   'FunctionStream',
   'JobAuthorCallback',
