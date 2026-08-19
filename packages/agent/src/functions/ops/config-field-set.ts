@@ -26,9 +26,10 @@
 import { ConfigFieldSetInputSchema, ConfigProposeOutputSchema } from '@vostride/agent-qa-schema'
 import type { ConfigFieldSetInput, ConfigProposeOutput } from '@vostride/agent-qa-schema'
 
+import { classifyConfigProposeOutput } from './config-propose-verdict.js'
 import { constructConfigFieldSetProposal } from '../../config-mutation/construct.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { ClauseVerdict, FunctionSpec } from '../spec.js'
+import type { FunctionSpec } from '../spec.js'
 
 export const CONFIG_FIELD_SET_FUNCTION_ID = 'config.field.set'
 
@@ -48,36 +49,13 @@ export const configFieldSetSpec: FunctionSpec<ConfigFieldSetInput, ConfigPropose
   /**
    * This op's own union, folded into a clause verdict (2026-08-20, Phase 399.1 D-01/D-02).
    *
-   * FOUR ARMS, THREE VERDICTS, AND THE MAPPING IS THE WHOLE POINT. `blocked` is the arm G-399-2
-   * caught reporting `executed` in green: the guardrail refused to write a secret into the config,
-   * the file was byte-unchanged, and chat told the person the mutation completed. It is `refused` —
-   * the control WORKED, and the reason (`guardrail-hit` distinguishing "you tried to write a secret"
-   * from `schema-fail`'s "your config is invalid") is what the outcome carries. `refused` is the
-   * op's OWN refusal arm and folds to the same status for the same reason: the request was declined
-   * before anything was proposed.
-   *
-   * `proposed` IS `executed`, AND `no-change` IS TOO. A proposal really was filed — the op's whole
-   * job is to file one — and a set of a value the config already holds is neither an error nor a
-   * refusal; both ran to completion and the outcome line says which.
-   *
-   * NOTHING IS DERIVED FROM THROW-VS-RETURN HERE, and that asymmetry is RC-1b's actual defect: all
-   * four of these arms RETURN, which is exactly why the engine could not tell them apart. A thrown
-   * error is still `failed` and still the engine's own mapping — this fold never sees one.
-   *
-   * PURE, and it reads only the discriminant and one field beside it.
+   * THE MAPPING MOVED TO `config-propose-verdict.ts` IN 399.1-03, unchanged, when the other six ops
+   * answering with this same union got classifiers of their own. It was written here first because
+   * this op was the tracer; leaving a private copy behind would have made a guardrail refusal report
+   * `refused` on this door and `executed` on the next one the first time somebody edited one copy.
+   * The arms, and the reasoning for which of them is `refused`, are documented at the fold.
    */
-  classify(output): ClauseVerdict {
-    switch (output.outcome) {
-      case 'blocked':
-        return { status: 'refused', outcome: output.blockedReason }
-      case 'refused':
-        return { status: 'refused', outcome: output.reason }
-      case 'no-change':
-        return { status: 'executed', outcome: `no change: ${output.path} already holds that value` }
-      case 'proposed':
-        return { status: 'executed', outcome: `proposed ${output.proposalId}` }
-    }
-  },
+  classify: classifyConfigProposeOutput,
   async invoke(input, deps): Promise<ConfigProposeOutput> {
     // FOUR DEPS, ONE `boundThrough`, on `proposals.accept`'s stated arrangement. The declared name
     // is the one whose absence means "this host has no config files at all"; the other three are

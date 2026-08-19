@@ -66,7 +66,7 @@ import type {
 
 import { applyablePayload } from '../../config-mutation/construct.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 import { configProposalApplySpec } from './config-proposal-apply.js'
 import { knowledgeProposalApplySpec } from './knowledge-proposal-apply.js'
 
@@ -437,6 +437,46 @@ export const proposalsAcceptSpec: FunctionSpec<ProposalsAcceptInput, ProposalsAc
     recognized: true,
     readOnly: false,
     declaredTier: 'mutating-shared',
+  },
+  /**
+   * The APPLY half's own union, folded into a clause verdict (2026-08-20, Phase 399.1 D-01/D-02).
+   *
+   * THIS OP WAS NOT ON PLAN 03'S FLOOR AND THE CENSUS FOUND IT. `not-applyable` is a BLOCKED config
+   * proposal reaching the one verb that commits, and its `reason` is the very `guardrail-hit` /
+   * `schema-fail` vocabulary `config.field.set` publishes — so reporting it `executed` is the
+   * G-399-2 defect one door over: the guardrail held, nothing was committed, and the person was told
+   * their change went in. `expired` is the lifecycle declining evidence D-12 has already ruled too
+   * old to act on — the schema's own words are "Refusing here is what makes the computed status mean
+   * something at the one verb that COMMITS".
+   *
+   * THE OTHER ARMS ARE ANSWERS, NOT REFUSALS, and the line is deliberate. `not-found` is an id
+   * pasted out of a stale message, `already-rejected` is somebody having got there first, and
+   * `apply-in-flight` is a machine holding the lock — none of them is a control declining an act it
+   * would otherwise have carried out, which is what D-02 minted `refused` to mean. Each reports
+   * `executed` with the outcome naming exactly what the caller found, and nothing pretends a commit
+   * happened: the payload is rendered beside the receipt on every arm (D-04).
+   *
+   * IT READS THE APPLY HALF ONLY. The GRANT half's refusals (`cross-boundary`, `ledger-damaged`,
+   * `protected-class`) are refusals of the MINT, on a call whose apply may have committed — folding
+   * them into this one status would force the choice the output's two-field shape exists to refuse.
+   * They travel in the payload, where both halves stay readable.
+   */
+  classify(output): ClauseVerdict {
+    const apply = output.apply
+    switch (apply.outcome) {
+      case 'not-applyable':
+        return { status: 'refused', outcome: `not-applyable: ${apply.reason}` }
+      case 'expired':
+        return { status: 'refused', outcome: 'expired: the proposal is past its decision window' }
+      case 'applied':
+        return { status: 'executed', outcome: `applied ${apply.applied.kind}` }
+      case 'already-rejected':
+        return { status: 'executed', outcome: 'already-rejected: nothing was applied' }
+      case 'apply-in-flight':
+        return { status: 'executed', outcome: `apply-in-flight: ${apply.proposalId}` }
+      case 'not-found':
+        return { status: 'executed', outcome: `not-found: ${apply.proposalId}` }
+    }
   },
   async invoke(input, deps: FunctionDeps): Promise<ProposalsAcceptOutput> {
     const inbox = deps.proposalsInbox

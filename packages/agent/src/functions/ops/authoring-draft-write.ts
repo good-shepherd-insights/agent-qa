@@ -54,7 +54,7 @@ import type {
 
 import { authoringFanOutBound, runAuthoringLoop } from '../../authoring/loop.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const AUTHORING_DRAFT_WRITE_FUNCTION_ID = 'authoring.draft.write'
 
@@ -125,6 +125,38 @@ export const authoringDraftWriteSpec: FunctionSpec<
   // what they are asking a person to approve, at the one moment the person is deciding.
   disclose(input: AuthoringDraftWriteInput): string {
     return renderFanOutPreview(authoringFanOutBound(input))
+  },
+  /**
+   * This op's own outcome enum, folded into a clause verdict (2026-08-20, Phase 399.1 D-01/D-02).
+   *
+   * `refused` IS THE MEASURED WITNESS. 399's live acceptance recorded this op returning its stage-2
+   * dedup refusal while chat printed `executed  authoring.draft.write completed`: the screen declined
+   * to author, nothing was written, and the person was told it had been. The screen WORKED, so the
+   * honest word is `refused` and not `failed` — the same reading D-02 minted the status for.
+   *
+   * THE OUTCOME CARRIES THE REFERENCE, because 394 D-04's requirement is refuse AND LINK: a person
+   * told only "duplicate" has nothing to open, and `matchedRef` is precisely the string
+   * `entities.resolve` takes. The refusal payload is optional on the contract, so an arm that says
+   * `refused` without one still says `refused` — the status is the claim that must not be lost, and
+   * a missing link degrades the sentence rather than the verdict.
+   *
+   * THE OTHER THREE ARMS RAN TO COMPLETION. `drafted`, `repaired` and `finding` all end with a draft
+   * and a receipt — a correctly-failing draft is a FINDING about the application, not a failure of
+   * this op — so each is `executed`, and the outcome says which road and names the test authored.
+   */
+  classify(output): ClauseVerdict {
+    if (output.outcome === 'refused') {
+      const matched = output.refusal?.matchedRef
+      return {
+        status: 'refused',
+        outcome: matched === undefined ? 'duplicate' : `duplicate-of:${matched}`,
+      }
+    }
+    const authored = output.draftRef?.testName
+    return {
+      status: 'executed',
+      outcome: authored === undefined ? output.outcome : `${output.outcome} ${authored}`,
+    }
   },
   async invoke(input, deps) {
     // `invokeFunction` already refused this composition on `draftShelf`, so reaching here with no

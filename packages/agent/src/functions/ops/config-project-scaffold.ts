@@ -25,6 +25,7 @@
 import { ConfigProjectScaffoldInputSchema, ConfigProposeOutputSchema } from '@vostride/agent-qa-schema'
 import type { ConfigProjectScaffoldInput, ConfigProposeOutput } from '@vostride/agent-qa-schema'
 
+import { classifyConfigProposeOutput } from './config-propose-verdict.js'
 import { constructConfigProjectScaffoldProposal } from '../../config-mutation/construct.js'
 import { FunctionNotBoundError } from '../spec.js'
 import type { FunctionSpec } from '../spec.js'
@@ -49,6 +50,15 @@ export const configProjectScaffoldSpec: FunctionSpec<
     recognized: true,
     readOnly: false,
   },
+  /**
+   * This op's own union, folded into a clause verdict (2026-08-20, Phase 399.1 D-01/D-02).
+   *
+   * THE FOLD IS SHARED BECAUSE THE UNION IS. Seven ops answer with `ConfigProposeOutput`, and a
+   * per-op copy of the mapping would be a guardrail refusal that reports `refused` on some doors
+   * and `executed` on others the first time one copy is edited. See `config-propose-verdict.ts`
+   * for why `blocked` and `refused` are the same status and different words.
+   */
+  classify: classifyConfigProposeOutput,
   async invoke(input, deps): Promise<ConfigProposeOutput> {
     // FIVE DEPS, ONE `boundThrough`, on `config.undo.propose`'s arrangement — with the declared
     // name being this op's OWN one. `scaffoldContent` is what a host that cannot render the shared

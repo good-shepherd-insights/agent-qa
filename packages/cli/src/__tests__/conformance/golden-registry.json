@@ -109,6 +109,7 @@
     },
     {
       "bindingStatusAtRoot": "bound",
+      "classifies": true,
       "discloses": true,
       "id": "authoring.draft.write",
       "inputSchemaDigest": "42253a99f2817179b35d82357acaec9cc5c85c0a75ee4dbe68414298c2efa913",
@@ -150,6 +151,7 @@
     },
     {
       "bindingStatusAtRoot": "bound",
+      "classifies": true,
       "id": "config.auth.set",
       "inputSchemaDigest": "1b383ad8b7fc0341ff247714d8fc6a2d3d10205690f1b0772e1589c8edc31b7e",
       "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",
@@ -208,6 +210,7 @@
     },
     {
       "bindingStatusAtRoot": "bound",
+      "classifies": true,
       "id": "config.hook.add",
       "inputSchemaDigest": "779411d4f0c10d810988139bc61dbeb86eb61bfa87c0f755083ed6f4e779ab20",
       "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",
@@ -227,6 +230,7 @@
     },
     {
       "bindingStatusAtRoot": "bound",
+      "classifies": true,
       "id": "config.project.scaffold",
       "inputSchemaDigest": "8ec9d2f71f8ef9484af79da67891ce91c528a83bba56332812ae2a98de368890",
       "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",
@@ -266,6 +270,7 @@
     },
     {
       "bindingStatusAtRoot": "bound",
+      "classifies": true,
       "id": "config.target.create",
       "inputSchemaDigest": "6d48e4d685f01a4e0fa39a090594bc548ba55a93d21748eb5da4a2b611e3334d",
       "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",
@@ -285,6 +290,7 @@
     },
     {
       "bindingStatusAtRoot": "bound",
+      "classifies": true,
       "id": "config.target.edit",
       "inputSchemaDigest": "d7dcd7c0cb6a84721a31edd1ef9858f34326f36a5b7542a55fda4ed596239a23",
       "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",
@@ -304,6 +310,7 @@
     },
     {
       "bindingStatusAtRoot": "bound",
+      "classifies": true,
       "id": "config.undo.propose",
       "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",
       "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",
@@ -573,6 +580,7 @@
     },
     {
       "bindingStatusAtRoot": "bound",
+      "classifies": true,
       "id": "proposals.accept",
       "inputSchemaDigest": "5b5b489fc085becee74396ff4acbd351c41986518402afe0e024f057ea45824a",
       "outputSchemaDigest": "b07477cd62310063eaedb7836fe4cb0a14012a78b44c51fb6f7121816f8b034a",
