@@ -14,7 +14,7 @@
       "bindingStatusAtRoot": "bound",
       "id": "agent.ask",
       "inputSchemaDigest": "4263d0037103be319312c3933a8c3bc17f441fe2a8852ac4afd917e78db43f8d",
-      "outputSchemaDigest": "d80b1539b8a4809f14a80c8d59ebf78f977c7ea2093cf230cc214e883b76e337",
+      "outputSchemaDigest": "f7953727cfb05167d27ea29cc5bacc98b1fa8416f55cf6b0503c4da20ce57e9a",
       "partition": {
         "kind": "unprojected",
         "reason": "agent-ask-delegation-deferral"
@@ -169,6 +169,7 @@
     },
     {
       "bindingStatusAtRoot": "bound",
+      "classifies": true,
       "id": "config.field.set",
       "inputSchemaDigest": "809dd2d6ebbd81f0f1d58f9713c7a58e46b0574fda84721556e31c323edff953",
       "outputSchemaDigest": "7a8846c253dbbbc0db25847d005710df759dcd7d500f92d70889e7e13c02100d",

@@ -23,7 +23,7 @@
 // already owns (`ask`'s `emitHuman`, chat's own masked write). A render that printed for itself
 // would be a disclosure boundary with none of `unmaskForHumanOutput`'s cover.
 
-import type { ClauseReceipt } from '@vostride/agent-qa-schema'
+import type { ClauseReceipt, ClauseReceiptStatus } from '@vostride/agent-qa-schema'
 import pc from 'picocolors'
 
 /**
@@ -34,12 +34,29 @@ import pc from 'picocolors'
  * person typed off the edge of a terminal on the ones that do not.
  */
 export function receiptLine(receipt: ClauseReceipt): string {
-  const status =
-    receipt.status === 'executed'
-      ? pc.green(receipt.status)
-      : receipt.status === 'failed'
-        ? pc.red(receipt.status)
-        : pc.dim(receipt.status)
-  return `  ${status}  ${pc.bold(receipt.functionId)}  ${pc.dim(receipt.clause)}\n`
-    + `    ${pc.dim(receipt.outcome)}`
+  return `  ${STATUS_STYLE[receipt.status](receipt.status)}  ${pc.bold(receipt.functionId)}`
+    + `  ${pc.dim(receipt.clause)}\n    ${pc.dim(receipt.outcome)}`
 }
+
+/**
+ * How each status reads on a terminal — TOTAL over the vocabulary, and that totality is the guard.
+ *
+ * IT WAS A TERNARY CHAIN UNTIL 399.1 (D-02, RESEARCH Pitfall 3), whose final `else` styled anything
+ * it did not recognise as `pc.dim` — the `not-run` styling. `refused` would have landed there
+ * silently: a security control's refusal wearing the "never attempted" affordance, on a build that
+ * had just been changed specifically so a person could tell the difference. A record with no default
+ * arm makes a FIFTH member a compile error at this line instead, which is the only version of this
+ * guard that does not depend on somebody remembering to come here.
+ *
+ * THE FOUR STYLES ARE FOUR DIFFERENT FACTS, not a palette. `executed` is green because the thing was
+ * carried out. `failed` is red because something went wrong and a person should look. `refused` is
+ * yellow — a deliberate third colour, because a guardrail declining an op is neither of those: the
+ * control worked, nothing is broken, and nothing happened. `not-run` is dim because the clause was
+ * never attempted and is the one line here that is not about an act at all.
+ */
+const STATUS_STYLE = {
+  executed: pc.green,
+  failed: pc.red,
+  refused: pc.yellow,
+  'not-run': pc.dim,
+} as const satisfies Record<ClauseReceiptStatus, (text: string) => string>

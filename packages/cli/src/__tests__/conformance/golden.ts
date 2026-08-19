@@ -115,6 +115,17 @@ export interface GoldenRow {
   readonly requiresHumanOrigin?: true
   /** Present only when the op composes a confirm-time disclosure (397-02's projected fact). */
   readonly discloses?: true
+  /**
+   * Present only when the op folds its own result into a clause verdict (399.1 D-01).
+   *
+   * CHANGE-CONTROL SURFACE, not decoration. An op that stops classifying its own result goes back
+   * to reporting `executed` for every arm of its union — which is the defect G-399-2 measured, a
+   * security control refusing while the terminal said the change completed. That regression is a
+   * one-line diff in this column.
+   */
+  readonly classifies?: true
+  /** Present only when the op declares render lines on top of the payload (399.1 D-04). */
+  readonly rendersResult?: true
   readonly resultKind: string
   /**
    * Whether the ONE shipped composition root binds this capability (D-08).
@@ -164,6 +175,8 @@ export const GOLDEN_PROJECTED_DECLARATION_KEYS: readonly string[] = Object.freez
   'requiredScopes',
   'requiresHumanOrigin',
   'discloses',
+  'classifies',
+  'rendersResult',
   'resultKind',
   'bindingStatus',
   'risk',
@@ -308,6 +321,8 @@ export function goldenRowOf(
     requiredScopes: [...declaration.requiredScopes].sort(),
     ...(declaration.requiresHumanOrigin === undefined ? {} : { requiresHumanOrigin: true as const }),
     ...(declaration.discloses === undefined ? {} : { discloses: true as const }),
+    ...(declaration.classifies === undefined ? {} : { classifies: true as const }),
+    ...(declaration.rendersResult === undefined ? {} : { rendersResult: true as const }),
     resultKind: declaration.resultKind,
     bindingStatusAtRoot: declaration.bindingStatus,
     risk: {
@@ -437,6 +452,8 @@ const ROW_FIELDS: readonly string[] = Object.freeze([
   'requiredScopes',
   'requiresHumanOrigin',
   'discloses',
+  'classifies',
+  'rendersResult',
   'resultKind',
   'bindingStatusAtRoot',
   'risk',

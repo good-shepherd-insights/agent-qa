@@ -59,6 +59,7 @@ import {
 import { resolveCliChatCapabilities } from '../llm-utils.js'
 import type { CliChatCapabilities } from '../llm-utils.js'
 import { receiptLine } from './receipt-line.js'
+import { renderClauseResults } from './result-render.js'
 
 type ChatErrorCode = 'unknown-session' | 'no-session-to-continue'
 
@@ -144,6 +145,10 @@ function renderTurn(result: AgentAskResult): string {
     )
   }
   if (result.receipts.length > 0) lines.push(...result.receipts.map(receiptLine))
+  // 399.1 (D-04/D-05): what the ops RETURNED, between the receipts that say they ran and the
+  // prose the planner wrote. The order is the order the facts were established, and the payload
+  // is rendered whole — this surface's masked write is the one place it is unmasked.
+  lines.push(...renderClauseResults(result.results))
   if (result.answer !== undefined) lines.push(result.answer)
   if (result.status === 'fail_closed') {
     lines.push(

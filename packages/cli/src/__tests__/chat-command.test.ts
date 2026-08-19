@@ -403,4 +403,43 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     const shared = readFileSync(join(commands, 'receipt-line.ts'), 'utf8')
     expect(shared).toContain('receipt.outcome')
   })
+
+  it('both surfaces render ONE payload block, from the one module, through their own masker', () => {
+    // THE SAME PIN FOR THE 399.1 RENDER (D-04). `result-render.ts` is the second module to be
+    // shared by these two surfaces, and it arrives with the pin rather than acquiring one later:
+    // the whole reason `receipt-line.ts` exists is that the two surfaces held byte-identical
+    // private copies and were free to drift.
+    const commands = join(__dirname, '..', 'commands')
+    for (const file of ['chat.ts', 'ask.ts']) {
+      const source = readFileSync(join(commands, file), 'utf8')
+      expect({ file, imports: source.includes("from './result-render.js'") })
+        .toEqual({ file, imports: true })
+      expect({ file, private: /function\s+renderClauseResults\s*\(/u.test(source) })
+        .toEqual({ file, private: false })
+      // …and each surface actually CALLS it. The two assertions above hold over a surface that
+      // imported the module and never rendered a payload, which is the state this phase repairs.
+      expect({ file, renders: source.includes('renderClauseResults(result.results)') })
+        .toEqual({ file, renders: true })
+    }
+
+    // COMMENTS STRIPPED, on `parity.test.ts`'s precedent and for its reason: the module's header
+    // NAMES `unmaskForHumanOutput` in order to say where the boundary lives instead, and a sweep
+    // over raw source would read that explanation as the violation. Measured: it did, first run.
+    // The claim is about the module's BODY, so the body is what is searched.
+    const shared = readFileSync(join(commands, 'result-render.ts'), 'utf8')
+      .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
+      .replaceAll(/^\s*\/\/.*$/gmu, '')
+    // THE BOUNDARY IS NOT HERE (criterion 3). Unmasking belongs at each surface's own emit, and a
+    // shared render that unmasked for itself would hand its caller a cleartext string with no
+    // masker in sight. Asserted as SOURCE because the module is pure — no test input can
+    // distinguish "did not unmask" from "had nothing to unmask".
+    expect(shared).not.toContain('unmask')
+    // Nor does it print. The surfaces own their streams; a render with a print site inside would be
+    // a disclosure boundary with none of `unmaskForHumanOutput`'s cover.
+    expect(shared).not.toContain('console.')
+    expect(shared).not.toContain('process.stdout')
+    // The non-vacuity guard on all of the above: the module renders the WHOLE payload rather than
+    // a hand-picked join of the fields somebody thought mattered (D-04's structural claim).
+    expect(shared).toContain('JSON.stringify(payload, null, 2)')
+  })
 })

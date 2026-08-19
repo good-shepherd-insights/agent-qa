@@ -61,8 +61,15 @@ describe('the chat session event vocabulary is closed and total', () => {
     expect(CHAT_SESSION_EVENT_KINDS).toHaveLength(10)
   })
 
-  it('D-11: the receipt statuses are exactly three, closed', () => {
-    expect([...CLAUSE_RECEIPT_STATUSES]).toEqual(['executed', 'failed', 'not-run'])
+  it('D-11 + 399.1 D-02: the receipt statuses are exactly four, closed', () => {
+    // FOUR SINCE 2026-08-20, and the assertion is spelled out rather than counted for the reason it
+    // always was: this is a published vocabulary, every surface renders every member, and a member
+    // arriving or leaving must be a visible edit HERE and not an arithmetic change somewhere.
+    //
+    // `refused` is the addition (399.1 D-02) and the ORDER is part of the pin: it is appended, so
+    // nothing that indexed this tuple moved. A guardrail declining an op is neither `executed` — the
+    // change did not happen — nor `failed`, which sends a reader hunting a defect that is not there.
+    expect([...CLAUSE_RECEIPT_STATUSES]).toEqual(['executed', 'failed', 'not-run', 'refused'])
   })
 
   it('CHAT-02: a scenario expects one of exactly two things', () => {

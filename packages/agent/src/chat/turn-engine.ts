@@ -841,9 +841,13 @@ async function runTurnThrough(
     // scaffold is gated, audited and receipted exactly as a directly-asked-for one would be.
     let proposed: unknown
     try {
-      proposed = await engine.invoke(
+      // THE PAYLOAD, off the classified envelope (399.1). This route reads the proposal the scaffold
+      // FILED — a summary line, a file list and a rendered diff it must show a person before it may
+      // ask them to approve anything — and a verdict has no part in that reading. The narrowing
+      // below is what decides whether the proposal is displayable at all.
+      proposed = (await engine.invoke(
         CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID, { domain: route.domain }, caller,
-      )
+      )).payload
     } catch (error) {
       writeTestRefusal = refusalMessage(error)
       return 'stop'

@@ -45,6 +45,7 @@ import pc from 'picocolors'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { receiptLine } from './receipt-line.js'
+import { renderClauseResults } from './result-render.js'
 
 type AskErrorCode = 'missing-message' | 'fail-closed' | 'clause-failed'
 
@@ -80,6 +81,10 @@ function renderTurn(result: AgentAskResult): string {
   if (result.receipts.length > 0) {
     lines.push(...result.receipts.map(receiptLine))
   }
+  // 399.1 (D-04/D-05): the same payload block the REPL prints, from the same module — the one-shot
+  // and the conversation are the same turn, and a scripted caller that was shown less than the
+  // person at the prompt would be the drift D-01 forbids.
+  lines.push(...renderClauseResults(result.results))
   if (result.answer !== undefined) lines.push(result.answer)
   return lines.join('\n')
 }
