@@ -20,43 +20,26 @@
 // guard below is what keeps that shared artifact from being a PREVIOUS revision of the source the
 // rest of the suite is reasoning about.
 //
-// THE FRESHNESS GUARD IS PART OF THE CELL'S CONTRACT, NOT A PRECONDITION SOMEBODY SATISFIED ONCE. A
-// stale `dist` is worse than an absent one: an anchor spawned against yesterday's build passes,
-// reads as proof of today's source, and certifies the wrong artifact. So the guard refuses on two
-// separate conditions — a MISSING built artifact and a built artifact OLDER than the newest
-// non-test source file of the package it was built from — and names the offending file in both
-// cases. It is an mtime comparison, which catches the failure it exists for (a person, or an agent,
-// forgetting to rebuild before measuring) and does not pretend to survive somebody deliberately
-// touching a build output.
-//
-// TEST SOURCES ARE EXCLUDED FROM THE FRESHNESS SCAN ON PURPOSE. tsup's entries are `src/index.ts`
-// and `src/cli.ts`; nothing under `__tests__` is bundled into anything. Counting this very file's
-// mtime would make every edit to a test look like an unbuilt change to the product, which is the
-// kind of false alarm that gets a guard deleted.
-//
-// HERMETIC, AND WITHOUT A CREDENTIAL ANYWHERE (T-397-17, 396 D-17). Each spawned cell gets its own
-// `mkdtemp` project whose configuration is planted throwaway workspace globs and nothing else — no
-// token entry, no key, no LLM block — and the child is handed a constructed environment rather than
-// this process's, so no ambient provider credential can reach it and no provider can be spent
-// against. The chat session the anchor drives is therefore model-unbound by construction and takes
-// the deterministic resolver route, which is the route that never touches a model at all.
+// THE INSTRUMENT ITSELF LIVES IN `spawned-chat.ts`, AND ONLY THERE (399.1-01). The stale-dist
+// freshness guard, the hermetic child environment, the fixture project and the chat driver were all
+// defined in this file until phase 399.1 needed the same instrument for its render differential.
+// This file's own law about the driver — "a second spawn helper would be a second answer to 'what
+// did the child inherit'" — is the reason they were EXTRACTED rather than copied: the sibling file
+// imports the same functions this one does, so there is still exactly one answer to that question,
+// one freshness reading and one fixture recipe. What stays here is what these two anchors ASSERT.
 
-import { spawn } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
-  rmSync,
-  statSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { PassThrough } from 'node:stream'
-import { dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join, relative } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
@@ -71,113 +54,21 @@ import { createChatCommand } from '../../commands/chat.js'
 import { MCP_STDIO_STARTUP_MESSAGE } from '../../commands/mcp.js'
 import { DEFAULT_MCP_SCOPES } from '../../composition/mcp-token-resolution.js'
 import { MCP_ENUMERATION_SCOPES, enumerateMcpOpIds, expandMcpListedTools } from './adapters.js'
-
-const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url))
-/** `packages/cli`. */
-const CLI_PACKAGE_ROOT = resolve(CONFORMANCE_DIR, '..', '..', '..')
-/** `packages`. */
-const PACKAGES_ROOT = resolve(CLI_PACKAGE_ROOT, '..')
-const CLI_ENTRY = join(CLI_PACKAGE_ROOT, 'dist', 'cli.js')
-
-const REBUILD_INSTRUCTION =
-  'the built artifacts these anchors measure are missing or older than their sources; run '
-  + '`pnpm build` at the repository root before running this file (see its header). An anchor '
-  + 'spawned against a stale build certifies the PREVIOUS revision while reading as proof of this '
-  + 'one.'
-
-// ---- The stale-dist guard ----------------------------------------------------------------------
-
-/**
- * The built artifacts the spawned halves of these cells actually execute.
- *
- * `cli` is bundled from its own source; the other four arrive as their own dists because tsup leaves
- * workspace dependencies external. All five are listed because the enumeration a spawned binary
- * answers with is composed out of all five, and a guard that watched only the entry point would be
- * green while the registry the entry point lists was a revision behind.
- */
-const ANCHORED_BUILDS: readonly { readonly pkg: string; readonly artifact: string }[] = Object.freeze(
-  [
-    Object.freeze({ pkg: 'schema', artifact: join('dist', 'index.js') }),
-    Object.freeze({ pkg: 'agent', artifact: join('dist', 'index.js') }),
-    Object.freeze({ pkg: 'agent-local', artifact: join('dist', 'index.js') }),
-    Object.freeze({ pkg: 'mcp', artifact: join('dist', 'index.js') }),
-    Object.freeze({ pkg: 'cli', artifact: join('dist', 'cli.js') }),
-  ],
-)
-
-/** What a freshness reading found, as data — so a refusal names files rather than a boolean. */
-export interface BuildFreshness {
-  /** Packages whose built artifact does not exist at all. */
-  readonly missing: readonly string[]
-  /** Packages whose newest product source is newer than the artifact built from it. */
-  readonly stale: readonly string[]
-}
-
-/**
- * The newest PRODUCT source under a directory, walked rather than globbed.
- *
- * Test sources are skipped for the reason in this file's header. Everything else under `src` counts,
- * including files a bundler may have tree-shaken away: a guard that tried to model the bundler's
- * reachability would be a second, quieter copy of the build.
- */
-function newestProductSource(dir: string): { path: string; mtimeMs: number } | undefined {
-  let newest: { path: string; mtimeMs: number } | undefined
-  const walk = (current: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      if (entry.name === '__tests__' || entry.name === 'node_modules') continue
-      const full = join(current, entry.name)
-      if (entry.isDirectory()) {
-        walk(full)
-        continue
-      }
-      if (!entry.isFile()) continue
-      if (!/\.(?:ts|tsx|mts|cts|js|mjs|cjs|json)$/u.test(entry.name)) continue
-      if (/\.test(?:-d)?\.[cm]?tsx?$/u.test(entry.name)) continue
-      const { mtimeMs } = statSync(full)
-      if (newest === undefined || mtimeMs > newest.mtimeMs) newest = { path: full, mtimeMs }
-    }
-  }
-  walk(dir)
-  return newest
-}
-
-/**
- * Whether every artifact these anchors execute exists and post-dates the source it was built from.
- *
- * RETURNED AS DATA rather than thrown or asserted here, so the cells assert it with their own
- * message. Both lists are relative paths, because an absolute path in a failure message is a path
- * that differs on every machine and therefore cannot be recognised.
- *
- * THE ROOT AND THE BUILD LIST ARE ARGUMENTS, and that is what makes the guard's own two branches
- * drivable: the control cell below points it at a synthetic package tree and watches it report a
- * missing artifact and a stale one. A guard whose refusing branches could only be reached by
- * deleting a real `dist` is a guard nobody has watched refuse.
- */
-export function buildFreshness(
-  builds: readonly { readonly pkg: string; readonly artifact: string }[] = ANCHORED_BUILDS,
-  packagesRoot: string = PACKAGES_ROOT,
-): BuildFreshness {
-  const missing: string[] = []
-  const stale: string[] = []
-  for (const build of builds) {
-    const artifact = join(packagesRoot, build.pkg, build.artifact)
-    if (!existsSync(artifact)) {
-      missing.push(relative(packagesRoot, artifact))
-      continue
-    }
-    const sourceRoot = join(packagesRoot, build.pkg, 'src')
-    if (!existsSync(sourceRoot)) continue
-    const newest = newestProductSource(sourceRoot)
-    if (newest === undefined) continue
-    if (newest.mtimeMs > statSync(artifact).mtimeMs) {
-      stale.push(
-        `${relative(packagesRoot, newest.path)} is newer than `
-        + `${relative(packagesRoot, artifact)}`,
-      )
-    }
-  }
-  return { missing, stale }
-}
+import {
+  ANCHORED_BUILDS,
+  CHAT_ANCHOR_UTTERANCE,
+  CLI_ENTRY,
+  PACKAGES_ROOT,
+  REBUILD_INSTRUCTION,
+  buildFreshness,
+  cleanupTempRoots,
+  driveChatSpawned,
+  fixtureProject,
+  hermeticEnv,
+  spawnCollecting,
+  trackTempRoot,
+} from './spawned-chat.js'
+import type { SpawnOutcome } from './spawned-chat.js'
 
 // ---- The comparator ----------------------------------------------------------------------------
 
@@ -211,87 +102,9 @@ export function anchorDifference(
 
 // ---- Fixtures ----------------------------------------------------------------------------------
 
-const roots: string[] = []
-
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  cleanupTempRoots()
 })
-
-/**
- * A real project on disk, produced rather than a literal path handed to a child.
- *
- * `grantConfigWrite` is the one non-default setting and it is what makes the MCP anchor a
- * like-for-like comparison: stdio has no header to carry a scope exception, so without this opt-in
- * the spawned host serves the D-07 default grant (every scope but `config-write`) and hides the two
- * configuration tools, while the in-process adapter enumerates under every scope. Comparing those
- * two would be comparing two different questions and calling the difference a defect.
- *
- * NOTHING SECRET IS PLANTED HERE. There is no token entry, no key and no LLM block: the fixture
- * declares workspace globs and one boolean. That is stronger than planting a throwaway credential,
- * because a value that does not exist cannot be printed by a diagnostic nobody anticipated.
- */
-function fixtureProject(
-  label: string,
-  /**
-   * Declared MCP token ENTRIES — names, never values (398-08).
-   *
-   * Empty for every 397 anchor, which is the posture the paragraph above argues for. The 398-08
-   * refs-only cell passes entries because its claim is the opposite one: that a credential which
-   * DOES exist is not printed, which nothing can measure without one. An entry here still carries
-   * no value — `McpTokenEntrySchema` has no member one could occupy — so what is written into the
-   * fixture is a variable NAME, and the value travels only in a constructed child environment.
-   */
-  tokens: readonly { name: string; tokenEnvVar: string; scopes: readonly string[] }[] = [],
-): { root: string; configPath: string } {
-  const root = mkdtempSync(join(tmpdir(), `agent-qa-397-07-${label}-`))
-  roots.push(root)
-  const configPath = join(root, 'agent-qa.config.yaml')
-  writeFileSync(
-    configPath,
-    `${JSON.stringify(
-      {
-        workspace: {
-          testMatch: ['tests/**/*.yaml'],
-          testPathIgnore: [],
-          suiteMatch: ['suites/**/*.suite.yaml'],
-          hooksFile: 'hooks.yaml',
-          envFile: '.env',
-          secretsFile: '.env.secrets.local',
-        },
-        use: { mobile: { appState: 'preserve' } },
-        services: {
-          mcp: {
-            stdio: { grantConfigWrite: true },
-            ...(tokens.length === 0 ? {} : { tokens }),
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  )
-  mkdirSync(join(root, '.agent-qa'), { recursive: true })
-  return { root, configPath }
-}
-
-/**
- * The child's whole environment, constructed rather than inherited.
- *
- * INHERITING WOULD MAKE THE CELL'S RESULT DEPEND ON WHOSE MACHINE IT RAN ON: a developer with a
- * provider key exported would be running a different chat composition from CI, and — worse — a
- * spawned process holding a real credential is a process whose stderr can print one. `HOME` and
- * `TMPDIR` point INTO the fixture so nothing the child writes escapes the directory this file
- * deletes.
- */
-function hermeticEnv(root: string): Record<string, string> {
-  return {
-    PATH: process.env.PATH ?? '',
-    HOME: root,
-    TMPDIR: join(root, '.agent-qa'),
-    NODE_ENV: 'test',
-  }
-}
 
 // ---- The chat comparand ------------------------------------------------------------------------
 
@@ -341,9 +154,6 @@ function readChatAnchor(root: string): ChatAnchorReading {
     hashShape: hashShape(toolsetHash),
   }
 }
-
-/** The utterance both halves type: the deterministic resolver route, which reaches no model. */
-const CHAT_ANCHOR_UTTERANCE = 'proposals'
 
 /**
  * The 398-13 answer-channel utterance: the `/fn` passthrough, so stage 1 resolves it (D-06).
@@ -401,44 +211,6 @@ async function driveChatInProcess(configPath: string): Promise<{ stdout: string;
   }
 }
 
-interface SpawnOutcome {
-  readonly code: number | null
-  readonly signal: NodeJS.Signals | null
-  readonly stdout: string
-  readonly stderr: string
-}
-
-/**
- * Run a program to completion with a CONSTRUCTED environment, collecting both streams.
- *
- * Factored out of the chat driver rather than written twice: the 398-08 anchors need the same
- * hermetic spawn with an extra declared variable, and a second copy of this plumbing would be a
- * second answer to "what did the child inherit" — which is the one property these cells depend on.
- */
-async function spawnCollecting(
-  root: string,
-  args: readonly string[],
-  extraEnv: Readonly<Record<string, string>> = {},
-): Promise<SpawnOutcome> {
-  const child = spawn(process.execPath, [...args], {
-    cwd: root,
-    env: { ...hermeticEnv(root), ...extraEnv },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-  let stdout = ''
-  let stderr = ''
-  child.stdout.on('data', (chunk: Buffer) => {
-    stdout += chunk.toString('utf8')
-  })
-  child.stderr.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString('utf8')
-  })
-  return await new Promise<SpawnOutcome>((settle, fail) => {
-    child.once('error', fail)
-    child.once('close', (code, signal) => settle({ code, signal, stdout, stderr }))
-  })
-}
-
 /** Drive the SHIPPED binary's `init --agent` against a project directory (398-08, D-16). */
 async function spawnAgentManifest(
   root: string,
@@ -455,39 +227,6 @@ async function spawnNodeInline(
   extraEnv: Readonly<Record<string, string>> = {},
 ): Promise<SpawnOutcome> {
   return await spawnCollecting(root, ['-e', source], extraEnv)
-}
-
-/**
- * Drive the SHIPPED binary's chat command over a real pipe, and wait for it to exit.
- *
- * THE UTTERANCE IS A PARAMETER, NOT A SECOND DRIVER (this file's no-second-copy law). A second
- * spawn helper would be a second answer to "what did the child inherit", which is the one property
- * every cell here depends on.
- */
-async function driveChatSpawned(
-  root: string,
-  configPath: string,
-  utterance: string = CHAT_ANCHOR_UTTERANCE,
-): Promise<SpawnOutcome> {
-  const child = spawn(process.execPath, [CLI_ENTRY, '--config', configPath, 'chat'], {
-    cwd: root,
-    env: hermeticEnv(root),
-    stdio: ['pipe', 'pipe', 'pipe'],
-  })
-  let stdout = ''
-  let stderr = ''
-  child.stdout.on('data', (chunk: Buffer) => {
-    stdout += chunk.toString('utf8')
-  })
-  child.stderr.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString('utf8')
-  })
-  child.stdin.write(`${utterance}\n`)
-  child.stdin.end()
-  return await new Promise<SpawnOutcome>((settle, fail) => {
-    child.once('error', fail)
-    child.once('close', (code, signal) => settle({ code, signal, stdout, stderr }))
-  })
 }
 
 // ---- The anchors -------------------------------------------------------------------------------
@@ -864,7 +603,7 @@ describe('the built-binary anchors (D-02)', () => {
     // function layer, which is exactly what an installed artifact is. It is driven here with two
     // planted headers instead.
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-397-07-stamp-'))
-    roots.push(root)
+    trackTempRoot(root)
     const plant = (label: string, toolsetHash: string): string => {
       const project = join(root, label)
       mkdirSync(join(project, '.agent-qa', 'sessions'), { recursive: true })
@@ -903,7 +642,7 @@ describe('the built-binary anchors (D-02)', () => {
     // BOTH REFUSING BRANCHES, DRIVEN. A synthetic package tree stands in for a real one so the
     // reading is produced by the same function the anchors call rather than described here.
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-397-07-freshness-'))
-    roots.push(root)
+    trackTempRoot(root)
 
     // (a) No dist at all — the `clean` reading, and the one the plan's must-have names.
     mkdirSync(join(root, 'control-397-07', 'src'), { recursive: true })
