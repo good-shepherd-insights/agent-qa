@@ -37,6 +37,7 @@ import {
 } from '@vostride/agent-qa-safety'
 import type { ConfirmPort, ProviderRequestParams } from '@vostride/agent-qa-safety'
 import { debugLoggingMiddleware } from '@vostride/agent-qa-model'
+import { renderClauseResults } from '../commands/result-render.js'
 import {
   ARTIFACT_FILE,
   EVENTS_FILE,
@@ -54,6 +55,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   CacheableStepInput,
+  ClauseResult,
   CompletedRunHandoff,
   PerTestOutcome,
   RedactedEnvVar,
@@ -87,6 +89,11 @@ const SECRETS = {
   hook: 'hook-pw-444ccc555', // rides a hook variable value + hook stdout
   summary: 'sk-live-SUM-666ddd777', // rides a failureSummary + handoff evidence + artifact snapshot
   confirm: 'sk-live-ASK-888eee999', // rides the ask-tier confirm action name
+  // 399.1 (D-04, criterion 3): rides a CHAT clause result — the op-result payload channel
+  // `results[]` opened, which is a sink that did not exist when this roll-call was written. An op
+  // result is exactly the kind of value a masked configuration read puts a credential into, and
+  // this phase made every one of them reach a terminal.
+  opResult: 'sk-live-OPR-000fff111',
 } as const
 
 const RUN_ID = 'rollcall-run'
@@ -105,6 +112,8 @@ interface RollCallFixture {
   egressParams: ProviderRequestParams
   debugResponseBody: string
   confirmActionName: string
+  /** One clause result, with its payload masked as the function layer returns it (399.1 D-05). */
+  clauseResults: ClauseResult[]
 }
 
 /**
@@ -311,6 +320,14 @@ function buildRollCallFixture(): RollCallFixture {
     egressParams,
     debugResponseBody: ctx.mask(`{"detail":"rejected ${SECRETS.error}"}`),
     confirmActionName: ctx.mask(`git push to ${SECRETS.confirm}`),
+    // MASKED AT THE SOURCE, which is the contract `results[]` carries (D-05, and the 2026-08-20
+    // D-10 adjudication's binding corollary): the payload on the turn contract is the placeholder
+    // form, so the session log and every `agent.ask` client hold the placeholder and only a
+    // surface's own emit restores it.
+    clauseResults: [{
+      functionId: 'config.auth.set',
+      payload: { outcome: 'proposed', token: ctx.mask(SECRETS.opResult) },
+    }],
   }
 }
 
@@ -383,6 +400,18 @@ const HUMAN_SURFACES: HumanSurface[] = [
       return seen.join('\n')
     },
   },
+  {
+    // 399.1 (criterion 3): the op-result payload block, on its way to a terminal. Both chat
+    // surfaces compose it with `renderClauseResults` and emit it through `unmaskForHumanOutput`,
+    // and that composition is what is driven here — a person reading a turn sees the value the op
+    // actually returned, restored, exactly as they see a step line restored.
+    name: 'chat:clause-results',
+    originals: [SECRETS.opResult],
+    render: () => unmaskForHumanOutput(
+      FIXTURE.ctx,
+      renderClauseResults(FIXTURE.clauseResults).join('\n'),
+    ),
+  },
 ]
 
 describe('SEAM-05 unmask boundary roll-call — HUMAN side restores originals (D-11/D-12)', () => {
@@ -400,7 +429,12 @@ describe('SEAM-05 unmask boundary roll-call — HUMAN side restores originals (D
   it('the console reporter is the sole unmasking surface — the whole stream carries zero placeholders', () => {
     const output = renderConsole()
     expect(output).not.toMatch(PLACEHOLDER)
-    for (const original of ALL_ORIGINALS.filter((s) => s !== SECRETS.confirm)) {
+    // `confirm` rides the ask-tier action name and `opResult` rides a chat clause result; neither
+    // is in the run envelope stream this reporter replays, so neither could appear here whatever
+    // the reporter did. Each is asserted by its OWN roll-call entry above.
+    for (const original of ALL_ORIGINALS.filter(
+      (secret) => secret !== SECRETS.confirm && secret !== SECRETS.opResult,
+    )) {
       expect(output).toContain(original)
     }
   })
@@ -522,6 +556,16 @@ const MASKED_SURFACES: MaskedSurface[] = [
       return JSON.stringify(hook(FIXTURE.egressParams))
     },
   },
+  {
+    // 399.1 (criterion 3): THE SAME RENDER, WITHOUT THE SURFACE'S EMIT — and this pairing is the
+    // whole point. The human entry above proves the payload reaches a person restored; this one
+    // proves the render module is not what restored it. `renderClauseResults` is where a shortcut
+    // would be tempting and invisible: a module that unmasked for itself would satisfy every
+    // rendering assertion in this repository while handing its caller a cleartext string that the
+    // session log, the `agent.ask` clients and the persistence seam would then carry.
+    name: 'machine:chat-clause-results',
+    render: () => renderClauseResults(FIXTURE.clauseResults).join('\n'),
+  },
 ]
 
 describe('SEAM-05 unmask boundary roll-call — MASKED side keeps placeholders (D-11/D-12)', () => {
@@ -555,6 +599,8 @@ const SURFACE_ROLLCALL = [
   'machine:debug-log',
   'machine:cache-key-material',
   'machine:provider-egress',
+  'chat:clause-results',
+  'machine:chat-clause-results',
 ] as const
 
 describe('SEAM-05 unmask boundary roll-call — enrollment guard (T-363-31)', () => {
