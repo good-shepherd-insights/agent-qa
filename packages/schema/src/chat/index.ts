@@ -28,8 +28,13 @@ export type {
 } from './session-events'
 export { CLAUSE_RECEIPT_STATUSES } from './turn-receipts'
 export type { ClauseReceipt, ClauseReceiptStatus } from './turn-receipts'
-export { AgentAskInputSchema, AgentAskResultSchema, ClauseReceiptSchema } from './agent-ask'
-export type { AgentAskInput, AgentAskResult } from './agent-ask'
+export {
+  AgentAskInputSchema,
+  AgentAskResultSchema,
+  ClauseReceiptSchema,
+  ClauseResultSchema,
+} from './agent-ask'
+export type { AgentAskInput, AgentAskResult, ClauseResult } from './agent-ask'
 export type {
   ChatSessionHandle,
   OpenedChatSession,

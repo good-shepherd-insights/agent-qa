@@ -24,6 +24,36 @@ export const ClauseReceiptSchema = z.object({
 })
 
 /**
+ * What ONE executed clause produced, on its way to a person (Phase 399.1, D-05).
+ *
+ * THE RECEIPT IS THE MAP AND THIS IS THE TERRITORY. `ClauseReceiptSchema` above is a five-string
+ * one-line record by charter (D-18), and 392's `explainAnswerLines` comment defends that seat at
+ * length — so the op's own result could not travel on it, and for forty ops it travelled nowhere at
+ * all: chat executed them and printed `<op> completed` (G-399-2). This member is that missing
+ * channel made structural rather than a second carrier bolted onto the receipt.
+ *
+ * `payload` IS `unknown` BY INTENTION. Forty-three ops declare forty-three output contracts, and a
+ * turn result that tried to name them would either enumerate them here — a second registry, free to
+ * drift from the one that dispatches — or normalise them, which is the render defect this member
+ * exists to close. The op that produced it is named by `functionId`, and the contract for those
+ * bytes is that op's own declared output schema, which the registry already publishes.
+ *
+ * THE PAYLOAD IS MASKED, AND THAT IS A CONTRACT RATHER THAN AN OBSERVATION (D-04/D-05, and the
+ * 2026-08-20 D-10 adjudication's binding corollary). It carries the value the function layer
+ * returned, placeholder-masked, and every path this contract travels — the prompt, the cache, the
+ * session event log, any `agent.ask` client — keeps it that way. `unmaskForHumanOutput` runs at ONE
+ * seam and it is each surface's own emit. An unmasked value here would put op-result credentials
+ * into a persisted trail, minting a new instance of a cleartext-at-rest class that has already been
+ * named.
+ */
+export const ClauseResultSchema = z.object({
+  functionId: z.string().min(1),
+  payload: z.unknown(),
+})
+
+export type ClauseResult = z.infer<typeof ClauseResultSchema>
+
+/**
  * What a caller asks with.
  *
  * `message` is non-empty because an empty utterance has no clause to route and the honest refusal
@@ -53,6 +83,19 @@ export const AgentAskResultSchema = z.object({
   status: z.enum(CHAT_TURN_STATUSES),
   answer: z.string().optional(),
   receipts: z.array(ClauseReceiptSchema),
+  /**
+   * What the clauses that RAN produced, in clause execution order (399.1, D-05).
+   *
+   * REQUIRED, AND A SIBLING OF `receipts` RATHER THAN A MEMBER OF ONE, on `receipts`' own argument:
+   * a turn that omitted the field would leave "nothing produced a result" and "this build does not
+   * report results" as the same bytes, and "the refused turn ran nothing" is precisely the claim a
+   * fail-closed turn makes. So a fail-closed turn carries `[]` and says so.
+   *
+   * ONE ENTRY PER EXECUTED CLAUSE, so a compound turn's second op is not silently the first's. The
+   * ORDER is the order the engine ran them in, which is the order the person typed them — the
+   * property this whole engine preserves everywhere else.
+   */
+  results: z.array(ClauseResultSchema),
   unhandled: z.object({ clause: z.string(), reason: z.string() }).optional(),
   /**
    * Lines of this session's log the open path could not read (392 plan 08, discharging 392-03).
