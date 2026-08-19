@@ -502,6 +502,13 @@ function declarationView(spec: FunctionSpec, deps: FunctionDeps): FunctionDeclar
     // for this op will say what the invocation costs, and the golden capability snapshot reads
     // that column off here instead of off somebody's reading of the op source.
     ...(spec.disclose === undefined ? {} : { discloses: true as const }),
+    // 399.1 D-01/D-04: the two 399.1 folds, projected the way the disclosure above is and for the
+    // identical reason — the callables stay on the spec, and what crosses to a listing is the
+    // boolean fact that this op folds its own result. The golden ledger reads both columns off
+    // here, so "which ops classify their own refusals" is a census over produced facts rather than
+    // over somebody's reading of forty-three op files.
+    ...(spec.classify === undefined ? {} : { classifies: true as const }),
+    ...(spec.renderResult === undefined ? {} : { rendersResult: true as const }),
     resultKind: spec.resultKind,
     bindingStatus: resolveBindingStatus(spec, deps),
     input: toSchemaProjection(spec.input),

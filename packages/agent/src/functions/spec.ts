@@ -14,6 +14,7 @@ import type { z } from 'zod'
 import type {
   AgentAskInput,
   AgentAskResult,
+  ClauseReceiptStatus,
   CompletedRunHandoff,
   EntityDescriptor,
   EntityResolution,
@@ -228,6 +229,35 @@ export interface FunctionMetadata {
 export type FunctionSchemaProjection = Readonly<Record<string, unknown>>
 
 /**
+ * What one clause's result MEANT, as the op that produced it reports (Phase 399.1, D-01/D-02/D-03).
+ *
+ * TWO FIELDS AND NO THIRD. `status` is the one bit a surface must not get wrong — whether the thing
+ * was carried out — and `outcome` is the sentence that says which road it came in by. Anything
+ * larger would be a second payload channel, and the payload has one (`results[]`).
+ *
+ * `not-run` IS ABSENT FROM THE STATUS SET, AND ITS ABSENCE IS THE POINT. That member describes a
+ * clause the ENGINE deliberately never attempted after an earlier one failed — a fact about the
+ * turn, which no op can know and none may claim. The three a classifier may return are derived from
+ * the schema's own vocabulary rather than re-spelled, so a fifth receipt status cannot appear here
+ * without somebody deciding whether an op may return it.
+ *
+ * THE `failed` MEMBER IS WHAT MAKES THIS FAIL-CLOSED POSSIBLE (D-03). A result the declared fold
+ * cannot read reports `failed` with a named outcome, never `executed`: an unreadable result might be
+ * a refusal, so success is the one claim a receipt must never default to.
+ */
+export interface ClauseVerdict {
+  readonly status: Exclude<ClauseReceiptStatus, 'not-run'>
+  /**
+   * WHICH road, in the op's own vocabulary — `guardrail-hit`, `schema-fail`, a proposal id.
+   *
+   * The empty string means "this op has nothing to add", and the engine falls back to the line it
+   * has always printed. It is not a second spelling of absence: a fold that had nothing to say and a
+   * fold that was never declared reach the same rendered line, which is the honest outcome for both.
+   */
+  readonly outcome: string
+}
+
+/**
  * The public, capability-free description of one registered capability.
  *
  * Carries no live validator and nothing runnable: every value reachable through a
@@ -269,6 +299,34 @@ export interface FunctionDeclaration extends FunctionMetadata {
    * `null` for an op that simply discloses nothing.
    */
   discloses?: true
+  /**
+   * This op folds its OWN result into a clause verdict (2026-08-20, Phase 399.1 D-01).
+   *
+   * PRESENCE, AS DATA — never the callable, on `discloses`' reasoning above and for its reason:
+   * {@link FunctionSpec.classify} stays where it is, and a function-valued field on
+   * {@link FunctionMetadata} would put something runnable back on every listing (BL-01).
+   *
+   * WHAT THE PROJECTION IS FOR, AND WHY IT IS NOT DECORATION. D-01 puts refusal knowledge in a
+   * per-op fold rather than in a chat-side rule that pattern-matches values, because a rule that
+   * can only refuse what it can NAME cannot be driven to zero by naming more things. The cost of
+   * that choice is coverage: an op that never declared a fold reports the legacy `executed` for
+   * every result it can return, silently. This boolean is what makes that countable — the census in
+   * `packages/cli` cannot reach a spec by construction, so without it the coverage question could
+   * only be answered by somebody reading forty-three op files.
+   *
+   * `true` is the only value, for the reason `discloses` gives: `false` and an absent key would be
+   * two spellings of one fact.
+   */
+  classifies?: true
+  /**
+   * This op composes its own human-facing lines on top of the default payload render (399.1 D-04).
+   *
+   * PRESENCE, AS DATA, on the two flags above. The fold ADDS legibility and can never suppress: the
+   * default render is the complete payload and a declared fold is printed beside it, never instead
+   * of it. That is a property of the render path rather than of this flag, and the flag is here so
+   * a listing — and the golden ledger — can say which ops carry one.
+   */
+  rendersResult?: true
   /** Inert JSON-Schema projection of the runtime input contract (D-14). */
   input: FunctionSchemaProjection
   /**
@@ -333,6 +391,46 @@ export interface FunctionSpec<Input = unknown, Output = unknown> extends Functio
    * from here would be I/O placed between a caller and its authorization decision.
    */
   disclose?(input: Input): string
+  /**
+   * What this op's OWN result means, as a clause verdict (2026-08-20, Phase 399.1 D-01/D-02).
+   *
+   * THE OP FOLDS ITS OWN UNION, AND NOTHING ELSE MAY. Chat cannot tell a refusal from a success by
+   * looking at a result: 399's UAT measured a credential-blocked config mutation, a validation
+   * failure and a real proposal all reported as `executed` in green, because the engine derived the
+   * status from throw-vs-return and every one of the three RETURNED. The knowledge of which arm of
+   * `ConfigProposeOutput` is a refusal lives in exactly one place — the op that declared the union —
+   * and this is that place. The alternative D-01 rejects by name is a chat-side rule matching values
+   * or field names, which can only ever refuse what somebody has already thought to name.
+   *
+   * IT LIVES ON THE SPEC, NOT ON {@link FunctionMetadata}, and its presence projects onto the
+   * declaration as {@link FunctionDeclaration.classifies} — `disclose`'s arrangement exactly.
+   *
+   * PURE BY CONTRACT, like `disclose`: it runs on the composition root's return path with the op's
+   * own output in hand, and a port reached from here would be I/O between an act and the report of
+   * what the act was.
+   *
+   * IT DECIDES NOTHING AND CANNOT WIDEN ANYTHING. The gate has already run, the op has already run,
+   * and the audit row is already written when this is called. What it produces is the REPORT.
+   *
+   * OPTIONAL IN THIS PLAN, REQUIRED AFTER THE FAN-OUT (399.1 plan 04). An op that declares none
+   * reports the legacy `{ status: 'executed', outcome: '' }`, which is what every op reported
+   * before this member existed — the absence is a build-time census red once the fan-out lands, and
+   * never a runtime downgrade of a verdict somebody did declare.
+   */
+  classify?(output: Output): ClauseVerdict
+  /**
+   * Extra human lines this op's result deserves, on top of the complete payload render (399.1 D-04).
+   *
+   * ADDITIVE BY CONTRACT. The default render is the whole masked payload, pretty-printed, and a
+   * declared fold is printed BESIDE it — never instead of it, never as a filter over it. D-04 makes
+   * that a law rather than a convention because RC-2's lesson is that a hand-picked field join is a
+   * drop site: the fan-out report and the explain lines are legibility a person is glad of, and
+   * neither is a reason to stop showing them what the op actually returned.
+   *
+   * PURE BY CONTRACT and PRESENCE-PROJECTED as {@link FunctionDeclaration.rendersResult}, on
+   * `classify`'s arrangement above.
+   */
+  renderResult?(output: Output): readonly string[]
   invoke(input: Input, deps: FunctionDeps): Promise<Output>
 }
 
