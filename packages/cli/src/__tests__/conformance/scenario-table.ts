@@ -225,6 +225,58 @@ export interface ChatSurfaceExpectation {
 }
 
 /**
+ * What one row claims about the `fn` door (2026-08-20, Phase 399.1 plan 06, D-07).
+ *
+ * A BOOLEAN, on {@link ChatSurfaceExpectation}'s reasoning and not on {@link McpSurfaceExpectation}'s:
+ * `fn` has no projection and no wire name — the id a person types IS the registry id — so there is
+ * no tool spelling for a row to carry and no unprojected class for one to cite. What is left to
+ * claim is reach, and the field's job is to be joined against the LIVE `fn` listing in both
+ * directions, which a type that could only say `true` would make unsayable.
+ *
+ * All 42 rows say `true`, and that is a MEASURED fact about the shipped composition rather than a
+ * property of this type: `agent-qa fn <id>` resolves every id through `invokeFunction` and the CLI
+ * caller holds every member of `FunctionScopeSchema`, so the door's reach is the whole census.
+ * `parity.test.ts` asserts it both ways, so the day the CLI narrows its grants this reads red.
+ */
+export interface FnSurfaceExpectation {
+  readonly reachable: boolean
+}
+
+/**
+ * What a person must be able to READ after this op answers, on every door (399.1 D-09).
+ *
+ * WHY THE RENDER EXPECTATION IS A COLUMN ON THIS TABLE AND NOT A SECOND CORPUS. D-09's one-
+ * denominator rule: the table is already census-equal to `registry.ids()` in both directions, so a
+ * capability landing without a render expectation is the SAME named RED as one landing without a
+ * scenario. A separate render fixture set would be a second register over one universe, and the two
+ * would drift in the direction the busier one was edited.
+ *
+ * THE MARKERS ARE PAYLOAD CONTENT, NEVER RECEIPT TEXT, and the leg enforces both halves of that
+ * mechanically rather than trusting this sentence. `render-parity.test.ts` produces each op's result
+ * document from the op's OWN output projection — the inert JSON-Schema the shipped registry
+ * publishes on its declaration — and refuses any marker that does not occur in it; so a marker
+ * naming a field the contract cannot produce is a named RED here rather than a cell that passes on
+ * a shape nothing returns (390-03's produced-not-literal law). It then renders the SAME document
+ * through the pre-399.1 drop site (`<op> completed`) and refuses any marker that survives THAT,
+ * which is the mutation bar: a marker a completion phrase already contains would be vacuously
+ * present on the very build this phase exists to red.
+ *
+ * THE SET IS THE OP'S REQUIRED OUTPUT FIELDS, DERIVED BY ONE RULE AND THEN REVIEWED — every required
+ * property of the first arm of its output contract, sorted. Not a hand-picked subset: hand-picking
+ * is the drop site RC-2 was caught being (D-04), and a suite that expected a curated few would be
+ * asserting the same curation it is supposed to catch. Committing the derived set is the golden-
+ * ledger idiom — an op whose required output fields change is then a reviewed one-line diff here.
+ *
+ * NON-EMPTY IN THE TYPE. `readonly [string, ...string[]]` makes `markers: []` a compile error, so a
+ * row cannot be added with nothing to look for; the leg asserts the same fact again at runtime,
+ * because a tuple type is defeatable by a cast and an empty expectation is a cell that passes on
+ * every build including the blind one.
+ */
+export interface RenderExpectation {
+  readonly markers: readonly [string, ...string[]]
+}
+
+/**
  * The policy points every row declares (D-11), as expected VERDICTS.
  *
  * The callers themselves are not spelled here and must not be: `policy-fixtures.ts` derives the
@@ -252,8 +304,11 @@ export interface ScenarioRow<Id extends ScenarioOpId = ScenarioOpId> {
   readonly perSurface: {
     readonly chat: ChatSurfaceExpectation
     readonly mcp: McpSurfaceExpectation
+    readonly fn: FnSurfaceExpectation
   }
   readonly policyPoints: PolicyPointExpectations
+  /** What a person must be able to read after this op answers — see {@link RenderExpectation}. */
+  readonly renderExpect: RenderExpectation
 }
 
 /**
@@ -283,7 +338,12 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'agent.ask',
     input: { message: 'nothing in this fixture can answer this' },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'agent-ask-delegation-deferral' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'agent-ask-delegation-deferral' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['receipts', 'results', 'sessionId', 'status', 'turnId'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 398 D-09: `query` is the whole input and it must be non-empty, so `{}` would report an INPUT
@@ -297,7 +357,9 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { unprojected: 'discovery-answered-by-protocol' },
+      fn: { reachable: true },
     },
+    renderExpect: { markers: ['citations', 'kind', 'renderedLines'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 389 D-11: a PARSING input for a capability most compositions cannot run — validation precedes
@@ -306,7 +368,12 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'analysis.get',
     input: { runId: FIXTURE_RUN_ID },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['clusters', 'runId', 'sentences', 'verdicts'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 394-09 D-21: BOTH fields are non-empty and required, so `{}` would report an input error where
@@ -318,7 +385,12 @@ export const SCENARIO_TABLE = Object.freeze([
       testRef: 'tests/nothing-in-this-fixture.yaml::Nothing In This Fixture',
       intent: 'nothing in this fixture can edit this',
     },
-    perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_refine_test' } } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_refine_test' } },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['draftRef', 'editedFrom', 'patches', 'proposal', 'thoughts'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 393 D-01: the path is well-formed, carries the extension the op requires, and names nothing in
@@ -326,7 +398,25 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'authoring.draft.verify',
     input: { draftPath: 'tests/nothing-in-this-fixture.yaml' },
-    perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_refine_test' } } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_refine_test' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'addsValueFinding',
+        'disposition',
+        'draftRef',
+        'evaluatedAt',
+        'gateRuns',
+        'gates',
+        'schemaVersion',
+        'stabilityRunsCompleted',
+        'stabilityRunsRequested',
+        'stepTable',
+      ],
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 394 D-01: non-empty intent and a well-formed scope are the contract's two requirements.
@@ -336,7 +426,12 @@ export const SCENARIO_TABLE = Object.freeze([
       intent: 'nothing in this fixture can author this',
       scope: { tier: 'product', key: 'nothing-in-this-fixture' },
     },
-    perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_write_test' } } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_write_test' } },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['fanOut', 'outcome'] },
     policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 394-07 D-12: the window is REQUIRED and closed, so `{}` would report an input error.
@@ -345,7 +440,21 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'authoring.funnel.get',
     input: { window: { scope: 'all-time' } },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'acceptanceFailure',
+        'line',
+        'sideCounters',
+        'smallSample',
+        'stages',
+        'undercounted',
+      ],
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 395 D-03: PARSING inputs for the config write half, on the reasoning every unbound row shares.
@@ -355,6 +464,18 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'crossBoundary',
+        'crossBoundaryReasons',
+        'files',
+        'outcome',
+        'proposalId',
+        'shownDiff',
+        'summaryLine',
+      ],
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
@@ -364,13 +485,30 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'crossBoundary',
+        'crossBoundaryReasons',
+        'files',
+        'outcome',
+        'proposalId',
+        'shownDiff',
+        'summaryLine',
+      ],
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
     opId: 'config.get',
     input: {},
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['configPath', 'entries', 'schemaVersion'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
@@ -379,6 +517,18 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'crossBoundary',
+        'crossBoundaryReasons',
+        'files',
+        'outcome',
+        'proposalId',
+        'shownDiff',
+        'summaryLine',
+      ],
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
@@ -390,6 +540,18 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'crossBoundary',
+        'crossBoundaryReasons',
+        'files',
+        'outcome',
+        'proposalId',
+        'shownDiff',
+        'summaryLine',
+      ],
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
@@ -399,7 +561,9 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_apply_config_proposal' } },
+      fn: { reachable: true },
     },
+    renderExpect: { markers: ['commits', 'files', 'outcome'] },
     policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 395-05 D-01: PARSING inputs on the rows above reasoning.
@@ -409,6 +573,18 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'crossBoundary',
+        'crossBoundaryReasons',
+        'files',
+        'outcome',
+        'proposalId',
+        'shownDiff',
+        'summaryLine',
+      ],
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
@@ -418,6 +594,18 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'crossBoundary',
+        'crossBoundaryReasons',
+        'files',
+        'outcome',
+        'proposalId',
+        'shownDiff',
+        'summaryLine',
+      ],
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
@@ -429,6 +617,18 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_config_change' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'crossBoundary',
+        'crossBoundaryReasons',
+        'files',
+        'outcome',
+        'proposalId',
+        'shownDiff',
+        'summaryLine',
+      ],
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
@@ -436,7 +636,12 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'entities.get',
     input: { ref: FIXTURE_ENTITY_SHORT_ID },
-    perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_get_entity' } } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_get_entity' } },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['actions', 'id', 'keyFacts', 'kind', 'status', 'title', 'uri'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 387: `resolve` takes any reference at all, so the sample is free text that matches nothing — an
@@ -444,7 +649,12 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'entities.resolve',
     input: { ref: 'nothing in this fixture is called this' },
-    perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_get_entity' } } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_get_entity' } },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['card', 'kind', 'score'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 391 PROP-01 / D-03: `list` genuinely takes the empty query — the fold is bounded, so there is
@@ -452,7 +662,12 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'grants.list',
     input: {},
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['grants', 'refusedLines'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 391 PROP-01 / D-03: `revoke` takes the grant's durable id, and `{}` would report an INPUT error
@@ -460,7 +675,12 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'grants.revoke',
     input: { grantId: 'grant_0123456789abcdef' },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'requires-human-origin' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'requires-human-origin' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['grant', 'outcome'] },
     policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 387-08: valid INPUTS for capabilities most compositions cannot run — `invokeFunction` validates
@@ -471,7 +691,9 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_knowledge_change' } },
+      fn: { reachable: true },
     },
+    renderExpect: { markers: ['kind', 'proposal'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 387 KREV-02: the fixture runs port records no run, so the honest answer is the typed no-trace
@@ -479,13 +701,38 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'knowledge.brief.why',
     input: { runId: FIXTURE_RUN_ID, stepIndex: 0 },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['kind', 'trace'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
     opId: 'knowledge.bundles.list',
     input: {},
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'bundleId',
+        'counters',
+        'dir',
+        'evidenceIncomplete',
+        'kind',
+        'lastConfirmedOrdinal',
+        'openedAtOrdinal',
+        'product',
+        'scope',
+        'status',
+        'summary',
+        'trust',
+      ],
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
@@ -494,7 +741,9 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_knowledge_change' } },
+      fn: { reachable: true },
     },
+    renderExpect: { markers: ['kind', 'proposal'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
@@ -503,21 +752,42 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_apply_proposal' } },
+      fn: { reachable: true },
     },
+    renderExpect: { markers: ['outcome', 'proposal'] },
     policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 387: the record id names nothing in this fixture and the typed miss is the correct answer.
   scenario({
     opId: 'knowledge.record.show',
     input: { recordId: 'rec-not-in-this-fixture' },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'body',
+        'kind',
+        'provenance',
+        'record',
+        'schemaVersion',
+        'summary',
+      ],
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 387: the diff baseline is 0 — a first-ever diff.
   scenario({
     opId: 'knowledge.records.diff',
     input: { sinceOrdinal: 0 },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['changes', 'schemaVersion', 'sinceOrdinal'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 387: the filter is closed and every member optional, so an empty filter is the honest
@@ -525,7 +795,12 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'knowledge.records.inspect',
     input: { filter: {} },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['records', 'schemaVersion'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
@@ -537,7 +812,9 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_propose_knowledge_change' } },
+      fn: { reachable: true },
     },
+    renderExpect: { markers: ['kind', 'proposal'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 391 PROP-01: the accept takes the refined proposal id; `always` is optional and omitted.
@@ -546,7 +823,12 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'proposals.accept',
     input: { proposalId: 'prop_0123456789ab' },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'requires-human-origin' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'requires-human-origin' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['apply', 'grant'] },
     policyPoints: { grant: 'allow', refuse: 'deny', ask: 'ask' },
   }),
   // 391 PROP-03: `list` genuinely takes the empty query — both filters are optional and absent means
@@ -557,13 +839,20 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_list_proposals' } },
+      fn: { reachable: true },
     },
+    renderExpect: { markers: ['entries'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
     opId: 'proposals.reject',
     input: { proposalId: 'prop_0123456789ab', reason: 'not this one' },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'requires-human-origin' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'requires-human-origin' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['entry', 'outcome'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 391 PROP-03: `show` takes a `ProposalIdSchema` id, so a bare string would report an INPUT error
@@ -574,7 +863,9 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_show_proposal' } },
+      fn: { reachable: true },
     },
+    renderExpect: { markers: ['entry', 'kind'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 390 D-13: the two write verbs take the three legs of stable test identity — a partial address
@@ -587,14 +878,24 @@ export const SCENARIO_TABLE = Object.freeze([
       filePath: 'tests/checkout.test.yaml',
       testName: 'checkout completes',
     },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-write' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-write' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['entry', 'kind'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 390 D-13: `list` genuinely takes the empty query — enumeration is the verb.
   scenario({
     opId: 'quarantine.list',
     input: {},
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['entries'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
@@ -604,7 +905,12 @@ export const SCENARIO_TABLE = Object.freeze([
       filePath: 'tests/checkout.test.yaml',
       testName: 'checkout completes',
     },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-write' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-write' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['entry', 'kind'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 391 D-16: a PARSING input for a capability most compositions cannot run.
@@ -614,6 +920,20 @@ export const SCENARIO_TABLE = Object.freeze([
     perSurface: {
       chat: { reachable: true },
       mcp: { reachable: { tool: 'agent_qa_get_run_digest' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'candidates',
+        'chain',
+        'lines',
+        'pendingProposalCount',
+        'proposalsMintedThisRun',
+        'quarantine',
+        'runAttributionAvailable',
+        'runId',
+        'verdictClusters',
+      ],
     },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
@@ -623,33 +943,90 @@ export const SCENARIO_TABLE = Object.freeze([
   scenario({
     opId: 'runs.events',
     input: { runId: FIXTURE_RUN_ID },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['payload', 'runId', 'seq', 'ts', 'type'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
     opId: 'runs.get',
     input: { runId: FIXTURE_RUN_ID },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'aggregateVerdict',
+        'buildOrdinal',
+        'configDigests',
+        'endedAt',
+        'executionContext',
+        'runId',
+        'scope',
+        'startedAt',
+        'tests',
+      ],
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   scenario({
     opId: 'runs.list',
     input: {},
-    perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_list_runs' } } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_list_runs' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'aggregateVerdict',
+        'buildOrdinal',
+        'endedAt',
+        'executionContext',
+        'runId',
+        'scope',
+        'startedAt',
+        'testCount',
+      ],
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 388 D-14: a PARSING input for a capability most compositions cannot run.
   scenario({
     opId: 'runs.postprocessing',
     input: { runId: FIXTURE_RUN_ID },
-    perSurface: { chat: { reachable: true }, mcp: { unprojected: 'not-mid-flight-read' } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'not-mid-flight-read' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['chips', 'runId'] },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // D-09: declared in full; every field is optional, so the empty object is the whole input.
   scenario({
     opId: 'runs.start',
     input: {},
-    perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_start_run' } } },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { reachable: { tool: 'agent_qa_start_run' } },
+      fn: { reachable: true },
+    },
+    renderExpect: {
+      markers: [
+        'buildOrdinal',
+        'executionContext',
+        'runId',
+        'scope',
+        'startedAt',
+        'testCount',
+      ],
+    },
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
 ] as const)

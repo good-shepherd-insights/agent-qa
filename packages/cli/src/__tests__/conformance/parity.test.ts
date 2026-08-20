@@ -1032,6 +1032,28 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
+  it('joins every row fn expectation to the live fn listing, in both directions', () => {
+    // 2026-08-20 (399.1 D-07), the chat cell above with the third door substituted. The comparand
+    // is the door's OWN `--list --json` stdout, folded through commander and the CLI composition
+    // root — not this file's reading of a registry — so a `fn` listing that started filtering (a
+    // narrowed CLI grant, a safe-mode default, a projection that dropped a column) reds here by
+    // name rather than being absorbed by a comparison of the census against itself.
+    const fnReach = enumerationOf('fn').opIds
+    for (const row of SCENARIO_TABLE) {
+      expect(
+        fnReach.has(row.opId),
+        `${row.opId} on fn: the row claims reachable=${String(row.perSurface.fn.reachable)}, `
+          + 'and the shipped `agent-qa fn --list` disagrees',
+      ).toBe(row.perSurface.fn.reachable)
+    }
+    for (const opId of sorted(fnReach)) {
+      expect(
+        scenarioRowFor(opId)?.perSurface.fn.reachable,
+        `${opId} on fn: listed by the shipped command and claimed by no row`,
+      ).toBe(true)
+    }
+  })
+
   // ---- D-12: the ASSERTED absences. No skip-list — a skip asserts nothing --------------------
 
   it('asserts the absence of every unprojected op over MCP: no fold, and no door of its own', async () => {
