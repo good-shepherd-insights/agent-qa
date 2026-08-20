@@ -992,6 +992,17 @@ async function runTurnThrough(
   // Appended inside the loop, so its order is the execution order — which is the utterance order
   // this engine preserves everywhere else — and its length is the number of clauses that ran.
   const results: ClauseResult[] = []
+  /**
+   * Whether some clause of this turn FAILED — the one fact the D-11 stop gate and the aggregate
+   * below both read.
+   *
+   * ITS PRODUCER IS THE RECEIPT VOCABULARY, NOT THE ENDING (399.1-09, D-12). It was set in the
+   * dispatch catch, so the only failure it could see was a thrown one — and every arm of a typed
+   * refusal RETURNS. That is the same derivation RC-1b got wrong one layer down, and it stayed
+   * wrong here after the receipt itself was fixed: a `failed` receipt sat under a `completed`
+   * aggregate, the gate never tripped, and `ask` exited 0. It is derived at the push site below
+   * now, from `receipt.status`, so a thrown failure and a returned one are one word to this loop.
+   */
   let failed = false
   // 398-13 (D-21): what the ops PRODUCED, on its way to the turn's `answer` field. The receipt
   // charter is untouched — see the charter note at the push site below.
@@ -1110,7 +1121,6 @@ async function runTurnThrough(
         // reaches the person through `results[]` either way.
         answerLines.push(...answered.foldLines)
       } catch (error) {
-        failed = true
         receipt = {
           clause: step.clause.text,
           functionId: step.functionId,
@@ -1120,6 +1130,16 @@ async function runTurnThrough(
         }
       }
     }
+    // THE ONE DERIVATION (399.1-09, D-12). Every receipt this loop mints passes here — the
+    // catch's, the fold's, and the `not-run` the gate itself writes — so the flag reads the
+    // vocabulary rather than the control flow, and the gate above and the aggregate below become
+    // honest without either of them changing a line.
+    //
+    // ONLY `failed` MOVES IT. D-11's rule is stop-on-FAILURE and D-02 ruled a refusal is not one:
+    // `clauseReachedCapability` already counts `refused` as an op that reached its capability and
+    // came back, so stopping there would abandon the rest of a person's sentence over a control
+    // that worked. `executed` and `not-run` are the other two words that must leave it alone.
+    if (receipt.status === 'failed') failed = true
     receipts.push(receipt)
     await append({
       kind: 'clause_receipt',

@@ -176,6 +176,20 @@ export function createAskCommand(): Command {
           // shell that called it. Both non-success statuses raise, so the exit code and the
           // rendered receipts agree — reporting one without the other is how a CI step goes green
           // on a turn that refused everything (D-08 / D-11).
+          //
+          // 2026-08-20 (399.1-09, D-12) — WHAT THIS GATE NOW SEES, AND WHAT IT DELIBERATELY DOES
+          // NOT. Nothing below changed; what changed is upstream. The turn aggregate is derived
+          // from the receipt vocabulary rather than from whether the op threw, so a `failed`
+          // receipt — thrown OR returned — reaches the `clause-failed` branch below. Until then
+          // that branch was dead for every returned failure: a typed refusal returns, the flag was
+          // set only in the engine's catch, and a turn carrying a `failed` receipt exited 0.
+          //
+          // A REFUSED-ONLY TURN DELIBERATELY KEEPS THE SUCCESS EXIT. `refused` means the control
+          // worked and the op answered (D-02), so it is not a failure to stop or to raise on; and
+          // the `fn` door was measured exiting 0 on the identical blocked payload. E2E-02 clause 2
+          // makes door DISAGREEMENT the defect class, so moving this door alone would mint a parity
+          // break inside the phase that exists to close one. The refusal reaches a reader on the
+          // receipt word, the rendered payload beneath it, and `agent.ask`'s own outer verdict.
           if (result.status === 'fail_closed') {
             throw new AskCommandError(
               'fail-closed',

@@ -68,24 +68,46 @@ export const agentAskSpec: FunctionSpec<AgentAskInput, AgentAskResult> = {
   // the door to every write verb as the cheapest thing in the registry.
   risk: { name: `fn:${AGENT_ASK_FUNCTION_ID}`, recognized: true, readOnly: false },
   /**
-   * A TURN's own report of how it went (2026-08-20, Phase 399.1 D-01/D-02).
+   * A TURN's own report of how it went (2026-08-20, Phase 399.1 D-01/D-02/D-12).
    *
-   * ON THE TURN STATUS, which is the only fact about a turn this op is entitled to fold — the
-   * per-clause verdicts are already receipts and re-deriving one from them here would be a second
-   * opinion about a question each clause has answered for itself.
+   * A TURN IS A COMPOSITION, SO ITS VERDICT IS A FOLD OF ITS CLAUSES' VERDICTS. This used to fold
+   * the turn STATUS alone, on the argument that the per-clause verdicts were already receipts and
+   * reading them here would be a second opinion. That argument is the recorded belief that produced
+   * gap 1: a turn whose only clause was REFUSED by a credential guardrail reported `executed` one
+   * composition layer up, and the person reading the outer line was told a blocked mutation had been
+   * carried out. The receipts are not a second opinion about the turn — they ARE the turn, and the
+   * status is a summary of them. Success is the one claim a fold may never default to (D-03's
+   * asymmetry): where the clauses do not support it, the outer word must say what they do support.
    *
    * `fail_closed` IS `failed` AND NOT `refused`. D-02 minted `refused` for a GUARDRAIL declining an
    * op; a fail-closed turn is the ENGINE abandoning the clauses after one of them broke, which is
    * an operation that did not complete. Reporting it `refused` would tell a person a control
    * declined their request when what happened is that something went wrong.
+   *
+   * AND THERE IS DELIBERATELY NO `failed` SCAN OVER THE RECEIPTS HERE (D-12). Post-399.1-09 the
+   * engine derives its aggregate from the same vocabulary, so it can no longer answer `completed`
+   * over a `failed` receipt; a second mechanism second-guessing the first is the redundant-mechanism
+   * failure mode this project has already paid for, and it would hide a regression in the engine
+   * rather than surface it.
    */
   classify(output): ClauseVerdict {
     switch (output.status) {
-      case 'completed':
+      case 'completed': {
+        // THE REFUSAL FACT TRAVELS ON `receipts[]` (D-12 point 3): the turn-status vocabulary stays
+        // three members, and this is where a refused clause becomes the outer clause's own word.
+        const refused = output.receipts.filter((receipt) => receipt.status === 'refused').length
+        if (refused > 0) {
+          return {
+            status: 'refused',
+            outcome:
+              `turn completed — ${refused} of ${output.receipts.length} clause(s) refused`,
+          }
+        }
         return {
           status: 'executed',
           outcome: `turn completed — ${output.results.length} clause result(s)`,
         }
+      }
       case 'fail_closed':
         return { status: 'failed', outcome: 'fail_closed: the turn carried nothing out' }
       case 'failed':
