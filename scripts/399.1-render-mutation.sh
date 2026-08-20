@@ -30,9 +30,17 @@
 # proof below is what a planted marker would otherwise have bought, obtained from the mutation's own
 # bytes rather than from an addition to it.
 #
-# THE FOUR RED SETS ARE DISJOINT, AND THAT IS THE POINT OF HAVING FOUR. A file whose mutations all
-# red the same rows would have proven its cells are restatements of one another. Measured
-# 2026-08-20: 6 / 1 / 4 / 2 cells, no cell in two lists.
+# THE FOUR RED SETS ARE ALMOST DISJOINT, AND THAT IS THE POINT OF HAVING FOUR. A file whose
+# mutations all red the same rows would have proven its cells are restatements of one another.
+# Measured 2026-08-20: 6 / 1 / 4 / 2 cells, no cell in two lists.
+#
+# 2026-08-20 (399.1-09), RE-MEASURED AT 7 / 2 / 4 / 2, AND ONE CELL IS NOW IN TWO LISTS. Plan 09's
+# nested-composition anchor reds under CHANNEL and under VERDICT, and the overlap is a property of
+# the cell rather than a weakening of the legs: it is the only cell that asserts a verdict word AND
+# the payload the word is about, one composition layer up, so the two mutations reach it by two
+# different roads (CHANNEL takes away the inner refusal it reads for non-vacuity; VERDICT turns that
+# refusal into a success before it is folded). Every OTHER cell is still in at most one list, so the
+# legs remain distinguishable from one another — which is what the disjointness was for.
 #
 # A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS — and this script found
 # one. See THE VERDICT LEG'S FINDING below.
@@ -253,7 +261,14 @@ dist_token_original () {
 # THE COUNTS ARE MEASURED, at agent-qa c4de0279, and where a measurement disagreed with the plan the
 # list follows the measurement and the disagreement is recorded in the phase SUMMARY.
 
-# CHANNEL's fan-out is SIX: the four chat render anchors that read a payload off the terminal, the
+# 2026-08-20 (399.1-09): CHANNEL's fan-out is SEVEN. Plan 09's nested-composition cell joined the
+# list BY NAME, measured, never by relaxing the leg. Its verdict-word claim survives an empty
+# channel — `agent.ask` folds `receipts`, which this mutation does not touch — but its NON-VACUITY
+# half reads the inner turn's own refusal out of the rendered payload, so a turn that carries no
+# payload cannot satisfy it. That is the cell working as written: it refuses to certify an outer
+# word without first seeing the inner refusal it is a word about.
+#
+# CHANNEL's fan-out was SIX: the four chat render anchors that read a payload off the terminal, the
 # per-surface chat anchor whose CONTENT half compares child stdout to the child's own filed result,
 # and the compound turn-shape cell whose `results[]`-vs-receipts ordering claim has nothing left to
 # order. Two neighbours stay GREEN and both are explainable from the mutation rather than from luck:
@@ -268,14 +283,19 @@ the chat render anchors (399.1, G-399-2) prints the guardrail refusal and its fi
 the chat render anchors (399.1, G-399-2) prints the reviewable diff when the mutation is genuinely proposed
 the chat render anchors (399.1, G-399-2) prints the validation refusal and the validator's own words when the result is invalid
 the chat render anchors (399.1, G-399-2) renders a SECOND op's payload too, on the read door chat advertises itself
+the chat render anchors (399.1, G-399-2) the nested composition: a refusal is never a success one composition layer up
 the per-surface render anchors (399.1 D-08): in-process ≡ shipped chat: the shipped binary prints the bytes this process renders from its own filed result
 ALLOWED_CHANNEL
 
-# VERDICT's fan-out is ONE, and that one cell exists because this leg found the file blind — see THE
-# VERDICT LEG'S FINDING in the header. It is the only cell in the directory that reads the verdict
-# word rather than the payload block, which is exactly why it is the only one that can red here.
+# 2026-08-20 (399.1-09): VERDICT's fan-out is TWO. It was ONE, and that one cell existed because
+# this leg found the file blind — see THE VERDICT LEG'S FINDING in the header. Plan 09's
+# nested-composition cell is the second, joined BY NAME after being measured red: it reads the
+# verdict word one COMPOSITION LAYER UP, so a `blocked` arm folded to `executed` reaches it through
+# `agent.ask`'s own receipts fold. Two cells now read a verdict word rather than a payload block,
+# one per layer, and this leg is the differential that says so.
 cat > "$WORK/allowed.VERDICT" <<'ALLOWED_VERDICT'
 the chat render anchors (399.1, G-399-2) reports each arm's own VERDICT WORD on the receipt line, refusals and success alike
+the chat render anchors (399.1, G-399-2) the nested composition: a refusal is never a success one composition layer up
 ALLOWED_VERDICT
 
 # CENSUS's fan-out is FOUR, and the fourth is the one that matters most: the golden ledger cell in
@@ -626,9 +646,10 @@ fi
 note "agent-qa tree clean after the run (git -C agent-qa status --porcelain empty)"
 
 echo
-echo "PASS — all four of 399.1's shipped mechanisms are mutation-detectable, each by an exact and"
-echo "       disjoint set of NAMED cells:"
-echo "         CHANNEL  a turn that puts nothing on results[] is named by four chat render anchors,"
+echo "PASS — all four of 399.1's shipped mechanisms are mutation-detectable, each by an exact list"
+echo "       of NAMED cells (399.1-09: the nested-composition anchor is in two of them, by two"
+echo "       different roads — see THE FOUR RED SETS in the header):"
+echo "         CHANNEL  a turn that puts nothing on results[] is named by five chat render anchors,"
 echo "                  by the spawned chat anchor's content half, and by the compound ordering cell"
 echo "         VERDICT  a guardrail's refusal reported as \`executed\` is named on the receipt line a"
 echo "                  person reads it on — the cell this leg's first run proved was missing"
