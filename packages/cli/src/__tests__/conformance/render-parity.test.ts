@@ -480,4 +480,118 @@ describe('399.1 — the turn shape a person reads (E2E-02 empty/ordering edges)'
       'the compound turn printed its payload blocks in REVERSE clause order',
     ).toBe(false)
   }, 180_000)
+
+  // ---- The MIXED-outcome turn: receipts outnumber results, and the survivor must name itself ----
+  //
+  // THE THIRD SIDE OF ONE GUARD, and the two cells below are deliberately committed together.
+  // `renderClauseResults` labels a payload with its op name or does not, and there are three shapes
+  // a turn can present it with: receipts == results == 1 (M2, no label), receipts == results > 1
+  // (the ordering cell directly above — labels, already pinned there), and receipts > results (M1,
+  // the shape gap 2 was measured in). A rule with a precondition needs a case its precondition
+  // REJECTS or the cells are all drawn from inside the rule's own assumption (384-04's law).
+
+  it('a mixed-outcome compound turn labels the surviving payload with its own op', async () => {
+    // GAP 2, as the verifier measured it on the shipped binary: two ordinary clauses, no credential,
+    // one executes and one fails. Both surfaces print ALL receipts and THEN all payloads, so the
+    // receipt line standing nearest above the payload block belongs to the SECOND clause — the one
+    // that failed — while the payload beneath it belongs to the FIRST. A person reads
+    // `{ "entries": [] }` as `runs.digest`'s answer when it is `proposals.list`'s. One op's output
+    // read as another op's is the legibility class this phase exists to close (D-04, phase goal).
+    const observed = await driveChatLines([
+      '/fn proposals.list {} then /fn runs.digest {"runId":"r_nope"}',
+    ])
+
+    // NON-VACUITY FIRST, each naming what broke if it trips. The mixed shape is a property of the
+    // ENGINE, not of this file: an engine change, a routing change or a stop-gate change could stop
+    // producing it, and then every assertion below would be about a turn that is not the subject.
+    // This cell must fail HERE, loudly, rather than going quietly vacuous.
+    expect(
+      observed.receipts.map((receipt) => receipt.status),
+      'the fixture stopped producing the MIXED shape (one executed clause, one failed clause), so '
+        + 'nothing below is measuring the misattribution this cell exists for',
+    ).toEqual(['executed', 'failed'])
+    expect(
+      observed.results,
+      'a mixed turn must file exactly one surviving payload; with none there is no payload to label '
+        + 'and the render assertions below would be vacuous',
+    ).toHaveLength(1)
+    expect(
+      observed.results[0]?.functionId,
+      "the surviving payload does not belong to the FIRST clause, so the misattribution premise — a "
+        + "payload printed beneath a DIFFERENT op's failure receipt — is not what this drive produced",
+    ).toBe(observed.receipts[0]?.functionId)
+    expect(
+      observed.receipts.length,
+      'receipts do not outnumber results, so this is not the receipts-exceed-results shape gap 2 '
+        + 'was measured in',
+    ).toBeGreaterThan(observed.results.length)
+
+    // THE DISCRIMINATING ASSERTIONS, on the module's own output so the comparand cannot drift from
+    // the shipped render. Soft, so one run records BOTH values the fix changes.
+    //
+    // Note vitest does not typecheck: at the pre-fix HEAD the second argument is silently ignored
+    // and `rendered` is a single unlabelled payload line. That is exactly why the assertions are on
+    // the rendered LINES — a containment-only assertion would be green before the fix and certify
+    // nothing.
+    const rendered = renderClauseResults(observed.results, observed.receipts.length)
+    expect
+      .soft(
+        rendered,
+        'the surviving payload rendered WITHOUT a label line: a person reads it directly beneath a '
+          + "different op's failure receipt, with nothing on screen saying whose output it is",
+      )
+      .toHaveLength(2)
+    expect
+      .soft(
+        rendered[0],
+        'the first rendered line does not name the op the payload belongs to (it is the payload '
+          + `itself). what the render produced: ${JSON.stringify(rendered)}`,
+      )
+      .toContain(String(observed.results[0]?.functionId))
+
+    // …and the shipped surface really prints that block, label directly above its own payload.
+    expect(
+      observed.stdout,
+      `the labelled block is not on the terminal. what the person read: `
+        + `${JSON.stringify(observed.stdout.slice(-1200))}`,
+    ).toContain(rendered.join('\n'))
+  }, 180_000)
+
+  it("a single-clause turn stays unlabelled (the guard's reject side)", async () => {
+    // THE CONTROL, and the reason it is committed beside M1 rather than assumed: the guard M1 moves
+    // has a precondition, and a suite drawn only from cases the precondition ACCEPTS cannot tell a
+    // receipt-count guard from an unconditional label. This cell is the reject side — one receipt,
+    // one result, no label — and what keeps a future drift to "always label" an explicit decision
+    // somebody makes rather than an accident nothing notices.
+    //
+    // Its rationale is the render module's own (result-render.ts): the receipt line directly above
+    // already names the op, so a label here would put the same word twice on two consecutive lines.
+    // The third shape — receipts == results > 1 — is pinned by the ordering cell above, whose
+    // comparand is the labelled compound render.
+    const observed = await driveChatLines(['/fn proposals.list {}'])
+
+    // NON-VACUITY FIRST: a drive that never reached the capability would satisfy "no label" trivially.
+    expect(
+      observed.receipts.map((receipt) => receipt.status),
+      'the single-clause fixture did not file exactly one executed receipt, so the unlabelled claim '
+        + 'below would be about a turn that never ran an op',
+    ).toEqual(['executed'])
+    expect(observed.results, 'a single executed clause filed no payload to render').toHaveLength(1)
+
+    const rendered = renderClauseResults(observed.results, observed.receipts.length)
+    expect(
+      rendered,
+      `a single-receipt turn grew a label line — the op's name now appears twice on two consecutive `
+        + `lines. what the render produced: ${JSON.stringify(rendered)}`,
+    ).toHaveLength(1)
+    expect(
+      rendered[0]?.includes(String(observed.results[0]?.functionId)),
+      'the sole rendered line names the op, which is the label the receipt line above already carries',
+    ).toBe(false)
+    expect(
+      observed.stdout,
+      `the single-clause payload is not on the terminal. what the person read: `
+        + `${JSON.stringify(observed.stdout.slice(-1200))}`,
+    ).toContain(rendered.join('\n'))
+  }, 180_000)
 })
