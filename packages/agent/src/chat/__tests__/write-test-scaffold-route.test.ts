@@ -55,7 +55,7 @@ import { isMap, isScalar, isSeq, parseDocument } from 'yaml'
 import { describe, expect, it } from 'vitest'
 
 import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
-import { utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
+import { CROSS_BOUNDARY_REASONS, utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
 import type {
   AgentAskInput,
   AgentAskResult,
@@ -815,6 +815,8 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
         readonly summaryLine: string
         readonly files: readonly string[]
         readonly shownDiff: string
+        readonly crossBoundary: boolean
+        readonly crossBoundaryReasons: readonly string[]
       }
       expect(answer.outcome).toBe('proposed')
       expect(render?.text).toContain(answer.summaryLine)
@@ -830,10 +832,15 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       expect(render?.text).toContain(answer.shownDiff)
       expect(render?.text.endsWith(answer.shownDiff)).toBe(true)
 
-      // AND THE RENDER IS EXACTLY THE THREE PARTS, in order — summary, file list, diff — with no
-      // fourth thing invented on the way to the person.
+      // AND THE RENDER IS EXACTLY THE DECLARED PARTS, in order, with nothing invented on the way to
+      // the person. FOUR NOW AND NOT THREE (399.1 RC-2): the boundary verdict leads, and it is
+      // composed HERE from the op's own two fields rather than quoted, so this equality still fails
+      // on any byte the engine adds that no producer filed. (R20) owns the boundary claim itself.
+      const boundaryLine = 'CROSSES A TRUST BOUNDARY — crossBoundary: true; '
+        + `crossBoundaryReasons: ${answer.crossBoundaryReasons.join(', ')}`
+      expect(answer.crossBoundary).toBe(true)
       expect(render?.text)
-        .toBe([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
+        .toBe([boundaryLine, answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
     })
 
   it('(R13′) an UNBOUND present REFUSES the route: nothing is displayed, so nothing is offered',
@@ -1142,6 +1149,106 @@ describe('one turn: detect, scaffold, confirm, apply, author (D-14 · CFGM-05)',
       const shown = brokenOp.show(proposalId ?? '')
       expect(shown?.summaryLine).toBe(brokenOp.filed[0]?.summaryLine)
       expect(shown?.paths.length ?? 0).toBeGreaterThan(0)
+    })
+
+
+  // -----------------------------------------------------------------------------------------------
+  // (R20)/(R21) — RC-2: THE BOUNDARY A PERSON IS NEVER TOLD ABOUT (399.1, criterion 4).
+  //
+  // The pre-confirm render above was built to answer "what does this change do" and it answers it
+  // well — summary, files, the true diff. It never answered "does this change cross a trust
+  // boundary", because the narrowing that reads the proposed arm stopped at the four fields the
+  // display needed and `crossBoundary`/`crossBoundaryReasons` were not among them. So the one place
+  // in chat where a person authorises a configuration write showed them a diff and then asked for
+  // approval with the boundary verdict — the field the grant machinery refuses a standing approval
+  // ON — dropped on the floor. `demo/acceptance/399/ACCEPTANCE.md` §9 item 2 is the witness.
+  //
+  // THE FIELDS ARE NOT OPTIONAL ON THE PRODUCER. `ConfigProposeOutputSchema`'s proposed arm requires
+  // both, so this is a READER-side drop and not a producer gap — which is why (R20) drives the REAL
+  // op and compares against what it actually filed rather than against a literal.
+  // -----------------------------------------------------------------------------------------------
+
+  it('(R20) tells the person the proposal CROSSES A BOUNDARY, and why, before the confirm is offered',
+    async () => {
+      // THE REAL OP ANSWERS IT (produced-not-literal). A scaffold files a target that did not exist,
+      // so the classifier's own verdict is `new-origin` — and this cell reads that verdict off the
+      // op's answer rather than restating it, so the day the classification changes the assertion
+      // follows it instead of disagreeing with it.
+      //
+      // NAMED RED DIRECTION, measured: with the two members removed from the narrowing (or the
+      // boundary line dropped from the join) the presented text carries no boundary verdict at all
+      // and every assertion below reds — which is the state this file measured before the fix.
+      const scaffoldOp = scaffoldOpFixture({ configText: ZERO_TARGET_CONFIG })
+      const test = harness({ targets: [], realScaffold: scaffoldOp })
+      const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
+
+      expect(result.status).toBe('completed')
+      expect(test.presented).toHaveLength(1)
+      const render = test.presented[0]
+
+      // BEFORE THE GATED VERB, not merely somewhere in the turn. The whole claim of criterion 4 is
+      // that the boundary reaches the person while the decision is still theirs to make.
+      expect(render?.orderingAtRender).not.toContain(CONFIG_PROPOSAL_APPLY_FUNCTION_ID)
+
+      const answer = test.answers.find(
+        (row) => row.functionId === CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID,
+      )?.answer as {
+        readonly outcome: string
+        readonly crossBoundary: boolean
+        readonly crossBoundaryReasons: readonly string[]
+        readonly summaryLine: string
+      }
+      expect(answer.outcome).toBe('proposed')
+      expect(answer.crossBoundary).toBe(true)
+      expect(answer.crossBoundaryReasons.length).toBeGreaterThan(0)
+
+      // BOTH FIELDS, IN THE BYTES THE PERSON READS. The verdict by name, and every reason VERBATIM
+      // off the payload — never a paraphrase, because a paraphrase is a second answer to "why" that
+      // is free to disagree with the record the grant machinery reads.
+      expect(render?.text).toContain('crossBoundary: true')
+      expect(render?.text).toContain('crossBoundaryReasons:')
+      for (const reason of answer.crossBoundaryReasons) {
+        expect(render?.text, reason).toContain(reason)
+      }
+
+      // ABOVE THE REST OF THE JOIN. A boundary warning printed under a forty-line diff is one a
+      // person scrolls past; the ordering inside the render is part of the disclosure.
+      const boundaryAt = render?.text.indexOf('crossBoundary: true') ?? -1
+      const summaryAt = render?.text.indexOf(answer.summaryLine) ?? -1
+      expect(boundaryAt).toBeGreaterThanOrEqual(0)
+      expect(summaryAt).toBeGreaterThan(boundaryAt)
+    })
+
+  it('(R21) adds NO boundary line to a proposal that crosses none — the common path stays quiet',
+    async () => {
+      // THE OTHER COORDINATE, and the one that keeps the fix from being "always warn". A warning
+      // printed on every proposal is a warning nobody reads, and this cell is what forbids the
+      // cheapest possible green.
+      //
+      // A CANNED PRODUCER, for (R16)-(R19)'s stated reason: today's ONE producer of this route is
+      // the scaffold, which files a target that did not exist and is therefore always
+      // `new-origin`. `crossBoundary: false` is representable on the schema's proposed arm and any
+      // future producer of a non-crossing proposal reaches this same engine road — so the cell
+      // drives the stub producer, which covers the engine's rule rather than one op's habit.
+      const test = harness({
+        targets: [],
+        scaffoldAnswer: { ...DISPLAYABLE_ANSWER, crossBoundary: false, crossBoundaryReasons: [] },
+      })
+      const result = await test.runTurn({ message: 'write a test for booking.com checkout' })
+
+      expect(result.status).toBe('completed')
+      expect(test.presented).toHaveLength(1)
+      const text = test.presented[0]?.text ?? ''
+
+      // NOT A SINGLE BYTE OF THE BOUNDARY VOCABULARY.
+      expect(text).not.toContain('crossBoundary')
+      expect(text).not.toContain('CROSSES A TRUST BOUNDARY')
+      for (const reason of CROSS_BOUNDARY_REASONS) expect(text, reason).not.toContain(reason)
+
+      // AND THE REST OF THE DISCLOSURE IS UNTOUCHED — the quiet path is quiet about the boundary,
+      // not about the change.
+      expect(text).toContain(DISPLAYABLE_ANSWER.summaryLine)
+      expect(text).toContain(DISPLAYABLE_ANSWER.shownDiff)
     })
 
   it('(R9) does not run at all on a host that binds no vocabulary', async () => {

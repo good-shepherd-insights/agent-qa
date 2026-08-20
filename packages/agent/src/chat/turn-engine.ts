@@ -296,6 +296,43 @@ export const WRITE_TEST_UNDISPLAYABLE_DETAIL =
   + 'filed. Run `agent-qa proposals list` to find it, `agent-qa proposals show <id>` to read it, '
   + 'and `agent-qa proposals accept <id>` to apply it.'
 
+/**
+ * The boundary verdict, ABOVE the change it is a verdict about (399.1, RC-2, criterion 4).
+ *
+ * WHAT WAS WRONG. The pre-confirm render answered "what does this change do" — summary line, file
+ * list, the true diff — and never answered "does this change cross a trust boundary". The proposed
+ * arm files that verdict as two required fields, the grant machinery REFUSES a covering standing
+ * approval on it (395-07's two-sided enforcement), and the one surface where a person is asked to
+ * authorise the write showed them neither. `demo/acceptance/399/ACCEPTANCE.md` §9 item 2 is the
+ * witness: a chat-minted `config.target.create` proposal filed `crossBoundary: true` on disk and
+ * the person approving it was never told.
+ *
+ * VERBATIM, NEVER A PARAPHRASE. Each reason is one of `CROSS_BOUNDARY_REASONS`' four closed words
+ * and it is printed as filed. A hand-written sentence per reason would be a SECOND answer to "why
+ * is this crossing", free to disagree with the record the grant machinery reads — which is the
+ * drop-site lesson (D-04) applied to the field that decides whether a fresh ask is owed.
+ *
+ * THE FIELD NAMES ARE IN THE BYTES, deliberately. A person who reads `crossBoundary: true` here can
+ * find the same field in `agent-qa proposals show <id>` and in the grant refusal, and knows they
+ * are looking at one fact rather than three surfaces' opinions of it.
+ *
+ * SILENT ON THE COMMON PATH. A proposal that crosses nothing contributes NO line, because a warning
+ * printed over every proposal is one nobody reads — and an absent or non-boolean verdict is treated
+ * as "no claim of crossing", never as a crossing, since the notice is a disclosure and inventing one
+ * would be this function paraphrasing a producer that said nothing.
+ */
+function crossBoundaryLines(answer: {
+  readonly crossBoundary?: boolean
+  readonly crossBoundaryReasons?: readonly string[]
+}): readonly string[] {
+  if (answer.crossBoundary !== true) return []
+  const reasons = answer.crossBoundaryReasons ?? []
+  return [
+    'CROSSES A TRUST BOUNDARY — crossBoundary: true; crossBoundaryReasons: '
+    + (reasons.length === 0 ? '(none named)' : reasons.join(', ')),
+  ]
+}
+
 /** What one directive did: a line to print back, or the reason the turn is refused. */
 type DirectiveResult =
   | { readonly kind: 'handled'; readonly text: string }
@@ -812,6 +849,15 @@ async function runTurnThrough(
       summaryLine?: string
       files?: readonly string[]
       shownDiff?: string
+      // RC-2 (399.1, criterion 4). The narrowing used to stop one field short of the only question
+      // the person is actually being asked: this write crosses a trust boundary, or it does not.
+      // Both are REQUIRED on `ConfigProposeOutputSchema`'s proposed arm, so their absence from the
+      // pre-confirm text was a reader-side drop — `demo/acceptance/399/ACCEPTANCE.md` §9 item 2.
+      // Optional HERE and not there, because this cast is the engine's own contract with every
+      // future producer, and a producer that files no verdict must reach the quiet path rather
+      // than a crash.
+      crossBoundary?: boolean
+      crossBoundaryReasons?: readonly string[]
     }
     if (answer.outcome !== 'proposed' || answer.proposalId === undefined) {
       // A refusal or a blocked record. Both are answers a person can act on, and neither is a
@@ -906,7 +952,10 @@ async function runTurnThrough(
       // sentence points at the surface that reads it. The refusal is the TURN's, never the
       // PROPOSAL's — and it is a fixed literal, so the broken port contributes no bytes to it.
       try {
-        await present([answer.summaryLine, ...answer.files, answer.shownDiff].join('\n'))
+        await present(
+          [...crossBoundaryLines(answer), answer.summaryLine, ...answer.files, answer.shownDiff]
+            .join('\n'),
+        )
       } catch {
         writeTestRefusal = WRITE_TEST_UNDISPLAYABLE_DETAIL
         return 'stop'
