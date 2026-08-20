@@ -46,11 +46,19 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
+import { Client } from '@modelcontextprotocol/client'
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { CONFIG_FIELD_SET_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import { maskedToolResult } from '@vostride/agent-qa-mcp'
 import { ConfigProposalV1Schema } from '@vostride/agent-qa-schema'
 import type { ConfigProposalV1 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { renderFnResult } from '../../commands/fn.js'
+import { renderClauseResults } from '../../commands/result-render.js'
+import { registryDeclarations } from './adapters.js'
+import { SCENARIO_TABLE } from './scenario-table.js'
+import type { ScenarioRow } from './scenario-table.js'
 import {
   CLI_ENTRY,
   PACKAGES_ROOT,
@@ -59,6 +67,8 @@ import {
   cleanupTempRoots,
   driveChatSpawned,
   fixtureProject,
+  hermeticEnv,
+  spawnCollecting,
 } from './spawned-chat.js'
 
 afterEach(() => {
@@ -365,4 +375,257 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
       }
     }
   }, 300_000)
+})
+
+// ---- The per-surface render anchors: in-process ≡ shipped, one cell per door (D-08) -------------
+//
+// WHAT THESE THREE ADD THAT THE MATRIX CANNOT. `render-parity.test.ts` drives the shipped render
+// FUNCTIONS for all 42 capabilities on all three doors, in this process, against documents produced
+// from the ops' own contracts. That is the coverage half, and it is blind to exactly one thing: the
+// artifact a person installs is a bundle, and a bundle can differ from the source it was built from
+// — a tree-shaken branch, an unbundled dependency resolved to a stale `dist`, a masker wired
+// differently at the composition root a `dist` entry point reaches. Each cell below spawns the built
+// binary for ONE door and asserts that the bytes it printed are the bytes the in-process render
+// produces for THE CHILD'S OWN RESULT. Spawned cells stay few, on D-08's wall-clock argument.
+//
+// THE COMPARAND IS THE CHILD'S OWN OUTPUT, NEVER A LITERAL (390-03, and `filedProposal` above is the
+// same move). Each anchor obtains the result the child actually computed — out of the session log
+// the chat child wrote, out of the `--json` channel the `fn` child publishes, off the wire the MCP
+// child answered on — and renders THAT in this process. A cell carrying its own copy of an expected
+// document keeps passing after the thing it claims to be about has changed.
+
+/**
+ * The row all three anchors drive, DERIVED from the table by a stated rule rather than picked.
+ *
+ * THE RULE, and each clause of it is a requirement of the measurement rather than a taste: the first
+ * row in the table's committed sorted order that (1) is reachable on every rostered door, so one op
+ * makes three comparable readings instead of three incomparable ones; (2) takes the EMPTY input, so
+ * the same fixture invocation can be typed at a chat prompt, passed to `fn --input` and sent as MCP
+ * tool arguments without three different spellings; and (3) whose output contract's root is an
+ * OBJECT, because an op answering a bare array answers `[]` in an empty fixture and a render of `[]`
+ * has no declared field to withhold — a cell driven there would pass on a door that prints nothing
+ * but brackets.
+ *
+ * DERIVED RATHER THAN NAMED because a hardcoded op id here is the shape success criterion 6 forbids
+ * one file away: the day this op is retired, a literal would leave three anchors asserting about a
+ * capability that no longer exists, while the rule re-lands on whatever the table's next qualifying
+ * row is and says so.
+ */
+function anchorRow(): ScenarioRow {
+  const projections = new Map(registryDeclarations().map((d) => [d.id, d.output]))
+  const row = SCENARIO_TABLE.find((candidate) => {
+    if (!candidate.perSurface.fn.reachable) return false
+    if (!('reachable' in candidate.perSurface.mcp)) return false
+    const input = candidate.input as Record<string, unknown>
+    if (typeof input !== 'object' || input === null || Object.keys(input).length > 0) return false
+    const projection = projections.get(candidate.opId) as Record<string, unknown> | undefined
+    return projection?.['type'] === 'object'
+  })
+  expect(
+    row,
+    'no scenario row is reachable on all three doors with an empty input and an object-rooted '
+    + 'output contract, so these anchors have nothing they can drive on every door at once',
+  ).toBeDefined()
+  return row as ScenarioRow
+}
+
+/** The bytes a declared field occupies — `render-parity.test.ts`'s token, for its reason. */
+function fieldToken(marker: string): string {
+  return `${JSON.stringify(marker)}:`
+}
+
+/** The one clause_result the chat child filed for an op, parsed off the session log it wrote. */
+function childClauseResult(root: string, opId: string): { functionId: string; payload: unknown } {
+  const sessions = join(root, '.agent-qa', 'sessions')
+  expect(existsSync(sessions), `the chat child filed no session directory under ${sessions}`)
+    .toBe(true)
+  const found: { functionId: string; payload: unknown }[] = []
+  for (const file of readdirSync(sessions)) {
+    for (const line of readFileSync(join(sessions, file), 'utf8').split('\n')) {
+      if (line.trim() === '') continue
+      const event = JSON.parse(line) as Record<string, unknown>
+      if (event['kind'] !== 'clause_result') continue
+      if (event['functionId'] !== opId) continue
+      found.push({ functionId: opId, payload: event['payload'] })
+    }
+  }
+  expect(
+    found.length,
+    `the chat child filed ${found.length} clause_result events for ${opId}; this anchor needs `
+    + 'exactly one, or the render it compares against is not the render of one turn',
+  ).toBe(1)
+  return found[0]!
+}
+
+describe('the per-surface render anchors (399.1 D-08): in-process ≡ shipped', () => {
+  it('chat: the shipped binary prints the bytes this process renders from its own filed result',
+    async () => {
+      expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+      const row = anchorRow()
+      const fixture = fixtureProject('399-1-anchor-chat')
+      const utterance = `/fn ${row.opId} ${JSON.stringify(row.input)}`
+      const outcome = await driveChatSpawned(fixture.root, fixture.configPath, utterance)
+
+      expect(
+        { code: outcome.code, signal: outcome.signal, stderr: outcome.stderr.trim().slice(0, 600) },
+        'the spawned chat binary did not exit cleanly for the chat render anchor',
+      ).toMatchObject({ code: 0, signal: null })
+
+      // The post-marker slice discipline, on the echoed clause and with its uniqueness asserted —
+      // `render-anchors.test.ts`'s header says why the marker is the clause and not the outcome line.
+      const markerIndex = outcome.stdout.indexOf(utterance)
+      expect(
+        markerIndex,
+        `the spawned chat binary never echoed ${JSON.stringify(utterance)}; its stdout was `
+        + `${JSON.stringify(outcome.stdout.slice(0, 800))} and its stderr `
+        + `${JSON.stringify(outcome.stderr.trim().slice(0, 400))}`,
+      ).toBeGreaterThanOrEqual(0)
+      expect(
+        outcome.stdout.lastIndexOf(utterance),
+        'the anchor clause occurs more than once in the child stdout, so the slice searched is not '
+        + 'the one turn it means',
+      ).toBe(markerIndex)
+      const slice = outcome.stdout.slice(markerIndex + utterance.length)
+
+      // IN-PROCESS ≡ SHIPPED. The comparand is this process's render of the result THE CHILD filed.
+      const filed = childClauseResult(fixture.root, row.opId)
+      const inProcess = renderClauseResults([filed]).join('\n')
+      expect(inProcess.length, 'the in-process render of the child\'s result is empty, so the '
+        + 'comparison below would be vacuous').toBeGreaterThan(0)
+      expect(
+        slice,
+        `the shipped chat binary and the in-process render disagree about what this result looks `
+        + `like. the binary printed ${JSON.stringify(slice.slice(0, 700))}; this process renders `
+        + `${JSON.stringify(inProcess.slice(0, 700))}`,
+      ).toContain(inProcess)
+
+      // …and the row's own declared expectation, asserted on child stdout exactly as its in-process
+      // twin asserts it on the produced document.
+      for (const marker of row.renderExpect.markers) {
+        expect(
+          slice,
+          `${row.opId} on chat (spawned): the field ${marker} never reached the terminal. `
+          + `post-marker stdout: ${JSON.stringify(slice.slice(0, 700))}`,
+        ).toContain(fieldToken(marker))
+      }
+    }, 180_000)
+
+  it('fn: the shipped binary\'s human bytes ARE this process\'s render of its own JSON channel',
+    async () => {
+      expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+      const row = anchorRow()
+      const fixture = fixtureProject('399-1-anchor-fn')
+      const base = [CLI_ENTRY, '--config', fixture.configPath, 'fn', row.opId, '--input',
+        JSON.stringify(row.input)]
+
+      const human = await spawnCollecting(fixture.root, base)
+      const machine = await spawnCollecting(fixture.root, [...base, '--json'])
+
+      for (const [label, outcome] of [['human', human], ['--json', machine]] as const) {
+        expect(
+          { code: outcome.code, signal: outcome.signal, stderr: outcome.stderr.trim().slice(0, 600) },
+          `the spawned fn binary did not exit cleanly on its ${label} channel`,
+        ).toMatchObject({ code: 0, signal: null })
+      }
+
+      // The child's OWN result, off the machine channel it publishes for exactly this purpose.
+      const payload = JSON.parse(machine.stdout) as unknown
+      expect(
+        payload,
+        'the fn child\'s --json channel answered nothing to render, so the comparison below is '
+        + 'vacuous',
+      ).not.toBeUndefined()
+
+      // EXACT EQUALITY, which is available here and nowhere else in this file: `fn` prints one
+      // document and nothing around it, so "the door showed the whole result" and "the door showed
+      // only the result" are one assertion. A `toContain` would pass on a build that printed the
+      // payload inside a wrapper this suite has never seen.
+      expect(
+        human.stdout.trim(),
+        'the shipped `agent-qa fn` printed something other than this process\'s render of the very '
+        + 'result it answered on its own --json channel',
+      ).toBe(renderFnResult(payload))
+
+      for (const marker of row.renderExpect.markers) {
+        expect(
+          human.stdout,
+          `${row.opId} on fn (spawned): the field ${marker} never reached the terminal. stdout: `
+          + `${JSON.stringify(human.stdout.slice(0, 700))}`,
+        ).toContain(fieldToken(marker))
+      }
+    }, 180_000)
+
+  it('mcp: the shipped server\'s two channels are one masking, and carry the declared fields',
+    async () => {
+      expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+      const row = anchorRow()
+      const mcp = row.perSurface.mcp
+      expect('reachable' in mcp, 'the derived anchor row has no MCP door').toBe(true)
+      if (!('reachable' in mcp)) return
+      const fixture = fixtureProject('399-1-anchor-mcp')
+
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [CLI_ENTRY, '--config', fixture.configPath, 'mcp'],
+        cwd: fixture.root,
+        env: hermeticEnv(fixture.root),
+        stderr: 'pipe',
+      })
+      let captured = ''
+      transport.stderr?.on('data', (chunk: Buffer | string) => {
+        captured += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+      })
+      const client = new Client({ name: 'agent-qa-399-1-render-anchor', version: '0.0.0' })
+      try {
+        await client.connect(transport)
+        const result = await client.callTool({
+          name: mcp.reachable.tool,
+          arguments: row.input as Record<string, unknown>,
+        })
+
+        expect(
+          {
+            isError: (result as { isError?: boolean }).isError === true,
+            stderr: captured.trim().slice(0, 400),
+          },
+          'the spawned MCP binary refused the anchor call in band; its stderr is quoted beside this',
+        ).toMatchObject({ isError: false })
+
+        const structured = (result as { structuredContent?: unknown }).structuredContent
+        expect(
+          structured,
+          'the spawned MCP binary answered with no structuredContent, so this door rendered no '
+          + 'result at all',
+        ).toBeDefined()
+
+        // IN-PROCESS ≡ SHIPPED, in the form this door's render makes checkable: `maskedToolResult`
+        // answers BOTH channels from ONE masking, so the text a person reads must be the
+        // serialization of the object a machine reads. Recomputing it here against the wire's own
+        // structuredContent is the identity — a build whose two channels had drifted apart reds.
+        const content = (result as { content?: readonly { type: string; text?: string }[] }).content
+        const wireText = (content ?? [])
+          .map((entry) => (entry.type === 'text' ? (entry.text ?? '') : ''))
+          .join('\n')
+        const recomputed = maskedToolResult(structured, (text: string) => text)
+        const recomputedText = (recomputed.content ?? [])
+          .map((entry) => (entry.type === 'text' ? (entry.text ?? '') : ''))
+          .join('\n')
+        expect(
+          wireText,
+          'the shipped MCP server\'s text channel is not the serialization of the object channel it '
+          + 'answered beside it — the two are supposed to be one masking of one document',
+        ).toBe(recomputedText)
+
+        const serialized = JSON.stringify(structured)
+        for (const marker of row.renderExpect.markers) {
+          expect(
+            serialized,
+            `${row.opId} on mcp (spawned): the field ${marker} never reached the wire. `
+            + `structuredContent: ${JSON.stringify(serialized.slice(0, 700))}`,
+          ).toContain(fieldToken(marker))
+        }
+      } finally {
+        await client.close().catch(() => {})
+      }
+    }, 180_000)
 })

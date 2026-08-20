@@ -140,6 +140,23 @@ function emitJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2))
 }
 
+/**
+ * The bytes `agent-qa fn` prints for a unary result — the honest baseline (399 D-14, 399.1 D-04).
+ *
+ * PROMOTED TO AN EXPORT ON 2026-08-20 rather than copied (399.1 plan 06). It was one inline
+ * expression until the conformance suite needed to drive this door's render for all 42 capabilities,
+ * and the available shortcut was to write `JSON.stringify(result, null, 2)` a second time inside the
+ * suite. That second spelling is the RC-2 defect in miniature: two renders of one door, free to
+ * disagree, with the measured one green while the shipped one drops a field. There is one render
+ * here and the suite drives it.
+ *
+ * IT DOES NOT PRINT AND IT DOES NOT UNMASK. `emitHuman` below owns both, which is where the
+ * disclosure boundary belongs and the only place `unmaskForHumanOutput` may run.
+ */
+export function renderFnResult(result: unknown): string {
+  return JSON.stringify(result, null, 2)
+}
+
 function emitHuman(maskedText: string): void {
   const maskingContext = createMaskingContext()
   try {
@@ -280,7 +297,7 @@ export function createFnCommand(deps: FnCommandDeps = {}): Command {
           emitJson(result)
           return
         }
-        emitHuman(JSON.stringify(result, null, 2))
+        emitHuman(renderFnResult(result))
       } catch (error) {
         reportError(error)
       }

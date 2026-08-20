@@ -38,6 +38,14 @@ export {
 } from './conformance-support.js'
 export type { JsonDocument } from './conformance-support.js'
 
+// 2026-08-20 (Phase 399.1 plan 06, D-08). `maskedToolResult` joins the barrel on the paragraph
+// above's reasoning, extended one door further: it IS this surface's render — the single masking
+// from which both `structuredContent` and the text a person reads are answered — and 399.1's
+// rendered-output matrix compares it against the chat and `fn` renders for every capability. The
+// alternative to publishing it is a second serialization recipe inside the suite, which would make
+// the suite's idea of this door the subject and leave the shipped one unmeasured. It hands a
+// consumer no capability: it is a pure function of a value the consumer already holds.
+
 export {
   advertisedContracts,
   AGENT_QA_COMPOSED_CONTRACTS,
@@ -64,6 +72,8 @@ export type {
 // longer exist and the rulings that retired them.
 export { V1_TOOL_MIGRATION_MAP } from './migration-map.js'
 export type { V1MigrationArm, V1ToolMigrationEntry } from './migration-map.js'
+
+export { maskedToolResult } from './masked-result.js'
 
 export { McpProjectionError, toRegisterToolConfig } from './projection.js'
 export type { ProjectedOpSpec, RegisterToolConfig } from './projection.js'
