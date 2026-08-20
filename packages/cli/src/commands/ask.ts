@@ -84,7 +84,7 @@ function renderTurn(result: AgentAskResult): string {
   // 399.1 (D-04/D-05): the same payload block the REPL prints, from the same module — the one-shot
   // and the conversation are the same turn, and a scripted caller that was shown less than the
   // person at the prompt would be the drift D-01 forbids.
-  lines.push(...renderClauseResults(result.results))
+  lines.push(...renderClauseResults(result.results, result.receipts.length))
   if (result.answer !== undefined) lines.push(result.answer)
   return lines.join('\n')
 }

@@ -222,8 +222,11 @@ const RENDER_DOORS: readonly RenderDoor[] = Object.freeze([
     covers: () => true,
     // The module `chat.ts:151` and `ask.ts:87` both print through. One result, because a turn's
     // payload block per clause is what a person reads; the compound case is the ordering cell below.
+    // The receipt count is `1` for the same reason the matrix drives one op: each cell is a
+    // single-clause turn, so this is the unlabelled shape and every cell's bytes are unchanged by
+    // 399.1-10's receipt-count keying. The labelled shapes are the two turn-shape cells below.
     render: (opId: string, payload: unknown) =>
-      renderClauseResults([{ functionId: opId, payload }]).join('\n'),
+      renderClauseResults([{ functionId: opId, payload }], 1).join('\n'),
   }),
   Object.freeze({
     id: 'mcp',
@@ -461,7 +464,7 @@ describe('399.1 — the turn shape a person reads (E2E-02 empty/ordering edges)'
 
     // …and what the person read. The comparand is the SHIPPED render of the results this very drive
     // filed, so this cannot pass on a render that printed something else in a plausible order.
-    const inOrder = renderClauseResults(observed.results).join('\n')
+    const inOrder = renderClauseResults(observed.results, observed.receipts.length).join('\n')
     expect(
       observed.stdout,
       `the compound turn's payload blocks are not on the terminal in clause order. what the person `
@@ -470,7 +473,7 @@ describe('399.1 — the turn shape a person reads (E2E-02 empty/ordering edges)'
 
     // THE CONTROL, so the assertion above is known to be about ORDER and not merely about presence:
     // the same two blocks the other way round must NOT be what was printed.
-    const reversed = renderClauseResults([...observed.results].reverse()).join('\n')
+    const reversed = renderClauseResults([...observed.results].reverse(), observed.receipts.length).join('\n')
     expect(
       reversed === inOrder,
       'the two clauses rendered identically, so a reversed-order control cannot discriminate',

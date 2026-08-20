@@ -39,16 +39,32 @@ import pc from 'picocolors'
  * nothing. The receipts already say what happened, and an empty payload block would be noise on
  * every refused turn and every turn answered in prose.
  *
- * THE OP IS NAMED ONLY WHEN A TURN HAS MORE THAN ONE RESULT. A single-clause turn already has the
- * op's name on the receipt line directly above; repeating it would put the same word twice on two
- * consecutive lines. A compound turn needs it, because two payloads in sequence with no labels is
- * two documents a reader has to tell apart by content.
+ * THE OP IS NAMED WHENEVER THE TURN FILED MORE THAN ONE RECEIPT — the RECEIPT count, not the result
+ * count. Both surfaces print ALL of a turn's receipts and THEN all of its payloads, so what drives a
+ * reader's ambiguity is how many receipt lines stand above the payload block, and nothing else. A
+ * single-receipt turn already has the op's name on the receipt line directly above; repeating it
+ * would put the same word twice on two consecutive lines, which is why the one-receipt shape stays
+ * bare. Beyond one, a payload is a document the reader has to attribute.
+ *
+ * KEYING THIS ON `results.length` WAS GAP 2, and the difference is only visible in a turn with MIXED
+ * outcomes. When some clause fails, the payload count is SMALLER than the receipt count: one
+ * surviving payload, no label, printed directly beneath a DIFFERENT op's failure receipt. The
+ * verifier measured it on the shipped binary — `proposals.list`'s `{ "entries": [] }` sitting under
+ * `failed  runs.digest`, readable as `runs.digest`'s answer. Two ordinary clauses, no credential:
+ * one op's output read as another op's, which is the legibility class this phase exists to close.
+ *
+ * `receiptCount` is therefore a required argument rather than something inferred here: this module
+ * is handed the results, and the number of lines a surface printed above them is a fact only the
+ * surface has. Both surfaces pass `result.receipts.length`, and a source pin holds them to it.
  */
-export function renderClauseResults(results: readonly ClauseResult[]): string[] {
+export function renderClauseResults(
+  results: readonly ClauseResult[],
+  receiptCount: number,
+): string[] {
   if (results.length === 0) return []
   const lines: string[] = []
   for (const result of results) {
-    if (results.length > 1) lines.push(pc.dim(result.functionId))
+    if (receiptCount > 1) lines.push(pc.dim(result.functionId))
     lines.push(renderPayload(result.payload))
   }
   return lines

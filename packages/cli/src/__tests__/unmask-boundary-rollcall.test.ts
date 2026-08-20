@@ -409,7 +409,7 @@ const HUMAN_SURFACES: HumanSurface[] = [
     originals: [SECRETS.opResult],
     render: () => unmaskForHumanOutput(
       FIXTURE.ctx,
-      renderClauseResults(FIXTURE.clauseResults).join('\n'),
+      renderClauseResults(FIXTURE.clauseResults, FIXTURE.clauseResults.length).join('\n'),
     ),
   },
 ]
@@ -564,7 +564,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
     // rendering assertion in this repository while handing its caller a cleartext string that the
     // session log, the `agent.ask` clients and the persistence seam would then carry.
     name: 'machine:chat-clause-results',
-    render: () => renderClauseResults(FIXTURE.clauseResults).join('\n'),
+    render: () => renderClauseResults(FIXTURE.clauseResults, FIXTURE.clauseResults.length).join('\n'),
   },
 ]
 

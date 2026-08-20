@@ -148,7 +148,7 @@ function renderTurn(result: AgentAskResult): string {
   // 399.1 (D-04/D-05): what the ops RETURNED, between the receipts that say they ran and the
   // prose the planner wrote. The order is the order the facts were established, and the payload
   // is rendered whole — this surface's masked write is the one place it is unmasked.
-  lines.push(...renderClauseResults(result.results))
+  lines.push(...renderClauseResults(result.results, result.receipts.length))
   if (result.answer !== undefined) lines.push(result.answer)
   if (result.status === 'fail_closed') {
     lines.push(

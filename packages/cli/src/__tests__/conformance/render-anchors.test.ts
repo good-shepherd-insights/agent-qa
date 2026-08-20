@@ -647,7 +647,9 @@ describe('the per-surface render anchors (399.1 D-08): in-process ≡ shipped', 
 
       // IN-PROCESS ≡ SHIPPED. The comparand is this process's render of the result THE CHILD filed.
       const filed = childClauseResult(fixture.root, row.opId)
-      const inProcess = renderClauseResults([filed]).join('\n')
+      // Receipt count `1`: each anchor drives one clause, so the child filed one receipt and the
+      // comparand is the unlabelled single-clause shape the child actually printed.
+      const inProcess = renderClauseResults([filed], 1).join('\n')
       expect(inProcess.length, 'the in-process render of the child\'s result is empty, so the '
         + 'comparison below would be vacuous').toBeGreaterThan(0)
       expect(
