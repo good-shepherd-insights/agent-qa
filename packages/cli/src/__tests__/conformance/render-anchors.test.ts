@@ -123,6 +123,14 @@ interface RenderReading {
   readonly utterance: string
   /** Everything the person read AFTER the echoed clause: the outcome line, and any payload. */
   readonly slice: string
+  /**
+   * The receipt line the echoed clause sits ON — which is where the VERDICT WORD is.
+   *
+   * `receipt-line.ts` renders `  <status>  <op>  <clause>`, so the status word PRECEDES the clause
+   * the marker is and no post-marker slice can carry it. This is still one marker-anchored line and
+   * still below every starter prompt; it is not a search of stdout.
+   */
+  readonly receiptLine: string
   /** The proposal this very drive filed, parsed with the shipped contract. */
   readonly filed: ConfigProposalV1
   readonly stdout: string
@@ -188,13 +196,29 @@ async function driveFieldSet(label: string, path: string, value: string): Promis
     + 'slice this cell searches is not the one turn it means',
   ).toBe(markerIndex)
 
+  const lineEnd = outcome.stdout.indexOf('\n', markerIndex)
+
   return {
     utterance,
     slice: outcome.stdout.slice(markerIndex + utterance.length),
+    receiptLine: outcome.stdout.slice(
+      outcome.stdout.lastIndexOf('\n', markerIndex) + 1,
+      lineEnd === -1 ? undefined : lineEnd,
+    ),
     filed: filedProposal(fixture.root),
     stdout: outcome.stdout,
     stderr: outcome.stderr,
   }
+}
+
+/**
+ * The one word the receipt line LEADS with — the verdict a person reads before anything else.
+ *
+ * Split on whitespace rather than sliced at a column, because the styling is `pc`'s and the leading
+ * indent is the renderer's; what is being asserted is the WORD, not its typography.
+ */
+function verdictWord(reading: RenderReading): string {
+  return reading.receiptLine.trim().split(/\s+/u)[0] ?? ''
 }
 
 /** The failure message every content assertion shares: what was searched, and what was in it. */
@@ -333,6 +357,55 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
       + `${JSON.stringify(outcome.stderr.trim().slice(0, 300))}`,
     ).toContain(asRendered(filed.summaryLine))
   }, 180_000)
+
+  it('reports each arm\'s own VERDICT WORD on the receipt line, refusals and success alike',
+    async () => {
+      // WHY THIS CELL EXISTS, AND IT IS A MEASUREMENT RATHER THAN AN ARGUMENT. Every content
+      // assertion in this file reads the POST-MARKER slice — the payload block. 399.1-07's VERDICT
+      // leg folded `blocked` to `executed` in `config-propose-verdict.ts` (the exact implementation
+      // D-01 forbids, and the literal G-399-2 defect: a guardrail declined and chat said the change
+      // was carried out), rebuilt, and ran the whole conformance directory: 271/271 GREEN. A
+      // guardrail's own words printed underneath the word `executed` is not the repair this phase
+      // claims — it is the defect with better prose. So the verdict word is pinned here, on the
+      // line a person reads it on, and the leg that found this file blind now reds exactly here.
+      //
+      // WHY IT WAS MISSED, structurally rather than by oversight: `receipt-line.ts` renders
+      // `  <status>  <op>  <clause>`, so the status word PRECEDES the clause the marker is and a
+      // strict post-marker slice CANNOT carry it. `receiptLine` above reads the marker's own line.
+      const guardrail = await driveFieldSet('verdict-guardrail', SETTABLE_PATH, PLANTED_SECRET)
+      const schemaFail = await driveFieldSet('verdict-schema-fail', UNSETTABLE_PATH, BENIGN_VALUE)
+      const proposed = await driveFieldSet('verdict-proposed', SETTABLE_PATH, BENIGN_VALUE)
+
+      // NON-VACUITY FIRST: the three drives really reached the two blocked arms and the applyable
+      // one. Without this, a fixture that landed three identical arms would satisfy every pin below
+      // while measuring one arm three times.
+      expect(
+        [guardrail, schemaFail, proposed].map((reading) => reading.filed.payloadKind),
+        'the three drives did not reach two blocked arms and the applyable arm, so the verdict '
+        + 'words below would be pinning whatever this fixture happened to produce',
+      ).toEqual(['blocked', 'blocked', 'applyable'])
+
+      // D-01's decision, arm by arm. `blocked` is `refused` because the CONTROL WORKED and nothing
+      // happened; `applyable` is `executed` because a proposal really was filed. The success arm is
+      // pinned in the SAME cell deliberately: a cell asserting only the two refusals would pass
+      // against a build that answered `refused` for everything — which would destroy every real
+      // verdict in the product — so both directions are one cell's business.
+      expect(
+        verdictWord(guardrail),
+        'a guardrail declined to write a secret into the config and the receipt does not read '
+        + `\`refused\`. the line the person read: ${JSON.stringify(guardrail.receiptLine)}`,
+      ).toBe('refused')
+      expect(
+        verdictWord(schemaFail),
+        'the validator refused the mutation and the receipt does not read `refused`. the line the '
+        + `person read: ${JSON.stringify(schemaFail.receiptLine)}`,
+      ).toBe('refused')
+      expect(
+        verdictWord(proposed),
+        'a proposal really was filed and the receipt does not read `executed`. the line the person '
+        + `read: ${JSON.stringify(proposed.receiptLine)}`,
+      ).toBe('executed')
+    }, 300_000)
 
   it('renders three DIFFERENT filed payloads as three different terminal readings', async () => {
     // THE MEASUREMENT THAT SET THIS PHASE'S SEVERITY, as a standing cell. Content assertions above
