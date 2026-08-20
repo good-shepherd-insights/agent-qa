@@ -25,18 +25,6 @@ import type { FunctionRegistry } from './registry.js'
 import type { ClauseVerdict } from './spec.js'
 
 /**
- * What an op with no declared classifier reports: exactly what every op reported before folds existed.
- *
- * ABSENCE IS NOT A REFUSAL AND NOT A FAILURE. An op that has not yet declared a fold has said
- * nothing about its own result, and inventing a verdict for it would be the chat-side value
- * matching D-01 rejects, wearing a default's clothes. The gap is made countable instead: the
- * declaration carries `classifies`, the golden ledger pins the column, and 399.1 plan 04 turns a
- * missing fold into a build-time census RED — which is a red somebody must answer, rather than a
- * runtime guess nobody sees.
- */
-const LEGACY_VERDICT: ClauseVerdict = Object.freeze({ status: 'executed', outcome: '' })
-
-/**
  * The verdict a result nobody could read reports.
  *
  * NAMED, so the receipt says which of the two failures happened. A thrown op error already reaches
@@ -106,7 +94,19 @@ function verdictOf(
   spec: { classify?: (output: never) => unknown },
   payload: unknown,
 ): ClauseVerdict {
-  if (spec.classify === undefined) return LEGACY_VERDICT
+  // AN ABSENT CLASSIFIER IS FAIL-CLOSED AS OF 399.1-04, AND THE FLIP IS THE WHOLE POINT OF THE
+  // PLAN THAT MADE IT. This answered the legacy `{ status: 'executed', outcome: '' }` for one plan,
+  // while `FunctionSpec.classify` was optional and an op with no fold was an ordinary, expected,
+  // COUNTABLE thing. The member is required now, so an absent one no longer means "this op has not
+  // got round to it" — it means a cast got past `tsc` AND past the conformance census, and the one
+  // claim a receipt must never default to is success (D-03).
+  //
+  // THE PARAMETER STAYS OPTIONAL ON PURPOSE. Narrowing it to a required member would delete this
+  // branch and make the guard unwritable, which is the type system certifying its own coverage:
+  // `foldFunctionResult` is exported, the registry stores specs behind an internals seam, and
+  // `registry.ts` itself registers a stream spec through an `as`-cast. The branch is reachable in
+  // exactly the situation it exists for, and `refusal-classifiers.test.ts` drives it.
+  if (typeof spec.classify !== 'function') return UNCLASSIFIABLE
   try {
     const answered: unknown = spec.classify(payload as never)
     return isClauseVerdict(answered) ? answered : UNCLASSIFIABLE

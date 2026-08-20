@@ -140,6 +140,9 @@ const configSetSpec: FunctionSpec<Record<string, never>, { ok: true }> = {
   input: z.object({}).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
   risk: { name: 'fn:config.set', recognized: true },
+  // 399.1-04: `classify` is a REQUIRED member now. A synthetic op's fold is the smallest honest
+  // one — the shape has a single arm, so there is nothing to discriminate.
+  classify: () => ({ status: 'executed' as const, outcome: '' }),
   invoke: () => Promise.resolve({ ok: true as const }),
 }
 
@@ -161,6 +164,9 @@ const authoringDraftWriteSpec: FunctionSpec<Record<string, never>, { ok: true }>
   input: z.object({}).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
   risk: { name: 'fn:authoring.draft.write.synthetic', recognized: true },
+  // 399.1-04: `classify` is a REQUIRED member now. A synthetic op's fold is the smallest honest
+  // one — the shape has a single arm, so there is nothing to discriminate.
+  classify: () => ({ status: 'executed' as const, outcome: '' }),
   invoke: () => Promise.resolve({ ok: true as const }),
 }
 

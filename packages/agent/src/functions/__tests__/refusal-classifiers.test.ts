@@ -30,6 +30,7 @@ import type {
   ProposalsAcceptOutput,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 
 import { foldFunctionResult } from '../classify.js'
 import { authoringDraftWriteSpec } from '../ops/authoring-draft-write.js'
@@ -42,6 +43,7 @@ import { configTargetEditSpec } from '../ops/config-target-edit.js'
 import { configUndoProposeSpec } from '../ops/config-undo-propose.js'
 import { proposalsAcceptSpec } from '../ops/proposals-accept.js'
 import { createRegistryFromSpecs } from '../registry.js'
+import type { FunctionRegistry } from '../registry.js'
 import type { FunctionDeps, FunctionSpec } from '../spec.js'
 import { executableSource, scanFile } from './op-source-scan.js'
 
@@ -312,6 +314,112 @@ describe('399.1 D-03 — the fail-closed wrapper, driven', () => {
     // answered `unclassifiable-result` for everything.
     expect(foldFunctionResult(registry, configFieldSetSpec.id, blockedByGuardrail).verdict)
       .toEqual({ status: 'refused', outcome: 'guardrail-hit' })
+  })
+})
+
+// ---- D-03, the two branches plan 01 shipped undriven (399.1-04 discharges them) -----------------
+
+/**
+ * The fail-closed branches that needed a SYNTHETIC spec to reach, driven at last.
+ *
+ * WHY THEY WERE UNDRIVEN FOR TWO PLANS, AND WHY THAT ENDED HERE. Plan 01 filed them; plan 03 drove
+ * two of the four with a shipped op (a hand-mutated discriminant, and `null`) and left the rest,
+ * because a shipped classifier is TOTAL over its own union and cannot be made to answer a
+ * structurally-valid non-verdict, nor to be absent. Plan 04 is the plan that makes `classify`
+ * REQUIRED — which is precisely the change that turns "an op with no fold" from an ordinary
+ * expected state into a cast that got past both enforcement layers, and gives the branch an input
+ * a test can construct.
+ *
+ * EVERY FIXTURE HERE IS A SPEC THIS PROJECT WOULD NEVER SHIP, AND THAT IS THE POINT. A guard
+ * against op-authored code going wrong cannot be measured with op-authored code that is right. The
+ * casts below are the same casts the guard exists to survive.
+ */
+describe('399.1-04 D-03 — the fail-closed branches a shipped op cannot reach', () => {
+  const SYNTHETIC_ID = 'synthetic.fold-probe'
+
+  /** A registry over one hand-built spec, so each cell chooses what the classifier answers. */
+  function registryAnswering(classify: unknown): FunctionRegistry {
+    return createRegistryFromSpecs(
+      [{
+        id: SYNTHETIC_ID,
+        summary: 'A probe spec whose fold answers whatever the cell hands it.',
+        requiredScopes: ['read'],
+        resultKind: 'unary',
+        input: z.object({}).strict(),
+        output: z.object({}).strict(),
+        risk: { name: `fn:${SYNTHETIC_ID}`, recognized: true, readOnly: true },
+        // The cast is the subject. A spec whose `classify` is absent or answers a non-verdict is
+        // exactly what `tsc` cannot see and what the census catches only at the registry — so the
+        // probe reproduces the shape rather than describing it.
+        ...(classify === undefined ? {} : { classify }),
+        invoke: () => Promise.resolve({}),
+      } as unknown as FunctionSpec],
+      {
+        deps: {} as unknown as FunctionDeps,
+        auditSink: {
+          appendExecutionAudit: () => { /* nothing dispatches here */ },
+          appendGuardrailAudit: () => { /* nothing dispatches here */ },
+        },
+      },
+    )
+  }
+
+  it('reports failed/unclassifiable-result for an op that declares NO fold at all', () => {
+    // THE BRANCH THE REQUIRED MEMBER CREATED. Until 399.1-04 this answered the legacy
+    // `{ status: 'executed', outcome: '' }`, which was the honest report while an op without a fold
+    // was an expected state. It is not one any more: `classify` is required, so an absent one means
+    // a cast got past `tsc` AND past the conformance census, and `executed` would be the receipt
+    // certifying a claim nothing substantiates.
+    const folded = foldFunctionResult(registryAnswering(undefined), SYNTHETIC_ID, { ok: true })
+
+    expect(folded.verdict).toEqual({ status: 'failed', outcome: 'unclassifiable-result' })
+  })
+
+  it('reports failed/unclassifiable-result for a WELL-FORMED answer that is not a verdict', () => {
+    // Plan 01's remaining stub, named there: "a classifier answering an object that is not a
+    // verdict". `status` is a word no surface knows how to render; a cast instead of a check would
+    // put it on a receipt, into the session log and into the goldens.
+    const folded = foldFunctionResult(
+      registryAnswering(() => ({ status: 'sideways', outcome: 'the fold invented a fourth word' })),
+      SYNTHETIC_ID,
+      { ok: true },
+    )
+
+    expect(folded.verdict).toEqual({ status: 'failed', outcome: 'unclassifiable-result' })
+  })
+
+  it('reports failed/unclassifiable-result when the OUTCOME is not a string', () => {
+    // The other half of the same check, and it is not a restatement: the status word is legal here,
+    // so a guard that only screened `status` would let this through and a receipt would carry a
+    // number where every surface renders a sentence.
+    const folded = foldFunctionResult(
+      registryAnswering(() => ({ status: 'executed', outcome: 42 })),
+      SYNTHETIC_ID,
+      { ok: true },
+    )
+
+    expect(folded.verdict).toEqual({ status: 'failed', outcome: 'unclassifiable-result' })
+  })
+
+  it('reports failed/unclassifiable-result for an op the registry does not hold', () => {
+    // The `spec === undefined` arm — unreachable in a composed host, because the op dispatched a
+    // moment ago through this same registry, and answered fail-closed anyway.
+    const folded = foldFunctionResult(registryAnswering(undefined), 'synthetic.not-registered', {})
+
+    expect(folded.verdict).toEqual({ status: 'failed', outcome: 'unclassifiable-result' })
+  })
+
+  it('control: a probe answering a REAL verdict is reported verbatim', () => {
+    // The discrimination control for all four. Without it every cell above would pass against a
+    // wrapper that answered `unclassifiable-result` unconditionally — which is the same wrapper
+    // that would also destroy every real verdict in the product.
+    const folded = foldFunctionResult(
+      registryAnswering(() => ({ status: 'refused', outcome: 'the probe declined' })),
+      SYNTHETIC_ID,
+      { ok: true },
+    )
+
+    expect(folded.verdict).toEqual({ status: 'refused', outcome: 'the probe declined' })
   })
 })
 

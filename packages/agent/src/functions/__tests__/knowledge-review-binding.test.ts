@@ -57,6 +57,9 @@ const reviewBoundSpec: FunctionSpec<Record<string, never>, string> = {
   input: z.object({}).strict(),
   output: z.string(),
   risk: { name: `fn:${FIXTURE_ID}`, recognized: true, readOnly: false },
+  // 399.1-04: `classify` is a REQUIRED member now. A synthetic op's fold is the smallest honest
+  // one — the shape has a single arm, so there is nothing to discriminate.
+  classify: () => ({ status: 'executed' as const, outcome: '' }),
   invoke(_input, deps) {
     const proposalId = deps.knowledgeReview === undefined ? 'no-port' : 'reached-the-port'
     return Promise.resolve(proposalId)

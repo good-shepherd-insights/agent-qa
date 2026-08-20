@@ -412,12 +412,29 @@ export interface FunctionSpec<Input = unknown, Output = unknown> extends Functio
    * IT DECIDES NOTHING AND CANNOT WIDEN ANYTHING. The gate has already run, the op has already run,
    * and the audit row is already written when this is called. What it produces is the REPORT.
    *
-   * OPTIONAL IN THIS PLAN, REQUIRED AFTER THE FAN-OUT (399.1 plan 04). An op that declares none
-   * reports the legacy `{ status: 'executed', outcome: '' }`, which is what every op reported
-   * before this member existed — the absence is a build-time census red once the fan-out lands, and
-   * never a runtime downgrade of a verdict somebody did declare.
+   * REQUIRED AS OF 2026-08-20 (399.1 plan 04), AND ENFORCED IN TWO PLACES THAT SEE DIFFERENT
+   * THINGS. It was optional for one plan while the fan-out landed, and an op that declared none
+   * reported the legacy `{ status: 'executed', outcome: '' }` — the same line every op reported
+   * before this member existed. Forty ops reported it for two phases, silently, which is the cost
+   * D-01 accepted when it put refusal knowledge on the op instead of in a chat-side rule.
+   *
+   * LAYER ONE IS `tsc`, AT THE KEYSTROKE. An op file that omits this does not compile, so the
+   * ordinary way of shipping an unclassified op is closed at the moment it is written.
+   *
+   * LAYER TWO IS THE CONFORMANCE CENSUS ON THE SHIPPED REGISTRY
+   * (`packages/cli/src/__tests__/conformance/classifier-census.test.ts`), AND IT IS NOT A
+   * RESTATEMENT OF LAYER ONE. The type is defeatable: `registry.ts` already registers
+   * `runsEventsSpec as FunctionSpec`, and an `as`-cast, a spread of a partial literal, or a
+   * registry assembled from another type all satisfy `tsc` while shipping an op with no fold. The
+   * census reads what the product CONTAINS — the declarations a composed root lists — so it answers
+   * the question the type cannot, by op id, in both directions.
+   *
+   * AND THE RUNTIME NO LONGER DEFAULTS. `foldFunctionResult` used to answer `executed` for an
+   * absent classifier; it answers `failed`/`unclassifiable-result` now, because with this member
+   * required an absent one means a cast got past both layers, and success is the one claim a
+   * receipt must never default to (D-03).
    */
-  classify?(output: Output): ClauseVerdict
+  classify(output: Output): ClauseVerdict
   /**
    * Extra human lines this op's result deserves, on top of the complete payload render (399.1 D-04).
    *
@@ -467,8 +484,13 @@ export interface FunctionStreamSpec<Input = unknown, Element = unknown>
    * the acquisition SUCCEEDED, which is a real fact here: the header above insists the stream is
    * acquired inside `invoke` precisely so an acquisition refusal is a throw rather than a stream
    * that dies half-delivered.
+   *
+   * REQUIRED, on {@link FunctionSpec.classify}'s reasoning and for a sharper reason here: a stream
+   * spec reaches the registry through `runsEventsSpec as FunctionSpec`, so this shape's own `tsc`
+   * layer is the ONLY one that fires at the keystroke for it. An optional member here would leave
+   * stream ops with no type-level census at all.
    */
-  classify?(output: FunctionStream<Element>): ClauseVerdict
+  classify(output: FunctionStream<Element>): ClauseVerdict
   invoke(input: Input, deps: FunctionDeps): Promise<FunctionStream<Element>>
 }
 
