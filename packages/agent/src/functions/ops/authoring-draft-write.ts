@@ -45,7 +45,9 @@
 import {
   AuthoringDraftWriteInputSchema,
   AuthoringDraftWriteOutputSchema,
+  FanOutReportSchema,
   renderFanOutPreview,
+  renderFanOutReport,
 } from '@vostride/agent-qa-schema'
 import type {
   AuthoringDraftWriteInput,
@@ -127,7 +129,8 @@ export const authoringDraftWriteSpec: FunctionSpec<
     return renderFanOutPreview(authoringFanOutBound(input))
   },
   /**
-   * This op's own outcome enum, folded into a clause verdict (2026-08-20, Phase 399.1 D-01/D-02).
+   * This op's own outcome enum, folded into a clause verdict (2026-08-20, Phase 399.1 D-01/D-02),
+   * carrying the invocation's FAN-OUT REPORT (394-14 · WTST-08 · D-18's one exception).
    *
    * `refused` IS THE MEASURED WITNESS. 399's live acceptance recorded this op returning its stage-2
    * dedup refusal while chat printed `executed  authoring.draft.write completed`: the screen declined
@@ -142,21 +145,54 @@ export const authoringDraftWriteSpec: FunctionSpec<
    *
    * THE OTHER THREE ARMS RAN TO COMPLETION. `drafted`, `repaired` and `finding` all end with a draft
    * and a receipt — a correctly-failing draft is a FINDING about the application, not a failure of
-   * this op — so each is `executed`, and the outcome says which road and names the test authored.
+   * this op — so each is `executed`, and the outcome names the test that was authored.
+   *
+   * ---- the fan-out, migrated here from `turn-engine.ts` by 399.1-03 -----------------------------
+   *
+   * IT ARRIVES ON THE VERDICT AND NOT ON A RENDER FOLD, and the choice is load-bearing rather than
+   * incidental. 394-14's second cell requires the sentence to reach the APPEND-ONLY LOG — "the
+   * return value is what one caller sees; the log is the triage report several surfaces render" —
+   * and the log carries `ClauseReceipt.outcome`, not the turn's answer. A `renderResult` fold would
+   * have put this disclosure on the answer channel only, silently costing it the half that is
+   * readable after the fact. `summariseOutcome` composed a RECEIPT LINE, so the seat it vacates is
+   * this one; `explainAnswerLines` composed ANSWER TEXT, so its seat is `renderResult`. The two
+   * hardcodes were never the same kind of thing.
+   *
+   * IT IS ADMITTED BY THE CHARTER RATHER THAN EXCEPTED FROM IT. D-18 says the receipt is a MAP, and
+   * `FanOutReport` is counts, run REFERENCES and one boolean — no draft body, no receipt payload, no
+   * step evidence. The proposal itself rides 391's envelope into the inbox and does not appear here.
+   *
+   * IT IS ONE FIELD ON ONE OP, AND NOW BY CONSTRUCTION. That used to be enforced by an id
+   * comparison inside a shared function — a claim a later edit could widen by deleting one line. It
+   * is a member of THIS spec now: no other op's line is touched, because no other op declares this.
+   *
+   * WHY THE DISCLOSURE IS THE WHOLE CONTROL. WTST-08's owner decision was preview plus honest
+   * reporting with NO enforced budget, so the number a person is shown is all there is. The same
+   * surface rendered the dispatch confirm they approved; a receipt omitting what was actually spent
+   * would be the half that makes the other half checkable, missing. They agreed to nine runs and
+   * had no way to learn eleven were taken.
+   *
+   * PARSED, NEVER CAST, AND THE PARSE CANNOT MOVE THE STATUS. `FanOutReportSchema` is `.strict()`,
+   * so a malformed result cannot smuggle prose into a file several surfaces render; an unparsable
+   * report costs the SENTENCE and never the verdict, which is `classify`'s fail-closed contract read
+   * correctly — the disclosure degrades, the claim about what happened does not.
+   *
+   * THE SENTENCE IS `renderFanOutReport`'S AND NOTHING ELSE. A line composed here would be a second
+   * prose form of one report, free to drift from the confirm's own wording the moment a phrase
+   * moves — and `scripts/394-fan-out-report-mutation.sh` mutation R is the differential that
+   * catches it.
    */
   classify(output): ClauseVerdict {
+    const report = FanOutReportSchema.safeParse(output.fanOut)
+    const spent = report.success ? ` — ${renderFanOutReport(report.data)}` : ''
     if (output.outcome === 'refused') {
       const matched = output.refusal?.matchedRef
-      return {
-        status: 'refused',
-        outcome: matched === undefined ? 'duplicate' : `duplicate-of:${matched}`,
-      }
+      const named = matched === undefined ? 'duplicate' : `duplicate-of:${matched}`
+      return { status: 'refused', outcome: `${named}${spent}` }
     }
     const authored = output.draftRef?.testName
-    return {
-      status: 'executed',
-      outcome: authored === undefined ? output.outcome : `${output.outcome} ${authored}`,
-    }
+    const named = authored === undefined ? output.outcome : `${output.outcome} ${authored}`
+    return { status: 'executed', outcome: `${named}${spent}` }
   },
   async invoke(input, deps) {
     // `invokeFunction` already refused this composition on `draftShelf`, so reaching here with no

@@ -38,6 +38,7 @@
         "kind": "unprojected",
         "reason": "discovery-answered-by-protocol"
       },
+      "rendersResult": true,
       "requiredScopes": [
         "read"
       ],

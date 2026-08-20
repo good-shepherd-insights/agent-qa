@@ -33,9 +33,16 @@ import {
   renderFanOutReport,
 } from '@vostride/agent-qa-schema'
 
-import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../../functions/ops/authoring-draft-write.js'
+import {
+  AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+  authoringDraftWriteSpec,
+} from '../../functions/ops/authoring-draft-write.js'
 import { AUTHORING_DRAFT_VERIFY_FUNCTION_ID } from '../../functions/ops/authoring-verify-draft.js'
 import { AUTHORING_FUNNEL_GET_FUNCTION_ID } from '../../functions/ops/authoring-funnel-get.js'
+import { foldFunctionResult } from '../../functions/classify.js'
+import { proposalsListSpec } from '../../functions/ops/proposals-list.js'
+import { createRegistryFromSpecs } from '../../functions/registry.js'
+import type { FunctionDeps, FunctionSpec } from '../../functions/spec.js'
 import { CHAT_RESOLVER_TABLE } from '../resolver-table.js'
 import { deterministicOverrideStrategy } from '../reconcile.js'
 import { splitClauses } from '../clause-split.js'
@@ -175,6 +182,38 @@ interface HarnessOptions {
   readonly results?: Readonly<Record<string, unknown>>
 }
 
+/**
+ * The ops this harness folds through the REAL composition-root fold (399.1-03).
+ *
+ * TWO SPECS, AND THE SECOND ONE IS THE MEASUREMENT. `authoring.draft.write` declares the fan-out
+ * disclosure; `proposals.list` declares nothing at all, and routing it through the SAME
+ * `foldFunctionResult` is what lets the blast-radius cell below see a shared runner that started
+ * folding everybody's result with one op's rule. While the exception was an id comparison inside
+ * `turn-engine.ts` that widening was one deleted line away and `394-fan-out-report-mutation.sh`
+ * mutation S made it; the fold is a member of one spec now, so the only place the same widening can
+ * still be written is the runner's spec lookup — which is exactly where mutation S now goes.
+ *
+ * Spelled as the specs THEMSELVES rather than mimicked: a hand-written stand-in would be a second
+ * copy of the disclosure, and these cells would then agree with the copy while the shipped fold
+ * drifted.
+ */
+const FOLD_REGISTRY = createRegistryFromSpecs(
+  [authoringDraftWriteSpec as FunctionSpec, proposalsListSpec as FunctionSpec],
+  {
+    // Never dispatched through: this harness calls the ops itself and hands the registry only the
+    // RETURN path, which is where folds run. The sink exists because D-11 refuses a sinkless one.
+    deps: {} as unknown as FunctionDeps,
+    auditSink: {
+      appendExecutionAudit: () => { /* nothing dispatches here */ },
+      appendGuardrailAudit: () => { /* nothing dispatches here */ },
+    },
+  },
+)
+
+const FOLD_IDS: ReadonlySet<string> = new Set(
+  [AUTHORING_DRAFT_WRITE_FUNCTION_ID, PROPOSALS_LIST],
+)
+
 function harness(options: HarnessOptions = {}): Harness {
   const log = memoryLog()
   const invocations: Invocation[] = []
@@ -218,14 +257,28 @@ function harness(options: HarnessOptions = {}): Harness {
       ordering.push(`invoke:${functionId}`)
       invocations.push({ functionId, input, caller })
       if (functionId === options.failOn) return Promise.reject(new FunctionDeniedError('denied'))
-      // 399.1: the envelope, with the LEGACY verdict every unclassified op reports. These cells are
-      // about ordering, atomicity and receipt COUNTS; scripting a verdict here would make them
-      // about the classifier instead, which the render anchors measure against the real thing.
-      return Promise.resolve({
-        payload: options.results?.[functionId] ?? { ok: true },
-        verdict: { status: 'executed' as const, outcome: '' },
-        foldLines: [],
-      })
+      // 399.1: the envelope, run through the REAL composition-root fold (399.1-03).
+      //
+      // It used to script `{ status: 'executed', outcome: '' }` for everything, which was right
+      // while the only fold in existence was `config.field.set`'s and every cell here was about
+      // ordering, atomicity and receipt COUNTS. The D-18 fan-out disclosure is now a member of
+      // `authoring.draft.write`'s spec rather than an id comparison inside `turn-engine.ts`, so a
+      // harness that kept scripting the legacy verdict would assert about a mechanism it had
+      // switched off. `FOLD_REGISTRY` runs `foldFunctionResult` — the one the composition root
+      // runs — so the cells measure the shipped disclosure and not a copy of it. Ops outside
+      // `FOLD_IDS` keep the legacy envelope, which is what an unclassified op reports in
+      // production, and is also what `foldFunctionResult` REFUSES to answer for an id its registry
+      // does not hold (fail-closed) — so the guard is here rather than a `failed` verdict every
+      // ordering cell would then have to explain.
+      const payload = options.results?.[functionId] ?? { ok: true }
+      if (!FOLD_IDS.has(functionId)) {
+        return Promise.resolve({
+          payload,
+          verdict: { status: 'executed' as const, outcome: '' },
+          foldLines: [],
+        })
+      }
+      return Promise.resolve({ payload, ...foldFunctionResult(FOLD_REGISTRY, functionId, payload) })
     },
     ...(planner === undefined ? {} : { planner }),
     ...(options.directives === true
@@ -734,6 +787,15 @@ const VERIFY_UTTERANCE = 'check the shelved draft again'
 const FUNNEL_TOOL = toToolName(AUTHORING_FUNNEL_GET_FUNCTION_ID)
 const FUNNEL_UTTERANCE = 'how is this session doing so far'
 
+/**
+ * The loop outcome every cell here drives, named ONCE (399.1-03).
+ *
+ * The receipt line is now the op's OWN verdict rather than the engine's `<id> completed`, so this
+ * word appears in both the fixture and the expectation. Spelling it twice would let a cell agree
+ * with a restated copy of itself while the harness drove something else.
+ */
+const AUTHORING_OUTCOME = 'drafted'
+
 function authoringHarness(report: unknown): Harness {
   return harness({
     planned: {
@@ -742,11 +804,17 @@ function authoringHarness(report: unknown): Harness {
         input: { intent: 'two factor auth', scope: { tier: 'product', key: 'app' } },
       }],
     },
-    results: { [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: { outcome: 'drafted', fanOut: report } },
+    results: {
+      [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: { outcome: AUTHORING_OUTCOME, fanOut: report },
+    },
   })
 }
 
 describe('D-18 exception — the authoring receipt carries the fan-out report (394-14)', () => {
+  // 399.1-03: the exception moved OUT of `turn-engine.ts` and onto this op's own `classify`. The
+  // claim is unchanged and the enforcement got stronger — it was an id comparison inside a shared
+  // summariser, and it is a member of one spec now. The receipt line is the op's own words, which
+  // is why the expectations below no longer carry the engine's `<id> completed` prefix.
   it('extends the outcome line with the RENDERER’s own sentence', async () => {
     const run = authoringHarness(HAPPY_REPORT)
     const result = await run.runTurn({ message: AUTHORING_UTTERANCE })
@@ -757,7 +825,7 @@ describe('D-18 exception — the authoring receipt carries the fan-out report (3
     // Composed from the renderer, not from a restated literal — this is the equality mutation R
     // breaks when a surface hand-formats the sentence instead of calling the one render.
     expect(result.receipts[0]?.outcome).toBe(
-      `${AUTHORING_DRAFT_WRITE_FUNCTION_ID} completed — ${renderFanOutReport(HAPPY_REPORT)}`,
+      `${AUTHORING_OUTCOME} — ${renderFanOutReport(HAPPY_REPORT)}`,
     )
   })
 
@@ -770,7 +838,7 @@ describe('D-18 exception — the authoring receipt carries the fan-out report (3
     // surfaces render. A report that reached the first and not the second would leave the
     // disclosure unreadable exactly where it is looked for after the fact.
     expect(receipt?.kind === 'clause_receipt' ? receipt.outcome : '').toBe(
-      `${AUTHORING_DRAFT_WRITE_FUNCTION_ID} completed — ${renderFanOutReport(HAPPY_REPORT)}`,
+      `${AUTHORING_OUTCOME} — ${renderFanOutReport(HAPPY_REPORT)}`,
     )
   })
 
@@ -808,12 +876,16 @@ describe('D-18 exception — the authoring receipt carries the fan-out report (3
           input: { intent: 'two factor auth', scope: { tier: 'product', key: 'app' } },
         }],
       },
-      results: { [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: { outcome: 'drafted', fanOut: 'nine runs' } },
+      results: {
+        [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: { outcome: AUTHORING_OUTCOME, fanOut: 'nine runs' },
+      },
     })
     const result = await run.runTurn({ message: AUTHORING_UTTERANCE })
 
     expect(result.status).toBe('completed')
-    expect(result.receipts[0]?.outcome).toBe(`${AUTHORING_DRAFT_WRITE_FUNCTION_ID} completed`)
+    // The VERDICT survives an unparsable disclosure and the SENTENCE does not: the op still says
+    // what happened, and says nothing about a report it could not read (399.1-03).
+    expect(result.receipts[0]?.outcome).toBe(AUTHORING_OUTCOME)
   })
 })
 

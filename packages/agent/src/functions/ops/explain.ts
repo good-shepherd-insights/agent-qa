@@ -104,6 +104,33 @@ export const explainSpec: FunctionSpec<ExplainInput, ExplainOutput> = {
   // Read-only and recognized: it starts nothing, writes nothing a caller can address, and the one
   // byte it appends is a local coverage line about a question it was asked.
   risk: { name: `fn:${EXPLAIN_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * The answer lines this op composed, on their way to the turn's `answer` field (398-13 · D-21).
+   *
+   * MIGRATED FROM `turn-engine.ts` BY 399.1-03, ARGUMENT INTACT. It lived there as
+   * `explainAnswerLines`, an explicit comparison of the running clause's `functionId` against this
+   * op's id — a render rule in the engine, which by construction could only ever render what
+   * somebody had thought to name there. D-04's promote decision moved it here: this op knows what
+   * its own result deserves to have said about it, and the engine no longer knows this op exists.
+   *
+   * THE RECEIPT CHARTER IS UNTOUCHED, and that is still the whole reason these lines take THIS
+   * channel rather than the receipt's. The receipt stays the MAP — the plain `agent.explain
+   * completed` line — and the territory travels on the field `renderTurn` already prints and `ask`
+   * already shares. A second carrier on the receipt would put the answer inside the map.
+   *
+   * PARSED, NEVER CAST, and a parse failure renders NOTHING extra: the fold fails OPEN by contract
+   * (`foldFunctionResult`), so an unreadable result costs a person legibility and never the record.
+   * Every character of `renderedLines` was quoted out of a committed catalog row by the renderer
+   * (D-10), so nothing a model wrote can ride this channel — which is why the parse is here and not
+   * a cast: a doctored result must not become a door for prose.
+   *
+   * BOTH ARMS RENDER. An abstention's lines are the honest "the catalog does not ground an answer",
+   * and XPLN-02's whole claim is that saying so plainly is an ANSWER a person is owed, not a silence.
+   */
+  renderResult(output): readonly string[] {
+    const parsed = ExplainOutputSchema.safeParse(output)
+    return parsed.success ? parsed.data.renderedLines : []
+  },
   async invoke(input, deps: FunctionDeps) {
     const port = deps.capabilityCatalog
     if (port === undefined) {

@@ -18,6 +18,18 @@
 #   S  the D-18 exception widened from one op to every op
 #   T  the typed parse replaced by a cast, so anything shaped like a result is rendered
 #
+# 2026-08-20 (399.1-03): THE SUBJECT MOVED, AND SO DID THE ANCHORS. The exception used to live in
+# `turn-engine.ts` as `summariseOutcome`, an explicit comparison of the running clause's id against
+# `authoring.draft.write`. It is now that op's own declared `classify` fold, run by
+# `foldFunctionResult` at the composition root, and the receipt line carries the op's own words
+# rather than `<id> completed — <sentence>`. R and T move with it, unchanged in what they claim.
+#
+# S CHANGED SHAPE BECAUSE THE PROPERTY IT ATTACKS CHANGED KIND. "One field, on one op" was a NAMED
+# BRANCH, one deleted line away from applying to everybody — so S deleted that line. A fold is a
+# member of one `FunctionSpec` now and no id comparison exists to widen; the only place the same
+# widening can still be WRITTEN is the shared runner's spec lookup, so that is where S goes. The
+# claim is the same claim and the mutation is the honest expression of it in the code that exists.
+#
 # R IS TWO EDITS, AND IT HAS TO BE — the same argument `394-fan-out-mutation.sh` mutation I makes
 # for a second arithmetic. A copied sentence is not observable while the copy and the renderer say
 # the same words, so the mutation copies the sentence AND retunes `FAN_OUT_PHRASES.reportLead`. The
@@ -70,7 +82,8 @@ cd "$REPO_ROOT"
 
 SUBJECT_PATHS=(
   "packages/schema/src/authoring/fan-out.ts"
-  "packages/agent/src/chat/turn-engine.ts"
+  "packages/agent/src/functions/ops/authoring-draft-write.ts"
+  "packages/agent/src/functions/classify.ts"
 )
 
 SCHEMA_FILTER="@vostride/agent-qa-schema"
@@ -125,18 +138,19 @@ swap () {
 
 # --- R, edit 1: the receipt copies the sentence instead of calling the one render.
 cat > "$WORK/r1.from" <<'ANCHOR'
-  const report = FanOutReportSchema.safeParse(carried)
-  return report.success ? `${line} — ${renderFanOutReport(report.data)}` : line
+    const spent = report.success ? ` — ${renderFanOutReport(report.data)}` : ''
 ANCHOR
 cat > "$WORK/r1.to" <<'ANCHOR'
-  const report = FanOutReportSchema.safeParse(carried)
-  if (!report.success) return line
-  const copied = `Runs consumed: ${String(report.data.consumedTotal)} `
-    + `(previewed up to ${String(report.data.previewed.total)})`
-  return report.data.exceedsPreview
-    ? `${line} — ${copied} — THIS EXCEEDS THE PREVIEWED BOUND — report this, it is a defect in `
-      + 'the bound'
-    : `${line} — ${copied}`
+    const copied = report.success
+      ? `Runs consumed: ${String(report.data.consumedTotal)} `
+        + `(previewed up to ${String(report.data.previewed.total)})`
+      : ''
+    const spent = !report.success
+      ? ''
+      : report.data.exceedsPreview
+        ? ` — ${copied} — THIS EXCEEDS THE PREVIEWED BOUND — report this, it is a defect in `
+          + 'the bound'
+        : ` — ${copied}`
 ANCHOR
 
 # --- R, edit 2: the phrase moves. With ONE renderer this is invisible; with a copy it is a
@@ -148,25 +162,45 @@ cat > "$WORK/r2.to" <<'ANCHOR'
   reportLead: 'Runs actually spent:',
 ANCHOR
 
-# --- S: the exception stops being one op's.
+# --- S, edit 1: the shared fold runner acquires the imports one op's rule needs.
 cat > "$WORK/s1.from" <<'ANCHOR'
-  if (functionId !== AUTHORING_DRAFT_WRITE_FUNCTION_ID) return line
+import { registryInternals } from './registry.js'
 ANCHOR
 cat > "$WORK/s1.to" <<'ANCHOR'
-  void AUTHORING_DRAFT_WRITE_FUNCTION_ID
+import { FanOutReportSchema, renderFanOutReport } from '@vostride/agent-qa-schema'
+
+import { registryInternals } from './registry.js'
+ANCHOR
+
+# --- S, edit 2: the exception stops being one op's — the runner ignores the spec it was handed
+#     and folds any UNDECLARED op's result with `authoring.draft.write`'s rule. It leaves the
+#     declaring op alone on purpose: the claim under attack is "one field, on ONE op", so a
+#     mutation that also changed that op's own line would red R's cells too and the three red sets
+#     would stop being disjoint — which is the property that proves they are not restatements.
+cat > "$WORK/s2.from" <<'ANCHOR'
+  if (spec.classify === undefined) return LEGACY_VERDICT
+ANCHOR
+cat > "$WORK/s2.to" <<'ANCHOR'
+  if (spec.classify === undefined) {
+    const leaked = FanOutReportSchema.safeParse((payload as { fanOut?: unknown } | null)?.fanOut)
+    return leaked.success
+      ? { status: 'executed', outcome: renderFanOutReport(leaked.data) }
+      : LEGACY_VERDICT
+  }
 ANCHOR
 
 # --- T: the typed parse becomes a cast, so a malformed result reaches the renderer.
 cat > "$WORK/t1.from" <<'ANCHOR'
-  const report = FanOutReportSchema.safeParse(carried)
-  return report.success ? `${line} — ${renderFanOutReport(report.data)}` : line
+    const report = FanOutReportSchema.safeParse(output.fanOut)
+    const spent = report.success ? ` — ${renderFanOutReport(report.data)}` : ''
 ANCHOR
 cat > "$WORK/t1.to" <<'ANCHOR'
-  void FanOutReportSchema
-  return `${line} — ${renderFanOutReport(carried as never)}`
+    void FanOutReportSchema
+    const spent = ` — ${renderFanOutReport(output.fanOut as never)}`
 ANCHOR
 
-TURN_ENGINE="packages/agent/src/chat/turn-engine.ts"
+DRAFT_WRITE="packages/agent/src/functions/ops/authoring-draft-write.ts"
+FOLD_RUNNER="packages/agent/src/functions/classify.ts"
 FAN_OUT="packages/schema/src/authoring/fan-out.ts"
 
 # Each mutation's allowed red cells, spelled as vitest prints them. THE THREE LISTS ARE DISJOINT,
@@ -182,12 +216,13 @@ apply_mutation () {
   esac
   case "$1" in
     R)
-      swap "$TURN_ENGINE" "$WORK/r1.from" "$WORK/r1.to"
+      swap "$DRAFT_WRITE" "$WORK/r1.from" "$WORK/r1.to"
       swap "$FAN_OUT" "$WORK/r2.from" "$WORK/r2.to" ;;
     S)
-      swap "$TURN_ENGINE" "$WORK/s1.from" "$WORK/s1.to" ;;
+      swap "$FOLD_RUNNER" "$WORK/s1.from" "$WORK/s1.to"
+      swap "$FOLD_RUNNER" "$WORK/s2.from" "$WORK/s2.to" ;;
     T)
-      swap "$TURN_ENGINE" "$WORK/t1.from" "$WORK/t1.to" ;;
+      swap "$DRAFT_WRITE" "$WORK/t1.from" "$WORK/t1.to" ;;
     *) echo "FATAL: unknown mutation $1" >&2; exit 1 ;;
   esac
 }

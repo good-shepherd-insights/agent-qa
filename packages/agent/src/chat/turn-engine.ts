@@ -33,11 +33,6 @@
 // and it is the thing the function layer exists to abolish; what varies per stage here is the
 // ORIGIN the composition minted, which is a fact about who is acting, not about where from.
 
-import {
-  ExplainOutputSchema,
-  FanOutReportSchema,
-  renderFanOutReport,
-} from '@vostride/agent-qa-schema'
 import type {
   AgentAskInput,
   AgentAskResult,
@@ -53,7 +48,6 @@ import type {
 import { AUTHORING_DRAFT_WRITE_FUNCTION_ID } from '../functions/ops/authoring-draft-write.js'
 import { CONFIG_PROJECT_SCAFFOLD_FUNCTION_ID } from '../functions/ops/config-project-scaffold.js'
 import { CONFIG_PROPOSAL_APPLY_FUNCTION_ID } from '../functions/ops/config-proposal-apply.js'
-import { EXPLAIN_FUNCTION_ID } from '../functions/ops/explain.js'
 import {
   WRITE_TEST_UNCONFIGURED_DETAIL,
   resolveWriteTestRoute,
@@ -202,65 +196,21 @@ export interface TurnEngine {
  * stays wherever the op put it. `JSON.stringify(result)` here would be the single easiest way to
  * put a knowledge record, a config value or a masked secret into a file several surfaces render.
  *
- * THE ONE EXCEPTION, AND IT IS RECORDED HERE RATHER THAN DISCOVERED (394-14 · WTST-08). For
- * `authoring.draft.write` the receipt line carries the invocation's FAN-OUT REPORT, read off the
- * result. Four things make that the charter rather than a hole in it:
+ * THIS IS THE FALLBACK NOW, NOT THE RULE (399.1-03). An op that declares a classifier says how it
+ * went in its own words and this line is never reached for it; what remains here is the honest
+ * answer for an op that has said nothing about its own result — which is the same line every op
+ * printed before folds existed.
  *
- *   1. THE COST IS "HOW IT WENT" FOR THIS OP. WTST-08's owner decision was preview plus honest
- *      reporting with no enforced budget, so the number a person is shown is the entire control.
- *      This same surface rendered the dispatch confirm they approved; a receipt that omitted what
- *      was actually spent would be the half of the disclosure that makes the other half checkable,
- *      missing. They agreed to nine runs and had no way to learn that eleven were taken.
- *   2. IT IS A MAP, NOT A TERRITORY. `FanOutReport` is counts, run REFERENCES and one boolean — no
- *      draft body, no receipt payload, no step evidence. The proposal itself rides 391's envelope
- *      into the inbox and does not appear here, which is the prohibition above still holding.
- *   3. IT IS PARSED, NEVER CAST. `FanOutReportSchema` is `.strict()`, so a malformed result cannot
- *      smuggle prose into a file several surfaces render — the exact risk the paragraph above
- *      names. An unparsable field renders NOTHING extra rather than anything invented.
- *   4. IT IS ONE FIELD ON ONE OP, by an explicit id comparison. No other op's line is touched and
- *      no other field of this op's result is read.
- *
- * THE SENTENCE IS `renderFanOutReport`'S AND NOTHING ELSE. A line composed here would be a second
- * prose form of one report, free to drift from the confirm's own wording the moment a phrase moves
- * — and `scripts/394-fan-out-report-mutation.sh` mutation R is the differential that catches it.
+ * THE 394-14 EXCEPTION LEFT THIS FILE AND ITS REASONING WENT WITH IT. `summariseOutcome` used to
+ * append `authoring.draft.write`'s fan-out report by an explicit id comparison here; that
+ * disclosure is now a `renderResult` fold declared on the op's own spec, where the whole argument
+ * for it (WTST-08's preview-plus-honest-reporting, and why counts are a map rather than a
+ * territory) is recorded. The exception is no longer a named branch in a shared function — it is a
+ * member of one spec, which is the same claim enforced by construction rather than by a comparison
+ * somebody could widen.
  */
 function summarise(functionId: string): string {
   return `${functionId} completed`
-}
-
-/**
- * The receipt's outcome line, plus the fan-out report when this op is the one that carries one.
- *
- * `safeParse` and a silent fall-back to the plain line, deliberately: the receipt exists to record
- * that the op RAN, and throwing here would destroy the record over a field that is a disclosure
- * rather than the verdict. Saying only what D-18 always said is the honest answer to a field that
- * did not arrive; inventing a number would be the defect the whole disclosure exists to prevent.
- */
-function summariseOutcome(functionId: string, result: unknown): string {
-  const line = summarise(functionId)
-  if (functionId !== AUTHORING_DRAFT_WRITE_FUNCTION_ID) return line
-  const carried = (result as { readonly fanOut?: unknown } | null | undefined)?.fanOut
-  const report = FanOutReportSchema.safeParse(carried)
-  return report.success ? `${line} — ${renderFanOutReport(report.data)}` : line
-}
-
-/**
- * `agent.explain`'s rendered lines, on their way to the turn's `answer` field (398-13 · D-21).
- *
- * THE RECEIPT CHARTER ABOVE IS UNTOUCHED, and that is the whole reason this function exists here
- * rather than as a second exception inside `summariseOutcome`. The receipt stays the MAP — the
- * plain `agent.explain completed` line — and the territory travels on the field `renderTurn`
- * already prints and `ask` already shares. A second carrier on the receipt would put the answer
- * inside the map, which is the prohibition that function argues for at length.
- *
- * PARSED, NEVER CAST, and a parse failure renders NOTHING extra: the same posture `summariseOutcome`
- * takes for its own field. Every character of `renderedLines` was quoted out of a committed catalog
- * row by the renderer (D-10), so nothing a model wrote can ride this channel.
- */
-function explainAnswerLines(functionId: string, result: unknown): readonly string[] {
-  if (functionId !== EXPLAIN_FUNCTION_ID) return []
-  const parsed = ExplainOutputSchema.safeParse(result)
-  return parsed.success ? parsed.data.renderedLines : []
 }
 
 // The stamped vocabulary now lives in `session-stamps.ts`, because the model-facing projection in
@@ -995,7 +945,7 @@ async function runTurnThrough(
   const results: ClauseResult[] = []
   let failed = false
   // 398-13 (D-21): what the ops PRODUCED, on its way to the turn's `answer` field. The receipt
-  // charter is untouched — see `explainAnswerLines`.
+  // charter is untouched — see the charter note at the push site below.
   const answerLines: string[] = []
   // The sentence the route wants a refused turn to carry, set by `routeWriteTest` before it answers
   // `stop`. A field rather than a return value so the refusal below reads as the one `refuse()` call
@@ -1034,7 +984,7 @@ async function runTurnThrough(
     } else {
       try {
         // The result arrives CLASSIFIED (399.1, D-01/D-03/D-05). It used to arrive as `unknown`,
-        // read by `summariseOutcome` alone, and the status below was the literal `'executed'` — so
+        // read by one id-matching summariser, and the status below was the literal `'executed'` — so
         // the only fact this receipt could report about a returning op was that it had returned.
         // Every arm of a typed refusal returns, which is how a credential-blocked config mutation
         // came to render `executed` in green over a file that was never written (G-399-2).
@@ -1053,7 +1003,7 @@ async function runTurnThrough(
           // An empty outcome means the op's fold had nothing to add, and the line this engine has
           // always printed is the honest answer for it — the same line an op with no fold gets.
           outcome: answered.verdict.outcome === ''
-            ? summariseOutcome(step.functionId, answered.payload)
+            ? summarise(step.functionId)
             : answered.verdict.outcome,
         }
         // WHAT THE OP PRODUCED, ON THE CHANNEL D-05 GAVE IT. One entry per clause that ran, in
@@ -1061,13 +1011,25 @@ async function runTurnThrough(
         // placeholder-masked. Nothing unmasks here: this value reaches the session log and every
         // `agent.ask` client, and `unmaskForHumanOutput` belongs at each surface's emit.
         //
-        // ITS ARRIVAL IS WHY `explainAnswerLines` IS NOW THE NARROW CASE RATHER THAN THE CHANNEL.
-        // 399.1 plan 03 migrates it and `summariseOutcome`'s fan-out case onto the registry-declared
-        // folds below and deletes both id-matches; they stay here in this plan so the tracer changes
-        // one path rather than every path at once.
         results.push({ functionId: step.functionId, payload: answered.payload })
+        // THE RECEIPT CHARTER, WHICH SURVIVED THE MIGRATION THAT DELETED ITS OLD HOME (398-13 D-21,
+        // moved here by 399.1-03). `explainAnswerLines` argued this seat at length and the argument
+        // is unchanged by the fold arriving: THE RECEIPT STAYS THE MAP — the plain `<op> completed`
+        // line, or the op's own one-line verdict — and the TERRITORY travels on this field, which
+        // `renderTurn` already prints and `ask` already shares. A second carrier on the receipt
+        // would put the answer inside the map, which is the prohibition `summarise` argues for.
+        //
+        // WHAT CHANGED IS ONLY WHO COMPOSES THE LINES. They used to be composed here, by comparing
+        // `step.functionId` against one op's id and parsing that op's output — a render rule living
+        // in the engine, which could only ever render what somebody had thought to name here. They
+        // are composed now by the op's OWN declared `renderResult`, run at the composition root by
+        // `foldFunctionResult`, and this site cannot tell which op produced them. That is the whole
+        // of D-04's promote decision: this engine holds ZERO per-op render branches.
+        //
+        // PARSED, NEVER CAST, AND FAIL-OPEN, unchanged: a fold that throws or answers a non-list
+        // renders NOTHING extra rather than anything invented, and the complete masked payload
+        // reaches the person through `results[]` either way.
         answerLines.push(...answered.foldLines)
-        answerLines.push(...explainAnswerLines(step.functionId, answered.payload))
       } catch (error) {
         failed = true
         receipt = {

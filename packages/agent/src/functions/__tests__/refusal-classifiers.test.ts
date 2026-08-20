@@ -22,6 +22,7 @@ import {
   ProposalsAcceptOutputSchema,
   buildFanOutReport,
   computeFanOutBound,
+  renderFanOutReport,
 } from '@vostride/agent-qa-schema'
 import type {
   AuthoringDraftWriteOutput,
@@ -234,14 +235,21 @@ describe('399.1 D-01/D-02 — authoring.draft.write folds its dedup refusal', ()
     // THE MEASURED WITNESS. 399's todo recorded this op returning its refusal arm while chat printed
     // `executed  authoring.draft.write completed`: the screen refused to author, and the person was
     // told it had. The reference is what makes the refusal actionable — refuse AND LINK (394 D-04).
-    expect(authoringDraftWriteSpec.classify?.(authoringRefused))
-      .toEqual({ status: 'refused', outcome: `duplicate-of:${DUPLICATE_REF}` })
+    const verdict = authoringDraftWriteSpec.classify?.(authoringRefused)
+    expect(verdict?.status).toBe('refused')
+    expect(verdict?.outcome).toContain(`duplicate-of:${DUPLICATE_REF}`)
+    // AND THE FAN-OUT RIDES THE SAME LINE (394-14, migrated onto this verdict by 399.1-03). A
+    // refusal's report is `NO_RUNS_FAN_OUT_BOUND` — "this invocation ran nothing" — and the
+    // contract makes it required on EVERY arm precisely so "nobody counted" and "nothing ran"
+    // cannot read the same. Composed by the renderer, never restated.
+    expect(verdict?.outcome).toContain(renderFanOutReport(authoringRefused.fanOut))
   })
 
   it('reports executed for an authored draft, naming the draft a person can open', () => {
     const verdict = authoringDraftWriteSpec.classify?.(authoringDrafted)
     expect(verdict?.status).toBe('executed')
     expect(verdict?.outcome).toContain('signs in with a one-time code')
+    expect(verdict?.outcome).toContain(renderFanOutReport(happyFanOut))
   })
 })
 
