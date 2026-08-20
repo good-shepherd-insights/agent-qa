@@ -34,6 +34,10 @@
 # mutations all red the same rows would have proven its cells are restatements of one another.
 # Measured 2026-08-20: 6 / 1 / 4 / 2 cells, no cell in two lists.
 #
+# 2026-08-20 (399.1-10), RE-MEASURED AT 9 / 2 / 4 / 2. Plan 10's two turn-shape cells joined
+# CHANNEL by name; still exactly one cell in two lists (see the 399.1-09 note below), so the
+# overlap property is unchanged and every other cell remains in at most one list.
+#
 # 2026-08-20 (399.1-09), RE-MEASURED AT 7 / 2 / 4 / 2, AND ONE CELL IS NOW IN TWO LISTS. Plan 09's
 # nested-composition anchor reds under CHANNEL and under VERDICT, and the overlap is a property of
 # the cell rather than a weakening of the legs: it is the only cell that asserts a verdict word AND
@@ -261,6 +265,17 @@ dist_token_original () {
 # THE COUNTS ARE MEASURED, at agent-qa c4de0279, and where a measurement disagreed with the plan the
 # list follows the measurement and the disagreement is recorded in the phase SUMMARY.
 
+# 2026-08-20 (399.1-10): CHANNEL's fan-out is NINE. Plan 10's two turn-shape cells joined the list
+# BY NAME after being measured — the leg was not widened and no leg was added. Both red for the
+# same reason the compound ordering cell already did, and it is the reason they were written that
+# way: each asserts its `results[]` shape BEFORE it asserts anything about the render (the mixed
+# cell that receipts outnumber a surviving payload, the single-clause control that one payload was
+# filed at all), so a turn whose channel carries nothing cannot satisfy either. That is the
+# non-vacuity-first idiom doing its job — a cell that certified a LABEL over a turn with no payload
+# would be certifying the render's agreement with itself. Note the asymmetry worth recording: the
+# single-clause control reds here even though its claim is that NO label appears, because an empty
+# channel renders zero lines rather than the one line it pins.
+#
 # 2026-08-20 (399.1-09): CHANNEL's fan-out is SEVEN. Plan 09's nested-composition cell joined the
 # list BY NAME, measured, never by relaxing the leg. Its verdict-word claim survives an empty
 # channel — `agent.ask` folds `receipts`, which this mutation does not touch — but its NON-VACUITY
@@ -278,6 +293,8 @@ dist_token_original () {
 # every payload is withheld — distinguishability survives a total channel drop, which is a fact
 # about that cell worth knowing and is recorded rather than smoothed.
 cat > "$WORK/allowed.CHANNEL" <<'ALLOWED_CHANNEL'
+399.1 — the turn shape a person reads (E2E-02 empty/ordering edges) a mixed-outcome compound turn labels the surviving payload with its own op
+399.1 — the turn shape a person reads (E2E-02 empty/ordering edges) a single-clause turn stays unlabelled (the guard's reject side)
 399.1 — the turn shape a person reads (E2E-02 empty/ordering edges) prints a compound turn's payloads in the order its clauses ran
 the chat render anchors (399.1, G-399-2) prints the guardrail refusal and its findings when a mutation would write a secret
 the chat render anchors (399.1, G-399-2) prints the reviewable diff when the mutation is genuinely proposed
@@ -650,7 +667,9 @@ echo "PASS — all four of 399.1's shipped mechanisms are mutation-detectable, e
 echo "       of NAMED cells (399.1-09: the nested-composition anchor is in two of them, by two"
 echo "       different roads — see THE FOUR RED SETS in the header):"
 echo "         CHANNEL  a turn that puts nothing on results[] is named by five chat render anchors,"
-echo "                  by the spawned chat anchor's content half, and by the compound ordering cell"
+echo "                  by the spawned chat anchor's content half, and by the three turn-shape cells"
+echo "                  (ordering, and 399.1-10's mixed-outcome cell and its single-clause control,"
+echo "                  each of which asserts its results[] shape before it asserts any render)"
 echo "         VERDICT  a guardrail's refusal reported as \`executed\` is named on the receipt line a"
 echo "                  person reads it on — the cell this leg's first run proved was missing"
 echo "         CENSUS   an op the projection stops reporting as folding is named by three census"
