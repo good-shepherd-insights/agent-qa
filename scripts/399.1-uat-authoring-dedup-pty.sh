@@ -18,12 +18,21 @@
 # THE THREE-WAY DIFFERENTIAL IS THE POINT. A single green drive would not distinguish "the
 # approval opened the gate" from "the gate was never closed". Each arm below fixes one variable:
 #
-#   A  no pty, approval impossible   -> FunctionDeniedError, dedup never runs
-#   B  pty, answered `n`             -> `failed`   (the person refused; gate reached, not passed)
-#   C  pty, answered `y`             -> `refused`  + `duplicate-of:<ref>` (gate passed, dedup ran)
+#   A0 `fn` door, no pty             -> FunctionDeniedError, dedup never runs
+#   A1 `chat` door, no pty           -> `failed`, NO approval prompt, dedup never runs
+#   B  `chat` door, pty, answered `n`-> `failed`   (the person refused; gate reached, not passed)
+#   C  `chat` door, pty, answered `y`-> `refused`  + `duplicate-of:<ref>` (gate passed, dedup ran)
 #
-# Arm A is what the verifier measured. Arm B is the control that makes arm C mean something: the
-# ONLY difference between them is the byte answered at the prompt.
+# A0 is the door the phase's own verifier measured, kept because it is the shipped `fn` surface.
+# A1 EXISTS BECAUSE A0 IS NOT A ONE-VARIABLE CONTROL FOR C: it changes the door AND the terminal at
+# once. A1 holds the door fixed at `chat` and varies only the terminal, so the pair (A1, B) isolates
+# the pty and the pair (B, C) isolates the answered byte. An earlier revision shipped A0 alone under
+# a banner claiming "A and B differ from C in ONE byte" — true of B, FALSE of A0. The claim was
+# corrected by MEASURING the missing cell rather than by softening the sentence.
+#
+# NOTE ON A1 vs B: both print `failed  authoring.draft.write`, so that line does NOT discriminate
+# them. What does is the approval PROMPT — absent without a pty, present with one — which is why
+# each pty arm checks for it FIRST and why A1 asserts its absence.
 #
 # NON-VACUITY. Arm C asserts the refusal is the DEDUP arm — `matchedRef`, and a `score` at or above
 # the pinned `threshold` — before it asserts the receipt word. A drive that refused for any other
@@ -151,7 +160,7 @@ fi
 note "dist is newer than every source file in packages/cli and packages/agent"
 
 echo
-echo "── ARM A — no pty: the gate cannot be answered, so the screen never runs ──"
+echo "── ARM A0 — \`fn\` door, no pty: the gate cannot be answered, so the screen never runs ──"
 A_OUT=$(printf '%s\n' "$UTTERANCE" | env -i PATH="$PATH" HOME="$FIXTURE" \
   TMPDIR="$FIXTURE/.agent-qa" NODE_ENV=test node "$CLI_ENTRY" \
   --config "$FIXTURE/agent-qa.config.yaml" fn authoring.draft.write \
@@ -159,12 +168,28 @@ A_OUT=$(printf '%s\n' "$UTTERANCE" | env -i PATH="$PATH" HOME="$FIXTURE" \
 if printf '%s' "$A_OUT" | grep -q 'FunctionDeniedError'; then
   note "denied without a terminal (FunctionDeniedError)"
 else
-  fatal "ARM A expected FunctionDeniedError without a pty; got:"; printf '%s\n' "$A_OUT" >&2
+  fatal "ARM A0 expected FunctionDeniedError without a pty; got:"; printf '%s\n' "$A_OUT" >&2
 fi
 if printf '%s' "$A_OUT" | grep -q 'duplicate-of:'; then
-  fatal "ARM A reached the dedup screen — the gate is NOT closed on a pipe, which invalidates arm C"
+  fatal "ARM A0 reached the dedup screen — the gate is NOT closed on a pipe, which invalidates arm C"
 else
-  note "the dedup screen was never reached (no duplicate-of: in arm A)"
+  note "the dedup screen was never reached (no duplicate-of: in arm A0)"
+fi
+
+echo
+echo "── ARM A1 — \`chat\` door, no pty: same door as C, only the terminal removed ──"
+A1_OUT=$(printf '%s\n/exit\n' "$UTTERANCE" | env -i PATH="$PATH" HOME="$FIXTURE" \
+  TMPDIR="$FIXTURE/.agent-qa" NODE_ENV=test node "$CLI_ENTRY" \
+  --config "$FIXTURE/agent-qa.config.yaml" chat 2>&1 | strip_ansi)
+if printf '%s' "$A1_OUT" | grep -q 'needs your approval'; then
+  fatal "ARM A1 saw an approval prompt on a PIPE — the tty guard is not holding, so arm C's pty proves nothing"
+else
+  note "no approval prompt without a pty (the tty guard holds on the chat door)"
+fi
+if printf '%s' "$A1_OUT" | grep -q 'duplicate-of:'; then
+  fatal "ARM A1 reached the dedup screen on a pipe — arm C would then measure nothing; got:"; printf '%s\n' "$A1_OUT" >&2
+else
+  note "the dedup screen was never reached (no duplicate-of: in arm A1)"
 fi
 
 echo
@@ -205,6 +230,16 @@ else
   fatal "ARM C could not read score>=threshold from the payload (score='$C_SCORE' threshold='$C_THRESHOLD')"
 fi
 
+# The fixture carries EXACTLY ONE test, so the screen must report comparing exactly one. The
+# header claims this is assertable; asserting it is what makes the claim true. A fixture that
+# silently grew a second test would change what `score` means without changing any word above.
+C_COMPARED=$(printf '%s' "$C_OUT" | grep -E '^\s*"comparedTests":' | head -1 | tr -dc '0-9')
+if [ "$C_COMPARED" = "1" ]; then
+  note "the screen compared exactly the one test the fixture contains"
+else
+  fatal "ARM C expected comparedTests 1 (the fixture has one test); got '$C_COMPARED'"
+fi
+
 # THE ITEM'S OWN TWO ASSERTIONS.
 if printf '%s' "$C_OUT" | grep -qE '^[[:space:]]*refused[[:space:]]+authoring\.draft\.write'; then
   note "the receipt line reads \`refused  authoring.draft.write\`"
@@ -231,11 +266,13 @@ fi
 cat <<'DONE'
 PASS — the 399.1 UAT item is discharged end-to-end, on the shipped binary:
 
-  A  no pty            -> FunctionDeniedError, dedup never runs
-  B  pty, answered n   -> failed   authoring.draft.write
-  C  pty, answered y   -> refused  authoring.draft.write
-                          duplicate-of:tests/uat-381-ladder.yaml::Submit the local form as a returning user
+  A0 fn door,   no pty         -> FunctionDeniedError, dedup never runs
+  A1 chat door, no pty         -> failed   authoring.draft.write, NO approval prompt
+  B  chat door, pty, answered n-> failed   authoring.draft.write, prompt SHOWN
+  C  chat door, pty, answered y-> refused  authoring.draft.write
+                                  duplicate-of:tests/uat-381-ladder.yaml::Submit the local form as a returning user
 
-  A and B differ from C in ONE byte answered at the prompt, so C measures the gate and the
-  screen behind it rather than the absence of either.
+  A1 and B hold the door fixed and differ only in whether a terminal exists; B and C hold both
+  fixed and differ only in the byte answered. So C measures the gate and the screen behind it
+  rather than the absence of either — and no single arm changes two things at once.
 DONE
