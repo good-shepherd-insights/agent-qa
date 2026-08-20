@@ -38,6 +38,7 @@ const KIND_MEANING = {
   user_message: 'what the person typed',
   stage_outcome: 'which stage answered, and how',
   clause_receipt: 'one clause through the function layer',
+  clause_result: 'what one clause\'s op returned, MASKED',
   approval_decision: 'what a person answered at an ask-tier gate',
   mark_unhandled: 'a clause nothing in this build handles',
   model_change: 'the session model changed',
@@ -59,7 +60,12 @@ describe('the chat session event vocabulary is closed and total', () => {
     // Ten from day one, including the kinds nothing emits yet (CHAT-05 names four of them). A
     // kind declared late would make "this build does not know that kind" and "that kind did not
     // occur" the same bytes for every reader written in between.
-    expect(CHAT_SESSION_EVENT_KINDS).toHaveLength(10)
+    //
+    // ELEVEN AS OF 399.1-05, and the eleventh is the one exception the day-one rule contemplates:
+    // `clause_result` did not exist to be declared, because the CHANNEL it records — the turn's
+    // `results[]` — was minted by 399.1's D-05. It is additive and append-only: no reader of a
+    // ten-kind log sees a different byte, and no existing kind changed.
+    expect(CHAT_SESSION_EVENT_KINDS).toHaveLength(11)
   })
 
   it('D-11 + 399.1 D-02: the receipt statuses are exactly four, closed', () => {
@@ -189,6 +195,15 @@ describe('guardChatSessionEvent refuses untrusted bytes by name', () => {
         // `/pin`. Both decide about one class, and collapsing them would leave a reviewer unable
         // to tell a refusal of one request from a standing rule set in advance.
         source: 'gate',
+      },
+      clause_result: {
+        kind: 'clause_result',
+        turnId: 't',
+        at: AT,
+        functionId: 'proposals.list',
+        // THE MASKED PAYLOAD, which is the whole of what this kind promises at rest (399.1-05,
+        // `.planning/phases/399.1-chat-render-contract/399.1-ADJUDICATION-transcript-cleartext.md`).
+        payload: { entries: [] },
       },
       mark_unhandled: { kind: 'mark_unhandled', turnId: 't', at: AT, clause: 'write a test', reason: 'absent' },
       model_change: { kind: 'model_change', turnId: 't', at: AT, from: 'a', to: 'b', source: 'verb' },

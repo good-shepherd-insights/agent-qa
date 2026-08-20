@@ -214,7 +214,12 @@ describe('the composed compound turn: complete, or loud (CHAT-01 / D-10 / D-11 /
         'stage_outcome',
         'stage_outcome',
         'stage_outcome',
+        // 399.1-05: one MASKED `clause_result` per clause that RAN, each written immediately before
+        // the receipt it belongs to — the territory beside its map, in execution order. Two clauses
+        // ran here, so the ledger interleaves rather than grouping.
+        'clause_result',
         'clause_receipt',
+        'clause_result',
         'clause_receipt',
         'turn_complete',
       ])

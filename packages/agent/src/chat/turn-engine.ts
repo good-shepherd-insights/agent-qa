@@ -1061,6 +1061,36 @@ async function runTurnThrough(
         // `agent.ask` client, and `unmaskForHumanOutput` belongs at each surface's emit.
         //
         results.push({ functionId: step.functionId, payload: answered.payload })
+        // AND INTO THE RECORD, MASKED (399.1-05, D-05's persistence discretion resolved).
+        //
+        // WHY IT PERSISTS AT ALL. `results[]` is the turn's answer to "what did the ops actually
+        // return", and 399's UAT rejected a chat surface that could not answer it. A session log
+        // that carried only the receipt map would reproduce the same hole one layer down, in the
+        // file D-18 calls the triage report — so the territory rides here beside its map.
+        //
+        // WHY VERBATIM AND NOT A DIGEST. A hash satisfies the disclosure guard trivially and gives
+        // a reader nothing; the result is the turn's own territory and it is kept as filed.
+        //
+        // AND WHY NOTHING UNMASKS ON THE WAY. This is a DURABLE path. `answered.payload` is the
+        // function layer's placeholder-masked value and it is written exactly as it rode
+        // `results[]` — `unmaskForHumanOutput` belongs at each surface's emit and nowhere near a
+        // file. An unmasked entry here would mint a SECOND cleartext sink in
+        // `.agent-qa/sessions/chat-*.jsonl`, which is the class
+        // `.planning/phases/399.1-chat-render-contract/399.1-ADJUDICATION-transcript-cleartext.md`
+        // adjudicates — inherited from 392 for two other fields, and a 399.1 DEFECT if this render
+        // phase added a third.
+        //
+        // `?? null` IS THE JSON BOUNDARY, not a normalisation of the value: the adapter writes
+        // JSONL, an `undefined` member serialises to an ABSENT KEY, and an absent key fails
+        // `guardChatSessionEvent`'s exact-key check on reopen — so an op that returns nothing would
+        // otherwise write a line this build cannot read back.
+        await append({
+          kind: 'clause_result',
+          turnId,
+          at: deps.now(),
+          functionId: step.functionId,
+          payload: answered.payload ?? null,
+        })
         // THE RECEIPT CHARTER, WHICH SURVIVED THE MIGRATION THAT DELETED ITS OLD HOME (398-13 D-21,
         // moved here by 399.1-03). `explainAnswerLines` argued this seat at length and the argument
         // is unchanged by the fold arriving: THE RECEIPT STAYS THE MAP — the plain `<op> completed`

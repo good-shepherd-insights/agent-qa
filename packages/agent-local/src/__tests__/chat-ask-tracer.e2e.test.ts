@@ -144,6 +144,10 @@ describe('the 392 tracer: agent-qa ask "proposals", end to end over the composed
       'stage_outcome',
       'stage_outcome',
       'stage_outcome',
+      // 399.1-05: the op's MASKED result lands beside its receipt, in that order — the map, then
+      // the territory. The receipt is written after the loop's dispatch and this line inside it,
+      // so `clause_result` precedes the `clause_receipt` it belongs to.
+      'clause_result',
       'clause_receipt',
       'turn_complete',
     ])

@@ -623,6 +623,73 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
     })
   })
 
+  describe('D-05/399.1-05 — the turn\'s results[] reaches the log as MASKED clause_result events', () => {
+    // WHY THIS KIND EXISTS AT ALL. `results[]` is the channel D-05 minted for what the ops
+    // RETURNED, and it is what `renderTurn` prints and every `agent.ask` client reads. A session
+    // log that carried the receipt map but not the territory would make "what did this turn
+    // actually get back" unanswerable from the record — which is the same hole 399's UAT rejected
+    // on the render surface, one file down.
+    //
+    // AND WHY IT IS MASKED. `results[]` carries the function layer's placeholder-masked payload and
+    // NOTHING unmasks on the way here (`unmaskForHumanOutput` belongs at each surface's emit).
+    // Persisting anything else would mint a SECOND unadjudicated cleartext sink in the very file
+    // the 399.1 adjudication names — see
+    // `.planning/phases/399.1-chat-render-contract/399.1-ADJUDICATION-transcript-cleartext.md`
+    // § "The load-bearing corollary for D-05". This describe pins the count and the verbatim
+    // payload; the byte-level absence proof is in `agent-local`, on a real file.
+
+    it('appends ONE clause_result per clause that RAN, carrying the payload verbatim', async () => {
+      const run = harness()
+      const result = await run.runTurn({ message: 'proposals and status' })
+
+      expect(result.status).toBe('completed')
+      const persisted = run.log.events.filter((event) => event.kind === 'clause_result')
+
+      // THE COUNT IS THE EXECUTION'S, read off the turn's own `results[]` rather than from a
+      // literal — so a turn that executed a different number of clauses cannot agree with this.
+      expect(persisted).toHaveLength(result.results.length)
+      expect(persisted.map((event) => (event as { functionId: string }).functionId))
+        .toEqual(result.results.map((entry) => entry.functionId))
+
+      // VERBATIM, NOT A SUMMARY. The receipt already carries the one-line map; this kind's whole
+      // reason for existing is that the territory rides with it.
+      expect(persisted.map((event) => (event as { payload: unknown }).payload))
+        .toEqual(result.results.map((entry) => entry.payload))
+    })
+
+    it('appends NONE for a clause that never ran — not-run is not a result', async () => {
+      // The chain stops on failure, so the third clause is never attempted. A `clause_result` for
+      // it would be this log asserting an op returned something it was never asked for.
+      const run = harness({
+        failOn: RUNS_LIST,
+        planned: { toolCalls: [{ toolName: toToolName(RUNS_DIGEST), input: { runId: 'RUN-1' } }] },
+      })
+      const result = await run.runTurn({
+        message: 'proposals and status and summarise the last failure',
+      })
+
+      expect(result.receipts.map((receipt) => receipt.status))
+        .toEqual(['executed', 'failed', 'not-run'])
+      const persisted = run.log.events.filter((event) => event.kind === 'clause_result')
+      expect(persisted).toHaveLength(1)
+      expect((persisted[0] as { functionId: string } | undefined)?.functionId).toBe(PROPOSALS_LIST)
+    })
+
+    it('leaves the clause_receipt line untouched — the map is still a map (D-18)', async () => {
+      // THE CHARTER SURVIVES THE ADDITION. 392's receipt ruling is that a receipt carries refs and
+      // a sentence; the territory travels beside it. A payload that had leaked onto the receipt
+      // would be the prohibition this whole vocabulary is built on, satisfied by a sibling kind.
+      const run = harness()
+      await run.runTurn({ message: 'proposals and status' })
+
+      for (const event of run.log.events.filter((row) => row.kind === 'clause_receipt')) {
+        expect(Object.keys(event).sort()).toEqual([
+          'at', 'clause', 'functionId', 'kind', 'origin', 'outcome', 'status', 'turnId',
+        ])
+      }
+    })
+  })
+
   describe('Pitfall 1 — the origin comes from the stage that PROVED the binding', () => {
     it('mints human for table-bound clauses and agent for planner-bound ones', async () => {
       const run = harness({

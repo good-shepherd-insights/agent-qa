@@ -55,6 +55,7 @@ export const CHAT_SESSION_EVENT_KINDS = [
   'user_message',
   'stage_outcome',
   'clause_receipt',
+  'clause_result',
   'approval_decision',
   'mark_unhandled',
   'model_change',
@@ -138,6 +139,46 @@ export interface ChatClauseReceiptEvent extends ChatSessionEventBase<'clause_rec
   origin: string
   status: string
   outcome: string
+}
+
+/**
+ * WHAT ONE CLAUSE'S OP RETURNED — the turn's `results[]` entry, MASKED (399.1, D-05).
+ *
+ * THE SECOND PAYLOAD BODY IN THIS VOCABULARY, and like the first it is stated as an exception
+ * rather than smuggled in. D-18's rule above is that an event carries REFS and one-line summaries,
+ * because "this file is read by surfaces that render it directly, so a field that could carry a
+ * secret would need a masking boundary at every one of them". That sentence is the REASON, and it
+ * is satisfied here by the boundary being crossed BEFORE the bytes arrive rather than at each
+ * reader: what rides this field is the function layer's placeholder-masked payload, and nothing
+ * between the op and this line unmasks. `unmaskForHumanOutput` belongs at each surface's EMIT.
+ *
+ * VERBATIM-MASKED, NOT A DIGEST — the discretion D-05 left open, resolved. A digest would satisfy
+ * the disclosure guard trivially and would also make the record unable to answer the question the
+ * channel was minted for: 399's UAT rejected a chat surface that executed ops and could not say
+ * what they returned, and a session log holding a hash of the answer reproduces that hole one
+ * layer down. The result is the TURN'S OWN TERRITORY (392's receipt charter: the receipt is the
+ * map, the territory travels beside it), so it is kept — as filed, masked.
+ *
+ * THE BINDING CONSTRAINT IS ON THE RECORD.
+ * `.planning/phases/399.1-chat-render-contract/399.1-ADJUDICATION-transcript-cleartext.md`
+ * § "The load-bearing corollary for D-05": op results can carry credentials, so persisting an
+ * UNMASKED entry here would mint a second unadjudicated cleartext sink in this exact file — the
+ * class that adjudication names — converting an inherited 392 posture gap into a 399.1 defect.
+ * A repair of the two fields that DO carry cleartext today (`user_message.text`,
+ * `clause_receipt.clause`) is filed separately as `T-399.1-04`; this kind must never become a
+ * third.
+ *
+ * ONE EVENT PER CLAUSE THAT RAN, never per clause planned: a `not-run` clause has no result, and a
+ * line claiming one would be the log asserting an op answered a call nobody made.
+ *
+ * `payload` IS `unknown` AND MUST BE JSON-REPRESENTABLE. The writer is a JSONL adapter, so an
+ * `undefined` payload is written as `null` at the append site rather than omitted — an omitted key
+ * would fail the exact-key guard below on reopen, turning an op that returns nothing into a corrupt
+ * line.
+ */
+export interface ChatClauseResultEvent extends ChatSessionEventBase<'clause_result'> {
+  functionId: string
+  payload: unknown
 }
 
 /** The fsync boundary marker. Its presence is what makes the preceding turn non-dangling (D-19). */
@@ -250,6 +291,7 @@ export type ChatSessionEvent =
   | ChatUserMessageEvent
   | ChatStageOutcomeEvent
   | ChatClauseReceiptEvent
+  | ChatClauseResultEvent
   | ChatApprovalDecisionEvent
   | ChatMarkUnhandledEvent
   | ChatModelChangeEvent
@@ -275,7 +317,7 @@ export class ChatSessionEventSchemaError extends Error {
  * The EXACT key set each kind carries, spelled once and read by the guard below.
  *
  * A total `Record` over the kind union, which is the compile-time half of the double lock: an
- * eleventh kind cannot be declared without saying what its line looks like. The guard is the
+ * twelfth kind cannot be declared without saying what its line looks like. The guard is the
  * runtime half, and the two catch different drifts (`jobs/kinds.ts:619-627`).
  *
  * Exact key sets rather than presence checks, for `run-notification.ts`'s stated reason: a
@@ -286,6 +328,7 @@ const EVENT_KEYS: Record<ChatSessionEventKind, readonly string[]> = {
   user_message: ['at', 'kind', 'text', 'turnId'],
   stage_outcome: ['at', 'kind', 'outcome', 'stage', 'turnId'],
   clause_receipt: ['at', 'clause', 'functionId', 'kind', 'origin', 'outcome', 'status', 'turnId'],
+  clause_result: ['at', 'functionId', 'kind', 'payload', 'turnId'],
   approval_decision: ['actionClass', 'at', 'decision', 'kind', 'source', 'turnId'],
   mark_unhandled: ['at', 'clause', 'kind', 'reason', 'turnId'],
   model_change: ['at', 'from', 'kind', 'source', 'to', 'turnId'],

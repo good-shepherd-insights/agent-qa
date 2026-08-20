@@ -12,6 +12,7 @@ export type {
   ChatActiveToolsChangeEvent,
   ChatApprovalDecisionEvent,
   ChatClauseReceiptEvent,
+  ChatClauseResultEvent,
   ChatCompactionEvent,
   ChatMarkUnhandledEvent,
   ChatModelChangeEvent,
