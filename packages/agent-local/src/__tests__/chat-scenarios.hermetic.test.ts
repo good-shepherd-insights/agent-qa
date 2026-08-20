@@ -74,10 +74,12 @@ import {
 import type { ChatLanguageModel, JobModelCapability } from '@vostride/agent-qa-agent'
 import { FsEventLog, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
+  CLAUSE_RECEIPT_STATUSES,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   FunctionScopeSchema,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   asRunId,
+  clauseReachedCapability,
 } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
@@ -369,6 +371,11 @@ describe('the hermetic lane: the frozen deterministic corpus over the real compo
       const cell = await runCell(scenario)
       const { result } = cell
       const executed = result.receipts.filter((receipt) => receipt.status === 'executed')
+      // 399.1 D-02: `refused` is a fourth word for a clause that RAN AND RETURNED, so a roll-call
+      // spelled over `executed` alone acquired a hole exactly its width the day the member landed.
+      // An op that reached its capability and declined leaves this row — and a blocked config
+      // proposal is FILED on the way, carrying its own id so a person can find it.
+      const reached = result.receipts.filter((receipt) => clauseReachedCapability(receipt.status))
 
       if (scenario.expect.kind === 'should_execute') {
         expect(result.status).toBe('completed')
@@ -384,8 +391,10 @@ describe('the hermetic lane: the frozen deterministic corpus over the real compo
         // A `should_execute` turn that left a refusal row is the decay the ceiling exists to catch.
         expect(cell.events.filter((event) => event.kind === 'mark_unhandled')).toHaveLength(0)
       } else {
-        // D-10's atomicity: NOTHING was carried out, whatever depth the refusal came from.
+        // D-10's atomicity: NOTHING was carried out, whatever depth the refusal came from — and
+        // "nothing" means no capability was REACHED, not merely that none reported success.
         expect(result.status).not.toBe('completed')
+        expect(reached).toHaveLength(0)
         expect(executed).toHaveLength(0)
         expect(executed).toHaveLength(scenario.expect.executed)
         const named = scenario.expect.namesClause
@@ -404,7 +413,14 @@ describe('the hermetic lane: the frozen deterministic corpus over the real compo
             (event) =>
               event.kind === 'approval_decision'
               || (event.kind === 'model_change' && event.source === 'verb')
-              || (event.kind === 'clause_receipt' && event.status === 'executed'),
+              || (event.kind === 'clause_receipt'
+                // The LOG's status is bytes rather than a type — `ChatClauseReceiptEvent.status` is
+                // a bare `string` because this reader may be handed a line an older build wrote.
+                // Narrowing through the closed set is what lets the one predicate answer for it
+                // without the reader casting a word nothing has checked.
+                && CLAUSE_RECEIPT_STATUSES.some(
+                  (status) => status === event.status && clauseReachedCapability(status),
+                )),
           ),
         ).toEqual([])
       }

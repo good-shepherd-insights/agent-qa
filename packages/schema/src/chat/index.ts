@@ -26,7 +26,7 @@ export type {
   ChatTurnStatus,
   ChatUserMessageEvent,
 } from './session-events'
-export { CLAUSE_RECEIPT_STATUSES } from './turn-receipts'
+export { CLAUSE_RECEIPT_STATUSES, clauseReachedCapability } from './turn-receipts'
 export type { ClauseReceipt, ClauseReceiptStatus } from './turn-receipts'
 export {
   AgentAskInputSchema,

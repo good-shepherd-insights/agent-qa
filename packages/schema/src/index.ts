@@ -1224,6 +1224,7 @@ export {
   SCENARIO_EXPECTATIONS,
   SCENARIO_LANES,
   ScenarioExpectationSchema,
+  clauseReachedCapability,
   guardChatSessionEvent,
   pinDenies,
 } from './chat/index'

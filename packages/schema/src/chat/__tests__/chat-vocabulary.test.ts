@@ -23,6 +23,7 @@ import {
   ChatSessionEventSchemaError,
   ChatScenarioSchema,
   SCENARIO_EXPECTATIONS,
+  clauseReachedCapability,
   guardChatSessionEvent,
   pinDenies,
 } from '../index'
@@ -70,6 +71,28 @@ describe('the chat session event vocabulary is closed and total', () => {
     // nothing that indexed this tuple moved. A guardrail declining an op is neither `executed` — the
     // change did not happen — nor `failed`, which sends a reader hunting a defect that is not there.
     expect([...CLAUSE_RECEIPT_STATUSES]).toEqual(['executed', 'failed', 'not-run', 'refused'])
+  })
+
+  it('399.1-03: exactly two of the four statuses mean the capability was REACHED', () => {
+    // THE PREDICATE EVERY ROLL-CALL OVER THIS SET NOW ASKS, pinned exhaustively over the set itself
+    // rather than over a list somebody typed — so a FIFTH member arriving lands in one of these two
+    // buckets by somebody's decision, and cannot join silently on whichever side the `||` chain
+    // happens to put it.
+    //
+    // IT MATTERS BECAUSE A ROLL-CALL SPELLED OVER `executed` ALONE WENT BLIND THE DAY `refused`
+    // LANDED. D-10's atomicity claim is that a fail-closed turn carried nothing out, and both
+    // scenario runners checked it as "no receipt says executed" — a complete statement of it only
+    // while `executed` was the only word for a clause that ran and returned. An op that reached its
+    // capability and declined files a blocked proposal on the way, and that row was invisible.
+    const reached = CLAUSE_RECEIPT_STATUSES.filter((status) => clauseReachedCapability(status))
+    const unreached = CLAUSE_RECEIPT_STATUSES.filter((status) => !clauseReachedCapability(status))
+
+    expect([...reached]).toEqual(['executed', 'refused'])
+    // Stated positively too: `failed` is ambiguous between a gate refusal and a mid-flight throw,
+    // and `not-run` is the one member that unambiguously means nothing happened. Neither may claim
+    // to answer a question the vocabulary cannot answer for it.
+    expect([...unreached]).toEqual(['failed', 'not-run'])
+    expect(reached.length + unreached.length).toBe(CLAUSE_RECEIPT_STATUSES.length)
   })
 
   it('CHAT-02: a scenario expects one of exactly two things', () => {

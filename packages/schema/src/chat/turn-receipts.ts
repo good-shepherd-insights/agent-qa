@@ -53,3 +53,29 @@ export interface ClauseReceipt {
   status: ClauseReceiptStatus
   outcome: string
 }
+
+/**
+ * Whether this status means the clause REACHED ITS CAPABILITY and came back (399.1-03).
+ *
+ * IT EXISTS BECAUSE THE FOURTH MEMBER PUT A HOLE IN EVERY ROLL-CALL SPELLED OVER `executed`. D-10's
+ * atomicity claim — a fail-closed turn carried NOTHING out — was checked by both scenario runners as
+ * "no receipt says `executed`", which was a complete statement of it for exactly as long as
+ * `executed` was the only word for a clause that ran and returned. It is not any more: an op that
+ * reached its capability and declined says `refused`, and some of them leave a durable trace on the
+ * way (a blocked config proposal is FILED — that arm carries its `proposalId` precisely so a person
+ * can find it). A roll-call that could not see that row would report "nothing ran" over a turn that
+ * ran something and wrote a record.
+ *
+ * `failed` AND `not-run` ARE DELIBERATELY OUTSIDE IT, and they are outside for different reasons.
+ * `not-run` is a clause the engine never attempted — the one member that is unambiguously nothing
+ * happening. `failed` is the ambiguous one: it covers a clause the gate refused before dispatch AND
+ * one that threw mid-flight, and the vocabulary cannot tell those apart, so a predicate that claimed
+ * either answer for it would be inventing a fact. What this function answers is the question it can
+ * answer: these two words mean the op RAN and RETURNED.
+ *
+ * SPELLED ONCE, BESIDE THE SET IT READS. Two runners in two packages ask this question, and a copy
+ * in each is how one of them keeps a hole after somebody fixes the other.
+ */
+export function clauseReachedCapability(status: ClauseReceiptStatus): boolean {
+  return status === 'executed' || status === 'refused'
+}

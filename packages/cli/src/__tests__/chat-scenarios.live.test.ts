@@ -46,8 +46,10 @@ import type { LocalAgentHost, RunExecutionPort } from '@vostride/agent-qa-agent-
 import { FsEventLog, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  CLAUSE_RECEIPT_STATUSES,
   FunctionScopeSchema,
   asRunId,
+  clauseReachedCapability,
 } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
@@ -285,6 +287,10 @@ describe.skipIf(SKIP_REASON !== undefined)(
         const cell = await runCell(scenario)
         const { result } = cell
         const executed = result.receipts.filter((receipt) => receipt.status === 'executed')
+        // 399.1 D-02: `refused` is a fourth word for a clause that RAN AND RETURNED, so a roll-call
+        // spelled over `executed` alone acquired a hole exactly its width the day the member
+        // landed. See `clauseReachedCapability`'s own header for why `failed` is outside it.
+        const reached = result.receipts.filter((receipt) => clauseReachedCapability(receipt.status))
 
         if (scenario.expect.kind === 'should_execute') {
           expect(result.status).toBe('completed')
@@ -296,8 +302,10 @@ describe.skipIf(SKIP_REASON !== undefined)(
           )
           expect(executed).toHaveLength(scenario.expect.executed)
         } else {
-          // D-10's atomicity, live: the clause that COULD have run did not.
+          // D-10's atomicity, live: the clause that COULD have run did not — and "did not" means
+          // no capability was REACHED, not merely that none reported success.
           expect(result.status).not.toBe('completed')
+          expect(reached).toHaveLength(0)
           expect(executed).toHaveLength(0)
           expect(executed).toHaveLength(scenario.expect.executed)
           const named = scenario.expect.namesClause ?? ''
@@ -316,7 +324,14 @@ describe.skipIf(SKIP_REASON !== undefined)(
               (event) =>
                 event.kind === 'approval_decision'
                 || (event.kind === 'model_change' && event.source === 'verb')
-                || (event.kind === 'clause_receipt' && event.status === 'executed'),
+                || (event.kind === 'clause_receipt'
+                  // The LOG's status is bytes rather than a type — `ChatClauseReceiptEvent.status`
+                  // is a bare `string` because this reader may be handed a line an older build
+                  // wrote. Narrowing through the closed set is what lets the one predicate answer
+                  // for it without the reader casting a word nothing has checked.
+                  && CLAUSE_RECEIPT_STATUSES.some(
+                    (status) => status === event.status && clauseReachedCapability(status),
+                  )),
             ),
           ).toEqual([])
         }
