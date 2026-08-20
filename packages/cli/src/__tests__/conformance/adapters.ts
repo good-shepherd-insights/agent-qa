@@ -1,4 +1,5 @@
-// The two surface adapters the parity suite enumerates through (Phase 397 plan 01, D-01/D-02/D-03).
+// The three surface adapters the parity suite enumerates through (Phase 397 plan 01, D-01/D-02/D-03;
+// the `fn` door added 2026-08-20, Phase 399.1 plan 06, D-07).
 //
 // WHAT AN ADAPTER ANSWERS, AND IN WHAT VOCABULARY. `enumerateOpIds()` returns the set of REGISTRY OP
 // IDS a surface can reach, never the surface's own names. D-01 makes the op id the comparison
@@ -25,6 +26,10 @@
 // cell without mutating a shipped file or introducing a skip. A detector nobody has seen fire is a
 // comment.
 
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { createMcpHandler } from '@modelcontextprotocol/server'
 import {
@@ -47,13 +52,16 @@ import {
 } from '@vostride/agent-qa-mcp'
 import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
 import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
+import { Command } from 'commander'
+import { vi } from 'vitest'
 
+import { createFnCommand } from '../../commands/fn.js'
 import { mcpFunctionCaller } from '../../commands/mcp.js'
 
 /** Which enumeration produced a capability the declared data does not catalogue. */
 export interface SurfaceStray {
-  readonly kind: 'mcp-listed-tool' | 'chat-alias-target'
-  /** The stray itself — a wire tool name, or a resolver alias's function-id target. */
+  readonly kind: 'mcp-listed-tool' | 'chat-alias-target' | 'fn-listed-op'
+  /** The stray itself — a wire tool name, a resolver alias's function-id target, a listed op id. */
   readonly name: string
 }
 
@@ -489,4 +497,110 @@ export async function enumerateChatOpIds(): Promise<SurfaceEnumeration> {
 export const chatSurfaceAdapter: SurfaceAdapter = Object.freeze({
   id: 'chat',
   enumerateOpIds: () => enumerateChatOpIds(),
+})
+
+// ---- The fn side (2026-08-20, Phase 399.1 plan 06, D-07) ----------------------------------------
+
+/**
+ * A project the `fn` listing can be taken in, and nothing more.
+ *
+ * `composeCliLocalAgent` resolves the configuration before it builds a registry, so a listing taken
+ * against a path that does not exist would report a resolution failure rather than a surface. The
+ * three keys below are the minimum `AgentQaConfigSchema` accepts — `use.mobile.appState` is required
+ * unconditionally, which `surface-dispatch.ts` records having measured. Nothing is planted beyond
+ * that: a LISTING consults no store, starts no run and reads no knowledge, so a fixture carrying any
+ * of those would be furniture this enumeration never touches.
+ */
+function fnListingFixture(): { root: string; configPath: string } {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-399-1-06-fn-'))
+  const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      workspace: {
+        testMatch: ['tests/**/*.test.yaml'],
+        suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      use: { mobile: { appState: 'reset' } },
+    })}\n`,
+    'utf8',
+  )
+  return { root, configPath }
+}
+
+/**
+ * What the `fn` door reaches, read off the door's OWN listing rather than off a registry.
+ *
+ * THE COMMAND IS DRIVEN, NOT RE-DERIVED, and that is the whole reason this function is eight lines
+ * of plumbing instead of one call to `registryOpIds()`. `agent-qa fn --list --json` runs commander's
+ * argument parse, the CLI composition root, `registry.list(CLI_FUNCTION_CALLER)` and the declaration
+ * projection `declarationRow` publishes — four stages, any of which could filter. A comparison
+ * against a set this file assembled from the same registry the door lists from would be the
+ * table-against-itself shape `adapters.ts`'s header refuses by name: it would pass on a door that
+ * had stopped listing half the registry, because both sides would have shrunk together.
+ *
+ * THE CALLER IS THE DOOR'S OWN (`CLI_FUNCTION_CALLER`) and is deliberately not overridden. That is
+ * the opposite move from {@link MCP_ENUMERATION_CALLER}, which exists because the MCP host's DEFAULT
+ * grant withholds `config-write` and an enumeration under it would under-report the surface. The CLI
+ * caller holds every member of `FunctionScopeSchema` and mints `origin: 'human'`, so the door's own
+ * posture is already the widest one — and a narrowing of it is a fact about the product this
+ * enumeration should report rather than paper over.
+ *
+ * STDOUT IS THE READ SURFACE. `--json` is the machine channel the command already publishes, so what
+ * is parsed here is bytes the door emitted, not an object this file was handed.
+ */
+export async function enumerateFnOpIds(): Promise<SurfaceEnumeration> {
+  const fixture = fnListingFixture()
+  const printed: string[] = []
+  const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
+    printed.push(values.map(String).join(' '))
+  })
+  try {
+    const program = new Command()
+      .option('--config <path>', 'config file path')
+      .addCommand(createFnCommand())
+    program.exitOverride()
+    await program.parseAsync([
+      'node',
+      'agent-qa',
+      '--config',
+      fixture.configPath,
+      'fn',
+      '--list',
+      '--json',
+    ])
+  } finally {
+    log.mockRestore()
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+
+  // A listing that printed nothing is returned as an EMPTY enumeration rather than thrown on: the
+  // roster leg already asserts no surface enumerates nothing, by name, and a throw here would report
+  // the same fact in a voice that does not say which surface it was about.
+  let rows: readonly { readonly id?: unknown }[] = []
+  try {
+    rows = JSON.parse(printed.join('\n')) as readonly { readonly id?: unknown }[]
+  } catch {
+    rows = []
+  }
+
+  const registryOpIdSet = new Set(registryOpIds())
+  const opIds = new Set<string>()
+  const strays: SurfaceStray[] = []
+  for (const row of rows) {
+    if (typeof row.id !== 'string' || row.id === '') continue
+    opIds.add(row.id)
+    // The uncatalogued-capability shape for this door, collected rather than thrown on the reason
+    // `expandMcpListedTools` states: "how many" is exactly the question a reader of that failure has.
+    if (!registryOpIdSet.has(row.id)) strays.push({ kind: 'fn-listed-op', name: row.id })
+  }
+  return { opIds, strays }
+}
+
+export const fnSurfaceAdapter: SurfaceAdapter = Object.freeze({
+  id: 'fn',
+  enumerateOpIds: () => enumerateFnOpIds(),
 })

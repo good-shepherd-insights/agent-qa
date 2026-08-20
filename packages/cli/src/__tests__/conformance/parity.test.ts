@@ -415,10 +415,14 @@ interface AdvertisedTool {
 }
 
 describe('the parity suite ranges the registry census over every rostered surface', () => {
-  it('pins the roster at the two surfaces that exist today', () => {
+  it('pins the roster at the three surfaces that exist today', () => {
     // D-04. An exact list rather than a length check or a contains check: a surface REPLACED would
     // pass both of those while the claim quietly moved to a different set of doors.
-    expect(SURFACE_ROSTER.map((entry) => entry.id)).toEqual(['chat', 'mcp'])
+    //
+    // 2026-08-20 (399.1 D-07): the `fn` door joins. The order is registration order and is asserted
+    // as such — `roster.ts` reads as a dated history and a row that moved would be a row somebody
+    // re-decided.
+    expect(SURFACE_ROSTER.map((entry) => entry.id)).toEqual(['chat', 'mcp', 'fn'])
     for (const entry of SURFACE_ROSTER) {
       expect(entry.adapter.id, `${entry.id}: the roster row and its adapter must name one surface`)
         .toBe(entry.id)

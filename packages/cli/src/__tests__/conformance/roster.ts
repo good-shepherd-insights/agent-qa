@@ -38,11 +38,34 @@
 // catalogue ever grows a read ENDPOINT — a caller asking a running process what exists, rather than
 // reading committed bytes — that endpoint is a door, and this note does not cover it.
 //
+// 2026-08-20 — THE `fn` DOOR IS THE THIRD ROW (Phase 399.1, D-07). This is the registration note
+// above being honoured rather than an exception to it: `agent-qa fn` is an INVOCATION DOOR by the
+// 2026-08-17 test — it dispatches, it consults the gate, and a person reaches every registered
+// capability through it — and it had no row for three phases. 399's UAT is what made the omission
+// costly: `fn` is the door the owner called HONEST (399 D-14, the CLI parity door), the one whose
+// render the chat surface's default was then re-derived from, and the suite could not compare the
+// two because only one of them was rostered. A parity claim about "what a person sees" that ranges
+// the two surfaces that DON'T print the payload, and not the one that does, is a claim measured
+// against the wrong denominator.
+//
+// WHAT IS AND IS NOT ON THE ROW (397 D-03, unchanged). The row is the REGISTRY-DRIVEN `fn` path —
+// `--list` and `fn <id>`, which own no capability of their own and resolve everything through
+// `invokeFunction`. The bespoke per-capability CLI command handlers (`agent-qa run`, `proposals
+// show`, …) stay OFF the roster exactly as 397 D-03 ruled: rostering them would mint a new parity
+// claim over hand-written handlers this suite has never measured, which is a widening dressed as a
+// completion. So D-04's rule reads unchanged for the third time: adding a surface adds a ROW and an
+// ADAPTER, in the change that ships it.
+//
 // THE ROW NAMES ITS ADAPTER RATHER THAN INLINING ONE. What a surface IS (a member of the roster) and
 // HOW it is read (a wire round trip, a projection walk) are different questions with different
 // reasons to change, and the enumeration mechanics carry enough reasoning to want their own module.
 
-import { chatSurfaceAdapter, mcpSurfaceAdapter, type SurfaceAdapter } from './adapters.js'
+import {
+  chatSurfaceAdapter,
+  fnSurfaceAdapter,
+  mcpSurfaceAdapter,
+  type SurfaceAdapter,
+} from './adapters.js'
 
 /** One rostered surface. */
 export interface SurfaceRosterEntry {
@@ -60,4 +83,11 @@ export const SURFACE_ROSTER: readonly SurfaceRosterEntry[] = Object.freeze([
   // the adapter folds a live listing back into op ids rather than comparing wire names to wire
   // names, because the other surface has no wire names to compare against.
   Object.freeze({ id: 'mcp', adapter: mcpSurfaceAdapter }),
+  // The `fn` door (384, rostered 399.1 D-07). One route and no projection at all: the id a person
+  // types IS the registry id, so the adapter's fold from wire names to op ids — the move the two
+  // rows above both need — is the identity here. What its adapter still has to do is DRIVE the
+  // command rather than read the registry, because the listing passes through a composition root, a
+  // caller mint and a declaration projection, and a set assembled from the registry this file could
+  // reach would be the same set on both sides of every comparison.
+  Object.freeze({ id: 'fn', adapter: fnSurfaceAdapter }),
 ] as const satisfies readonly SurfaceRosterEntry[])

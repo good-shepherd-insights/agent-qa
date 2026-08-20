@@ -47,7 +47,12 @@ import {
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
 import type { ExecutionAuditRow } from '@vostride/agent-qa-safety'
-import type { ClauseReceipt, ExecutionContext, FunctionScope } from '@vostride/agent-qa-schema'
+import type {
+  ClauseReceipt,
+  ClauseResult,
+  ExecutionContext,
+  FunctionScope,
+} from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { vi } from 'vitest'
 
@@ -80,17 +85,26 @@ export interface DriveChatDispatchInput {
 }
 
 /** What one chat drive produced, as the surface itself recorded it. */
-export interface ChatDispatchOutcome {
-  /**
-   * The receipt for the driven op, or `undefined` when the surface never reached a dispatch.
-   *
-   * Read out of the SESSION LOG the shipped adapter wrote rather than scraped off the terminal:
-   * the printed line is a render of this record (`receipt-line.ts` reads `receipt.outcome`), so
-   * the two cannot disagree, and the record carries its fields already parted.
-   */
-  readonly receipt: ClauseReceipt | undefined
+export interface ChatDriveObservation {
   /** Every clause receipt of the drive, for a cell that needs to see what else happened. */
   readonly receipts: readonly ClauseReceipt[]
+  /**
+   * Every op RESULT the drive produced, in clause execution order (2026-08-20, 399.1 plan 06).
+   *
+   * WHY THIS MEMBER EXISTS, AND WHY IT IS NOT A CONVENIENCE. Until 399.1 the two drivers in this
+   * file answered in incommensurable vocabularies: chat reported a `ClauseReceipt` — a one-line map
+   * of clause to outcome, by charter carrying no territory — while MCP reported
+   * `McpCallAnswered.structured`, the op's whole typed result. A cell wanting to ask "do these two
+   * doors show a person the same thing" had nothing on the chat side to compare, so no cell asked,
+   * and the answer was NO for forty of forty-two capabilities for two phases (G-399-2). `results[]`
+   * is 399.1 D-05's channel and this is the driver's read of it.
+   *
+   * READ OFF THE SESSION LOG'S `clause_result` EVENTS, on `receipt`'s own reasoning: the printed
+   * payload block is a render of these records, so the two cannot disagree, and the record arrives
+   * with its fields already parted. The persisted payload is MASKED (399.1 plan 05), which is what
+   * makes this member safe to hold and to print in a failure message.
+   */
+  readonly results: readonly ClauseResult[]
   /**
    * The execution-audit rows this drive landed, in order.
    *
@@ -104,6 +118,18 @@ export interface ChatDispatchOutcome {
   readonly unhandled: readonly string[]
   /** Everything the surface printed, i.e. what a person actually sees. */
   readonly stdout: string
+}
+
+/** One drive keyed to ONE op, which is what every parity leg asks about. */
+export interface ChatDispatchOutcome extends ChatDriveObservation {
+  /**
+   * The receipt for the driven op, or `undefined` when the surface never reached a dispatch.
+   *
+   * Read out of the SESSION LOG the shipped adapter wrote rather than scraped off the terminal:
+   * the printed line is a render of this record (`receipt-line.ts` reads `receipt.outcome`), so
+   * the two cannot disagree, and the record carries its fields already parted.
+   */
+  readonly receipt: ClauseReceipt | undefined
 }
 
 /** The pin spelling every registered op's risk name carries; the gate compares exactly these bytes. */
@@ -210,6 +236,37 @@ function readJsonLines(path: string): readonly Record<string, unknown>[] {
 export async function driveChatDispatch(
   input: DriveChatDispatchInput,
 ): Promise<ChatDispatchOutcome> {
+  const observed = await driveChatLines(
+    [
+      ...(input.pinBefore ?? []).map((actionClass) => `/pin ${actionClass}`),
+      genericFnClause(input.opId, input.input),
+    ],
+    input.executionContext,
+  )
+  return {
+    ...observed,
+    receipt: observed.receipts.find((candidate) => candidate.functionId === input.opId),
+  }
+}
+
+/**
+ * Type ARBITRARY lines at the same shipped REPL, and report the same observation.
+ *
+ * THE SAME BODY, NOT A SECOND DRIVER (`spawned-chat.ts`'s no-second-copy law, applied in-process).
+ * `driveChatDispatch` is this function plus one composition of clause text and one receipt lookup;
+ * a separate helper for "a turn that is not one `/fn` invocation" would be a second answer to what
+ * the surface was driven WITH — the workspace, the execution-context injection, the headless
+ * posture and the collected interrupt handler — which is the one property every cell depends on.
+ *
+ * WHAT NEEDS IT. 399.1's turn-shape cells ask two questions no `opId`-keyed drive can express: what
+ * a turn that executes NOTHING renders (E2E-02/empty), and what order a COMPOUND turn's payloads
+ * print in (E2E-02/ordering). Neither has a single op to key on — the first has none by design and
+ * the second has two — so the shape that carried the parity legs cannot carry them.
+ */
+export async function driveChatLines(
+  typedLines: readonly string[],
+  executionContext?: ExecutionContext,
+): Promise<ChatDriveObservation> {
   const configPath = fixtureWorkspace()
   const root = dirname(resolve(configPath))
   const stdout: string[] = []
@@ -224,16 +281,10 @@ export async function driveChatDispatch(
   // captured rather than assumed because a restore to a literal would be this file deciding what
   // the surrounding process's context is.
   const previousContext = getActiveExecutionContext()
-  setActiveExecutionContextResolver(
-    () => input.executionContext ?? CONFORMANCE_EXECUTION_CONTEXT,
-  )
+  setActiveExecutionContextResolver(() => executionContext ?? CONFORMANCE_EXECUTION_CONTEXT)
 
   try {
-    const typed = [
-      ...(input.pinBefore ?? []).map((actionClass) => `/pin ${actionClass}`),
-      genericFnClause(input.opId, input.input),
-      '/quit',
-    ]
+    const typed = [...typedLines, '/quit']
     const stdin = new PassThrough()
     const stdoutStream = new PassThrough()
     stdoutStream.resume()
@@ -278,6 +329,7 @@ export async function driveChatDispatch(
 
   const agentQaRoot = join(root, '.agent-qa')
   const receipts: ClauseReceipt[] = []
+  const results: ClauseResult[] = []
   const unhandled: string[] = []
   let sessionDir: string[] = []
   try {
@@ -296,6 +348,12 @@ export async function driveChatDispatch(
           outcome: String(line['outcome']),
         })
       }
+      // The 11-kind ledger interleaves per clause: a `clause_result` lands immediately BEFORE the
+      // `clause_receipt` of the clause that produced it, and a clause that did not run files none.
+      // Reading them in file order is therefore reading them in clause execution order.
+      if (line['kind'] === 'clause_result') {
+        results.push({ functionId: String(line['functionId']), payload: line['payload'] })
+      }
       if (line['kind'] === 'mark_unhandled') unhandled.push(String(line['clause']))
     }
   }
@@ -305,13 +363,7 @@ export async function driveChatDispatch(
 
   rmSync(root, { recursive: true, force: true })
 
-  return {
-    receipt: receipts.find((candidate) => candidate.functionId === input.opId),
-    receipts,
-    auditRows,
-    unhandled,
-    stdout: stdout.join('\n'),
-  }
+  return { receipts, results, auditRows, unhandled, stdout: stdout.join('\n') }
 }
 
 // ---- The MCP surface ---------------------------------------------------------------------------
