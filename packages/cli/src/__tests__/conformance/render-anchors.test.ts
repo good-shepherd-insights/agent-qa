@@ -48,7 +48,7 @@ import { join, relative } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/client'
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
-import { CONFIG_FIELD_SET_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import { AGENT_ASK_FUNCTION_ID, CONFIG_FIELD_SET_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { maskedToolResult } from '@vostride/agent-qa-mcp'
 import { ConfigProposalV1Schema } from '@vostride/agent-qa-schema'
 import type { ConfigProposalV1 } from '@vostride/agent-qa-schema'
@@ -406,6 +406,91 @@ describe('the chat render anchors (399.1, G-399-2)', () => {
         + `read: ${JSON.stringify(proposed.receiptLine)}`,
       ).toBe('executed')
     }, 300_000)
+
+  it('the nested composition: a refusal is never a success one composition layer up',
+    async () => {
+      // GAP 1's THIRD MEASURED CONSEQUENCE (P2, 399.1-VERIFICATION), on the surface it was measured
+      // on. The cells above pin ONE composition layer: the op refuses, the receipt says `refused`.
+      // Wrap that same turn in `/fn agent.ask` and the outer clause is a turn whose own receipts
+      // carry the refusal — and `agent.ask`'s classify folded only the turn STATUS, which the engine
+      // derived from throw-versus-return. Nothing threw, so the inner aggregate read `completed` and
+      // the outer receipt read the success word over a blocked credential write. A person reading
+      // the outer line was told the mutation was carried out; the file was byte-unchanged.
+      //
+      // THE UTTERANCE IS COMPOSED, NEVER HAND-ESCAPED. The inner clause is itself JSON-bearing, so
+      // spelling the nesting by hand is how a fixture silently drives a DIFFERENT utterance from the
+      // one its name claims — and a drive that reached the wrong op would red for the wrong reason.
+      expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
+      const fixture = fixtureProject('399-1-09-nested')
+      const inner = utteranceFor(SETTABLE_PATH, PLANTED_SECRET)
+      const outer = `/fn ${AGENT_ASK_FUNCTION_ID} ${JSON.stringify({ message: inner })}`
+      const outcome = await driveChatSpawned(fixture.root, fixture.configPath, outer)
+
+      expect(
+        { code: outcome.code, signal: outcome.signal, stderr: outcome.stderr.trim().slice(0, 600) },
+        'the spawned chat binary did not exit cleanly for the nested-composition cell',
+      ).toMatchObject({ code: 0, signal: null })
+
+      // THE BANNER IS SLICED OFF FIRST, on this file's own vacuity law: `chat.ts` prints three
+      // starter prompts at open, so committed text is in this child's stdout before any turn runs.
+      const bannerEnd = outcome.stdout.indexOf('session ')
+      expect(
+        bannerEnd,
+        `the spawned chat binary never announced a session; its stdout was ${
+          JSON.stringify(outcome.stdout.slice(0, 800))}`,
+      ).toBeGreaterThanOrEqual(0)
+      const postBanner = outcome.stdout.slice(bannerEnd)
+
+      const markerIndex = postBanner.indexOf(outer)
+      expect(
+        markerIndex,
+        `the spawned chat binary never echoed the nested clause; its stdout was ${
+          JSON.stringify(outcome.stdout.slice(0, 800))} and its stderr ${
+          JSON.stringify(outcome.stderr.trim().slice(0, 400))}`,
+      ).toBeGreaterThanOrEqual(0)
+      expect(
+        postBanner.lastIndexOf(outer),
+        'the nested clause occurs more than once in the child\'s stdout, so the receipt line this '
+        + 'cell reads is not the one turn it means',
+      ).toBe(markerIndex)
+
+      const lineEnd = postBanner.indexOf('\n', markerIndex)
+      const receiptLine = postBanner.slice(
+        postBanner.lastIndexOf('\n', markerIndex) + 1,
+        lineEnd === -1 ? undefined : lineEnd,
+      )
+      const slice = postBanner.slice(markerIndex + outer.length)
+
+      // NON-VACUITY: the INNER refusal really happened, and the whole inner result really was
+      // rendered underneath the outer receipt. Without this the verdict-word assertion below could
+      // be satisfied by a turn that refused for some entirely different reason — or by one that
+      // never reached `config.field.set` at all.
+      expect(
+        slice,
+        `the outer receipt printed none of the inner turn's own report. post-marker stdout: ${
+          JSON.stringify(slice.slice(0, 900))}; child stderr: ${
+          JSON.stringify(outcome.stderr.trim().slice(0, 300))}`,
+      ).toContain('"status": "refused"')
+      expect(slice, 'the inner refusal did not name the guardrail that fired').toContain(
+        'guardrail-hit',
+      )
+
+      // THE CLAIM. One layer up, the word a person reads must still be the one its own receipts
+      // support — success is the one claim a fold may never default to (D-03's asymmetry, D-12).
+      expect(
+        receiptLine.trim().split(/\s+/u)[0] ?? '',
+        'an inner turn whose only clause was REFUSED by a credential guardrail is reported as a '
+        + `success one composition layer up. the line the person read: ${
+          JSON.stringify(receiptLine)}`,
+      ).toBe('refused')
+
+      // AND THE SUCCESS WORD IS ABSENT FROM THE OUTER RECEIPT, spelled as a line predicate rather
+      // than a whole-slice search: `executed` legitimately appears elsewhere in a rendered turn.
+      expect(
+        postBanner.split('\n').filter((line) => /^\s*executed\s+agent\.ask/u.test(line)),
+        'the outer agent.ask receipt still leads with the success status word',
+      ).toEqual([])
+    }, 180_000)
 
   it('renders three DIFFERENT filed payloads as three different terminal readings', async () => {
     // THE MEASUREMENT THAT SET THIS PHASE'S SEVERITY, as a standing cell. Content assertions above

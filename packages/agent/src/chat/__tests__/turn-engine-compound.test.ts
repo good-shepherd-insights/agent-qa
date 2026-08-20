@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest'
 import type {
   AgentAskInput,
   AgentAskResult,
+  AuthoringDraftWriteOutput,
   ChatSessionEvent,
   ChatSessionHandle,
   ChatSessionHeader,
@@ -28,6 +29,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import {
+  AuthoringDraftWriteOutputSchema,
   FAN_OUT_PHRASES,
   ProposalsListOutputSchema,
   buildFanOutReport,
@@ -621,6 +623,85 @@ describe('turn engine stage 3/4: atomicity, ordered execution, receipts, per-sta
       const receipts = run.log.events.filter((event) => event.kind === 'clause_receipt')
       expect(receipts.map((event) => event.status)).toEqual(['failed', 'not-run'])
     })
+
+    // ---- 399.1-09 (gap round 1, D-12): the stop gate reads the RECEIPT, not the ending ----------
+    //
+    // THE THREE CELLS ABOVE ALL FAIL BY THROWING. `failOn` rejects, the engine's catch mints the
+    // `failed` receipt AND sets the flag, and the chain stops — which was a complete statement of
+    // D-11 for exactly as long as a failure could only arrive as an exception. It is not any more:
+    // 399.1 made the receipt status the op's OWN verdict, and every arm of a typed refusal RETURNS.
+    // So a fold answering `failed` produced a `failed` receipt over which the aggregate still said
+    // `completed`, the gate never tripped, and the clause after it ran anyway. That is RC-1b
+    // restated one layer up, and the two cells below are its differential.
+    //
+    // THE GUARD-REJECT CONTROL IS ALREADY WRITTEN AND IS NOT DUPLICATED HERE: 'executes table-bound
+    // clauses in utterance order' (the first cell in this describe) is the all-executed turn — no
+    // receipt says `failed`, nothing stops, the aggregate stays `completed`. A rule with a guard
+    // needs a case its guard REJECTS, and that is the one.
+
+    it('stops the chain and fails the turn on a RETURNED failed verdict', async () => {
+      // PRODUCED THROUGH THE REAL FOLD, NEVER SCRIPTED. `results` here is the op's RESULT, and the
+      // harness routes every `FOLD_IDS` result through `foldFunctionResult` — the same function the
+      // composition root runs. `proposals.list`'s declared classifier reads `output.entries.length`;
+      // an object with no `entries` is a result its own fold cannot read, so D-03's fail-closed
+      // wrapper answers `failed`/`unclassifiable-result` as a RETURN. Scripting a verdict literal
+      // into the invoke seat would have pinned a verdict no producer can emit.
+      const run = harness({ results: { [PROPOSALS_LIST]: { inbox: 'not the contract' } } })
+      const result = await run.runTurn({ message: 'proposals and status' })
+
+      // NON-VACUITY: the first clause really did come back with the fail-closed verdict rather than
+      // dying on the way, so the three assertions below are about the STOP GATE and not about a
+      // harness that never reached the fold.
+      expect(result.receipts[0]).toMatchObject({
+        functionId: PROPOSALS_LIST,
+        status: 'failed',
+        outcome: 'unclassifiable-result',
+      })
+
+      // THE THREE FACTS IN ONE `toEqual`, on E3's precedent above: the aggregate, the receipt
+      // sequence and what was actually invoked are one claim about one turn, and asserting them in
+      // sequence would report only the first of the three that is wrong. The clause after a failure
+      // was never attempted — thrown or returned, identically.
+      expect({
+        status: result.status,
+        receipts: result.receipts.map((receipt) => receipt.status),
+        invoked: run.invocations.map((call) => call.functionId),
+      }).toEqual({
+        status: 'failed',
+        receipts: ['failed', 'not-run'],
+        invoked: [PROPOSALS_LIST],
+      })
+    })
+
+    it('does NOT stop the chain on a RETURNED refused verdict (D-12 posture CONTROL)', async () => {
+      // A D-12 POSTURE CONTROL, GREEN BEFORE AND AFTER THE FIX, and it is the reason the fix reads
+      // `receipt.status === 'failed'` rather than "anything that is not `executed`". D-11 stops on
+      // FAILURE; D-02 ruled that a refusal is not a failure — the control worked, the op ran and
+      // came back, which is precisely what `clauseReachedCapability` already counts. A guard that
+      // stopped here would turn every declined write into a turn that abandoned the rest of the
+      // person's sentence.
+      const run = harness({
+        planned: {
+          toolCalls: [{
+            toolName: AUTHORING_TOOL,
+            input: { intent: 'two factor auth', scope: { tier: 'product', key: 'app' } },
+          }],
+        },
+        results: { [AUTHORING_DRAFT_WRITE_FUNCTION_ID]: AUTHORING_REFUSED_RESULT },
+      })
+      const result = await run.runTurn({ message: `${AUTHORING_UTTERANCE} and proposals` })
+
+      // NON-VACUITY: the refusal arm really was reached, through the op's own declared classifier.
+      expect(result.receipts[0]).toMatchObject({
+        functionId: AUTHORING_DRAFT_WRITE_FUNCTION_ID,
+        status: 'refused',
+      })
+
+      expect(result.receipts.map((receipt) => receipt.status)).toEqual(['refused', 'executed'])
+      expect(result.status).toBe('completed')
+      expect(run.invocations.map((call) => call.functionId))
+        .toEqual([AUTHORING_DRAFT_WRITE_FUNCTION_ID, PROPOSALS_LIST])
+    })
   })
 
   describe('D-05/399.1-05 — the turn\'s results[] reaches the log as MASKED clause_result events', () => {
@@ -893,6 +974,32 @@ const FUNNEL_UTTERANCE = 'how is this session doing so far'
  * with a restated copy of itself while the harness drove something else.
  */
 const AUTHORING_OUTCOME = 'drafted'
+
+/**
+ * The dedup REFUSAL arm, produced through the op's own output contract (399.1-09).
+ *
+ * PARSED, NEVER TYPED — the same move `PROPOSALS_LIST_RESULT` makes above and the shape
+ * `refusal-classifiers.test.ts` mints for this op's refusal cell. A hand-written stand-in would hand
+ * the shipped classifier an input its contract cannot produce, and the D-12 control below would then
+ * be pinning the fail-closed wrapper instead of the refusal it means to pin.
+ */
+const AUTHORING_REFUSED_RESULT: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSchema.parse({
+  outcome: 'refused',
+  refusal: {
+    filePath: 'tests/checkout.spec.ts',
+    testName: 'adds a product to the cart',
+    matchedRef: 'tests/checkout.spec.ts::adds a product to the cart',
+    score: 0.91,
+    threshold: 0.8,
+    sharedTokens: 5,
+    comparedTests: 42,
+    continuations: ['extend-that-test', 'name-the-differing-assertion'],
+  },
+  fanOut: buildFanOutReport({
+    previewed: computeFanOutBound({ initialN: 3, probeK: 3, finalN: 3 }),
+    runs: [],
+  }),
+})
 
 function authoringHarness(report: unknown): Harness {
   return harness({
