@@ -18,7 +18,7 @@ import type {
   KnowledgeRecordsInspectOutput,
 } from '@vostride/agent-qa-schema'
 
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const KNOWLEDGE_RECORDS_INSPECT_FUNCTION_ID = 'knowledge.records.inspect'
 
@@ -50,6 +50,12 @@ export const knowledgeRecordsInspectSpec: FunctionSpec<
   input: KnowledgeRecordsInspectInputSchema,
   output: KnowledgeRecordsInspectOutputSchema,
   risk: { name: `fn:${KNOWLEDGE_RECORDS_INSPECT_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * An inspection that answered — the count, and no record content (399.1 D-01).
+   */
+  classify(output): ClauseVerdict {
+    return { status: 'executed', outcome: `${output.records.length} record(s) inspected` }
+  },
   async invoke(input, deps) {
     // The filter crosses UNCHANGED. Narrowing or defaulting it here would be a second query
     // planner sitting above the one that already exists, and the two would answer differently

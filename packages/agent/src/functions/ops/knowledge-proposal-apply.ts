@@ -19,7 +19,7 @@
 import { KnowledgeApplyOutcomeSchema, KnowledgeProposalApplyInputSchema } from '@vostride/agent-qa-schema'
 import type { KnowledgeApplyOutcomeDto, KnowledgeProposalApplyInput } from '@vostride/agent-qa-schema'
 
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 import { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from './knowledge-review-ids.js'
 
 export { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from './knowledge-review-ids.js'
@@ -61,6 +61,19 @@ export const knowledgeProposalApplySpec: FunctionSpec<
     recognized: true,
     readOnly: false,
     declaredTier: 'mutating-shared',
+  },
+  /**
+   * `applied | already-applied` — idempotency, not refusal (399.1 D-01, plan 03's razor).
+   *
+   * The same union `config.proposal.apply` carries and the same reading: a second apply of one
+   * proposal is the store reporting a state it found. The verb applied travels with it, because
+   * `forget` and `write` are very different things to have committed.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `${output.outcome}: ${output.proposal.verb} ${output.proposal.proposalId}`,
+    }
   },
   invoke(input, deps) {
     // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a refusal at

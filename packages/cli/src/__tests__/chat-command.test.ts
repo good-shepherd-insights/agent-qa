@@ -201,12 +201,20 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     // render that never reads `outcome` is a person told what an invocation MIGHT cost and never
     // what it DID. The field is pinned here on the deterministic turn every other case drives, so
     // the claim is about the render rather than about a fan-out fixture: for a non-authoring op the
-    // outcome is exactly `${functionId} completed`, and the shipped line renders the functionId and
-    // the clause as separate fields, so the contiguous string cannot appear unless `outcome` does.
+    // outcome is the op's own one-line map, and the shipped line renders the functionId and the
+    // clause as separate fields, so the contiguous string cannot appear unless `outcome` does.
+    //
+    // 2026-08-20 (399.1-04): THE LINE MOVED AND THE CLAIM DID NOT. `proposals.list` declares a
+    // classifier now — `classify` is a REQUIRED member of `FunctionSpec` as of plan 04 — so the
+    // engine's `${functionId} completed` fallback is not what this op reports any more. The op's
+    // own one-line map is, and the string below is it for an EMPTY inbox, which is what this
+    // fixture workspace has. It is still a contiguous string the shipped line renders only by
+    // printing `outcome`: the functionId and the clause are separate fields, and neither of them
+    // is this sentence.
     const configPath = fixtureWorkspace(roots)
     const result = await runChat(configPath, [], ['proposals', '/quit'])
 
-    expect(result.stdout).toContain('proposals.list completed')
+    expect(result.stdout).toContain('0 proposal(s) in the inbox')
   })
 
   it('prints the banner at most once, on open', async () => {

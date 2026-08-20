@@ -41,7 +41,7 @@ import type { AuthoringFunnelGetInput, AuthoringFunnelGetOutput } from '@vostrid
 
 import { projectAuthoringFunnel } from '../../authoring/funnel.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 /**
  * Lowercase dot taxonomy (384 D-15), three segments: the shipped `authoring` domain, `funnel` as
@@ -82,6 +82,17 @@ export const authoringFunnelGetSpec: FunctionSpec<
   input: AuthoringFunnelGetInputSchema,
   output: AuthoringFunnelGetOutputSchema,
   risk: { name: `fn:${AUTHORING_FUNNEL_GET_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * The funnel's OWN one line, not a second one composed here (399.1 D-01 · WTST-05).
+   *
+   * `line` is the single rendered sentence every surface prints, and it is screened against the
+   * forbidden phrasings before the contract will carry it. Composing a receipt line out of the
+   * counters instead would be a second funnel rendering — unscreened, and free to call a high keep
+   * rate an achievement, which is the exact misreading D-13 exists to prevent.
+   */
+  classify(output): ClauseVerdict {
+    return { status: 'executed', outcome: output.line }
+  },
   async invoke(input, deps: FunctionDeps) {
     const authoringFunnel = deps.authoringFunnel
     if (authoringFunnel === undefined) {

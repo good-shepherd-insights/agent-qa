@@ -37,7 +37,7 @@ import type { AuthoringVerifyDraftInput, DraftReceipt } from '@vostride/agent-qa
 
 import { evaluateDraft } from '../../authoring/verify-draft.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const AUTHORING_DRAFT_VERIFY_FUNCTION_ID = 'authoring.draft.verify'
 
@@ -152,6 +152,20 @@ export const authoringVerifyDraftSpec: FunctionSpec<AuthoringVerifyDraftInput, D
     name: `fn:${AUTHORING_DRAFT_VERIFY_FUNCTION_ID}`,
     recognized: true,
     declaredTier: 'mutating-local',
+  },
+  /**
+   * A RECEIPT'S VERDICT ABOUT A DRAFT IS AN ANSWER, not a refusal (399.1 D-01, plan 03's razor).
+   *
+   * `rejected` here is the gate saying what it found about somebody's draft — the verification ran
+   * and produced its finding. `refused` is for a control declining an act it would otherwise have
+   * carried out, and nothing was declined: the act WAS carrying out the verification.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `verified — disposition ${output.disposition}, `
+        + `${output.gateRuns.length} gate run(s)`,
+    }
   },
   async invoke(input, deps) {
     // `invokeFunction` already refused this composition on the same fact, so reaching here with no

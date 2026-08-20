@@ -452,6 +452,23 @@ export interface FunctionStreamSpec<Input = unknown, Element = unknown>
   resultKind: 'stream'
   input: z.ZodType<Input>
   output: z.ZodType<Element>
+  /**
+   * What a stream op's RESULT meant, folded over the acquisition rather than over an element
+   * (2026-08-20, Phase 399.1 D-01).
+   *
+   * IT IS HANDED THE STREAM, NOT AN ELEMENT, AND THE TYPE SAYS SO. `foldFunctionResult` runs on the
+   * composition root's return path with whatever `invoke` answered in hand, and for a stream op
+   * that is the iterable. Declaring this over `Element` would have been a signature promising an
+   * argument the runtime never passes.
+   *
+   * IT MUST NOT CONSUME WHAT IT IS GIVEN. Reading an element to decide a verdict would eat the
+   * first event of the caller's replay — a side effect, on a member both this and
+   * {@link FunctionSpec.classify} contract as pure. What a stream op can honestly report is that
+   * the acquisition SUCCEEDED, which is a real fact here: the header above insists the stream is
+   * acquired inside `invoke` precisely so an acquisition refusal is a throw rather than a stream
+   * that dies half-delivered.
+   */
+  classify?(output: FunctionStream<Element>): ClauseVerdict
   invoke(input: Input, deps: FunctionDeps): Promise<FunctionStream<Element>>
 }
 

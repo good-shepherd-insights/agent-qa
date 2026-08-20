@@ -36,7 +36,7 @@ import { clusterVerdicts } from '../../analysis/cluster.js'
 import { renderVerdictSentence } from '../../analysis/render-sentence.js'
 import { templateSentenceParts } from '../../jobs/kinds.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 import { RunNotFoundError } from './runs-get.js'
 
 /**
@@ -109,6 +109,19 @@ export const analysisGetSpec: FunctionSpec<AnalysisGetInput, AnalysisGetOutput> 
   input: AnalysisGetInputSchema,
   output: AnalysisGetOutputSchema,
   risk: { name: `fn:${ANALYSIS_GET_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * An analysis is an ANSWER, and its verdicts are what it answered (399.1 D-01).
+   *
+   * COUNTS AND THE RUN REF, never a sentence out of the artifact: the receipt is a map (392's
+   * charter) and every verdict sentence is on `results[]`, which D-04 renders in full beside it.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `analysis for ${output.runId} — ${output.verdicts.length} verdict(s), `
+        + `${output.clusters.length} cluster(s)`,
+    }
+  },
   async invoke(input, deps: FunctionDeps) {
     const analysis = deps.analysis
     if (analysis === undefined) {

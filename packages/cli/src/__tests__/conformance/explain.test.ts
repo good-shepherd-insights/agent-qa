@@ -730,18 +730,26 @@ describe('the grounded explain answer rides the turn a person reads (398-13, D-2
     // length that the receipt is a map and that its ONE exception is one field on one op. D-21
     // honoured that rather than amending it, and this is the cell that reds if a later change
     // quietly puts the territory back inside the map.
+    //
+    // THE LINE MOVED IN 399.1-04 AND THE CLAIM DID NOT. `agent.explain` reported the engine's
+    // fallback `<op> completed` while it declared no classifier; plan 04 makes `classify` a
+    // REQUIRED member, so the op now says how the explain went in its own words. What is pinned
+    // here is unchanged in kind — a MAP: a status word and a COUNT of citations, with no byte of
+    // the answer in it. The `not.toContain(row.description)` assertion above is the half that
+    // survives any future rewording of this line, and the literal below is the half that reds if
+    // somebody makes the outcome expressive enough to be worth reading instead of the answer.
     expect(
       result.receipts.map((receipt) => ({
         functionId: receipt.functionId,
         status: receipt.status,
         outcome: receipt.outcome,
       })),
-      'the explain receipt is no longer the plain completed line',
+      'the explain receipt is no longer the op\'s own one-line map',
     ).toEqual([
       {
         functionId: EXPLAIN_FUNCTION_ID,
         status: 'executed',
-        outcome: `${EXPLAIN_FUNCTION_ID} completed`,
+        outcome: 'answered — 1 capability citation(s)',
       },
     ])
 

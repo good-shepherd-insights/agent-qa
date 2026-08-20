@@ -34,7 +34,7 @@ import { GrantsRevokeInputSchema, GrantsRevokeOutputSchema } from '@vostride/age
 import type { GrantsRevokeInput, GrantsRevokeOutput } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 /** The literal appears here once; every surface names the constant (384 D-15). */
 export const GRANTS_REVOKE_FUNCTION_ID = 'grants.revoke'
@@ -53,6 +53,23 @@ export const grantsRevokeSpec: FunctionSpec<GrantsRevokeInput, GrantsRevokeOutpu
     recognized: true,
     readOnly: false,
     declaredTier: 'mutating-shared',
+  },
+  /**
+   * `no-grant` IS AN ORDINARY ANSWER — the contract says so in its own header (399.1 D-01).
+   *
+   * "An id pasted out of a stale listing, a second click, a grant somebody else already withdrew."
+   * None of those is a control declining an act; each is the ledger reporting what the caller
+   * found. Both arms are `executed`, and the outcome says which.
+   */
+  classify(output): ClauseVerdict {
+    switch (output.outcome) {
+      case 'revoked':
+        return { status: 'executed', outcome: `revoked ${output.grant.grantId}` }
+      case 'no-grant':
+        return { status: 'executed', outcome: `no-grant: ${output.grantId}` }
+      default:
+        return output satisfies never
+    }
   },
   async invoke(input, deps: FunctionDeps) {
     const grants = deps.standingGrants

@@ -25,7 +25,7 @@ import { GrantsListInputSchema, GrantsListOutputSchema } from '@vostride/agent-q
 import type { GrantsListInput, GrantsListOutput } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 /** The literal appears here once; every surface names the constant (384 D-15). */
 export const GRANTS_LIST_FUNCTION_ID = 'grants.list'
@@ -39,6 +39,21 @@ export const grantsListSpec: FunctionSpec<GrantsListInput, GrantsListOutput> = {
   input: GrantsListInputSchema,
   output: GrantsListOutputSchema,
   risk: { name: `fn:${GRANTS_LIST_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * A listing that answered, with BOTH counts (399.1 D-01).
+   *
+   * The refused-line count travels on the receipt too, because a ledger that could not read some of
+   * its own lines and reported only the grants it managed to parse would be a listing that looks
+   * complete. `refusedLines` is not a refusal of the OP — the op answered — it is part of what it
+   * answered, so the status stays `executed` and the number is said out loud.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `${output.grants.length} standing grant(s), `
+        + `${output.refusedLines.length} unreadable ledger line(s)`,
+    }
+  },
   async invoke(_input, deps: FunctionDeps) {
     const grants = deps.standingGrants
     if (grants === undefined) {

@@ -8,7 +8,7 @@ import { KnowledgeBundleSummarySchema, KnowledgeBundlesListInputSchema } from '@
 import type { KnowledgeBundleSummary, KnowledgeBundlesListInput } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const KNOWLEDGE_BUNDLES_LIST_FUNCTION_ID = 'knowledge.bundles.list'
 
@@ -27,6 +27,12 @@ export const knowledgeBundlesListSpec: FunctionSpec<
   input: KnowledgeBundlesListInputSchema,
   output: z.array(KnowledgeBundleSummarySchema),
   risk: { name: `fn:${KNOWLEDGE_BUNDLES_LIST_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * A listing that answered — the count, and nothing out of a bundle (399.1 D-01).
+   */
+  classify(output): ClauseVerdict {
+    return { status: 'executed', outcome: `${output.length} knowledge bundle(s)` }
+  },
   async invoke(_input, deps) {
     const rows = await deps.knowledge.listBundles()
     // The op owns its own total order rather than inheriting whatever a composition's

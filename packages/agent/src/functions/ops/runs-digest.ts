@@ -44,7 +44,7 @@ import type {
 
 import { renderAnalysisClusterBlock } from '../../analysis/render-cluster-block.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 import { analysisGetSpec } from './analysis-get.js'
 import { RunNotFoundError } from './runs-get.js'
 import { projectPostProcessingChips, runsPostProcessingSpec } from './runs-post-processing.js'
@@ -265,6 +265,21 @@ export const runsDigestSpec: FunctionSpec<RunsDigestInput, RunDigest> = {
   input: RunsDigestInputSchema,
   output: RunDigestSchema,
   risk: { name: `fn:${RUNS_DIGEST_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * REFS AND COUNTS, which is this op's own law rather than a house style (399.1 D-01 · 391 D-18).
+   *
+   * The digest's `lines` are its rendered territory and they travel on `results[]`, which D-04
+   * prints in full. A receipt line reaching into them would put a run's story inside the map — the
+   * exact thing D-18 pinned this op's whole shape around.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `digest for ${output.runId} — `
+        + `${output.proposalsMintedThisRun.length} proposal(s) minted, `
+        + `${output.pendingProposalCount} pending`,
+    }
+  },
   async invoke(input, deps: FunctionDeps) {
     const inbox = deps.proposalsInbox
     if (inbox === undefined) {

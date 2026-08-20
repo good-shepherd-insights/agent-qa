@@ -26,7 +26,7 @@ import type {
   KnowledgeProposeOutcomeDto,
 } from '@vostride/agent-qa-schema'
 
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 import { KNOWLEDGE_REJECT_PROPOSE_FUNCTION_ID } from './knowledge-review-ids.js'
 
 export { KNOWLEDGE_REJECT_PROPOSE_FUNCTION_ID } from './knowledge-review-ids.js'
@@ -40,6 +40,23 @@ export const knowledgeRejectProposeSpec: FunctionSpec<KnowledgeRejectProposeInpu
   output: KnowledgeProposeOutcomeSchema,
   boundThrough: 'knowledgeReview',
   risk: { name: `fn:${KNOWLEDGE_REJECT_PROPOSE_FUNCTION_ID}`, recognized: true, readOnly: false },
+  /**
+   * `target-not-found` IS ABSENCE, WHICH IS AN ANSWER (399.1 D-01, plan 03's razor).
+   *
+   * A ref that names nothing is an ordinary human mistake — pasted out of a stale message, typed
+   * from a screenshot — and the store is intact. `refused` would send a person hunting for a
+   * guardrail. The echoed target travels on `results[]`, which D-04 renders in full.
+   */
+  classify(output): ClauseVerdict {
+    switch (output.kind) {
+      case 'proposed':
+        return { status: 'executed', outcome: `proposed ${output.proposal.proposalId}` }
+      case 'target-not-found':
+        return { status: 'executed', outcome: 'target-not-found: nothing was proposed' }
+      default:
+        return output satisfies never
+    }
+  },
   invoke({ runId, ...input }, deps) {
     // Non-null: `boundThrough` makes an absent review port an `unbound` listing and a refusal at
     // the gate, so dispatch is only reached in a composition that supplied one. The two answers

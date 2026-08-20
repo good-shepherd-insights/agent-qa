@@ -123,11 +123,19 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     // (D-01: one turn, two surfaces), so it shares the omission too — fixing one alone would leave
     // a person's scripted run and their conversation disagreeing about what an invocation cost.
     // `Runs consumed: N (previewed up to M)` rides `ClauseReceipt.outcome`; this pins that the
-    // field reaches stdout at all, on the deterministic turn (`${functionId} completed`).
+    // field reaches stdout at all, on the deterministic turn.
+    //
+    // 2026-08-20 (399.1-04): THE LINE MOVED AND THE CLAIM DID NOT. `proposals.list` declares a
+    // classifier now — `classify` is a REQUIRED member of `FunctionSpec` as of plan 04 — so the
+    // engine's `${functionId} completed` fallback is not what this op reports any more. The op's
+    // own one-line map is, and the string below is it for an EMPTY inbox, which is what this
+    // fixture workspace has. It is still a contiguous string the shipped line renders only by
+    // printing `outcome`: the functionId and the clause are separate fields, and neither of them
+    // is this sentence.
     const configPath = fixtureWorkspace(roots)
     const result = await runAsk(configPath, ['proposals'])
 
-    expect(result.stdout).toContain('proposals.list completed')
+    expect(result.stdout).toContain('0 proposal(s) in the inbox')
   })
 
   it('(A3) binds a presentation port on the SAME stream its confirm prompts on', async () => {

@@ -25,7 +25,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const RUNS_START_FUNCTION_ID = 'runs.start'
 
@@ -93,6 +93,19 @@ export const runsStartSpec: FunctionSpec<RunsStartInput, RunStartAcknowledgement
     name: `fn:${RUNS_START_FUNCTION_ID}`,
     recognized: true,
     declaredTier: 'mutating-local',
+  },
+  /**
+   * AN ACKNOWLEDGEMENT IS A START, NOT AN OUTCOME (399.1 D-01).
+   *
+   * This op returns when the run has been ACCEPTED, long before it has a verdict — so the outcome
+   * names the run a person can follow and how much it took on, and says nothing about how it went.
+   * A refusal to start is a throw and already reaches the engine's `failed` mapping.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `started ${output.runId} — ${output.testCount} test(s) on ${output.scope}`,
+    }
   },
   async invoke(input, deps) {
     // `invokeFunction` already refused this composition on the same fact, so reaching here

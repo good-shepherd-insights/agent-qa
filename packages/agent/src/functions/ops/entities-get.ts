@@ -15,7 +15,7 @@ import type { EntitiesGetInput, EntityCard } from '@vostride/agent-qa-schema'
 import { readEntityCardContext } from '../entity-cards/card-context.js'
 import { produceEntityCard } from '../entity-cards/produce-card.js'
 import { ENTITIES_GET_FUNCTION_ID } from './entities-ids.js'
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export { ENTITIES_GET_FUNCTION_ID }
 
@@ -43,6 +43,16 @@ export const entitiesGetSpec: FunctionSpec<EntitiesGetInput, EntityCard> = {
   input: EntitiesGetInputSchema,
   output: EntityCardSchema as FunctionSpec<EntitiesGetInput, EntityCard>['output'],
   risk: { name: `fn:${ENTITIES_GET_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * A card that came back is a card that was found (399.1 D-01).
+   *
+   * Absence is a THROW here (`EntityNotFoundError`), not an arm, so the one returning shape is a
+   * hit. THE ADDRESS AND NOTHING ELSE: `kind` and `id` are the card's own name, and every fact on
+   * it travels on `results[]`.
+   */
+  classify(output): ClauseVerdict {
+    return { status: 'executed', outcome: `found ${output.kind} ${output.id}` }
+  },
   async invoke(input, deps) {
     const descriptor = await deps.entities.get(input.ref)
     if (descriptor === undefined) throw new EntityNotFoundError(input.ref)

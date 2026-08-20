@@ -30,7 +30,7 @@ import {
 import type { QuarantineListInput, QuarantineListOutput } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 /**
  * Lowercase dot taxonomy (384 D-15): a new `quarantine` domain, one noun. Quarantine state is
@@ -54,6 +54,16 @@ export const quarantineListSpec: FunctionSpec<QuarantineListInput, QuarantineLis
   input: QuarantineListInputSchema,
   output: QuarantineListOutputSchema,
   risk: { name: `fn:${QUARANTINE_LIST_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * A ledger listing that answered — the count, and no entry's identity legs (399.1 D-01).
+   */
+  classify(output): ClauseVerdict {
+    const count = output.entries.length
+    return {
+      status: 'executed',
+      outcome: `${count} quarantine entr${count === 1 ? 'y' : 'ies'}`,
+    }
+  },
   async invoke(_input, deps: FunctionDeps) {
     const quarantine = deps.quarantine
     if (quarantine === undefined) {

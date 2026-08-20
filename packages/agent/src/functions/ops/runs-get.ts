@@ -14,7 +14,7 @@ import type {
   Verdict,
 } from '@vostride/agent-qa-schema'
 
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const RUNS_GET_FUNCTION_ID = 'runs.get'
 
@@ -103,6 +103,18 @@ export const runsGetSpec: FunctionSpec<RunsGetInput, RunDetail> = {
   input: RunsGetInputSchema,
   output: RunDetailSchema,
   risk: { name: `fn:${RUNS_GET_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * A run that came back is a run that was found (399.1 D-01).
+   *
+   * Absence is `RunNotFoundError`, a throw, which already reaches the engine's `failed` mapping.
+   * The verdict a run ENDED with is not this clause's verdict: a failing run is a successful read.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `${output.runId} — ${output.aggregateVerdict}, ${output.tests.length} test(s)`,
+    }
+  },
   async invoke(input, deps) {
     const document = await deps.runs.get(input.runId)
     if (document === undefined) {

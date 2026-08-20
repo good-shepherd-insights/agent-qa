@@ -33,7 +33,7 @@ import type { CatalogRow, ExplainInput, ExplainOutput } from '@vostride/agent-qa
 import { closestCapabilities, renderExplainOutput } from '../../explain/index.js'
 import type { CapabilityCatalogPort } from '../../explain/index.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 /**
  * Lowercase dot taxonomy (384 D-15): the `agent` domain, already a pinned member of the conformance
@@ -130,6 +130,35 @@ export const explainSpec: FunctionSpec<ExplainInput, ExplainOutput> = {
   renderResult(output): readonly string[] {
     const parsed = ExplainOutputSchema.safeParse(output)
     return parsed.success ? parsed.data.renderedLines : []
+  },
+  /**
+   * AN ABSTENTION IS AN HONEST ANSWER, NOT A CONTROL DECLINING (399.1 D-01/D-02, plan 03's razor).
+   *
+   * XPLN-02's whole claim is that "the catalog does not ground an answer" is a result this op is
+   * PROUD of. Folding it to `refused` would tell a person a guardrail stopped their question when
+   * what happened is that the question was answered truthfully.
+   *
+   * COUNTS AND NO TERRITORY, and here that is load-bearing rather than stylistic. The answer text
+   * is this op's `renderResult` output and reaches the turn's `answer` field; a receipt outcome
+   * carrying a cited row's description would put the territory back inside the map, which is the
+   * one thing `explain.test.ts`'s receipt-charter cell exists to red on.
+   */
+  classify(output): ClauseVerdict {
+    switch (output.kind) {
+      case 'answer':
+        return {
+          status: 'executed',
+          outcome: `answered — ${output.citations.length} capability citation(s)`,
+        }
+      case 'abstention':
+        return {
+          status: 'executed',
+          outcome: `abstention — not grounded; `
+            + `${output.closestRowIds.length} closest row(s) offered`,
+        }
+      default:
+        return output satisfies never
+    }
   },
   async invoke(input, deps: FunctionDeps) {
     const port = deps.capabilityCatalog

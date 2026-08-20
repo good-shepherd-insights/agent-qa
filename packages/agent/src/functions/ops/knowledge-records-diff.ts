@@ -11,7 +11,7 @@ import type {
   RecordChange,
 } from '@vostride/agent-qa-schema'
 
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const KNOWLEDGE_RECORDS_DIFF_FUNCTION_ID = 'knowledge.records.diff'
 
@@ -48,6 +48,19 @@ export const knowledgeRecordsDiffSpec: FunctionSpec<
   input: KnowledgeRecordsDiffInputSchema,
   output: KnowledgeRecordsDiffOutputSchema,
   risk: { name: `fn:${KNOWLEDGE_RECORDS_DIFF_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * A diff that answered, WITH ITS BASELINE (399.1 D-01).
+   *
+   * The ordinal rides the outcome for the contract's own reason: "a change list with no baseline is
+   * a list whose meaning depends on remembering the question", and a receipt line is exactly the
+   * artifact that gets pasted somewhere the question is gone.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `${output.changes.length} change(s) since ordinal ${output.sinceOrdinal}`,
+    }
+  },
   async invoke(input, deps) {
     const changes = await deps.knowledge.diffSince(input)
     return {

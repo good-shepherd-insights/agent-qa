@@ -80,11 +80,18 @@ GOLDEN="$ROOT/$GOLDEN_REL"
 # hole that is invisible precisely because nothing ever fires through it. `classify.mjs` reports the
 # misses and the gate FATALs on them.
 #
+# THE FOURTH NAME (2026-08-20, 399.1-04) is the classifier census's ledger-agreement cell, and it is
+# eligible on the same rule rather than on a new one: its subject is the committed golden's
+# `classifies` column disagreeing with the live registry. Its two SIBLING cells in the same file —
+# the "every capability declares a classifier" leg and the both-ways census — measure the TREE and
+# are deliberately NOT listed, so a regen attempted while an op ships without a fold still refuses.
+#
 # A PLAIN MULTI-LINE STRING, not a heredoc inside a command substitution — measured on the bash 3.2
 # macOS ships, where the heredoc form dies at an unrelated line with `arg: unbound variable`.
 ALLOWED_RED_NAMES="the parity suite ranges the registry census over every rostered surface matches the committed golden registry, op by op and field by field
 the capability catalog regenerates byte-identically from the live seams into the committed artifact (D-03)
-the capability catalog census carries exactly the capabilities the committed golden ledger records (D-01)"
+the capability catalog census carries exactly the capabilities the committed golden ledger records (D-01)
+399.1 D-01 — the classifier census: no capability ships without a fold agrees with the committed ledger, so an op that STOPS folding is a reviewed diff"
 # Vacuity floor. A gate that passed because the suite collected nothing is the CI-shaped version of
 # the failure this whole phase exists to prevent. Measured 2026-08-16: 71 tests in the directory;
 # 2026-08-17 (398-07): 133, after 398's manifest, catalog and explain cells joined the same suite.

@@ -58,7 +58,7 @@ import type {
 
 import { applyablePayload } from '../../config-mutation/construct.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 export const CONFIG_PROPOSAL_APPLY_FUNCTION_ID = 'config.proposal.apply'
 
@@ -232,6 +232,25 @@ export const configProposalApplySpec: FunctionSpec<ConfigProposalApplyInput, Con
     recognized: true,
     readOnly: false,
     declaredTier: 'mutating-shared',
+  },
+  /**
+   * TWO ARMS, AND NEITHER IS A REFUSAL (2026-08-20, 399.1 D-01/D-02 · plan 03's census).
+   *
+   * This op was on plan 03's floor and the census took it off: `ConfigApplyOutcome` is
+   * `applied | already-applied` and nothing else. `already-applied` is idempotency — a second
+   * click, a retried job — which is the op reporting a state it FOUND rather than a control
+   * declining an act. The refusal this family can make lives at the PROPOSE verbs, which classify
+   * it through `config-propose-verdict.ts`, and at `proposals.accept`, which folds `not-applyable`.
+   */
+  classify(output): ClauseVerdict {
+    switch (output.outcome) {
+      case 'applied':
+        return { status: 'executed', outcome: 'applied: the configuration change was committed' }
+      case 'already-applied':
+        return { status: 'executed', outcome: 'already-applied: nothing was committed again' }
+      default:
+        return output satisfies never
+    }
   },
   invoke(input, deps: FunctionDeps): Promise<ConfigApplyOutcome> {
     return applyConfigProposalById(deps, CONFIG_PROPOSAL_APPLY_FUNCTION_ID, input.proposalId)

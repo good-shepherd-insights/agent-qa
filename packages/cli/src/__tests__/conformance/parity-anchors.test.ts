@@ -386,8 +386,18 @@ describe('the built-binary anchors (D-02)', () => {
       // at open and each starter is a catalog row's own description — so committed row text is
       // already in this child's stdout before any turn runs. A cell that asked "does some row
       // description appear in stdout" would pass on the unwired build and prove nothing. The search
-      // therefore runs over the stdout slice AFTER the single receipt marker, and the marker's
-      // uniqueness is asserted so the slice cannot be silently widened by a second occurrence.
+      // therefore runs over the stdout slice AFTER a marker, and the marker's uniqueness is
+      // asserted so the slice cannot be silently widened by a second occurrence.
+      //
+      // THE MARKER IS THE ECHOED CLAUSE, NOT `<op> completed` (moved 2026-08-20, 399.1-04). It was
+      // the receipt line, which the engine printed only while `agent.explain` declared no
+      // classifier — plan 04 makes `classify` a REQUIRED member of `FunctionSpec`, the op now
+      // reports its own one-line verdict, and that string no longer exists to mark on. This is the
+      // idiom `render-anchors.test.ts` already uses for exactly this reason, and it costs the cell
+      // nothing it was relying on: the starter prompts are printed at OPEN, before the clause is
+      // typed and echoed, so everything after the echo is still the one turn this cell means. The
+      // slice is WIDER by one receipt line, and that line is a map — an op id and a verdict, never
+      // a catalog row's description — so it cannot be what the search below finds.
       expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
       expect(
         existsSync(CLI_ENTRY),
@@ -409,11 +419,11 @@ describe('the built-binary anchors (D-02)', () => {
         'the spawned chat binary did not exit cleanly',
       ).toMatchObject({ code: 0, signal: null })
 
-      const marker = `${EXPLAIN_FUNCTION_ID} completed`
+      const marker = CHAT_EXPLAIN_UTTERANCE
       const markerIndex = outcome.stdout.indexOf(marker)
       expect(
         markerIndex,
-        `the spawned chat binary never reported "${marker}" for "${CHAT_EXPLAIN_UTTERANCE}"; its `
+        `the spawned chat binary never echoed the clause "${marker}"; its `
         + `stdout was ${JSON.stringify(outcome.stdout.slice(0, 800))} and its stderr `
         + `${JSON.stringify(outcome.stderr.trim().slice(0, 400))}`,
       ).toBeGreaterThanOrEqual(0)

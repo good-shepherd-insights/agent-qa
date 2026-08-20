@@ -172,21 +172,34 @@ import { FanOutReportSchema, renderFanOutReport } from '@vostride/agent-qa-schem
 import { registryInternals } from './registry.js'
 ANCHOR
 
-# --- S, edit 2: the exception stops being one op's — the runner ignores the spec it was handed
-#     and folds any UNDECLARED op's result with `authoring.draft.write`'s rule. It leaves the
+# --- S, edit 2: the exception stops being one op's — the shared runner appends
+#     `authoring.draft.write`'s disclosure to whatever verdict ANY op declared. It leaves the
 #     declaring op alone on purpose: the claim under attack is "one field, on ONE op", so a
 #     mutation that also changed that op's own line would red R's cells too and the three red sets
-#     would stop being disjoint — which is the property that proves they are not restatements.
+#     would stop being disjoint — which is the property that proves they are not restatements. The
+#     `includes` guard is what buys that: the declaring op's outcome already ENDS with the rendered
+#     report, so it is left byte-identical while every other op's line grows one.
+#
+#     2026-08-20 (399.1-04): THIS ANCHOR MOVED, AND THE REASON IS THE PLAN THAT MOVED IT. S used to
+#     mutate the runner's `spec.classify === undefined` branch — the seat an UNDECLARED op reached.
+#     Plan 04 makes `classify` a REQUIRED member of `FunctionSpec`, so no composed host has an
+#     undeclared op left and that branch is unreachable: the mutation would have compiled, changed
+#     nothing, and this script would have FATALed "mutation S measures nothing", which is the design
+#     working. The widening it models is unchanged in kind and now has exactly one place left to be
+#     written — what the runner does with the verdict an op DID declare.
 cat > "$WORK/s2.from" <<'ANCHOR'
-  if (spec.classify === undefined) return LEGACY_VERDICT
+    const answered: unknown = spec.classify(payload as never)
+    return isClauseVerdict(answered) ? answered : UNCLASSIFIABLE
 ANCHOR
 cat > "$WORK/s2.to" <<'ANCHOR'
-  if (spec.classify === undefined) {
+    const answered: unknown = spec.classify(payload as never)
+    const verdict = isClauseVerdict(answered) ? answered : UNCLASSIFIABLE
     const leaked = FanOutReportSchema.safeParse((payload as { fanOut?: unknown } | null)?.fanOut)
-    return leaked.success
-      ? { status: 'executed', outcome: renderFanOutReport(leaked.data) }
-      : LEGACY_VERDICT
-  }
+    if (!leaked.success) return verdict
+    const report = renderFanOutReport(leaked.data)
+    return verdict.outcome.includes(report)
+      ? verdict
+      : { status: verdict.status, outcome: `${verdict.outcome} — ${report}` }
 ANCHOR
 
 # --- T: the typed parse becomes a cast, so a malformed result reaches the renderer.

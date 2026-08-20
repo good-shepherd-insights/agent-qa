@@ -31,7 +31,7 @@ import { ProposalsRejectInputSchema, ProposalsRejectOutputSchema } from '@vostri
 import type { ProposalsRejectInput, ProposalsRejectOutput } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 export const PROPOSALS_REJECT_FUNCTION_ID = 'proposals.reject'
 
@@ -45,6 +45,32 @@ export const proposalsRejectSpec: FunctionSpec<ProposalsRejectInput, ProposalsRe
   input: ProposalsRejectInputSchema,
   output: ProposalsRejectOutputSchema,
   risk: { name: `fn:${PROPOSALS_REJECT_FUNCTION_ID}`, recognized: true, readOnly: false },
+  /**
+   * FIVE ARMS, NONE OF THEM A CONTROL DECLINING (399.1 D-01/D-02, plan 03's census).
+   *
+   * Four of them are the ways a proposal is already spoken for, and the contract keeps them apart
+   * because a person acts differently on each. Not one is a guardrail refusing a reject it would
+   * otherwise have carried out: they are the inbox reporting the state the caller found, which is
+   * the same reading `proposals.accept` applies to its own `already-rejected` and `apply-in-flight`.
+   * The refusals at THAT verb (`not-applyable`, `expired`) have no counterpart here — rejecting is
+   * the decision a blocked or expired proposal is still available for.
+   */
+  classify(output): ClauseVerdict {
+    switch (output.outcome) {
+      case 'rejected':
+        return { status: 'executed', outcome: `rejected ${output.entry.envelope.id}` }
+      case 'already-applied':
+        return { status: 'executed', outcome: 'already-applied: nothing was rejected' }
+      case 'already-rejected':
+        return { status: 'executed', outcome: 'already-rejected: somebody got there first' }
+      case 'apply-in-flight':
+        return { status: 'executed', outcome: `apply-in-flight: ${output.proposalId}` }
+      case 'not-found':
+        return { status: 'executed', outcome: `not-found: ${output.proposalId}` }
+      default:
+        return output satisfies never
+    }
+  },
   async invoke(input, deps: FunctionDeps) {
     const inbox = deps.proposalsInbox
     if (inbox === undefined) {

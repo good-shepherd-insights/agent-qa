@@ -23,11 +23,13 @@ import type {
   ChatSessionHandle,
   ChatSessionHeader,
   FunctionCaller,
+  ProposalsListOutput,
   SessionLogPort,
 } from '@vostride/agent-qa-schema'
 
 import {
   FAN_OUT_PHRASES,
+  ProposalsListOutputSchema,
   buildFanOutReport,
   computeFanOutBound,
   renderFanOutReport,
@@ -186,12 +188,19 @@ interface HarnessOptions {
  * The ops this harness folds through the REAL composition-root fold (399.1-03).
  *
  * TWO SPECS, AND THE SECOND ONE IS THE MEASUREMENT. `authoring.draft.write` declares the fan-out
- * disclosure; `proposals.list` declares nothing at all, and routing it through the SAME
- * `foldFunctionResult` is what lets the blast-radius cell below see a shared runner that started
- * folding everybody's result with one op's rule. While the exception was an id comparison inside
- * `turn-engine.ts` that widening was one deleted line away and `394-fan-out-report-mutation.sh`
- * mutation S made it; the fold is a member of one spec now, so the only place the same widening can
- * still be written is the runner's spec lookup — which is exactly where mutation S now goes.
+ * disclosure; `proposals.list` declares a classifier that says only how many proposals it listed,
+ * and routing it through the SAME `foldFunctionResult` is what lets the blast-radius cell below see
+ * a shared runner that started folding everybody's result with one op's rule. While the exception
+ * was an id comparison inside `turn-engine.ts` that widening was one deleted line away and
+ * `394-fan-out-report-mutation.sh` mutation S made it; the fold is a member of one spec now, so the
+ * only place the same widening can still be written is the runner's post-classify seat — which is
+ * exactly where mutation S now goes.
+ *
+ * 2026-08-20 (399.1-04): `proposals.list` USED TO DECLARE NOTHING, and mutation S attacked the
+ * runner's absent-classifier branch. `classify` is a REQUIRED member now — there is no undeclared
+ * op left anywhere in the registry to leak onto — so both the control below and mutation S moved
+ * onto the seat that still exists: what the runner does with the verdict an op DID declare. The
+ * claim is unchanged: one field, on one op.
  *
  * Spelled as the specs THEMSELVES rather than mimicked: a hand-written stand-in would be a second
  * copy of the disclosure, and these cells would then agree with the copy while the shipped fold
@@ -213,6 +222,28 @@ const FOLD_REGISTRY = createRegistryFromSpecs(
 const FOLD_IDS: ReadonlySet<string> = new Set(
   [AUTHORING_DRAFT_WRITE_FUNCTION_ID, PROPOSALS_LIST],
 )
+
+/**
+ * An EMPTY inbox, produced through `proposals.list`'s own output contract (399.1-04).
+ *
+ * PRODUCED, NEVER TYPED. The op declares a classifier as of plan 04, and a classifier is run over
+ * whatever this seat answers with — so a hand-written `{ ok: true }` would hand the shipped fold an
+ * input its contract cannot produce, and the fail-closed guard would answer
+ * `failed/unclassifiable-result` for a cell whose subject is something else entirely. Parsing it
+ * here means a fixture describing an impossible shape reds AT THIS LINE.
+ */
+const PROPOSALS_LIST_RESULT: ProposalsListOutput = ProposalsListOutputSchema.parse({ entries: [] })
+
+/**
+ * What the invoke seat answers when a cell did not say — per op, because ops now read their results.
+ *
+ * `{ ok: true }` remains the answer for every op OUTSIDE `FOLD_IDS`: nothing folds those here, so
+ * the value is never read and a produced fixture for each would be ceremony. The ops that ARE
+ * folded get a real one.
+ */
+function defaultResultFor(functionId: string): unknown {
+  return functionId === PROPOSALS_LIST ? PROPOSALS_LIST_RESULT : { ok: true }
+}
 
 function harness(options: HarnessOptions = {}): Harness {
   const log = memoryLog()
@@ -270,7 +301,7 @@ function harness(options: HarnessOptions = {}): Harness {
       // production, and is also what `foldFunctionResult` REFUSES to answer for an id its registry
       // does not hold (fail-closed) — so the guard is here rather than a `failed` verdict every
       // ordering cell would then have to explain.
-      const payload = options.results?.[functionId] ?? { ok: true }
+      const payload = options.results?.[functionId] ?? defaultResultFor(functionId)
       if (!FOLD_IDS.has(functionId)) {
         return Promise.resolve({
           payload,
@@ -858,10 +889,14 @@ describe('D-18 exception — the authoring receipt carries the fan-out report (3
     // The D-18 blast radius, measured. The exception is a named branch, not "render whatever the
     // result carried": a fix that appended a report to every receipt would pass all three cells
     // above and red this one, which is what makes them a subset rather than restatements.
-    const run = harness({ results: { [PROPOSALS_LIST]: { fanOut: HAPPY_REPORT } } })
+    // The result carries a parsable report AND is a real `proposals.list` output, so the only
+    // reason its line could grow the disclosure is a runner that stopped asking whose rule it is.
+    const run = harness({
+      results: { [PROPOSALS_LIST]: { ...PROPOSALS_LIST_RESULT, fanOut: HAPPY_REPORT } },
+    })
     const result = await run.runTurn({ message: 'proposals' })
 
-    expect(result.receipts[0]?.outcome).toBe(`${PROPOSALS_LIST} completed`)
+    expect(result.receipts[0]?.outcome).toBe('0 proposal(s) in the inbox')
     expect(result.receipts[0]?.outcome).not.toContain(FAN_OUT_PHRASES.reportLead)
   })
 

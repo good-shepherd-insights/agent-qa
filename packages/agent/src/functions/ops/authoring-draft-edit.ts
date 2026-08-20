@@ -64,7 +64,7 @@ import type { EntityBinding } from '../../authoring/entity-binding.js'
 import { screenDraftForCredentials } from '../../authoring/loop.js'
 import { buildTieredPrompt } from '../../prompt/tiered-prompt-builder.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const AUTHORING_DRAFT_EDIT_FUNCTION_ID = 'authoring.draft.edit'
 
@@ -200,6 +200,19 @@ export const authoringDraftEditSpec: FunctionSpec<
     name: `fn:${AUTHORING_DRAFT_EDIT_FUNCTION_ID}`,
     recognized: true,
     declaredTier: 'mutating-local',
+  },
+  /**
+   * An edit that returned STAGED a draft — there is no arm where it did not (399.1 D-01).
+   *
+   * Every refusal this op can make is a THROW (the never-guess binder, the region fence, the
+   * parser), which already reaches the engine's own `failed` mapping. What returns is one shape,
+   * and the honest report of it is what was edited and how much changed.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `edited ${output.editedFrom.testName} — ${output.patches.length} patch op(s) staged`,
+    }
   },
   async invoke(input, deps) {
     const shelf = deps.draftShelf

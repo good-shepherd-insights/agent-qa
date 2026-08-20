@@ -18,7 +18,7 @@ import { ProposalsListInputSchema, ProposalsListOutputSchema } from '@vostride/a
 import type { ProposalsListInput, ProposalsListOutput } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 /**
  * Lowercase dot taxonomy (384 D-15): a new `proposals` domain, one noun.
@@ -44,6 +44,12 @@ export const proposalsListSpec: FunctionSpec<ProposalsListInput, ProposalsListOu
   input: ProposalsListInputSchema,
   output: ProposalsListOutputSchema,
   risk: { name: `fn:${PROPOSALS_LIST_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * An inbox listing that answered — the count, and nothing out of an entry (399.1 D-01).
+   */
+  classify(output): ClauseVerdict {
+    return { status: 'executed', outcome: `${output.entries.length} proposal(s) in the inbox` }
+  },
   async invoke(input, deps: FunctionDeps) {
     const inbox = deps.proposalsInbox
     if (inbox === undefined) {

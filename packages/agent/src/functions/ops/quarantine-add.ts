@@ -51,7 +51,7 @@ import {
 import type { QuarantineAddInput, QuarantineAddOutput } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 /** The literal appears here once; every surface names the constant (384 D-15). */
 export const QUARANTINE_ADD_FUNCTION_ID = 'quarantine.add'
@@ -65,6 +65,22 @@ export const quarantineAddSpec: FunctionSpec<QuarantineAddInput, QuarantineAddOu
   input: QuarantineAddInputSchema,
   output: QuarantineAddOutputSchema,
   risk: { name: `fn:${QUARANTINE_ADD_FUNCTION_ID}`, recognized: true, readOnly: false },
+  /**
+   * `renewed` IS IDEMPOTENCY, AND THE CONTRACT CALLS IT INFORMATION (399.1 D-01).
+   *
+   * "Already quarantined is information an operator acts on, not an error" — so both arms are
+   * `executed` and the outcome says which gesture the ledger recorded.
+   */
+  classify(output): ClauseVerdict {
+    switch (output.kind) {
+      case 'entered':
+        return { status: 'executed', outcome: 'entered: a new quarantine window was opened' }
+      case 'renewed':
+        return { status: 'executed', outcome: 'renewed: an open window was extended' }
+      default:
+        return output satisfies never
+    }
+  },
   async invoke(input, deps: FunctionDeps) {
     const quarantine = deps.quarantine
     if (quarantine === undefined) {

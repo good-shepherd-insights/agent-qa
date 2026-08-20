@@ -25,7 +25,7 @@ import { readEntityCardContext } from '../entity-cards/card-context.js'
 import type { EntityCardContext } from '../entity-cards/card-context.js'
 import { produceEntityCard } from '../entity-cards/produce-card.js'
 import { ENTITIES_RESOLVE_FUNCTION_ID } from './entities-ids.js'
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export { ENTITIES_RESOLVE_FUNCTION_ID }
 
@@ -86,6 +86,29 @@ export const entitiesResolveSpec: FunctionSpec<EntitiesResolveInput, EntityCardR
   input: EntitiesResolveInputSchema,
   output: EntityCardResolutionSchema,
   risk: { name: `fn:${ENTITIES_RESOLVE_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * THREE ARMS, ALL ANSWERS (399.1 D-01, plan 03's razor).
+   *
+   * `ambiguous` and `none` are the resolver refusing to GUESS, which is the never-guess contract
+   * doing exactly what it promises — a resolution it will not invent is the answer to the question
+   * asked, not a control declining an act. Reporting either as `refused` would send a person
+   * looking for a guardrail that never fired.
+   */
+  classify(output): ClauseVerdict {
+    switch (output.kind) {
+      case 'resolved':
+        return { status: 'executed', outcome: `resolved to ${output.card.id}` }
+      case 'ambiguous':
+        return {
+          status: 'executed',
+          outcome: `ambiguous — ${output.candidates.length} candidates, none picked`,
+        }
+      case 'none':
+        return { status: 'executed', outcome: `none: ${output.reason}` }
+      default:
+        return output satisfies never
+    }
+  },
   async invoke(input, deps) {
     // Read-tier despite D-01's lazy mint, and the distinction is deliberate: minting records
     // an ADDRESS for something that already existed. It creates no entity, changes no

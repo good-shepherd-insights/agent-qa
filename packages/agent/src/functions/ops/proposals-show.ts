@@ -15,7 +15,7 @@ import { ProposalsShowInputSchema, ProposalsShowOutputSchema } from '@vostride/a
 import type { ProposalsShowInput, ProposalsShowOutput } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 export const PROPOSALS_SHOW_FUNCTION_ID = 'proposals.show'
 
@@ -28,6 +28,19 @@ export const proposalsShowSpec: FunctionSpec<ProposalsShowInput, ProposalsShowOu
   input: ProposalsShowInputSchema,
   output: ProposalsShowOutputSchema,
   risk: { name: `fn:${PROPOSALS_SHOW_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * "Absence is a RESULT rather than a refusal" — this contract's own header (399.1 D-01).
+   */
+  classify(output): ClauseVerdict {
+    switch (output.kind) {
+      case 'found':
+        return { status: 'executed', outcome: `found ${output.entry.envelope.id}` }
+      case 'not-found':
+        return { status: 'executed', outcome: `not-found: ${output.proposalId}` }
+      default:
+        return output satisfies never
+    }
+  },
   async invoke(input, deps: FunctionDeps) {
     const inbox = deps.proposalsInbox
     if (inbox === undefined) {

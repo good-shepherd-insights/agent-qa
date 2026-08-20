@@ -7,7 +7,7 @@
 import { RunsListInputSchema, RunsListOutputSchema } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, RunSummary, RunsListInput } from '@vostride/agent-qa-schema'
 
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const RUNS_LIST_FUNCTION_ID = 'runs.list'
 
@@ -38,6 +38,12 @@ export const runsListSpec: FunctionSpec<RunsListInput, RunSummary[]> = {
   // tier — allow in every execution context. The verdict is still computed and audited
   // (D-11): there is no read bypass, only a read classification.
   risk: { name: `fn:${RUNS_LIST_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * A listing that answered — the count, and nothing out of a run (399.1 D-01).
+   */
+  classify(output): ClauseVerdict {
+    return { status: 'executed', outcome: `${output.length} completed run(s)` }
+  },
   async invoke(_input, deps) {
     const documents = await deps.runs.list()
     return documents

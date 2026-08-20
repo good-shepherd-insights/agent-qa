@@ -25,7 +25,7 @@ import type {
   ServedRetrievalTraceV1,
 } from '@vostride/agent-qa-schema'
 
-import type { FunctionSpec, StepEvidenceLookup } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec, StepEvidenceLookup } from '../spec.js'
 
 export const KNOWLEDGE_BRIEF_WHY_FUNCTION_ID = 'knowledge.brief.why'
 
@@ -130,6 +130,23 @@ export const knowledgeBriefWhySpec: FunctionSpec<BriefWhyInput, BriefWhyResult> 
   input: BriefWhyInputSchema,
   output: BriefWhyResultSchema,
   risk: { name: `fn:${KNOWLEDGE_BRIEF_WHY_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * `no-trace` IS THE HONEST ABSENCE THIS VERB EXISTS FOR (399.1 D-01).
+   *
+   * KREV-02's whole posture is that a brief whose trace is gone must be SAID to be gone rather than
+   * re-derived; the op that answers it is given no serving capability at all. That is an answer the
+   * verb is proud of, not a control declining, so the arm is `executed` with the store's own reason.
+   */
+  classify(output): ClauseVerdict {
+    switch (output.kind) {
+      case 'answered':
+        return { status: 'executed', outcome: 'answered from the persisted retrieval trace' }
+      case 'no-trace':
+        return { status: 'executed', outcome: `no-trace: ${output.reason}` }
+      default:
+        return output satisfies never
+    }
+  },
   async invoke(input, deps) {
     // The DTO speaks a plain string because it crosses a process boundary as JSON; the port
     // speaks the branded id every other run read uses. Narrowing HERE, once, is what keeps both

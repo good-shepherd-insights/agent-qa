@@ -28,7 +28,7 @@ import {
 import type { QuarantineReleaseInput, QuarantineReleaseOutput } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 /** The literal appears here once; every surface names the constant (384 D-15). */
 export const QUARANTINE_RELEASE_FUNCTION_ID = 'quarantine.release'
@@ -45,6 +45,22 @@ export const quarantineReleaseSpec: FunctionSpec<
   input: QuarantineReleaseInputSchema,
   output: QuarantineReleaseOutputSchema,
   risk: { name: `fn:${QUARANTINE_RELEASE_FUNCTION_ID}`, recognized: true, readOnly: false },
+  /**
+   * `no-entry` IS "an ordinary answer to an ordinary question" — the contract's words (399.1 D-01).
+   */
+  classify(output): ClauseVerdict {
+    switch (output.kind) {
+      case 'released':
+        return { status: 'executed', outcome: 'released: the quarantine window was closed' }
+      case 'no-entry':
+        return {
+          status: 'executed',
+          outcome: 'no-entry: nothing was quarantined under that identity',
+        }
+      default:
+        return output satisfies never
+    }
+  },
   async invoke(input, deps: FunctionDeps) {
     const quarantine = deps.quarantine
     if (quarantine === undefined) {

@@ -27,7 +27,7 @@ import { AgentAskInputSchema, AgentAskResultSchema } from '@vostride/agent-qa-sc
 import type { AgentAskInput, AgentAskResult } from '@vostride/agent-qa-schema'
 
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionDeps, FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 
 /**
  * Lowercase dot taxonomy (384 D-15): the `agent.` domain's first verb.
@@ -67,6 +67,33 @@ export const agentAskSpec: FunctionSpec<AgentAskInput, AgentAskResult> = {
   // turn is a variable-reach capability, so describing it as a read would let a gate ladder treat
   // the door to every write verb as the cheapest thing in the registry.
   risk: { name: `fn:${AGENT_ASK_FUNCTION_ID}`, recognized: true, readOnly: false },
+  /**
+   * A TURN's own report of how it went (2026-08-20, Phase 399.1 D-01/D-02).
+   *
+   * ON THE TURN STATUS, which is the only fact about a turn this op is entitled to fold — the
+   * per-clause verdicts are already receipts and re-deriving one from them here would be a second
+   * opinion about a question each clause has answered for itself.
+   *
+   * `fail_closed` IS `failed` AND NOT `refused`. D-02 minted `refused` for a GUARDRAIL declining an
+   * op; a fail-closed turn is the ENGINE abandoning the clauses after one of them broke, which is
+   * an operation that did not complete. Reporting it `refused` would tell a person a control
+   * declined their request when what happened is that something went wrong.
+   */
+  classify(output): ClauseVerdict {
+    switch (output.status) {
+      case 'completed':
+        return {
+          status: 'executed',
+          outcome: `turn completed — ${output.results.length} clause result(s)`,
+        }
+      case 'fail_closed':
+        return { status: 'failed', outcome: 'fail_closed: the turn carried nothing out' }
+      case 'failed':
+        return { status: 'failed', outcome: 'the turn failed' }
+      default:
+        return output.status satisfies never
+    }
+  },
   async invoke(input, deps: FunctionDeps) {
     const turn = deps.chatTurn
     // An explicit presence check rather than a try/catch, on the `runs-digest.ts` reasoning:

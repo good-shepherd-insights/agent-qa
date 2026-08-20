@@ -19,7 +19,7 @@ import type {
   KnowledgeRecordShowResult,
 } from '@vostride/agent-qa-schema'
 
-import type { FunctionSpec } from '../spec.js'
+import type { ClauseVerdict, FunctionSpec } from '../spec.js'
 
 export const KNOWLEDGE_RECORD_SHOW_FUNCTION_ID = 'knowledge.record.show'
 
@@ -34,6 +34,19 @@ export const knowledgeRecordShowSpec: FunctionSpec<
   input: KnowledgeRecordShowInputSchema,
   output: KnowledgeRecordShowResultSchema,
   risk: { name: `fn:${KNOWLEDGE_RECORD_SHOW_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * "Absence is a RESULT rather than a refusal" — the contract's own words (399.1 D-01).
+   */
+  classify(output): ClauseVerdict {
+    switch (output.kind) {
+      case 'found':
+        return { status: 'executed', outcome: 'found — the record with its provenance' }
+      case 'not-found':
+        return { status: 'executed', outcome: `not-found: ${output.recordId}` }
+      default:
+        return output satisfies never
+    }
+  },
   invoke(input, deps) {
     // The id crosses verbatim, including one shaped like a path. That is safe for a structural
     // reason and not a hopeful one: the reader resolves an id against the records it

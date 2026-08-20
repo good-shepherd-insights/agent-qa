@@ -28,7 +28,12 @@ import type {
 
 import { chainJobIdsForRun } from '../../jobs/chain-identity.js'
 import { FunctionNotBoundError } from '../spec.js'
-import type { FunctionSpec, PostProcessingChainState, PostProcessingJobRow } from '../spec.js'
+import type {
+  ClauseVerdict,
+  FunctionSpec,
+  PostProcessingChainState,
+  PostProcessingJobRow,
+} from '../spec.js'
 
 /**
  * All lowercase, and that is a measurement rather than a taste.
@@ -98,6 +103,20 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
   input: RunsPostProcessingInputSchema,
   output: PostProcessingStatusSchema,
   risk: { name: `fn:${RUNS_POST_PROCESSING_FUNCTION_ID}`, recognized: true, readOnly: true },
+  /**
+   * THE THREE CHIPS, WHICH ARE THE WHOLE ANSWER (399.1 D-01).
+   *
+   * A chip reading `failed` is this op reporting a CHAIN's state truthfully; the read succeeded.
+   * Folding a red chip into the clause's own status would make "the post-run chain broke" and "I
+   * could not tell you about the post-run chain" the same line on a receipt.
+   */
+  classify(output): ClauseVerdict {
+    return {
+      status: 'executed',
+      outcome: `chain for ${output.runId} — analysis ${output.chips.analysis}, `
+        + `curation ${output.chips.curation}, issues ${output.chips.issues}`,
+    }
+  },
   async invoke(input, deps) {
     // `invokeFunction` already refused this composition on the same fact; reaching here with no
     // port means an in-layer caller holding the spec directly, and the refusal is the same
