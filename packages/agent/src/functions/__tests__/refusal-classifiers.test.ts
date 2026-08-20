@@ -14,7 +14,8 @@
 // an op that grows a refusal arm without a classifier is a named red rather than a silent
 // `executed`.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 import {
   AuthoringDraftWriteOutputSchema,
@@ -45,7 +46,7 @@ import { proposalsAcceptSpec } from '../ops/proposals-accept.js'
 import { createRegistryFromSpecs } from '../registry.js'
 import type { FunctionRegistry } from '../registry.js'
 import type { FunctionDeps, FunctionSpec } from '../spec.js'
-import { executableSource, scanFile } from './op-source-scan.js'
+import { classifyBodies, executableSource, scanFile, scanText } from './op-source-scan.js'
 
 // ---- fixtures, produced through the contracts ---------------------------------------------------
 
@@ -460,6 +461,117 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // make this cell pass forever over an empty string.
     expect(scan.statements.length).toBeGreaterThan(10)
     expect(scan.hits).toEqual([])
+  })
+
+  // ---- the same claim, over EVERY fold in the directory (399.1-04) ------------------------------
+
+  /** The ops directory, read from disk — never a list of file names somebody maintains. */
+  const OPS_DIR = new URL('../ops/', import.meta.url).pathname
+
+  /** Files that DECLARE a spec, which is the population the claim is about. */
+  function specFiles(): readonly string[] {
+    return readdirSync(OPS_DIR)
+      .filter((name) => name.endsWith('.ts'))
+      .filter((name) => {
+        const text = readFileSync(join(OPS_DIR, name), 'utf8')
+        return text.includes(': FunctionSpec<') || text.includes(': FunctionStreamSpec<')
+      })
+      .sort()
+  }
+
+  it('every spec file either declares a fold or points at the shared one — no third answer', () => {
+    // THE DISCOVERY PREDICATE IS THE WHOLE RISK, so it is derived and two-sided. The population is
+    // "files declaring a spec", read off the directory; the claim is that each one accounts for its
+    // fold in one of exactly two ways. A file that did neither would be a spec whose classifier
+    // lives somewhere this scan never looks — which is the shape of a census that is green because
+    // it cannot see the thing it is counting.
+    //
+    // THE SHARED-FOLD ARM IS NOT AN ESCAPE HATCH: `config-propose-verdict.ts` is itself in the
+    // hand-named list above AND its own body is scanned by the cell below, because it declares
+    // `classify` for the seven ops that point at it.
+    const unaccounted = specFiles().filter((name) => {
+      const text = readFileSync(join(OPS_DIR, name), 'utf8')
+      return classifyBodies(text).length === 0 && !text.includes('config-propose-verdict.js')
+    })
+
+    expect(
+      unaccounted,
+      'these files declare a capability whose result fold is neither written here nor delegated to '
+        + 'the shared config-propose fold — the scan below cannot see it, so it is unchecked',
+    ).toEqual([])
+
+    // …and the population is not empty, which every line above would pass on.
+    expect(specFiles().length, 'no spec files were discovered — this cell ranges nothing')
+      .toBeGreaterThan(30)
+  })
+
+  it('no fold in the ops directory inspects value CONTENT — every body, brace-matched', () => {
+    // The 399.1-03 three-file list widened to the whole directory, at the granularity that makes
+    // the widening possible: the fold BODY. A whole-file scan cannot be used here and the reason is
+    // recorded on `classifyBodies` — `authoring-verify-draft.ts` matches a draft file EXTENSION in
+    // a helper the fold never calls, and exempting it by name would be the door enumeration this
+    // rule exists to refuse.
+    const offenders: string[] = []
+    let bodiesScanned = 0
+
+    // OVER EVERY FILE IN THE DIRECTORY, not just the spec-declaring ones, so a future shared fold
+    // module written as a spec member is inside this scan on the day it lands rather than on the
+    // day somebody remembers.
+    for (const name of readdirSync(OPS_DIR).filter((entry) => entry.endsWith('.ts'))) {
+      for (const body of classifyBodies(readFileSync(join(OPS_DIR, name), 'utf8'))) {
+        bodiesScanned += 1
+        for (const hit of scanText(body, VALUE_SNIFFING).hits) offenders.push(`${name} :: ${hit}`)
+      }
+    }
+
+    expect(
+      offenders,
+      'a fold that sniffs its payload\'s content is the chat-side value matching D-01 rejected, '
+        + 'moved one file over and wearing the declaration\'s clothes',
+    ).toEqual([])
+
+    // Non-vacuity, and it is the load-bearing half: an extractor that returned nothing would make
+    // the loop above pass over an empty set forever. The number is the census's own arithmetic,
+    // measured 2026-08-20: 42 registered ops minus the SEVEN that delegate to
+    // `config-propose-verdict.ts` leaves 35 folds written as a spec member. The 36th — that shared
+    // module's `classifyConfigProposeOutput` — is a named exported function rather than a
+    // `classify(` member, so this extractor does not see it and the whole-file scan above does. An
+    // equality rather than a floor, because an op deleting its fold and this scan quietly ranging
+    // one body fewer is the drift a floor cannot see.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(35)
+  })
+
+  it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {
+    // A scanner nobody has seen fire is a comment, and an extractor nobody has seen return the
+    // right thing is a scanner over an empty string. Both halves are driven with synthetic source:
+    // one fold that reads a discriminant and one that reads content, in a file shaped like an op.
+    const planted = [
+      'export const probeSpec: FunctionSpec<never, never> = {',
+      '  classify(output): ClauseVerdict {',
+      "    if (output.message.toLowerCase().includes('denied')) return REFUSED",
+      '    return EXECUTED',
+      '  },',
+      '}',
+    ].join('\n')
+
+    const bodies = classifyBodies(planted)
+    expect(bodies.length, 'the extractor found no body in source that plainly has one').toBe(1)
+    expect(
+      scanText(bodies[0] ?? '', VALUE_SNIFFING).hits.length,
+      'the scan did not flag a fold that lowercases its payload and searches it for a word',
+    ).toBeGreaterThan(0)
+
+    // And the inverse: a fold that reads its own discriminant is NOT flagged. A scan that fired on
+    // everything would certify as little as one that fired on nothing.
+    const clean = classifyBodies([
+      'export const cleanSpec: FunctionSpec<never, never> = {',
+      '  classify(output): ClauseVerdict {',
+      "    return output.kind === 'found' ? FOUND : ABSENT",
+      '  },',
+      '}',
+    ].join('\n'))
+    expect(clean.length).toBe(1)
+    expect(scanText(clean[0] ?? '', VALUE_SNIFFING).hits).toEqual([])
   })
 
   it('folds on a DISCRIMINANT — the switch, spelled', () => {

@@ -94,3 +94,44 @@ export function scanText(text: string, forbidden: readonly string[]): SourceScan
 export function scanFile(path: string, forbidden: readonly string[]): SourceScan {
   return scanText(readFileSync(path, 'utf8'), forbidden)
 }
+
+/**
+ * Every `classify(...)` method BODY in a source file, brace-matched (399.1-04).
+ *
+ * WHY BODIES AND NOT WHOLE FILES. The 399.1-03 scan named three files by hand, which was honest
+ * while three ops declared a fold and became a door-enumeration rule the moment forty-two did — a
+ * rule that can only refuse what it can NAME cannot be driven to zero by naming more things. The
+ * obvious widening (scan every op file) does not work and the reason is worth recording:
+ * `authoring-verify-draft.ts` resolves a draft path with `lowered.endsWith(extension)`, which is a
+ * FILE EXTENSION check in a helper the fold never calls. A whole-file scan would flag it, and the
+ * only ways out would be a per-file exemption list — the same door enumeration one level up — or
+ * deleting correct code to satisfy a scanner.
+ *
+ * SO THE UNIT IS THE FOLD ITSELF. Braces are counted from the body's opening `{`, over text whose
+ * comments and string literals are already stripped, so a brace inside a doc comment or inside a
+ * template literal cannot end a body early. The caller scans what comes back.
+ */
+export function classifyBodies(source: string): readonly string[] {
+  const code = executableSource(source)
+  const bodies: string[] = []
+  let cursor = 0
+
+  for (;;) {
+    const at = code.indexOf('classify(', cursor)
+    if (at < 0) return bodies
+    const open = code.indexOf('{', at)
+    if (open < 0) return bodies
+
+    let depth = 0
+    let index = open
+    for (; index < code.length; index += 1) {
+      if (code[index] === '{') depth += 1
+      else if (code[index] === '}') {
+        depth -= 1
+        if (depth === 0) break
+      }
+    }
+    bodies.push(code.slice(open, index + 1))
+    cursor = index + 1
+  }
+}
