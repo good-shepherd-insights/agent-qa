@@ -485,6 +485,9 @@ importers:
       '@vostride/agent-qa-ids':
         specifier: workspace:*
         version: link:../ids
+      '@vostride/agent-qa-schema':
+        specifier: workspace:*
+        version: link:../schema
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1

@@ -1,3 +1,4 @@
+import type { AgentAskResult, ClauseReceiptStatus, ChatSessionEvent } from '@vostride/agent-qa-schema'
 
 export interface RunRow {
   id: string
@@ -1315,4 +1316,127 @@ export async function fetchHookNames(): Promise<{ names: string[] }> {
 
 export async function fetchCapturedVarNames(testId: string): Promise<{ names: string[] }> {
   return request(`/api/variables/captured/${encodeURIComponent(testId)}`)
+}
+
+// ---- The fourth door: dashboard chat (Phase 400 plan 06, DASH-01) ---------------------------
+//
+// FOUR WRAPPERS AND NO FIFTH. The door is `POST /api/chat/turn`, its stream, the confirm answer and
+// the served capability catalog; there is no per-capability endpoint to wrap because there is no
+// per-capability endpoint at all (397 D-03 — everything crosses one gated `agent.ask`). A helper
+// here named after a capability would be the first inch of the bespoke-handler surface the roster
+// exists to refuse.
+
+
+/** One executed clause's registry fold, as the door computes it beside the payload (399.1 D-04). */
+export interface ChatTurnFold {
+  functionId: string
+  verdict: { status: Exclude<ClauseReceiptStatus, 'not-run'>; outcome: string }
+  foldLines: string[]
+}
+
+/** What `POST /api/chat/turn` answers with — the typed result, whole, plus the folds beside it. */
+export interface ChatTurnResponse {
+  result: AgentAskResult
+  folds: ChatTurnFold[]
+}
+
+/** The three answers the browser confirm offers — the TTY's `[y/a/N]`, in a medium with buttons. */
+export type ChatConfirmAnswer = 'accept' | 'accept-always' | 'deny'
+
+export interface ChatConfirmRequestFrame {
+  confirmId: string
+  actionClass: string
+  preview?: string
+}
+
+export interface ChatConfirmResolvedFrame {
+  kind: 'confirm_resolved'
+  confirmId: string
+  answer: ChatConfirmAnswer
+  /** WHY it resolved — a person, or one of the two silences. Rendered, never inferred. */
+  by: 'answer' | 'timeout' | 'channel-closed'
+}
+
+export async function postChatTurn(input: {
+  message: string
+  sessionId?: string
+}): Promise<ChatTurnResponse> {
+  return postJson<ChatTurnResponse>('/api/chat/turn', input)
+}
+
+/**
+ * Answer one outstanding confirm.
+ *
+ * `sessionId` IS NOT REDUNDANT WITH THE CONFIRM ID and must not be "tidied away": the registry
+ * compares it against the session the question was parked for, so an id that leaked somewhere it
+ * should not have cannot be spent on somebody else's conversation (T-400-09).
+ */
+export async function answerChatConfirm(input: {
+  sessionId: string
+  confirmId: string
+  answer: ChatConfirmAnswer
+}): Promise<{ resolved: boolean; answer: ChatConfirmAnswer }> {
+  return postJson<{ resolved: boolean; answer: ChatConfirmAnswer }>('/api/chat/confirm', input)
+}
+
+/** One op row of the served capability catalog — the artifact's fourth projection. */
+export interface ChatCapabilityRow {
+  id: string
+  summary?: string
+  tier?: string
+}
+
+export async function fetchChatCapabilityCatalog(): Promise<{ ops: ChatCapabilityRow[] }> {
+  return request<{ ops: ChatCapabilityRow[] }>('/api/chat/catalog')
+}
+
+/**
+ * Watch one conversation.
+ *
+ * TWO KINDS OF FRAME ON ONE CONNECTION, and the callbacks keep them apart because the SERVER does:
+ * session events are a projection of a durable log and carry the `id:` a reconnect spends; confirm
+ * frames are transient facts about a question in flight and deliberately carry none (400-03). A
+ * consumer that folded them into one handler would be inviting the reconnect to ask for an id no
+ * window could hold.
+ */
+export function subscribeToChatSessionEvents(
+  sessionId: string,
+  callbacks: {
+    onSessionEvent?: (event: ChatSessionEvent) => void
+    onConfirmRequest?: (frame: ChatConfirmRequestFrame) => void
+    onConfirmResolved?: (frame: ChatConfirmResolvedFrame) => void
+    onPresent?: (text: string) => void
+    onOpen?: () => void
+  },
+): EventSource {
+  const source = new EventSource(
+    `${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}/events`,
+  )
+  source.addEventListener('open', () => { callbacks.onOpen?.() })
+
+  // The session-event kinds the door projects. Named rather than caught with a catch-all listener:
+  // `EventSource` has no wildcard, and a `message` handler would only ever see frames the server
+  // sent WITHOUT an `event:` line, which is none of these.
+  const SESSION_EVENT_KINDS = [
+    'user_message', 'stage_outcome', 'clause_receipt', 'clause_result', 'approval_decision',
+    'mark_unhandled', 'model_change', 'active_tools_change', 'compaction', 'aborted',
+    'turn_complete',
+  ] as const
+  for (const kind of SESSION_EVENT_KINDS) {
+    source.addEventListener(kind, (e) => {
+      callbacks.onSessionEvent?.(JSON.parse((e as MessageEvent).data) as ChatSessionEvent)
+    })
+  }
+
+  source.addEventListener('confirm_request', (e) => {
+    callbacks.onConfirmRequest?.(JSON.parse((e as MessageEvent).data) as ChatConfirmRequestFrame)
+  })
+  source.addEventListener('confirm_resolved', (e) => {
+    callbacks.onConfirmResolved?.(JSON.parse((e as MessageEvent).data) as ChatConfirmResolvedFrame)
+  })
+  source.addEventListener('chat_present', (e) => {
+    callbacks.onPresent?.((JSON.parse((e as MessageEvent).data) as { text: string }).text)
+  })
+
+  return source
 }

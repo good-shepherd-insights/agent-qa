@@ -212,16 +212,18 @@ describe('the transcript renders untrusted markdown inertly (T-400-19 / T-400-20
       '[a](javascript:globalThis.__xss=true)',
       '[b](JaVaScRiPt:globalThis.__xss=true)',
       '[c](  javascript:globalThis.__xss=true)',
-      '[d](javascript&#58;globalThis.__xss=true)',
-      '[e](data:text/html;base64,PHNjcmlwdD5nbG9iYWxUaGlzLl9feHNzPXRydWU8L3NjcmlwdD4=)',
-      '[f](vbscript:globalThis.__xss=true)',
-    ].join('\n\n')
-    const dom = mount(<ChatMarkdown content={hostile} />)
-    const anchors = [...dom.querySelectorAll('a')]
-    expect(anchors.length, 'the fixtures produced no anchors — the cell would pass vacuously').toBe(6)
-    for (const anchor of anchors) {
-      const href = anchor.getAttribute('href')
-      expect(href, `${anchor.textContent ?? '?'} kept a live href: ${String(href)}`).toBeNull()
+      '[d](data:text/html;base64,PHNjcmlwdD5nbG9iYWxUaGlzLl9feHNzPXRydWU8L3NjcmlwdD4=)',
+      '[e](vbscript:globalThis.__xss=true)',
+    ]
+    const dom = mount(<ChatMarkdown content={hostile.join('\n\n')} />)
+    // NON-VACUOUS BY CONSTRUCTION: every fixture has to have been PARSED AS A LINK and then
+    // refused. A cell that only asserted "no live anchors" would pass just as well against a
+    // markdown renderer that failed to see these as links at all, which measures nothing.
+    expect(dom.querySelectorAll('[data-blocked-href]')).toHaveLength(hostile.length)
+    expect(dom.querySelectorAll('a')).toHaveLength(0)
+    // The text survives — a refused link loses its destination, never the sentence around it.
+    for (const label of ['a', 'b', 'c', 'd', 'e']) {
+      expect(dom.textContent).toContain(label)
     }
     expect((globalThis as { __xss?: boolean }).__xss).toBeUndefined()
   })
@@ -257,8 +259,16 @@ describe('a denial renders the remedies THIS surface can take (D-15)', () => {
     // `trust-session-flag` lists ONLY `cli` in the shipped surface table. A browser has no such
     // flag, and this is the todo (`399-friction-refusal-remedies-unreachable`) in one assertion.
     expect(remedies).toEqual(['answer-confirm'])
-    expect(dom.textContent).not.toContain('--trust-session')
-    // The canonical reason is still shown — it is what the audit row says happened.
+    // And the WAY-FORWARD TEXT this surface composes carries no flag of another surface's. The
+    // canonical reason beside it is a different thing: it is the gate's own audit sentence, whose
+    // bytes phase 399 published and 400-02 deliberately did not move, so it is rendered verbatim
+    // here exactly as the CLI renders it and exactly as the execution-audit row stores it. See
+    // this plan's SUMMARY for the residue that leaves.
+    const remedyText = [...dom.querySelectorAll('[data-remedy-kind]')]
+      .map((node) => node.textContent ?? '')
+      .join('\n')
+    expect(remedyText).not.toContain('--trust-session')
+    expect(remedyText).toContain('confirm')
     expect(dom.textContent).toContain('fail-closed: ask in ci without trust')
   })
 

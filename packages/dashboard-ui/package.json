@@ -49,6 +49,7 @@
     "@fontsource-variable/geist-mono": "5.2.7",
     "@tanstack/react-table": "8.21.3",
     "@vostride/agent-qa-ids": "workspace:*",
+    "@vostride/agent-qa-schema": "workspace:*",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
