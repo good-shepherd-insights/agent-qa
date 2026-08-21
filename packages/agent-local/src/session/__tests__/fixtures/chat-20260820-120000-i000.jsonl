@@ -1,0 +1,6 @@
+{"schemaVersion":1,"sessionId":"chat-20260820-120000-i000","createdAt":"2026-08-20T12:00:00.000Z","model":"claude-sonnet-4-5","toolsetHash":"toolset-pre400"}
+{"kind":"user_message","turnId":"turn-pre400-0001","at":"2026-08-20T12:00:01.000Z","text":"list the runs"}
+{"kind":"stage_outcome","turnId":"turn-pre400-0001","at":"2026-08-20T12:00:02.000Z","stage":"resolver","outcome":"resolved"}
+{"kind":"clause_receipt","turnId":"turn-pre400-0001","at":"2026-08-20T12:00:03.000Z","clause":"list the runs","functionId":"runs.list","origin":"chat-resolver","status":"executed","outcome":"listed 0 runs"}
+{"kind":"clause_result","turnId":"turn-pre400-0001","at":"2026-08-20T12:00:04.000Z","functionId":"runs.list","payload":{"runs":[]}}
+{"kind":"turn_complete","turnId":"turn-pre400-0001","at":"2026-08-20T12:00:05.000Z","status":"completed"}
