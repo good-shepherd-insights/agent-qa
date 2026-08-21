@@ -546,6 +546,137 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
   })
 })
 
+// ---- The axis the shipped honesty cell held constant (400-13, gap 3 / D-05) ---------------------
+//
+// WHAT THE VERIFIER MEASURED, REPRODUCED AS A CELL. Every cell above varies ONE conversation: its
+// stream, its turn, its confirm. The defect gap 3 names lives in the space between two — a stream
+// open on conversation A made the whole PROCESS claim `local-interactive`, so conversation B, which
+// nobody was watching, had its ask-tier denial written to the audit ledger as `prompted-denied`. A
+// prompt nobody was shown. The sibling cell above (`denies an ask with no channel open`) says in
+// its own words what that means: "a `prompted-denied` here would mean the door claimed a prompt it
+// never showed anybody."
+//
+// THE ASSERTION IS THE AUDIT ROW'S OWN BYTES, not a predicate's return value — the row is what a
+// person reads afterwards when they ask what this door did, and it is the artifact the sibling cell
+// pins for the single-session shape of exactly this op.
+//
+// AND THE OTHER HALF OF THE SAME DEFECT: nothing may be asked in the WRONG transcript either, so
+// A's held stream is read for confirm frames it must never have carried.
+
+describe('a second conversation\'s stream cannot flip an unwatched conversation\'s posture', () => {
+  it('writes fail-closed-denied on B while A holds an open, idle stream (gap 3, axis A)', async () => {
+    // The window is short because a mutation that routes the confirm to A pays for it in wall
+    // clock here — the timer is the only way that mutation's confirm ever resolves.
+    const door = await openDoor({ timeoutMs: 300 })
+
+    // Conversation A: minted by a real turn, then WATCHED — a stream held open, and idle.
+    const sessionA = await openSession(door.origin)
+    const streamA = await openStream(door.origin, sessionA)
+    // The server decides when the channel is registered, so the cell waits on the server's own
+    // answer rather than sleeping a number.
+    const opened = Date.now()
+    while (!door.confirms.liveSessionIds().includes(sessionA) && Date.now() - opened < 5_000) {
+      await new Promise<void>((settled) => setTimeout(settled, 10))
+    }
+    expect(door.confirms.liveSessionIds(), 'A is not watched, so this cell would be a second copy '
+      + 'of the no-channel cell above').toEqual([sessionA])
+
+    // Conversation B: minted by its own turn, and nobody is watching it.
+    const sessionB = await openSession(door.origin)
+    expect(sessionB, 'both turns landed in one conversation, so no axis is varied')
+      .not.toBe(sessionA)
+
+    // THE ASK-TIER OP, ON THE UNWATCHED CONVERSATION.
+    const answered = await postTurn(door.origin, { message: ASK_UTTERANCE, sessionId: sessionB })
+    expect(answered.result.receipts.map((receipt) => ({
+      functionId: receipt.functionId,
+      status: receipt.status,
+      outcome: receipt.outcome,
+    }))).toEqual([{
+      functionId: 'knowledge.proposal.apply',
+      status: 'failed',
+      outcome: 'FunctionDeniedError',
+    }])
+
+    // THE WHOLE OF GAP 3, IN ONE STRING. `prompted-denied` here is the door claiming it showed
+    // somebody a question; the only conversation with a watcher was never asked anything.
+    expect(askRowsFor(door.configRoot).map((row) => row['outcome'])).toEqual(['fail-closed-denied'])
+
+    // THE WRONG-TRANSCRIPT HALF. A settle window first, so a green cannot come from asserting in
+    // the same tick the turn returned in: a confirm routed to A would already have been written to
+    // A's socket by the time the turn resolved, but the reader is a separate task.
+    const settleBy = Date.now() + 500
+    while (
+      Date.now() < settleBy
+      && !streamA.frames.some((frame) => frame.event === 'confirm_request')
+    ) {
+      await new Promise<void>((settled) => setTimeout(settled, 10))
+    }
+    expect(
+      streamA.frames.filter((frame) => frame.event === 'confirm_request'),
+      'B\'s question was put in front of the person watching A',
+    ).toEqual([])
+
+    expect(door.confirms.pendingCount()).toBe(0)
+    await streamA.close()
+  }, 20_000)
+})
+
+// ---- The `:id` this process never minted (400-13, gap 3 leg 2) ----------------------------------
+//
+// THE ROUTE IS THE POSTURE'S INPUT, so the route is where an unowned id has to be refused. The
+// verifier reached `local-interactive` by opening a stream on `chat-verifier-probe-unowned` — a
+// string, typed at a URL, that no session in this process ever minted — and the route registered a
+// confirm channel for it without asking anything.
+//
+// REFUSED ON THE RESPONSE, NEVER BY SILENT ABSENCE. A cell that asserted only "no channel appeared"
+// would pass against a route that had quietly stopped serving anybody; the 404 bytes are what tells
+// the two apart, and the driven accepts-control beside it is what stops the fix from being
+// "refuse everything".
+
+describe('the turn-events route serves only sessions this process minted', () => {
+  it('refuses an unminted :id with 404 before any channel opens, and serves a minted one (axis B)',
+    async () => {
+      const door = await openDoor()
+
+      const refused = await fetch(
+        `${door.origin}/api/chat/sessions/chat-400-13-never-minted/events`,
+      )
+      expect(refused.status).toBe(404)
+      expect(await refused.json()).toEqual({ error: 'Not found' })
+      // No channel, and therefore no posture input, was created by naming an id.
+      expect(door.confirms.liveSessionIds()).toEqual([])
+
+      // THE ACCEPTS-CONTROL, DRIVEN: a session a real turn minted streams normally — 200, the
+      // `:ok` prelude, and that turn's own events replayed.
+      const sessionId = await openSession(door.origin)
+      const controller = new AbortController()
+      const reaper = setTimeout(() => { controller.abort() }, 8_000)
+      let served = ''
+      try {
+        const accepted = await fetch(
+          `${door.origin}/api/chat/sessions/${sessionId}/events`,
+          { signal: controller.signal },
+        )
+        expect(accepted.status).toBe(200)
+        expect(accepted.headers.get('content-type')).toBe('text/event-stream')
+        const reader = accepted.body!.getReader()
+        const decoder = new TextDecoder()
+        while (!served.includes('event: turn_complete')) {
+          const chunk = await reader.read()
+          if (chunk.done) break
+          served += decoder.decode(chunk.value, { stream: true })
+        }
+      } finally {
+        clearTimeout(reaper)
+        controller.abort()
+      }
+      expect(served.startsWith(':ok\n\n'), `the served stream carried no prelude: ${served.slice(0, 40)}`)
+        .toBe(true)
+      expect(served, 'the minted session replayed none of its own turn').toContain('event: turn_complete')
+    }, 20_000)
+})
+
 // ---- The dual-host lease differential (Phase 400 plan 03 task 3, RESEARCH A3) -----------------
 //
 // WHAT IS BEING MEASURED, AND WHY IT IS NOT ALREADY KNOWN. CONTEXT's D-01 asserts that "the 386
