@@ -239,11 +239,11 @@ describe('the dashboard chat door dispatches one utterance end to end', () => {
     // DRIVEN THROUGH THE REAL GATE. `/pin` writes a deny into this conversation's overlay and the
     // second turn trips it, so the remedy below is minted by `buildDecisionRemedies`'s
     // `session-pin-denied` arm rather than by anything this file knows how to spell.
-    const pinned = await postTurn(door.origin, { message: '/pin fn:runs.digest' })
+    const pinned = await postTurn(door.origin, { message: '/pin fn:config.get' })
     expect(pinned.status).toBe(200)
     const sessionId = (pinned.body as ChatTurnResponse).result.sessionId
 
-    const denied = await postTurn(door.origin, { message: '/fn runs.digest {}', sessionId })
+    const denied = await postTurn(door.origin, { message: '/fn config.get {}', sessionId })
     expect(denied.status).toBe(200)
     const turn = denied.body as ChatTurnResponse
 
@@ -253,7 +253,7 @@ describe('the dashboard chat door dispatches one utterance end to end', () => {
       status: receipt.status,
       outcome: receipt.outcome,
     }))).toEqual([{
-      functionId: 'runs.digest',
+      functionId: 'config.get',
       status: 'failed',
       outcome: 'FunctionDeniedError',
     }])
@@ -261,8 +261,8 @@ describe('the dashboard chat door dispatches one utterance end to end', () => {
     // And beside it, what the browser needs to offer a way forward. The clause is named so a
     // compound turn's second denial is not silently attributed to its first.
     expect(turn.result.denials).toEqual([{
-      clause: '/fn runs.digest {}',
-      functionId: 'runs.digest',
+      clause: '/fn config.get {}',
+      functionId: 'config.get',
       reason: expect.stringContaining('session-pin-denied'),
       remedies: [{ kind: 'session-pin-final' }],
     }])

@@ -15,7 +15,7 @@
       "classifies": true,
       "id": "agent.ask",
       "inputSchemaDigest": "4263d0037103be319312c3933a8c3bc17f441fe2a8852ac4afd917e78db43f8d",
-      "outputSchemaDigest": "f7953727cfb05167d27ea29cc5bacc98b1fa8416f55cf6b0503c4da20ce57e9a",
+      "outputSchemaDigest": "1edd961bdf7954c4c467e0fc3f80972a196452002940b94e1ce49f111e01c669",
       "partition": {
         "kind": "unprojected",
         "reason": "agent-ask-delegation-deferral"
