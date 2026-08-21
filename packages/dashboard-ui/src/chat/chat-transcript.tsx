@@ -41,6 +41,24 @@ import type { ChatEntry, ChatTranscriptState, ChatTurnStatus } from "@/chat/use-
 import type { ChatCapabilityRow, ChatConfirmAnswer } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
+/**
+ * The identity of THIS MODULE INSTANCE, minted once when the module is evaluated (400-09, D-13).
+ *
+ * WHAT IT PROVES THAT A FIXED ATTRIBUTE CANNOT. `data-chat-transcript` says "something rendered a
+ * transcript here"; a second, per-placement renderer could carry the same attribute and the mount
+ * would look identical. D-13's claim is stronger and more specific — the `/chat` page and the
+ * global panel resolve to ONE module — and the only observable that distinguishes one module from
+ * two copies of it is a value the module minted for itself. Two mounts of one instance carry the
+ * same value; a second copy of this file, or a bundle that duplicated it into two chunks, carries
+ * two different ones.
+ *
+ * IT IS A PER-LOAD VALUE AND THAT IS DELIBERATE. Pinning a constant string would be an attribute
+ * anybody could copy into a second renderer, which is the exact thing being ruled out. Nothing
+ * reads it but a test and a person debugging; it is not an id, not a key, and nothing routes on it.
+ */
+export const CHAT_TRANSCRIPT_MODULE_ID = `ctm-${Math.random().toString(36).slice(2, 12)}`
+
+
 export interface ChatTranscriptViewProps {
   state: ChatTranscriptState
   status: ChatTurnStatus | string
@@ -125,7 +143,11 @@ export function ChatTranscriptView({
   }
 
   return (
-    <div data-chat-transcript className="flex min-h-0 flex-1 flex-col gap-3">
+    <div
+      data-chat-transcript
+      data-chat-transcript-module={CHAT_TRANSCRIPT_MODULE_ID}
+      className="flex min-h-0 flex-1 flex-col gap-3"
+    >
       <div
         data-chat-entries
         className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1"

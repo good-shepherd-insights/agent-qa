@@ -343,7 +343,16 @@ describe('app shell update banner route gate', () => {
       Array.from(provider?.children ?? []).map((element) =>
         element.getAttribute('data-testid'),
       ),
-    ).toEqual(['app-sidebar', 'sidebar-inset', 'product-tour-overlay', 'command-palette'])
+    ).toEqual([
+      'app-sidebar',
+      'sidebar-inset',
+      'product-tour-overlay',
+      'command-palette',
+      // 400-09: the chat panel's launcher, a direct child of the shell on every route but `/chat`.
+      // The panel itself is a portal and has never appeared in this list; the button that OPENS it
+      // does, and 400-06 shipped the panel with no opener at all.
+      'chat-panel-launcher',
+    ])
 
     cleanupRoot()
     vi.resetModules()
