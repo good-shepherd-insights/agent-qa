@@ -43,6 +43,28 @@ export interface ChatSessionHeader {
   createdAt: string
   model: string
   toolsetHash: string
+  /**
+   * WHICH DOOR OPENED THIS CONVERSATION (Phase 400, D-04) — optional, and on the HEADER.
+   *
+   * D-04 puts dashboard chat on this exact substrate "tagged with their surface". The obvious
+   * spelling is a field on each event, and it is the one thing this grammar cannot have: the guard
+   * below compares an EXACT key set per kind, so an extra field on any event kind makes every
+   * session file written before it unreadable by the build that comes after. The header's own
+   * guard is presence-based and tolerates keys it does not know, so the tag rides here, is written
+   * ONCE at create with the rest of the opening context, and never rewritten.
+   *
+   * ABSENT IS A REAL VALUE AND IT IS THE DEFAULT: a session opened by a host that did not name its
+   * surface. That is every file written before Phase 400 and every `agent-qa chat` session written
+   * after it — one population, not two, which is what keeps the absence unambiguous. Only a host
+   * that has a reason to distinguish itself supplies one, and `agent-qa dashboard` is the first.
+   *
+   * A PLAIN STRING RATHER THAN A CLOSED UNION, deliberately. The value is the surface's own name —
+   * the same word `FunctionCaller.surface` carries for the same door — and the surface roster grows
+   * by design (four doors today). A union here would make a session file written by a later build
+   * fail to typecheck against an older one for a field no decision is taken on: nothing branches on
+   * this value, it is a fact for a reader and a listing filter.
+   */
+  surface?: string
 }
 
 /**

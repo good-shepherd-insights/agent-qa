@@ -1662,6 +1662,23 @@ export interface ComposeLocalAgentInput {
    */
   readonly observeSessionEvent?: (sessionId: string, event: ChatSessionEvent) => void
   /**
+   * WHICH DOOR OPENED THE SESSIONS THIS COMPOSITION WRITES (400-03, D-04).
+   *
+   * ONE SUBSTRATE, TAGGED — never a second store. D-04's ruling is that dashboard conversations
+   * ride the exact `.agent-qa/sessions/chat-*.jsonl` log CLI chat writes, so what distinguishes
+   * them is a FIELD and not a directory: resume, compaction and the cleartext-masking adjudication
+   * (399.1 D-10) then apply once, to one population, rather than to two that drift.
+   *
+   * IT REACHES THE HEADER AND NOTHING ELSE. The event grammar's exact-key guard means a per-event
+   * tag would make every session file written before this change unreadable (Pitfall 4); the
+   * header guard is presence-based, so that is where the value goes and this passthrough is the
+   * only route to it.
+   *
+   * ABSENT ⇒ NO TAG, which is the pre-400 CLI-chat population and therefore what every host that
+   * does not supply one keeps writing.
+   */
+  readonly sessionSurface?: string
+  /**
    * The turn engine's reconciliation strategy (392 D-16).
    *
    * AN INTERNAL COMPOSITION OPTION, and every word of that is load-bearing. It is here so the
@@ -2275,6 +2292,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // conversation opened after it.
     model: () => composedChatModelName,
     toolsetHash: () => chatToolsetHash(composedRegistry),
+    // D-04's tag, conditionally spread so a host that names no surface composes a log byte-identical
+    // to the one every build before 400 composed.
+    ...(input.sessionSurface === undefined ? {} : { surface: input.sessionSurface }),
   })
 
   // 392-12 / CR-01: WHICH SESSIONS ARE OPEN RIGHT NOW, and which turns each of them has recorded.

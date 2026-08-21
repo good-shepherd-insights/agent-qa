@@ -217,6 +217,21 @@ export interface CreateJsonlSessionLogOptions {
   readonly model: () => string
   /** The toolset fingerprint at open, on the same thunk reasoning as `model` above. */
   readonly toolsetHash: () => string
+  /**
+   * WHICH DOOR THIS LOG BELONGS TO (Phase 400 plan 03, D-04). Absent ⇒ no tag is written.
+   *
+   * A VALUE AND NOT A THUNK, which is the opposite of `model` and `toolsetHash` above and for the
+   * mirror of their reason. Those are resolved lazily because a composition's model can arrive
+   * after the log does and can drift afterwards; a surface cannot. Which door composed this host is
+   * decided at the composition root and is a constant for the life of the process, so a thunk would
+   * be a seam for a value to change through — and a header is written once and never rewritten,
+   * so a changing surface has nowhere to go.
+   *
+   * ABSENT IS THE PRE-400 CLI-CHAT POSTURE, stated in `ChatSessionHeader.surface` and preserved
+   * here: a host that names no surface writes a header byte-identical to the ones every build
+   * before this one wrote.
+   */
+  readonly surface?: string
   /** Random source for the id suffix, injectable so a test can pin an id. */
   readonly random?: () => number
 }
@@ -310,6 +325,18 @@ function guardHeader(sessionId: string, line: string): ChatSessionHeader {
   }
   if (typeof header.createdAt !== 'string' || typeof header.model !== 'string') {
     throw new ChatSessionHeaderError(sessionId, 'its header names no creation instant or model')
+  }
+  // THE TAG IS OPTIONAL AND THE CHECK IS ON ITS TYPE, NOT ON ITS PRESENCE (400-03, D-04). An absent
+  // `surface` is the pre-400 CLI-chat population and passes untouched — that absence is the whole
+  // back-compatibility claim. A PRESENT one that is not a string is refused for the reason this
+  // whole guard exists: the cast below hands the caller a typed record, and a header that would
+  // make `header.surface` a number is a header this build cannot read rather than one it may
+  // quietly narrow.
+  if (header.surface !== undefined && typeof header.surface !== 'string') {
+    throw new ChatSessionHeaderError(
+      sessionId,
+      `its header names a surface of type ${typeof header.surface} and this build reads a string`,
+    )
   }
   return header as unknown as ChatSessionHeader
 }
@@ -595,6 +622,12 @@ export function createJsonlSessionLogOn(
         createdAt,
         model: options.model(),
         toolsetHash: options.toolsetHash(),
+        // CONDITIONALLY SPREAD, on the composition's own idiom (400-01) and for its reason: an
+        // unconditional `surface: options.surface` would put `"surface":undefined` through
+        // `JSON.stringify` — which drops it — but would also make an explicit `undefined` and an
+        // unsupplied option two spellings of one state at every call site above. Absent here means
+        // the option was never given, and that is exactly the pre-400 population's meaning.
+        ...(options.surface === undefined ? {} : { surface: options.surface }),
       }
       // Exclusive create, then fsync the header BEFORE the file is used, then fsync the directory
       // that now names it: a session file that exists at all is a session file whose header is on

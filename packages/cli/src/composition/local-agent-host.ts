@@ -498,6 +498,14 @@ export interface ComposeCliLocalAgentInput {
    */
   observeSessionEvent?: ComposeLocalAgentInput['observeSessionEvent']
   /**
+   * Which door opened the sessions this host writes (400-03, D-04), passed through untouched.
+   *
+   * The dashboard door supplies `'dashboard'`; `agent-qa chat` supplies nothing, which is the
+   * pre-400 population's own posture and keeps the CLI's header bytes exactly as they were. See
+   * the shared composition's own field for why the tag lives on the header rather than on events.
+   */
+  sessionSurface?: ComposeLocalAgentInput['sessionSurface']
+  /**
    * How this host reads configuration, MASKED (400-01, D-16).
    *
    * A passthrough with a default rather than a required argument, because there is exactly one
@@ -3502,6 +3510,9 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     ...(input.observeSessionEvent === undefined
       ? {}
       : { observeSessionEvent: input.observeSessionEvent }),
+    // 400-03, D-04: the session surface tag, conditionally spread on the idiom above so a host
+    // that names no surface writes the untagged header every pre-400 file carries.
+    ...(input.sessionSurface === undefined ? {} : { sessionSurface: input.sessionSurface }),
     // D-18: when a live daemon holds the writer lease, this host hands it the SAME
     // `knowledge.proposal.apply` envelope over the SAME 386 socket every other capability crosses,
     // and waits bounded for the receipt. It is a closure over `invokeViaDaemon` rather than a new

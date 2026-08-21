@@ -259,6 +259,16 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
       input.boundOrigin,
     ),
     resolveExecutionContext: input.resolveExecutionContext,
+    // D-04 (400-03): ONE substrate, tagged. A dashboard conversation rides the exact
+    // `.agent-qa/sessions/chat-*.jsonl` log `agent-qa chat` writes — resume, compaction and the
+    // cleartext-masking adjudication apply once, to one population — and what distinguishes it is
+    // this word on the session HEADER. Never on an event: the grammar's exact-key guard would make
+    // every pre-400 file unreadable (Pitfall 4).
+    //
+    // THE SAME WORD `DASHBOARD_FUNCTION_CALLER.surface` CARRIES, deliberately: the door that
+    // dispatched a turn and the door that opened its session are the same fact, and two spellings
+    // of it would be free to disagree.
+    sessionSurface: DASHBOARD_FUNCTION_CALLER.surface,
     // D-03: the door's half of the projection. The composition notifies this once per APPENDED
     // event; the fan-out is what turns one notification into however many browsers are watching.
     observeSessionEvent: (sessionId, event) => { sessionEvents.emit(sessionId, event) },
