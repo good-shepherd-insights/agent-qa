@@ -49,6 +49,8 @@ import {
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
   ConfigUndoProposeInputSchema,
+  ENTITY_DASHBOARD_ROUTES,
+  ENTITY_KINDS,
   EntitiesGetInputSchema,
   EntitiesResolveInputSchema,
   ExplainInputSchema,
@@ -76,6 +78,7 @@ import {
   RunsPostProcessingInputSchema,
   RunsStartInputSchema,
 } from '@vostride/agent-qa-schema'
+import type { EntityDashboardRouteGrain, EntityKind } from '@vostride/agent-qa-schema'
 import type { z } from 'zod'
 
 /**
@@ -277,6 +280,89 @@ export interface RenderExpectation {
 }
 
 /**
+ * What a person must be able to read off an ENTITY CARD, per kind, on every door (400-08, DASH-03).
+ *
+ * A COLUMN ON THIS TABLE AND NOT A SECOND CENSUS, on {@link RenderExpectation}'s own reasoning
+ * (399.1 D-09). DASH-03's parity clause holds the dashboard's card render and MCP's reference
+ * projection to ONE denominator; a dashboard-only card census beside this table would be a table
+ * measured against itself, and the two would drift in the direction of whichever was edited more.
+ *
+ * THE ROUTE HALF IS NOT WRITTEN HERE — IT IS READ. `ENTITY_DASHBOARD_ROUTES` is a SHIPPED contract
+ * in the schema package (`entity/dashboard-route.ts`), beside `ENTITY_URL_ROUTE` and for the reason
+ * that constant's docstring already gives: the dashboard's renderer mints hrefs from it, so a copy
+ * here would be a second route table free to say a kind has a page after the router stopped serving
+ * one. Spreading it is what makes "the same row measures both doors" a structural fact across a
+ * package boundary neither surface can import across — every package's `tsconfig.json` pins
+ * `rootDir` to its own `src`, so the two consumers reach one declaration through `schema` rather
+ * than through each other.
+ *
+ * WHAT THIS TABLE ADDS is the expectation the CONTRACT cannot carry: the fields a reader must
+ * actually be able to read. Those are the card's always-present contract fields rather than a
+ * per-kind selection, because hand-picking which fields matter per kind is the curation 399.1 D-04
+ * caught the drop site being, and it would let a kind quietly expect less.
+ */
+export interface EntityCardRenderCase {
+  readonly kind: EntityKind
+  /** The dashboard route TEMPLATE, or `null` — read off the shipped contract, never restated. */
+  readonly dashboardRoute: string | null
+  /** WHICH address fills the route's parameter — the grain a link is keyed by. */
+  readonly routeKeyedBy: EntityDashboardRouteGrain
+  /**
+   * The card fields a reader must be able to read on EVERY door, for a card of this kind.
+   *
+   * Non-empty in the type on {@link RenderExpectation}'s reasoning: a case with nothing to look for
+   * is a cell that passes on every build, including the one with no card render at all.
+   */
+  readonly markers: readonly [string, ...string[]]
+}
+
+/**
+ * The card's ALWAYS-PRESENT contract fields, sorted — the same derived-then-reviewed rule
+ * {@link RenderExpectation} states, applied to the card contract instead of to an op's output.
+ *
+ * `keyFacts` and `actions` are deliberately absent: they are arrays a kind may legally answer with
+ * empty (`BUG` advertises no actions at all, by D-03), so requiring them per kind would demand of
+ * one kind a thing the contract says it need not have.
+ */
+const ENTITY_CARD_MARKERS = ['id', 'kind', 'status', 'title', 'uri'] as const
+
+/**
+ * THE per-kind card-render cases — one denominator, six kinds, no fallback.
+ *
+ * TOTAL OVER `EntityKind`, and the totality is the point rather than tidiness. The unrouted kinds
+ * are the arm a happy-path suite never drives: `MEM`, `POL` and `BUG` are exactly the cards that
+ * carry a `url` (400-01 D-16 overlays a base for any conversation the dashboard serves) and must
+ * STILL render no link, because this build serves no page for them. A set listing only the routed
+ * three would state the claim it was already going to pass.
+ */
+export const ENTITY_CARD_RENDER_CASES: Readonly<Record<EntityKind, EntityCardRenderCase>> =
+  Object.freeze(
+    Object.fromEntries(
+      ENTITY_KINDS.map((kind) => [kind, Object.freeze({
+        kind,
+        dashboardRoute: ENTITY_DASHBOARD_ROUTES[kind].route,
+        routeKeyedBy: ENTITY_DASHBOARD_ROUTES[kind].keyedBy,
+        markers: ENTITY_CARD_MARKERS,
+      })]),
+    ) as Record<EntityKind, EntityCardRenderCase>,
+  )
+
+/**
+ * What one row claims about the ENTITY CARDS its op can answer with.
+ *
+ * The kinds are carried on the ROW rather than assumed, so the join is two-directional the way
+ * every other census in this file is: a consumer asserts the row's kinds set-equal to
+ * `ENTITY_CARD_RENDER_CASES`'s keys, and a kind that lost its case is a named RED rather than a
+ * kind that quietly stopped being measured.
+ */
+export interface EntityCardRenderExpectation {
+  readonly kinds: readonly [EntityKind, ...EntityKind[]]
+}
+
+/** Every kind an entity op can answer with — the complete vocabulary, not a chosen subset. */
+const EVERY_ENTITY_CARD_KIND: EntityCardRenderExpectation = { kinds: ENTITY_KINDS }
+
+/**
  * The policy points every row declares (D-11), as expected VERDICTS.
  *
  * The callers themselves are not spelled here and must not be: `policy-fixtures.ts` derives the
@@ -309,6 +395,16 @@ export interface ScenarioRow<Id extends ScenarioOpId = ScenarioOpId> {
   readonly policyPoints: PolicyPointExpectations
   /** What a person must be able to read after this op answers — see {@link RenderExpectation}. */
   readonly renderExpect: RenderExpectation
+  /**
+   * Present on exactly the ops that answer with an ENTITY CARD (400-08) — see
+   * {@link EntityCardRenderCase}.
+   *
+   * Optional because most ops do not return one; a consumer partitions on the key's presence the
+   * same way the MCP leg partitions on `reachable`, and `entity-card-parity.test.ts` asserts the
+   * set of rows carrying it set-equal to the set of ops whose OUTPUT CONTRACT is the card contract,
+   * in both directions — so an op cannot acquire a card result and quietly skip this expectation.
+   */
+  readonly entityCardExpect?: EntityCardRenderExpectation
 }
 
 /**
@@ -642,6 +738,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['actions', 'id', 'keyFacts', 'kind', 'status', 'title', 'uri'] },
+    entityCardExpect: EVERY_ENTITY_CARD_KIND,
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 387: `resolve` takes any reference at all, so the sample is free text that matches nothing — an
@@ -655,6 +752,7 @@ export const SCENARIO_TABLE = Object.freeze([
       fn: { reachable: true },
     },
     renderExpect: { markers: ['card', 'kind', 'score'] },
+    entityCardExpect: EVERY_ENTITY_CARD_KIND,
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 391 PROP-01 / D-03: `list` genuinely takes the empty query — the fold is bounded, so there is

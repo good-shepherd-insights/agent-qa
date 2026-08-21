@@ -35,8 +35,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  ENTITY_DASHBOARD_ROUTES,
   ENTITY_IDENTITY_FACT_LABELS,
   ENTITY_KINDS,
+  isRoutedEntityKind,
   type EntityCard as EntityCardValue,
   type EntityKind,
 } from '@vostride/agent-qa-schema'
@@ -46,6 +48,7 @@ import {
   EntityCard,
   entityCardActionUtterance,
   entityCardMachineId,
+  entityCardRoute,
   entityCardsIn,
   entityRouteFor,
 } from '@/chat/entity-card'
@@ -457,3 +460,90 @@ it('the produced-fixture set covers every kind the card schema can carry', () =>
     new Set(ENTITY_KINDS),
   )
 })
+
+// ---- The dashboard half of the ONE scenario-table denominator (400-08 task 2) ------------------
+
+// THE ROUTE EXPECTATIONS ARE NOT WRITTEN HERE. `ENTITY_DASHBOARD_ROUTES` is a SHIPPED contract in
+// the schema package (`entity/dashboard-route.ts`), and the conformance scenario table's
+// `ENTITY_CARD_RENDER_CASES` — carried on the two entity ops through their `entityCardExpect`
+// column — is SPREAD from that same declaration, with `conformance/entity-card-parity.test.ts`
+// asserting the spread held and driving the MCP half of the same rows. So both doors are measured
+// against one declaration, which is DASH-03's parity clause and 399.1 D-09's one-denominator rule.
+//
+// WHY THIS FILE READS THE CONTRACT AND NOT THE TABLE DIRECTLY: every package's `tsconfig.json` pins
+// `rootDir` to its own `src`, so a cross-package relative import is a `tsc --noEmit` error
+// (TS6059). The schema package is the ONE package both surfaces depend on, and it is where
+// `ENTITY_URL_ROUTE` already lives for exactly this reason — "the M5 route table imports this
+// constant, so the dashboard's routes and the cards' links agree is ONE declaration rather than
+// two that were written from the same sentence."
+
+describe('the dashboard render answers the shipped card-route contract', () => {
+  it('routes exactly the kinds the contract says are routed, and none of the ones it does not', () => {
+    const fromMap = Object.fromEntries(
+      ENTITY_KINDS.map((kind) => [kind, ENTITY_KIND_ROUTES[kind] === null ? null : 'routed']),
+    )
+    const fromContract = Object.fromEntries(
+      ENTITY_KINDS.map((kind) => [kind, isRoutedEntityKind(kind) ? 'routed' : null]),
+    )
+    expect(fromMap).toEqual(fromContract)
+  })
+
+  it('mints an href that fills the contract\'s own template, for every routed kind', () => {
+    // The map could route the right kinds and still point them at a path the contract does not
+    // name — which is the drift a shared declaration exists to make impossible, and which a
+    // "routed / unrouted" comparison alone cannot see.
+    for (const kind of ENTITY_KINDS) {
+      const template = ENTITY_DASHBOARD_ROUTES[kind].route
+      if (template === null) continue
+      const card = FIXTURE_BY_KIND[kind]
+      const href = entityCardRoute(card)
+      if (ENTITY_DASHBOARD_ROUTES[kind].keyedBy === 'no-parameter') {
+        expect(href).toBe(template)
+      } else {
+        const prefix = template.slice(0, template.indexOf(':'))
+        expect(href?.startsWith(prefix), `${kind}: ${String(href)} vs ${template}`).toBe(true)
+        expect(href?.slice(prefix.length)).toBe(entityCardMachineId(card))
+      }
+    }
+  })
+
+  for (const kind of ENTITY_KINDS) {
+    it(`entities.get / ${kind} on dashboard: the row's render form, in the DOM`, () => {
+      const contract = ENTITY_DASHBOARD_ROUTES[kind]
+      const card = FIXTURE_BY_KIND[kind]
+      const host = mountCard(card)
+
+      // (a) the identifying fields the row names reach a reader. The markers are FIELD NAMES on the
+      // card contract, so the claim on THIS door is that each one's VALUE is on the page — a
+      // browser renders values, not JSON keys, and asserting the key would be asserting that the
+      // DOM contains a string the card never displays.
+      const text = host.textContent ?? ''
+      for (const marker of CARD_RENDER_MARKERS) {
+        const value = String((card as unknown as Record<string, unknown>)[marker])
+        expect(text, `${kind}: the row names ${marker} and the render withholds it`).toContain(value)
+      }
+
+      // (b) a route link EXACTLY when the contract says the kind is routed, and (c) url-absence —
+      // zero link affordance — when it says it is not.
+      const links = anchors(host).filter((link) => link.hasAttribute('data-entity-card-link'))
+      if (contract.route === null) {
+        expect(links, `${kind} is unrouted and this render offered a link`).toEqual([])
+      } else {
+        expect(links).toHaveLength(1)
+        expect(links[0]?.getAttribute('href')).toBe(entityCardRoute(card))
+        // And never the card's own url, whatever the contract says (T-400-27).
+        expect(links[0]?.getAttribute('href')).not.toBe(card.url)
+      }
+    })
+  }
+})
+
+/**
+ * The card fields a reader must be able to read — the SAME set `scenario-table.ts` carries as each
+ * case's `markers`, and the same rule: the card contract's always-present fields, sorted.
+ *
+ * `keyFacts` and `actions` are deliberately absent, on the table's own stated reasoning: they are
+ * arrays a kind may legally answer with empty (`BUG` advertises no actions at all, by D-03), so
+ * requiring them per kind would demand of one kind a thing the contract says it need not have.
+ */
+const CARD_RENDER_MARKERS = ['id', 'kind', 'status', 'title', 'uri'] as const

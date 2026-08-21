@@ -45,6 +45,7 @@
 import { Link } from "react-router"
 
 import {
+  ENTITY_DASHBOARD_ROUTES,
   ENTITY_IDENTITY_FACT_LABELS,
   EntityCardResolutionSchema,
   EntityCardSchema,
@@ -82,11 +83,11 @@ export type EntityRouteResolver = (address: EntityRouteAddress) => string | unde
  * seventh kind is a compile error here rather than a card that silently renders whichever arm the
  * lookup happened to miss. There is deliberately no fallback and no default.
  *
- * `null` — not an absent key — is how a kind says it has no page here. An absent key would make
- * "unrouted" indistinguishable from "nobody has looked at this kind yet", and those are the two
+ * `null` — not an absent key — is how a kind says it has no page here. An absent key would make an
+ * intentional unrouted arm read exactly like a kind nobody has looked at yet, and those are the two
  * answers a reviewer needs to be able to tell apart.
  *
- * THE PATHS ARE `lib/routes.ts`'s, not strings retyped from the router. `routes.testView` and
+ * THE PATHS ARE `lib/routes.ts`'s builders, not strings retyped off the router. `routes.testView` and
  * `routes.runDetail` are the same builders every other page navigates with, so a route rename moves
  * the card's links with it instead of leaving them pointing at a path nothing serves.
  *
@@ -104,6 +105,29 @@ export const ENTITY_KIND_ROUTES = {
   POL: null,
   TGT: () => routes.config,
 } as const satisfies Record<EntityKind, EntityRouteResolver | null>
+
+/**
+ * The routed/unrouted partition above is the SHIPPED CONTRACT's, checked at compile time.
+ *
+ * `ENTITY_DASHBOARD_ROUTES` (schema, `entity/dashboard-route.ts`) is the one declaration the
+ * conformance scenario table's card cases are also spread from. Without this line the map above and
+ * that contract would be two tables agreeing today, and a kind could acquire or lose a page in one
+ * of them silently — which is the exact drift a shared declaration exists to prevent. The mapped
+ * type below makes a `null` here required wherever the contract says `route: null`, and a resolver
+ * required wherever it names a path, so a disagreement is a `tsc` error rather than a card that
+ * links somewhere nothing serves.
+ *
+ * The PATHS themselves are still built with `lib/routes.ts`'s builders (the ones every other page
+ * navigates with) and are joined against the contract's templates by `entity-card.test.ts` — a
+ * compile-time check can hold the partition, and only a rendered href can hold the shape.
+ */
+type RoutePartitionOfContract = {
+  [K in EntityKind]: (typeof ENTITY_DASHBOARD_ROUTES)[K]["route"] extends null
+    ? null
+    : EntityRouteResolver
+}
+const ROUTE_PARTITION_MATCHES_CONTRACT: RoutePartitionOfContract = ENTITY_KIND_ROUTES
+void ROUTE_PARTITION_MATCHES_CONTRACT
 
 /** The route this address resolves to in THIS dashboard, or `undefined` — never a guess. */
 export function entityRouteFor(address: EntityRouteAddress): string | undefined {

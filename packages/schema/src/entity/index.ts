@@ -33,6 +33,13 @@ export {
 export type { ParsedEntityUri } from './uri'
 
 export {
+  ENTITY_DASHBOARD_ROUTES,
+  ENTITY_DASHBOARD_ROUTE_GRAINS,
+  isRoutedEntityKind,
+} from './dashboard-route'
+export type { EntityDashboardRoute, EntityDashboardRouteGrain } from './dashboard-route'
+
+export {
   ActionRefSchema,
   ENTITY_CARD_MAX_ACTIONS,
   ENTITY_CARD_MAX_KEY_FACTS,
