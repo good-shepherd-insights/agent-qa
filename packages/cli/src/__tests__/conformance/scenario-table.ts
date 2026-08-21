@@ -335,17 +335,36 @@ const ENTITY_CARD_MARKERS = ['id', 'kind', 'status', 'title', 'uri'] as const
  * STILL render no link, because this build serves no page for them. A set listing only the routed
  * three would state the claim it was already going to pass.
  */
+function entityCardRenderCase(kind: EntityKind): EntityCardRenderCase {
+  return Object.freeze({
+    kind,
+    dashboardRoute: ENTITY_DASHBOARD_ROUTES[kind].route,
+    routeKeyedBy: ENTITY_DASHBOARD_ROUTES[kind].keyedBy,
+    markers: ENTITY_CARD_MARKERS,
+  })
+}
+
+/**
+ * WRITTEN AS SIX NAMED ARMS RATHER THAN AN `Object.fromEntries` WALK (400-09 deviation).
+ *
+ * The walk read better and did not typecheck: `Object.fromEntries` answers with an index signature,
+ * and the `as Record<EntityKind, …>` needed to recover the total type is a TS2352 that `vitest` does
+ * not see and `tsc --noEmit` does. Widening the cast through `unknown` would have silenced the
+ * compiler by removing the only check that matters here — that the record is TOTAL. Naming the arms
+ * moves that check from a runtime census to the type annotation: a seventh member of `EntityKind`
+ * fails to compile at this literal. The census cell in `entity-card-parity.test.ts` still asserts
+ * the key set against `ENTITY_KINDS`, and every VALUE is still spread from the shipped contract by
+ * the helper above rather than restated here.
+ */
 export const ENTITY_CARD_RENDER_CASES: Readonly<Record<EntityKind, EntityCardRenderCase>> =
-  Object.freeze(
-    Object.fromEntries(
-      ENTITY_KINDS.map((kind) => [kind, Object.freeze({
-        kind,
-        dashboardRoute: ENTITY_DASHBOARD_ROUTES[kind].route,
-        routeKeyedBy: ENTITY_DASHBOARD_ROUTES[kind].keyedBy,
-        markers: ENTITY_CARD_MARKERS,
-      })]),
-    ) as Record<EntityKind, EntityCardRenderCase>,
-  )
+  Object.freeze({
+    TST: entityCardRenderCase('TST'),
+    RUN: entityCardRenderCase('RUN'),
+    BUG: entityCardRenderCase('BUG'),
+    MEM: entityCardRenderCase('MEM'),
+    POL: entityCardRenderCase('POL'),
+    TGT: entityCardRenderCase('TGT'),
+  })
 
 /**
  * What one row claims about the ENTITY CARDS its op can answer with.

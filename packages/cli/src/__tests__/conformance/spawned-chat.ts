@@ -110,7 +110,7 @@ function newestProductSource(dir: string): { path: string; mtimeMs: number } | u
         continue
       }
       if (!entry.isFile()) continue
-      if (!/\.(?:ts|tsx|mts|cts|js|mjs|cjs|json)$/u.test(entry.name)) continue
+      if (!/\.(?:ts|tsx|mts|cts|js|mjs|cjs|json|css|html)$/u.test(entry.name)) continue
       if (/\.test(?:-d)?\.[cm]?tsx?$/u.test(entry.name)) continue
       const { mtimeMs } = statSync(full)
       if (newest === undefined || mtimeMs > newest.mtimeMs) newest = { path: full, mtimeMs }
@@ -333,4 +333,196 @@ export async function driveChatSpawned(
     child.once('error', fail)
     child.once('close', (code, signal) => settle({ code, signal, stdout, stderr }))
   })
+}
+
+// ---- Driving the shipped DASHBOARD (400-09) ----------------------------------------------------
+//
+// WHY THE DASHBOARD SPAWN LIVES HERE AND NOT IN THE TWO FILES THAT USE IT. `dashboard-anchors` and
+// `dashboard-dom` both drive the same child — the built `agent-qa dashboard` command, in the same
+// hermetic environment, against the same freshness reading. This module's own law ("a second spawn
+// helper would be a second answer to 'what did the child inherit'") applies to that child exactly
+// as it applies to the chat one, so there is one recipe and both files import it.
+
+/**
+ * The built artifacts a spawned DASHBOARD executes.
+ *
+ * The chat list plus the two the fourth door adds. `dashboard-server` is the process that serves
+ * the routes and `dashboard-ui` is the bundle a browser is handed — and BOTH belong in the guard
+ * for the reason the header gives about `cli`: a DOM cell run against yesterday's `dashboard-ui`
+ * bundle passes, reads as proof of today's `.tsx`, and certifies the wrong artifact. `dashboard-ui`
+ * is anchored on `dist/index.html` rather than a hashed asset name, because the asset names change
+ * every build and a guard that had to know them would be a second copy of the manifest.
+ */
+export const DASHBOARD_ANCHORED_BUILDS: readonly {
+  readonly pkg: string
+  readonly artifact: string
+}[] = Object.freeze([
+  ...ANCHORED_BUILDS,
+  Object.freeze({ pkg: 'dashboard-server', artifact: join('dist', 'index.js') }),
+  Object.freeze({ pkg: 'dashboard-ui', artifact: join('dist', 'index.html') }),
+])
+
+/**
+ * A project the SPAWNED dashboard can open, which is a strictly larger recipe than the chat one.
+ *
+ * THE THREE EMPTY FILES ARE NOT DECORATION. `agent-qa dashboard` resolves its workspace with
+ * `requireExistingFiles: true`, so a project whose `hooksFile`, `envFile` or `secretsFile` is
+ * merely DECLARED makes the command exit 2 before it binds a port — which a cell would read as
+ * "the dashboard did not start" with no idea why. `agent-qa chat` does not take that path, which
+ * is why `fixtureProject` above does not write them and why this is a second recipe rather than
+ * an edit to that one.
+ *
+ * NOTHING SECRET IS PLANTED, on `fixtureProject`'s own argument: `.env` and `.env.secrets.local`
+ * are written EMPTY. A value that does not exist cannot be printed by a diagnostic nobody
+ * anticipated, and the door these cells drive is model-unbound for the same reason.
+ *
+ * The knowledge root is declared so a cell that wants a real entity can publish a bundle into it;
+ * a cell that does not simply lists an empty store.
+ */
+export function dashboardFixtureProject(label: string): {
+  root: string
+  configPath: string
+  knowledgeRoot: string
+} {
+  const root = trackTempRoot(mkdtempSync(join(tmpdir(), `agent-qa-400-09-${label}-`)))
+  const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        workspace: {
+          testMatch: ['tests/**/*.test.yaml'],
+          testPathIgnore: [],
+          suiteMatch: ['suites/**/*.suite.yaml'],
+          hooksFile: 'hooks.yaml',
+          envFile: '.env',
+          secretsFile: '.env.secrets.local',
+        },
+        knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+        use: { mobile: { appState: 'preserve' } },
+        registry: {
+          targets: {
+            conformance: { platform: 'web', url: 'https://conformance.invalid' },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  )
+  writeFileSync(join(root, 'hooks.yaml'), 'hooks: {}\n', 'utf8')
+  writeFileSync(join(root, '.env'), '', 'utf8')
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
+  mkdirSync(join(root, '.agent-qa'), { recursive: true })
+  const knowledgeRoot = join(root, 'agent-qa-knowledge')
+  mkdirSync(knowledgeRoot, { recursive: true })
+  return { root, configPath, knowledgeRoot }
+}
+
+/**
+ * A port nothing is listening on, learned by binding one and letting it go.
+ *
+ * `--port 0` is NOT usable here even though the server accepts it: `startServer` reports the port
+ * it was ASKED for rather than the one it bound, so a `0` would leave both this process and the
+ * child's own `services.dashboard.baseUrl` overlay naming `http://localhost:0`. Reserving a real
+ * port and handing it over keeps one number true on both sides. (The residual race — somebody else
+ * taking the port between the close and the child's listen — announces itself as a child that
+ * exited with an EADDRINUSE on its stderr, which every caller below quotes.)
+ */
+export async function reserveEphemeralPort(): Promise<number> {
+  const { createServer } = await import('node:http')
+  return await new Promise<number>((settle, fail) => {
+    const probe = createServer()
+    probe.once('error', fail)
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address()
+      if (address === null || typeof address === 'string') {
+        probe.close(() => { fail(new TypeError('the probe bound no port')) })
+        return
+      }
+      const { port } = address
+      probe.close(() => { settle(port) })
+    })
+  })
+}
+
+/** A spawned dashboard, as the cells that drive it consume it. */
+export interface SpawnedDashboard {
+  /** The origin a browser is pointed at. */
+  readonly origin: string
+  readonly port: number
+  /** Everything the child has printed so far — quoted verbatim in every failure message. */
+  stdout(): string
+  stderr(): string
+  /** Idempotent: safe to call from a cell body and from an `afterAll`. */
+  stop(): Promise<void>
+}
+
+/** The line `startServer` prints once it is listening — the child's own readiness statement. */
+export function dashboardReadyLine(port: number): string {
+  return `Dashboard running at http://localhost:${String(port)}`
+}
+
+/**
+ * Start the SHIPPED `agent-qa dashboard` command and wait for it to say it is listening.
+ *
+ * READINESS IS THE CHILD'S OWN SENTENCE, not a poll of the port and not a sleep. A poll would go
+ * green against any process that happened to hold the port; a sleep would be a number somebody
+ * guessed, and the failure it produces (an empty page) reads like a product defect.
+ *
+ * IT RETURNS DATA AND NEVER ASSERTS, on this module's own law — `startedAt` is `undefined` when
+ * the child died or the budget ran out, and the caller decides what that means with its own
+ * message and its own quoted streams.
+ */
+export async function spawnDashboard(
+  root: string,
+  configPath: string,
+  port: number,
+  budgetMs = 60_000,
+): Promise<SpawnedDashboard & { readonly ready: boolean }> {
+  const child = spawn(
+    process.execPath,
+    [CLI_ENTRY, '--config', configPath, 'dashboard', '--port', String(port)],
+    {
+      cwd: root,
+      env: hermeticEnv(root),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  let stdout = ''
+  let stderr = ''
+  let exited = false
+  child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8') })
+  child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+  child.once('close', () => { exited = true })
+
+  const readyLine = dashboardReadyLine(port)
+  const deadline = Date.now() + budgetMs
+  while (!stdout.includes(readyLine) && !exited && Date.now() < deadline) {
+    await new Promise<void>((tick) => setTimeout(tick, 50))
+  }
+
+  let stopped: Promise<void> | undefined
+  const stop = async (): Promise<void> => {
+    stopped ??= new Promise<void>((settled) => {
+      if (exited) { settled(); return }
+      child.once('close', () => { settled() })
+      // SIGTERM first, because the command installs a handler that closes the server and the
+      // database. The kill below is the backstop for a child that ignored it.
+      child.kill('SIGTERM')
+      const hard = setTimeout(() => { child.kill('SIGKILL') }, 5_000)
+      hard.unref?.()
+    })
+    await stopped
+  }
+
+  return {
+    origin: `http://127.0.0.1:${String(port)}`,
+    port,
+    ready: stdout.includes(readyLine),
+    stdout: () => stdout,
+    stderr: () => stderr,
+    stop,
+  }
 }
