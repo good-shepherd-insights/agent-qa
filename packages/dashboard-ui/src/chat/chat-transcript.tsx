@@ -33,6 +33,7 @@ import {
 } from "@vostride/agent-qa-schema"
 
 import { ChatMarkdown } from "@/chat/chat-markdown"
+import { ConfirmBubble } from "@/chat/confirm-bubble"
 import { ReceiptRow } from "@/chat/receipt-row"
 import type { ChatEntry, ChatTranscriptState, ChatTurnStatus } from "@/chat/use-chat-turn"
 import type { ChatConfirmAnswer } from "@/lib/api"
@@ -77,6 +78,7 @@ export function ChatTranscriptView({
   status,
   starters,
   onSend,
+  onAnswerConfirm,
 }: ChatTranscriptViewProps) {
   const [draft, setDraft] = useState("")
 
@@ -106,6 +108,7 @@ export function ChatTranscriptView({
             receiptCount={
               "turnId" in entry ? (state.receiptCountByTurn[entry.turnId] ?? 0) : 0
             }
+            onAnswerConfirm={onAnswerConfirm}
           />
         ))}
       </div>
@@ -167,9 +170,11 @@ function StarterPrompts({
 function TranscriptEntry({
   entry,
   receiptCount,
+  onAnswerConfirm,
 }: {
   entry: ChatEntry
   receiptCount: number
+  onAnswerConfirm: (confirmId: string, answer: ChatConfirmAnswer) => void
 }) {
   switch (entry.kind) {
     case "utterance":
@@ -214,14 +219,14 @@ function TranscriptEntry({
         </div>
       )
     case "confirm":
-      // The slot plan 06 task 2 fills with the inline confirm bubble. It renders the question
-      // rather than hiding it, so a build stopped between the two tasks still shows a person that
-      // something is being asked of them.
       return (
-        <div data-entry="confirm" className="rounded-lg border border-border px-3 py-2 text-sm">
-          <span className="font-mono text-xs">{entry.actionClass}</span>
-          {entry.preview === undefined ? null : <p className="text-xs text-muted-foreground">{entry.preview}</p>}
-        </div>
+        <ConfirmBubble
+          confirmId={entry.confirmId}
+          actionClass={entry.actionClass}
+          {...(entry.preview === undefined ? {} : { preview: entry.preview })}
+          {...(entry.resolution === undefined ? {} : { resolution: entry.resolution })}
+          onAnswer={onAnswerConfirm}
+        />
       )
     case "unhandled":
       return (

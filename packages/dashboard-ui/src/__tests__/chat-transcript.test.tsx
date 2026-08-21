@@ -15,6 +15,7 @@
 // real mount path is broken, and the cell would never know.
 
 import { readFileSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
 
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -383,12 +384,23 @@ describe('the confirm bubble is a render over the plan-03 bridge (D-06 / D-07)',
     // server composed. A browser-side timer would be a SECOND clock on one question — free to
     // disagree with the one that actually decides — and a browser-side grant would be a write the
     // 391 machinery never saw.
+    // Read off DISK rather than through the bundler: the question is what the shipped module
+    // contains, and a transformed copy is not the thing a reviewer or a `grep` would read.
     const source = readFileSync(
-      new URL('../chat/confirm-bubble.tsx', import.meta.url),
+      resolvePath(process.cwd(), 'src/chat/confirm-bubble.tsx'),
       'utf8',
     )
-    expect(source).not.toMatch(/setTimeout|setInterval|requestAnimationFrame/)
-    expect(source).not.toMatch(/recordStandingApproval|grants\./)
+    // COMMENTS ARE STRIPPED FIRST, and that is not a convenience. This repository has already paid
+    // for the other way round twice: `validate:arch` read a sentence shaped like an import as a
+    // dependency (400-03), and the paragraph above legitimately mentions `grants.list` while
+    // explaining why this file never calls it. A source assertion that reads prose measures prose.
+    const code = source
+      .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('//'))
+      .join('\n')
+    expect(code).not.toMatch(/setTimeout|setInterval|requestAnimationFrame/)
+    expect(code).not.toMatch(/recordStandingApproval|grants\./)
     // And the three answers are spelled here, so a rename on the wire is a visible edit.
     for (const answer of ['accept', 'accept-always', 'deny']) {
       expect(source).toContain(`"${answer}"`)
