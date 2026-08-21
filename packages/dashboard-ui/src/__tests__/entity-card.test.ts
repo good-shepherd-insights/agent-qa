@@ -102,10 +102,27 @@ function anchors(host: HTMLElement): HTMLAnchorElement[] {
   return [...host.querySelectorAll('a')]
 }
 
-const ENTITY_CARD_SOURCE = readFileSync(
+const ENTITY_CARD_SOURCE_TEXT = readFileSync(
   resolvePath(import.meta.dirname, '../chat/entity-card.tsx'),
   'utf8',
 )
+
+/**
+ * The module's EXECUTABLE source — comments removed.
+ *
+ * The prohibition cell below is a scan for a network call, and a scan that ranged the whole file
+ * would fire on the header paragraph that EXPLAINS why there is no `fetch` and no `EventSource` in
+ * it. That is the same defect in the same family as 400-06's blind mutation landing on a doc
+ * comment: an assertion that reads prose measures the prose. The planted-violation control below
+ * is what keeps this stripper from quietly removing the thing it was supposed to leave.
+ */
+function executableSource(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//gu, '')
+    .replace(/^[ \t]*\/\/.*$/gmu, '')
+}
+
+const ENTITY_CARD_SOURCE = executableSource(ENTITY_CARD_SOURCE_TEXT)
 
 // ---- 1. The pinned shape reaches the DOM -------------------------------------------------------
 
@@ -259,6 +276,16 @@ describe('card actions are gated invokes through the chat door', () => {
     expect(ENTITY_CARD_SOURCE).not.toMatch(/\bEventSource\b/u)
     expect(ENTITY_CARD_SOURCE).not.toMatch(/from ["']axios["']/u)
     expect(ENTITY_CARD_SOURCE).not.toMatch(/from ["']@\/lib\/api["']/u)
+  })
+
+  it('would SEE a network call if one were added (planted-violation control)', () => {
+    // A source scan that has never been observed to fire certifies its own regex. Two controls:
+    // the scan reds on a planted call, and the comment stripper does not swallow one that sits
+    // beside prose about it.
+    const planted = executableSource(`${ENTITY_CARD_SOURCE_TEXT}\nawait fetch("/api/entities")\n`)
+    expect(planted).toMatch(/\bfetch\s*\(/u)
+    expect(executableSource('// we never call fetch(\nconst x = 1')).not.toMatch(/\bfetch\s*\(/u)
+    expect(executableSource('/* no fetch( here */\nfetch("/x")')).toMatch(/\bfetch\s*\(/u)
   })
 
   it('serialises the seed as the door\'s own /fn grammar', () => {

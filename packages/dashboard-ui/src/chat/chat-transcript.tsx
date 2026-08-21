@@ -35,6 +35,7 @@ import {
 import { useChatSession } from "@/chat/chat-session-context"
 import { ChatMarkdown } from "@/chat/chat-markdown"
 import { ConfirmBubble } from "@/chat/confirm-bubble"
+import { EntityCard, entityCardsIn } from "@/chat/entity-card"
 import { ReceiptRow } from "@/chat/receipt-row"
 import type { ChatEntry, ChatTranscriptState, ChatTurnStatus } from "@/chat/use-chat-turn"
 import type { ChatCapabilityRow, ChatConfirmAnswer } from "@/lib/api"
@@ -142,6 +143,7 @@ export function ChatTranscriptView({
               "turnId" in entry ? (state.receiptCountByTurn[entry.turnId] ?? 0) : 0
             }
             onAnswerConfirm={onAnswerConfirm}
+            onSend={onSend}
           />
         ))}
       </div>
@@ -242,10 +244,13 @@ function TranscriptEntry({
   entry,
   receiptCount,
   onAnswerConfirm,
+  onSend,
 }: {
   entry: ChatEntry
   receiptCount: number
   onAnswerConfirm: (confirmId: string, answer: ChatConfirmAnswer) => void
+  /** The chat door, threaded down so a card action leaves the same way a typed line does. */
+  onSend: (utterance: string) => void
 }) {
   switch (entry.kind) {
     case "utterance":
@@ -273,6 +278,7 @@ function TranscriptEntry({
           // LAW 2, and the only input it has. `receiptCount` is the number of receipt lines this
           // turn filed; keying on how many payloads came back is 399.1 gap 2.
           label={receiptCount > 1}
+          onSend={onSend}
         />
       )
     case "denial":
@@ -328,14 +334,21 @@ function PayloadBlock({
   payload,
   foldLines,
   label,
+  onSend,
 }: {
   functionId: string
   payload: unknown
   foldLines: readonly string[]
   label: boolean
+  onSend: (utterance: string) => void
 }) {
   const [expanded, setExpanded] = useState(true)
   const rendered = JSON.stringify(payload, null, 2)
+  // 400-08 (DASH-03): an entity reference renders as THE card, recognised by the schema that
+  // defines one — never by a shape check written here. A card is a FOLD in 399.1 D-04's sense: it
+  // renders ABOVE the complete payload and can never take its place, because a legibility layer
+  // that could suppress a value is a drop path with a rule attached.
+  const cards = entityCardsIn(payload)
   return (
     <div className="flex flex-col gap-1 rounded-md border border-border/60 px-3 py-2">
       {/* The folds render ABOVE and never in place of the payload. */}
@@ -343,6 +356,9 @@ function PayloadBlock({
         <p data-fold-line key={line} className="text-sm text-foreground">
           {line}
         </p>
+      ))}
+      {cards.map((card) => (
+        <EntityCard key={card.uri} card={card} onSend={onSend} />
       ))}
       <div className="flex items-center gap-2">
         {label ? (
