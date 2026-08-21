@@ -386,6 +386,39 @@ function refuseWith(respond: Respond, res: ServerResponse, error: string, status
   respond(res, { error }, status)
 }
 
+/**
+ * The router's LAST answer — what a request gets when something threw past every guard (400-14).
+ *
+ * DELIBERATELY NOT THROUGH THIS DOOR'S RESPONDER. The responder runs the host's unmasker over the
+ * serialised bytes, and one of the faults this backstop exists to catch is the unmasker itself: a
+ * backstop that re-entered it would throw inside its own catch and answer nothing at all. These
+ * bytes are a fixed literal carrying no host value, so there is nothing here for a masker to
+ * reduce — the one place in this file where writing the response directly is the safe choice
+ * rather than the lazy one.
+ *
+ * ONCE THE HEAD IS OUT, THE ONLY HONEST ANSWER IS TO HANG UP. A stream that has already written
+ * `200 text/event-stream` cannot be told it failed, and appending a JSON body to it would hand the
+ * client a frame it will try to parse. Destroying the socket is what a reader can actually act on.
+ */
+function backstopRefusal(res: ServerResponse, error: unknown): void {
+  if (res.headersSent || res.writableEnded) {
+    res.destroy()
+    return
+  }
+  const body = JSON.stringify({
+    error: `The request could not be completed [${error instanceof Error ? error.name : 'Error'}]`,
+  })
+  try {
+    res.writeHead(500, {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+    })
+    res.end(body)
+  } catch {
+    res.destroy()
+  }
+}
+
 async function handleTurn(
   host: AgentHost,
   respond: Respond,
@@ -410,9 +443,9 @@ async function handleTurn(
   // file would be a second spelling of an id that already has exactly one.
   const AGENT_ASK_FUNCTION_ID = host.agentAskFunctionId
 
-  let result: AgentAskResult
+  let response: ChatTurnResponse
   try {
-    result = await host.invokeFunction(
+    const result = await host.invokeFunction(
       host.registry,
       AGENT_ASK_FUNCTION_ID,
       parsed.data.sessionId === undefined
@@ -420,6 +453,20 @@ async function handleTurn(
         : { message: parsed.data.message, sessionId: parsed.data.sessionId },
       host.caller,
     ) as AgentAskResult
+    // Folded server-side and shipped BESIDE the payloads, one entry per executed clause in the
+    // order the clauses ran. The fold needs the registry, which lives in this process and not in
+    // the browser; re-deriving it client-side would be a second classifier.
+    //
+    // INSIDE THIS TRY (400-14, gap 7). The fold map used to sit below it, so a throwing
+    // `foldFunctionResult` rejected `handleTurn`'s promise at a `void` call site — an unhandled
+    // rejection, which is the process-kill class the unguarded decode belongs to, one layer up.
+    // The router's boundary backstop would now catch that too; this is the precise guard beneath
+    // it, and the two answer with different words so a cell can tell which one fired.
+    const folds: ChatTurnFold[] = result.results.map((clause) => ({
+      functionId: clause.functionId,
+      ...host.foldFunctionResult(host.registry, clause.functionId, clause.payload),
+    }))
+    response = { result, folds }
   } catch (error) {
     // A THROW HERE IS NOT A REFUSAL AND IS NOT REPORTED AS ONE. Every refusal this product can
     // express — a scope short, a gate denial, a pin, an unknown op — comes BACK as a turn whose
@@ -435,15 +482,6 @@ async function handleTurn(
     return
   }
 
-  // Folded server-side and shipped BESIDE the payloads, one entry per executed clause in the order
-  // the clauses ran. The fold needs the registry, which lives in this process and not in the
-  // browser; re-deriving it client-side would be a second classifier.
-  const folds: ChatTurnFold[] = result.results.map((clause) => ({
-    functionId: clause.functionId,
-    ...host.foldFunctionResult(host.registry, clause.functionId, clause.payload),
-  }))
-
-  const response: ChatTurnResponse = { result, folds }
   respond(res, response)
 }
 
@@ -695,7 +733,29 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
     })
   }
 
-  const router = (req: IncomingMessage, res: ServerResponse): void => {
+  /**
+   * EVERY WAY A REQUEST CAN THROW PAST THIS ROUTER, ENUMERATED (400-14, gap 7).
+   *
+   * Extend this list rather than re-deriving it. The router runs INSIDE a `node:http` request
+   * handler, so an exception that leaves it is an `uncaughtException` and the shipped
+   * `agent-qa dashboard` process dies — measured: one unauthenticated
+   * `GET /api/chat/sessions/%/events` was a remote kill.
+   *
+   * 1. `new URL(req.url …)` at the head — an unparseable request line. Guarded: 400.
+   * 2. `decodeURIComponent` on the `:id` capture — `%`, `%E0`, any half-escape. Guarded: 404, the
+   *    SAME bytes as the unminted-id refusal, so unparseable and unknown are one answer.
+   * 3. `handleTurn` / `handleConfirm` — fire-and-forget promises whose rejection would be an
+   *    unhandled rejection. Guarded: `.catch` into the boundary backstop.
+   * 4. Any synchronous throw anywhere in the dispatch, including `handleSessionEvents`'s body and
+   *    the responder's own unmask pass. Guarded: the `try` around `dispatch` below — ONE boundary
+   *    rather than a nested one per arm, because a second `try` inside the streaming arm would be
+   *    a second spelling of the same rule with nothing extra to say.
+   *
+   * The precise guards and the backstop are BOTH present on purpose: the precise ones give a
+   * caller an answer they can act on (404, 400), and the backstop makes "the process survives"
+   * true for the faults nobody has thought of yet.
+   */
+  const dispatch = (req: IncomingMessage, res: ServerResponse): void => {
     // The door answers its OWN preflight, and the answer carries no `Access-Control-Allow-Origin`
     // at all. The shared `cors()` helper grants `*`, which would hand any page a person has open
     // the permission it needs to POST a turn at their local agent — the precise thing the turn
@@ -736,7 +796,13 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
       return
     }
 
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname
+    let path: string
+    try {
+      path = new URL(req.url ?? '/', 'http://localhost').pathname
+    } catch {
+      refuseWith(respond, res, 'Invalid request URL', 400)
+      return
+    }
 
     const matched = matchChatRoute(req.method, path)
     if (matched === undefined) {
@@ -746,10 +812,14 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
 
     switch (matched.row.handler) {
       case 'turn':
-        void handleTurn(host, respond, req, res)
+        handleTurn(host, respond, req, res).catch((error: unknown) => {
+          backstopRefusal(res, error)
+        })
         return
       case 'confirm':
-        void handleConfirm(host, respond, req, res)
+        handleConfirm(host, respond, req, res).catch((error: unknown) => {
+          backstopRefusal(res, error)
+        })
         return
       case 'capabilities':
         handleCapabilities(host, respond, res)
@@ -758,7 +828,20 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
         handleCatalog(host, respond, res)
         return
       case 'sessionEvents': {
-        const sessionId = decodeURIComponent(matched.params[0] ?? '')
+        // AN UNPARSEABLE ID IS A REFUSAL, NOT AN EXCEPTION (400-14, gap 7). `decodeURIComponent`
+        // throws `URIError` on a lone `%` or a truncated escape, and this router is synchronous:
+        // that throw used to leave the request handler and kill the process.
+        //
+        // THE SAME 404 BYTES AS THE UNMINTED-ID ARM BELOW, deliberately. "I cannot read that id"
+        // and "no session here has that id" must be indistinguishable from outside, or the route
+        // tells a prober which of their guesses were at least well-formed.
+        let sessionId: string
+        try {
+          sessionId = decodeURIComponent(matched.params[0] ?? '')
+        } catch {
+          refuseWith(respond, res, 'Not found', 404)
+          return
+        }
         // THE `:id` IS VALIDATED BEFORE A CHANNEL CAN EXIST (400-13, gap 3). This route used to open
         // a confirm channel for ANY string typed at the URL, and a channel is a POSTURE INPUT: a
         // stream held on an id no session ever minted made this door claim a human was watching, and
@@ -782,6 +865,14 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
         handleSessionEvents(sessionId, req, res)
         return
       }
+    }
+  }
+
+  const router = (req: IncomingMessage, res: ServerResponse): void => {
+    try {
+      dispatch(req, res)
+    } catch (error) {
+      backstopRefusal(res, error)
     }
   }
 
