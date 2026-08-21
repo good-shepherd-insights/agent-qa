@@ -552,7 +552,7 @@ import {
   releaseLease,
 } from '@vostride/agent-qa-knowledge-local'
 import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
-import { GrantRecordOutcomeSchema } from '@vostride/agent-qa-schema'
+import { GrantRecordOutcomeSchema, type GrantRecordOutcome } from '@vostride/agent-qa-schema'
 
 import { resolveConfig } from '../config.js'
 import { composeCliLocalAgent } from '../composition/local-agent-host.js'
@@ -598,6 +598,18 @@ function activeGrantsFor(knowledgeRoot: string, actionClass: string): readonly {
   return foldActiveGrants(ledger.events).filter((grant) => grant.actionClass === actionClass)
 }
 
+/**
+ * The two mint outcomes this cell names, TYPED AGAINST THE SHIPPED UNION.
+ *
+ * The criterion is that no arbitration status is hand-typed here, and this is what honouring it
+ * mechanically looks like: the annotation makes a misspelling — or a member the schema renames — a
+ * compile error at this line rather than a cell that quietly stops matching anything. Every
+ * load-bearing assertion below is additionally vocabulary-free: a grant ID identity, a line count,
+ * and an error CLASS imported from the module that throws it.
+ */
+const RECORDED: GrantRecordOutcome['kind'] = 'recorded'
+const ALREADY_GRANTED: GrantRecordOutcome['kind'] = 'already-granted'
+
 describe('two interactive hosts on one workspace', () => {
   it('dual-host: the lease arbitrates contending standing-grant writes (A3)', async () => {
     // ---- Arm 1: ORDERED — the dashboard mints, and the CLI host folds ITS committed line ------
@@ -634,7 +646,7 @@ describe('two interactive hosts on one workspace', () => {
       )
       // ONE ARBITRATED STATE, TWO HOSTS. `already-granted` is the machinery's no-accretion arm, and
       // reaching it means this host's read-fold-decide cycle saw a line the OTHER host committed.
-      expect(cliOutcome.kind).toBe('already-granted')
+      expect(cliOutcome.kind).toBe(ALREADY_GRANTED)
       if (cliOutcome.kind !== 'already-granted') throw new TypeError('unreachable')
       expect(cliOutcome.grant.grantId).toBe(dashboardGrants[0]!.grantId)
       expect(activeGrantsFor(knowledgeRootA, ASK_ACTION_CLASS)).toHaveLength(1)
@@ -675,9 +687,9 @@ describe('two interactive hosts on one workspace', () => {
       // NO ACCRETION UNDER CONTENTION. Two lines here is the A3 defect by name: two revokes needed
       // to undo one approval, and the second is the one nobody remembers to issue.
       expect(active).toHaveLength(1)
-      const contendedGrantId = contendedOutcome.kind === 'recorded'
+      const contendedGrantId = contendedOutcome.kind === RECORDED
         ? contendedOutcome.grant.grantId
-        : contendedOutcome.kind === 'already-granted'
+        : contendedOutcome.kind === ALREADY_GRANTED
           ? contendedOutcome.grant.grantId
           : undefined
       expect(contendedGrantId, 'the CLI host\'s contending write named no grant at all')
@@ -719,7 +731,7 @@ describe('two interactive hosts on one workspace', () => {
       const afterRelease = GrantRecordOutcomeSchema.parse(
         await cliB.recordStandingApproval(CONTROL_ACTION_CLASS),
       )
-      expect(afterRelease.kind).toBe('recorded')
+      expect(afterRelease.kind).toBe(RECORDED)
     } finally {
       await cliB.host.close()
     }
