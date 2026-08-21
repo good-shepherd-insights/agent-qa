@@ -1098,6 +1098,22 @@ export { TRUST_SCOPE_KEYS } from './safety/index'
 // would be self-referentially mutable, which is the hole PROP-05 closes.
 export { PROTECTED_ACTION_CLASSES, isProtectedActionClass } from './safety/index'
 export type { ProtectedActionClass } from './safety/index'
+// 400 D-15: the closed remedy vocabulary a denial carries beside its prose reason, and the ONE
+// per-surface projection every render runs through. `remediesRenderableBy` is published rather
+// than re-derived at each door, because a render that filtered for itself is how one surface ends
+// up printing another surface's instructions — the defect this vocabulary closes.
+export {
+  GATE_REMEDY_KINDS,
+  GATE_REMEDY_SURFACES,
+  GATE_REMEDY_SURFACES_BY_KIND,
+  remediesRenderableBy,
+} from './safety/index'
+export type {
+  GateRemedy,
+  GateRemedyKind,
+  GateRemedySurface,
+  RemedyKindFor,
+} from './safety/index'
 // 391 D-03/D-05: the grant verbs' contracts and the ONE standing-grants port. `record` is on the
 // port and on no registry entry — a standing approval arises only from the accept escalation.
 export {

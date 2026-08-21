@@ -1,4 +1,9 @@
 export type { RiskTier, PolicyVerdict, ExecutionPolicyResult } from './risk-tier'
+// 400 D-15: the closed, surface-aware remedy vocabulary that rides beside a decision's prose
+// reason. Published from here because four packages read it (safety mints, cli/agent/dashboard
+// render) — the same reasoning that seated `session-events` in this package.
+export { GATE_REMEDY_KINDS, GATE_REMEDY_SURFACES, GATE_REMEDY_SURFACES_BY_KIND, remediesRenderableBy } from './remedies'
+export type { GateRemedy, GateRemedyKind, GateRemedySurface, RemedyKindFor } from './remedies'
 export type { RiskActionDescriptor } from './action-descriptor'
 // 391-11 (REVIEW WR-05): the scope key set, spelled ONCE and PUBLISHED — same posture as the
 // sibling constant `PROTECTED_ACTION_CLASSES` below, on the identical 388-C13 argument. Keeping it

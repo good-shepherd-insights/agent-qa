@@ -1,5 +1,6 @@
 import type {
   ExecutionContext,
+  GateRemedy,
   ExecutionPolicyResult,
   PolicyVerdict,
   RiskActionDescriptor,
@@ -210,6 +211,13 @@ export async function evaluate(
             confirm: deps.confirm ?? DENY_CONFIRM,
           })
   const decisionReason = buildDecisionReason(classificationReason, ctx, resolved)
+  // 400 D-15: the machine-readable half of the same decision, minted from the SAME `resolved`
+  // outcome one line below the prose. Two functions rather than one returning a pair, and that
+  // shape is load-bearing twice over: `buildDecisionReason` keeps returning a bare string, so its
+  // `return` templates stay the single greppable producer `399-runbook-gate.sh --chain` resolves
+  // and quotes the runbook against; and the prose arm and the remedy arm cannot drift apart while
+  // both switch exhaustively over one union.
+  const decisionRemedies = buildDecisionRemedies(resolved)
   const row = buildExecutionAuditRow({
     action,
     riskTier,
@@ -225,6 +233,12 @@ export async function evaluate(
     verdict: resolved.verdict,
     reason: decisionReason,
     riskTier,
+    // NOT ON THE AUDIT ROW (T-400-07). The trail carries the prose, unchanged, because the prose
+    // is what a person reads back months later and what the previous phase published verbatim.
+    // The remedies are for a LIVE reader deciding what to do next; a record of what was offered
+    // to whom is a different feature, and inventing it here would widen the audit contract on the
+    // way past.
+    remedies: decisionRemedies,
   }
 }
 
@@ -258,5 +272,54 @@ function buildDecisionReason(
       // design — an overlay that could be lifted mid-conversation would be a loosening path, and
       // the whole point of `/pin` is that it only ever goes one way.
       return `session-pin-denied: ${classificationReason}: this action class is pinned DENY for this chat session; a pin cannot be lifted — it ends when the session does`
+  }
+}
+
+/**
+ * The same decision, as the things the caller could DO about it (400 D-15).
+ *
+ * WHY THIS IS NOT MORE PROSE. `buildDecisionReason` above composes ONE sentence, and phase 399
+ * measured what that costs across four doors: the fail-closed sentence names `--trust-session`,
+ * which is declared on `agent-qa run` and nowhere else, so the MCP client that read it had no flag
+ * to pass and no way to know that from the text. A sentence cannot be right for a terminal, a
+ * transcript, a protocol client and a browser at once. These arms mint DATA; each surface projects
+ * it through `remediesRenderableBy` and renders only what it can offer.
+ *
+ * THE SWITCH IS EXHAUSTIVE OVER `ExecutionPolicyOutcome`, deliberately mirroring the prose switch
+ * arm for arm. A sixth outcome is a compile error in BOTH functions, so an outcome cannot arrive
+ * with a sentence and no remedies — nor with remedies and no sentence.
+ *
+ * EMPTY IS AN ANSWER AND THREE ARMS GIVE IT. `blocked` is the important one: a restricted-tier
+ * action is never executable and no grant, credential or flag changes that (§2.4 finality), so the
+ * honest offer is nothing at all. An arm that reached for a remedy here to avoid looking blank
+ * would be re-minting the very defect this vocabulary closes.
+ */
+function buildDecisionRemedies(resolved: ResolveAskResult): readonly GateRemedy[] {
+  switch (resolved.outcome) {
+    case 'proceeded':
+    case 'prompted-approved':
+      // Nothing was refused. There is nothing to remedy.
+      return []
+    case 'blocked':
+      // §2.4 finality: restricted actions are never executable. No surface has an affordance.
+      return []
+    case 'fail-closed-denied':
+    case 'prompted-denied':
+      // The two arms whose prose names two ways forward, now typed. `answer-confirm` is the
+      // confirm port — real on the terminal, in chat and (400 plan 06) in the browser, absent on
+      // MCP, which is exactly the asymmetry the todo measured. `trust-session-flag` names the flag
+      // AND the command it is declared on, because "there is no such flag on this surface" was the
+      // half of the finding a bare flag name could not have carried.
+      return [
+        { kind: 'answer-confirm' },
+        {
+          kind: 'trust-session-flag',
+          params: { flag: '--trust-session', command: 'run' },
+        },
+      ]
+    case 'session-pin-denied':
+      // 392 D-21: a pin has no revoke verb by design, so the session boundary is the only way out
+      // — and only a surface that HAS a session can render it.
+      return [{ kind: 'session-pin-final' }]
   }
 }

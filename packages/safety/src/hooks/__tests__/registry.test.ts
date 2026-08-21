@@ -72,6 +72,9 @@ describe('HookRegistry', () => {
         verdict: 'deny',
         reason: 'restricted action blocked',
         riskTier: 'restricted',
+        // 400 D-15: `remedies` is a required member of a decision — a restricted-tier block
+        // is the arm that offers nothing, and it has to SAY nothing rather than omit the field.
+        remedies: [],
       },
     }), FIRST_PARTY)
     registry.registerToolCall(laterHook, FIRST_PARTY)
@@ -85,6 +88,7 @@ describe('HookRegistry', () => {
         verdict: 'deny',
         reason: 'restricted action blocked',
         riskTier: 'restricted',
+        remedies: [],
       },
     })
     expect(laterHook).not.toHaveBeenCalled()
@@ -274,6 +278,7 @@ describe('HookRegistry async tool_call dispatch', () => {
           verdict: 'deny',
           reason: 'restricted action blocked',
           riskTier: 'restricted',
+          remedies: [],
         },
       })) as AsyncToolCallHook,
       FIRST_PARTY,
@@ -292,6 +297,7 @@ describe('HookRegistry async tool_call dispatch', () => {
         verdict: 'deny',
         reason: 'restricted action blocked',
         riskTier: 'restricted',
+        remedies: [],
       },
     })
     expect(laterHook).not.toHaveBeenCalled()
