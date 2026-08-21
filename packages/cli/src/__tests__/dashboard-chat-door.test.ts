@@ -39,6 +39,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
   composeDashboardDoor,
+  overlayDashboardBaseUrl,
   DASHBOARD_FUNCTION_CALLER,
 } from '../commands/dashboard.js'
 
@@ -259,6 +260,66 @@ describe('the dashboard chat door dispatches one utterance end to end', () => {
       body: 'not json at all',
     })
     expect(notJson.status).toBe(400)
+  })
+
+  it('overlays services.dashboard.baseUrl with the origin it actually bound (D-16)', async () => {
+    // 387 D-10 made the entity card's `url` config-derived and absent by default, read through the
+    // masker at `services.dashboard.baseUrl`. D-16 adds the SECOND SUPPLIER: a dashboard serving
+    // its own conversation knows its own origin, so cards in that conversation carry working links
+    // with no user setup — one mechanism, two suppliers, and no change to the card producer.
+    //
+    // MEASURED AT THE OP BOUNDARY, which is the only place the claim is about the product. The
+    // producer reads `deps.config.getMasked()`, so driving `config.get` through the door reads the
+    // exact entry the producer would: same port, same composition, same masking oracle. A cell that
+    // inspected the overlay function directly would be asserting about this file's wiring.
+    const answered = await postTurn(door.origin, { message: '/fn config.get {}' })
+    const payload = (answered.body as ChatTurnResponse).result.results[0]?.payload as {
+      entries?: readonly { key: string; value: string; source: string; masked: boolean }[]
+    }
+    const entry = payload.entries?.find((row) => row.key === 'services.dashboard.baseUrl')
+    expect(entry, 'the door composed no dashboard base URL, so every card it renders would be '
+      + 'url-absent even though this server has an address').toBeDefined()
+    expect(entry?.value, 'the base URL must be the origin this server BOUND, not a guess: an '
+      + 'ephemeral port is a real posture and a value captured before `listen` would be wrong')
+      .toBe(door.origin)
+    // `masked: false` is load-bearing, not decoration. The producer decides a base is usable by
+    // reading that flag — a `true` here would make the whole overlay contribute nothing, and the
+    // cards would be url-absent with everything else looking correct.
+    expect(entry?.masked, 'a masked base is treated as NO base by the card producer').toBe(false)
+    expect(entry?.source, 'no file, environment variable or flag carries this value').toBe('default')
+  })
+
+  it('lets an operator\'s own configured base URL win over the bound origin (D-16)', async () => {
+    // THE OVERLAY FILLS AN ABSENCE AND NEVER REPLACES A PRESENCE. A configured base is somebody
+    // pointing at something — a reverse proxy, a tunnel, a path prefix — and overwriting it with
+    // `http://127.0.0.1:<port>` would silently redirect every card link away from the address they
+    // chose. The knob stays THE mechanism; this door is its second supplier, not its owner.
+    const configured = 'https://qa.example.invalid'
+    const overlaid = overlayDashboardBaseUrl(
+      {
+        getMasked: async () => Promise.resolve({
+          schemaVersion: 1,
+          configPath: 'agent-qa.config.yaml',
+          entries: [{
+            key: 'services.dashboard.baseUrl',
+            value: configured,
+            source: 'config-file' as const,
+            masked: false,
+          }],
+        }),
+      },
+      () => 'http://127.0.0.1:9999',
+    )
+    const masked = await overlaid.getMasked()
+    expect(
+      masked.entries.filter((row) => row.key === 'services.dashboard.baseUrl'),
+      'the operator\'s value must survive, exactly once',
+    ).toEqual([{
+      key: 'services.dashboard.baseUrl',
+      value: configured,
+      source: 'config-file',
+      masked: false,
+    }])
   })
 
   it('lists what it reaches, through the door itself', async () => {
