@@ -94,6 +94,33 @@ export const ALL_HOSTILE_DESTINATIONS: readonly string[] = Object.freeze([
 /** A destination that MUST survive: the guard is an allow-list, not a refusal of everything. */
 export const BENIGN_LINK_DESTINATION = 'https://example.invalid/report'
 
+/**
+ * Markdown IMAGE destinations that must never reach an `img src` (400 gap round 1).
+ *
+ * THE THIRD RENDERER VECTOR, and the one that needs no click. `![alt](dest)` is neither an HTML
+ * block nor a link — it reaches `renderer.image`, which composed an `<img src>` out of an
+ * unsanitised destination — and a browser FETCHES an `img src` the instant the entry paints. So a
+ * remote destination is a beacon confirming this transcript rendered somebody's bytes inside the
+ * dashboard's origin, and a `data:` destination is a payload the page then holds.
+ *
+ * ONE ROW, DELIBERATELY. The spelling axis is already measured exhaustively by the link list above
+ * against the SAME predicate — the image guard reuses `isRenderableHref` rather than forking a
+ * second parser — so a second full spelling sweep here would measure the same function twice. What
+ * this row adds is the vector: that the predicate is reached from the image renderer at all.
+ */
+export const REFUSED_IMAGE_DESTINATIONS: readonly string[] = Object.freeze([
+  'data:text/html;base64,PHNjcmlwdD4xPC9zY3JpcHQ+',
+])
+
+/** An image destination that MUST survive: the image guard is a filter, not a blanket. */
+export const BENIGN_IMAGE_DESTINATION = 'https://example.invalid/shot.png'
+
+/** The alt text every refused image carries, so a refused image can be found by its words. */
+export const HOSTILE_IMAGE_ALT = 'refused image'
+
+/** The alt text of the one image that must render. */
+export const BENIGN_IMAGE_ALT = 'a screenshot'
+
 /** The visible text every link below carries, so a refused link can be found by its words. */
 export const HOSTILE_LINK_TEXT = 'click here'
 
@@ -117,6 +144,12 @@ export function hostileMarkdownDocument(): string {
     ),
     '',
     `- [safe link](${BENIGN_LINK_DESTINATION})`,
+    '',
+    ...REFUSED_IMAGE_DESTINATIONS.map(
+      (destination) => `- ![${HOSTILE_IMAGE_ALT}](${destination})`,
+    ),
+    '',
+    `- ![${BENIGN_IMAGE_ALT}](${BENIGN_IMAGE_DESTINATION})`,
     '',
   ].join('\n')
 }

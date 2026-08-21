@@ -65,8 +65,12 @@ import {
 } from './spawned-chat.js'
 import type { SpawnedDashboard } from './spawned-chat.js'
 import {
+  BENIGN_IMAGE_ALT,
+  BENIGN_IMAGE_DESTINATION,
   BENIGN_LINK_DESTINATION,
+  HOSTILE_IMAGE_ALT,
   HOSTILE_LINK_TEXT,
+  REFUSED_IMAGE_DESTINATIONS,
   REFUSED_LINK_DESTINATIONS,
   RELATIVE_LOOKALIKE_DESTINATION,
   XSS_WITNESS,
@@ -846,8 +850,12 @@ describe('untrusted transcript prose renders inert in a real browser (400-09)', 
 
         // GUARD ONE: a raw HTML BLOCK is TEXT. No element was created from it, and the source is
         // readable as the characters it was written with.
+        // The selector NAMES what the raw block would have produced (`<img src="x" onerror=…>` and
+        // a `<script>`) rather than "any img", because the fixture now also carries a BENIGN
+        // markdown image that is supposed to render. A blanket `img` count here would have gone
+        // red on the control and told a reader the escape had broken.
         expect(
-          await answer.locator('img, script').count(),
+          await answer.locator('script, img[src="x"], img[onerror]').count(),
           'the raw HTML block was INJECTED rather than escaped — an element the transcript\'s '
           + 'author never wrote now exists inside the dashboard\'s own origin',
         ).toBe(0)
@@ -920,6 +928,35 @@ describe('untrusted transcript prose renders inert in a real browser (400-09)', 
           await answer.textContent(),
           'the destination markdown could not parse as a link vanished instead of rendering as text',
         ).toContain('embedded-newline')
+
+        // GUARD THREE: the IMAGE vector, which needs no click at all — the browser fetches an
+        // `img src` the moment the entry paints. Before this guard existed the `data:` row below
+        // reached an `img src` verbatim in this very cell's render.
+        expect(
+          await answer.locator('[data-blocked-src]').count(),
+          'the refused image count does not match the fixture, so either a hostile image '
+          + 'destination survived or the guard deleted the node instead of keeping its alt text',
+        ).toBe(REFUSED_IMAGE_DESTINATIONS.length)
+        expect(
+          await answer.locator('img[src^="data:"]').count(),
+          'a `data:` destination reached an `img src` inside the dashboard\'s own origin',
+        ).toBe(0)
+        expect(
+          await answer.textContent(),
+          'the refused image lost its alt text as well as its destination',
+        ).toContain(HOSTILE_IMAGE_ALT)
+        // AND THE CONTROL: the guard is a filter, not a blanket. A benign https image still
+        // renders, with the destination the document named.
+        const benignImages = await answer.locator('img').evaluateAll(
+          (nodes) => nodes.map((node) => ({
+            src: node.getAttribute('src') ?? '',
+            alt: node.getAttribute('alt') ?? '',
+          })),
+        )
+        expect(
+          benignImages,
+          'the benign https image was refused too, so no transcript image renders at all',
+        ).toEqual([{ src: BENIGN_IMAGE_DESTINATION, alt: BENIGN_IMAGE_ALT }])
 
         // AND NOTHING RAN. The witness a successful injection would have set is absent, and no
         // dialog was raised — the two observable effects every payload above was written to have.

@@ -6,12 +6,15 @@
 // controls the thing the agent was pointed at, and this component paints them into the dashboard's
 // own origin, where the API that drives a person's local agent lives.
 //
-// TWO VECTORS, TWO GUARDS, AND THE SHIPPED IDIOM ONLY CLOSES ONE. `ObservationMarkdown` overrides
-// `renderer.html` so a raw HTML BLOCK is escaped rather than injected, and that idiom is copied
-// verbatim below — it is the reviewed one and this file must not fork it. But a markdown LINK is
-// not an HTML block: `[click](javascript:…)` reaches `marked`'s link renderer, which composes an
-// `<a href>` out of a destination it does not sanitise. The escape leaves that untouched, so this
-// file adds the second guard, and `chat-transcript.test.tsx` drives hostile fixtures at both.
+// THREE VECTORS, THREE GUARDS, AND THE SHIPPED IDIOM ONLY CLOSES ONE. `ObservationMarkdown`
+// overrides `renderer.html` so a raw HTML BLOCK is escaped rather than injected, and that idiom is
+// copied verbatim below — it is the reviewed one and this file must not fork it. But a markdown
+// LINK is not an HTML block: `[click](javascript:…)` reaches `marked`'s link renderer, which
+// composes an `<a href>` out of a destination it does not sanitise. Nor is a markdown IMAGE:
+// `![alt](data:…)` reaches the image renderer and becomes an `img src` the browser fetches with no
+// click at all — a beacon to a remote host, or a payload the page holds. The escape leaves both
+// untouched, so this file adds the other two guards, and `chat-transcript.test.tsx` drives hostile
+// fixtures at all three.
 //
 // THE LINK GUARD IS AN ALLOW-LIST AND THAT IS THE WHOLE DESIGN. A deny-list of protocol names is a
 // rule that can only refuse what somebody thought to NAME, and the history of this class is a
@@ -30,7 +33,7 @@ interface ChatMarkdownProps {
 }
 
 /**
- * The protocols a transcript link may carry.
+ * The protocols a transcript link or image may carry.
  *
  * Relative and same-document destinations are handled separately below: they have no protocol at
  * all, so they can never be one of these, and refusing them would break every internal link the
@@ -82,6 +85,36 @@ renderer.link = ({ href, title, tokens }) => {
   }
   const titleAttribute = title === null || title === undefined ? "" : ` title="${escapeHtml(title)}"`
   return `<a href="${escapeHtml(href)}"${titleAttribute} rel="noreferrer noopener" target="_blank">${text}</a>`
+}
+
+/**
+ * The image guard — the third renderer vector, and the one a click is not needed for.
+ *
+ * WHY IT IS NOT COVERED BY THE TWO ABOVE. `![alt](dest)` is neither a raw HTML block nor a link:
+ * it reaches `renderer.image`, which composes an `<img src>` out of a destination nothing
+ * sanitised. And an `img src` is worse than an unclicked href, because the browser FETCHES it the
+ * moment the entry paints — so a remote destination is a beacon confirming that this transcript,
+ * in this dashboard's origin, rendered the attacker's bytes, and a `data:` destination is a payload
+ * the page then holds. Neither needs a person to do anything.
+ *
+ * ONE PREDICATE, NOT A SECOND ONE. `isRenderableHref` is reused verbatim — its whole argument is
+ * that a second parser over the same string is where every bypass in this class lives, and forking
+ * it for images would be exactly that. `#`-relative is meaningless for an image and harmless: it
+ * resolves to this document, which fetches nothing interesting.
+ *
+ * A REFUSED IMAGE KEEPS ITS ALT TEXT, on the link guard's own stated reason: nothing is invented
+ * and nothing disappears. What the reader loses is the destination, and the marker says so.
+ *
+ * NO DIMENSIONS ARE TAKEN FROM CONTENT. The only attributes composed here are the escaped `src`,
+ * the escaped `alt`, an escaped `title` when the document carried one, and `loading="lazy"`.
+ */
+renderer.image = ({ href, title, text }) => {
+  const alt = escapeHtml(text)
+  if (!isRenderableHref(href)) {
+    return `<span data-blocked-src="true" title="image removed: unsupported protocol">${alt}</span>`
+  }
+  const titleAttribute = title === null || title === undefined ? "" : ` title="${escapeHtml(title)}"`
+  return `<img src="${escapeHtml(href)}" alt="${alt}"${titleAttribute} loading="lazy">`
 }
 
 export function ChatMarkdown({ className, content }: ChatMarkdownProps) {

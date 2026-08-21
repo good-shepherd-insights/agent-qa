@@ -236,6 +236,35 @@ describe('the transcript renders untrusted markdown inertly (T-400-19 / T-400-20
     const dom = mount(<ChatMarkdown content={'[docs](https://example.invalid/a)'} />)
     expect(dom.querySelector('a')?.getAttribute('href')).toBe('https://example.invalid/a')
   })
+
+  it('refuses a markdown IMAGE destination the same allow-list refuses for a link', () => {
+    // THE THIRD RENDERER VECTOR, and it was open while its two siblings were closed. A markdown
+    // image is not an HTML block and not a link: `![alt](dest)` reaches `renderer.image`, which
+    // composes an `<img src>` out of a destination nothing sanitised. An `img src` is a REQUEST the
+    // browser makes with no click — a `data:` payload the page then holds, or a remote host handed
+    // a hit from the dashboard's own origin the moment a transcript entry paints. Same predicate as
+    // the link guard, deliberately: one URL parser, not a second one that can disagree with it.
+    const hostile = [
+      '![alt-data](data:text/html;base64,PHNjcmlwdD4xPC9zY3JpcHQ+)',
+      '![alt-scheme](JaVaScRiPt:globalThis.__xss=true)',
+    ]
+    const dom = mount(<ChatMarkdown content={hostile.join('\n\n')} />)
+    expect(dom.querySelectorAll('[data-blocked-src]')).toHaveLength(hostile.length)
+    expect(dom.querySelectorAll('img')).toHaveLength(0)
+    // The alt text survives, for the link guard's own stated reason: nothing is invented and
+    // nothing disappears.
+    expect(dom.textContent).toContain('alt-data')
+    expect(dom.textContent).toContain('alt-scheme')
+    expect((globalThis as { __xss?: boolean }).__xss).toBeUndefined()
+  })
+
+  it('renders a benign https image, so the image guard is a filter and not a blanket', () => {
+    const dom = mount(<ChatMarkdown content={'![a screenshot](https://example.invalid/shot.png)'} />)
+    const image = dom.querySelector('img')
+    expect(image?.getAttribute('src')).toBe('https://example.invalid/shot.png')
+    expect(image?.getAttribute('alt')).toBe('a screenshot')
+    expect(dom.querySelectorAll('[data-blocked-src]')).toHaveLength(0)
+  })
 })
 
 describe('a denial renders the remedies THIS surface can take (D-15)', () => {
