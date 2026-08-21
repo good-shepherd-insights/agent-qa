@@ -14,6 +14,8 @@
 // component mounted into a detached node can satisfy every query in a file like this one while the
 // real mount path is broken, and the cell would never know.
 
+import { readFileSync } from 'node:fs'
+
 import { act, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -313,5 +315,83 @@ describe("the input row carries a person's bytes to the door unchanged (D-10)", 
     const form = dom.querySelector('[data-chat-form]') as HTMLFormElement
     act(() => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
     expect(onSend).toHaveBeenCalledWith('/fn runs.digest {"limit": 3}')
+  })
+})
+
+describe('the confirm bubble is a render over the plan-03 bridge (D-06 / D-07)', () => {
+  it('renders INLINE in the transcript with the action class and the cost preview', () => {
+    // D-06: never a modal. A dialog that covers the transcript hides the very context a person
+    // needs in order to answer — the preview `chatPresent` pushed a moment earlier, saying what
+    // this invocation is about to cost. The bubble sits where that context is.
+    const state = fold([
+      { channel: 'present', text: 'authoring.funnel.dispatch will consume up to 9 runs' },
+      { channel: 'confirm-request', frame: { confirmId: 'c-1', actionClass: 'authoring.dispatch', preview: 'up to 9 runs' } },
+    ])
+    const dom = mount(<ChatTranscriptView state={state} {...NOOP_HANDLERS} />)
+    const bubble = dom.querySelector('[data-confirm-bubble]')
+    expect(bubble, 'no confirm bubble rendered').not.toBeNull()
+    expect(bubble?.textContent).toContain('authoring.dispatch')
+    expect(bubble?.textContent).toContain('up to 9 runs')
+    // The preview that arrived BEFORE the question is still above it, unhidden.
+    const present = dom.querySelector('[data-entry="present"]')
+    expect(present?.textContent).toContain('up to 9 runs')
+    expect(
+      (present?.compareDocumentPosition(bubble as Node) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('offers exactly the TTY\'s three answers and posts each with the confirm\'s own id', () => {
+    // D-07: full grant parity. `accept-always` rides 391's shipped grant machinery on the server;
+    // the browser offers the same three words a terminal does and mints nothing itself.
+    const onAnswerConfirm = vi.fn()
+    const state = fold([
+      { channel: 'confirm-request', frame: { confirmId: 'c-42', actionClass: 'authoring.dispatch' } },
+    ])
+    const dom = mount(
+      <ChatTranscriptView state={state} {...NOOP_HANDLERS} onAnswerConfirm={onAnswerConfirm} />,
+    )
+    const buttons = [...dom.querySelectorAll('[data-confirm-answer]')]
+    expect(buttons.map((node) => node.getAttribute('data-confirm-answer')))
+      .toEqual(['accept', 'accept-always', 'deny'])
+    for (const button of buttons) act(() => { (button as HTMLButtonElement).click() })
+    expect(onAnswerConfirm.mock.calls).toEqual([
+      ['c-42', 'accept'],
+      ['c-42', 'accept-always'],
+      ['c-42', 'deny'],
+    ])
+  })
+
+  it('shows a deny-on-silence as the DENIAL it is, never as a question still pending', () => {
+    // The server denies on timeout, on disconnect and where no channel is open, deliberately
+    // (D-06 — fail-closed is the only honest default for a channel that can vanish mid-question).
+    // A bubble that kept its buttons after that would be offering an answer to a question that is
+    // already closed, and a spinner would be papering over the product's own decision.
+    const state = fold([
+      { channel: 'confirm-request', frame: { confirmId: 'c-7', actionClass: 'authoring.dispatch', preview: 'up to 9 runs' } },
+      { channel: 'confirm-resolved', frame: { kind: 'confirm_resolved', confirmId: 'c-7', answer: 'deny', by: 'timeout' } },
+    ])
+    const dom = mount(<ChatTranscriptView state={state} {...NOOP_HANDLERS} />)
+    const bubble = dom.querySelector('[data-confirm-bubble]')
+    expect(bubble?.getAttribute('data-confirm-resolution')).toBe('deny')
+    expect(bubble?.getAttribute('data-confirm-resolved-by')).toBe('timeout')
+    expect(dom.querySelectorAll('[data-confirm-answer]')).toHaveLength(0)
+    expect(bubble?.textContent).toContain('denied')
+  })
+
+  it('carries no client-side timer and no client-side grant (source assertion)', () => {
+    // The window, the deny-on-silence and the standing-approval mint all live in the registry the
+    // server composed. A browser-side timer would be a SECOND clock on one question — free to
+    // disagree with the one that actually decides — and a browser-side grant would be a write the
+    // 391 machinery never saw.
+    const source = readFileSync(
+      new URL('../chat/confirm-bubble.tsx', import.meta.url),
+      'utf8',
+    )
+    expect(source).not.toMatch(/setTimeout|setInterval|requestAnimationFrame/)
+    expect(source).not.toMatch(/recordStandingApproval|grants\./)
+    // And the three answers are spelled here, so a rename on the wire is a visible edit.
+    for (const answer of ['accept', 'accept-always', 'deny']) {
+      expect(source).toContain(`"${answer}"`)
+    }
   })
 })
