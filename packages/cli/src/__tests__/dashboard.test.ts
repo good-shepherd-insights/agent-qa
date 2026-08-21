@@ -10,6 +10,7 @@ const {
   mockDashboardDatabase,
   mockResolveDashboardDbPath,
   mockStartServer,
+  mockCreateConfirmRegistry,
 } = vi.hoisted(() => ({
   mockResolveConfig: vi.fn(),
   mockDashboardDatabase: vi.fn(),
@@ -17,6 +18,19 @@ const {
     configuredDbPath || '.agent-qa/runs.db',
   ),
   mockStartServer: vi.fn(),
+  // 400-03: the confirm registry the command creates through this same import. A mock missing it
+  // does not fail as a missing assertion — the command throws on the destructure, exits 2, and
+  // every cell below then measures a command that never ran.
+  mockCreateConfirmRegistry: vi.fn(() => ({
+    openChannel: vi.fn(() => vi.fn()),
+    liveSessionIds: vi.fn(() => []),
+    hasLiveChannel: vi.fn(() => false),
+    subscribe: vi.fn(() => vi.fn()),
+    request: vi.fn(async () => 'deny' as const),
+    present: vi.fn(),
+    answer: vi.fn(() => ({ kind: 'unknown-confirm' as const })),
+    pendingCount: vi.fn(() => 0),
+  })),
 }))
 
 vi.mock('../config.js', () => ({
@@ -25,6 +39,7 @@ vi.mock('../config.js', () => ({
 
 vi.mock('@vostride/agent-qa-dashboard', () => ({
   DashboardDatabase: mockDashboardDatabase,
+  createConfirmRegistry: mockCreateConfirmRegistry,
   resolveDashboardDbPath: mockResolveDashboardDbPath,
   startServer: mockStartServer,
 }))
@@ -151,6 +166,13 @@ describe('createDashboardCommand', () => {
 
     expect(mockDashboardDatabase).toHaveBeenCalled()
     expect(mockStartServer).toHaveBeenCalled()
+
+    // 400-03: ONE registry, reaching BOTH halves. The command creates it, the composition parks
+    // ask-tier questions in it, and the server is handed the same instance through the agent host —
+    // a server started without it would serve a confirm route with nothing behind it.
+    expect(mockCreateConfirmRegistry).toHaveBeenCalledTimes(1)
+    const started = mockStartServer.mock.calls[0]?.[0] as { agentHost?: { confirms?: unknown } }
+    expect(started.agentHost?.confirms).toBe(mockCreateConfirmRegistry.mock.results[0]?.value)
   })
 
   it('uses dashboard config from resolved config', async () => {
