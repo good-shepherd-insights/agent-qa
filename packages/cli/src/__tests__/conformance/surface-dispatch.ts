@@ -350,7 +350,15 @@ export async function driveChatLines(
  * NEVER SCRAPED FROM A RENDER. The printed line and the served JSON are both renders of these
  * records, so a reader that parsed either could disagree with what the product wrote down.
  */
-function readRuntimeObservations(agentQaRoot: string): Omit<ChatDriveObservation, 'stdout'> {
+/**
+ * EXPORTED for the spawned-wire anchors (400-09), which must read the CHILD's runtime root.
+ *
+ * The anchors compare an in-process drive with a drive against the shipped `agent-qa dashboard`
+ * binary, and the comparand on both sides has to be produced by the SAME reader — otherwise the
+ * anchor's subject is the difference between two reading recipes rather than the difference between
+ * two doors. A private copy in the anchor file would be exactly that second recipe.
+ */
+export function readRuntimeObservations(agentQaRoot: string): Omit<ChatDriveObservation, 'stdout'> {
   const receipts: ClauseReceipt[] = []
   const results: ClauseResult[] = []
   const unhandled: string[] = []
@@ -443,8 +451,23 @@ export interface DashboardDispatchOutcome extends DashboardDriveObservation {
 export async function driveDashboardLines(
   typedLines: readonly string[],
   executionContext?: ExecutionContext,
+  /**
+   * A project this driver did NOT make, for the wire anchors (400-09).
+   *
+   * The anchors compare this in-process drive against the same lines typed at the SHIPPED binary,
+   * and a receipt's `outcome` is content: `config.get` reports how many entries it resolved. Two
+   * different fixture recipes therefore produce two different receipt lines for one working door —
+   * a red about the fixture wearing the anchor's failure message. So the anchor hands BOTH halves a
+   * project built from one recipe (`dashboardFixtureProject`), in two separate temp roots.
+   *
+   * A SUPPLIED PROJECT IS NOT DELETED HERE. Its owner registered it with the shared temp-root
+   * tracker and sweeps it in its own hook; deleting somebody else's directory from inside a driver
+   * is how a cleanup ends up running at an ambiguous time.
+   */
+  fixture?: { readonly configPath: string },
 ): Promise<DashboardDriveObservation> {
-  const configPath = fixtureWorkspace()
+  const configPath = fixture?.configPath ?? fixtureWorkspace()
+  const ownsFixture = fixture === undefined
   const root = dirname(resolve(configPath))
   let boundOrigin: string | undefined
   const door = composeDashboardDoor({
@@ -487,7 +510,7 @@ export async function driveDashboardLines(
   }
 
   const observed = readRuntimeObservations(join(root, '.agent-qa'))
-  rmSync(root, { recursive: true, force: true })
+  if (ownsFixture) rmSync(root, { recursive: true, force: true })
   return { ...observed, httpStatuses, turns, lastHeaders }
 }
 
