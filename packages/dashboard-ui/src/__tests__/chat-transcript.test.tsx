@@ -249,6 +249,7 @@ describe('a denial renders the remedies THIS surface can take (D-15)', () => {
           clause: 'run it',
           functionId: 'runs.start',
           reason: 'fail-closed: ask in ci without trust (tier): re-run locally to confirm interactively or opt in with --trust-session',
+          neutralReason: 'fail-closed (ci): tier: this action needs an approval this context has not established',
           remedies: [
             { kind: 'answer-confirm' },
             { kind: 'trust-session-flag', params: { flag: '--trust-session', command: 'run' } },
@@ -273,7 +274,57 @@ describe('a denial renders the remedies THIS surface can take (D-15)', () => {
       .join('\n')
     expect(remedyText).not.toContain('--trust-session')
     expect(remedyText).toContain('confirm')
-    expect(dom.textContent).toContain('fail-closed: ask in ci without trust')
+    // 400 gap round 1 (D-15 prose half): and the REASON PARAGRAPH beside them is now the
+    // surface-neutral one. 400-02 left the canonical sentence rendered verbatim here and said so;
+    // that sentence names `--trust-session`, a flag declared on `agent-qa run` and nowhere else,
+    // so a browser reader was being handed another surface's instructions by the very block whose
+    // remedy list had just been taught not to. The canonical prose is the CLI's and the audit
+    // trail's; nothing composes it into this DOM.
+    expect(dom.textContent).toContain(
+      'fail-closed (ci): tier: this action needs an approval this context has not established',
+    )
+    expect(dom.textContent).not.toContain('fail-closed: ask in ci without trust')
+    expect(dom.textContent).not.toContain('--trust-session')
+  })
+
+  it('never lets the CANONICAL prose reach the DOM, whatever it carries (the mutation bar)', () => {
+    // THE TWO STRINGS ARE DELIBERATELY DISJOINT in this fixture, because that is the only shape
+    // that can tell the fix from the defect. A denial whose two reasons agreed would render the
+    // same bytes under either implementation, and this cell would be green against the HEAD render
+    // it exists to red on.
+    const state = fold([
+      {
+        channel: 'turn',
+        turnId: 't1',
+        denials: [{
+          clause: 'apply it',
+          functionId: 'knowledge.proposal.apply',
+          reason: 'prompted-denied: fn:knowledge.proposal.apply (mutating-shared): the interactive prompt was declined; re-run and approve, or opt in with --trust-session',
+          neutralReason: 'prompted-denied: fn:knowledge.proposal.apply (mutating-shared): the interactive prompt was declined',
+          remedies: [
+            { kind: 'answer-confirm' },
+            { kind: 'trust-session-flag', params: { flag: '--trust-session', command: 'run' } },
+          ],
+        }],
+      },
+    ])
+    const dom = mount(<ChatTranscriptView state={state} {...NOOP_HANDLERS} />)
+    const denial = dom.querySelector('[data-entry="denial"]') as HTMLElement
+    expect(denial).not.toBeNull()
+
+    // What a browser reader IS shown: the classification, the outcome, and the way forward this
+    // surface can actually offer.
+    expect(denial.textContent).toContain(
+      'prompted-denied: fn:knowledge.proposal.apply (mutating-shared): the interactive prompt was declined',
+    )
+    expect(
+      [...denial.querySelectorAll('[data-remedy-kind]')].map((node) => node.getAttribute('data-remedy-kind')),
+    ).toEqual(['answer-confirm'])
+
+    // And what they are NOT: the trailing clause the CLI owns. A render that hid the reason
+    // entirely would fail the assertion above; a render that showed the canonical one fails here.
+    expect(denial.textContent).not.toContain('--trust-session')
+    expect(denial.textContent).not.toContain('re-run and approve')
   })
 
   it('renders nothing where the dashboard projection is empty rather than inventing a way forward', () => {
@@ -285,6 +336,7 @@ describe('a denial renders the remedies THIS surface can take (D-15)', () => {
           clause: 'run it',
           functionId: 'runs.start',
           reason: 'blocked: restricted tier',
+          neutralReason: 'blocked: restricted tier',
           remedies: [{ kind: 'trust-session-flag', params: { flag: '--trust-session', command: 'run' } }],
         }],
       },

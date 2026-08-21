@@ -304,7 +304,7 @@ function TranscriptEntry({
         />
       )
     case "denial":
-      return <DenialBlock reason={entry.denial.reason} remedies={entry.denial.remedies} />
+      return <DenialBlock neutralReason={entry.denial.neutralReason} remedies={entry.denial.remedies} />
     case "answer":
       return (
         <div data-entry="answer" className="rounded-lg bg-muted/40 px-3 py-2">
@@ -414,7 +414,19 @@ function PayloadBlock({
 }
 
 /**
- * A refusal: the canonical reason, then the ways forward A BROWSER READER CAN ACTUALLY TAKE.
+ * A refusal: what was refused, then the ways forward A BROWSER READER CAN ACTUALLY TAKE.
+ *
+ * THE PROSE IS THE `neutralReason`, NEVER THE CANONICAL `reason` (400 gap round 1, D-15 / #191).
+ * The gate mints two sentences from one decision. `reason` is the canonical one — the audit row's
+ * text, the bytes `demo/acceptance/399/` published — and on two of its arms it names
+ * `--trust-session`, a flag declared on `agent-qa run` and on no other command. 400-02 rendered it
+ * here verbatim and recorded the residue: this block had just been taught not to hand a browser
+ * reader another surface's remedy, while the paragraph above the remedies did exactly that. The
+ * canonical prose belongs to the CLI and to the trail; nothing composes it into this DOM.
+ *
+ * SO THE WAY OUT REACHES THIS READER THROUGH `remediesRenderableBy("dashboard", …)` AND NOWHERE
+ * ELSE. That is the whole shape of the repair: one channel that says what happened, in words any
+ * surface can show, and one channel of typed offers each surface filters to what it can honour.
  *
  * AN EMPTY PROJECTION RENDERS NOTHING, and that had to be a decision rather than a fallthrough. A
  * render that reached for a line when it had nothing to offer would re-mint the todo — a reader
@@ -422,16 +434,16 @@ function PayloadBlock({
  * answer.
  */
 function DenialBlock({
-  reason,
+  neutralReason,
   remedies,
 }: {
-  reason: string
+  neutralReason: string
   remedies: readonly GateRemedy[]
 }) {
   const renderable = remediesRenderableBy("dashboard", remedies)
   return (
     <div data-entry="denial" className="flex flex-col gap-1 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-sm">
-      <p className="text-foreground">{reason}</p>
+      <p className="text-foreground">{neutralReason}</p>
       {renderable.map((remedy) => (
         <p
           key={remedy.kind}
