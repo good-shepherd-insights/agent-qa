@@ -289,9 +289,14 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
 
     // THE CONFIRM REACHED THE WIRE. Asserted BEFORE anything about how it resolved, because
     // "resolved to deny" is trivially true of a confirm that was never raised.
-    const raised = confirmRequestOf(await stream.waitFor((frame) => frame.event === 'confirm_request'))
+    const raisedFrame = await stream.waitFor((frame) => frame.event === 'confirm_request')
+    const raised = confirmRequestOf(raisedFrame)
     expect(raised.actionClass).toBe(ASK_ACTION_CLASS)
     expect(raised.confirmId).toBeTruthy()
+    // NO STREAM ID ON A CONFIRM FRAME. The ids on this connection are the replay currency for the
+    // session log's projection; numbering a transient question into that sequence would make a
+    // reconnect ask for an event no window could ever hold.
+    expect(raisedFrame.id).toBeUndefined()
 
     const answered = await turn
     expect(answered.result.receipts.map((receipt) => ({
@@ -453,6 +458,45 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
       await new Promise<void>((settled) => setTimeout(settled, 10))
     }
     expect(door.executionContext()).toBe('local-headless')
+  })
+
+  it('denies an ask with no channel open, fail-closed and without hanging (D-05/D-06)', async () => {
+    // THE TWO MECHANISMS COMPOSED. No stream is opened, so the context predicate answers
+    // `local-headless`, so the gate never reaches its ask arm at all — and even if it did, the
+    // registry would refuse to park a question for a session nobody is watching. The audit row is
+    // what tells the two apart, and it must be the fail-closed one: a `prompted-denied` here would
+    // mean the door claimed a prompt it never showed anybody.
+    const door = await openDoor({ timeoutMs: 300 })
+    const sessionId = await openSession(door.origin)
+    expect(door.confirms.hasLiveChannel()).toBe(false)
+
+    const answered = await postTurn(door.origin, { message: ASK_UTTERANCE, sessionId })
+    expect(answered.result.receipts[0]?.outcome).toBe('FunctionDeniedError')
+    expect(askRowsFor(door.configRoot).map((row) => row['outcome'])).toEqual(['fail-closed-denied'])
+    expect(door.confirms.pendingCount()).toBe(0)
+  })
+
+  it('withholds every cross-origin grant on the answer route, including its preflight (T-400-03)', async () => {
+    // THE ROUTE THIS CELL GUARDS IS A CLICK-YES-ON-SOMEBODY'S-BEHALF PRIMITIVE. It is inside the
+    // `/api/chat/` prefix, which is mounted ahead of the shared `cors()` arm precisely so no page a
+    // person has open can preflight it — 400-01 found that hole on the turn route and this route is
+    // the same class, one step worse.
+    const door = await openDoor()
+    const preflight = await fetch(`${door.origin}/api/chat/confirm`, { method: 'OPTIONS' })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-origin')).toBeNull()
+
+    const answered = await fetch(`${door.origin}/api/chat/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'chat-x', confirmId: 'confirm-x', answer: 'accept' }),
+    })
+    expect(answered.status).toBe(404)
+    expect(answered.headers.get('access-control-allow-origin')).toBeNull()
+
+    // And the door refuses bytes that are not the contract before it touches the registry.
+    const malformed = await postConfirm(door.origin, { sessionId: 'chat-x', answer: 'maybe' })
+    expect(malformed.status).toBe(400)
   })
 
   it('tags the session it opened with its own surface, on the header only (D-04)', async () => {

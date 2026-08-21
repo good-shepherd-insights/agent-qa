@@ -33,6 +33,7 @@ import type { AgentAskResult, ChatSessionEvent } from '@vostride/agent-qa-schema
 import { z } from 'zod'
 
 import { readJsonBody } from '../server/body-parser.js'
+import { CHAT_CONFIRM_ANSWERS, type ChatConfirmChannelFrame } from './confirm-registry.js'
 import type { AgentHost, ChatTurnFold, ChatTurnResponse } from './host.js'
 
 /** Every path this door owns, so the router can hand it a prefix and nothing else. */
@@ -40,6 +41,18 @@ export const CHAT_ROUTE_PREFIX = '/api/chat/'
 
 export const CHAT_TURN_ROUTE = '/api/chat/turn'
 export const CHAT_CAPABILITIES_ROUTE = '/api/chat/capabilities'
+
+/**
+ * Where a person's yes / always / no comes back (400-03, D-05 / D-06 / D-07).
+ *
+ * A SECOND ROUTE AND NOT A SECOND DOOR. It dispatches nothing and reaches no capability: all it can
+ * do is spend one outstanding confirm id, and the decision that id was minted for is already inside
+ * a turn that is waiting. `POST` because it changes something (a question stops being open), and
+ * inside the `/api/chat/` prefix because that prefix is what withholds the cross-origin wildcard —
+ * a confirm-answer route reachable from any open page would be a click-yes-on-somebody's-behalf
+ * primitive, which is strictly worse than the turn route it sits beside.
+ */
+export const CHAT_CONFIRM_ROUTE = '/api/chat/confirm'
 
 /** `/api/chat/sessions/<id>/events` — the one streaming path, matched rather than parsed. */
 const CHAT_SESSION_EVENTS_PATTERN = /^\/api\/chat\/sessions\/([^/]+)\/events$/
@@ -150,6 +163,20 @@ const ChatTurnRequestSchema = z.object({
 }).strict()
 
 /**
+ * The answer, validated at the door (T-400-01 / T-400-09).
+ *
+ * `sessionId` is REQUIRED and it is not redundant with the confirm id. The registry compares it
+ * against the session the question was parked for, so a request that holds an id it should not have
+ * cannot spend it on somebody else's conversation. `.strict()` and a closed `answer` enum, so a
+ * fourth answer is a 400 here rather than an `undefined` somewhere downstream.
+ */
+const ChatConfirmRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  confirmId: z.string().min(1),
+  answer: z.enum(CHAT_CONFIRM_ANSWERS),
+}).strict()
+
+/**
  * JSON, WITHOUT the cross-origin wildcard `routes.ts`'s helper writes.
  *
  * Deliberately a second responder rather than a parameter on the shared one. A flag would make the
@@ -225,6 +252,46 @@ async function handleTurn(host: AgentHost, req: IncomingMessage, res: ServerResp
   jsonSameOrigin(res, response)
 }
 
+async function handleConfirm(
+  host: AgentHost,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const confirms = host.confirms
+  if (confirms === undefined) {
+    // The 501 idiom, for the same reason the absent-host arm uses it: this server was composed
+    // without a confirm channel, and that is a different fact than an unrecognised path.
+    //
+    // (The wording is deliberate: `validate:arch` extracts import specifiers textually, so a
+    // comment shaped like an import clause is read as a dependency this package never declared.)
+    refuse(res, 'Chat confirms are not available: this server was started without a confirm channel', 501)
+    return
+  }
+
+  let body: unknown
+  try {
+    body = await readJsonBody<unknown>(req)
+  } catch {
+    refuse(res, 'Invalid request body', 400)
+    return
+  }
+  const parsed = ChatConfirmRequestSchema.safeParse(body)
+  if (!parsed.success) {
+    refuse(res, 'Invalid request body', 400)
+    return
+  }
+
+  const outcome = confirms.answer(parsed.data)
+  if (outcome.kind === 'unknown-confirm') {
+    // ONE ANSWER FOR THREE STATES — no such id, an id already spent, an id belonging to another
+    // session. Distinguishing them here would tell a caller which confirms are outstanding and
+    // whose they are, which is the probe the single-use id exists to close.
+    refuse(res, 'Unknown or already-answered confirm', 404)
+    return
+  }
+  jsonSameOrigin(res, { resolved: true, answer: outcome.answer })
+}
+
 function handleCapabilities(host: AgentHost, res: ServerResponse): void {
   // Read off the door's OWN registry under the door's OWN caller, which is what makes a listing
   // taken through this route a fact about the door rather than about whoever asked.
@@ -270,11 +337,29 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
   const windows = new Map<string, SessionStreamWindow>()
   /** Every live stream, so a frame reaches whoever is watching and a close removes exactly one. */
   const streams = new Set<(entry: StreamedSessionEvent, sessionId: string) => void>()
+  /**
+   * The confirm channel's writers, kept SEPARATE from the log projection's above (400-03).
+   *
+   * Two sets rather than one, because the two kinds of frame have different truth conditions. A
+   * session-log frame is a projection of a durable record and carries the `id:` a reconnect spends;
+   * a confirm frame is a transient fact about a question in flight, and giving it an id would put a
+   * number in that sequence which no replay could ever produce. Keeping the writers apart is what
+   * makes that separation structural rather than remembered.
+   */
+  const confirmStreams = new Set<(sessionId: string, frame: ChatConfirmChannelFrame) => void>()
 
   host?.onSessionEvent((sessionId, event) => {
     const entry = recordStreamedEvent(windows, sessionId, event)
     for (const write of [...streams]) write(entry, sessionId)
   })
+
+  // ONE SUBSCRIPTION AT CONSTRUCTION, on the session-event fan-out's own precedent: a subscription
+  // taken per connection would make the registry's listener set grow with reconnects.
+  host?.confirms?.subscribe((sessionId, frame) => {
+    for (const write of [...confirmStreams]) write(sessionId, frame)
+  })
+
+  const confirms = host?.confirms
 
   function handleSessionEvents(sessionId: string, req: IncomingMessage, res: ServerResponse): void {
     // The shipped SSE idiom (`routes.ts`'s run-events stream), with ONE deliberate omission: no
@@ -316,6 +401,28 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
     }
     streams.add(write)
 
+    // ---- The confirm channel (400-03, D-05/D-06) ---------------------------------------------
+    //
+    // THIS CONNECTION IS WHAT MAKES THE DOOR INTERACTIVE. An open stream is a browser that can be
+    // asked a question and can answer it; registering it here — and releasing it in the same
+    // teardown as everything else — is what keeps "a human is reachable" a fact about a socket
+    // rather than a claim in a comment. The registry denies this session's outstanding confirms
+    // when the last of these goes away.
+    const writeConfirm = (frameSessionId: string, channelFrame: ChatConfirmChannelFrame): void => {
+      if (frameSessionId !== sessionId) return
+      // NO `id:` LINE. See `confirmStreams` above: these frames are not in the replay numbering.
+      res.write(
+        `event: ${channelFrame.kind}\n`
+        + `data: ${JSON.stringify(
+          channelFrame.kind === 'confirm_request'
+            ? channelFrame.request
+            : channelFrame,
+        )}\n\n`,
+      )
+    }
+    confirmStreams.add(writeConfirm)
+    const closeChannel = confirms?.openChannel(sessionId)
+
     const heartbeat = setInterval(() => {
       res.write(':\n\n')
     }, CHAT_STREAM_HEARTBEAT_MS)
@@ -329,6 +436,11 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
     req.on('close', () => {
       clearInterval(heartbeat)
       streams.delete(write)
+      confirmStreams.delete(writeConfirm)
+      // LAST, and never before the writer is removed: releasing the channel can resolve pending
+      // confirms, which emits `confirm_resolved` frames — and writing one into a socket this
+      // handler has just been told is closed is a write nobody reads.
+      closeChannel?.()
     })
   }
 
@@ -353,6 +465,11 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
 
     if (path === CHAT_TURN_ROUTE && req.method === 'POST') {
       void handleTurn(host, req, res)
+      return
+    }
+
+    if (path === CHAT_CONFIRM_ROUTE && req.method === 'POST') {
+      void handleConfirm(host, req, res)
       return
     }
 

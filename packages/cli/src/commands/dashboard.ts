@@ -9,13 +9,14 @@ import {
   type ConfigReaderPort,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
-import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
+import type { ComposeLocalAgentInput, LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import type {
   AgentDeclarationRow,
   AgentHost,
   AgentRegistryHandle,
   AgentResultFold,
+  ConfirmRegistry,
 } from '@vostride/agent-qa-dashboard'
 import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import type {
@@ -24,6 +25,7 @@ import type {
   ExecutionContext,
   FunctionCaller,
   MaskedConfigEntry,
+  RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
 import { resolveConfig } from '../config.js'
 import {
@@ -111,10 +113,15 @@ export function createSessionEventFanOut(): SessionEventFanOut {
 export function composeDashboardAgentHost(
   host: LocalAgentHost,
   sessionEvents: SessionEventFanOut,
+  confirms?: ConfirmRegistry,
 ): AgentHost {
   return {
     registry: host.registry,
     onSessionEvent: (listener) => sessionEvents.subscribe(listener),
+    // 400-03: the SAME registry the composition parks questions in, handed to the routes that
+    // serve them. Conditionally spread so a door composed without a confirm channel carries no
+    // field at all — the translated no-TTY posture, in one place.
+    ...(confirms === undefined ? {} : { confirms }),
     caller: DASHBOARD_FUNCTION_CALLER,
     agentAskFunctionId: AGENT_ASK_FUNCTION_ID,
     invokeFunction: (
@@ -197,6 +204,127 @@ export function overlayDashboardBaseUrl(
   }
 }
 
+/**
+ * Is a person reachable RIGHT NOW? (400-03, D-05 · RESEARCH Pattern 2.)
+ *
+ * THE PREDICATE PLAN 400-01 LEFT A SEAM FOR, filled. That plan bound
+ * `resolveExecutionContext: () => 'local-interactive'` — honest then, because the server had no
+ * confirm channel at all and there was no liveness to consult. There is one now, and this is what
+ * consulting it looks like: `local-interactive` while a browser holds an open stream this door can
+ * ask a question down, `local-headless` the moment the last one goes away.
+ *
+ * THE HONESTY IS THE POINT, NOT THE CAPABILITY. D-05 ruled that the browser confirm makes this door
+ * interactive; the vocabulary's ONE consequence is `requiresFailClosed`, so a door that claimed
+ * `local-interactive` with nobody watching would be telling the gate to consult a confirm port that
+ * can only deny — spending an ask-tier call on a question nobody sees. Dropping to `local-headless`
+ * denies it in the gate, by name, with `fail-closed-denied` on the audit row rather than a
+ * `prompted-denied` that names a prompt nobody was shown.
+ *
+ * STRUCTURALLY TYPED over the one method it reads, so this module keeps its type-only relationship
+ * with `@vostride/agent-qa-dashboard` — the CLI loads that package lazily, and a value import here
+ * would put the whole dashboard server on the startup path of every `agent-qa` invocation.
+ */
+export function dashboardExecutionContext(
+  confirms: { hasLiveChannel(): boolean } | undefined,
+): () => ExecutionContext {
+  return () => (confirms?.hasLiveChannel() === true ? 'local-interactive' : 'local-headless')
+}
+
+/**
+ * The dashboard's `chatConfirm` factory — 391's approval machinery, rendered in a browser.
+ *
+ * A RENDER AND NEVER NEW APPROVAL MACHINERY (D-07). Everything that decides anything is supplied:
+ * `recordStandingApproval` is a closure over the composition's own `StandingGrantsPort` — the same
+ * instance `proposals.accept --always` mints through, with its protected-class refusal, its
+ * already-granted fold, its writer lease and its committed ledger — and `onDecision` is what writes
+ * the `approval_decision` session event. This function contributes the three answers a person can
+ * give and the socket they give them on.
+ *
+ * IT IS THE TTY WRAPPER'S LOGIC IN A DIFFERENT MEDIUM, deliberately parallel: the `a` arm mints
+ * first and answers second (nothing has happened yet, so the standing half is settled while it can
+ * still be reported), the log records the EFFECT rather than the request (392-05: `accept-always` is
+ * written only where a standing approval actually exists), a mint failure is reported and the call
+ * still proceeds, and anything that is not an explicit yes is a refusal.
+ *
+ * WHICH CONVERSATION IS ASKED is `resolveTargetSession`'s answer, and the fail-safe direction is
+ * the composition's own (392-12, plan 13): a `ConfirmPort` is handed an action and no caller, so
+ * where more than one watched conversation has a turn in flight this port cannot tell which one is
+ * asking — and it denies rather than putting somebody else's question in front of a person. A
+ * confirm shown in the wrong transcript IS the defect; a denial is not.
+ */
+export function createDashboardConfirmFactory(input: {
+  readonly confirms: ConfirmRegistry
+  readonly resolveTargetSession: () => string | undefined
+}): NonNullable<ComposeLocalAgentInput['chatConfirm']> {
+  return (bindings) => {
+    /** The session-log append is a RECORD of the decision, never a veto over it. */
+    const ledger = async (
+      actionClass: string,
+      decision: 'accept' | 'accept-always' | 'deny',
+    ): Promise<void> => {
+      try {
+        await bindings.onDecision({ actionClass, decision })
+      } catch {
+        // Swallowed here and nowhere else, on the TTY wrapper's stated reasoning: letting a logging
+        // failure out through a `ConfirmPort` would turn it into an exception where the gate
+        // expects a boolean, and the person who just said yes would be told their action failed.
+      }
+    }
+
+    const acceptAlways = async (
+      action: RiskActionDescriptor,
+      sessionId: string,
+    ): Promise<void> => {
+      let outcome: Awaited<ReturnType<typeof bindings.recordStandingApproval>> | undefined
+      try {
+        outcome = await bindings.recordStandingApproval(action.name)
+      } catch (error) {
+        input.confirms.present(
+          sessionId,
+          `agent-qa: the standing approval could not be recorded `
+          + `(${error instanceof Error ? error.name : String(error)}); this call still proceeds.`,
+        )
+      }
+      if (outcome?.kind === 'protected-class') {
+        // D-05's mint half, reported rather than swallowed: a person who chose "always" and got a
+        // plain accept must be told which half of their answer did not happen.
+        input.confirms.present(
+          sessionId,
+          `agent-qa: ${outcome.actionClass} is a protected class and never takes a standing `
+          + 'approval; this call is approved once.',
+        )
+      }
+      const recorded = outcome?.kind === 'recorded' || outcome?.kind === 'already-granted'
+      await ledger(action.name, recorded ? 'accept-always' : 'accept')
+    }
+
+    return async (action) => {
+      const sessionId = input.resolveTargetSession()
+      if (sessionId === undefined) {
+        // NOBODY TO ASK. The same answer the TTY wrapper gives a process with no terminal, reached
+        // one layer later because liveness here is a per-turn fact rather than a per-process one.
+        await ledger(action.name, 'deny')
+        return false
+      }
+
+      const answer = await input.confirms.request({
+        sessionId,
+        actionClass: action.name,
+        // The action's OWN disclosure — what this invocation is about to cost, composed by the op
+        // and carried as inert data. Absent on almost every action, exactly as at the terminal.
+        ...(action.disclosure === undefined ? {} : { preview: action.disclosure }),
+      })
+
+      if (answer === 'accept-always') {
+        await acceptAlways(action, sessionId)
+        return true
+      }
+      await ledger(action.name, answer === 'accept' ? 'accept' : 'deny')
+      return answer === 'accept'
+    }
+  }
+}
+
 /** Everything the door's composition needs that only its host knows. */
 export interface DashboardDoorInput {
   /** The project's runtime root, i.e. `<configDir>/.agent-qa`. */
@@ -219,6 +347,19 @@ export interface DashboardDoorInput {
    * from TTY and CI markers, which is the ambient reach `resolveExecutionContext` exists to remove.
    */
   readonly resolveExecutionContext: () => ExecutionContext
+  /**
+   * Where this door's ask-tier questions wait for a person (400-03, D-05 / D-06 / D-07).
+   *
+   * SUPPLIED RATHER THAN CREATED HERE, for one mechanical reason: the registry's implementation
+   * lives in `@vostride/agent-qa-dashboard`, and this module's relationship with that package is
+   * type-only on purpose — the CLI imports it lazily so `agent-qa --help` does not pay for a web
+   * server. The command creates one through the same dynamic import it already takes; the
+   * conformance suite creates none.
+   *
+   * ABSENT IS THE TRANSLATED NO-TTY POSTURE and is what the suite composes: no confirm port is
+   * bound, so every ask-tier call meets the gate's own deny-by-default, unchanged.
+   */
+  readonly confirms?: ConfirmRegistry
   /**
    * What this door plans with, ALREADY RESOLVED (CHAT-06 / Pitfall 12).
    *
@@ -251,6 +392,30 @@ export interface DashboardDoor {
  */
 export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
   const sessionEvents = createSessionEventFanOut()
+  const confirms = input.confirms
+
+  /**
+   * The composed host, in a box the confirm factory closes over (400-03).
+   *
+   * A MUTABLE BOX BECAUSE THE ORDER IS FIXED AND CANNOT BE INVERTED: `composeCliLocalAgent` CALLS
+   * the `chatConfirm` factory while it composes, so the factory exists before the host does — and
+   * the question the factory has to answer ("which watched conversation has a turn in flight") is a
+   * question about that host. The same shape, and the same reason, as `boundOrigin` above: a value
+   * captured at composition time would be a guess, and this one would be `undefined` forever.
+   */
+  let composed: LocalAgentHost | undefined
+
+  const resolveTargetSession = (): string | undefined => {
+    if (confirms === undefined) return undefined
+    // WATCHED **AND** IN FLIGHT. A live channel says a browser is there; an active turn id says
+    // that conversation is the one waiting on an answer. Neither alone identifies the asker, and
+    // the composition's own `onDecision` takes exactly this fail-safe (392-12): more than one
+    // candidate, or none, and this port refuses rather than guessing a transcript.
+    const candidates = confirms.liveSessionIds()
+      .filter((sessionId) => composed?.chat.stateFor(sessionId)?.activeTurnId !== undefined)
+    return candidates.length === 1 ? candidates[0] : undefined
+  }
+
   const host = composeCliLocalAgent({
     agentQaRoot: input.agentQaRoot,
     configPath: input.configPath,
@@ -279,8 +444,23 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
         chatModelFor: input.chatModel.modelFor,
         chatAccounting: input.chatModel.accounting,
       }),
+    // D-05/D-06/D-07 (400-03): the inline confirm and the mid-turn artifact seam beside it, both
+    // conditionally spread on the composition's own idiom — a door with no confirm channel binds
+    // NEITHER, which leaves the gate's deny-by-default and the engine's render-nothing posture
+    // exactly as plan 400-01 shipped them.
+    ...(confirms === undefined ? {} : {
+      chatConfirm: createDashboardConfirmFactory({ confirms, resolveTargetSession }),
+      // Pattern 5: cost previews and diffs land in the transcript BEFORE the confirm bubble, on
+      // the same channel and routed to the same conversation. Dropped where no conversation can be
+      // identified, for the reason the confirm is denied there.
+      chatPresent: (text: string) => {
+        const sessionId = resolveTargetSession()
+        if (sessionId !== undefined) confirms.present(sessionId, text)
+      },
+    }),
   })
-  return { host, agentHost: composeDashboardAgentHost(host, sessionEvents) }
+  composed = host
+  return { host, agentHost: composeDashboardAgentHost(host, sessionEvents, confirms) }
 }
 
 type DashboardCommandOptions = {
@@ -347,7 +527,12 @@ async function startDashboardBackedServices(
       vision: resolveVisionConfig((config as any).services?.vision),
     }
 
-    const { DashboardDatabase, resolveDashboardDbPath, startServer } = await import('@vostride/agent-qa-dashboard')
+    const {
+      DashboardDatabase,
+      createConfirmRegistry,
+      resolveDashboardDbPath,
+      startServer,
+    } = await import('@vostride/agent-qa-dashboard')
 
     const db = new DashboardDatabase({
       dbPath: resolveDashboardDbPath({ configDir, configuredDbPath }),
@@ -385,6 +570,14 @@ async function startDashboardBackedServices(
     // `overlayDashboardBaseUrl` for why this is a mutable box rather than a value.
     let boundOrigin: string | undefined
 
+    // ---- The confirm channel (400-03, D-05/D-06/D-07) -----------------------------------------
+    //
+    // ONE REGISTRY FOR THE WHOLE PROCESS, created here because both halves of an inline confirm
+    // need the SAME one: the composition parks ask-tier questions in it, and the routes below push
+    // those questions down a browser's stream and spend their ids on the answer route. Two
+    // registries would park a question in the one the answer never reaches.
+    const confirms = createConfirmRegistry()
+
     const { agentHost } = composeDashboardDoor({
       agentQaRoot: resolve(configDir, '.agent-qa'),
       configPath: configFilePath,
@@ -395,13 +588,12 @@ async function startDashboardBackedServices(
       // INJECTED rather than through `setActiveExecutionContextResolver` — that setter is a process
       // global and would re-answer the question for every composition in this process (Pitfall 5).
       //
-      // THIS IS THE TYPED HOOK PLAN 400-03 NARROWS, not a placeholder. The predicate it will read
-      // is "is a confirm channel live for this turn" — a browser with an open stream is a person
-      // demonstrably present, and a browser that closed one is not. Today the server has no confirm
-      // channel at all, so there is no liveness to consult and the honest constant answer is the
-      // posture D-05 ratified for this door; the shape is already the one that predicate slots
-      // into, so 400-03 changes a body and not a seam.
-      resolveExecutionContext: (): ExecutionContext => 'local-interactive',
+      // 400-03 NARROWED THE BODY, and the seam is the one 400-01 shipped: the answer is now
+      // `local-interactive` only while a browser holds a stream this door can ask a question down.
+      // See `dashboardExecutionContext` for why claiming otherwise would be dishonest rather than
+      // merely optimistic.
+      resolveExecutionContext: dashboardExecutionContext(confirms),
+      confirms,
     })
 
     const { close, port: listeningPort } = await startServer({

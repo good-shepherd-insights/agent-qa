@@ -34,6 +34,8 @@ import type {
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
 
+import type { ConfirmRegistry } from './confirm-registry.js'
+
 /**
  * The composed function registry, OPAQUE to this package.
  *
@@ -143,6 +145,20 @@ export interface AgentHost {
   onSessionEvent(
     listener: (sessionId: string, event: ChatSessionEvent) => void,
   ): () => void
+  /**
+   * The parked-confirm registry this door's ask-tier questions wait in (400-03, D-05/D-06/D-07).
+   *
+   * ON THE HOST SEAM BECAUSE BOTH HALVES NEED THE SAME ONE. The composition binds a `chatConfirm`
+   * factory that parks questions in it; the routes push those questions down a browser's SSE
+   * connection and spend their ids on the answer route. A registry created per half would be two
+   * parking lots, and the question would be parked in the one the answer never reaches.
+   *
+   * OPTIONAL, AND ABSENT IS THE TRANSLATED TTY POSTURE. A host composed without a confirm channel
+   * has nobody to ask — the conformance suite's model-free doors are exactly that — so the
+   * composition binds no confirm port and the gate's own deny-by-default answers every ask-tier
+   * call, unchanged. The answer route reports 501 for the same reason.
+   */
+  readonly confirms?: ConfirmRegistry
 }
 
 /** One executed clause's result, with the fold that makes it legible. */

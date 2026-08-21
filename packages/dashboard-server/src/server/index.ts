@@ -6,12 +6,29 @@ export { readJsonBody } from './body-parser.js'
 // command that starts this server composes the host, and the conformance suite drives the router.
 export {
   CHAT_CAPABILITIES_ROUTE,
+  CHAT_CONFIRM_ROUTE,
   CHAT_ROUTE_PREFIX,
   CHAT_STREAM_BOUNDS,
   CHAT_TURN_ROUTE,
   createChatRouter,
   recordStreamedEvent,
 } from '../chat/chat-routes.js'
+// The confirm bridge (400-03). The registry is created by the command that composes the door — the
+// composition parks questions in it and the routes serve them — so both its factory and its
+// vocabulary are published.
+export {
+  CHAT_CONFIRM_ANSWERS,
+  CHAT_CONFIRM_TIMEOUT_MS,
+  createConfirmRegistry,
+} from '../chat/confirm-registry.js'
+export type {
+  ChatConfirmAnswer,
+  ChatConfirmAnswerOutcome,
+  ChatConfirmChannelFrame,
+  ChatConfirmRequest,
+  ConfirmRegistry,
+  CreateConfirmRegistryOptions,
+} from '../chat/confirm-registry.js'
 export type {
   ChatRouter,
   SessionStreamWindow,
