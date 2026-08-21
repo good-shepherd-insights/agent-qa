@@ -34,7 +34,7 @@ import {
   type SessionStreamWindow,
 } from '@vostride/agent-qa-dashboard'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import type { ChatSessionEvent } from '@vostride/agent-qa-schema'
+import { remediesRenderableBy, type ChatSessionEvent } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
@@ -223,6 +223,64 @@ describe('the dashboard chat door dispatches one utterance end to end', () => {
     }])
     // And the SAME op executed one cell up in an unpinned session. The pin is what changed, so the
     // door's answer is a fact about the gate rather than about the fixture.
+  })
+
+  it('carries the denial\'s REMEDIES to the browser, beside the receipts (400-06, window #188)', async () => {
+    // WHAT THIS CLOSES. `ClauseReceipt` is a five-string record by charter (398-13 D-21) and its
+    // key set is mirrored in the append-only session-event grammar, so 400-02 could mint a typed
+    // `GateRemedy` vocabulary and feed only the CLI's single-op door from `FunctionDeniedError`.
+    // Inside a TURN that error is caught by `turn-engine.ts`'s dispatch catch, which keeps
+    // `refusalName(error)` — the NAME — and drops the reason and the remedies on the floor. So
+    // every interactive door rendered `failed FunctionDeniedError` and nothing a person could act
+    // on. The carrier is a SIBLING of `receipts`, exactly as `results[]` is: the receipt stays the
+    // map, and the territory of a denial — its canonical reason and the typed ways forward —
+    // travels beside it.
+    //
+    // DRIVEN THROUGH THE REAL GATE. `/pin` writes a deny into this conversation's overlay and the
+    // second turn trips it, so the remedy below is minted by `buildDecisionRemedies`'s
+    // `session-pin-denied` arm rather than by anything this file knows how to spell.
+    const pinned = await postTurn(door.origin, { message: '/pin fn:runs.digest' })
+    expect(pinned.status).toBe(200)
+    const sessionId = (pinned.body as ChatTurnResponse).result.sessionId
+
+    const denied = await postTurn(door.origin, { message: '/fn runs.digest {}', sessionId })
+    expect(denied.status).toBe(200)
+    const turn = denied.body as ChatTurnResponse
+
+    // The receipt is unchanged — five strings, the refusal NAME. The charter is intact.
+    expect(turn.result.receipts.map((receipt) => ({
+      functionId: receipt.functionId,
+      status: receipt.status,
+      outcome: receipt.outcome,
+    }))).toEqual([{
+      functionId: 'runs.digest',
+      status: 'failed',
+      outcome: 'FunctionDeniedError',
+    }])
+
+    // And beside it, what the browser needs to offer a way forward. The clause is named so a
+    // compound turn's second denial is not silently attributed to its first.
+    expect(turn.result.denials).toEqual([{
+      clause: '/fn runs.digest {}',
+      functionId: 'runs.digest',
+      reason: expect.stringContaining('session-pin-denied'),
+      remedies: [{ kind: 'session-pin-final' }],
+    }])
+
+    // The remedy the gate minted is one a BROWSER can take, which is the whole of D-15: the same
+    // denial projects EMPTY for `mcp`, and the dashboard render runs the same projection.
+    const remedies = turn.result.denials![0]!.remedies
+    expect(remediesRenderableBy('dashboard', remedies)).toEqual([{ kind: 'session-pin-final' }])
+    expect(remediesRenderableBy('mcp', remedies)).toEqual([])
+  })
+
+  it('reports an empty denial list on a turn nothing denied (the emptiness is the claim)', async () => {
+    // ON `results[]`'s OWN ARGUMENT. A turn that omitted the field would leave "nothing was
+    // denied" and "this build does not report denials" as the same bytes — and "the gate refused
+    // nothing here" is a claim a reader of a green transcript is entitled to.
+    const answered = await postTurn(door.origin, { message: '/fn config.get {}' })
+    expect(answered.status).toBe(200)
+    expect((answered.body as ChatTurnResponse).result.denials).toEqual([])
   })
 
   it('writes no cross-origin wildcard on the mutating turn route (T-400-03)', async () => {
