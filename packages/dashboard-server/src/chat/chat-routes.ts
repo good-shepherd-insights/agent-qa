@@ -21,6 +21,14 @@
 // responder rather than importing that one, and the tracer cell asserts the header's ABSENCE — the
 // real authz story is Phase 402's, and this is the part of it 400 must not make harder.
 //
+// THE MUTATING ROUTES ARE GUARDED AT ONE CHOKE POINT, NOT DOOR BY DOOR (400-14, gap 6). The
+// paragraph above was the door's whole cross-origin story and it was not enough: withholding
+// `Access-Control-Allow-Origin` stops an attacker READING the reply and does nothing about the
+// side effect, and a `text/plain` JSON POST is a CORS SIMPLE request, so the 204-no-grant preflight
+// arm never even runs. The router therefore refuses every MUTATING request that is cross-site or
+// does not declare `application/json`, on the method and above the route table — so a route added
+// tomorrow inherits both guards without anybody remembering to add them.
+//
 // THE TURN-EVENTS STREAM IS A PROJECTION OF THE LOG, NEVER A SECOND PRODUCER (D-03). Every frame
 // `GET /api/chat/sessions/:id/events` emits was appended to that session's own JSONL file BEFORE
 // this process was told about it, so the durable truth and the push can disagree only by the file
@@ -68,6 +76,157 @@ export const CHAT_CONFIRM_ROUTE = '/api/chat/confirm'
 
 /** `/api/chat/sessions/<id>/events` — the one streaming path, matched rather than parsed. */
 const CHAT_SESSION_EVENTS_PATTERN = /^\/api\/chat\/sessions\/([^/]+)\/events$/
+
+/** The one templated path, in the shape a person reads it — the table's row for the stream. */
+export const CHAT_SESSION_EVENTS_TEMPLATE = '/api/chat/sessions/:id/events'
+
+/** Which handler a table row reaches. A closed union, so a row with no arm is a type error. */
+export type ChatRouteHandlerName = 'turn' | 'confirm' | 'capabilities' | 'catalog' | 'sessionEvents'
+
+export interface ChatRouteRow {
+  readonly method: 'GET' | 'POST'
+  /** The literal path, or — for the one templated route — its `:id` shape. */
+  readonly path: string
+  readonly handler: ChatRouteHandlerName
+  /** Present only on the templated route; the matcher uses it instead of `path`. */
+  readonly pattern?: RegExp
+}
+
+/**
+ * EVERY PATH THIS DOOR ANSWERS, as data the dispatch reads — not as a chain of `if`s (400-14).
+ *
+ * WHY A TABLE AND NOT FIVE ARMS. The cross-site and media-type guards below are the whole of
+ * gap 6's fix, and their claim is an ORDER claim: no mutating request reaches a body read without
+ * passing them. A guard bolted onto each POST arm would make that claim a fact about the arms
+ * somebody remembered — true today, silently false the morning a sixth route lands. The guards are
+ * therefore applied to the METHOD, at the top, before this table is consulted at all, so a new
+ * mutating route inherits them by construction rather than by review.
+ *
+ * The table is what makes that inheritance AUDITABLE from outside. Because dispatch reads it, a
+ * route that is not in it is unreachable — so a cell can enumerate this array, drive every mutating
+ * row cross-origin, and a newly added route cannot escape the corpus by nobody noticing it. That
+ * cell is `dashboard-door-security.test.ts`'s completeness cell, and this export exists for it.
+ */
+export const CHAT_ROUTE_TABLE: readonly ChatRouteRow[] = Object.freeze([
+  { method: 'POST', path: CHAT_TURN_ROUTE, handler: 'turn' },
+  { method: 'POST', path: CHAT_CONFIRM_ROUTE, handler: 'confirm' },
+  { method: 'GET', path: CHAT_CAPABILITIES_ROUTE, handler: 'capabilities' },
+  { method: 'GET', path: CHAT_CATALOG_ROUTE, handler: 'catalog' },
+  {
+    method: 'GET',
+    path: CHAT_SESSION_EVENTS_TEMPLATE,
+    handler: 'sessionEvents',
+    pattern: CHAT_SESSION_EVENTS_PATTERN,
+  },
+] as const)
+
+/** What a matched row carries: the row itself and whatever its pattern captured. */
+export interface ChatRouteMatch {
+  readonly row: ChatRouteRow
+  /** The raw, still-ENCODED capture groups. Decoding is the handler's business, and it can throw. */
+  readonly params: readonly string[]
+}
+
+/** Resolve a request to a table row, or to nothing. The dispatch's only route lookup. */
+export function matchChatRoute(
+  method: string | undefined,
+  path: string,
+): ChatRouteMatch | undefined {
+  for (const row of CHAT_ROUTE_TABLE) {
+    if (row.method !== method) continue
+    if (row.pattern === undefined) {
+      if (path === row.path) return { row, params: [] }
+      continue
+    }
+    const matched = row.pattern.exec(path)
+    if (matched !== null) return { row, params: matched.slice(1).map((part) => part ?? '') }
+  }
+  return undefined
+}
+
+/**
+ * The methods that change nothing — and therefore the complement, which is what the guards range.
+ *
+ * STATED AS THE SAFE SET RATHER THAN THE MUTATING ONE, deliberately. A list of mutating methods is
+ * a list somebody has to extend, and forgetting to extend it is a hole that opens silently; a list
+ * of SAFE methods fails the other way, so an unfamiliar verb is guarded rather than waved through.
+ */
+export const CHAT_SAFE_METHODS: readonly string[] = Object.freeze(['GET', 'HEAD', 'OPTIONS'])
+
+/** Whether this request can change something — the guards' whole domain. */
+export function isMutatingChatRequest(method: string | undefined): boolean {
+  return !CHAT_SAFE_METHODS.includes((method ?? 'GET').toUpperCase())
+}
+
+/**
+ * Refuse a request that a page on another origin drove (400-14, gap 6 — T-400-G6-01/02).
+ *
+ * THE RECORDED POLICY, and each rung is a decision rather than a default:
+ *
+ * - An ABSENT `Origin` is ALLOWED. This is a localhost door and its shipped norm is a person with a
+ *   terminal: `curl`, a script, the CLI. No browser omits `Origin` on a cross-origin POST, so
+ *   absence is evidence of a non-browser caller, and refusing it would brick every local drive to
+ *   defend against nothing.
+ * - An `Origin` whose HOST equals the request's own `Host` is allowed — that is the dashboard's own
+ *   page driving its own door, which is exactly what must keep working.
+ * - The literal `null` and every other value are REFUSED. `null` is what a sandboxed iframe, a
+ *   `data:` document and a redirected cross-origin request send; it is not "no origin", it is an
+ *   origin that declined to name itself.
+ * - `Sec-Fetch-Site`, when the browser sends it, must say `same-origin` or `none`. It is checked
+ *   BESIDE `Origin` and not instead of it: it is unforgeable by page script where `Origin` is only
+ *   unforgeable by fetch, and it is absent on every non-browser client, so neither alone is total.
+ *
+ * WHY THE SCHEME IS NOT COMPARED. The bound door speaks `http` on loopback and the header carries
+ * an absolute origin; comparing hosts keeps the check honest behind the `https` terminator an
+ * operator may put in front of it, which is the deployment shape Phase 402 owns.
+ *
+ * WHY THIS LIVES HERE AND NOT IN `body-parser.ts`. That parser also serves the legacy read routes
+ * whose wildcard-CORS posture is Phase 402's re-platform question. Widening it here would change
+ * the posture of routes this phase does not own; this file already keeps its own responder and its
+ * own preflight for exactly that reason, and this is the third member of that set.
+ */
+function refuseCrossSiteRequest(req: IncomingMessage): string | undefined {
+  const refusal = 'Cross-site request refused: this door is driven from its own origin or from a '
+    + 'local client that sends no Origin'
+  const origin = req.headers.origin
+  if (typeof origin === 'string' && origin !== '') {
+    const host = typeof req.headers.host === 'string' ? req.headers.host.toLowerCase() : ''
+    let originHost: string
+    try {
+      originHost = new URL(origin).host.toLowerCase()
+    } catch {
+      // Includes the literal `null`, which parses as no URL at all — a sandboxed frame, a
+      // `data:` document, or a cross-origin redirect. Refused with everything else.
+      return refusal
+    }
+    if (originHost === '' || host === '' || originHost !== host) return refusal
+  }
+
+  const site = req.headers['sec-fetch-site']
+  if (typeof site === 'string' && site !== 'same-origin' && site !== 'none') return refusal
+
+  return undefined
+}
+
+/**
+ * Refuse a mutating request that does not declare JSON (400-14, gap 6 — the preflight leg).
+ *
+ * THIS IS THE LEG THAT CLOSES THE ACTUAL HOLE, and it is worth naming why the Origin check above is
+ * not enough on its own. A `text/plain` JSON POST is a CORS SIMPLE request: the browser sends it
+ * with no preflight at all, so this door's 204-no-grant `OPTIONS` arm — the arm that is supposed to
+ * stop a cross-origin caller — never runs. Requiring `application/json` makes every browser-borne
+ * mutating request non-simple, which forces the preflight into the arm that already refuses it.
+ *
+ * A MISSING HEADER IS REFUSED TOO. There is no bodyless mutating request on this door, so an absent
+ * media type is a caller that has not said what it is sending, and the refusal says what to send.
+ */
+function refuseUnsupportedMediaType(req: IncomingMessage): string | undefined {
+  const header = req.headers['content-type']
+  const mediaType = typeof header === 'string' ? header.split(';')[0]!.trim().toLowerCase() : ''
+  if (mediaType === 'application/json') return undefined
+  return 'Unsupported media type: this route reads application/json only '
+    + '(send `content-type: application/json`)'
+}
 
 /**
  * How many events one session's replay window holds (T-400-04).
@@ -537,8 +696,6 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
   }
 
   const router = (req: IncomingMessage, res: ServerResponse): void => {
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname
-
     // The door answers its OWN preflight, and the answer carries no `Access-Control-Allow-Origin`
     // at all. The shared `cors()` helper grants `*`, which would hand any page a person has open
     // the permission it needs to POST a turn at their local agent — the precise thing the turn
@@ -550,59 +707,82 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
       return
     }
 
+    // ---- THE MUTATING-REQUEST CHOKE POINT (400-14, gap 6) ------------------------------------
+    //
+    // ON THE METHOD, ABOVE THE ROUTE TABLE, AND BEFORE ANY BODY IS READ. Both refusals below
+    // return from THIS function, so `handleTurn` and `handleConfirm` are never invoked: no turn id
+    // is minted, no session file is opened, the confirm registry is never consulted. That is a
+    // structural fact about where these five lines sit, not a claim about what the handlers do.
+    //
+    // The gap this closes was measured on the shipped door: a `text/plain` JSON POST carrying
+    // `Origin: https://evil.example` EXECUTED a turn and wrote a session file. The door's only
+    // defense was a withheld response header, which hides the reply from the attacker and leaves
+    // the side effect exactly where they wanted it.
+    if (isMutatingChatRequest(req.method)) {
+      const crossSite = refuseCrossSiteRequest(req)
+      if (crossSite !== undefined) {
+        refuseWith(respond, res, crossSite, 403)
+        return
+      }
+      const mediaType = refuseUnsupportedMediaType(req)
+      if (mediaType !== undefined) {
+        refuseWith(respond, res, mediaType, 415)
+        return
+      }
+    }
+
     if (host === undefined) {
       refuseWith(respond, res, 'Chat is not available: this server was started without an agent host', 501)
       return
     }
 
-    if (path === CHAT_TURN_ROUTE && req.method === 'POST') {
-      void handleTurn(host, respond, req, res)
+    const path = new URL(req.url ?? '/', 'http://localhost').pathname
+
+    const matched = matchChatRoute(req.method, path)
+    if (matched === undefined) {
+      refuseWith(respond, res, 'Not found', 404)
       return
     }
 
-    if (path === CHAT_CONFIRM_ROUTE && req.method === 'POST') {
-      void handleConfirm(host, respond, req, res)
-      return
-    }
-
-    if (path === CHAT_CAPABILITIES_ROUTE && req.method === 'GET') {
-      handleCapabilities(host, respond, res)
-      return
-    }
-
-    if (path === CHAT_CATALOG_ROUTE && req.method === 'GET') {
-      handleCatalog(host, respond, res)
-      return
-    }
-
-    const streaming = CHAT_SESSION_EVENTS_PATTERN.exec(path)
-    if (streaming !== null && req.method === 'GET') {
-      const sessionId = decodeURIComponent(streaming[1]!)
-      // THE `:id` IS VALIDATED BEFORE A CHANNEL CAN EXIST (400-13, gap 3). This route used to open
-      // a confirm channel for ANY string typed at the URL, and a channel is a POSTURE INPUT: a
-      // stream held on an id no session ever minted made this door claim a human was watching, and
-      // an unwatched conversation's ask-tier denial was recorded as `prompted-denied`. Refusing
-      // here — ahead of `handleSessionEvents` — makes `writeHead(200)`, the replay, the stream
-      // registration and `confirms.openChannel` all structurally unreachable for an unowned id.
-      //
-      // 404 AND NOT A DISTINCT STATUS, deliberately: "no such session" must be indistinguishable
-      // from outside from every other reason this route declines, or the route is an oracle for
-      // probing which ids exist. The confirm route's one-404 idiom, applied here.
-      //
-      // THE BEHAVIOURAL CONSEQUENCE, NAMED: after a server restart a browser reconnecting to an
-      // old conversation gets 404 until a turn re-mints it in this process. The durable log
-      // remains that conversation's home — the same remedy the replay-window bound already states
-      // — and the shipped UI only opens a stream after a turn has answered (WINDOWS #192's turn-1
-      // handshake), so the id is already in the set on the happy path.
-      if (!mintedSessions.has(sessionId)) {
-        refuseWith(respond, res, 'Not found', 404)
+    switch (matched.row.handler) {
+      case 'turn':
+        void handleTurn(host, respond, req, res)
+        return
+      case 'confirm':
+        void handleConfirm(host, respond, req, res)
+        return
+      case 'capabilities':
+        handleCapabilities(host, respond, res)
+        return
+      case 'catalog':
+        handleCatalog(host, respond, res)
+        return
+      case 'sessionEvents': {
+        const sessionId = decodeURIComponent(matched.params[0] ?? '')
+        // THE `:id` IS VALIDATED BEFORE A CHANNEL CAN EXIST (400-13, gap 3). This route used to open
+        // a confirm channel for ANY string typed at the URL, and a channel is a POSTURE INPUT: a
+        // stream held on an id no session ever minted made this door claim a human was watching, and
+        // an unwatched conversation's ask-tier denial was recorded as `prompted-denied`. Refusing
+        // here — ahead of `handleSessionEvents` — makes `writeHead(200)`, the replay, the stream
+        // registration and `confirms.openChannel` all structurally unreachable for an unowned id.
+        //
+        // 404 AND NOT A DISTINCT STATUS, deliberately: "no such session" must be indistinguishable
+        // from outside from every other reason this route declines, or the route is an oracle for
+        // probing which ids exist. The confirm route's one-404 idiom, applied here.
+        //
+        // THE BEHAVIOURAL CONSEQUENCE, NAMED: after a server restart a browser reconnecting to an
+        // old conversation gets 404 until a turn re-mints it in this process. The durable log
+        // remains that conversation's home — the same remedy the replay-window bound already states
+        // — and the shipped UI only opens a stream after a turn has answered (WINDOWS #192's turn-1
+        // handshake), so the id is already in the set on the happy path.
+        if (!mintedSessions.has(sessionId)) {
+          refuseWith(respond, res, 'Not found', 404)
+          return
+        }
+        handleSessionEvents(sessionId, req, res)
         return
       }
-      handleSessionEvents(sessionId, req, res)
-      return
     }
-
-    refuseWith(respond, res, 'Not found', 404)
   }
 
   router.openStreamCount = (): number => streams.size
