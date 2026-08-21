@@ -1,5 +1,5 @@
 import { Command } from 'commander'
-import { resolve, dirname } from 'node:path'
+import { basename, resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import pc from 'picocolors'
 import {
@@ -27,6 +27,7 @@ import type {
   ExecutionContext,
   FunctionCaller,
   MaskedConfigEntry,
+  MaskedResolvedConfig,
   RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
 import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
@@ -47,6 +48,17 @@ import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
 
 /** The dot-path 387 D-10's card `url` is read from, spelled here exactly as the producer reads it. */
 export const DASHBOARD_BASE_URL_CONFIG_KEY = 'services.dashboard.baseUrl'
+
+/**
+ * The OTHER dot-path the same producer reads (400-10, gap 1 / WINDOWS #195).
+ *
+ * `readDashboardUrlBase` is an AND over two keys, not one: a base with no workspace cannot render
+ * the pinned `/t/:workspace/:kind/:shortId/:slug` route, so either half alone yields no url base at
+ * all. 400-01 supplied `baseUrl` and nothing in this build produced a workspace, which made the
+ * whole overlay INERT — every card the dashboard's own conversation rendered came back url-absent
+ * while the overlay's own entry looked perfectly correct. Both halves or neither.
+ */
+export const DASHBOARD_WORKSPACE_CONFIG_KEY = 'services.dashboard.workspace'
 
 /**
  * The caller the dashboard door dispatches as (400-01, D-08 / Pitfall 9).
@@ -190,37 +202,73 @@ export function composeDashboardAgentHost(
  * The origin is a FACTORY, not a string, because the server has not bound a port when the host is
  * composed — and an ephemeral port (`port: 0`) is a real posture, in this suite and in tests. A
  * value captured at composition time would be a guess; a factory read per invocation is the truth.
+ *
+ * BOTH HALVES, because the producer requires both (400-10, gap 1). The workspace segment is
+ * supplied on identical rules — operator wins, `source: 'default'`, `masked: false` — and is
+ * INDEPENDENT of the origin: it is overlaid whenever it is supplied, including while the server
+ * has not bound a port yet, because the producer's own AND makes a lone workspace inert rather
+ * than wrong. Gating it on the origin would be a second, invisible precondition on a value that
+ * has none.
  */
 export function overlayDashboardBaseUrl(
   inner: ConfigReaderPort,
   boundOrigin: () => string | undefined,
+  workspaceSegment: string | undefined,
 ): ConfigReaderPort {
   return {
     async getMasked() {
       const masked = await inner.getMasked()
+      const supplied: MaskedConfigEntry[] = []
+
       const origin = boundOrigin()
-      if (origin === undefined) return masked
-      const existing = masked.entries.find(
-        (entry) => entry.key === DASHBOARD_BASE_URL_CONFIG_KEY,
-      )
-      if (existing !== undefined && !existing.masked && existing.value.trim() !== '') {
-        return masked
+      if (origin !== undefined && !hasVerbatim(masked, DASHBOARD_BASE_URL_CONFIG_KEY)) {
+        supplied.push({
+          key: DASHBOARD_BASE_URL_CONFIG_KEY,
+          value: origin,
+          source: 'default',
+          masked: false,
+        })
       }
-      const overlaid: MaskedConfigEntry = {
-        key: DASHBOARD_BASE_URL_CONFIG_KEY,
-        value: origin,
-        source: 'default',
-        masked: false,
+
+      // An empty segment is left ABSENT rather than overlaid as `''`: `formatEntityUrl` refuses an
+      // empty workspace, so an empty entry would be a base that reads as present and renders
+      // nothing — the same inert state gap 1 was, one layer down.
+      if (
+        workspaceSegment !== undefined
+        && workspaceSegment.trim() !== ''
+        && !hasVerbatim(masked, DASHBOARD_WORKSPACE_CONFIG_KEY)
+      ) {
+        supplied.push({
+          key: DASHBOARD_WORKSPACE_CONFIG_KEY,
+          value: workspaceSegment,
+          source: 'default',
+          masked: false,
+        })
       }
+
+      if (supplied.length === 0) return masked
+      const overlaidKeys = new Set(supplied.map((entry) => entry.key))
       return {
         ...masked,
         entries: [
-          ...masked.entries.filter((entry) => entry.key !== DASHBOARD_BASE_URL_CONFIG_KEY),
-          overlaid,
+          ...masked.entries.filter((entry) => !overlaidKeys.has(entry.key)),
+          ...supplied,
         ],
       }
     },
   }
+}
+
+/**
+ * Does the inner config already carry the operator's OWN value for this key?
+ *
+ * The `masked` flag is read rather than the value, on `card-context.ts`'s own reasoning: a reduced
+ * entry is not the operator's value, and treating it as a presence would leave the overlay refusing
+ * to fill an absence that is, as far as the producer is concerned, exactly what it is.
+ */
+function hasVerbatim(masked: MaskedResolvedConfig, key: string): boolean {
+  const entry = masked.entries.find((candidate) => candidate.key === key)
+  return entry !== undefined && !entry.masked && entry.value.trim() !== ''
 }
 
 /**
@@ -414,6 +462,29 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
   const confirms = input.confirms
 
   /**
+   * The workspace half of the card url base: this workspace directory's own NAME (400-10, gap 1).
+   *
+   * IT IS THE ONLY WORKSPACE IDENTITY A LOCALLY-SERVED HOST HAS. This build carries no
+   * workspace-name concept anywhere — `WorkspaceSchema` declares none and `resolveWorkspacePaths`
+   * returns paths — so the directory the config file lives in is the one durable, human-recognisable
+   * name available at composition time. It is a display segment in a route, never an identity a
+   * decision is taken on, and `formatEntityUrl` percent-encodes it.
+   *
+   * THE OPERATOR'S CONFIGURED VALUE WINS, on the baseUrl half's own precedence: whoever names the
+   * workspace their hosted dashboard serves has said something this process cannot know, and
+   * overwriting it would point every card link at a workspace that host does not have. M5's hosted
+   * naming therefore arrives through the existing knob with nothing here to change.
+   *
+   * Empty or `/`-degenerate is passed as `undefined`, because absence is the honest state:
+   * `formatEntityUrl` refuses an empty workspace, so a blank segment would be a base that reads as
+   * present and renders no link.
+   */
+  const workspaceSegment = ((): string | undefined => {
+    const name = basename(dirname(resolve(input.configPath)))
+    return name === '' || name === '/' || name === '.' ? undefined : name
+  })()
+
+  /**
    * The composed host, in a box the confirm factory closes over (400-03).
    *
    * A MUTABLE BOX BECAUSE THE ORDER IS FIXED AND CANNOT BE INVERTED: `composeCliLocalAgent` CALLS
@@ -441,6 +512,7 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
     config: overlayDashboardBaseUrl(
       createMaskedConfigReader(input.configPath),
       input.boundOrigin,
+      workspaceSegment,
     ),
     resolveExecutionContext: input.resolveExecutionContext,
     // D-04 (400-03): ONE substrate, tagged. A dashboard conversation rides the exact

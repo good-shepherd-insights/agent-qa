@@ -389,6 +389,10 @@ describe('the dashboard chat door dispatches one utterance end to end', () => {
         }),
       },
       () => 'http://127.0.0.1:9999',
+      // No workspace supplied: this cell is about the baseUrl half's precedence, and the second
+      // half (400-10) has its own control below. `undefined` overlays nothing for that key, which
+      // keeps the assertion below a statement about one supplier rather than two.
+      undefined,
     )
     const masked = await overlaid.getMasked()
     expect(
