@@ -73,6 +73,8 @@ interface DoorFixture {
   readonly configRoot: string
   readonly host: LocalAgentHost
   readonly server: Server
+  /** How many SSE streams this door is holding open right now — the leak cell's only observable. */
+  readonly streamCount: () => number
 }
 
 async function openDoor(): Promise<DoorFixture> {
@@ -90,14 +92,15 @@ async function openDoor(): Promise<DoorFixture> {
     boundOrigin: () => boundOrigin,
     resolveExecutionContext: () => 'local-interactive',
   })
-  const server = createServer(createChatRouter(agentHost))
+  const router = createChatRouter(agentHost)
+  const server = createServer(router)
   await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
   const address = server.address()
   if (address === null || typeof address === 'string') {
     throw new TypeError('the door bound no port')
   }
   boundOrigin = `http://127.0.0.1:${String(address.port)}`
-  return { origin: boundOrigin, configRoot, host, server }
+  return { origin: boundOrigin, configRoot, host, server, streamCount: router.openStreamCount }
 }
 
 async function closeDoor(door: DoorFixture): Promise<void> {
@@ -292,5 +295,189 @@ describe('the door is composed once, and mounted where the server serves it', ()
       .join('\n')
     expect(source).toContain('createChatRouter(deps.agentHost)')
     expect(source).toContain('CHAT_ROUTE_PREFIX')
+  })
+})
+
+// ---- The turn-events stream (400-01 task 3, D-03 / T-400-04) -----------------------------------
+//
+// WHAT THE STREAM IS, STATED BEFORE IT IS TESTED. The session's append-only JSONL log is the
+// DURABLE TRUTH and the stream is a push optimisation over it — the same law the run chips are
+// under. So every cell below reads its expectations off the log the turn wrote, never off a list
+// this file keeps: a stream that dropped an event, reordered two, or invented one that was never
+// appended is a difference between the two, and a cell comparing the stream against a hand-written
+// expectation could not see any of the three.
+
+/** One SSE frame, as the wire carries it. */
+interface SseFrame {
+  readonly id: string | undefined
+  readonly event: string | undefined
+  readonly data: string
+}
+
+/**
+ * Read frames off a real SSE connection until a predicate is satisfied or the budget runs out.
+ *
+ * The connection is ABORTED rather than left to time out, because that is what a browser tab
+ * closing does — and cell three's whole subject is what the server does when it happens.
+ */
+async function readFrames(
+  url: string,
+  options: {
+    readonly lastEventId?: string
+    readonly until: (frames: readonly SseFrame[]) => boolean
+    readonly budgetMs?: number
+  },
+): Promise<{ readonly frames: readonly SseFrame[]; readonly raw: string; readonly abort: () => void }> {
+  const controller = new AbortController()
+  const response = await fetch(url, {
+    signal: controller.signal,
+    headers: options.lastEventId === undefined ? {} : { 'Last-Event-ID': options.lastEventId },
+  })
+  if (response.body === null) throw new TypeError('the stream carried no body')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  const frames: SseFrame[] = []
+  let raw = ''
+  const deadline = Date.now() + (options.budgetMs ?? 10_000)
+  try {
+    while (!options.until(frames) && Date.now() < deadline) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      raw += decoder.decode(chunk.value, { stream: true })
+      // Frames are separated by a blank line; a trailing partial stays in `raw` for the next read.
+      const parts = raw.split('\n\n')
+      raw = parts.pop() ?? ''
+      for (const part of parts) {
+        if (part.trim() === '' || part.startsWith(':')) continue
+        const lines = part.split('\n')
+        frames.push({
+          id: lines.find((line) => line.startsWith('id: '))?.slice(4),
+          event: lines.find((line) => line.startsWith('event: '))?.slice(7),
+          data: lines.find((line) => line.startsWith('data: '))?.slice(6) ?? '',
+        })
+      }
+    }
+  } finally {
+    controller.abort()
+  }
+  return { frames, raw, abort: () => controller.abort() }
+}
+
+/** Every event the session's own JSONL log carries, in file order — the durable truth. */
+function loggedEvents(configRoot: string, sessionId: string): readonly Record<string, unknown>[] {
+  const path = join(configRoot, '.agent-qa', 'sessions', `${sessionId}.jsonl`)
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    // The first line is the session HEADER, which carries no `kind` and is not an event.
+    .filter((record) => typeof record['kind'] === 'string')
+}
+
+describe('the turn-events stream is a projection of the session log', () => {
+  let door: DoorFixture
+
+  beforeAll(async () => {
+    door = await openDoor()
+  })
+
+  afterAll(async () => {
+    await closeDoor(door)
+  })
+
+  it('delivers every event the turn appended, in append order, closing on turn_complete', async () => {
+    const answered = await postTurn(door.origin, { message: '/fn config.get {}' })
+    const { sessionId } = (answered.body as ChatTurnResponse).result
+
+    const { frames } = await readFrames(
+      `${door.origin}/api/chat/sessions/${sessionId}/events`,
+      { until: (seen) => seen.some((frame) => frame.event === 'turn_complete') },
+    )
+
+    // THE COMPARAND IS THE LOG, not a list written here. A stream that dropped, reordered or
+    // invented an event differs from the file the turn wrote, and nothing else can say so.
+    const logged = loggedEvents(door.configRoot, sessionId)
+    expect(logged.length, 'the turn appended nothing at all, so this cell would assert about an '
+      + 'empty stream and pass').toBeGreaterThan(0)
+    expect(frames.map((frame) => frame.event)).toEqual(logged.map((record) => record['kind']))
+    expect(frames.map((frame) => JSON.parse(frame.data) as unknown)).toEqual(logged)
+
+    // The ids are the replay currency, so they must be present, distinct and ascending.
+    const ids = frames.map((frame) => Number(frame.id))
+    expect(ids.every((id) => Number.isInteger(id))).toBe(true)
+    expect(ids).toEqual([...ids].sort((left, right) => left - right))
+    expect(new Set(ids).size).toBe(ids.length)
+
+    // The turn closes on the log's own closing event, carrying that turn's id — the typed result
+    // reference a client needs to join the frame to the response it already has.
+    const last = frames.at(-1)
+    expect(last?.event).toBe('turn_complete')
+    expect((JSON.parse(last?.data ?? '{}') as { turnId?: string }).turnId)
+      .toBe((answered.body as ChatTurnResponse).result.turnId)
+  })
+
+  it('replays from Last-Event-ID with no duplicates and no gaps', async () => {
+    const answered = await postTurn(door.origin, { message: '/fn config.get {}' })
+    const { sessionId } = (answered.body as ChatTurnResponse).result
+    const streamUrl = `${door.origin}/api/chat/sessions/${sessionId}/events`
+
+    const first = await readFrames(streamUrl, {
+      until: (seen) => seen.some((frame) => frame.event === 'turn_complete'),
+    })
+    expect(first.frames.length, 'nothing to reconnect into').toBeGreaterThan(1)
+
+    // Reconnect as a browser does: the id of the last frame it actually saw.
+    const seenThrough = first.frames[0]!.id!
+    const resumed = await readFrames(streamUrl, {
+      lastEventId: seenThrough,
+      until: (seen) => seen.some((frame) => frame.event === 'turn_complete'),
+    })
+
+    // NO DUPLICATES: nothing at or before the id the client acknowledged.
+    expect(
+      resumed.frames.map((frame) => Number(frame.id)).filter((id) => id <= Number(seenThrough)),
+      'the replay re-sent an event the client had already seen',
+    ).toEqual([])
+    // NO GAPS: everything after it, in the same order, byte for byte.
+    expect(resumed.frames).toEqual(
+      first.frames.filter((frame) => Number(frame.id) > Number(seenThrough)),
+    )
+  })
+
+  it('tears down its listener and heartbeat when the client disconnects', async () => {
+    const answered = await postTurn(door.origin, { message: '/fn config.get {}' })
+    const { sessionId } = (answered.body as ChatTurnResponse).result
+    const streamUrl = `${door.origin}/api/chat/sessions/${sessionId}/events`
+
+    // T-400-04's other half. An abandoned stream holds a listener on the append path and a 15s
+    // interval; two connect/disconnect cycles that left either behind would grow without bound in
+    // a process a person leaves open all day, and nothing outside the server can see it happening.
+    const baseline = door.streamCount()
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      const live = await readFrames(streamUrl, {
+        until: (seen) => seen.some((frame) => frame.event === 'turn_complete'),
+      })
+      expect(live.frames.length).toBeGreaterThan(0)
+      live.abort()
+      // The close event is delivered on the server's own turn of the loop.
+      await new Promise<void>((settled) => setTimeout(settled, 150))
+      expect(
+        door.streamCount(),
+        `cycle ${String(cycle)}: a disconnected stream left its listener and heartbeat behind`,
+      ).toBe(baseline)
+    }
+  })
+
+  it('bounds the replay buffer (T-400-04)', () => {
+    // A SOURCE assertion, because an unbounded buffer is invisible to any drive short of the one
+    // that exhausts memory. What is asserted is that a numeric cap EXISTS and is applied, not what
+    // its value is — the value is an operations decision and this cell must not pin it.
+    const streamPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../dashboard-server/src/chat/chat-routes.ts',
+    )
+    const source = readFileSync(streamPath, 'utf8')
+    expect(source).toMatch(/CHAT_STREAM_REPLAY_LIMIT\s*=\s*\d+/)
+    expect(source).toMatch(/CHAT_STREAM_SESSION_LIMIT\s*=\s*\d+/)
   })
 })
