@@ -35,8 +35,16 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import { CHAT_DOOR_SURFACE } from '../commands/chat.js'
 import { composeDashboardDoor, DASHBOARD_FUNCTION_CALLER } from '../commands/dashboard.js'
-import { composeCliLocalAgent, CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
+import {
+  AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE,
+  AGENT_CONFIG_COMMIT_AUTHOR_UNRECOGNISED,
+  AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED,
+  composeCliLocalAgent,
+  CLI_FUNCTION_CALLER,
+} from '../composition/local-agent-host.js'
+import { SURFACE_ROSTER } from './conformance/roster.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -203,11 +211,14 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
     expect(author).not.toContain('proposed by the cli')
   })
 
-  it('(2) a chat-minted proposal is attributed to chat', async () => {
+  it('(2) a chat-minted proposal is still attributed to chat', async () => {
     const workspace = seedWorkspace()
+    // THE WORD `agent-qa chat` ITSELF SUPPLIES, imported rather than re-typed. A literal `'chat'`
+    // here would agree with the door today and be free to disagree with it forever after.
     const { registry } = composeCliLocalAgent({
       agentQaRoot: workspace.agentQaRoot,
       configPath: workspace.configPath,
+      mintingSurface: CHAT_DOOR_SURFACE,
       resolveExecutionContext: () => 'local-interactive',
       confirm: () => true,
     })
@@ -215,12 +226,73 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
     const proposalId = await mint(registry, CLI_FUNCTION_CALLER, '45s')
     await accept(applyingHost(workspace), proposalId)
 
-    // THE CONTROL, and it is honest about being one: this arm is green against the hardcoded
-    // constant too, because the hardcode says `chat`. It carries no RED evidence and is not
-    // supposed to — what it guards is that fixing the dashboard arm does not break the arm that
-    // was already right. Its non-vacuity is established by mutation (see the SUMMARY's ledger),
-    // not by its own colour.
-    expect(authorAt(workspace, 'HEAD')).toContain('chat')
+    // THE CONTROL, and it is honest about being one: this arm was green against the hardcoded
+    // constant too, because the hardcode said `chat`. What it guards is that naming the other
+    // three doors did not cost the one door that was already named correctly. Its non-vacuity is
+    // established by mutation (see the SUMMARY's ledger), not by its own colour — and by the
+    // `cli` negative below, which the hardcode could not have satisfied by accident.
+    const author = authorAt(workspace, 'HEAD')
+    expect(author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE.chat)
+    expect(author).not.toContain('proposed by the cli')
+  })
+
+  it('(4) a surface this build does not recognise is named as such, never interpolated', async () => {
+    const workspace = seedWorkspace()
+    // A WORD FROM THE FUTURE, carrying the two characters that structure a git author field. A
+    // reader that rendered the stored surface into `Name <email>` would let a record rewrite the
+    // field it is being read into; the map's unrecognised arm is what makes that unreachable.
+    const { registry } = composeCliLocalAgent({
+      agentQaRoot: workspace.agentQaRoot,
+      configPath: workspace.configPath,
+      mintingSurface: 'voice> <someone-else@example.invalid',
+      resolveExecutionContext: () => 'local-interactive',
+      confirm: () => true,
+    })
+
+    const proposalId = await mint(registry, CLI_FUNCTION_CALLER, '45s')
+
+    // THE RECORD STILL HOLDS THE WORD IT WAS GIVEN, read off disk BEFORE the accept moves it out
+    // of the pending directory. The reading side is closed; the writing side is not, which is what
+    // keeps a record written by a later build parseable here at all.
+    const stored = JSON.parse(readFileSync(
+      join(workspace.agentQaRoot, 'proposals', `${proposalId}.json`), 'utf8',
+    )) as { origin: { surface?: string } }
+    expect(stored.origin.surface).toBe('voice> <someone-else@example.invalid')
+
+    await accept(applyingHost(workspace), proposalId)
+
+    const author = authorAt(workspace, 'HEAD')
+    expect(author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECOGNISED)
+    // PRESENCE IS NOT ABSENCE. Something WAS recorded; saying `unrecorded` would report the wrong
+    // fact, and this is the negative that keeps the two arms from collapsing into one.
+    expect(author).not.toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
+    expect(author).not.toContain('someone-else@example.invalid')
+  })
+
+  it('(5) every rostered door supplies a minting surface — the census, over the roster itself', () => {
+    // THE COMPLETE SET IS THE CONFORMANCE ROSTER'S, not a list kept here. `SURFACE_ROSTER` is what
+    // this phase treats as the set of invocation doors, so a fifth door added there without a
+    // module named below throws rather than passing quietly — the census cannot be greener than
+    // its own discovery predicate, so the predicate is the product's own enumeration.
+    const MODULE_FOR_DOOR: Readonly<Record<string, string>> = {
+      chat: 'chat.ts',
+      mcp: 'mcp.ts',
+      fn: 'fn.ts',
+      dashboard: 'dashboard.ts',
+    }
+    expect(SURFACE_ROSTER.length).toBeGreaterThan(0)
+    for (const entry of SURFACE_ROSTER) {
+      const module = MODULE_FOR_DOOR[entry.id]
+      if (module === undefined) {
+        throw new Error(
+          `the roster carries a door this census has no module for: ${entry.id}. `
+          + 'Name its command module here, and check that it supplies a mintingSurface.',
+        )
+      }
+      const source = readFileSync(join(HERE, '..', 'commands', module), 'utf8')
+      expect(`${entry.id}: ${source.includes('mintingSurface:') ? 'supplies' : 'omits'}`)
+        .toBe(`${entry.id}: supplies`)
+    }
   })
 
   it('(3) a legacy proposal — no surface recorded — applies, and is NOT attributed to chat', async () => {
@@ -246,6 +318,6 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
     const author = authorAt(workspace, 'HEAD')
     expect(author).not.toContain('proposed by chat')
     expect(author).not.toContain(DASHBOARD_FUNCTION_CALLER.surface)
-    expect(author).toMatch(/unrecorded/)
+    expect(author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
   })
 })

@@ -284,6 +284,21 @@ export interface ConfigApplyPortLike {
   apply(request: {
     readonly proposalId: string
     readonly payload: ConfigProposalApplyableV1
+    /**
+     * The door that MINTED this proposal — `ProposalOrigin.surface`, read off the stored record
+     * (400-05).
+     *
+     * IT TRAVELS BESIDE THE PAYLOAD RATHER THAN INSIDE IT. Attribution is a fact about the envelope
+     * and not about the change, so putting it on the payload would have meant a copy on every
+     * payload arm and a `.strict()` schema change for each — and would have made a stored proposal's
+     * provenance mutable by whoever hands the port a payload.
+     *
+     * ABSENT MEANS NO SURFACE WAS RECORDED, which is every proposal minted before 400-05 and every
+     * mint by a composition that declares no door. The port must say so honestly; it must not
+     * substitute a surface, and it must still APPLY — refusing here would poison a store this
+     * product itself wrote.
+     */
+    readonly mintedSurface?: string
   }): Promise<ConfigApplyOutcome>
 }
 

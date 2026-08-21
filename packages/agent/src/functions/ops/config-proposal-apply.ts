@@ -216,7 +216,14 @@ export async function applyConfigProposalById(
     }
   }
 
-  return await configApply.apply({ proposalId, payload: applyablePayload(envelope.payload) })
+  // 400-05: the attribution rides ALONG THE SAME READ the payload does. This function has the
+  // envelope in hand, so the surface that minted it comes off the record it already holds — never
+  // off this process, which is the surface APPLYING and is routinely a different door.
+  return await configApply.apply({
+    proposalId,
+    payload: applyablePayload(envelope.payload),
+    ...(envelope.origin?.surface === undefined ? {} : { mintedSurface: envelope.origin.surface }),
+  })
 }
 
 export const configProposalApplySpec: FunctionSpec<ConfigProposalApplyInput, ConfigApplyOutcome> = {

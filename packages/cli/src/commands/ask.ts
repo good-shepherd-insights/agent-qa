@@ -64,9 +64,17 @@ function globalOptions(command: Command): { config?: string } {
 }
 
 /** Everything the composition root needs, derived from one flag — the `fn.ts` derivation. */
-function compositionInput(command: Command): { agentQaRoot: string; configPath: string } {
+function compositionInput(
+  command: Command,
+): { agentQaRoot: string; configPath: string; mintingSurface: string } {
   const configPath = resolve(globalOptions(command).config ?? 'agent-qa.config.yaml')
-  return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
+  return {
+    agentQaRoot: resolve(dirname(configPath), '.agent-qa'),
+    configPath,
+    // 400-05: `agent-qa ask` is one scripted turn taken by the caller one line below — the `cli`
+    // surface — so that is the word its proposals carry.
+    mintingSurface: CLI_FUNCTION_CALLER.surface,
+  }
 }
 
 function renderTurn(result: AgentAskResult): string {

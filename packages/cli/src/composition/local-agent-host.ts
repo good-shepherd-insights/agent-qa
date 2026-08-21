@@ -506,6 +506,16 @@ export interface ComposeCliLocalAgentInput {
    */
   sessionSurface?: ComposeLocalAgentInput['sessionSurface']
   /**
+   * Which door this host MINTS PROPOSALS as (400-05), passed through untouched.
+   *
+   * Each door supplies its own `FunctionCaller.surface` — the same record it dispatches with, never
+   * a second spelling of the word. Absent records nothing, which is honest and is what the reader
+   * calls `unrecorded`; it can never mis-name a door, which is the property that makes an omission
+   * here safe. See the shared composition's own field for why this is the seam and why it is not
+   * `sessionSurface`.
+   */
+  mintingSurface?: ComposeLocalAgentInput['mintingSurface']
+  /**
    * How this host reads configuration, MASKED (400-01, D-16).
    *
    * A passthrough with a default rather than a required argument, because there is exactly one
@@ -2006,20 +2016,109 @@ export function createTestDraftApplyPort(configPath: string): DraftApplyPortLike
 export const AGENT_CONFIG_PROPOSAL_TRAILER_KEY = 'Agent-QA-Proposal'
 
 /**
- * The author every agent config commit is written under (spec §4.3).
+ * The doors this host can NAME in a commit author (400-05).
+ *
+ * A CLOSED VOCABULARY ON THE READING SIDE, against an open `string` on the writing side, and the
+ * asymmetry is deliberate. `ProposalOrigin.surface` is a plain string so that a record written by a
+ * later build still parses here; this map is closed so that nothing a later build writes can be
+ * INTERPOLATED into a git author. A commit author is a structured field — `Name <email>` — and a
+ * value spliced into it from a stored record is a place where a newline or an angle bracket would
+ * rewrite the field. Nothing below ever renders the stored word; it only ever looks it up.
+ *
+ * The four rostered doors plus the two non-interactive hosts that compose this port set. The `cli`
+ * arm is not a synonym for `chat`: `agent-qa fn config.field.set` is a person typing a command, and
+ * before this plan it was one of the surfaces the single constant misnamed.
+ */
+export const CONFIG_COMMIT_AUTHOR_SURFACES = [
+  'chat', 'dashboard', 'mcp', 'fn', 'cli', 'daemon',
+] as const
+
+export type ConfigCommitAuthorSurface = (typeof CONFIG_COMMIT_AUTHOR_SURFACES)[number]
+
+/**
+ * The author every agent config commit is written under (spec §4.3), BY MINTING SURFACE.
  *
  * ATTRIBUTION IS THE POINT rather than tidiness. A commit presenting agent-authored configuration
  * as a person's own work would make the repository's own history the wrong place to find out where
  * a change came from, and the person whose name is on the commit would be the last to know. It is
  * an `--author` and not only a message line because `git log --author` and every review tool that
  * reads authorship are what a person actually filters on.
+ *
+ * A TOTAL MAP RATHER THAN A CONSTANT, since 400-05. Until the fourth door shipped this was one
+ * string — `agent-qa (proposed by chat) <agent-qa@local>` — written on every apply whatever had
+ * proposed it. That was imprecise for `mcp` and `fn` and became a plain falsehood the day
+ * `agent-qa dashboard` could mint a config change: a browser-minted proposal committed under
+ * chat's name makes the audit trail lie in the one direction an audit trail must not.
+ *
+ * `Record<ConfigCommitAuthorSurface, string>` and not a partial map: a seventh surface added to the
+ * vocabulary above stops this object compiling until somebody writes the sentence a person will
+ * read in `git log`, which is the only place that decision belongs.
  */
-export const AGENT_CONFIG_COMMIT_AUTHOR = 'agent-qa (proposed by chat) <agent-qa@local>'
+export const AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE:
+Readonly<Record<ConfigCommitAuthorSurface, string>> = Object.freeze({
+  chat: 'agent-qa (proposed by chat) <agent-qa@local>',
+  dashboard: 'agent-qa (proposed by the dashboard) <agent-qa@local>',
+  mcp: 'agent-qa (proposed over mcp) <agent-qa@local>',
+  fn: 'agent-qa (proposed by the cli) <agent-qa@local>',
+  cli: 'agent-qa (proposed by the cli) <agent-qa@local>',
+  daemon: 'agent-qa (proposed by the daemon) <agent-qa@local>',
+})
+
+/**
+ * The author for a proposal that recorded NO minting surface.
+ *
+ * THE HONEST ARM, and it exists so that nothing has to be invented. Every config proposal written
+ * before 400-05 is in this population, and so is any mint by a composition that declares no door.
+ * Falling back to the chat form would have been the original defect wearing a default; picking any
+ * other surface would be a fabricated attribution in a durable audit record.
+ *
+ * IT STILL APPLIES. This is a reading, never a refusal: a store this product itself wrote must not
+ * become unapplyable because a later build learned to record more about it.
+ */
+export const AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED =
+  'agent-qa (proposed by an unrecorded surface) <agent-qa@local>'
+
+/**
+ * The author for a proposal whose recorded surface this build does not recognise.
+ *
+ * DISTINCT FROM `…_UNRECORDED`, because the two are different facts and a person reading `git log`
+ * deserves the true one: nothing was recorded, versus something was recorded and this binary has
+ * never heard of it (a record written by a newer build, or by a host outside this composition).
+ * Collapsing them would report an absence where there was a presence.
+ */
+export const AGENT_CONFIG_COMMIT_AUTHOR_UNRECOGNISED =
+  'agent-qa (proposed by an unrecognised surface) <agent-qa@local>'
+
+function isConfigCommitAuthorSurface(value: string): value is ConfigCommitAuthorSurface {
+  return (CONFIG_COMMIT_AUTHOR_SURFACES as readonly string[]).includes(value)
+}
+
+/**
+ * The commit author for one applied proposal, from the surface that MINTED it (400-05).
+ *
+ * THE ONE DERIVATION. `applyConfigProposalAsOneCommit` calls this and nothing else builds an
+ * author, so there is no second recipe to disagree with it — and every arm above is reachable only
+ * through here.
+ */
+export function agentConfigCommitAuthor(mintedSurface: string | undefined): string {
+  if (mintedSurface === undefined) return AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED
+  return isConfigCommitAuthorSurface(mintedSurface)
+    ? AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE[mintedSurface]
+    : AGENT_CONFIG_COMMIT_AUTHOR_UNRECOGNISED
+}
 
 /** What an accepted `config` proposal asks this host to do. */
 export interface ConfigApplyRequest {
   readonly proposalId: string
   readonly payload: ConfigProposalApplyableV1
+  /**
+   * The door that MINTED this proposal — `ProposalOrigin.surface`, read off the stored record.
+   *
+   * NOT DERIVED HERE, and that is the load-bearing half of 400-05. This function runs inside
+   * whichever host is APPLYING, which is routinely not the host that proposed; a surface computed
+   * at this point would name the person's inbox rather than the agent's door.
+   */
+  readonly mintedSurface?: string
 }
 
 /**
@@ -2477,7 +2576,9 @@ export function applyConfigProposalAsOneCommit(
       configDir,
       files.map((file) => file.identityPath),
       configApplyCommitMessage(request),
-      AGENT_CONFIG_COMMIT_AUTHOR,
+      // 400-05: the surface the PROPOSAL recorded, never this host's own. See
+      // `agentConfigCommitAuthor` for the map and its two honest arms.
+      agentConfigCommitAuthor(request.mintedSurface),
     )
   } catch (error) {
     restoreConfigApplyFailure(exec, configDir, files, writeTarget, error)
@@ -2887,7 +2988,15 @@ export function createConfigApplyPort(configPath: string): ConfigApplyPortLike {
       return applyConfigProposalAsOneCommit({
         configPath,
         pinnedFileSet: members,
-        request: { proposalId: request.proposalId, payload: request.payload },
+        request: {
+          proposalId: request.proposalId,
+          payload: request.payload,
+          // 400-05: passed through untouched. This port decides nothing about attribution — the
+          // value was recorded at propose time and read by the op that held the envelope.
+          ...(request.mintedSurface === undefined
+            ? {}
+            : { mintedSurface: request.mintedSurface }),
+        },
       })
     },
   }
@@ -3513,6 +3622,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // 400-03, D-04: the session surface tag, conditionally spread on the idiom above so a host
     // that names no surface writes the untagged header every pre-400 file carries.
     ...(input.sessionSurface === undefined ? {} : { sessionSurface: input.sessionSurface }),
+    ...(input.mintingSurface === undefined ? {} : { mintingSurface: input.mintingSurface }),
     // D-18: when a live daemon holds the writer lease, this host hands it the SAME
     // `knowledge.proposal.apply` envelope over the SAME 386 socket every other capability crosses,
     // and waits bounded for the receipt. It is a closure over `invokeViaDaemon` rather than a new

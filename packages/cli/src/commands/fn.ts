@@ -50,9 +50,18 @@ function globalOptions(command: Command): { config?: string } {
 }
 
 /** Everything the composition root needs to build the registry, derived from one flag. */
-function compositionInput(command: Command): { agentQaRoot: string; configPath: string } {
+function compositionInput(
+  command: Command,
+): { agentQaRoot: string; configPath: string; mintingSurface: string } {
   const configPath = resolve(globalOptions(command).config ?? 'agent-qa.config.yaml')
-  return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
+  return {
+    agentQaRoot: resolve(dirname(configPath), '.agent-qa'),
+    configPath,
+    // 400-05: READ OFF THE CALLER THIS DOOR DISPATCHES WITH, never re-typed — the record and the
+    // attribution are one fact. A person typing `agent-qa fn config.field.set` is the `cli`
+    // surface, and before this plan their proposal was committed under chat's name.
+    mintingSurface: CLI_FUNCTION_CALLER.surface,
+  }
 }
 
 function parsedInput(raw: string | undefined): unknown {

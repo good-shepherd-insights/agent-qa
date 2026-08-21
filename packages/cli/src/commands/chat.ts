@@ -117,10 +117,31 @@ function globalOptions(command: Command): { config?: string } {
   return command.parent?.opts<{ config?: string }>() ?? {}
 }
 
+/**
+ * THE DOOR THIS SURFACE MINTS PROPOSALS AS (400-05).
+ *
+ * SPELLED HERE RATHER THAN READ OFF A CALLER, and the reason is a measured fact about this door
+ * rather than a preference. There is no chat-door `FunctionCaller`: this command dispatches with
+ * `CLI_FUNCTION_CALLER` at the outer level, and inside a turn the engine dispatches with
+ * `CHAT_RESOLVER_CALLER`, which is `surface: 'chat'` and is shared with the DASHBOARD door — it
+ * identifies the turn engine, not which door opened the conversation. So the caller record cannot
+ * answer "which door minted this", and the composition is the only place that can.
+ *
+ * EXPORTED so the attribution cells drive the word this door actually supplies, rather than a
+ * second copy of it that agrees today.
+ */
+export const CHAT_DOOR_SURFACE = 'chat'
+
 /** Everything the composition root needs, derived from one flag — the `fn.ts` derivation. */
-function compositionInput(command: Command): { agentQaRoot: string; configPath: string } {
+function compositionInput(
+  command: Command,
+): { agentQaRoot: string; configPath: string; mintingSurface: string } {
   const configPath = resolve(globalOptions(command).config ?? 'agent-qa.config.yaml')
-  return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
+  return {
+    agentQaRoot: resolve(dirname(configPath), '.agent-qa'),
+    configPath,
+    mintingSurface: CHAT_DOOR_SURFACE,
+  }
 }
 
 /**

@@ -68,7 +68,7 @@ import { scanConstructedArtifact } from '@vostride/agent-qa-safety'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
-  AGENT_CONFIG_COMMIT_AUTHOR,
+  AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED,
   AGENT_CONFIG_PROPOSAL_TRAILER_KEY,
   createConfigApplyPort,
   createConfigFilesPort,
@@ -373,7 +373,7 @@ describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
     expect(git('log', '-1', '--format=%s', 'HEAD').stdout.trim())
       .toBe('config: set use.timeout.step to 45s')
     expect(git('log', '-1', '--format=%an <%ae>', 'HEAD').stdout.trim())
-      .toBe(AGENT_CONFIG_COMMIT_AUTHOR)
+      .toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
     expect(git('log', '-1', '--format=%B', 'HEAD').stdout)
       .toContain(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: ${id}`)
 

@@ -434,6 +434,11 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
     // dispatched a turn and the door that opened its session are the same fact, and two spellings
     // of it would be free to disagree.
     sessionSurface: DASHBOARD_FUNCTION_CALLER.surface,
+    // 400-05: the same word again, and again read off the caller rather than typed. A config
+    // proposal minted in a browser is accepted from wherever the person happens to be — often the
+    // CLI inbox, hours later — so this is the ONLY moment at which the door that proposed can be
+    // recorded truthfully.
+    mintingSurface: DASHBOARD_FUNCTION_CALLER.surface,
     // D-03: the door's half of the projection. The composition notifies this once per APPENDED
     // event; the fan-out is what turns one notification into however many browsers are watching.
     observeSessionEvent: (sessionId, event) => { sessionEvents.emit(sessionId, event) },

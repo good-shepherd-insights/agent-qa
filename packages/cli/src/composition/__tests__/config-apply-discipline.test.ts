@@ -89,7 +89,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createFnCommand } from '../../commands/fn.js'
 import {
-  AGENT_CONFIG_COMMIT_AUTHOR,
+  AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED,
   AGENT_CONFIG_PROPOSAL_TRAILER_KEY,
   CONFIG_REPROPOSE_CLI_VERB,
   ConfigUndoSourceOutOfSetError,
@@ -281,6 +281,11 @@ function registryFor(overrides: Partial<FunctionDeps> = {}) {
     configScan: { scan: (parts) => scanConstructedArtifact(parts, {}) },
     configApply: createConfigApplyPort(configPath),
     configUndoSource: createConfigUndoSourcePort(configPath),
+    // 400-05: THIS FIXTURE DECLARES NO DOOR, and that is a real posture rather than an oversight —
+    // it is the shape of every proposal minted before the minting surface was recorded at all. So
+    // the author these cells assert is the honest `unrecorded` arm, which gives them incidental
+    // coverage of the legacy path; the per-surface claims live in
+    // `__tests__/proposal-author-attribution.test.ts`, which drives real door compositions.
     configProposals: {
       put: (record) => {
         const proposalId = mintProposalId(() => `${Date.now()}-${Math.floor(performance.now())}`)
@@ -381,7 +386,7 @@ describe('D-05: the human commits first, and the agent commits only what was app
     expect(human.body).not.toContain('agent-qa (proposed by chat)')
 
     expect(agent.subject).toBe('config: set use.timeout.step to 45s')
-    expect(agent.author).toBe(AGENT_CONFIG_COMMIT_AUTHOR)
+    expect(agent.author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
     expect(agent.body).toContain(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: ${id}`)
 
     // THE HUMAN'S COMMIT CARRIES THE HUMAN'S BYTES AND NOTHING ELSE. Read out of the repository,
@@ -772,7 +777,7 @@ describe('D-07: undo is a proposal, and it rides the one gated write path', () =
     expect(Uint8Array.from(readFileSync(configPath))).toEqual(original)
     // ONE more commit, trailered and agent-authored like any other apply — because it IS one.
     expect(commitCount()).toBe(3)
-    expect(commitAt('HEAD').author).toBe(AGENT_CONFIG_COMMIT_AUTHOR)
+    expect(commitAt('HEAD').author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
     expect(commitAt('HEAD').body).toContain(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: ${undoId}`)
     expect(commitAt('HEAD').subject).toContain('revert agent-qa configuration commit')
   })
@@ -834,7 +839,7 @@ describe('D-07: undo is a proposal, and it rides the one gated write path', () =
     expect(commitCount()).toBe(4)
     for (const rev of ['HEAD', 'HEAD~1', 'HEAD~2']) {
       expect(commitAt(rev).body).toContain(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: `)
-      expect(commitAt(rev).author).toBe(AGENT_CONFIG_COMMIT_AUTHOR)
+      expect(commitAt(rev).author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
     }
   })
 
@@ -894,7 +899,7 @@ describe('the config dir is NOT the repository root (395-11 · CR-03)', () => {
     // BYTE EQUALITY at the sub/dir layout — the fact an undo that "succeeded" against a phantom
     // path cannot produce, because it never touched the real file.
     expect(Uint8Array.from(readFileSync(configPath))).toEqual(original)
-    expect(commitAt('HEAD').author).toBe(AGENT_CONFIG_COMMIT_AUTHOR)
+    expect(commitAt('HEAD').author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
     expect(commitAt('HEAD').body).toContain(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: ${undoId}`)
     expect(commitAt('HEAD').subject).toContain('revert agent-qa configuration commit')
 
@@ -977,7 +982,7 @@ describe('the config dir is NOT the repository root (395-11 · CR-03)', () => {
     expect(human.body).not.toContain(AGENT_CONFIG_PROPOSAL_TRAILER_KEY)
 
     expect(agent.subject).toBe('config: set use.timeout.step to 45s')
-    expect(agent.author).toBe(AGENT_CONFIG_COMMIT_AUTHOR)
+    expect(agent.author).toBe(AGENT_CONFIG_COMMIT_AUTHOR_UNRECORDED)
     expect(agent.body).toContain(`${AGENT_CONFIG_PROPOSAL_TRAILER_KEY}: ${id}`)
 
     // THE FILE LISTS, which is where the layout shows up: git reports them repo-root-relative, so

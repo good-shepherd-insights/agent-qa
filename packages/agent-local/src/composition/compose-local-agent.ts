@@ -1679,6 +1679,33 @@ export interface ComposeLocalAgentInput {
    */
   readonly sessionSurface?: string
   /**
+   * WHICH DOOR THIS COMPOSITION MINTS PROPOSALS AS (400-05) — attribution, never a permission.
+   *
+   * A SEPARATE FIELD FROM `sessionSurface` ONE LINE UP, and the separation is the whole point
+   * rather than tidiness. That one says which door opened a CONVERSATION and is deliberately absent
+   * for CLI chat, so that pre-400 session headers keep their exact bytes; this one says which door
+   * minted a PROPOSAL, and CLI chat has a true answer for it. Folding them would have attributed
+   * every chat-minted proposal to nobody in order to preserve a byte in an unrelated file.
+   *
+   * STAMPED AT MINT, READ AT APPLY. The value lands on `ProposalOrigin.surface` when the proposal is
+   * written and is read back off the stored record when somebody accepts it — which may be days
+   * later, from a different door. An apply that asked "which surface am I" would answer about the
+   * person accepting rather than about the agent that proposed, and would be wrong exactly when it
+   * matters (a dashboard proposal accepted from the CLI inbox).
+   *
+   * SUPPLIED BY THE DOOR FROM ITS OWN `FunctionCaller.surface`, never re-spelled: the record a door
+   * dispatches with and the word its proposals carry are one fact, and two spellings of one fact are
+   * free to disagree. The caller does not reach an op — `invokeFunction` dispatches
+   * `spec.invoke(input, deps)` and the caller record stops at the gate — so a composition input is
+   * the seam that exists, and it is the same one 400-01 used for the execution context.
+   *
+   * ABSENT ⇒ NOTHING RECORDED, and that degradation is FAIL-SAFE by design: a door that forgets to
+   * supply one produces a proposal whose reader says `unrecorded`, which is true. It can never
+   * produce a proposal attributed to a door that did not mint it, which is the failure this whole
+   * plan exists to close.
+   */
+  readonly mintingSurface?: string
+  /**
    * The turn engine's reconciliation strategy (392 D-16).
    *
    * AN INTERNAL COMPOSITION OPTION, and every word of that is load-bearing. It is here so the
@@ -3137,7 +3164,16 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
             schemaVersion: CURRENT_PROPOSAL_RECORD_SCHEMA_VERSION,
             id: proposalId,
             kind: record.kind,
-            origin: { emittedBy: record.emittedBy, at: Date.parse(clock.now()) },
+            // 400-05: the minting door, stamped here beside the clock and for the same reason the
+            // clock is stamped here — it is a fact about the COMPOSITION, which is what this
+            // function is, and not about the op, which is why the op does not carry it. Spread
+            // conditionally so a composition that declares no door writes the byte-identical
+            // record it wrote before this field existed.
+            origin: {
+              emittedBy: record.emittedBy,
+              ...(input.mintingSurface === undefined ? {} : { surface: input.mintingSurface }),
+              at: Date.parse(clock.now()),
+            },
             payload: record.payload,
           } as ProposalRecord)
           return await Promise.resolve({ proposalId })

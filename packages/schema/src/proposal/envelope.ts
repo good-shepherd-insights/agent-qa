@@ -100,6 +100,30 @@ export const PROPOSAL_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000
 export const ProposalOriginSchema = z.object({
   emittedBy: z.string().min(1),
   runId: z.string().min(1).optional(),
+  /**
+   * WHICH DOOR MINTED THIS PROPOSAL (400-05) — the composition's own `FunctionCaller.surface`.
+   *
+   * IT BELONGS ON THE ORIGIN AND NOWHERE ELSE, because this record is already the answer to "where
+   * did this come from" and a second attribution field on a payload arm would be a per-kind copy of
+   * one cross-kind fact. It is emphatically NOT the session header's `surface` tag (400-03): that
+   * one says which door OPENED a conversation, which is a per-session fact and is read at the wrong
+   * moment — a proposal minted in a dashboard conversation and accepted the next morning from the
+   * CLI would be attributed to whichever session happened to be open at apply time.
+   *
+   * OPTIONAL, AND ITS ABSENCE IS A STATEMENT RATHER THAN A GAP: no surface was recorded. Every
+   * proposal written before this field existed is in that population, and so is every mint by a
+   * composition that declares no door. A reader may say so — `unrecorded` — and may NOT pick a
+   * surface to stand in for it; a fabricated attribution in a git author is exactly the defect this
+   * field closes. The schema is `.strict()`, so optional is also what keeps every pre-400 record on
+   * disk parsing unchanged.
+   *
+   * A PLAIN STRING RATHER THAN A CLOSED UNION, on the session tag's own reasoning (400-03): nothing
+   * here branches on it, and a union would make a record written by a later build fail to parse
+   * against an older one. What is closed is the READER's vocabulary — see
+   * `agentConfigCommitAuthor` in the CLI's host, whose map over known surfaces has an explicit arm
+   * for a word it does not recognise.
+   */
+  surface: z.string().min(1).optional(),
   /** Epoch milliseconds, stamped by the CALLER at mint time (this module reads no clock). */
   at: z.number().int().nonnegative(),
 }).strict()

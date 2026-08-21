@@ -605,7 +605,7 @@
       "classifies": true,
       "id": "proposals.accept",
       "inputSchemaDigest": "5b5b489fc085becee74396ff4acbd351c41986518402afe0e024f057ea45824a",
-      "outputSchemaDigest": "b07477cd62310063eaedb7836fe4cb0a14012a78b44c51fb6f7121816f8b034a",
+      "outputSchemaDigest": "f0848e309ba92c9a5f1867245d6eddb5cd05ac6619446ccb895d44d6631337e6",
       "partition": {
         "kind": "unprojected",
         "reason": "requires-human-origin"
@@ -628,7 +628,7 @@
       "classifies": true,
       "id": "proposals.list",
       "inputSchemaDigest": "3420dd10ab5186e194efec4c0175c45d6497f5585b57abb2d1e25c1a39667743",
-      "outputSchemaDigest": "6585297399462fb610a1b57c6360f4235a8d4376aaf5a4b4f9f912595674c5e5",
+      "outputSchemaDigest": "afb49bf82b5ed20d0109d532c2b6e6a98a347f47e6e5e01659bc012dbb95e777",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_list_proposals"
@@ -648,7 +648,7 @@
       "classifies": true,
       "id": "proposals.reject",
       "inputSchemaDigest": "f6ca5100a80ae14b0d11df3452fb0faf0ca7ac53e4da300bd06872a20809eda6",
-      "outputSchemaDigest": "5f310933fc2fdde0dd59b2a901b8e03ac045f4947ddcf9bb24d21fb904781bda",
+      "outputSchemaDigest": "1abe60ba49d7d5bb4edb738c5b9de32ae7ca87f855acd5a330d8f09f3800e81c",
       "partition": {
         "kind": "unprojected",
         "reason": "requires-human-origin"
@@ -669,7 +669,7 @@
       "classifies": true,
       "id": "proposals.show",
       "inputSchemaDigest": "22ab6f6276b4e60e27758f591e47bb2890bf8ee64c4a0e6e861a97d93e0ae980",
-      "outputSchemaDigest": "7c6deb87a47acc924bb5a2f20c0de14a1cb6fae7c9d277b42774fd6cdf7b7ccd",
+      "outputSchemaDigest": "0d0e52ccddb1d5ea430f0021826cfd0ca876da88ecb60307e32f6c2e3c0e81df",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_show_proposal"

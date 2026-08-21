@@ -57,6 +57,7 @@ import {
 import type {
   ProposalInboxEntryDto,
   ProposalKind,
+  ProposalOrigin,
   ProposalsAcceptApplied,
   ProposalsAcceptGrantOutcome,
   ProposalsAcceptInput,
@@ -104,6 +105,15 @@ interface ProposalApplyRoute<K extends ProposalKind> {
     deps: FunctionDeps,
     proposalId: string,
     payload: ProposalPayloadFor<K>,
+    /**
+     * The envelope's own provenance, travelling BESIDE the payload (400-05).
+     *
+     * ON THE SHARED SIGNATURE RATHER THAN ON THE ONE ARM THAT READS IT, because provenance is a
+     * fact about every envelope and not about the config arm's change. A per-arm parameter would
+     * have made the next route that needs it a second widening of this contract; today exactly one
+     * route reads it, and the others ignoring it is the honest shape of that.
+     */
+    origin: ProposalOrigin | undefined,
   ): Promise<ProposalsAcceptApplied>
 }
 
@@ -217,12 +227,19 @@ const ROUTE_FOR_KIND: Readonly<{ [K in ProposalKind]: ProposalApplyRoute<K> }> =
       deps: FunctionDeps,
       proposalId: string,
       payload: ProposalPayloadFor<'config'>,
+      origin: ProposalOrigin | undefined,
     ): Promise<ProposalsAcceptApplied> {
       const configApply = deps.configApply
       if (configApply === undefined) throw new FunctionNotBoundError(PROPOSALS_ACCEPT_FUNCTION_ID)
+      // 400-05: WHO PROPOSED, off the envelope this accept already read — never off this process.
+      // The surface accepting a proposal is routinely not the surface that minted it (a dashboard
+      // conversation proposes; a person accepts it from the CLI inbox the next morning), so reading
+      // the applying side here would be attributing the commit to the wrong door precisely in the
+      // case the field exists for.
       const outcome = await configApply.apply({
         proposalId,
         payload: applyablePayload(payload),
+        ...(origin?.surface === undefined ? {} : { mintedSurface: origin.surface }),
       })
       // THE DECISION IS RECORDED AFTER THE COMMIT, and only when a commit was MADE. CFGM-03's
       // idempotency edge is why the second half is a condition rather than an unconditional call:
@@ -291,13 +308,13 @@ function applyEnvelope(
 ): Promise<ProposalsAcceptApplied> {
   switch (envelope.kind) {
     case 'knowledge':
-      return ROUTE_FOR_KIND.knowledge.apply(deps, proposalId, envelope.payload)
+      return ROUTE_FOR_KIND.knowledge.apply(deps, proposalId, envelope.payload, envelope.origin)
     case 'test-draft':
-      return ROUTE_FOR_KIND['test-draft'].apply(deps, proposalId, envelope.payload)
+      return ROUTE_FOR_KIND['test-draft'].apply(deps, proposalId, envelope.payload, envelope.origin)
     case 'finding':
-      return ROUTE_FOR_KIND.finding.apply(deps, proposalId, envelope.payload)
+      return ROUTE_FOR_KIND.finding.apply(deps, proposalId, envelope.payload, envelope.origin)
     case 'config':
-      return ROUTE_FOR_KIND.config.apply(deps, proposalId, envelope.payload)
+      return ROUTE_FOR_KIND.config.apply(deps, proposalId, envelope.payload, envelope.origin)
     default: {
       const unhandled: never = envelope
       throw new TypeError(`proposals.accept: unhandled proposal kind ${JSON.stringify(unhandled)}`)

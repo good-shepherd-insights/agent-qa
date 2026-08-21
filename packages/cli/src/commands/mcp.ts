@@ -325,6 +325,10 @@ export function createMcpCommand(): Command {
           analytics,
           agentQaRoot,
           configPath,
+          // 400-05: READ OFF THIS DOOR'S OWN CALLER, never re-typed. An MCP client proposing a
+          // config change is a distinct door from the two interactive ones, and the person who
+          // later accepts it in their inbox is entitled to know which asked.
+          mintingSurface: MCP_FUNCTION_CALLER.surface,
           // 396-01 D-09: the confirm port is REFUSED, not merely unsupplied. The field is present
           // and `undefined`, which this composition root reads as "this host must never ask" —
           // absent would default to a tty prompt, and on the one process whose stdout IS the
