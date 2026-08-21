@@ -267,9 +267,28 @@ ALLOWED_A2
 # a second drive of a capability the banner does not read, and reds under this leg. Recorded as a
 # deviation touching 397-04's file, because a leg list edited to match a vacuous cell would have
 # left the phase's own thesis untested on the surface it is about.
+#
+# 2026-08-21 (400-09): B's fan-out is now SIX, and the four new names are the net getting STRONGER
+# rather than the list getting looser. Two of them are the DASHBOARD door — phase 400 added the
+# fourth roster row, and the same two questions the chat surface asks ("does a capability reach its
+# own composed dispatch" and "does the surface wall refuse it") are now asked on it, so an op
+# answered inside `packages/agent` around `invokeFunction` is caught on both interactive doors
+# instead of one. The other two are 399.1's render anchors, which compare the bytes a person reads
+# against the filed result: a payload answered from inside the engine is a different payload, and
+# both the in-process render and the shipped binary's say so.
+#
+# THE DISTINCTION THIS LIST STILL ENFORCES. Every one of the four was checked for WHY it reds: each
+# is a cell that observes the planted capability's own effect (a wrong payload, or a refusal that
+# stopped refusing), not a cell knocked over sideways. A name added because a leg happened to red it
+# would be the widening this script forbids; a name added because the suite grew a cell that detects
+# the leg is the measurement the script exists to take. All six must red and nothing else may.
 cat > "$WORK/allowed.B" <<'ALLOWED_B'
 the parity suite ranges the registry census over every rostered surface refuses at the CHAT SURFACE WALL for every capability, through its own composed dispatch
 the parity suite ranges the registry census over every rostered surface drives a capability through the chat surface's own composed dispatch, model-free
+the parity suite ranges the registry census over every rostered surface refuses at the DASHBOARD SURFACE WALL for every capability, through its own dispatch
+the parity suite ranges the registry census over every rostered surface drives a capability through the dashboard door's own composed dispatch, model-free
+the chat render anchors (399.1, G-399-2) renders a SECOND op's payload too, on the read door chat advertises itself
+the per-surface render anchors (399.1 D-08): in-process ≡ shipped chat: the shipped binary prints the bytes this process renders from its own filed result
 ALLOWED_B
 
 # C's list is MEASURED, and it is the list SC-4 rests on. 397-03 measured FOUR cells for this shape;
@@ -279,8 +298,16 @@ ALLOWED_B
 # that does NOT red is `types every scenario input against the contract …`: it iterates the TABLE,
 # so a table one row short simply has one less row to type-check — correct, and exactly the kind of
 # asymmetry a measured list preserves and a guessed one flattens.
+#
+# 2026-08-21 (400-09): C's fan-out is now TEN. The two added names are the denominator getting WIDER
+# since 397, not the list getting looser: 398 added the `fn` surface's own join, and 399.1 added the
+# rendered-output matrix — both range the SAME scenario table, so a capability the table stopped
+# carrying goes unasserted on their axes too. Each was checked for why it reds (a row missing from
+# the table it iterates), which is the same reason as the eight already here.
 cat > "$WORK/allowed.C" <<'ALLOWED_C'
 the parity suite ranges the registry census over every rostered surface carries exactly one scenario row per registered capability, in both directions
+the parity suite ranges the registry census over every rostered surface joins every row fn expectation to the live fn listing, in both directions
+399.1 D-08/D-09 — the rendered-output matrix: leg 8 produces a result document for every registered capability, from its own contract
 the parity suite ranges the registry census over every rostered surface joins every row MCP expectation to the declared mapping, in both directions
 the parity suite ranges the registry census over every rostered surface joins every row chat expectation to the live chat enumeration, in both directions
 the parity suite ranges the registry census over every rostered surface answers identically for two callers that differ only in which surface minted them
@@ -358,8 +385,21 @@ MUTATIONS = {
             "          stampSessionFacts(step.functionId, step.args, sessionId),\n"
             "          caller,\n"
             "        )\n",
+            # 2026-08-21 (400-09): the short-circuit now answers a WELL-FORMED `ChatInvokeAnswer`.
+            # The 397 spelling returned `{ proposals: [], via: … }`, which widened `answered` into a
+            # union whose members do not share `verdict`/`payload`/`foldLines` — so by the time this
+            # leg was re-run for the fourth surface it failed `tsup`'s dts build and never reached
+            # the suite at all. This file's own doctrine calls that UNFAITHFUL and requires a
+            # rewrite rather than a count: "an edit which reds because it tripped a type error
+            # BEFORE reaching the detector proves nothing". Answering in the binding's own shape is
+            # also the more faithful careless commit — it is what somebody short-circuiting an op
+            # inside the engine writes to make the compiler stop complaining.
             "        const answered = step.functionId === 'proposals.list'\n"
-            "          ? { proposals: [], via: 'MUTATION_397_09_LEG_B_UNGATED' }\n"
+            "          ? {\n"
+            "            payload: { proposals: [], via: 'MUTATION_397_09_LEG_B_UNGATED' },\n"
+            "            verdict: { status: 'executed' as const, outcome: '0 proposal(s)' },\n"
+            "            foldLines: [] as readonly string[],\n"
+            "          }\n"
             "          : await deps.invoke(\n"
             "            step.functionId,\n"
             "            stampSessionFacts(step.functionId, step.args, sessionId),\n"
@@ -370,16 +410,15 @@ MUTATIONS = {
     # C — one scenario row deleted. The table is a typed literal array, so removing a member keeps
     # the file compiling and keeps every other row correlated to its own op's contract; what is left
     # is exactly the state a repository is in the moment a capability ships without a row for it.
+    # 2026-08-21 (400-09): the anchor is RE-READ off the tree rather than kept as a frozen
+    # transcription. `runs.list`'s row has legitimately grown since 397 — a `fn` surface arm (398), a
+    # `renderExpect` marker set (399.1) — and a literal copy of the row as it was written then simply
+    # stopped matching, which is a script that FATALs before measuring anything rather than a script
+    # that measures a change. The anchor below is the row's stable opening (`opId: 'runs.list'`) and
+    # the deletion is bounded by the next row's `scenario({`, so the leg keeps deleting exactly one
+    # row however that row grows. The one-occurrence guard still applies.
     'C': ('packages/cli/src/__tests__/conformance/scenario-table.ts', [
-        (
-            "  scenario({\n"
-            "    opId: 'runs.list',\n"
-            "    input: {},\n"
-            "    perSurface: { chat: { reachable: true }, mcp: { reachable: { tool: 'agent_qa_list_runs' } } },\n"
-            "    policyPoints: { grant: 'allow', refuse: 'deny' },\n"
-            "  }),\n",
-            "",
-        ),
+        ('SCENARIO_ROW:runs.list', ''),
     ]),
 }
 
@@ -389,6 +428,39 @@ if name not in MUTATIONS:
 relative, edits = MUTATIONS[name]
 path = os.path.join(root, relative)
 source = open(path).read()
+
+
+def scenario_row(text, op_id):
+    """The WHOLE `scenario({ ... })` literal for one op id, read off the tree.
+
+    A frozen transcription of a row is a script that FATALs the day the row grows a field; this
+    finds the row by its `opId` and takes it from its own `scenario({` to the start of the next
+    one, so the leg deletes exactly one row whatever that row now carries.
+    """
+    needle = "opId: '%s'," % op_id
+    at = text.find(needle)
+    if at < 0:
+        return None
+    start = text.rfind('  scenario({', 0, at)
+    if start < 0:
+        return None
+    end = text.find('  scenario({', at)
+    if end < 0:
+        end = text.find('\n]', at)
+    return text[start:end]
+
+
+expanded = []
+for anchor, replacement in edits:
+    if anchor.startswith('SCENARIO_ROW:'):
+        row = scenario_row(source, anchor.split(':', 1)[1])
+        if row is None:
+            sys.exit('FATAL: mutation %s could not locate the %s scenario row' % (name, anchor))
+        expanded.append((row, replacement))
+    else:
+        expanded.append((anchor, replacement))
+edits = expanded
+
 for index, (anchor, replacement) in enumerate(edits, start=1):
     found = source.count(anchor)
     if found != 1:
