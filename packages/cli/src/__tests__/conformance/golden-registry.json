@@ -118,7 +118,7 @@
       "classifies": true,
       "discloses": true,
       "id": "authoring.draft.write",
-      "inputSchemaDigest": "42253a99f2817179b35d82357acaec9cc5c85c0a75ee4dbe68414298c2efa913",
+      "inputSchemaDigest": "2d98bde1d977b1e9928d3613fa0fa97b7e3d765a6e9b1c43bf23214e8adf03ed",
       "outputSchemaDigest": "7e50b7c81f52f0cce26cfe1b863541d54766a53d4f9f34f75f156e04ae669b7c",
       "partition": {
         "kind": "projected",
@@ -140,7 +140,7 @@
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "authoring.funnel.get",
-      "inputSchemaDigest": "e6617f91644e86966578eaadabb122a216a1c1898488e5702b59cc7b28260c2b",
+      "inputSchemaDigest": "cc347d50015ae652d1ee0c6b32e14745bff5afaab2ec7be8631d7d059baffb12",
       "outputSchemaDigest": "fd20800eafdc77364f114fd7216d4cc0cc9ac396f93503b676e580a68a7850c1",
       "partition": {
         "kind": "unprojected",

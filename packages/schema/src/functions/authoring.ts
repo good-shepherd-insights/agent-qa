@@ -187,8 +187,37 @@ export const AuthoringDraftWriteInputSchema = z.object({
    * a field it refuses the whole call over (WINDOWS 110). A supplied scope always wins; the host
    * derives only on absence, and refuses by name rather than guessing when the answer is not
    * unique.
+   *
+   * THE `.describe()` BELOW IS THE HUMAN-FACING HALF, AND IT IS WHY IT IS A `.describe()` RATHER
+   * THAN THIS DOC BLOCK (400-04, D-19). A JSDoc comment documents this field for whoever opens
+   * this file; it reaches no reader of the product. The capability catalog is PRODUCED from the
+   * declarations — `params` is the JSON-Schema projection of this very object — and `/help`,
+   * `explain` and the chat type-ahead are all projections of that ONE committed artifact. So a
+   * description attached HERE is the single edit that documents `scope` on every human-facing
+   * surface at once, and a paragraph anywhere else is a paragraph the product never says.
+   *
+   * The 399 rehearsal measured what its absence costs: `/fn authoring.draft.write` ROUTES, meets
+   * the confirm interactively, and then fails on `AuthoringScopeUnresolvableError` naming targets
+   * the caller was never told they had to choose between — a field that is undocumented on every
+   * surface a person reads is a field they can only learn about by being refused over it.
+   *
+   * IT DOES NOT RESTATE THE MODEL-FACING SENTENCE AND MUST NOT CONTRADICT IT.
+   * `planner-tools.ts`'s `HOST_DERIVES_SCOPE` already tells the PLANNER who fills this field and
+   * that the host never guesses; that sentence is load-bearing (it carries the 394-35 dist-gate
+   * sentinel) and is untouched. This text says the same things in the same direction and adds the
+   * half the planner has no use for: what a `/fn` caller typing JSON by hand has to pass.
    */
-  scope: scopeKeySchema.optional(),
+  scope: scopeKeySchema.optional().describe(
+    'Which product this test is authored for — the target key, e.g. `automation-exercise`. '
+    + "In chat the planner fills this from the person's own words: a request that names the page, "
+    + 'product or site it is for supplies the scope, and nothing needs to be typed. Calling '
+    + '`/fn authoring.draft.write` directly, pass it explicitly — `{"scope":{"tier":"product",'
+    + '"key":"<target>"}}` — whenever this project scaffolds more than one target. When it is '
+    + 'omitted the host derives it ONLY where the project has exactly one candidate product; '
+    + 'otherwise the call returns a typed refusal that names every candidate so you can choose '
+    + 'one. It never guesses at a product, because authoring against a guessed product writes a '
+    + 'test for the wrong application.',
+  ),
   /**
    * Draft mode: the stability gate runs ONCE instead of the pinned N.
    *
@@ -325,7 +354,30 @@ export type AuthoringFunnelWindow = z.infer<typeof AuthoringFunnelWindowSchema>
  * handed between two halves of one program.
  */
 export const AuthoringFunnelGetInputSchema = z.object({
-  window: AuthoringFunnelWindowSchema,
+  /**
+   * ITS `scope` IS A HOMONYM, AND THAT IS EXACTLY WHY IT IS DOCUMENTED HERE (400-04, D-19).
+   *
+   * `authoring.draft.write.scope` names a PRODUCT to author for. This op's `window.scope` names a
+   * SPAN OF HISTORY to count over — `session` / `all-time` / `last-n`. Two fields spelled the same
+   * with nothing in common, sitting on two ops a person meets in the same breath. D-19's doc half
+   * would have made that worse, not better, if this row had inherited the product-target sentence:
+   * a catalog that documented this `scope` as "the target product" would be a produced artifact
+   * confidently describing a capability the product does not have.
+   *
+   * AND THE HUMAN IS THE ONLY READER THIS TEXT HAS. `window` is host-stamped for the planner —
+   * `WINDOW_STAMPED_FUNCTION_IDS` carries this op, so `modelFacingInput()` drops `window` from
+   * `required` and the model is told it will be supplied. So this description is not planner
+   * guidance at all; it exists for `/help`, `explain` and the type-ahead, which is precisely the
+   * surface D-19 says was undocumented.
+   */
+  window: AuthoringFunnelWindowSchema.describe(
+    'Which drafts to count — a span of history, NOT a product. `{"scope":"session","sessionRef":'
+    + '"<id>"}` counts only what this conversation authored; `{"scope":"all-time"}` counts every '
+    + 'draft this workspace has evaluated; `{"scope":"last-n","n":<count>}` counts the N most '
+    + 'recently evaluated, newest first. In chat you never type this: the session supplies its own '
+    + 'window, and asking about the current conversation is the default. Do not confuse it with '
+    + '`authoring.draft.write`\'s `scope`, which names the product a test is authored for.',
+  ),
 }).strict()
 
 export type AuthoringFunnelGetInput = z.infer<typeof AuthoringFunnelGetInputSchema>

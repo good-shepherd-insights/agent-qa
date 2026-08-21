@@ -478,6 +478,7 @@
           },
           "scope": {
             "additionalProperties": false,
+            "description": "Which product this test is authored for — the target key, e.g. `automation-exercise`. In chat the planner fills this from the person's own words: a request that names the page, product or site it is for supplies the scope, and nothing needs to be typed. Calling `/fn authoring.draft.write` directly, pass it explicitly — `{\"scope\":{\"tier\":\"product\",\"key\":\"<target>\"}}` — whenever this project scaffolds more than one target. When it is omitted the host derives it ONLY where the project has exactly one candidate product; otherwise the call returns a typed refusal that names every candidate so you can choose one. It never guesses at a product, because authoring against a guessed product writes a test for the wrong application.",
             "properties": {
               "key": {
                 "minLength": 1,
@@ -539,6 +540,7 @@
         "additionalProperties": false,
         "properties": {
           "window": {
+            "description": "Which drafts to count — a span of history, NOT a product. `{\"scope\":\"session\",\"sessionRef\":\"<id>\"}` counts only what this conversation authored; `{\"scope\":\"all-time\"}` counts every draft this workspace has evaluated; `{\"scope\":\"last-n\",\"n\":<count>}` counts the N most recently evaluated, newest first. In chat you never type this: the session supplies its own window, and asking about the current conversation is the default. Do not confuse it with `authoring.draft.write`'s `scope`, which names the product a test is authored for.",
             "oneOf": [
               {
                 "additionalProperties": false,
@@ -2095,5 +2097,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "9f756af7df78a2404b34cc2eaf31c15dbe9203b2d005ae0891b2c02c3b7d4675"
+  "rowsDigest": "691827c25ffbddb8024b683bab2384e3343f354cc6d2de33db806945d1c28c2b"
 }
