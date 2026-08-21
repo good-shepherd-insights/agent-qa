@@ -408,8 +408,25 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
    * makes that separation structural rather than remembered.
    */
   const confirmStreams = new Set<(sessionId: string, frame: ChatConfirmChannelFrame) => void>()
+  /**
+   * Every session THIS PROCESS minted — the `:id` guard's whole input (400-13, gap 3).
+   *
+   * A SESSION IS MINTED BY THIS PROCESS EXACTLY WHEN THIS PROCESS APPENDED AN EVENT FOR IT, which
+   * is why the set is filled from the subscription below rather than from a second source: the
+   * append path is the one place a conversation this door actually served becomes a fact, and a
+   * register kept anywhere else would be free to disagree with the windows it sits beside.
+   *
+   * WHY IT IS NOT LRU-BOUNDED LIKE THE WINDOWS. The windows hold events and are capped because an
+   * unbounded one is a memory leak an ordinary conversation produces. This holds session ids —
+   * a few dozen bytes each — and only ids of turns this door EXECUTED: an unauthenticated caller
+   * cannot grow it, because an unminted id is refused below and minting requires driving a turn.
+   * A bound here could only evict a live conversation's id, which would refuse that person's
+   * reconnect to protect nothing.
+   */
+  const mintedSessions = new Set<string>()
 
   host?.onSessionEvent((sessionId, event) => {
+    mintedSessions.add(sessionId)
     const entry = recordStreamedEvent(windows, sessionId, event)
     for (const write of [...streams]) write(entry, sessionId)
   })
@@ -560,7 +577,28 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
 
     const streaming = CHAT_SESSION_EVENTS_PATTERN.exec(path)
     if (streaming !== null && req.method === 'GET') {
-      handleSessionEvents(decodeURIComponent(streaming[1]!), req, res)
+      const sessionId = decodeURIComponent(streaming[1]!)
+      // THE `:id` IS VALIDATED BEFORE A CHANNEL CAN EXIST (400-13, gap 3). This route used to open
+      // a confirm channel for ANY string typed at the URL, and a channel is a POSTURE INPUT: a
+      // stream held on an id no session ever minted made this door claim a human was watching, and
+      // an unwatched conversation's ask-tier denial was recorded as `prompted-denied`. Refusing
+      // here — ahead of `handleSessionEvents` — makes `writeHead(200)`, the replay, the stream
+      // registration and `confirms.openChannel` all structurally unreachable for an unowned id.
+      //
+      // 404 AND NOT A DISTINCT STATUS, deliberately: "no such session" must be indistinguishable
+      // from outside from every other reason this route declines, or the route is an oracle for
+      // probing which ids exist. The confirm route's one-404 idiom, applied here.
+      //
+      // THE BEHAVIOURAL CONSEQUENCE, NAMED: after a server restart a browser reconnecting to an
+      // old conversation gets 404 until a turn re-mints it in this process. The durable log
+      // remains that conversation's home — the same remedy the replay-window bound already states
+      // — and the shipped UI only opens a stream after a turn has answered (WINDOWS #192's turn-1
+      // handshake), so the id is already in the set on the happy path.
+      if (!mintedSessions.has(sessionId)) {
+        refuseWith(respond, res, 'Not found', 404)
+        return
+      }
+      handleSessionEvents(sessionId, req, res)
       return
     }
 

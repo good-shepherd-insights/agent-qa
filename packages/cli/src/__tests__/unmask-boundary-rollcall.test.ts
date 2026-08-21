@@ -433,6 +433,17 @@ async function renderDashboardChatFrame(): Promise<string> {
   const address = server.address()
   const port = typeof address === 'object' && address !== null ? address.port : 0
   const sessionId = 'chat-20260821-000000-r0ll'
+  // MINT THE SESSION BEFORE CONNECTING (400-13). The events route now serves only sessions this
+  // process appended an event for, and this host is synthetic — nothing has driven a turn on it. So
+  // the mint is synthetic too: one event of a DIFFERENT kind, before the request, which the replay
+  // then carries ahead of the frame this entry is actually about. A `user_message` rather than a
+  // second `clause_result`, so the predicate below cannot be satisfied by the primer.
+  publish?.(sessionId, {
+    kind: 'user_message',
+    turnId: 'turn-0',
+    at: '2026-08-21T00:00:00.000Z',
+    text: 'mint',
+  })
   try {
     return await new Promise<string>((settle, fail) => {
       const request = httpRequest({
