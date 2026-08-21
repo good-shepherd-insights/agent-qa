@@ -460,7 +460,7 @@ describe('the observation seam cannot become a production escape hatch', () => {
   // composition root could make by accident.
   it('exposes no filesystem member on the production option bag', () => {
     expectTypeOf<keyof CreateJsonlSessionLogOptions>().toEqualTypeOf<
-      'root' | 'now' | 'model' | 'toolsetHash' | 'random'
+      'root' | 'now' | 'model' | 'toolsetHash' | 'random' | 'surface'
     >()
   })
 
