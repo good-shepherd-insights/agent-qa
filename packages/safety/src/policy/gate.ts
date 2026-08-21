@@ -218,6 +218,11 @@ export async function evaluate(
   // and quotes the runbook against; and the prose arm and the remedy arm cannot drift apart while
   // both switch exhaustively over one union.
   const decisionRemedies = buildDecisionRemedies(resolved)
+  // 400 gap round 1 (D-15 prose half): the SAME decision, said without naming any surface's
+  // affordance. A third sibling switch for the second reason the remedy switch is a sibling — the
+  // canonical template above stays the one thing `--chain` greps and quotes, and a builder that
+  // sliced this string out of that one would be a second parser over prose somebody else composes.
+  const decisionNeutralReason = buildDecisionNeutralReason(classificationReason, ctx, resolved)
   const row = buildExecutionAuditRow({
     action,
     riskTier,
@@ -233,12 +238,13 @@ export async function evaluate(
     verdict: resolved.verdict,
     reason: decisionReason,
     riskTier,
-    // NOT ON THE AUDIT ROW (T-400-07). The trail carries the prose, unchanged, because the prose
-    // is what a person reads back months later and what the previous phase published verbatim.
-    // The remedies are for a LIVE reader deciding what to do next; a record of what was offered
-    // to whom is a different feature, and inventing it here would widen the audit contract on the
-    // way past.
+    // NEITHER OF THE TWO BELOW IS ON THE AUDIT ROW (T-400-07). The trail carries the prose,
+    // unchanged, because the prose is what a person reads back months later and what the previous
+    // phase published verbatim. The remedies — and now the neutral reason — are for a LIVE reader
+    // deciding what to do next; a record of what was offered to whom is a different feature, and
+    // inventing it here would widen the audit contract on the way past.
     remedies: decisionRemedies,
+    neutralReason: decisionNeutralReason,
   }
 }
 
@@ -271,6 +277,71 @@ function buildDecisionReason(
       // above use. The way out is the session boundary, because a pin has no revoke verb by
       // design — an overlay that could be lifted mid-conversation would be a loosening path, and
       // the whole point of `/pin` is that it only ever goes one way.
+      return `session-pin-denied: ${classificationReason}: this action class is pinned DENY for this chat session; a pin cannot be lifted — it ends when the session does`
+  }
+}
+
+/**
+ * The same decision, said without naming any surface's affordance (400 gap round 1, D-15).
+ *
+ * WHY A THIRD SWITCH RATHER THAN AN EDIT TO THE FIRST. `buildDecisionReason` composes the CANONICAL
+ * sentence: it lands in the execution-audit row, `demo/acceptance/399/` published it verbatim as
+ * that phase's evidence, and `399-runbook-gate.sh --chain` derives the runbook's operator-facing
+ * quote by grepping its `return` templates. Those bytes are a contract, and the harness REFUSES
+ * unless exactly one `fail-closed: ask in ` template exists. So the repair adds beside it rather
+ * than inside it — the same move `buildDecisionRemedies` made, for the same reason.
+ *
+ * WHY NOT A PROJECTION AT RENDER TIME. Splitting the canonical sentence at its colons would be a
+ * second parser over a string another function composes: the class of defect where the producer
+ * edits a clause and a consumer silently starts showing half of it. The gate composes both halves,
+ * from one `resolved` outcome, or neither is trustworthy.
+ *
+ * WHAT "NEUTRAL" MEANS HERE, precisely: the classification and the outcome, and NOTHING a reader
+ * could try. No flag, no command, no "re-run", no prompt instruction. The way out is
+ * `buildDecisionRemedies`' typed data, which each door projects through `remediesRenderableBy` and
+ * renders only if it is a thing that door can actually offer. Three arms below therefore read as
+ * finalities, and that is honest: the affordance is not missing from the sentence, it is somewhere
+ * a sentence cannot correctly carry it.
+ *
+ * EXHAUSTIVE OVER `ExecutionPolicyOutcome`, mirroring both siblings arm for arm. A sixth outcome is
+ * a compile error in ALL THREE functions, so an outcome cannot arrive with two of the three halves.
+ */
+function buildDecisionNeutralReason(
+  classificationReason: string,
+  ctx: ExecutionContext,
+  resolved: ResolveAskResult,
+): string {
+  switch (resolved.outcome) {
+    case 'proceeded':
+      // Nothing was refused and the canonical arm names no affordance: same words, minted here.
+      return resolved.trustSource === undefined
+        ? classificationReason
+        : `${classificationReason}; ask satisfied by ${resolved.trustSource}`
+    case 'blocked':
+      // §2.4 finality names no way forward on ANY surface, so the neutral form is the canonical
+      // one — reached through this switch, not by falling through to the prose builder.
+      return `blocked: ${classificationReason}: restricted actions are never executable; no grant overrides them`
+    case 'fail-closed-denied':
+      // THE ARM THIS WHOLE FUNCTION EXISTS FOR. The canonical sibling names `--trust-session`, a
+      // flag declared on `agent-qa run` and nowhere else, and a browser reader was being handed it
+      // verbatim. Here: the posture and the classification, full stop.
+      //
+      // THE OPENING IS DELIBERATELY SPELLED DIFFERENTLY from the canonical template. The acceptance
+      // harness refuses unless `fail-closed: ask in ` occurs exactly once in this file; a neutral
+      // arm that opened with those bytes would trip a published pin on its way to fixing a defect.
+      return `fail-closed (${ctx}): ${classificationReason}: this action needs an approval this context has not established`
+    case 'prompted-approved':
+      return `prompted-approved: ${classificationReason}`
+    case 'prompted-denied':
+      // The canonical sibling continues "re-run and approve, or opt in with --trust-session". Both
+      // of those are remedies (`answer-confirm`, `trust-session-flag`) and both are already typed,
+      // so this arm stops at the fact.
+      return `prompted-denied: ${classificationReason}: the interactive prompt was declined`
+    case 'session-pin-denied':
+      // 392 D-21's finality names the SESSION BOUNDARY, which is not a foreign surface's
+      // instruction — it is a property of the conversation the reader is already in. So this arm
+      // matches its sibling in substance, and still travels through this builder so the three
+      // switches stay parallel and a sixth outcome reds in all of them.
       return `session-pin-denied: ${classificationReason}: this action class is pinned DENY for this chat session; a pin cannot be lifted — it ends when the session does`
   }
 }

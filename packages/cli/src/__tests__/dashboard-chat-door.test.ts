@@ -267,11 +267,20 @@ describe('the dashboard chat door dispatches one utterance end to end', () => {
 
     // And beside it, what the browser needs to offer a way forward. The clause is named so a
     // compound turn's second denial is not silently attributed to its first.
+    // 400 gap round 1: the carrier gained `neutralReason`, and the EXACT-SHAPE assertion is
+    // restated rather than loosened — a `toMatchObject` here would have let a later member reach
+    // a browser unannounced, which is the whole reason this cell compares the object.
+    //
+    // ON THIS ARM THE TWO STRINGS AGREE, and that is the claim rather than an accident: 392 D-21's
+    // way out is the SESSION BOUNDARY, a property of the conversation the reader is already in,
+    // not another surface's affordance. The arms where they diverge are fail-closed and
+    // prompted-denied, driven in `dashboard-denial-prose.test.ts`.
     expect(turn.result.denials).toEqual([{
       clause: '/fn config.get {}',
       functionId: 'config.get',
       reason: expect.stringContaining('session-pin-denied'),
       remedies: [{ kind: 'session-pin-final' }],
+      neutralReason: expect.stringContaining('session-pin-denied'),
     }])
 
     // The remedy the gate minted is one a BROWSER can take, which is the whole of D-15: the same

@@ -985,6 +985,19 @@ describe('daemon /invoke endpoint semantic parity', () => {
     })
     expect(overWire.message).toContain('re-run locally')
 
+    // 400 gap round 1 (D-15 prose half), and it is the WIRE half of a two-sided contract: the
+    // gate mints a surface-neutral reason beside the canonical one, `wireError` carries it across
+    // by the enumerable-own-property spread, and `rehydrateFunctionError` reads it back. A read
+    // side that dropped it would leave every daemon-routed browser denial rendering the CLI's flag
+    // while the direct one renders neutral prose — the fork this cell exists to refuse.
+    const wireDenial = overWire as FunctionDeniedError
+    const localDenial = inProcess as FunctionDeniedError
+    expect(wireDenial.neutralReason).toEqual(localDenial.neutralReason)
+    expect(wireDenial.neutralReason).not.toContain('--trust-session')
+    expect(wireDenial.neutralReason).not.toContain('re-run')
+    // Beside it, unchanged: the canonical sentence the audit row and the runbook publish.
+    expect(wireDenial.reason).toContain('--trust-session')
+
     const wireRows = auditRows.splice(0)
     expect(wireRows).toHaveLength(1)
     expect(wireRows).toEqual(inProcessRows)

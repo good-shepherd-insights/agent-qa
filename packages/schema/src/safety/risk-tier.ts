@@ -26,4 +26,18 @@ export interface ExecutionPolicyResult {
    * through `remediesRenderableBy` so a reader is only ever shown a way forward they can take.
    */
   remedies: readonly GateRemedy[]
+  /**
+   * The same decision, said without naming any surface's affordance (400 gap round 1, D-15).
+   *
+   * BESIDE `reason`, NEVER INSTEAD OF IT, and the split is the whole repair. `reason` is the
+   * CANONICAL sentence: the execution-audit row's text, the bytes `demo/acceptance/399/` published
+   * verbatim, the template the runbook gate greps. It names `--trust-session` on two of its arms
+   * because a terminal reader can take that. This one names nothing a reader could try, so a
+   * surface can show it to anybody — and what to DO travels as `remedies`, projected per surface.
+   *
+   * REQUIRED, on `remedies`' own recorded argument: an optional member would let a producer answer
+   * "I did not think about this decision" in the same bytes as a real answer, and a render that
+   * fell back to `reason` on absence would silently re-mint the very defect this closes.
+   */
+  neutralReason: string
 }

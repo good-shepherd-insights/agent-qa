@@ -1174,6 +1174,10 @@ async function runTurnThrough(
             functionId: step.functionId,
             reason: error.reason,
             remedies: [...error.remedies],
+            // 400 gap round 1: and the surface-neutral half of the same sentence, because the
+            // door that renders this carrier is a BROWSER — `reason` names a CLI flag on two of
+            // its arms and a browser reader has no way to pass one.
+            neutralReason: error.neutralReason,
           })
         }
       }

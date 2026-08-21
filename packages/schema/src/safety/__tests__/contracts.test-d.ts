@@ -18,19 +18,22 @@ const policyResult: ExecutionPolicyResult = {
   reason: 'read-only action',
   riskTier: 'read-only',
   remedies: [],
+  neutralReason: 'read-only action',
 }
 
 expectTypeOf(policyResult.verdict).toEqualTypeOf<PolicyVerdict>()
 expectTypeOf(policyResult.riskTier).toEqualTypeOf<RiskTier>()
-// 400 D-15 reconciled the exact-shape pin: the decision gained a FOURTH member. The pin is
-// restated rather than loosened — an `expectTypeOf(...).toMatchTypeOf` here would have let any
-// later member arrive unannounced, and the point of an exact pin on this type is that a field
-// reaching every surface's render cannot be added quietly.
+// 400 D-15 reconciled the exact-shape pin: the decision gained a FOURTH member, and 400's gap
+// round 1 a FIFTH (`neutralReason`, the prose half of the same finding). The pin is restated each
+// time rather than loosened — an `expectTypeOf(...).toMatchTypeOf` here would have let any later
+// member arrive unannounced, and the point of an exact pin on this type is that a field reaching
+// every surface's render cannot be added quietly.
 expectTypeOf<ExecutionPolicyResult>().toEqualTypeOf<{
   verdict: PolicyVerdict
   reason: string
   riskTier: RiskTier
   remedies: readonly GateRemedy[]
+  neutralReason: string
 }>()
 
 const invalidVerdict: ExecutionPolicyResult = {
@@ -41,6 +44,7 @@ const invalidVerdict: ExecutionPolicyResult = {
   reason: 'a policy word from the deleted vocabulary',
   riskTier: 'read-only',
   remedies: [],
+  neutralReason: 'a policy word from the deleted vocabulary',
 }
 
 const invalidRiskTier: ExecutionPolicyResult = {
@@ -49,6 +53,7 @@ const invalidRiskTier: ExecutionPolicyResult = {
   // @ts-expect-error riskTier is the five-member execution-risk union.
   riskTier: 'shared',
   remedies: [],
+  neutralReason: 'invalid risk tier',
 }
 
 const invalidRemedyKind: ExecutionPolicyResult = {
@@ -58,6 +63,7 @@ const invalidRemedyKind: ExecutionPolicyResult = {
   // @ts-expect-error GateRemedyKind is closed; a surface cannot be told to do something the
   // vocabulary never declared, which is the whole of D-15's guard shape.
   remedies: [{ kind: 'email-the-admin' }],
+  neutralReason: 'a remedy kind outside the closed vocabulary',
 }
 
 expectTypeOf<ScanResult['action']>().toEqualTypeOf<ScanAction>()

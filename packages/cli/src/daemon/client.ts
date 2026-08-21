@@ -78,6 +78,8 @@ interface WireError {
   // 400 D-15: the gate's structured remedies, preserved across the hop by `wireError`'s
   // enumerable-own-property spread and re-validated on the way in by `wireRemedies`.
   readonly remedies?: unknown
+  // 400 gap round 1: the surface-neutral prose half, across the same hop by the same spread.
+  readonly neutralReason?: unknown
   readonly runId?: unknown
   readonly requestedSeq?: unknown
   readonly earliestAvailableSeq?: unknown
@@ -181,7 +183,18 @@ export function rehydrateFunctionError(value: unknown, statusCode: number): Erro
     // before. They are re-validated against the shipped vocabulary rather than trusted: an
     // unknown `kind` arriving from a wire must not reach a render map that is total over the
     // kinds this build declares.
-    return new FunctionDeniedError(functionId, wire.reason, wireRemedies(wire.remedies))
+    // 400 gap round 1: `neutralReason` crosses the same way and is read back the same way, for
+    // the same reason. The FALLBACK IS THE CANONICAL SENTENCE and it is deliberate: a daemon
+    // built before this field existed sends nothing, and the honest reconstruction is the one
+    // sentence it did send. Defaulting to an empty string would have made an older daemon's
+    // denials render blank in the browser — a read side inventing a silence the write side never
+    // claimed.
+    return new FunctionDeniedError(
+      functionId,
+      wire.reason,
+      wireRemedies(wire.remedies),
+      typeof wire.neutralReason === 'string' ? wire.neutralReason : wire.reason,
+    )
   }
   if (wire?.name === 'FunctionNotBoundError' && functionId !== undefined) {
     return new FunctionNotBoundError(functionId)

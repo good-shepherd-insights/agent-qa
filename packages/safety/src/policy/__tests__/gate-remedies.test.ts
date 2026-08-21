@@ -198,3 +198,107 @@ describe('the session-pin arm names the only way out it has', () => {
     expect(remediesRenderableBy('cli', result.remedies)).toEqual([])
   })
 })
+
+// The PROSE half of the same finding (Phase 400 gap round 1, plan 11, D-15 / WINDOWS #191).
+//
+// 400-02 closed the structured half and said so: the canonical sentence still names
+// `--trust-session`, and the dashboard rendered that sentence verbatim to a browser reader who has
+// no flag to pass. THE REPAIR IS NOT A REWRITE. The canonical bytes are published evidence — the
+// audit row, `demo/acceptance/399/`'s runbook quote, and the `--chain` grep that derives it — so a
+// THIRD sibling switch mints a surface-neutral reason BESIDE them, and the browser renders that.
+//
+// THE TWO CHANNELS ARE ASSERTED IN THE SAME CELL, deliberately. A cell that only asserted the
+// neutral string would stay green the day somebody "fixed" the flag out of the canonical prose,
+// which is exactly the pin trip 399's harness exists to catch; asserting both means the two cannot
+// be conflated and neither can drift alone.
+
+describe('a surface-neutral reason rides beside the canonical prose (D-15 prose half)', () => {
+  it('names no affordance on the fail-closed arm, while the canonical bytes are unchanged', async () => {
+    const classificationReason = classifyRisk(mutatingSharedAction).reason
+    const result = await evaluate(mutatingSharedAction, 'local-headless')
+
+    expect(result.verdict).toBe('deny')
+    // The neutral half: what a browser reader is shown. No flag, no command, no re-run instruction.
+    expect(result.neutralReason).not.toContain('--trust-session')
+    expect(result.neutralReason).not.toContain('re-run')
+    expect(result.neutralReason).not.toContain('opt in')
+    // It still says WHAT was refused and in WHICH posture — a reason that named neither would be
+    // honest absence of information rather than a surface-neutral answer.
+    expect(result.neutralReason).toContain(classificationReason)
+    expect(result.neutralReason).toContain('local-headless')
+    // The sibling canonical channel, byte-identical to the shipped template.
+    expect(result.reason).toBe(
+      shippedFailClosedReason('local-headless', classificationReason),
+    )
+    expect(result.reason).toContain('--trust-session')
+  })
+
+  it('leaves the canonical fail-closed template the SINGLE greppable producer', () => {
+    // The invariant `399-runbook-gate.sh` refuses on. The neutral arm must spell its opening
+    // differently or the runbook's derived quote is checked against one of two templates.
+    const declarations = GATE_SOURCE.split('\n').filter((line) =>
+      line.includes('return `fail-closed: ask in '),
+    )
+    expect(declarations).toHaveLength(1)
+  })
+
+  it('carries the declined prompt and nothing after it on the prompted-denied arm', async () => {
+    const classificationReason = classifyRisk(mutatingSharedAction).reason
+    const result = await evaluate(mutatingSharedAction, 'local-interactive', {}, {
+      confirm: () => Promise.resolve(false),
+    })
+
+    expect(result.verdict).toBe('deny')
+    expect(result.neutralReason).not.toContain('--trust-session')
+    expect(result.neutralReason).not.toContain('re-run')
+    expect(result.neutralReason).toContain(classificationReason)
+    expect(result.neutralReason).toContain('the interactive prompt was declined')
+    // Beside it, the canonical sentence still names both ways forward, unedited.
+    expect(result.reason).toContain('--trust-session')
+    expect(result.reason).toContain('re-run and approve')
+  })
+
+  it('mints a neutral reason on the session-pin arm too — the three switches stay parallel', async () => {
+    const result = await evaluate(mutatingSharedAction, 'local-interactive', {}, {
+      deny: () => true,
+    })
+
+    expect(result.verdict).toBe('deny')
+    expect(result.neutralReason).toContain('session-pin-denied')
+    expect(result.neutralReason).not.toContain('--trust-session')
+  })
+
+  it('mints one on the arms nothing refused, because the member is required and always answered', async () => {
+    const allowed = await evaluate(
+      { name: 'inspect_state', recognized: true, readOnly: true },
+      'ci',
+    )
+    expect(allowed.verdict).toBe('allow')
+    expect(allowed.neutralReason).toBe(allowed.reason)
+
+    const blocked = await evaluate(restrictedAction, 'local-interactive')
+    expect(blocked.verdict).toBe('deny')
+    // §2.4 finality names no affordance, so the neutral form IS the canonical form here — through
+    // the neutral builder, not by falling through to the prose one.
+    expect(blocked.neutralReason).toBe(blocked.reason)
+  })
+
+  it('keeps the NEUTRAL reason off the execution-audit row — the trail carries the canonical prose', async () => {
+    const rows: { reason: string }[] = []
+    const result = await evaluate(mutatingSharedAction, 'ci', {}, {
+      auditSink: {
+        appendExecutionAudit: (row) => {
+          rows.push({ reason: row.reason })
+        },
+        appendGuardrailAudit: () => {
+          throw new Error('gate writes execution audit only')
+        },
+      },
+    })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0].reason).toBe(result.reason)
+    expect(rows[0].reason).not.toBe(result.neutralReason)
+    expect(rows[0]).not.toHaveProperty('neutralReason')
+  })
+})

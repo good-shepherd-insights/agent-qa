@@ -112,12 +112,21 @@ export class FunctionOriginError extends Error {
  * exactly those, so the remedies survive the hop and the client reconstructs them. It DEFAULTS to
  * empty so a caller that has no gate decision in hand cannot be forced to invent one — and an
  * empty list renders as honest absence rather than as a wrong remedy.
+ *
+ * `neutralReason` IS THE PROSE HALF OF THE SAME REPAIR (400 gap round 1). `reason` is the gate's
+ * canonical sentence and stays the message this error carries; `neutralReason` is that decision
+ * said without naming a surface's affordance, for the doors whose reader cannot take the one the
+ * canonical sentence names. It defaults to `reason` — a caller with no gate decision in hand has
+ * only one sentence and copying it is the honest answer, where inventing a neutral one would be
+ * this class writing policy prose it did not compose. The parameter is APPENDED so every existing
+ * construction site stays valid positionally.
  */
 export class FunctionDeniedError extends Error {
   constructor(
     readonly functionId: string,
     readonly reason: string,
     readonly remedies: readonly GateRemedy[] = [],
+    readonly neutralReason: string = reason,
   ) {
     super(`Denied ${functionId}: ${reason}`)
     this.name = 'FunctionDeniedError'
@@ -248,7 +257,12 @@ export async function invokeFunction(
     },
   )
   if (policy.verdict === 'deny') {
-    throw new FunctionDeniedError(functionId, policy.reason, policy.remedies)
+    throw new FunctionDeniedError(
+      functionId,
+      policy.reason,
+      policy.remedies,
+      policy.neutralReason,
+    )
   }
 
   // Binding is checked AFTER the gate on purpose (D-09/D-11): an attempt to run a

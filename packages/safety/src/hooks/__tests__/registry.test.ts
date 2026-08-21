@@ -75,6 +75,9 @@ describe('HookRegistry', () => {
         // 400 D-15: `remedies` is a required member of a decision — a restricted-tier block
         // is the arm that offers nothing, and it has to SAY nothing rather than omit the field.
         remedies: [],
+        // 400 gap round 1: and `neutralReason` for the same argument. §2.4 finality names no
+        // affordance on any surface, so this arm's neutral form IS its canonical sentence.
+        neutralReason: 'restricted action blocked',
       },
     }), FIRST_PARTY)
     registry.registerToolCall(laterHook, FIRST_PARTY)
@@ -89,6 +92,7 @@ describe('HookRegistry', () => {
         reason: 'restricted action blocked',
         riskTier: 'restricted',
         remedies: [],
+        neutralReason: 'restricted action blocked',
       },
     })
     expect(laterHook).not.toHaveBeenCalled()
@@ -279,6 +283,7 @@ describe('HookRegistry async tool_call dispatch', () => {
           reason: 'restricted action blocked',
           riskTier: 'restricted',
           remedies: [],
+          neutralReason: 'restricted action blocked',
         },
       })) as AsyncToolCallHook,
       FIRST_PARTY,
@@ -298,6 +303,7 @@ describe('HookRegistry async tool_call dispatch', () => {
         reason: 'restricted action blocked',
         riskTier: 'restricted',
         remedies: [],
+        neutralReason: 'restricted action blocked',
       },
     })
     expect(laterHook).not.toHaveBeenCalled()

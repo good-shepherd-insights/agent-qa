@@ -82,6 +82,18 @@ export type ClauseResult = z.infer<typeof ClauseResultSchema>
  * `reason` IS THE GATE'S CANONICAL SENTENCE, VERBATIM. It is the same string the audit row carries
  * and `demo/acceptance/399/` publishes; nothing edits it on the way here. The per-surface half is
  * `remedies`, which is data, and each door renders only its own projection.
+ *
+ * `neutralReason` IS WHAT A BROWSER READER IS ACTUALLY SHOWN (400 gap round 1, D-15 prose half).
+ * The canonical sentence names `--trust-session` on two arms — a flag declared on `agent-qa run`
+ * and nowhere else — so rendering it in a transcript hands a reader another surface's instructions,
+ * which is precisely what the finding measured. The gate mints this beside the canonical one; the
+ * carrier moves both, and each door picks the one its reader can act on.
+ *
+ * REQUIRED, AND THAT COSTS NOTHING PERSISTED. Denials ride the RESULT channel only — they are
+ * never appended to a session log, so no file written before this field existed becomes
+ * unreadable, and no back-compat arm is owed. An optional member would have let a producer answer
+ * "this build does not mint one" in the same bytes as a real answer, and the render's fallback
+ * would then be the canonical prose: the defect, restored by the shape of its own fix.
  */
 export const ClauseDenialSchema = z.object({
   clause: z.string(),
@@ -91,6 +103,7 @@ export const ClauseDenialSchema = z.object({
     kind: z.enum(GATE_REMEDY_KINDS),
     params: z.record(z.string(), z.string()).optional(),
   })),
+  neutralReason: z.string(),
 })
 
 export type ClauseDenial = z.infer<typeof ClauseDenialSchema>
