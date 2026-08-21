@@ -2,11 +2,159 @@ import { Command } from 'commander'
 import { resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import pc from 'picocolors'
+import {
+  AGENT_ASK_FUNCTION_ID,
+  foldFunctionResult,
+  invokeFunction,
+  type ConfigReaderPort,
+  type FunctionRegistry,
+} from '@vostride/agent-qa-agent'
+import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
+import type {
+  AgentDeclarationRow,
+  AgentHost,
+  AgentRegistryHandle,
+  AgentResultFold,
+} from '@vostride/agent-qa-dashboard'
 import { resolveVisionConfig } from '@vostride/agent-qa-model'
+import type {
+  AgentAskInput,
+  ExecutionContext,
+  FunctionCaller,
+  MaskedConfigEntry,
+} from '@vostride/agent-qa-schema'
 import { resolveConfig } from '../config.js'
-import { applyResolvedAuthToModelConfig, resolveModelAuth, type LLMConfigLike } from '../llm-utils.js'
+import {
+  CLI_FUNCTION_CALLER,
+  composeCliLocalAgent,
+  createMaskedConfigReader,
+} from '../composition/local-agent-host.js'
+import {
+  applyResolvedAuthToModelConfig,
+  resolveCliChatCapabilities,
+  resolveModelAuth,
+  type LLMConfigLike,
+} from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
+
+/** The dot-path 387 D-10's card `url` is read from, spelled here exactly as the producer reads it. */
+export const DASHBOARD_BASE_URL_CONFIG_KEY = 'services.dashboard.baseUrl'
+
+/**
+ * The caller the dashboard door dispatches as (400-01, D-08 / Pitfall 9).
+ *
+ * DERIVED FROM THE CLI CHAT DOOR'S OWN MINT, with the surface name — attribution only, never a
+ * permission input — as the single difference. A hand-typed scope list here is the drift vector
+ * D-08 names by name: the parity suite's whole claim about the two interactive doors is that the
+ * same utterance refuses, or does not, identically on both, and two lists that agree today are how
+ * that stops being true. The spread makes the agreement structural: a seventh scope minted by a
+ * later phase reaches this door the day it reaches the CLI's, without anyone remembering to come
+ * here. `origin` rides along unchanged and deliberately — a person typed into a browser this
+ * machine's own process is serving, which is the same fact `agent-qa chat` mints `human` for.
+ */
+export const DASHBOARD_FUNCTION_CALLER: FunctionCaller = Object.freeze({
+  ...CLI_FUNCTION_CALLER,
+  surface: 'dashboard',
+})
+
+/**
+ * The composed host, as the dashboard's chat routes consume it (400-01, D-01).
+ *
+ * THE WHOLE OF THE COMPOSER, and it decides nothing. Every member is either a handle from the host
+ * this function was handed or a function the `agent` package exports, bound. There is no listing
+ * assembled here, no op id spelled here and no scope decided here — a composer that computed any
+ * of those would be a second answer to a question the composition root has already answered, which
+ * is the shape `chat/host.ts`'s header refuses at length.
+ *
+ * PUBLISHED rather than private because the conformance suite composes the door the same way the
+ * command does. An adapter that assembled its own seam would be enumerating a door this product
+ * does not ship (397 D-01's produced-enumeration law, applied to the composition itself).
+ */
+export function composeDashboardAgentHost(host: LocalAgentHost): AgentHost {
+  return {
+    registry: host.registry,
+    caller: DASHBOARD_FUNCTION_CALLER,
+    agentAskFunctionId: AGENT_ASK_FUNCTION_ID,
+    invokeFunction: (
+      registry: AgentRegistryHandle,
+      functionId: string,
+      input: AgentAskInput,
+      caller: FunctionCaller,
+    ): Promise<unknown> =>
+      invokeFunction(registry as FunctionRegistry, functionId, input, caller),
+    foldFunctionResult: (
+      registry: AgentRegistryHandle,
+      functionId: string,
+      payload: unknown,
+    ): AgentResultFold =>
+      foldFunctionResult(registry as FunctionRegistry, functionId, payload),
+    listDeclarations: (
+      registry: AgentRegistryHandle,
+      caller: FunctionCaller,
+    ): readonly AgentDeclarationRow[] => (registry as FunctionRegistry).list(caller),
+  }
+}
+
+/**
+ * The masked config reader, with the bound origin standing in for an UNSET dashboard base URL
+ * (400-01, D-16 / 387 D-10).
+ *
+ * ONE MECHANISM, TWO SUPPLIERS. 387 D-10 made the entity card's `url` config-derived and absent by
+ * default, read through the masker at `services.dashboard.baseUrl`; that knob stays THE mechanism
+ * and is how a CLI or MCP host is pointed at somebody's dashboard. What this adds is the second
+ * supplier: a dashboard serving its own in-process conversation knows its own origin, so the cards
+ * in that conversation carry working links with no user setup at all.
+ *
+ * THE OPERATOR'S VALUE WINS, and the precedence is deliberate rather than incidental. A configured
+ * base is somebody pointing at something — a reverse proxy, a tunnel, a path prefix — and
+ * overwriting it with `http://localhost:<port>` would silently redirect every link away from the
+ * address they chose. So the overlay fills an ABSENCE and never replaces a presence.
+ *
+ * `masked: false` because this value is not the operator's secret and was not reduced by the
+ * masker: it is a loopback origin this process minted from the port it bound. The producer reads
+ * that flag to decide whether a base is verbatim (`card-context.ts`), so a `true` here would make
+ * the overlay contribute nothing — which is the failure mode this comment exists to prevent
+ * somebody re-introducing.
+ *
+ * `source: 'default'` on the same reasoning: no config file, environment variable or flag carries
+ * this value. It is what this host supplies when nothing else did.
+ *
+ * The origin is a FACTORY, not a string, because the server has not bound a port when the host is
+ * composed — and an ephemeral port (`port: 0`) is a real posture, in this suite and in tests. A
+ * value captured at composition time would be a guess; a factory read per invocation is the truth.
+ */
+export function overlayDashboardBaseUrl(
+  inner: ConfigReaderPort,
+  boundOrigin: () => string | undefined,
+): ConfigReaderPort {
+  return {
+    async getMasked() {
+      const masked = await inner.getMasked()
+      const origin = boundOrigin()
+      if (origin === undefined) return masked
+      const existing = masked.entries.find(
+        (entry) => entry.key === DASHBOARD_BASE_URL_CONFIG_KEY,
+      )
+      if (existing !== undefined && !existing.masked && existing.value.trim() !== '') {
+        return masked
+      }
+      const overlaid: MaskedConfigEntry = {
+        key: DASHBOARD_BASE_URL_CONFIG_KEY,
+        value: origin,
+        source: 'default',
+        masked: false,
+      }
+      return {
+        ...masked,
+        entries: [
+          ...masked.entries.filter((entry) => entry.key !== DASHBOARD_BASE_URL_CONFIG_KEY),
+          overlaid,
+        ],
+      }
+    },
+  }
+}
 
 type DashboardCommandOptions = {
   port?: string
@@ -89,7 +237,56 @@ async function startDashboardBackedServices(
       }
     }
 
-    const { close } = await startServer({
+    // ---- The fourth door's host (400-01, D-01/D-05/D-08/D-16) ---------------------------------
+    //
+    // COMPOSED HERE AND HANDED OVER. The host lives in this process, which is the process
+    // dashboard-server runs in — D-01's requirement, met without dashboard-server acquiring the
+    // agent packages or re-assembling the port set this command already has. It is the SAME
+    // `composeCliLocalAgent` `agent-qa chat` composes, so the two interactive doors answer "what
+    // can a conversation do" once.
+    //
+    // THE MODEL IS BOUND EXACTLY AS `agent-qa chat` BINDS IT. A host composed without it is
+    // HEADLESS by design: every deterministic utterance still routes and every natural-language one
+    // fails the turn closed by name. That posture passes every model-free conformance cell and
+    // refuses every real sentence a person types into the browser, which is precisely the shape of
+    // a green that never ran — so the resolution is paid here, once, when the server opens.
+    // `undefined` stays a real posture: a project with no usable LLM configuration gets a
+    // deterministic door rather than no door.
+    const chatModel = await resolveCliChatCapabilities(configFilePath)
+
+    // The bound origin, written once the server has a port and read per configuration lookup. See
+    // `overlayDashboardBaseUrl` for why this is a mutable box rather than a value.
+    let boundOrigin: string | undefined
+
+    const agentHost = composeDashboardAgentHost(composeCliLocalAgent({
+      agentQaRoot: resolve(configDir, '.agent-qa'),
+      configPath: configFilePath,
+      config: overlayDashboardBaseUrl(
+        createMaskedConfigReader(configFilePath),
+        () => boundOrigin,
+      ),
+      ...(chatModel === undefined
+        ? {}
+        : {
+          chatModel: chatModel.model,
+          chatModelFor: chatModel.modelFor,
+          chatAccounting: chatModel.accounting,
+        }),
+      // D-05, answered per RESEARCH Pattern 2: reuse `local-interactive` through the spec's own
+      // explicit-override rung rather than minting a fifth vocabulary member, and supply it
+      // INJECTED rather than through `setActiveExecutionContextResolver` — that setter is a process
+      // global and would re-answer the question for every composition in this process (Pitfall 5).
+      //
+      // THIS IS THE TYPED HOOK PLAN 400-03 NARROWS, not a placeholder. The predicate it will read
+      // is "is a confirm channel live for this turn" — a browser with an open stream is a person
+      // demonstrably present, and a browser that closed one is not. Today the server has no confirm
+      // channel at all, so there is no liveness to consult and the honest constant answer is the
+      // posture D-05 ratified for this door; the shape is already the one that predicate slots
+      // into, so 400-03 changes a body and not a seam.
+      resolveExecutionContext: (): ExecutionContext => 'local-interactive',
+    }))
+
+    const { close, port: listeningPort } = await startServer({
       db,
       port,
       uiDir,
@@ -98,7 +295,12 @@ async function startDashboardBackedServices(
       configPath: configFilePath,
       llmConfig: dashboardLLMConfig,
       authFetch,
+      agentHost,
     })
+
+    // D-16: the second supplier, now that there is a port to name. Loopback rather than a hostname,
+    // matching where this server binds.
+    boundOrigin = `http://localhost:${String(listeningPort)}`
 
     if (opts.open) {
       const { exec } = await import('node:child_process')

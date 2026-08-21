@@ -17,6 +17,7 @@ import {
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
 import type { DashboardLLMConfig } from '../llm-model-mapping.js'
+import type { AgentHost } from '../chat/host.js'
 // 396-01 D-10: the `@vostride/agent-qa-mcp` import is GONE, together with the MCP endpoint this
 // server used to start beside the dashboard. The v2 server is composed per-caller by the CLI's own
 // host (`agent-qa mcp`) over the function registry, so a dashboard that mounted its own copy would
@@ -59,6 +60,15 @@ interface StartServerOptions {
     vision?: { screenshotSize?: number; effectiveResolution?: number }
   }
   authFetch?: typeof globalThis.fetch
+  /**
+   * The composed agent host the chat door dispatches through (400-01, D-01).
+   *
+   * INJECTED by whoever starts this server — in production `agent-qa dashboard`, which composes the
+   * SAME port set `agent-qa chat` does and hands it over, so the two interactive doors have one
+   * answer to "what can a conversation do" (D-08). Absent leaves the chat routes answering 501 by
+   * name: the door exists, this process was started without a host. See `chat/host.ts`.
+   */
+  agentHost?: AgentHost
 }
 
 export async function startServer(opts: StartServerOptions): Promise<{
@@ -66,7 +76,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   port: number
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch } = opts
+  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost } = opts
 
   const resolvedConfigPath = configPath ?? resolve('agent-qa.config.yaml')
   const configManager = new ConfigManager(resolvedConfigPath)
@@ -453,6 +463,9 @@ export async function startServer(opts: StartServerOptions): Promise<{
     llmConfig,
     authFetch,
     sessionManager,
+    // 400-01: conditionally spread on the house rule an absent dependency is an ABSENT field and
+    // never a present `undefined` — the router's own 501 arm is what decides, in one place.
+    ...(agentHost === undefined ? {} : { agentHost }),
   })
 
   const server = createServer(async (req, res) => {

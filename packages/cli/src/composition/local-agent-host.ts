@@ -479,6 +479,29 @@ export interface ComposeCliLocalAgentInput {
    */
   chatConfirm?: ComposeLocalAgentInput['chatConfirm']
   /**
+   * The context every policy decision in this host's registry is taken in (400-01, D-05).
+   *
+   * A PASSTHROUGH of the shared composition's own new input, and it is here rather than pinned on
+   * the process for the reason that field states at length: `setActiveExecutionContextResolver` is
+   * a process global, and the dashboard door's posture is a property of a SERVER (its confirm
+   * channel is live, or it is not) rather than of the machine the server runs on. Absent leaves
+   * the shipped ambient resolver, which is every other CLI invocation.
+   */
+  resolveExecutionContext?: ComposeLocalAgentInput['resolveExecutionContext']
+  /**
+   * How this host reads configuration, MASKED (400-01, D-16).
+   *
+   * A passthrough with a default rather than a required argument, because there is exactly one
+   * right answer for a CLI — {@link createMaskedConfigReader} over this invocation's config path —
+   * and one host that needs to say something more: `agent-qa dashboard` composes a host whose
+   * `services.dashboard.baseUrl` is the origin the server actually bound, so the entity cards a
+   * conversation in that browser renders carry working links with no user setup (387 D-10's config
+   * knob, supplied by the second of its two suppliers). It is an OVERLAY over this reader in that
+   * host and never a replacement: the masking oracle, the layer precedence and the disclosure
+   * decision all stay where they are.
+   */
+  config?: ComposeLocalAgentInput['config']
+  /**
    * Where a chat session PRINTS the scaffold proposal a person is about to be asked about
    * (395-13, D-14), passed through untouched on `chatConfirm`'s precedent.
    *
@@ -3460,8 +3483,13 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // do not exist at proposal time. Inventing them here would be inventing facts; the scan's
     // pattern half is what covers shapes nobody seeded.
     configScanSeeds: () => ({ env: sensitiveEnvSlice(process.env) }),
-    config: createMaskedConfigReader(input.configPath),
+    config: input.config ?? createMaskedConfigReader(input.configPath),
     knowledgeRoot,
+    // 400-01 (D-05): forwarded untouched, conditionally spread on this file's own absent-field
+    // rule so that a host supplying nothing composes exactly as it did before the option existed.
+    ...(input.resolveExecutionContext === undefined
+      ? {}
+      : { resolveExecutionContext: input.resolveExecutionContext }),
     // D-18: when a live daemon holds the writer lease, this host hands it the SAME
     // `knowledge.proposal.apply` envelope over the SAME 386 socket every other capability crosses,
     // and waits bounded for the receipt. It is a closure over `invokeViaDaemon` rather than a new

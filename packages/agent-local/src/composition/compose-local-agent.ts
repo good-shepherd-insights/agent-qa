@@ -196,6 +196,7 @@ import type {
   ChatSessionHandle,
   CompletedRunHandoff,
   DraftReceipt,
+  ExecutionContext,
   FunctionCaller,
   FunctionScope,
   GrantRecordOutcome,
@@ -1619,6 +1620,25 @@ export interface ComposeLocalAgentInput {
    * No host binds it yet; the CLI's terminal confirmation is plan 04's.
    */
   readonly confirm?: ConfirmPort
+  /**
+   * The context every policy decision in this composition's registry is taken in (400-01, D-05).
+   *
+   * INJECTED RATHER THAN PINNED ON THE PROCESS, and that is the whole reason this field exists.
+   * The registry has accepted a `resolveExecutionContext` since 384; what it did NOT have was a
+   * way for a host to supply one, so the only lever a host had was
+   * `setActiveExecutionContextResolver` — a PROCESS GLOBAL. Reaching for it changes the answer
+   * for everything composed in that process, including compositions the host does not own, and a
+   * host that forgot to restore it leaks its posture into every later caller. The dashboard door
+   * is the first host that has to state a posture per composition rather than per process
+   * (D-01/D-05: the browser confirm channel is what makes the context interactive, and it is a
+   * property of a server, not of the machine), so the injected form is what it binds.
+   *
+   * ABSENT MEANS THE SHIPPED AMBIENT RESOLVER, unchanged: the registry's own default reads
+   * safety's process resolver, so every existing host composes exactly as it did before. This is
+   * a passthrough and nothing here decides what a context MEANS — `requiresFailClosed` still owns
+   * that, over the same closed four-member vocabulary.
+   */
+  readonly resolveExecutionContext?: () => ExecutionContext
   /**
    * The turn engine's reconciliation strategy (392 D-16).
    *
@@ -3121,6 +3141,14 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     // gate's ladder untouched — and the hook has to be in place before the first turn, because a
     // person types `/pin` in the middle of a session and there is no second binding moment.
     deny: chatDeny,
+    // 400-01 (D-05): the host's own execution-context answer, forwarded UNTOUCHED to the option the
+    // registry has published since 384. Conditionally spread on this block's own house rule — an
+    // absent host answer must be an ABSENT field, never a present `undefined` — so the registry's
+    // `?? getActiveExecutionContext` default is what decides, in exactly one place, and every host
+    // that supplies nothing composes precisely as it did before this line existed.
+    ...(input.resolveExecutionContext === undefined
+      ? {}
+      : { resolveExecutionContext: input.resolveExecutionContext }),
   })
   // Closes the cycle the turn engine's dispatch binding was built against. It happens exactly
   // here, on the line after the registry exists, so there is no window in which a turn could run

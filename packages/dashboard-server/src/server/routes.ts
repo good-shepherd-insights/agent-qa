@@ -12,6 +12,8 @@ import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
+import { CHAT_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
+import type { AgentHost } from '../chat/host.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
@@ -1326,6 +1328,15 @@ interface RouterDeps {
   llmConfig?: DashboardRuntimeLLMConfig
   authFetch?: typeof globalThis.fetch
   sessionManager?: import('../live-editor/session-manager.js').SessionManager
+  /**
+   * The composed agent host this server's chat door dispatches through (400-01, D-01).
+   *
+   * INJECTED, and optional because a router built the legacy two-argument way
+   * (`createRouter(db)`) has none. The chat door then answers 501 by name rather than 404 —
+   * the route exists, this server was started without a host. See `chat/host.ts` for why the
+   * composition happens in the CLI command that starts this server rather than here.
+   */
+  agentHost?: AgentHost
 }
 
 export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: ServerResponse) => void
@@ -1335,18 +1346,37 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
     ? dbOrDeps as RouterDeps
     : { db: dbOrDeps as DashboardDatabase, artifactsDir }
   const { db, testRunner, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
+  // The fourth door (400-01). ONE router for the whole `/api/chat/` prefix, built once, and the
+  // same function the conformance adapter and the tracer cell drive — a second mount here would be
+  // a second answer to what the door is.
+  const chatRouter = createChatRouter(deps.agentHost)
   const pluginOAuthSessions = new Map<string, PluginOAuthSession>()
   const ssDir = deps.artifactsDir ? join(deps.artifactsDir, 'screenshots') : undefined
   const vidDir = deps.artifactsDir ? join(deps.artifactsDir, 'videos') : undefined
 
   return (req: IncomingMessage, res: ServerResponse) => {
+    const url = parseUrl(req)
+    const path = url.pathname
+
+    // ---- The fourth door (400-01, D-02) --------------------------------------------------------
+    //
+    // Mounted FIRST — ahead of the shared OPTIONS arm as well as every route — and TOTAL over its
+    // prefix. Two reasons, and the second is the load-bearing one. A chat path that fell through
+    // would land in the shared `notFound`, which writes the cross-origin wildcard header this door
+    // deliberately omits. And `cors()` below answers EVERY preflight with
+    // `Access-Control-Allow-Origin: *`: leaving the chat routes behind it would grant any page a
+    // person has open the preflight it needs to POST a turn at their local agent, which is exactly
+    // the header the turn route refuses to write on its own response. The door answers its own
+    // preflight, same-origin.
+    if (path.startsWith(CHAT_ROUTE_PREFIX)) {
+      chatRouter(req, res)
+      return
+    }
+
     if (req.method === 'OPTIONS') {
       cors(res)
       return
     }
-
-    const url = parseUrl(req)
-    const path = url.pathname
 
     // GET /api/auth-states — list safe auth-state metadata only
     if (path === '/api/auth-states' && req.method === 'GET') {
