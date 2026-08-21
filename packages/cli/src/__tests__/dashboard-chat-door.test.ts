@@ -19,7 +19,7 @@
 // `setActiveExecutionContextResolver` — the process global whose forgotten restore leaks a posture
 // into every sibling cell (Pitfall 5). There is nothing to restore because nothing was set.
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -34,7 +34,13 @@ import {
   type SessionStreamWindow,
 } from '@vostride/agent-qa-dashboard'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { remediesRenderableBy, type ChatSessionEvent } from '@vostride/agent-qa-schema'
+import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
+import type { BundleStoreConfig, PublishBundleInput } from '@vostride/agent-qa-knowledge-local'
+import {
+  EntityCardSchema,
+  remediesRenderableBy,
+  type ChatSessionEvent,
+} from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { resolveCapabilityCatalogPath } from '../capability-catalog/loader.js'
@@ -714,5 +720,308 @@ describe('the turn-events stream is a projection of the session log', () => {
     expect(manySessions.size, 'the tracked-session set grew past its cap').toBe(sessionLimit)
     expect(manySessions.has('chat-0'), 'the recently appended session was evicted').toBe(true)
     expect(manySessions.has('chat-1'), 'the least recently appended session survived').toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// Gap 1 (400-10, D-16 / WINDOWS #195): the card's OWN `url`, driven through the door.
+//
+// WHY THIS BLOCK EXISTS BESIDE THE TWO OVERLAY CELLS ABOVE. Those cells are true and they were
+// not sufficient: both assert the OVERLAY's output — one entry in `config.get`'s masked listing —
+// and the claim D-16 makes is about a CARD. The producer requires BOTH halves of the url base
+// (`services.dashboard.baseUrl` AND `services.dashboard.workspace`, `card-context.ts`), 400-01
+// supplied one, nothing in the repo produced the other, and so `url` was absent from every card
+// this door has ever produced while the overlay cell above stayed green. The assertion surface was
+// the defect. This block asserts the field a person sees.
+//
+// ORTHOGONAL TO ROUTED-KIND HONESTY, deliberately. MEM is unrouted and stays unrouted: 400-08's
+// render mints hrefs from the route map and never from `card.url`, so the `url` a MEM card now
+// carries renders as monospace text exactly as that plan shipped it. `url` present and `kind`
+// routed are two claims and this file keeps them apart.
+
+/** The workspace directory name the segment must be derived FROM — known here, asserted below. */
+const CARD_URL_WORKSPACE_NAME = 'ws-cardurl'
+
+/**
+ * The origin the overlay is handed.
+ *
+ * A FACTORY VALUE rather than the port this fixture's server binds, and that is the point of
+ * separating them: the overlay reads `boundOrigin()` per invocation, so a cell that fed it the
+ * server's own ephemeral port could not tell a base derived from the factory from one derived
+ * from the request. A value nothing else in this file can produce makes the derivation visible.
+ */
+const CARD_URL_ORIGIN = 'http://localhost:4599'
+
+const CARD_URL_PRODUCT = 'gap1-card-url-product'
+const CARD_URL_SUMMARY = 'Checkout control, gap 1'
+
+interface CardUrlFixture {
+  readonly requestOrigin: string
+  readonly parent: string
+  readonly host: LocalAgentHost
+  readonly server: Server
+  readonly bundleId: string
+}
+
+/**
+ * A project whose directory NAME is the workspace segment, with one real entity in it.
+ *
+ * The parent temp root is `mkdtemp`'d and the project sits inside it under a fixed name, because
+ * `mkdtemp`'s own suffix is random and the segment under measurement has to be a value this cell
+ * can name. The knowledge root is declared so the bundle below has somewhere to land.
+ */
+function cardUrlProject(): { parent: string; root: string; knowledgeRoot: string; configPath: string } {
+  const parent = mkdtempSync(join(tmpdir(), 'agent-qa-400-10-'))
+  const root = join(parent, CARD_URL_WORKSPACE_NAME)
+  mkdirSync(join(root, '.agent-qa'), { recursive: true })
+  const knowledgeRoot = join(root, 'agent-qa-knowledge')
+  mkdirSync(knowledgeRoot, { recursive: true })
+  const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      workspace: {
+        testMatch: ['tests/**/*.test.yaml'],
+        suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+      use: { mobile: { appState: 'reset' } },
+      registry: {
+        targets: {
+          conformance: { platform: 'web', url: 'https://conformance.invalid' },
+        },
+      },
+    })}\n`,
+    'utf8',
+  )
+  return { parent, root, knowledgeRoot, configPath }
+}
+
+/**
+ * Publish ONE real memory bundle through the shipped writer (dashboard-dom's idiom).
+ *
+ * MEM is the only kind this build can mint an address for — `compose-local-agent.ts` wires exactly
+ * one sighting source — so it is the only kind a DRIVEN card cell can be about here.
+ */
+function seedCardUrlBundle(project: { root: string; knowledgeRoot: string }): string {
+  const config: BundleStoreConfig = {
+    knowledgeRoot: project.knowledgeRoot,
+    productKey: CARD_URL_PRODUCT,
+    auditBaseDir: join(project.root, '.agent-qa'),
+    commitArtifacts: 'none',
+  }
+  const input: PublishBundleInput = {
+    draft: {
+      kind: 'fact',
+      subtype: 'selector',
+      anchors: [{ t: 'el', role: 'button', name: 'Checkout' }],
+      scope: { tier: 'product', key: CARD_URL_PRODUCT },
+      summary: CARD_URL_SUMMARY,
+      body: 'The verified checkout control.',
+      distilledEvidenceRef: { id: 'gap1-evidence', sha: 'b'.repeat(64) },
+      originStage: 'run-curation',
+    },
+    discriminant: {
+      kind: 'fact',
+      subtype: 'selector',
+      elementRef: { role: 'button', name: 'Checkout' },
+    },
+    originClass: 'agent-verified',
+    createdAtOrdinal: 5,
+    screenStates: [],
+    initialEvents: [],
+    relations: [],
+    provenance: {
+      mode: 'run-linked',
+      runId: 'gap1-run',
+      testId: 'gap1-test',
+      stepIndex: 0,
+      sourceBuildOrdinal: 5,
+    },
+    artifacts: [],
+  }
+  const published = publishBundleForTest(config, input)
+  if (published.kind !== 'published') {
+    throw new Error(`the gap-1 fixture published no bundle: ${JSON.stringify(published)}`)
+  }
+  return published.id
+}
+
+describe('a card the dashboard\'s own conversation produces carries a url (gap 1, D-16)', () => {
+  let fixture: CardUrlFixture
+
+  beforeAll(async () => {
+    const project = cardUrlProject()
+    const bundleId = seedCardUrlBundle(project)
+    // THE SHIPPED COMPOSER, on the shipped router, over a real socket — the same instrument the
+    // cells above use. Nothing here reaches into the composition to hand the producer a context.
+    const { host, agentHost } = composeDashboardDoor({
+      agentQaRoot: join(project.root, '.agent-qa'),
+      configPath: project.configPath,
+      boundOrigin: () => CARD_URL_ORIGIN,
+      resolveExecutionContext: () => 'local-interactive',
+    })
+    const server = createServer(createChatRouter(agentHost))
+    await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
+    const address = server.address()
+    if (address === null || typeof address === 'string') {
+      throw new TypeError('the gap-1 door bound no port')
+    }
+    fixture = {
+      requestOrigin: `http://127.0.0.1:${String(address.port)}`,
+      parent: project.parent,
+      host,
+      server,
+      bundleId,
+    }
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((closed) => fixture.server.close(() => closed()))
+    await fixture.host.close()
+    rmSync(fixture.parent, { recursive: true, force: true })
+  })
+
+  it('DRIVEN: entities.get returns a card whose own `url` names the bound origin and this workspace',
+    async () => {
+      // `entities.get` NEVER MINTS (387 D-09: a get that could write would make every card render
+      // a mutation), so the address has to exist before it is asked for. `entities.resolve` is the
+      // sighting leg that mints it — and both clauses travel over the same wire, through the same
+      // door, in the same conversation, which is what makes this a drive rather than a setup.
+      const minted = await postTurn(fixture.requestOrigin, {
+        message: `/fn entities.resolve {"ref":${JSON.stringify(fixture.bundleId)}}`,
+      })
+      expect(minted.status).toBe(200)
+      const resolution = (minted.body as ChatTurnResponse).result.results[0]?.payload as {
+        kind?: string
+        card?: { kind?: string; id?: string; uri?: string }
+      }
+      expect(
+        resolution.kind,
+        `the seeded bundle did not resolve: ${JSON.stringify((minted.body as ChatTurnResponse).result.receipts)}`,
+      ).toBe('resolved')
+      const uri = resolution.card?.uri
+      expect(uri, 'the sighting minted no address, so there is nothing to `get`').toBeDefined()
+
+      const answered = await postTurn(fixture.requestOrigin, {
+        message: `/fn entities.get {"ref":${JSON.stringify(uri)}}`,
+      })
+      expect(answered.status).toBe(200)
+      const turn = answered.body as ChatTurnResponse
+      expect(
+        turn.result.receipts.map((receipt) => `${receipt.functionId}:${receipt.status}`),
+        'the card turn did not execute',
+      ).toEqual(['entities.get:executed'])
+
+      // PARSED BY THE SCHEMA, never shape-checked (400-08's anti-duck-typing rule). A `url` on an
+      // object this cell merely believes is a card would be a claim about this cell.
+      const card = EntityCardSchema.parse(turn.result.results[0]?.payload)
+
+      expect(
+        card.url,
+        'the card the door\'s OWN conversation produced carries no `url`: the host supplied only '
+        + 'one of the two halves `readDashboardUrlBase` requires, so `urlBase` is undefined and '
+        + 'the producer omits the field on every card this door renders',
+      ).toBeTypeOf('string')
+      // The ORIGIN half, from the factory — and the WORKSPACE half, from the project directory's
+      // own name. Asserting the prefix asserts both suppliers at once; neither is guessable from
+      // the other, and the shipped `/t/:workspace/:kind/:shortId/:slug` route puts them adjacent.
+      expect(card.url).toMatch(
+        new RegExp(`^${CARD_URL_ORIGIN}/t/${CARD_URL_WORKSPACE_NAME}/memory/`, 'u'),
+      )
+      expect(card.url, 'the kind segment must be the URI word, not the short-ID prefix')
+        .toContain('/memory/')
+      expect(card.kind, 'MEM stays MEM: url-present is not routed-kind').toBe('MEM')
+    })
+
+  it('overlays BOTH producer halves, read back verbatim from the shipped overlay', async () => {
+    // The producer's rule is an AND over two keys read through `verbatim()`, so an overlay that
+    // supplies one of them contributes exactly nothing — which is the whole of gap 1. Read BOTH
+    // keys back off one `getMasked()`, with the flags, because `masked: true` on either half is
+    // the silent-inert failure this assertion exists to stop somebody re-introducing.
+    const overlaid = overlayDashboardBaseUrl(
+      {
+        getMasked: async () => Promise.resolve({
+          schemaVersion: 1,
+          configPath: 'agent-qa.config.yaml',
+          entries: [],
+        }),
+      },
+      () => CARD_URL_ORIGIN,
+      CARD_URL_WORKSPACE_NAME,
+    )
+    const masked = await overlaid.getMasked()
+    expect(
+      masked.entries.filter((row) => row.key.startsWith('services.dashboard.')),
+    ).toEqual([
+      {
+        key: 'services.dashboard.baseUrl',
+        value: CARD_URL_ORIGIN,
+        source: 'default',
+        masked: false,
+      },
+      {
+        key: 'services.dashboard.workspace',
+        value: CARD_URL_WORKSPACE_NAME,
+        source: 'default',
+        masked: false,
+      },
+    ])
+  })
+
+  it('lets an operator\'s own configured workspace win over the derived directory name', async () => {
+    // The control for the half above, on the baseUrl half's own reasoning: the overlay FILLS AN
+    // ABSENCE and never replaces a presence. A configured workspace is somebody naming the
+    // workspace their hosted dashboard serves, and overwriting it with this machine's directory
+    // name would point every card link at a workspace that host does not have.
+    const configured = 'operator-named-workspace'
+    const overlaid = overlayDashboardBaseUrl(
+      {
+        getMasked: async () => Promise.resolve({
+          schemaVersion: 1,
+          configPath: 'agent-qa.config.yaml',
+          entries: [{
+            key: 'services.dashboard.workspace',
+            value: configured,
+            source: 'config-file' as const,
+            masked: false,
+          }],
+        }),
+      },
+      () => CARD_URL_ORIGIN,
+      CARD_URL_WORKSPACE_NAME,
+    )
+    const masked = await overlaid.getMasked()
+    expect(
+      masked.entries.filter((row) => row.key === 'services.dashboard.workspace'),
+      'the operator\'s workspace must survive, exactly once',
+    ).toEqual([{
+      key: 'services.dashboard.workspace',
+      value: configured,
+      source: 'config-file',
+      masked: false,
+    }])
+  })
+
+  it('overlays the workspace half even while the origin factory is still empty', async () => {
+    // INDEPENDENT SUPPLIERS. The origin is only known after `listen`, and a lone workspace is
+    // INERT rather than wrong — the producer's both-halves AND refuses it. Gating the workspace
+    // on the origin would be a second, invisible precondition on a value that has none.
+    const overlaid = overlayDashboardBaseUrl(
+      {
+        getMasked: async () => Promise.resolve({
+          schemaVersion: 1,
+          configPath: 'agent-qa.config.yaml',
+          entries: [],
+        }),
+      },
+      () => undefined,
+      CARD_URL_WORKSPACE_NAME,
+    )
+    const masked = await overlaid.getMasked()
+    expect(masked.entries.map((row) => row.key)).toEqual(['services.dashboard.workspace'])
   })
 })
