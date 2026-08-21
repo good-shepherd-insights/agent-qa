@@ -60,6 +60,36 @@ export const ENTITY_CARD_MAX_KEY_FACTS = 12
 export const ENTITY_CARD_MAX_ACTIONS = 6
 
 /**
+ * What each kind CALLS the machine id its address maps FROM — the label its FIRST key fact rides
+ * under, on every card the one producer emits.
+ *
+ * IT LIVES IN THE CONTRACT RATHER THAN IN THE PRODUCER (moved here 400-08) because it is the only
+ * thing that makes the machine id READABLE OFF A CARD. A card carries `{kind, id, uri, …}` and
+ * deliberately no `machineId` field — the short-ID is the published address — but the identity fact
+ * carries it, and a surface that has to route to a page keyed by machine id (the dashboard's
+ * `/test/:t_id` and `/runs/:id`) needs to name that fact without guessing. With the table in the
+ * producer's package a renderer had two ways to get there and both were wrong: read the label as a
+ * literal (a second copy, free to drift the day a noun is retuned) or fish the id out of an
+ * `actions[]` seed (addressing by coincidence, which `actions.ts`'s own header names as the thing
+ * its seeds must never be). One declaration, imported by the producer that WRITES the fact and by
+ * every surface that READS it, is what makes "the identity fact carries the machine id" a contract
+ * instead of a convention.
+ *
+ * The label is per-kind and not cosmetic: `bundle id` and `run id` send a reader to different
+ * places to correlate, and a card that said `machine id` for both would make the reader guess which
+ * store to look in. A table rather than six literals so a kind cannot be added without answering
+ * the question.
+ */
+export const ENTITY_IDENTITY_FACT_LABELS = {
+  TST: 'test id',
+  RUN: 'run id',
+  BUG: 'reserved address',
+  MEM: 'bundle id',
+  POL: 'policy id',
+  TGT: 'target name',
+} as const satisfies Record<EntityKind, string>
+
+/**
  * One deterministic fact about the entity, computed by the producer from store data — never
  * LLM-authored (D-12). `ref` is an `agentqa://` URI so a fact can LINK another entity, which
  * is what lets a failing run's card point at the test it ran without inventing a second

@@ -36,6 +36,7 @@ export {
   ActionRefSchema,
   ENTITY_CARD_MAX_ACTIONS,
   ENTITY_CARD_MAX_KEY_FACTS,
+  ENTITY_IDENTITY_FACT_LABELS,
   ENTITY_STATUSES,
   EntityCardSchema,
   KeyFactSchema,

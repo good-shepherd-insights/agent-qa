@@ -23,7 +23,7 @@
 // to be both the apply verb's return value and the content a forgotten entity's permanent
 // address resolves to afterwards (D-04). `forgetReceiptKeyFacts` is that second use.
 
-import { formatEntityUri } from '@vostride/agent-qa-schema'
+import { ENTITY_IDENTITY_FACT_LABELS, formatEntityUri } from '@vostride/agent-qa-schema'
 import type {
   EntityDescriptor,
   EntityKind,
@@ -33,22 +33,18 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 /**
- * What each kind CALLS the machine id its address maps FROM.
+ * What each kind CALLS the machine id its address maps FROM — RE-EXPORTED, declared in `schema`.
  *
- * One fact every kind carries, under the kind's own noun. The label is the whole per-kind
- * content of this fact and it is not cosmetic: `bundle id` and `run id` send a reader to
- * different places to correlate, and a card that said `machine id` for both would make the
- * reader guess which store to look in. A table rather than six literals so a kind cannot be
- * added without answering the question.
+ * The table moved to `schema/src/entity/entity-card.ts` in 400-08 and this line is the re-export
+ * every existing importer keeps reading. It moved because it is the only thing that makes the
+ * machine id readable OFF a card: the card shape carries no `machineId` field, so the dashboard's
+ * entity-card renderer — which routes to pages keyed by machine id — has to be able to NAME the
+ * fact that carries it. A second copy in the surface would be a label free to drift from the one
+ * the producer writes with; fishing the id out of an `actions[]` seed would be the
+ * addressing-by-coincidence `actions.ts` forbids. One declaration, beside the card contract, read
+ * by the writer here and by every reader there.
  */
-export const ENTITY_IDENTITY_FACT_LABELS = {
-  TST: 'test id',
-  RUN: 'run id',
-  BUG: 'reserved address',
-  MEM: 'bundle id',
-  POL: 'policy id',
-  TGT: 'target name',
-} as const satisfies Record<EntityKind, string>
+export { ENTITY_IDENTITY_FACT_LABELS }
 
 /** The label the D-03 rename fact renders under, named once so a test can pin it. */
 export const ENTITY_RENAMED_TO_FACT_LABEL = 'renamed to'
