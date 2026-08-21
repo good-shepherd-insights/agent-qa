@@ -37,10 +37,7 @@ import {
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import {
-  composeDashboardDoor,
-  dashboardExecutionContext,
-} from '../commands/dashboard.js'
+import { composeDashboardDoor } from '../commands/dashboard.js'
 
 /** A well-formed proposal id that names nothing — the gate is reached, the apply then finds none. */
 const ABSENT_PROPOSAL = 'prop_400-03-absent'
@@ -113,16 +110,17 @@ async function openDoor(options: { readonly timeoutMs?: number } = {}): Promise<
   const confirms = createConfirmRegistry(
     options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs },
   )
-  // THE SHIPPED RESOLVER, not a constant written here: `dashboardExecutionContext` is the function
-  // the command binds, so the honesty cell measures production's own predicate.
-  const executionContext = dashboardExecutionContext(confirms)
-  const { host, agentHost } = composeDashboardDoor({
+  // NO `resolveExecutionContext` (400-13), for the reason the command passes none: the honest
+  // posture is a per-conversation fact only the composition can compute, so the door DERIVES it and
+  // publishes what it derived. The honesty cell then measures production's own predicate rather
+  // than a second copy of the rule written here.
+  const { host, agentHost, resolveExecutionContext } = composeDashboardDoor({
     agentQaRoot: join(configRoot, '.agent-qa'),
     configPath,
     boundOrigin: () => boundOrigin,
-    resolveExecutionContext: executionContext,
     confirms,
   })
+  const executionContext = resolveExecutionContext
   const router = createChatRouter(agentHost)
   const server = createServer(router)
   await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
@@ -446,8 +444,11 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
     await stream.close()
   }, 30_000)
 
-  it('is local-interactive only while a confirm channel can reach a human (D-05)', async () => {
-    const door = await openDoor()
+  it('is local-interactive only while a confirm channel can reach THIS conversation (D-05)', async () => {
+    // THE POSITIVE CONTROL for 400-13's tightening, and it has to be one: a fix that answered
+    // `local-headless` everywhere would close gap 3 and break the door. This cell drives the
+    // watched, in-flight, same-conversation case all the way to `prompted-approved`.
+    const door = await openDoor({ timeoutMs: 60_000 })
     // NO CHANNEL, NO CLAIM. A dashboard process with nobody watching is exactly as headless as a
     // piped CLI, and saying otherwise is the dishonesty this seam exists to prevent.
     expect(door.executionContext()).toBe('local-headless')
@@ -457,18 +458,39 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
     // The server decides when the channel is registered, so the cell waits on the server's own
     // answer rather than sleeping a number.
     const opened = Date.now()
-    while (!door.confirms.hasLiveChannel() && Date.now() - opened < 5_000) {
+    while (!door.confirms.hasLiveChannel(sessionId) && Date.now() - opened < 5_000) {
       await new Promise<void>((settled) => setTimeout(settled, 10))
     }
+    // WATCHED IS NOT YET REACHABLE, and this line is the one a live-only candidate rule reds on. A
+    // browser with no question outstanding is a person reading their transcript; the claim this
+    // door makes is that it can hand THIS TURN's question to whoever asked it.
+    expect(door.executionContext()).toBe('local-headless')
+
+    // A real ask-tier turn on the watched conversation. FLOATING: it does not return until the
+    // confirm resolves, and the confirm is what proves the gate took its ask arm.
+    const turn = postTurn(door.origin, { message: ASK_UTTERANCE, sessionId })
+    const raised = confirmRequestOf(
+      await stream.waitFor((frame) => frame.event === 'confirm_request'),
+    )
     expect(door.executionContext()).toBe('local-interactive')
+
+    expect((await postConfirm(door.origin, {
+      sessionId,
+      confirmId: raised.confirmId,
+      answer: 'accept',
+    })).status).toBe(200)
+    const answered = await turn
+    expect(answered.result.receipts[0]?.outcome).not.toBe('FunctionDeniedError')
+    // THE ROW A PERSON READS: an ask that really was put in front of somebody, and answered.
+    expect(askRowsFor(door.configRoot).map((row) => row['outcome'])).toEqual(['prompted-approved'])
 
     await stream.close()
     const closed = Date.now()
-    while (door.confirms.hasLiveChannel() && Date.now() - closed < 5_000) {
+    while (door.confirms.hasLiveChannel(sessionId) && Date.now() - closed < 5_000) {
       await new Promise<void>((settled) => setTimeout(settled, 10))
     }
     expect(door.executionContext()).toBe('local-headless')
-  })
+  }, 30_000)
 
   it('denies an ask with no channel open, fail-closed and without hanging (D-05/D-06)', async () => {
     // THE TWO MECHANISMS COMPOSED. No stream is opened, so the context predicate answers
@@ -478,7 +500,7 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
     // mean the door claimed a prompt it never showed anybody.
     const door = await openDoor({ timeoutMs: 300 })
     const sessionId = await openSession(door.origin)
-    expect(door.confirms.hasLiveChannel()).toBe(false)
+    expect(door.confirms.hasLiveChannel(sessionId)).toBe(false)
 
     const answered = await postTurn(door.origin, { message: ASK_UTTERANCE, sessionId })
     expect(answered.result.receipts[0]?.outcome).toBe('FunctionDeniedError')

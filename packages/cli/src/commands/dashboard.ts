@@ -272,29 +272,61 @@ function hasVerbatim(masked: MaskedResolvedConfig, key: string): boolean {
 }
 
 /**
- * Is a person reachable RIGHT NOW? (400-03, D-05 · RESEARCH Pattern 2.)
+ * WHICH conversation this door can put a question in front of, right now (400-13, gap 3 / D-05).
  *
- * THE PREDICATE PLAN 400-01 LEFT A SEAM FOR, filled. That plan bound
- * `resolveExecutionContext: () => 'local-interactive'` — honest then, because the server had no
- * confirm channel at all and there was no liveness to consult. There is one now, and this is what
- * consulting it looks like: `local-interactive` while a browser holds an open stream this door can
- * ask a question down, `local-headless` the moment the last one goes away.
+ * ONE PREDICATE WITH TWO CONSUMERS, AND THAT IS THE WHOLE REPAIR. The confirm port needs a target
+ * ("which watched conversation has a turn in flight") and the execution-context resolver needs a
+ * posture ("can this door actually deliver an ask-tier question to a person"). Those used to be two
+ * rules with two spellings, and they disagreed in the one direction that matters: the resolver
+ * asked whether ANY channel was live anywhere, so a stream held open on one conversation made a
+ * DIFFERENT, unwatched conversation's ask-tier denial read `prompted-denied` on the audit row — a
+ * prompt nobody was shown, where the same op with no stream at all is recorded `fail-closed-denied`.
+ * Answering both from here makes `local-interactive` mean exactly "the confirm reaches the asker".
  *
- * THE HONESTY IS THE POINT, NOT THE CAPABILITY. D-05 ruled that the browser confirm makes this door
- * interactive; the vocabulary's ONE consequence is `requiresFailClosed`, so a door that claimed
- * `local-interactive` with nobody watching would be telling the gate to consult a confirm port that
- * can only deny — spending an ask-tier call on a question nobody sees. Dropping to `local-headless`
- * denies it in the gate, by name, with `fail-closed-denied` on the audit row rather than a
- * `prompted-denied` that names a prompt nobody was shown.
+ * WATCHED **AND** IN FLIGHT. A live channel says a browser is there; an active turn id says that
+ * conversation is the one waiting on an answer. Neither alone identifies the asker.
  *
- * STRUCTURALLY TYPED over the one method it reads, so this module keeps its type-only relationship
+ * FAIL-SAFE ON AMBIGUITY (392-12): a `ConfirmPort` is handed an action and no caller, so with more
+ * than one candidate it cannot tell which conversation is asking — and a question shown in the
+ * wrong transcript IS the defect, where a denial is not. Two watched mid-turn conversations
+ * therefore now fail closed IN THE GATE, by name, instead of reaching the port and being refused
+ * there under a `prompted-denied` row.
+ *
+ * THE TWO REGISTRY READS ARE ASKED SEPARATELY ON PURPOSE. `liveSessionIds()` enumerates candidates;
+ * `hasLiveChannel(sessionId)` is what makes reachability a per-conversation answer rather than a
+ * property of that list, so an enumeration that ever widened could not smuggle an unreachable
+ * conversation through.
+ *
+ * STRUCTURALLY TYPED over the two members it reads, so this module keeps its type-only relationship
  * with `@vostride/agent-qa-dashboard` — the CLI loads that package lazily, and a value import here
  * would put the whole dashboard server on the startup path of every `agent-qa` invocation.
  */
+export function watchedTurnSession(
+  confirms: Pick<ConfirmRegistry, 'liveSessionIds' | 'hasLiveChannel'> | undefined,
+  hasTurnInFlight: (sessionId: string) => boolean,
+): string | undefined {
+  if (confirms === undefined) return undefined
+  const candidates = confirms.liveSessionIds()
+    .filter((sessionId) => confirms.hasLiveChannel(sessionId) && hasTurnInFlight(sessionId))
+  return candidates.length === 1 ? candidates[0] : undefined
+}
+
+/**
+ * Is a person reachable RIGHT NOW, on the conversation being gated? (400-03 / 400-13, D-05 ·
+ * RESEARCH Pattern 2.)
+ *
+ * THE CLAIM IS PER-CONVERSATION, and it is the confirm port's own question rather than a second
+ * one: interactive exactly when {@link watchedTurnSession} names a conversation this door can hand
+ * THIS turn's question to. The vocabulary's ONE consequence is `requiresFailClosed`, so a door that
+ * claimed `local-interactive` with nobody reachable would be telling the gate to consult a confirm
+ * port that can only deny — spending an ask-tier call on a question nobody sees, and recording it
+ * as one that was asked. `local-headless` denies it in the gate, by name, with `fail-closed-denied`
+ * on the audit row.
+ */
 export function dashboardExecutionContext(
-  confirms: { hasLiveChannel(): boolean } | undefined,
+  watched: () => string | undefined,
 ): () => ExecutionContext {
-  return () => (confirms?.hasLiveChannel() === true ? 'local-interactive' : 'local-headless')
+  return () => (watched() !== undefined ? 'local-interactive' : 'local-headless')
 }
 
 /**
@@ -407,13 +439,20 @@ export interface DashboardDoorInput {
    */
   readonly boundOrigin: () => string | undefined
   /**
-   * The context every policy decision on this door is taken in (D-05).
+   * An EXPLICIT OVERRIDE of the context this door's policy decisions are taken in (D-05, spec §2.2).
    *
-   * REQUIRED rather than defaulted, because the whole point of the seam is that a door STATES its
-   * posture rather than inheriting the process's. A door composed without one would be answering
-   * from TTY and CI markers, which is the ambient reach `resolveExecutionContext` exists to remove.
+   * OPTIONAL SINCE 400-13, AND THE ABSENCE IS THE HONEST DEFAULT rather than a convenience. The
+   * per-conversation posture — is there a watched conversation with a turn in flight — can only be
+   * computed INSIDE the composition, because it reads the composed host's own turn state through
+   * the mutable box below. A caller outside cannot answer it, so production used to hand in the
+   * one answer it COULD compute (any channel anywhere) and the door stated a posture it had no way
+   * to know. Absent now means the door derives it from {@link watchedTurnSession}; supplied is the
+   * spec's explicit-override rung, which is the conformance suite's posture and unchanged.
+   *
+   * WHAT IS NOT DEFAULTED IS THE PROCESS. Neither arm ever falls back to TTY and CI markers, which
+   * is the ambient reach this seam exists to remove.
    */
-  readonly resolveExecutionContext: () => ExecutionContext
+  readonly resolveExecutionContext?: () => ExecutionContext
   /**
    * Where this door's ask-tier questions wait for a person (400-03, D-05 / D-06 / D-07).
    *
@@ -442,6 +481,14 @@ export interface DashboardDoorInput {
 export interface DashboardDoor {
   readonly host: LocalAgentHost
   readonly agentHost: AgentHost
+  /**
+   * The posture this door actually decides under — the caller's override, or the derived one.
+   *
+   * PUBLISHED SO IT CAN BE MEASURED. The derivation lives inside the composition (it reads the
+   * composed host's turn state), so a cell that wanted production's own answer would otherwise have
+   * to write a second copy of the rule — which is the two-spellings failure gap 3 is.
+   */
+  readonly resolveExecutionContext: () => ExecutionContext
 }
 
 /**
@@ -495,16 +542,20 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
    */
   let composed: LocalAgentHost | undefined
 
-  const resolveTargetSession = (): string | undefined => {
-    if (confirms === undefined) return undefined
-    // WATCHED **AND** IN FLIGHT. A live channel says a browser is there; an active turn id says
-    // that conversation is the one waiting on an answer. Neither alone identifies the asker, and
-    // the composition's own `onDecision` takes exactly this fail-safe (392-12): more than one
-    // candidate, or none, and this port refuses rather than guessing a transcript.
-    const candidates = confirms.liveSessionIds()
-      .filter((sessionId) => composed?.chat.stateFor(sessionId)?.activeTurnId !== undefined)
-    return candidates.length === 1 ? candidates[0] : undefined
-  }
+  // THE ONE PREDICATE, read through the box above. Both the confirm's target and this door's
+  // execution-context claim resolve through this call and no other — see `watchedTurnSession` for
+  // why a second spelling of the rule is the defect rather than a duplication.
+  const resolveTargetSession = (): string | undefined =>
+    watchedTurnSession(
+      confirms,
+      (sessionId) => composed?.chat.stateFor(sessionId)?.activeTurnId !== undefined,
+    )
+
+  // The explicit-override rung first (the conformance suite's posture), else the derived honest
+  // claim. No `confirms` needs no separate arm: the predicate answers `undefined` for a door with
+  // no channel at all, which is the translated no-TTY posture, spelled once.
+  const resolveExecutionContext = input.resolveExecutionContext
+    ?? dashboardExecutionContext(resolveTargetSession)
 
   const host = composeCliLocalAgent({
     agentQaRoot: input.agentQaRoot,
@@ -514,7 +565,7 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
       input.boundOrigin,
       workspaceSegment,
     ),
-    resolveExecutionContext: input.resolveExecutionContext,
+    resolveExecutionContext,
     // D-04 (400-03): ONE substrate, tagged. A dashboard conversation rides the exact
     // `.agent-qa/sessions/chat-*.jsonl` log `agent-qa chat` writes — resume, compaction and the
     // cleartext-masking adjudication apply once, to one population — and what distinguishes it is
@@ -556,7 +607,11 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
     }),
   })
   composed = host
-  return { host, agentHost: composeDashboardAgentHost(host, sessionEvents, confirms) }
+  return {
+    host,
+    agentHost: composeDashboardAgentHost(host, sessionEvents, confirms),
+    resolveExecutionContext,
+  }
 }
 
 type DashboardCommandOptions = {
@@ -679,16 +734,13 @@ async function startDashboardBackedServices(
       configPath: configFilePath,
       boundOrigin: () => boundOrigin,
       ...(chatModel === undefined ? {} : { chatModel }),
-      // D-05, answered per RESEARCH Pattern 2: reuse `local-interactive` through the spec's own
-      // explicit-override rung rather than minting a fifth vocabulary member, and supply it
-      // INJECTED rather than through `setActiveExecutionContextResolver` — that setter is a process
-      // global and would re-answer the question for every composition in this process (Pitfall 5).
-      //
-      // 400-03 NARROWED THE BODY, and the seam is the one 400-01 shipped: the answer is now
-      // `local-interactive` only while a browser holds a stream this door can ask a question down.
-      // See `dashboardExecutionContext` for why claiming otherwise would be dishonest rather than
-      // merely optimistic.
-      resolveExecutionContext: dashboardExecutionContext(confirms),
+      // NO `resolveExecutionContext` (400-13). D-05 is answered per RESEARCH Pattern 2 — reuse
+      // `local-interactive` rather than minting a fifth vocabulary member — but the answer is a
+      // PER-CONVERSATION fact that only the composition can compute, so production supplies no
+      // override and takes the derived predicate. What this command used to pass was "any channel
+      // anywhere", which is the posture gap 3 measured false. Nothing here reaches
+      // `setActiveExecutionContextResolver` either: that setter is a process global and would
+      // re-answer the question for every composition in this process (Pitfall 5).
       confirms,
     })
 

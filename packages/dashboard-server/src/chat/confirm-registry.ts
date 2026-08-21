@@ -116,8 +116,19 @@ export interface ConfirmRegistry {
   openChannel(sessionId: string): () => void
   /** Every session with at least one live channel — the caller's input for choosing a target. */
   liveSessionIds(): readonly string[]
-  /** Whether ANY channel is live. The execution-context predicate's whole question (D-05). */
-  hasLiveChannel(): boolean
+  /**
+   * Whether THIS conversation has a live channel (400-13, gap 3).
+   *
+   * SESSION-SCOPED, AND THE ZERO-ARG FORM IS DELETED RATHER THAN KEPT BESIDE IT. `hasLiveChannel()`
+   * answered `channels.size > 0` — a fact about the PROCESS, and the only fact this registry ever
+   * answered that named no conversation. Its one consumer was the door's execution-context
+   * resolver, so a stream opened on any id at all made every conversation in the process claim a
+   * human was watching, and an UNWATCHED conversation's ask-tier denial went to the audit ledger as
+   * `prompted-denied` — a prompt nobody was shown. "Any channel anywhere" is not a question about a
+   * conversation, and the only questions this registry may answer are per-conversation; removing
+   * the global form is what stops a later caller from re-acquiring the one that is not.
+   */
+  hasLiveChannel(sessionId: string): boolean
   /** Watch the frames above. Returns its own unsubscribe. */
   subscribe(listener: (sessionId: string, frame: ChatConfirmChannelFrame) => void): () => void
   /** Ask, and wait. Resolves `deny` for a session no channel is watching (D-06). */
@@ -213,8 +224,8 @@ export function createConfirmRegistry(
       return [...channels.keys()]
     },
 
-    hasLiveChannel() {
-      return channels.size > 0
+    hasLiveChannel(sessionId) {
+      return channels.has(sessionId)
     },
 
     subscribe(listener) {
