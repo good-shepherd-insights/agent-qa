@@ -34,6 +34,7 @@ import type {
   FunctionCaller,
   FunctionCallerOrigin,
   FunctionScope,
+  GateRemedy,
 } from '@vostride/agent-qa-schema'
 
 import { registryInternals, resolveBindingStatus } from './registry.js'
@@ -97,11 +98,26 @@ export class FunctionOriginError extends Error {
   }
 }
 
-/** The policy gate returned `deny` for this invocation. */
+/**
+ * The policy gate returned `deny` for this invocation.
+ *
+ * `remedies` CARRIES THE GATE'S OWN ANSWER TO "now what" (400 D-15), unprojected. Each surface
+ * applies `remediesRenderableBy` at its render; this class does not choose for them, because it
+ * cannot know which door it will be caught on — the same object reaches a terminal, a chat
+ * transcript, an MCP client and the daemon's wire, and the whole finding
+ * (`399-friction-refusal-remedies-unreachable`) is what happens when one of them is shown
+ * another's instructions.
+ *
+ * IT IS AN ENUMERABLE OWN PROPERTY, which is load-bearing across the daemon: `wireError` preserves
+ * exactly those, so the remedies survive the hop and the client reconstructs them. It DEFAULTS to
+ * empty so a caller that has no gate decision in hand cannot be forced to invent one — and an
+ * empty list renders as honest absence rather than as a wrong remedy.
+ */
 export class FunctionDeniedError extends Error {
   constructor(
     readonly functionId: string,
     readonly reason: string,
+    readonly remedies: readonly GateRemedy[] = [],
   ) {
     super(`Denied ${functionId}: ${reason}`)
     this.name = 'FunctionDeniedError'
@@ -232,7 +248,7 @@ export async function invokeFunction(
     },
   )
   if (policy.verdict === 'deny') {
-    throw new FunctionDeniedError(functionId, policy.reason)
+    throw new FunctionDeniedError(functionId, policy.reason, policy.remedies)
   }
 
   // Binding is checked AFTER the gate on purpose (D-09/D-11): an attempt to run a

@@ -23,7 +23,13 @@
 // already owns (`ask`'s `emitHuman`, chat's own masked write). A render that printed for itself
 // would be a disclosure boundary with none of `unmaskForHumanOutput`'s cover.
 
-import type { ClauseReceipt, ClauseReceiptStatus } from '@vostride/agent-qa-schema'
+import {
+  remediesRenderableBy,
+  type ClauseReceipt,
+  type ClauseReceiptStatus,
+  type GateRemedy,
+  type RemedyKindFor,
+} from '@vostride/agent-qa-schema'
 import pc from 'picocolors'
 
 /**
@@ -60,3 +66,65 @@ const STATUS_STYLE = {
   refused: pc.yellow,
   'not-run': pc.dim,
 } as const satisfies Record<ClauseReceiptStatus, (text: string) => string>
+
+/**
+ * A refusal as this door renders it: the canonical reason, then the ways forward A CLI READER CAN
+ * ACTUALLY TAKE — and when there are none, the reason alone (400 D-15).
+ *
+ * WHY THIS IS NOT A SENTENCE THE GATE WRITES. Phase 399 measured the fail-closed denial telling an
+ * MCP client to "opt in with --trust-session", a flag declared on `agent-qa run` and on no other
+ * command. One string cannot be right for a terminal, a transcript, a protocol client and a
+ * browser, and the shape of being wrong is always the same: one surface's instructions rendered to
+ * a reader on another. The gate mints DATA now; this is the CLI's projection of it and nothing
+ * else renders for the CLI (`399-friction-refusal-remedies-unreachable`).
+ *
+ * THE REASON IS RETURNED FIRST AND UNTOUCHED. It is the audit/log text and the previous phase
+ * published its bytes; this function never edits it, only follows it.
+ *
+ * AN EMPTY PROJECTION APPENDS NOTHING, which is the half that had to be a decision rather than a
+ * fallthrough. A render that reached for a line when it had nothing to offer would re-mint the
+ * defect: a reader spending time on a way forward that is not there. `[reason]` is a complete
+ * answer.
+ *
+ * NO PRINT SITE LIVES HERE, on this module's own charter: it returns strings, and the caller emits
+ * them through the masker it already owns.
+ */
+export function denialDetailLines(
+  reason: string,
+  remedies: readonly GateRemedy[],
+): readonly string[] {
+  return [
+    reason,
+    ...remediesRenderableBy('cli', remedies).map(
+      (remedy) => `  ${pc.dim(CLI_REMEDY_TEXT[remedy.kind as RemedyKindFor<'cli'>](remedy))}`,
+    ),
+  ]
+}
+
+/**
+ * How each CLI-takeable remedy reads on a terminal — TOTAL over that set, and the totality is the
+ * guard, on `STATUS_STYLE`'s argument one screen up.
+ *
+ * THE KEY SET IS DERIVED, NOT LISTED. `RemedyKindFor<'cli'>` is computed from the vocabulary's own
+ * surface table, so the day a kind is added with `cli` among its surfaces, this record is missing
+ * a required arm and THIS LINE fails to compile. A hand-written list of "the kinds the CLI
+ * renders" would have been a second copy of that table, free to drift from it — and the drift
+ * would present as a remedy the gate mints for this door and this door silently drops.
+ *
+ * THE FLAG'S NAME IS NOT SPELLED IN THIS FILE. It arrives in `params`, minted beside the gate arm
+ * that knows it, because the one fact the todo turned on is WHICH COMMAND declares it — and a
+ * render carrying its own copy of that answer is a third place for it to go stale.
+ */
+const CLI_REMEDY_TEXT = {
+  'answer-confirm': () =>
+    'answer the confirm prompt: re-run on an interactive terminal, with stdout not redirected',
+  'trust-session-flag': (remedy: GateRemedy) => {
+    const flag = remedy.params?.flag
+    const command = remedy.params?.command
+    if (flag === undefined) return 'opt in for this session with the trust-session flag'
+    return command === undefined
+      ? `opt in for this session with ${flag}`
+      : `opt in for this session with \`agent-qa ${command} ${flag}\` `
+        + '— declared on that command and no other'
+  },
+} as const satisfies Record<RemedyKindFor<'cli'>, (remedy: GateRemedy) => string>

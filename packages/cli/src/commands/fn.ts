@@ -7,6 +7,7 @@
 import { dirname, resolve } from 'node:path'
 
 import {
+  FunctionDeniedError,
   createMaskingContext,
   invokeFunction,
   unmaskForHumanOutput,
@@ -22,6 +23,7 @@ import {
 } from '../composition/local-agent-host.js'
 import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import { invokeViaDaemon } from '../daemon/client.js'
+import { denialDetailLines } from './receipt-line.js'
 
 interface FnOptions {
   list?: boolean
@@ -203,6 +205,19 @@ function renderListing(declarations: readonly FunctionDeclaration[]): string {
 function reportError(error: unknown): void {
   if (error instanceof FnCommandError) {
     console.error(pc.red(`Function error [${error.code}]: ${error.message}`))
+  } else if (error instanceof FunctionDeniedError) {
+    // 400 D-15. THE DOOR THAT ISSUED THE REFUSAL IS THE DOOR THAT ANSWERS "now what". Phase 399's
+    // rehearsal read this exact line from an MCP client and was told to pass a flag declared on a
+    // different command; the projection below is why that cannot happen again — this surface
+    // renders only the remedies a CLI reader can take, and renders nothing when there are none.
+    console.error(
+      pc.red(
+        denialDetailLines(
+          `Function error [${error.name}]: ${error.message}`,
+          error.remedies,
+        ).join('\n'),
+      ),
+    )
   } else if (error instanceof Error) {
     console.error(pc.red(`Function error [${error.name}]: ${error.message}`))
   } else {

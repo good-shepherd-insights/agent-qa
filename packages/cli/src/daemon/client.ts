@@ -9,7 +9,8 @@ import {
   StreamReplayFloorError,
   UnknownFunctionError,
 } from '@vostride/agent-qa-agent'
-import type { FunctionScope } from '@vostride/agent-qa-schema'
+import { GATE_REMEDY_KINDS } from '@vostride/agent-qa-schema'
+import type { FunctionScope, GateRemedy, GateRemedyKind } from '@vostride/agent-qa-schema'
 
 import {
   classifyDaemonRegistration,
@@ -74,6 +75,9 @@ interface WireError {
   readonly issues?: unknown
   readonly missingScopes?: unknown
   readonly reason?: unknown
+  // 400 D-15: the gate's structured remedies, preserved across the hop by `wireError`'s
+  // enumerable-own-property spread and re-validated on the way in by `wireRemedies`.
+  readonly remedies?: unknown
   readonly runId?: unknown
   readonly requestedSeq?: unknown
   readonly earliestAvailableSeq?: unknown
@@ -170,7 +174,14 @@ export function rehydrateFunctionError(value: unknown, statusCode: number): Erro
     functionId !== undefined &&
     typeof wire.reason === 'string'
   ) {
-    return new FunctionDeniedError(functionId, wire.reason)
+    // 400 D-15: the remedies ride the wire because `wireError` preserves enumerable own
+    // properties, and they are RECONSTRUCTED HERE rather than dropped — a read side that ignored
+    // them would leave the daemon-routed door silently remedy-less while the direct door renders
+    // them, which is a one-sided contract and the class of half-fix this codebase has paid for
+    // before. They are re-validated against the shipped vocabulary rather than trusted: an
+    // unknown `kind` arriving from a wire must not reach a render map that is total over the
+    // kinds this build declares.
+    return new FunctionDeniedError(functionId, wire.reason, wireRemedies(wire.remedies))
   }
   if (wire?.name === 'FunctionNotBoundError' && functionId !== undefined) {
     return new FunctionNotBoundError(functionId)
@@ -511,4 +522,37 @@ export async function nudgeDaemon(
     // A missed nudge is intentionally invisible; the daemon's poll loop is the backstop.
     return undefined
   }
+}
+
+/**
+ * The remedies a wire error carried, kept only where the shipped vocabulary recognises them.
+ *
+ * DROPS RATHER THAN THROWS. A refusal that failed to reconstruct because a peer offered a remedy
+ * kind this build does not know would replace a governed denial with a parse error — the caller
+ * would lose the reason too. An unrecognised kind is simply not a remedy here.
+ */
+function wireRemedies(value: unknown): readonly GateRemedy[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry): GateRemedy[] => {
+    if (typeof entry !== 'object' || entry === null) return []
+    const kind = (entry as { kind?: unknown }).kind
+    if (
+      typeof kind !== 'string' ||
+      !(GATE_REMEDY_KINDS as readonly string[]).includes(kind)
+    ) {
+      return []
+    }
+    const params = (entry as { params?: unknown }).params
+    const usableParams =
+      typeof params === 'object' &&
+      params !== null &&
+      Object.values(params).every((entryValue) => typeof entryValue === 'string')
+        ? (params as Record<string, string>)
+        : undefined
+    return [
+      usableParams === undefined
+        ? { kind: kind as GateRemedyKind }
+        : { kind: kind as GateRemedyKind, params: usableParams },
+    ]
+  })
 }
