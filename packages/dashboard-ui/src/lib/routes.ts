@@ -2,6 +2,7 @@ import { shouldRouteRunToLive } from '@/lib/status'
 
 export const routes = {
   runs: '/runs',
+  chat: '/chat',
   tests: '/tests',
   testNew: '/tests/new',
   hooks: '/hooks',

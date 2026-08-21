@@ -1379,15 +1379,30 @@ export async function answerChatConfirm(input: {
   return postJson<{ resolved: boolean; answer: ChatConfirmAnswer }>('/api/chat/confirm', input)
 }
 
-/** One op row of the served capability catalog — the artifact's fourth projection. */
+/**
+ * One row of the COMMITTED capability catalog, as the artifact spells it.
+ *
+ * The fields are the artifact's own, not a browser-shaped subset: the catalog is produced from a
+ * real composition's declarations and the CLI's `/help`, its completer and `init --agent` all read
+ * these same rows. A remapping here would be this surface's private idea of the document.
+ */
 export interface ChatCapabilityRow {
-  id: string
-  summary?: string
-  tier?: string
+  kind: string
+  alias?: string
+  targetOpId?: string
+  opId?: string
+  description?: string
+  docPath?: string | null
 }
 
-export async function fetchChatCapabilityCatalog(): Promise<{ ops: ChatCapabilityRow[] }> {
-  return request<{ ops: ChatCapabilityRow[] }>('/api/chat/catalog')
+export interface ChatCapabilityCatalog {
+  rowCount: number
+  rowsDigest: string
+  rows: ChatCapabilityRow[]
+}
+
+export async function fetchChatCapabilityCatalog(): Promise<ChatCapabilityCatalog> {
+  return request<ChatCapabilityCatalog>('/api/chat/catalog')
 }
 
 /**

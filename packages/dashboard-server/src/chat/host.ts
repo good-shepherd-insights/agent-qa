@@ -181,6 +181,22 @@ export interface AgentHost {
    * `unmask` count for any one byte stays exactly one.
    */
   unmaskForDisplay(text: string): string
+  /**
+   * The committed capability catalog, as its ONE loader reads it (400-06, RESEARCH Open Q4).
+   *
+   * A FOURTH PROJECTION OF ONE ARTIFACT, not a fifth answer to "what can this product do". The
+   * catalog is PRODUCED from a real composition's declarations and committed; the CLI's `/help`,
+   * its completer and `agent-qa init --agent` all read that same file through
+   * `loadCapabilityCatalog`, and the browser needs the same bytes for the same two jobs. Serving
+   * it is therefore a read of an existing artifact rather than a new source of truth — which is
+   * exactly why this seam hands over a LOADER rather than letting this package walk to a path: the
+   * file's location is resolved by the package that ships it, and a second resolver here would be
+   * a second place for the answer to go stale.
+   *
+   * OPTIONAL, on the `confirms` idiom: a server composed without one answers 501, which is a
+   * different fact from an unrecognised path and a client can act on the difference.
+   */
+  readCapabilityCatalog?(): unknown
 }
 
 /** One executed clause's result, with the fold that makes it legible. */

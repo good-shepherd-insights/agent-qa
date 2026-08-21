@@ -32,6 +32,11 @@ const appHarness = vi.hoisted(() => ({
 vi.mock('@/lib/api', () => ({
   fetchAppMetadata: appHarness.fetchAppMetadata,
   fetchTestFiles: appHarness.fetchTestFiles,
+  // 400-06: the app shell now holds ONE chat session, and its provider reads the committed
+  // capability catalog once on mount. This mock is an allow-list by design, so the shell's new
+  // read has to be declared here — a rejection is the shape a server with no catalog loader
+  // produces, and the shell must keep working under it.
+  fetchChatCapabilityCatalog: () => Promise.reject(new Error('no catalog in this fixture')),
 }))
 
 vi.mock('@/pages/runs', () => ({

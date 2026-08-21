@@ -37,6 +37,7 @@ import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { remediesRenderableBy, type ChatSessionEvent } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
+import { resolveCapabilityCatalogPath } from '../capability-catalog/loader.js'
 import {
   composeDashboardDoor,
   overlayDashboardBaseUrl,
@@ -281,6 +282,27 @@ describe('the dashboard chat door dispatches one utterance end to end', () => {
     const answered = await postTurn(door.origin, { message: '/fn config.get {}' })
     expect(answered.status).toBe(200)
     expect((answered.body as ChatTurnResponse).result.denials).toEqual([])
+  })
+
+  it('serves the COMMITTED capability catalog, byte for byte (400-06, RESEARCH Open Q4)', async () => {
+    // ONE ARTIFACT, A FOURTH PROJECTION. The catalog is produced from a real composition's
+    // declarations and committed; `/help`, the completer and `init --agent` all read that file.
+    // The browser needs the same document, and the only way to be sure it IS the same document is
+    // to compare the served bytes against the file on disk — a shape assertion ("it has rows")
+    // would stay green against a catalog this door assembled for itself, which is the second
+    // source of truth the whole artifact exists to prevent.
+    const response = await fetch(`${door.origin}/api/chat/catalog`)
+    expect(response.status).toBe(200)
+    // No wildcard here either: this route rides the same prefix and the same responder.
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
+    const served = await response.json() as { rowCount: number; rowsDigest: string; rows: unknown[] }
+    const committed = JSON.parse(
+      readFileSync(resolveCapabilityCatalogPath(), 'utf8'),
+    ) as { rowCount: number; rowsDigest: string; rows: unknown[] }
+    expect(served).toEqual(committed)
+    // And the artifact's own mechanical self-check still holds over what was served.
+    expect(served.rows).toHaveLength(served.rowCount)
+    expect(served.rowsDigest).toBe(committed.rowsDigest)
   })
 
   it('writes no cross-origin wildcard on the mutating turn route (T-400-03)', async () => {

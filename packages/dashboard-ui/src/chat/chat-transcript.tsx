@@ -32,19 +32,50 @@ import {
   type RemedyKindFor,
 } from "@vostride/agent-qa-schema"
 
+import { useChatSession } from "@/chat/chat-session-context"
 import { ChatMarkdown } from "@/chat/chat-markdown"
 import { ConfirmBubble } from "@/chat/confirm-bubble"
 import { ReceiptRow } from "@/chat/receipt-row"
 import type { ChatEntry, ChatTranscriptState, ChatTurnStatus } from "@/chat/use-chat-turn"
-import type { ChatConfirmAnswer } from "@/lib/api"
+import type { ChatCapabilityRow, ChatConfirmAnswer } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 export interface ChatTranscriptViewProps {
   state: ChatTranscriptState
   status: ChatTurnStatus | string
   starters: readonly string[]
+  /**
+   * The committed catalog's rows, for `/fn <op>` completion. Optional so a cell can drive the
+   * render without one — and because a door composed with no catalog loader honestly has none.
+   */
+  capabilities?: readonly ChatCapabilityRow[]
   onSend: (utterance: string) => void
   onAnswerConfirm: (confirmId: string, answer: ChatConfirmAnswer) => void
+}
+
+/** The prefix a person types when they mean an op id — the resolver table's own passthrough. */
+const FN_PREFIX = "/fn "
+
+/**
+ * The op ids a half-typed `/fn` could mean, READ OFF THE COMMITTED CATALOG.
+ *
+ * NOT ASSEMBLED HERE, and that is the whole design. The set of capabilities has exactly one
+ * published answer — the artifact produced from a real composition's declarations — and a list this
+ * component built from anything else would be a second one, free to advertise an op this door
+ * cannot reach. Empty in, empty out: no catalog means no suggestions, never a guess.
+ */
+function completionsFor(
+  draft: string,
+  capabilities: readonly ChatCapabilityRow[],
+): readonly string[] {
+  if (!draft.startsWith(FN_PREFIX)) return []
+  const typed = draft.slice(FN_PREFIX.length).trimStart().split(/\s/)[0] ?? ""
+  const ids = new Set<string>()
+  for (const row of capabilities) {
+    const id = row.opId ?? row.targetOpId
+    if (id !== undefined && id.includes(typed)) ids.add(id)
+  }
+  return [...ids].sort().slice(0, 8)
 }
 
 /**
@@ -77,10 +108,12 @@ export function ChatTranscriptView({
   state,
   status,
   starters,
+  capabilities = [],
   onSend,
   onAnswerConfirm,
 }: ChatTranscriptViewProps) {
   const [draft, setDraft] = useState("")
+  const completions = completionsFor(draft, capabilities)
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -112,6 +145,21 @@ export function ChatTranscriptView({
           />
         ))}
       </div>
+      {completions.length === 0 ? null : (
+        <div data-chat-completions className="flex flex-wrap gap-1">
+          {completions.map((id) => (
+            <button
+              key={id}
+              type="button"
+              data-chat-completion={id}
+              onClick={() => { setDraft(`${FN_PREFIX}${id} `) }}
+              className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground hover:bg-accent"
+            >
+              {id}
+            </button>
+          ))}
+        </div>
+      )}
       <form data-chat-form onSubmit={submit} className="flex items-end gap-2">
         <textarea
           data-chat-input
@@ -137,6 +185,29 @@ export function ChatTranscriptView({
         </button>
       </form>
     </div>
+  )
+}
+
+/**
+ * THE shared transcript, bound to the app's ONE chat session.
+ *
+ * THIS is what both mounts render, and it takes NO PROPS on purpose. A mount that could configure
+ * the transcript would be a mount that could configure it DIFFERENTLY, and the per-placement
+ * divergence D-13 forbids would arrive one prop at a time rather than as a second file. `/chat` and
+ * the panel each contain exactly `<ChatTranscript />`; plan 400-09's thin DOM cell proves they
+ * resolve to this module.
+ */
+export function ChatTranscript() {
+  const session = useChatSession()
+  return (
+    <ChatTranscriptView
+      state={session.state}
+      status={session.status}
+      starters={session.starters}
+      capabilities={session.capabilities}
+      onSend={session.sendTurn}
+      onAnswerConfirm={session.answerConfirm}
+    />
   )
 }
 

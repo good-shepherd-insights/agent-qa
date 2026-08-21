@@ -20,6 +20,7 @@ function icon(name: string) {
 
 vi.mock("lucide-react", () => ({
   Play: icon("Play"),
+  MessageSquare: icon("MessageSquare"),
   FileText: icon("FileText"),
   Webhook: icon("Webhook"),
   Wrench: icon("Wrench"),
@@ -327,6 +328,10 @@ describe("AppSidebar", () => {
     }
 
     expect(container.querySelector('a[href="/insights"]')?.getAttribute("data-tour-id")).toBeNull()
+    // 400-06: `/chat` is a primary nav item and deliberately carries NO tour anchor — the product
+    // tour is a fixed, approved sequence and adding a step to it is a decision that belongs to
+    // whoever owns the tour, not to the phase that ships the page.
+    expect(container.querySelector('a[href="/chat"]')?.getAttribute("data-tour-id")).toBeNull()
   })
 
   it("uses a safe grouped feedback mailto body", async () => {

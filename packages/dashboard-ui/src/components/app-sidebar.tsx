@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { useLocation, Link } from "react-router"
 import {
   Play,
+  MessageSquare,
   FileText,
   Webhook,
   FolderOpen,
@@ -49,6 +50,9 @@ import { useTheme } from "@/components/theme-provider"
 
 const navItems = [
   { title: "Runs", url: routes.runs, icon: Play, tourId: "tour-nav-runs" },
+  // 400-06: the fourth door's page mount. The side panel is reachable from anywhere and shows the
+  // SAME conversation; this is the full-height view of it.
+  { title: "Chat", url: routes.chat, icon: MessageSquare },
   { title: "Tests", url: routes.tests, icon: FileText, tourId: "tour-nav-tests" },
   { title: "Hooks", url: routes.hooks, icon: Webhook, tourId: "tour-nav-hooks" },
   { title: "Suites", url: routes.suites, icon: FolderOpen, tourId: "tour-nav-suites" },

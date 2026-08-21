@@ -29,6 +29,7 @@ import type {
   MaskedConfigEntry,
   RiskActionDescriptor,
 } from '@vostride/agent-qa-schema'
+import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
 import { resolveConfig } from '../config.js'
 import {
   CLI_FUNCTION_CALLER,
@@ -148,6 +149,9 @@ export function composeDashboardAgentHost(
     // disposed per emit rather than held, exactly as every CLI emit site does it — a long-lived
     // one would be a resolved secret map kept alive for the lifetime of a server process, for no
     // gain over building it at the moment bytes leave.
+    // 400-06: the ONE loader, called by the door that serves the browser's `/help`. The path is
+    // resolved by `loader.ts` (which ships the file) and never by dashboard-server.
+    readCapabilityCatalog: (): unknown => loadCapabilityCatalog(),
     unmaskForDisplay: (text: string): string => {
       const maskingContext = createMaskingContext()
       try {

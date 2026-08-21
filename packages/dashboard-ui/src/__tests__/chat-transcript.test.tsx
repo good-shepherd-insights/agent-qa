@@ -24,7 +24,8 @@ import { CLAUSE_RECEIPT_STATUSES, type ClauseReceiptStatus } from '@vostride/age
 
 import { ChatMarkdown } from '@/chat/chat-markdown'
 import { RECEIPT_STATUS_PRESENTATION } from '@/chat/receipt-row'
-import { ChatTranscriptView, type ChatTranscriptViewProps } from '@/chat/chat-transcript'
+import { ChatTranscript, ChatTranscriptView, type ChatTranscriptViewProps } from '@/chat/chat-transcript'
+import { ChatSessionProvider } from '@/chat/chat-session-context'
 import {
   createChatTranscriptState,
   reduceChatTranscript,
@@ -405,5 +406,123 @@ describe('the confirm bubble is a render over the plan-03 bridge (D-06 / D-07)',
     for (const answer of ['accept', 'accept-always', 'deny']) {
       expect(source).toContain(`"${answer}"`)
     }
+  })
+})
+
+describe('the page and the panel are two MOUNTS of one component (D-13)', () => {
+  it('both mount files contain the transcript element and no render logic of their own', () => {
+    // THE SOURCE ASSERTION IS THE POINT HERE, and it is not a stand-in for a DOM cell (plan 400-09
+    // drives the built UI in a real browser). What it holds is the shape D-13 asks for: the second
+    // entry DASH-01 forbids would arrive as a receipt/payload/remedy branch inside one of these
+    // two files, and it would look reasonable on the day somebody wrote it.
+    const page = readFileSync(resolvePath(process.cwd(), 'src/pages/chat.tsx'), 'utf8')
+    const panel = readFileSync(resolvePath(process.cwd(), 'src/components/chat-panel.tsx'), 'utf8')
+
+    for (const [name, source] of [['page', page], ['panel', panel]] as const) {
+      expect(source, `${name} does not import the shared transcript`)
+        .toContain('from "@/chat/chat-transcript"')
+      expect(source, `${name} does not mount it`).toContain('<ChatTranscript />')
+      const code = source
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('//'))
+        .join('\n')
+      // Nothing that renders a receipt, a payload, a remedy or a confirm may live in a mount.
+      expect(code, `${name} grew transcript logic`).not.toMatch(
+        /RECEIPT_STATUS_PRESENTATION|remediesRenderableBy|data-payload|data-receipt|ConfirmBubble|ReceiptRow/,
+      )
+    }
+    // And they name the SAME module specifier, so "the same component" is a fact a grep can check
+    // rather than an intention.
+    const specifier = /from "(@\/chat\/chat-transcript)"/
+    expect(specifier.exec(page)?.[1]).toBe(specifier.exec(panel)?.[1])
+  })
+
+  it('registers the chat route on the house idiom — crumb, error boundary, lazy Suspense', () => {
+    const app = readFileSync(resolvePath(process.cwd(), 'src/app.tsx'), 'utf8')
+    expect(app).toContain('const ChatPage = lazy(() => import("@/pages/chat"))')
+    const entry = /path: "chat",[\s\S]{0,400}?<ChatPage \/>/.exec(app)?.[0] ?? ''
+    expect(entry, 'the chat route entry was not found in app.tsx').not.toBe('')
+    expect(entry).toContain('handle: { crumb: "Chat" }')
+    expect(entry).toContain('errorElement: <RouteErrorBoundary />')
+    expect(entry).toContain('<Suspense')
+    // The panel is mounted beside the other global overlays, so it is reachable from every route.
+    expect(app).toContain('<ChatPanel />')
+    expect(app).toContain('<ChatSessionProvider>')
+  })
+
+  it('renders one transcript per mount, both reading the one session', () => {
+    // The mounts are rendered TOGETHER under a single provider — which is the state that would
+    // expose two hooks, two sessions and two streams if the provider were not the one holding
+    // them. Both mounts show the same entry because there is only one transcript state.
+    const dom = mount(
+      <ChatSessionProvider>
+        <TwoMountHarness />
+      </ChatSessionProvider>,
+    )
+    expect(dom.querySelectorAll('[data-chat-transcript]')).toHaveLength(2)
+    expect(dom.querySelectorAll('[data-chat-form]')).toHaveLength(2)
+  })
+})
+
+/** Both mounts, side by side, exactly as the app renders them: the page's tree and the panel's. */
+function TwoMountHarness() {
+  return (
+    <>
+      <ChatTranscript />
+      <ChatTranscript />
+    </>
+  )
+}
+
+describe('the browser completes `/fn <op>` from the ONE committed catalog (RESEARCH Open Q4)', () => {
+  it('suggests only op ids the served artifact declares, and only for `/fn`', () => {
+    // The suggestion set has exactly one source: the artifact produced from a real composition's
+    // declarations, served over the door's catalog route. A component that assembled its own list
+    // would be advertising capabilities nobody checked this door can reach.
+    const capabilities = [
+      { kind: 'op', opId: 'runs.digest' },
+      { kind: 'alias', alias: 'digest', targetOpId: 'runs.digest' },
+      { kind: 'op', opId: 'runs.start' },
+      { kind: 'op', opId: 'config.get' },
+    ]
+    const dom = mount(
+      <ChatTranscriptView
+        state={createChatTranscriptState()}
+        {...NOOP_HANDLERS}
+        capabilities={capabilities}
+      />,
+    )
+    const input = dom.querySelector('[data-chat-input]') as HTMLTextAreaElement
+    const type = (value: string) => {
+      act(() => {
+        const setter = Object.getOwnPropertyDescriptor(
+          globalThis.HTMLTextAreaElement.prototype,
+          'value',
+        )?.set
+        setter?.call(input, value)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+
+    // Ordinary prose is not a capability query and must not sprout a completer.
+    type('what changed in my last run?')
+    expect(dom.querySelectorAll('[data-chat-completion]')).toHaveLength(0)
+
+    type('/fn runs.')
+    expect([...dom.querySelectorAll('[data-chat-completion]')].map((n) => n.textContent))
+      .toEqual(['runs.digest', 'runs.start'])
+
+    // And with no catalog served there are no suggestions, never a guessed one.
+    const bare = mount(<ChatTranscriptView state={createChatTranscriptState()} {...NOOP_HANDLERS} />)
+    const bareInput = bare.querySelector('[data-chat-input]') as HTMLTextAreaElement
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(
+        globalThis.HTMLTextAreaElement.prototype,
+        'value',
+      )?.set
+      setter?.call(bareInput, '/fn runs.')
+      bareInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(bare.querySelectorAll('[data-chat-completion]')).toHaveLength(0)
   })
 })

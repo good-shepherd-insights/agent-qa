@@ -43,6 +43,18 @@ export const CHAT_TURN_ROUTE = '/api/chat/turn'
 export const CHAT_CAPABILITIES_ROUTE = '/api/chat/capabilities'
 
 /**
+ * The committed capability catalog, served (400-06).
+ *
+ * BESIDE `capabilities` AND NOT INSTEAD OF IT, because they answer different questions.
+ * `/capabilities` is PRODUCED by driving this door's own registry listing — it is what the
+ * conformance adapter enumerates and it says what THIS door reaches right now. `/catalog` serves
+ * the committed artifact: aliases, descriptions, doc paths, the migration map — the human-facing
+ * documentation the CLI's `/help` and completer read. Collapsing them would either put prose in
+ * the enumeration the roster measures or make the roster's census depend on a checked-in file.
+ */
+export const CHAT_CATALOG_ROUTE = '/api/chat/catalog'
+
+/**
  * Where a person's yes / always / no comes back (400-03, D-05 / D-06 / D-07).
  *
  * A SECOND ROUTE AND NOT A SECOND DOOR. It dispatches nothing and reaches no capability: all it can
@@ -317,6 +329,30 @@ async function handleConfirm(
   respond(res, { resolved: true, answer: outcome.answer })
 }
 
+function handleCatalog(host: AgentHost, respond: Respond, res: ServerResponse): void {
+  const read = host.readCapabilityCatalog
+  if (read === undefined) {
+    refuseWith(respond, res, 'The capability catalog is not available on this server', 501)
+    return
+  }
+  try {
+    // THE ARTIFACT'S OWN BYTES, whole. Projecting a subset here would make the browser's `/help` a
+    // different document from the terminal's, which is the one thing "one artifact, four
+    // projections" is for.
+    respond(res, read())
+  } catch (error) {
+    // The loader refuses a missing or unparseable file BY NAME and its message says what to run to
+    // repair it. That sentence is more use to a person than a bare 500, and it names no path this
+    // package chose.
+    refuseWith(
+      respond,
+      res,
+      error instanceof Error ? error.message : 'The capability catalog could not be read',
+      500,
+    )
+  }
+}
+
 function handleCapabilities(host: AgentHost, respond: Respond, res: ServerResponse): void {
   // Read off the door's OWN registry under the door's OWN caller, which is what makes a listing
   // taken through this route a fact about the door rather than about whoever asked.
@@ -514,6 +550,11 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
 
     if (path === CHAT_CAPABILITIES_ROUTE && req.method === 'GET') {
       handleCapabilities(host, respond, res)
+      return
+    }
+
+    if (path === CHAT_CATALOG_ROUTE && req.method === 'GET') {
+      handleCatalog(host, respond, res)
       return
     }
 
