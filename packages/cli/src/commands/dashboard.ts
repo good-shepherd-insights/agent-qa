@@ -20,6 +20,7 @@ import type {
 import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import type {
   AgentAskInput,
+  ChatSessionEvent,
   ExecutionContext,
   FunctionCaller,
   MaskedConfigEntry,
@@ -60,6 +61,41 @@ export const DASHBOARD_FUNCTION_CALLER: FunctionCaller = Object.freeze({
 })
 
 /**
+ * One notification in, however many watchers out (400-01, D-03).
+ *
+ * IT IS A FAN-OUT AND NOT A BUS, and the distinction is the whole of D-03. A bus is something a
+ * producer publishes to; this is handed a record the session log has ALREADY written and copies it
+ * to whoever is listening. It holds no history, decides no ordering and can answer no question —
+ * the buffering, the ids and the replay all live in the server that serves them, where their
+ * bounds belong.
+ *
+ * A LISTENER'S THROW IS SWALLOWED so one broken watcher cannot silence the others, on the same
+ * reasoning the composition's own notify site swallows: this channel is downstream of the durable
+ * log, and nothing on it may reach back and affect a turn.
+ */
+export interface SessionEventFanOut {
+  emit(sessionId: string, event: ChatSessionEvent): void
+  subscribe(listener: (sessionId: string, event: ChatSessionEvent) => void): () => void
+}
+
+export function createSessionEventFanOut(): SessionEventFanOut {
+  const listeners = new Set<(sessionId: string, event: ChatSessionEvent) => void>()
+  return {
+    emit(sessionId, event) {
+      for (const listener of [...listeners]) {
+        try {
+          listener(sessionId, event)
+        } catch { /* one watcher's failure is not another's, and never the turn's */ }
+      }
+    },
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+  }
+}
+
+/**
  * The composed host, as the dashboard's chat routes consume it (400-01, D-01).
  *
  * THE WHOLE OF THE COMPOSER, and it decides nothing. Every member is either a handle from the host
@@ -72,9 +108,13 @@ export const DASHBOARD_FUNCTION_CALLER: FunctionCaller = Object.freeze({
  * command does. An adapter that assembled its own seam would be enumerating a door this product
  * does not ship (397 D-01's produced-enumeration law, applied to the composition itself).
  */
-export function composeDashboardAgentHost(host: LocalAgentHost): AgentHost {
+export function composeDashboardAgentHost(
+  host: LocalAgentHost,
+  sessionEvents: SessionEventFanOut,
+): AgentHost {
   return {
     registry: host.registry,
+    onSessionEvent: (listener) => sessionEvents.subscribe(listener),
     caller: DASHBOARD_FUNCTION_CALLER,
     agentAskFunctionId: AGENT_ASK_FUNCTION_ID,
     invokeFunction: (
@@ -210,6 +250,7 @@ export interface DashboardDoor {
  * and the injected-host seam — which is the part that must not be written twice.
  */
 export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
+  const sessionEvents = createSessionEventFanOut()
   const host = composeCliLocalAgent({
     agentQaRoot: input.agentQaRoot,
     configPath: input.configPath,
@@ -218,6 +259,9 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
       input.boundOrigin,
     ),
     resolveExecutionContext: input.resolveExecutionContext,
+    // D-03: the door's half of the projection. The composition notifies this once per APPENDED
+    // event; the fan-out is what turns one notification into however many browsers are watching.
+    observeSessionEvent: (sessionId, event) => { sessionEvents.emit(sessionId, event) },
     ...(input.chatModel === undefined
       ? {}
       : {
@@ -226,7 +270,7 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
         chatAccounting: input.chatModel.accounting,
       }),
   })
-  return { host, agentHost: composeDashboardAgentHost(host) }
+  return { host, agentHost: composeDashboardAgentHost(host, sessionEvents) }
 }
 
 type DashboardCommandOptions = {

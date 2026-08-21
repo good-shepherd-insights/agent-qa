@@ -7,8 +7,14 @@ export { readJsonBody } from './body-parser.js'
 export {
   CHAT_CAPABILITIES_ROUTE,
   CHAT_ROUTE_PREFIX,
+  CHAT_STREAM_BOUNDS,
   CHAT_TURN_ROUTE,
   createChatRouter,
+  recordStreamedEvent,
+} from '../chat/chat-routes.js'
+export type {
+  ChatRouter,
+  SessionStreamWindow,
 } from '../chat/chat-routes.js'
 export type {
   AgentDeclarationRow,

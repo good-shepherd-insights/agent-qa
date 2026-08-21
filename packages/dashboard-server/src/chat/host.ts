@@ -29,6 +29,7 @@
 import type {
   AgentAskInput,
   AgentAskResult,
+  ChatSessionEvent,
   ClauseReceiptStatus,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
@@ -123,6 +124,25 @@ export interface AgentHost {
     registry: AgentRegistryHandle,
     caller: FunctionCaller,
   ): readonly AgentDeclarationRow[]
+  /**
+   * Watch session events as they are APPENDED to their log (400-01, D-03).
+   *
+   * THE STREAM IS A PROJECTION AND THIS IS WHERE THE PROJECTING STARTS. The listener is called
+   * with a record that is already on the session's JSONL file, so the durable truth and the push
+   * can disagree only by the file being wrong. A dashboard-side event bus that the turn engine
+   * published to directly would be a SECOND producer, free to drift the moment either side grew a
+   * case the other did not — which is the shape D-03 rules out by name.
+   *
+   * THE EVENT IS MASKED, because it is the persisted record: `unmaskForHumanOutput` runs exactly
+   * once, at each surface's own display boundary, and for the dashboard that boundary is the
+   * browser's render (plan 400-06). A frame that carried an unmasked payload would put op-result
+   * credentials on the wire and into whatever a client persists.
+   *
+   * Returns its own unsubscribe, so a caller tears down what it registered and nothing else.
+   */
+  onSessionEvent(
+    listener: (sessionId: string, event: ChatSessionEvent) => void,
+  ): () => void
 }
 
 /** One executed clause's result, with the fold that makes it legible. */

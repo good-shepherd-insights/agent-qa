@@ -193,6 +193,7 @@ import {
 import type {
   AuthoringBrief,
   AuthoringVerifyDraftInput,
+  ChatSessionEvent,
   ChatSessionHandle,
   CompletedRunHandoff,
   DraftReceipt,
@@ -1640,6 +1641,27 @@ export interface ComposeLocalAgentInput {
    */
   readonly resolveExecutionContext?: () => ExecutionContext
   /**
+   * Notified AFTER one session event has been appended to its log (400-01, D-03).
+   *
+   * AN OBSERVER, AND EVERY WORD OF THAT IS THE CONTRACT. It is called with an event that is
+   * ALREADY ON THE FILE — after `append` resolves, never before and never instead — so a host
+   * pushing these somewhere cannot show a person an event the durable log does not carry. It
+   * cannot append, cannot rewrite and cannot refuse: the return value is discarded and a throw is
+   * swallowed at the notify site, because a surface's push channel failing must not fail the turn
+   * that produced the event.
+   *
+   * WHY THIS AND NOT A HOST-SUPPLIED `SessionLogPort`. The obvious alternative — let a host wrap
+   * or replace the log — is exactly what D-04 forbids: sessions belong to the agent, not to a
+   * surface, and a replaceable log is a second store one conversation at a time. This seam widens
+   * nothing. The log stays the single producer and the single writer; what a host gets is a
+   * carbon copy of what was written.
+   *
+   * The SESSION ID travels with the event because the event itself carries only a `turnId` — the
+   * grammar's exact-key guard means it never will carry more (Pitfall 4), so the fact a subscriber
+   * needs is supplied beside the record rather than smuggled into it.
+   */
+  readonly observeSessionEvent?: (sessionId: string, event: ChatSessionEvent) => void
+  /**
    * The turn engine's reconciliation strategy (392 D-16).
    *
    * AN INTERNAL COMPOSITION OPTION, and every word of that is load-bearing. It is here so the
@@ -2280,6 +2302,12 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
         append: async (event) => {
           turnIds.add(event.turnId)
           await opened.append(event)
+          // 400-01 (D-03): the host's carbon copy, taken AFTER the write and never instead of it.
+          // Swallowed by name: a surface's push channel is downstream of the durable log, and a
+          // failing SSE write must not fail the turn whose event it was trying to announce.
+          try {
+            input.observeSessionEvent?.(id, event)
+          } catch { /* a push channel's failure is not the turn's */ }
         },
         turnBoundary: () => opened.turnBoundary(),
         close: async () => {

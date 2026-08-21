@@ -489,6 +489,15 @@ export interface ComposeCliLocalAgentInput {
    */
   resolveExecutionContext?: ComposeLocalAgentInput['resolveExecutionContext']
   /**
+   * Notified after one session event has been appended (400-01, D-03), passed through untouched.
+   *
+   * The dashboard door binds it so a browser can watch a turn happen; nothing else does, and an
+   * absent observer is the shipped state for every other CLI invocation. See the shared
+   * composition's own field for why this is an observer over the one log rather than a
+   * replaceable log.
+   */
+  observeSessionEvent?: ComposeLocalAgentInput['observeSessionEvent']
+  /**
    * How this host reads configuration, MASKED (400-01, D-16).
    *
    * A passthrough with a default rather than a required argument, because there is exactly one
@@ -3490,6 +3499,9 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     ...(input.resolveExecutionContext === undefined
       ? {}
       : { resolveExecutionContext: input.resolveExecutionContext }),
+    ...(input.observeSessionEvent === undefined
+      ? {}
+      : { observeSessionEvent: input.observeSessionEvent }),
     // D-18: when a live daemon holds the writer lease, this host hands it the SAME
     // `knowledge.proposal.apply` envelope over the SAME 386 socket every other capability crosses,
     // and waits bounded for the receipt. It is a closure over `invokeViaDaemon` rather than a new

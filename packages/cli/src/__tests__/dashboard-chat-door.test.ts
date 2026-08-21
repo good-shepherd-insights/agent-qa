@@ -26,8 +26,15 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
 
-import { createChatRouter, type ChatTurnResponse } from '@vostride/agent-qa-dashboard'
+import {
+  CHAT_STREAM_BOUNDS,
+  createChatRouter,
+  recordStreamedEvent,
+  type ChatTurnResponse,
+  type SessionStreamWindow,
+} from '@vostride/agent-qa-dashboard'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
+import type { ChatSessionEvent } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
@@ -363,6 +370,14 @@ async function readFrames(
   return { frames, raw, abort: () => controller.abort() }
 }
 
+/** Poll a condition the SERVER decides, rather than sleeping a number somebody guessed. */
+async function waitUntil(condition: () => boolean, budgetMs = 5_000): Promise<void> {
+  const deadline = Date.now() + budgetMs
+  while (!condition() && Date.now() < deadline) {
+    await new Promise<void>((settled) => setTimeout(settled, 10))
+  }
+}
+
 /** Every event the session's own JSONL log carries, in file order — the durable truth. */
 function loggedEvents(configRoot: string, sessionId: string): readonly Record<string, unknown>[] {
   const path = join(configRoot, '.agent-qa', 'sessions', `${sessionId}.jsonl`)
@@ -444,40 +459,115 @@ describe('the turn-events stream is a projection of the session log', () => {
     )
   })
 
-  it('tears down its listener and heartbeat when the client disconnects', async () => {
-    const answered = await postTurn(door.origin, { message: '/fn config.get {}' })
-    const { sessionId } = (answered.body as ChatTurnResponse).result
+  it('delivers LIVE, and tears down its listener and heartbeat when the client disconnects', async () => {
+    // TWO CLAIMS IN ONE CELL BECAUSE NEITHER IS HONEST ALONE. A teardown cell that only counted
+    // down would pass over a server that never subscribed at all — the count would be zero before
+    // and zero after, and every replay-based cell above would stay green, because a turn that has
+    // already finished replays out of the window whether anybody is subscribed or not. So the
+    // subscription is asserted UP (a stream is registered while it is open) and DOWN (it is gone
+    // when the socket closes), and a turn posted while the connection is open has to arrive on it.
+    const opened = await postTurn(door.origin, { message: '/fn config.get {}' })
+    const { sessionId } = (opened.body as ChatTurnResponse).result
     const streamUrl = `${door.origin}/api/chat/sessions/${sessionId}/events`
 
-    // T-400-04's other half. An abandoned stream holds a listener on the append path and a 15s
-    // interval; two connect/disconnect cycles that left either behind would grow without bound in
-    // a process a person leaves open all day, and nothing outside the server can see it happening.
+    // Everything the first turn appended, so the live half below can start from a known point
+    // instead of re-reading the window's history.
+    const priorFrames = await readFrames(streamUrl, {
+      until: (seen) => seen.some((frame) => frame.event === 'turn_complete'),
+    })
+    let seenThrough = Math.max(...priorFrames.frames.map((frame) => Number(frame.id)))
+
+    // WAITED FOR RATHER THAN READ, because a socket this file aborted a moment ago is torn down on
+    // the SERVER's turn of the loop and not on the client's — the first draft of this cell read the
+    // count while the previous connection was still registered and measured a baseline of one. The
+    // settle is itself a small proof that teardown is asynchronous and real.
+    await waitUntil(() => door.streamCount() === 0)
     const baseline = door.streamCount()
+    expect(baseline, 'a stream from an earlier cell is still registered').toBe(0)
     for (let cycle = 0; cycle < 2; cycle += 1) {
-      const live = await readFrames(streamUrl, {
-        until: (seen) => seen.some((frame) => frame.event === 'turn_complete'),
+      const controller = new AbortController()
+      const response = await fetch(streamUrl, {
+        signal: controller.signal,
+        headers: { 'Last-Event-ID': String(seenThrough) },
       })
-      expect(live.frames.length).toBeGreaterThan(0)
-      live.abort()
-      // The close event is delivered on the server's own turn of the loop.
-      await new Promise<void>((settled) => setTimeout(settled, 150))
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+
+      await waitUntil(() => door.streamCount() === baseline + 1)
+      expect(
+        door.streamCount(),
+        `cycle ${String(cycle)}: the server served a stream without registering a subscription, `
+          + 'so nothing it appends later can reach this client',
+      ).toBe(baseline + 1)
+
+      // The live half: a turn posted with the connection ALREADY OPEN. Its events cannot come from
+      // the replay — the reconnect id is past everything the window held when this socket opened.
+      const posted = await postTurn(door.origin, { message: '/fn config.get {}', sessionId })
+      const posturnId = (posted.body as ChatTurnResponse).result.turnId
+      let text = ''
+      const deadline = Date.now() + 10_000
+      while (!text.includes('event: turn_complete') && Date.now() < deadline) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        text += decoder.decode(chunk.value, { stream: true })
+      }
+      expect(
+        text,
+        `cycle ${String(cycle)}: the turn's events never reached the open stream — the push half `
+          + 'of D-03 is not connected, and every other cell here would still pass on the replay',
+      ).toContain(`"turnId":"${posturnId}"`)
+      for (const line of text.split('\n')) {
+        if (line.startsWith('id: ')) seenThrough = Math.max(seenThrough, Number(line.slice(4)))
+      }
+
+      controller.abort()
+      await waitUntil(() => door.streamCount() === baseline)
       expect(
         door.streamCount(),
         `cycle ${String(cycle)}: a disconnected stream left its listener and heartbeat behind`,
       ).toBe(baseline)
     }
-  })
+  }, 60_000)
 
-  it('bounds the replay buffer (T-400-04)', () => {
-    // A SOURCE assertion, because an unbounded buffer is invisible to any drive short of the one
-    // that exhausts memory. What is asserted is that a numeric cap EXISTS and is applied, not what
-    // its value is — the value is an operations decision and this cell must not pin it.
-    const streamPath = resolve(
-      dirname(fileURLToPath(import.meta.url)),
-      '../../../dashboard-server/src/chat/chat-routes.ts',
-    )
-    const source = readFileSync(streamPath, 'utf8')
-    expect(source).toMatch(/CHAT_STREAM_REPLAY_LIMIT\s*=\s*\d+/)
-    expect(source).toMatch(/CHAT_STREAM_SESSION_LIMIT\s*=\s*\d+/)
+  it('enforces both replay bounds, driven rather than asserted about (T-400-04)', () => {
+    // THE BOUND IS DRIVEN, and the first draft of this cell is why. It asserted that the two cap
+    // CONSTANTS existed in the source — and a mutation that deleted the enforcement while leaving
+    // the constants in place kept every cell in this file green. A cap nothing applies is a comment.
+    //
+    // The recorder is exported for exactly this reason: it is the same function the router's one
+    // subscription calls, pure over the map it is handed, so six hundred synthetic events cost a
+    // millisecond and the eviction is observed rather than argued. The cap VALUES are read from the
+    // published bounds instead of spelled here — an operations decision this cell must not pin.
+    const { replayLimit, sessionLimit } = CHAT_STREAM_BOUNDS
+    const event = (turnId: string): ChatSessionEvent =>
+      ({ kind: 'user_message', at: '2026-08-21T00:00:00.000Z', turnId, text: 'x' })
+
+    // Bound one: one session's window never exceeds the replay limit, and what it keeps is the
+    // TAIL — a window that evicted the newest events would answer "what did I miss" with the
+    // oldest thing it had.
+    const oneSession = new Map<string, SessionStreamWindow>()
+    for (let index = 0; index < replayLimit + 100; index += 1) {
+      recordStreamedEvent(oneSession, 'chat-bounded', event(`t${String(index)}`))
+    }
+    const window = oneSession.get('chat-bounded')
+    expect(window?.events.length, 'the replay window grew past its cap').toBe(replayLimit)
+    expect(window?.events.at(-1)?.id, 'ids must keep counting past an eviction, or a reconnect id '
+      + 'would address two different events').toBe(replayLimit + 100)
+    expect(window?.events.at(0)?.id, 'the window kept the head instead of the tail')
+      .toBe(101)
+
+    // Bound two: the number of TRACKED SESSIONS is capped, and the one evicted is the least
+    // recently APPENDED rather than the first created — the session somebody is watching right now
+    // is the one that must survive.
+    const manySessions = new Map<string, SessionStreamWindow>()
+    for (let index = 0; index < sessionLimit; index += 1) {
+      recordStreamedEvent(manySessions, `chat-${String(index)}`, event('t'))
+    }
+    // Touch the oldest, so eviction order and creation order disagree.
+    recordStreamedEvent(manySessions, 'chat-0', event('t'))
+    recordStreamedEvent(manySessions, 'chat-overflow', event('t'))
+    expect(manySessions.size, 'the tracked-session set grew past its cap').toBe(sessionLimit)
+    expect(manySessions.has('chat-0'), 'the recently appended session was evicted').toBe(true)
+    expect(manySessions.has('chat-1'), 'the least recently appended session survived').toBe(false)
   })
 })
