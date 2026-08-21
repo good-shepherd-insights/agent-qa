@@ -86,8 +86,16 @@ interface ComparableReceipt {
  * THE FIELDS ARE THE DECISION AND NOT ITS BOOKKEEPING. `runId` and `actionId` are per-invocation
  * identifiers that differ by construction, and comparing them would make every anchor red for a
  * reason that has nothing to do with the door. What is compared is what the gate DECIDED — the
- * action, the tier it decided under, the verdict, the coded outcome, the reason, and the execution
- * context the decision resolved in, which is the one field 400-03's injected posture can move.
+ * action, the tier it decided under, the verdict, the coded outcome and the reason.
+ *
+ * `executionContext` IS IN THE PROJECTION AND IS VACUOUS TODAY, said plainly rather than left for a
+ * later reader to discover. `ExecutionAuditRow` declares it, and its own docstring says the run
+ * stamps it "so gate rows are self-describing" — but no row this door writes carries one. It was
+ * measured: mutating the SHIPPED COMMAND to resolve a different posture than the seam
+ * (`resolveExecutionContext: () => 'ci'`) left every anchor GREEN, because the one field that would
+ * have moved is absent from both sides. It stays in the projection because it costs nothing and
+ * starts discriminating the day the stamp lands; the cell below pins the absence so that day is
+ * noticed, and the gap is filed as WINDOWS #197.
  */
 interface ComparableAuditRow {
   readonly action: string
@@ -441,6 +449,30 @@ describe('the served wire is the in-process seam (400-09, D-09)', () => {
         'the SHIPPED dashboard binary and the in-process door disagree about a REFUSAL, which is '
         + 'the direction a green suite is least likely to have measured',
       ).toEqual(seam)
+    }, 300_000)
+})
+
+describe('what these anchors CANNOT see, measured rather than assumed (400-09)', () => {
+  it('finds no execution context on any gate row — the posture axis is unmeasurable today',
+    async () => {
+      // A WINDOW'S BOUNDARY, DRIVEN (400-07's idiom). This is not an assertion that the absence is
+      // correct; it is the absence RECORDED, so that the comparand's claim about posture is honest
+      // and so that the day a row starts carrying a context is a day this cell reds and somebody
+      // reads this paragraph. Until then, no conformance comparison anywhere in this repository can
+      // see two doors resolve a different execution context — which is exactly what a mutation of
+      // the shipped command's `resolveExecutionContext` proved by staying green.
+      const wire = await driveWire('posture', [ANCHOR_CLAUSE])
+      expect(
+        wire.comparand.auditRows.length,
+        'the drive landed no gate rows at all, so this cell would be reporting about nothing',
+      ).toBeGreaterThan(0)
+      expect(
+        wire.comparand.auditRows.map((row) => row.executionContext),
+        'a gate row now carries an execution context. THIS IS GOOD NEWS: the anchors\' comparand '
+        + 'already projects the field, so it starts discriminating a posture divergence the moment '
+        + 'this cell reds. Delete this cell, close WINDOWS #197, and re-run the '
+        + '`resolveExecutionContext` mutation to confirm the anchors now see it.',
+      ).toEqual(wire.comparand.auditRows.map(() => undefined))
     }, 300_000)
 })
 
