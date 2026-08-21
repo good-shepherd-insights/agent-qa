@@ -37,6 +37,9 @@ import {
 } from '@vostride/agent-qa-safety'
 import type { ConfirmPort, ProviderRequestParams } from '@vostride/agent-qa-safety'
 import { debugLoggingMiddleware } from '@vostride/agent-qa-model'
+import { createChatRouter, recordStreamedEvent } from '@vostride/agent-qa-dashboard'
+import type { AgentHost, SessionStreamWindow } from '@vostride/agent-qa-dashboard'
+import { createServer, request as httpRequest } from 'node:http'
 import { renderClauseResults } from '../commands/result-render.js'
 import {
   ARTIFACT_FILE,
@@ -55,6 +58,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   CacheableStepInput,
+  ChatSessionEvent,
   ClauseResult,
   CompletedRunHandoff,
   PerTestOutcome,
@@ -356,6 +360,115 @@ function consoleLines(needle: string): string {
     .join('\n')
 }
 
+/**
+ * Drive the SHIPPED dashboard chat door over a real socket and return the bytes it answered with.
+ *
+ * THE FOURTH DOOR'S EMIT IS A NEW HUMAN SURFACE (400-06) and this file's enrollment rule says a
+ * surface that touches output must enrol to ship. It is a human surface for a reason that took
+ * deciding: the browser cannot be the unmasking boundary, because the masking context lives in the
+ * server process and shipping one to a page would mint a cleartext sink in a document, a bfcache
+ * entry and a devtools log. So the boundary is this door's response bytes — the same position
+ * `emitHuman` occupies for the CLI — and this entry is what holds it there.
+ *
+ * THE ROUTER IS THE SHIPPED ONE AND THE SOCKET IS REAL. What is supplied rather than composed is
+ * the HOST, which is an input to the router and not the thing under test: a full
+ * `composeDashboardDoor` here would drag a workspace, a config file and the whole port set into a
+ * roll-call cell whose question is one line of transport. The `unmaskForDisplay` it binds is the
+ * production binding's SHAPE — one `unmaskForHumanOutput` call per emit — over this file's one
+ * fixture context, which is what lets the cell see a restoration at all.
+ */
+function dashboardRollCallHost(
+  onSessionEvent: (listener: (sessionId: string, event: ChatSessionEvent) => void) => void = () => {},
+): AgentHost {
+  return {
+    registry: {},
+    caller: { origin: 'human', surface: 'dashboard', scopes: ['read'] } as never,
+    agentAskFunctionId: 'agent.ask',
+    invokeFunction: () => Promise.resolve({
+      sessionId: 'chat-20260821-000000-r0ll',
+      turnId: 'turn-1',
+      status: 'completed',
+      receipts: [],
+      results: FIXTURE.clauseResults,
+      denials: [],
+    }),
+    foldFunctionResult: () => ({ verdict: { status: 'executed', outcome: '' }, foldLines: [] }),
+    listDeclarations: () => [],
+    onSessionEvent: (listener) => { onSessionEvent(listener); return () => {} },
+    unmaskForDisplay: (text: string) => unmaskForHumanOutput(FIXTURE.ctx, text),
+  }
+}
+
+async function renderDashboardChatEmit(): Promise<string> {
+  const server = createServer(createChatRouter(dashboardRollCallHost()))
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  const address = server.address()
+  const port = typeof address === 'object' && address !== null ? address.port : 0
+  try {
+    const response = await fetch(`http://127.0.0.1:${String(port)}/api/chat/turn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'what did that op return' }),
+    })
+    return await response.text()
+  } finally {
+    await new Promise<void>((done) => server.close(() => { done() }))
+  }
+}
+
+/**
+ * The SAME door's OTHER emit: one frame off the turn-events stream (400-06).
+ *
+ * A SEPARATE ENTRY BECAUSE IT IS A SEPARATE WRITE. The response body and the SSE frame are two
+ * `res.write` sites in `chat-routes.ts` and a boundary applied to one is not applied to the other —
+ * measured: deleting the frame's unmask left every other cell in this repository green. The stream
+ * is also the channel a person actually watches a turn on, so a placeholder here is the version a
+ * user would see first.
+ */
+async function renderDashboardChatFrame(): Promise<string> {
+  let publish: ((sessionId: string, event: ChatSessionEvent) => void) | undefined
+  const host = dashboardRollCallHost((listener) => { publish = listener })
+  const server = createServer(createChatRouter(host))
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  const address = server.address()
+  const port = typeof address === 'object' && address !== null ? address.port : 0
+  const sessionId = 'chat-20260821-000000-r0ll'
+  try {
+    return await new Promise<string>((settle, fail) => {
+      const request = httpRequest({
+        host: '127.0.0.1',
+        port,
+        path: `/api/chat/sessions/${sessionId}/events`,
+        method: 'GET',
+      }, (response) => {
+        let seen = ''
+        response.setEncoding('utf8')
+        response.on('data', (chunk: string) => {
+          seen += chunk
+          if (seen.includes('event: clause_result')) {
+            request.destroy()
+            settle(seen)
+          }
+        })
+        response.on('error', () => { settle(seen) })
+        // The subscription is registered synchronously inside the handler, so the first byte of the
+        // stream (`:ok`) is the signal that this connection is one the fan-out can reach.
+        publish?.(sessionId, {
+          kind: 'clause_result',
+          turnId: 'turn-1',
+          at: '2026-08-21T00:00:00.000Z',
+          functionId: 'config.get',
+          payload: FIXTURE.clauseResults[0]!.payload,
+        })
+      })
+      request.on('error', fail)
+      request.end()
+    })
+  } finally {
+    await new Promise<void>((done) => server.close(() => { done() }))
+  }
+}
+
 // ---- HUMAN registry: surfaces that MUST restore the original secrets (D-11) ------------------
 
 interface HumanSurface {
@@ -411,6 +524,19 @@ const HUMAN_SURFACES: HumanSurface[] = [
       FIXTURE.ctx,
       renderClauseResults(FIXTURE.clauseResults, FIXTURE.clauseResults.length).join('\n'),
     ),
+  },
+  {
+    // 400-06: the same payload channel, on the fourth door, in the medium a browser reads. The
+    // masked value goes in through `invokeFunction` and the restored one has to come out of the
+    // socket, or the door is answering a person with a placeholder where a value belongs.
+    name: 'dashboard:chat-turn-response',
+    originals: [SECRETS.opResult],
+    render: renderDashboardChatEmit,
+  },
+  {
+    name: 'dashboard:chat-sse-frame',
+    originals: [SECRETS.opResult],
+    render: renderDashboardChatFrame,
   },
 ]
 
@@ -566,6 +692,25 @@ const MASKED_SURFACES: MaskedSurface[] = [
     name: 'machine:chat-clause-results',
     render: () => renderClauseResults(FIXTURE.clauseResults, FIXTURE.clauseResults.length).join('\n'),
   },
+  {
+    // 400-06: THE DOOR'S IN-MEMORY REPLAY WINDOW, which is the pairing the human entry above needs.
+    // The turn response restores, so the tempting shortcut is to unmask on the way IN — at the
+    // point events are recorded — which would satisfy every rendering assertion while turning the
+    // server's reconnect buffer into a cleartext store that outlives the request. `recordStreamedEvent`
+    // is the shipped recorder and what it holds is what a reconnect replays.
+    name: 'machine:dashboard-chat-replay-window',
+    render: () => {
+      const windows = new Map<string, SessionStreamWindow>()
+      recordStreamedEvent(windows, 'chat-20260821-000000-r0ll', {
+        kind: 'clause_result',
+        turnId: 'turn-1',
+        at: '2026-08-21T00:00:00.000Z',
+        functionId: 'config.get',
+        payload: FIXTURE.clauseResults[0]!.payload,
+      })
+      return JSON.stringify([...windows.values()])
+    },
+  },
 ]
 
 describe('SEAM-05 unmask boundary roll-call — MASKED side keeps placeholders (D-11/D-12)', () => {
@@ -601,6 +746,9 @@ const SURFACE_ROLLCALL = [
   'machine:provider-egress',
   'chat:clause-results',
   'machine:chat-clause-results',
+  'dashboard:chat-turn-response',
+  'dashboard:chat-sse-frame',
+  'machine:dashboard-chat-replay-window',
 ] as const
 
 describe('SEAM-05 unmask boundary roll-call — enrollment guard (T-363-31)', () => {

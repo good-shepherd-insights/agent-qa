@@ -4,8 +4,10 @@ import { createRequire } from 'node:module'
 import pc from 'picocolors'
 import {
   AGENT_ASK_FUNCTION_ID,
+  createMaskingContext,
   foldFunctionResult,
   invokeFunction,
+  unmaskForHumanOutput,
   type ConfigReaderPort,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
@@ -141,6 +143,19 @@ export function composeDashboardAgentHost(
       registry: AgentRegistryHandle,
       caller: FunctionCaller,
     ): readonly AgentDeclarationRow[] => (registry as FunctionRegistry).list(caller),
+    // The fourth door's display boundary, in `chat.ts`'s `emitHuman` shape and for its law
+    // (400-06): "everything a surface prints goes through the masker". The context is created and
+    // disposed per emit rather than held, exactly as every CLI emit site does it — a long-lived
+    // one would be a resolved secret map kept alive for the lifetime of a server process, for no
+    // gain over building it at the moment bytes leave.
+    unmaskForDisplay: (text: string): string => {
+      const maskingContext = createMaskingContext()
+      try {
+        return unmaskForHumanOutput(maskingContext, text)
+      } finally {
+        maskingContext.dispose()
+      }
+    },
   }
 }
 

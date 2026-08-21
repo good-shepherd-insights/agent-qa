@@ -183,32 +183,55 @@ const ChatConfirmRequestSchema = z.object({
  * safe posture opt-in at a seam where every future route author has to remember it; a separate
  * function makes the wildcard something a chat route would have to import to acquire.
  */
-function jsonSameOrigin(res: ServerResponse, data: unknown, status = 200): void {
-  const body = JSON.stringify(data)
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(body),
-  })
-  res.end(body)
+type Respond = (res: ServerResponse, data: unknown, status?: number) => void
+
+/**
+ * Build the door's ONE responder: same-origin JSON, unmasked exactly once (400-06).
+ *
+ * A CLOSURE RATHER THAN A DEFAULTED PARAMETER, for the reason the paragraph above gives about the
+ * wildcard: an optional `unmask` argument makes the display boundary something each handler has to
+ * remember to pass, and the failure mode of forgetting is silent — a placeholder rendered where a
+ * value belongs, which reads as a product bug rather than as a missing call. Built once, here, and
+ * every arm of this file writes through it.
+ *
+ * THE UNMASK RUNS ON THE SERIALISED BYTES, which is where the CLI runs it too (`emitHuman` unmasks
+ * the rendered string, not the value). A masked placeholder is a token inside a string, so a
+ * structural walk would have to know every field of every one of forty-three op payloads; the text
+ * pass knows none of them and is total over all of them.
+ */
+function createResponder(unmask: (text: string) => string): Respond {
+  return (res, data, status = 200) => {
+    const body = unmask(JSON.stringify(data))
+    res.writeHead(status, {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+    })
+    res.end(body)
+  }
 }
 
 /** Everything the door answers when it cannot answer. */
-function refuse(res: ServerResponse, error: string, status: number): void {
-  jsonSameOrigin(res, { error }, status)
+function refuseWith(respond: Respond, res: ServerResponse, error: string, status: number): void {
+  respond(res, { error }, status)
 }
 
-async function handleTurn(host: AgentHost, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleTurn(
+  host: AgentHost,
+  respond: Respond,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
   let body: unknown
   try {
     body = await readJsonBody<unknown>(req)
   } catch {
-    refuse(res, 'Invalid request body', 400)
+    refuseWith(respond, res, 'Invalid request body', 400)
     return
   }
 
   const parsed = ChatTurnRequestSchema.safeParse(body)
   if (!parsed.success) {
-    refuse(res, 'Invalid request body', 400)
+    refuseWith(respond, res, 'Invalid request body', 400)
     return
   }
 
@@ -232,7 +255,8 @@ async function handleTurn(host: AgentHost, req: IncomingMessage, res: ServerResp
     // receipts carry a classifier-derived status, on a 200. So anything that arrives here is the
     // turn machinery itself failing, which is a 500 by name and carries no receipt at all: a
     // fabricated `refused` receipt would be this file inventing a verdict nobody reached.
-    refuse(
+    refuseWith(
+      respond,
       res,
       `The turn could not be carried out [${error instanceof Error ? error.name : 'Error'}]`,
       500,
@@ -249,11 +273,12 @@ async function handleTurn(host: AgentHost, req: IncomingMessage, res: ServerResp
   }))
 
   const response: ChatTurnResponse = { result, folds }
-  jsonSameOrigin(res, response)
+  respond(res, response)
 }
 
 async function handleConfirm(
   host: AgentHost,
+  respond: Respond,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -264,7 +289,7 @@ async function handleConfirm(
     //
     // (The wording is deliberate: `validate:arch` extracts import specifiers textually, so a
     // comment shaped like an import clause is read as a dependency this package never declared.)
-    refuse(res, 'Chat confirms are not available: this server was started without a confirm channel', 501)
+    refuseWith(respond, res, 'Chat confirms are not available: this server was started without a confirm channel', 501)
     return
   }
 
@@ -272,12 +297,12 @@ async function handleConfirm(
   try {
     body = await readJsonBody<unknown>(req)
   } catch {
-    refuse(res, 'Invalid request body', 400)
+    refuseWith(respond, res, 'Invalid request body', 400)
     return
   }
   const parsed = ChatConfirmRequestSchema.safeParse(body)
   if (!parsed.success) {
-    refuse(res, 'Invalid request body', 400)
+    refuseWith(respond, res, 'Invalid request body', 400)
     return
   }
 
@@ -286,17 +311,17 @@ async function handleConfirm(
     // ONE ANSWER FOR THREE STATES — no such id, an id already spent, an id belonging to another
     // session. Distinguishing them here would tell a caller which confirms are outstanding and
     // whose they are, which is the probe the single-use id exists to close.
-    refuse(res, 'Unknown or already-answered confirm', 404)
+    refuseWith(respond, res, 'Unknown or already-answered confirm', 404)
     return
   }
-  jsonSameOrigin(res, { resolved: true, answer: outcome.answer })
+  respond(res, { resolved: true, answer: outcome.answer })
 }
 
-function handleCapabilities(host: AgentHost, res: ServerResponse): void {
+function handleCapabilities(host: AgentHost, respond: Respond, res: ServerResponse): void {
   // Read off the door's OWN registry under the door's OWN caller, which is what makes a listing
   // taken through this route a fact about the door rather than about whoever asked.
   const ops = host.listDeclarations(host.registry, host.caller).map((row) => ({ id: row.id }))
-  jsonSameOrigin(res, { ops })
+  respond(res, { ops })
 }
 
 /**
@@ -361,6 +386,14 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
 
   const confirms = host?.confirms
 
+  /**
+   * The display boundary of this door (400-06). Identity when no host is bound: there is then no
+   * masking context to consult and nothing this router can emit that ever passed a masker.
+   */
+  const unmask = (text: string): string =>
+    host === undefined ? text : host.unmaskForDisplay(text)
+  const respond = createResponder(unmask)
+
   function handleSessionEvents(sessionId: string, req: IncomingMessage, res: ServerResponse): void {
     // The shipped SSE idiom (`routes.ts`'s run-events stream), with ONE deliberate omission: no
     // `Access-Control-Allow-Origin`. That header is on the run stream because it predates this
@@ -374,12 +407,18 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
     res.write(':ok\n\n')
 
     const frame = (entry: StreamedSessionEvent): void => {
-      // The event is written AS PERSISTED — masked. `unmaskForHumanOutput` runs exactly once, at
-      // each surface's own display boundary, and for this door that is the browser's render.
+      // The event is HELD as persisted — masked — and unmasked HERE, on the way to a person
+      // (400-06). The replay window and the session JSONL both keep the masked form; this is the
+      // door's emit, which is where the standing law puts the one `unmaskForHumanOutput` call. See
+      // `AgentHost.unmaskForDisplay` for why the browser cannot be the boundary on this surface.
+      //
+      // ONLY THE `data:` LINE. The id and the kind are this transport's own words — they never
+      // passed a masker, and running one over the whole frame would put the boundary somewhere a
+      // reader of this file could not see it.
       res.write(
         `id: ${String(entry.id)}\n`
         + `event: ${entry.event.kind}\n`
-        + `data: ${JSON.stringify(entry.event)}\n\n`,
+        + `data: ${unmask(JSON.stringify(entry.event))}\n\n`,
       )
     }
 
@@ -413,11 +452,11 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
       // NO `id:` LINE. See `confirmStreams` above: these frames are not in the replay numbering.
       res.write(
         `event: ${channelFrame.kind}\n`
-        + `data: ${JSON.stringify(
+        + `data: ${unmask(JSON.stringify(
           channelFrame.kind === 'confirm_request'
             ? channelFrame.request
             : channelFrame,
-        )}\n\n`,
+        ))}\n\n`,
       )
     }
     confirmStreams.add(writeConfirm)
@@ -459,22 +498,22 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
     }
 
     if (host === undefined) {
-      refuse(res, 'Chat is not available: this server was started without an agent host', 501)
+      refuseWith(respond, res, 'Chat is not available: this server was started without an agent host', 501)
       return
     }
 
     if (path === CHAT_TURN_ROUTE && req.method === 'POST') {
-      void handleTurn(host, req, res)
+      void handleTurn(host, respond, req, res)
       return
     }
 
     if (path === CHAT_CONFIRM_ROUTE && req.method === 'POST') {
-      void handleConfirm(host, req, res)
+      void handleConfirm(host, respond, req, res)
       return
     }
 
     if (path === CHAT_CAPABILITIES_ROUTE && req.method === 'GET') {
-      handleCapabilities(host, res)
+      handleCapabilities(host, respond, res)
       return
     }
 
@@ -484,7 +523,7 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
       return
     }
 
-    refuse(res, 'Not found', 404)
+    refuseWith(respond, res, 'Not found', 404)
   }
 
   router.openStreamCount = (): number => streams.size

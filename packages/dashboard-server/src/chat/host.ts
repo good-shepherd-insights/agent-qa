@@ -159,6 +159,28 @@ export interface AgentHost {
    * call, unchanged. The answer route reports 501 for the same reason.
    */
   readonly confirms?: ConfirmRegistry
+  /**
+   * Restore masked placeholders in bytes on their way to a PERSON (400-06, the standing v52 law).
+   *
+   * WHERE THE DISPLAY BOUNDARY OF A BROWSER SURFACE ACTUALLY IS. The law is that every human-facing
+   * byte crosses `unmaskForHumanOutput` exactly once, at the surface's own emit — and on a terminal
+   * door the process that prints is the process that holds the secret map, so the CLI's `emitHuman`
+   * can be the whole of it. This surface is split across two processes: the map lives here and the
+   * pixels are drawn somewhere else. The browser therefore CANNOT be the boundary, and the fix is
+   * not to give it a masking context — a secret map shipped to a page is a cleartext sink in a
+   * document, a bfcache entry and a devtools log, which is strictly worse than the placeholder it
+   * would replace. So the boundary is this door's EMIT, exactly as `emitHuman` is the CLI's, and
+   * these are the last bytes this product owns before a person reads them.
+   *
+   * IT IS A REQUIRED MEMBER AND THE FUNCTION IS APPLIED IN ONE PLACE. An optional one would make
+   * the safe posture something every future route author has to remember, which is the argument
+   * `jsonSameOrigin` already makes one file over about the cross-origin header.
+   *
+   * THE PERSISTED RECORD IS NOT TOUCHED. The session JSONL and the replay window hold the masked
+   * form; this runs on the way out, per emitted frame, so nothing durable gains cleartext and the
+   * `unmask` count for any one byte stays exactly one.
+   */
+  unmaskForDisplay(text: string): string
 }
 
 /** One executed clause's result, with the fold that makes it legible. */
