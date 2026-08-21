@@ -45,6 +45,16 @@ import {
 /** A well-formed proposal id that names nothing — the gate is reached, the apply then finds none. */
 const ABSENT_PROPOSAL = 'prop_400-03-absent'
 
+/**
+ * A second, non-protected class the lease arm writes — never reached through an op.
+ *
+ * Its name carries this plan's number so a later mutation sweep can tell a deliberate fixture from
+ * a planted stray, and it is deliberately NOT the class the arms above contend on: the held arm
+ * must fail on the LEASE, and reusing an already-granted class would let it pass on the
+ * already-granted fold instead.
+ */
+const CONTROL_ACTION_CLASS = 'fn:control.400.03.lease-arm'
+
 /** The ask-tier utterance every confirm cell drives. */
 const ASK_UTTERANCE = `/fn knowledge.proposal.apply {"proposalId":"${ABSENT_PROPOSAL}"}`
 
@@ -512,4 +522,206 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
       expect(Object.keys(JSON.parse(line) as Record<string, unknown>)).not.toContain('surface')
     }
   })
+})
+
+// ---- The dual-host lease differential (Phase 400 plan 03 task 3, RESEARCH A3) -----------------
+//
+// WHAT IS BEING MEASURED, AND WHY IT IS NOT ALREADY KNOWN. CONTEXT's D-01 asserts that "the 386
+// lease machinery arbitrates writer conflicts between hosts (the dual-host proof extends to this
+// pair)". That is an assertion about a pair nothing had ever run: the earlier proof was taken over
+// a daemon and a CLI, and this phase puts a SECOND interactive host — one that mints standing
+// grants from a browser click — beside the CLI chat door on the same workspace. RESEARCH A3 names
+// the cost of the assertion being wrong: two interactive hosts appending to one committed ledger,
+// corrupting it. So the pair is driven rather than trusted.
+//
+// THE CONTENDED ARTIFACT IS THE STANDING-GRANT LEDGER, reached through each host's OWN
+// `recordStandingApproval` binding — the closure `composeLocalAgent` hands its surface, which is
+// the only route either door has to a grant. Neither side writes a ledger line itself, which is
+// D-07's rule and also what makes this a test of the machinery rather than of two callers.
+//
+// THE VOCABULARY IS IMPORTED, NEVER TYPED HERE. `GrantRecordOutcomeSchema` validates the outcome
+// shape, `foldActiveGrants` over `readGrantLedger` is the machinery's own reading of its own file,
+// and the refusal is asserted as `instanceof GrantLeaseHeldError`. A hand-written status string
+// would be this cell's idea of an arbitration contract.
+
+import {
+  GrantLeaseHeldError,
+  acquireWriterLease,
+  foldActiveGrants,
+  readGrantLedger,
+  releaseLease,
+} from '@vostride/agent-qa-knowledge-local'
+import { resolveKnowledgeRoot } from '@vostride/agent-qa-core'
+import { GrantRecordOutcomeSchema } from '@vostride/agent-qa-schema'
+
+import { resolveConfig } from '../config.js'
+import { composeCliLocalAgent } from '../composition/local-agent-host.js'
+
+/** The two hosts' shared knowledge root, resolved the way the composition resolves it. */
+async function knowledgeRootFor(configPath: string): Promise<string> {
+  const config = await resolveConfig({ configPath, loadAuthPlugins: false })
+  return resolveKnowledgeRoot(config.knowledge, dirname(resolve(configPath)))
+}
+
+/** One CLI-chat-shaped host over an existing workspace, with its confirm bindings captured. */
+function composeCliShapedHost(configRoot: string): {
+  readonly host: LocalAgentHost
+  readonly recordStandingApproval: (actionClass: string) => Promise<unknown>
+} {
+  const configPath = join(configRoot, 'agent-qa.config.yaml')
+  let captured:
+    | { recordStandingApproval: (actionClass: string) => Promise<unknown> }
+    | undefined
+  // `chatConfirm` is the seam a SURFACE is handed its bindings through — the TTY wrapper is handed
+  // exactly these — and returning `undefined` binds no confirm port, which is what a CLI with no
+  // terminal does. Nothing here constructs a grants port: the binding is the composition's own.
+  const host = composeCliLocalAgent({
+    agentQaRoot: join(configRoot, '.agent-qa'),
+    configPath,
+    chatConfirm: (bindings) => {
+      captured = bindings
+      return undefined
+    },
+  })
+  if (captured === undefined) {
+    throw new TypeError('the CLI-shaped host bound no confirm bindings')
+  }
+  const bindings = captured
+  return { host, recordStandingApproval: (cls) => bindings.recordStandingApproval(cls) }
+}
+
+/** Every active standing grant for one class, as the machinery reads its own committed file. */
+function activeGrantsFor(knowledgeRoot: string, actionClass: string): readonly { grantId: string }[] {
+  const ledger = readGrantLedger(knowledgeRoot)
+  expect(ledger.refusedLines, 'the contended ledger carries a line its own reader cannot read')
+    .toEqual([])
+  return foldActiveGrants(ledger.events).filter((grant) => grant.actionClass === actionClass)
+}
+
+describe('two interactive hosts on one workspace', () => {
+  it('dual-host: the lease arbitrates contending standing-grant writes (A3)', async () => {
+    // ---- Arm 1: ORDERED — the dashboard mints, and the CLI host folds ITS committed line ------
+    //
+    // The strongest of the three, because both hosts' outcomes are observable. The dashboard's
+    // write goes the whole shipped way (a person clicks "always" in a browser); the CLI host's
+    // binding is then called and MUST come back `already-granted` naming the dashboard's own grant
+    // id. That single assertion is what a one-host cell cannot fake: with no dashboard write there
+    // is nothing to already-grant, and with a write to some other class there is no shared id.
+    const doorA = await openDoor({ timeoutMs: 60_000 })
+    const cliA = composeCliShapedHost(doorA.configRoot)
+    try {
+      const knowledgeRootA = await knowledgeRootFor(join(doorA.configRoot, 'agent-qa.config.yaml'))
+      const sessionA = await openSession(doorA.origin)
+      const streamA = await openStream(doorA.origin, sessionA)
+      const turnA = postTurn(doorA.origin, { message: ASK_UTTERANCE, sessionId: sessionA })
+      const raisedA = confirmRequestOf(
+        await streamA.waitFor((frame) => frame.event === 'confirm_request'),
+      )
+      expect((await postConfirm(doorA.origin, {
+        sessionId: sessionA,
+        confirmId: raisedA.confirmId,
+        answer: 'accept-always',
+      })).status).toBe(200)
+      await turnA
+      await streamA.close()
+
+      const dashboardGrants = activeGrantsFor(knowledgeRootA, ASK_ACTION_CLASS)
+      expect(dashboardGrants, 'the dashboard host minted no grant, so the CLI host below would be '
+        + 'the only writer and this cell would measure one host').toHaveLength(1)
+
+      const cliOutcome = GrantRecordOutcomeSchema.parse(
+        await cliA.recordStandingApproval(ASK_ACTION_CLASS),
+      )
+      // ONE ARBITRATED STATE, TWO HOSTS. `already-granted` is the machinery's no-accretion arm, and
+      // reaching it means this host's read-fold-decide cycle saw a line the OTHER host committed.
+      expect(cliOutcome.kind).toBe('already-granted')
+      if (cliOutcome.kind !== 'already-granted') throw new TypeError('unreachable')
+      expect(cliOutcome.grant.grantId).toBe(dashboardGrants[0]!.grantId)
+      expect(activeGrantsFor(knowledgeRootA, ASK_ACTION_CLASS)).toHaveLength(1)
+    } finally {
+      await cliA.host.close()
+    }
+
+    // ---- Arm 2: CONCURRENT — both writes on one class, issued in the same tick ---------------
+    //
+    // A FRESH WORKSPACE, because arm 1's class is now granted and a second ask would be satisfied
+    // by the standing approval without ever raising a confirm. Neither write is ordered by this
+    // cell: both are issued before either is awaited. The outcome that discriminates is the grant
+    // ID — whichever host lost, the id it reports is the one on the file, so a write that went to
+    // a different class or never happened cannot satisfy it.
+    const doorB = await openDoor({ timeoutMs: 60_000 })
+    const cliB = composeCliShapedHost(doorB.configRoot)
+    try {
+      const knowledgeRootB = await knowledgeRootFor(join(doorB.configRoot, 'agent-qa.config.yaml'))
+      const sessionB = await openSession(doorB.origin)
+      const streamB = await openStream(doorB.origin, sessionB)
+      const turnB = postTurn(doorB.origin, { message: ASK_UTTERANCE, sessionId: sessionB })
+      const raisedB = confirmRequestOf(
+        await streamB.waitFor((frame) => frame.event === 'confirm_request'),
+      )
+
+      const cliWrite = cliB.recordStandingApproval(ASK_ACTION_CLASS)
+      const dashboardAnswer = postConfirm(doorB.origin, {
+        sessionId: sessionB,
+        confirmId: raisedB.confirmId,
+        answer: 'accept-always',
+      })
+      const [contended, answered] = await Promise.all([cliWrite, dashboardAnswer, turnB])
+      expect(answered.status).toBe(200)
+      await streamB.close()
+
+      const contendedOutcome = GrantRecordOutcomeSchema.parse(contended)
+      const active = activeGrantsFor(knowledgeRootB, ASK_ACTION_CLASS)
+      // NO ACCRETION UNDER CONTENTION. Two lines here is the A3 defect by name: two revokes needed
+      // to undo one approval, and the second is the one nobody remembers to issue.
+      expect(active).toHaveLength(1)
+      const contendedGrantId = contendedOutcome.kind === 'recorded'
+        ? contendedOutcome.grant.grantId
+        : contendedOutcome.kind === 'already-granted'
+          ? contendedOutcome.grant.grantId
+          : undefined
+      expect(contendedGrantId, 'the CLI host\'s contending write named no grant at all')
+        .toBe(active[0]!.grantId)
+      // The dashboard's half landed too: the session log records the EFFECT of an answer (392-05),
+      // so this line exists only where a standing approval is actually in force.
+      expect(
+        loggedEvents(doorB.configRoot, sessionB)
+          .filter((event) => event['kind'] === 'approval_decision')
+          .map((event) => event['decision']),
+      ).toEqual(['accept-always'])
+
+      // ---- Arm 3: the HELD arm, in the lease's own vocabulary --------------------------------
+      //
+      // Neither arm above can reach `held`: the acquire/decide/release cycle has no await point, so
+      // two writers in one event loop always serialize rather than collide. The lease is therefore
+      // OCCUPIED here through the machinery's own primitive — which is what the other host's
+      // process holds while it is mid-write — and a real host is driven against it.
+      const occupied = acquireWriterLease(knowledgeRootB)
+      expect(occupied.kind, 'the lease was not free, so this arm would measure the wrong refusal')
+        .toBe('acquired')
+      if (occupied.kind !== 'acquired') throw new TypeError('unreachable')
+      let refusal: unknown
+      try {
+        await cliB.recordStandingApproval(CONTROL_ACTION_CLASS)
+      } catch (error) {
+        refusal = error
+      } finally {
+        releaseLease({ knowledgeRoot: knowledgeRootB, leaseId: occupied.leaseId })
+      }
+      // THE TYPE IS THE ASSERTION. `GrantLeaseHeldError` is the refusal the grant verbs' own
+      // `onLeaseHeld` factory mints, naming the committed artifact the caller was refused on.
+      expect(refusal).toBeInstanceOf(GrantLeaseHeldError)
+      expect(activeGrantsFor(knowledgeRootB, CONTROL_ACTION_CLASS), 'the refused write landed a '
+        + 'line anyway').toEqual([])
+
+      // THE ACCEPT DIRECTION, so the refusal is a fact about contention and not about this host:
+      // with the lease released, the same write through the same binding proceeds.
+      const afterRelease = GrantRecordOutcomeSchema.parse(
+        await cliB.recordStandingApproval(CONTROL_ACTION_CLASS),
+      )
+      expect(afterRelease.kind).toBe('recorded')
+    } finally {
+      await cliB.host.close()
+    }
+  }, 60_000)
 })
