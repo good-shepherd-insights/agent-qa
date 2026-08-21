@@ -101,6 +101,7 @@ import {
 import { SURFACE_ROSTER } from './roster.js'
 import {
   driveChatDispatch,
+  driveDashboardDispatch,
   driveMcpCall,
   genericFnClause,
   pinClassFor,
@@ -415,14 +416,19 @@ interface AdvertisedTool {
 }
 
 describe('the parity suite ranges the registry census over every rostered surface', () => {
-  it('pins the roster at the three surfaces that exist today', () => {
+  it('pins the roster at the four surfaces that exist today', () => {
     // D-04. An exact list rather than a length check or a contains check: a surface REPLACED would
     // pass both of those while the claim quietly moved to a different set of doors.
     //
     // 2026-08-20 (399.1 D-07): the `fn` door joins. The order is registration order and is asserted
     // as such — `roster.ts` reads as a dated history and a row that moved would be a row somebody
     // re-decided.
-    expect(SURFACE_ROSTER.map((entry) => entry.id)).toEqual(['chat', 'mcp', 'fn'])
+    //
+    // 2026-08-21 (400-01 D-12): the dashboard chat door joins, on the day the door itself is first
+    // committed rather than at the end of the phase that builds it. That is the whole content of
+    // "day one, not at its end": every plan after this one builds under a suite that already ranges
+    // the door, so a private power added to it is a named RED in the change that adds it.
+    expect(SURFACE_ROSTER.map((entry) => entry.id)).toEqual(['chat', 'mcp', 'fn', 'dashboard'])
     for (const entry of SURFACE_ROSTER) {
       expect(entry.adapter.id, `${entry.id}: the roster row and its adapter must name one surface`)
         .toBe(entry.id)
@@ -1054,6 +1060,32 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
+  it('joins the dashboard door\'s served listing to the registry census, in both directions', () => {
+    // 2026-08-21 (400-01, D-12), the `fn` cell's shape with the fourth door substituted and the
+    // CENSUS as the comparand rather than the scenario table's per-surface column.
+    //
+    // WHY THE CENSUS AND NOT A `perSurface.dashboard` COLUMN. The two are different claims and only
+    // one of them is true of this door. MCP projects a SUBSET (a declared partition, with rows
+    // saying which ops have no tool), and chat and `fn` each carry their own reachability column
+    // because their routes can differ from the catalogue. The dashboard door dispatches ONE op and
+    // lists the registry it dispatches through, so "reachable here" and "declared at all" are the
+    // same set by construction — and a column restating that for 42 rows would be 42 places for the
+    // restatement to rot. What this cell asserts is the construction itself, in both directions.
+    //
+    // THE COMPARANDS ARE NOT THE SAME OBJECT. One side is the door's own HTTP response bytes, taken
+    // over a socket through the router, the injected-host seam, the door's caller mint and JSON
+    // serialisation; the other is `registryOpIds()`. A door that started filtering — a narrowed
+    // grant, a safe-mode default, a projection that dropped a column — shrinks one side and not the
+    // other, and reds here by name.
+    const dashboardReach = enumerationOf('dashboard').opIds
+    expect(
+      sorted(dashboardReach),
+      'the dashboard door\'s served listing and the registry census must be one set: this door '
+        + 'reaches every capability through one gated op and lists the registry it dispatches '
+        + 'through, so a difference in either direction is a filter nobody declared',
+    ).toEqual(sorted(censusIds))
+  })
+
   // ---- D-12: the ASSERTED absences. No skip-list — a skip asserts nothing --------------------
 
   it('asserts the absence of every unprojected op over MCP: no fold, and no door of its own', async () => {
@@ -1308,6 +1340,117 @@ describe('the parity suite ranges the registry census over every rostered surfac
         + 'dispatched outside the gate and this cell would still be green',
     ).toBeGreaterThan(openingReads)
   })
+
+  it('drives a capability through the dashboard door\'s own composed dispatch, model-free', async () => {
+    // 2026-08-21 (400-01, D-09/D-12), the plan-04 tracer with the fourth door substituted, and it
+    // is the cell that makes the roster row mean something: an enumeration reads a listing, and a
+    // capability rerouted around `invokeFunction` still appears in every listing it ever appeared
+    // in. Only a drive can tell those two worlds apart.
+    //
+    // WHAT PRODUCES THIS ANSWER: a real `node:http` server on an ephemeral port, the shipped
+    // `createChatRouter`, the shipped `composeDashboardDoor`, one `invokeFunction(agent.ask, …)`,
+    // the shipped resolver's `/fn` branch, the composition's caller mint, the gate. The receipt read
+    // back is the record the served payload renders, taken off the session log rather than off the
+    // response — the same reading its chat neighbour makes, over the SAME session substrate (D-04).
+    const row = scenarioRowFor('proposals.list')
+    expect(row, 'the scenario table no longer carries proposals.list').toBeDefined()
+
+    const outcome = await driveDashboardDispatch({ opId: 'proposals.list', input: row!.input })
+
+    expect(
+      outcome.httpStatuses,
+      'the door answered something other than 200 — a turn that carried a verdict would not',
+    ).toEqual([200])
+    expect(
+      outcome.unhandled,
+      'the generic /fn route failed to resolve the clause the driver typed — the surface never '
+        + 'reached a dispatch, so nothing below is a statement about a verdict',
+    ).toEqual([])
+    expect(outcome.receipt?.status, 'proposals.list on dashboard: the surface reached a definitive '
+      + 'outcome').toBe('executed')
+    // ORIGIN IS THE MODEL-FREE PROOF, on the chat cell's own reasoning: the deterministic route
+    // mints `human` and the planner route mints `agent` (391 D-06), so a receipt stamped `human`
+    // cannot have been planned by a model — and this door is composed with no model at all.
+    expect(outcome.receipt?.origin, 'proposals.list on dashboard: the receipt must come from the '
+      + 'deterministic route, or a model planned this call').toBe('human')
+
+    // THE GATE SAW *THIS* CALL, as a two-drive differential rather than a presence check — 397-09
+    // measured the presence check VACUOUS for this op, because the session's own opening banner
+    // reads `proposals.list` through the same gate. `config.get` is the baseline for the reason the
+    // chat cell states: it is none of the three ops the banner reads, so its drive contributes
+    // nothing to the count being compared.
+    const baselineRow = scenarioRowFor('config.get')
+    expect(baselineRow, 'the scenario table no longer carries config.get').toBeDefined()
+    const baselineDrive = await driveDashboardDispatch({
+      opId: 'config.get',
+      input: baselineRow!.input,
+    })
+    const rowsFrom = (drive: typeof outcome): number =>
+      drive.auditRows.filter((auditRow) => auditRow.action === pinClassFor('proposals.list')).length
+    const openingReads = rowsFrom(baselineDrive)
+    expect(
+      rowsFrom(outcome),
+      `proposals.list on dashboard: this drive must add a gate row of its own beyond the `
+        + `${openingReads} the session's opening reads write by themselves — otherwise the clause `
+        + 'dispatched outside the gate and this cell would still be green',
+    ).toBeGreaterThan(openingReads)
+  }, 120_000)
+
+  it('refuses at the DASHBOARD SURFACE WALL for every capability, through its own dispatch', async () => {
+    // WALL TWO of two for the fourth door, over its own producer and in its own cell — D-11's rule
+    // that two walls averaged into one assertion is one wall. No expression in this body touches
+    // `invokeFunction`; the refusal observed is `FunctionDeniedError`, the class the gate's `deny`
+    // and nothing else produces, corroborated by the gate's own audit row naming the action class
+    // and `session-pin-denied` as the outcome that produced it.
+    //
+    // A CAPABILITY REROUTED AROUND `invokeFunction` CANNOT BE PINNED: it would execute, this cell
+    // would see `executed`, and it would red by name for that op. That is the mutation bar the
+    // roster row exists to hold this door to, and it now holds it for all forty-two.
+    //
+    // THE PIN IS SESSION-SCOPED AND THE DRIVE THREADS THE SESSION ID (392 W-03), which is the one
+    // thing this transport has to get right that the REPL got for free: each POST is a turn, and a
+    // driver that started a fresh conversation for the second turn would have a pin that applied to
+    // nothing while reading exactly like one that worked.
+    for (const row of SCENARIO_TABLE) {
+      const outcome = await driveDashboardDispatch({
+        opId: row.opId,
+        input: row.input,
+        pinBefore: [pinClassFor(row.opId)],
+      })
+      expect(
+        outcome.httpStatuses,
+        `${row.opId} on dashboard (surface wall): a refusal must ride a 200 carrying a receipt, `
+          + 'never an HTTP error — status from the result, never from the transport (DASH-01)',
+      ).toEqual([200, 200])
+      expect(
+        outcome.unhandled,
+        `${row.opId} on dashboard (surface wall): the generic route did not resolve the clause, so `
+          + 'this drive never reached a dispatch and its refusal would be a routing failure',
+      ).toEqual([])
+      expect(
+        outcome.receipt?.status,
+        `${row.opId} on dashboard (surface wall): the surface did not refuse a pinned capability`,
+      ).toBe('failed')
+      expect(
+        outcome.receipt?.outcome,
+        `${row.opId} on dashboard (surface wall): the refusal must be the gate's own — an input or `
+          + 'unknown-id refusal would look the same to a person and mean the gate never ran',
+      ).toBe('FunctionDeniedError')
+      const denials = outcome.auditRows.filter(
+        (auditRow) => auditRow.action === pinClassFor(row.opId) && auditRow.verdict === 'deny',
+      )
+      expect(
+        denials.map((auditRow) => auditRow.outcome),
+        `${row.opId} on dashboard (surface wall): the gate wrote no deny row for this action `
+          + 'class, so nothing attributes the surface\'s refusal to the gate',
+      ).toContain('session-pin-denied')
+      expect(
+        outcome.lastHeaders?.get('access-control-allow-origin'),
+        `${row.opId} on dashboard (surface wall): the mutating turn route wrote a cross-origin `
+          + 'wildcard (T-400-03) — that header is an SSE read idiom and never a POST one',
+      ).toBeNull()
+    }
+  }, 300_000)
 
   it('drives the chat surface with no provider credential in the environment at all', async () => {
     // ZERO PROVIDER SPEND, asserted as behaviour rather than argued. Every environment variable
@@ -1816,12 +1959,16 @@ describe('the parity suite ranges the registry census over every rostered surfac
     expect(bandRefusals, 'no ask-capable op reached the in-band refusal arm').toBeGreaterThan(0)
   }, 300_000)
 
-  it('observes the chat surface through its own dispatch, never through the gate directly', () => {
+  it('observes each surface through its own dispatch, never through the gate directly', () => {
     // PITFALL 5, AS A SOURCE ASSERTION. Every behavioural cell above would pass over a driver that
     // called `invokeFunction` itself — and such a driver is blind to D-14's ungated-op mutation by
     // construction, because the thing the mutation removes is the very call the driver would be
     // making. Comments are stripped first so this file's own prose may name what the driver's body
     // must not.
+    //
+    // 2026-08-21 (400-01): the sweep now covers the dashboard driver too, and it covers it by
+    // covering the FILE rather than by naming a function — which is what makes a fourth driver
+    // added later inherit the rule instead of having to be remembered.
     const code = commentStrippedSource('surface-dispatch.ts')
     // Named identifiers rather than a bare word: the drivers' fixture config declares a
     // `registry.targets` block, and a token scan would have read the project's own configuration
@@ -1837,11 +1984,24 @@ describe('the parity suite ranges the registry census over every rostered surfac
       expect(code, `surface-dispatch.ts reaches past the surface via ${forbidden}`)
         .not.toContain(forbidden)
     }
-    // …and the sweep is over the real file rather than an empty string.
+    // …and the sweep is over the real file rather than an empty string. Each driver's own shipped
+    // entry point is named, so a file that had stopped driving a surface reads as an empty sweep
+    // here rather than as a pass.
     expect(code, 'the surface-dispatch source read back empty').toContain('createChatCommand')
-    // The context is injected there too, on policy-fixtures.ts's rule (Pitfall 3).
-    expect(code, 'surface-dispatch.ts must inject the execution context it decides under')
+    expect(code, 'the dashboard driver no longer drives the shipped router')
+      .toContain('createChatRouter')
+    expect(code, 'the dashboard driver no longer composes the shipped door')
+      .toContain('composeDashboardDoor')
+    // The context is injected on both doors, on policy-fixtures.ts's rule (Pitfall 3) — but by two
+    // MECHANISMS, and the difference is a product fact rather than a preference. The CLI chat
+    // command resolves its context ambiently, so its driver sets and restores the process resolver;
+    // the dashboard door takes `resolveExecutionContext` as a composition input (400-01), so the
+    // posture travels with the door and there is nothing to restore. Both are asserted, so a driver
+    // that quietly started inheriting the process's answer reds.
+    expect(code, 'the chat driver must inject the execution context it decides under')
       .toContain('setActiveExecutionContextResolver')
+    expect(code, 'the dashboard driver must inject the execution context it decides under')
+      .toContain('resolveExecutionContext:')
   })
 
   // ---- The golden capability ledger (plan 06 — FUNC-05 leg 6, D-05/D-06/D-07/D-08) --------------

@@ -5,6 +5,9 @@
 // surfaces exist today — the chat host and the MCP server — and they are named here as data so that
 // adding a third is a reviewed one-line diff rather than a silent widening of the claim.
 //
+// 2026-08-21 — FOUR ROWS. The sentence above is left as it was written because this file reads as a
+// dated history, and its counts are history too; the roster itself is what states the current set.
+//
 // 2026-08-16 — THE REGISTRATION NOTE. A surface that lands after this date MUST arrive with a roster
 // row and an adapter, in the same change that ships it. Three are already anticipated:
 //
@@ -62,6 +65,7 @@
 
 import {
   chatSurfaceAdapter,
+  dashboardSurfaceAdapter,
   fnSurfaceAdapter,
   mcpSurfaceAdapter,
   type SurfaceAdapter,
@@ -90,4 +94,23 @@ export const SURFACE_ROSTER: readonly SurfaceRosterEntry[] = Object.freeze([
   // caller mint and a declaration projection, and a set assembled from the registry this file could
   // reach would be the same set on both sides of every comparison.
   Object.freeze({ id: 'fn', adapter: fnSurfaceAdapter }),
+  // The dashboard chat door (400, rostered 400-01, D-12). THE SECOND OF THE THREE ARRIVALS THE
+  // 2026-08-16 registration note reserved, and it lands on day one of the phase that ships it rather
+  // than at its end — which is what D-04's "in the change that ships it" means when the surface is
+  // being built rather than discovered. The note named this door specifically: "the M5 dashboard,
+  // whose HTTP path is the exact private channel the v1 server carried and the one this whole suite
+  // exists to make impossible to re-create quietly."
+  //
+  // WHAT IS AND IS NOT ON THE ROW, on 397 D-03's unchanged rule. The row is the registry-driven chat
+  // door — `POST /api/chat/turn`, which owns no capability of its own and resolves everything
+  // through one `invokeFunction(agent.ask, …)`, and `GET /api/chat/capabilities`, which is that
+  // door's own listing. The dashboard's other ~90 HTTP routes — runs, suites, config, artifacts,
+  // the live editor — stay OFF the roster exactly as `agent-qa run` and `proposals show` do:
+  // rostering them would mint a parity claim over hand-written v1 handlers this suite has never
+  // measured, which is a widening dressed as a completion. Their retirement is 401's and 402's.
+  //
+  // THE ADAPTER DRIVES A REAL SERVER (D-09's in-process half). The door has no in-process listing
+  // that is not served: what it reaches is what its own route says it reaches, read off the response
+  // bytes, so a door that started filtering reds here by name.
+  Object.freeze({ id: 'dashboard', adapter: dashboardSurfaceAdapter }),
 ] as const satisfies readonly SurfaceRosterEntry[])

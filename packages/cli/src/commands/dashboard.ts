@@ -34,6 +34,7 @@ import {
   applyResolvedAuthToModelConfig,
   resolveCliChatCapabilities,
   resolveModelAuth,
+  type CliChatCapabilities,
   type LLMConfigLike,
 } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
@@ -156,6 +157,78 @@ export function overlayDashboardBaseUrl(
   }
 }
 
+/** Everything the door's composition needs that only its host knows. */
+export interface DashboardDoorInput {
+  /** The project's runtime root, i.e. `<configDir>/.agent-qa`. */
+  readonly agentQaRoot: string
+  /** The configuration file this door resolves against. */
+  readonly configPath: string
+  /**
+   * The origin this server bound, read per configuration lookup (D-16).
+   *
+   * A FACTORY because the server has not bound a port when the door is composed, and an ephemeral
+   * port is a real posture. Answering `undefined` leaves the operator's config knob — or its
+   * absence, and therefore a `url`-absent card — exactly as it was.
+   */
+  readonly boundOrigin: () => string | undefined
+  /**
+   * The context every policy decision on this door is taken in (D-05).
+   *
+   * REQUIRED rather than defaulted, because the whole point of the seam is that a door STATES its
+   * posture rather than inheriting the process's. A door composed without one would be answering
+   * from TTY and CI markers, which is the ambient reach `resolveExecutionContext` exists to remove.
+   */
+  readonly resolveExecutionContext: () => ExecutionContext
+  /**
+   * What this door plans with, ALREADY RESOLVED (CHAT-06 / Pitfall 12).
+   *
+   * Absent composes the shipped HEADLESS posture: every deterministic utterance still routes and
+   * a natural-language one fails the turn closed by name. That is a real posture — a project with
+   * no usable LLM configuration gets a deterministic door rather than no door — and it is also
+   * what the conformance suite composes, deliberately, so no cell can reach a provider.
+   */
+  readonly chatModel?: CliChatCapabilities
+}
+
+/** The composed door: the local host it owns, and the seam the routes consume. */
+export interface DashboardDoor {
+  readonly host: LocalAgentHost
+  readonly agentHost: AgentHost
+}
+
+/**
+ * Compose the fourth door — ONE composer, for production and for the suite that measures it.
+ *
+ * PUBLISHED AND SINGULAR, and both halves matter. The conformance adapter enumerates this door and
+ * the dispatch driver drives it; if either assembled its own host beside this one, the suite would
+ * be measuring a door this product does not ship — the lookalike-assembly failure `spawned-chat.ts`
+ * names and `surface-dispatch.ts` refuses by source assertion. So the command below calls this, and
+ * so does the suite, and there is no third assembly to disagree with either.
+ *
+ * IT DECIDES NOTHING ITS CALLER HAS NOT SAID. Model, execution context and bound origin all arrive
+ * as inputs; what this function contributes is the wiring — the CLI port set, the base-URL overlay
+ * and the injected-host seam — which is the part that must not be written twice.
+ */
+export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
+  const host = composeCliLocalAgent({
+    agentQaRoot: input.agentQaRoot,
+    configPath: input.configPath,
+    config: overlayDashboardBaseUrl(
+      createMaskedConfigReader(input.configPath),
+      input.boundOrigin,
+    ),
+    resolveExecutionContext: input.resolveExecutionContext,
+    ...(input.chatModel === undefined
+      ? {}
+      : {
+        chatModel: input.chatModel.model,
+        chatModelFor: input.chatModel.modelFor,
+        chatAccounting: input.chatModel.accounting,
+      }),
+  })
+  return { host, agentHost: composeDashboardAgentHost(host) }
+}
+
 type DashboardCommandOptions = {
   port?: string
   db?: string
@@ -258,20 +331,11 @@ async function startDashboardBackedServices(
     // `overlayDashboardBaseUrl` for why this is a mutable box rather than a value.
     let boundOrigin: string | undefined
 
-    const agentHost = composeDashboardAgentHost(composeCliLocalAgent({
+    const { agentHost } = composeDashboardDoor({
       agentQaRoot: resolve(configDir, '.agent-qa'),
       configPath: configFilePath,
-      config: overlayDashboardBaseUrl(
-        createMaskedConfigReader(configFilePath),
-        () => boundOrigin,
-      ),
-      ...(chatModel === undefined
-        ? {}
-        : {
-          chatModel: chatModel.model,
-          chatModelFor: chatModel.modelFor,
-          chatAccounting: chatModel.accounting,
-        }),
+      boundOrigin: () => boundOrigin,
+      ...(chatModel === undefined ? {} : { chatModel }),
       // D-05, answered per RESEARCH Pattern 2: reuse `local-interactive` through the spec's own
       // explicit-override rung rather than minting a fifth vocabulary member, and supply it
       // INJECTED rather than through `setActiveExecutionContextResolver` — that setter is a process
@@ -284,7 +348,7 @@ async function startDashboardBackedServices(
       // posture D-05 ratified for this door; the shape is already the one that predicate slots
       // into, so 400-03 changes a body and not a seam.
       resolveExecutionContext: (): ExecutionContext => 'local-interactive',
-    }))
+    })
 
     const { close, port: listeningPort } = await startServer({
       db,

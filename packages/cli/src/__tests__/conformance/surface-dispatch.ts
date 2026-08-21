@@ -1,4 +1,5 @@
-// The two surface DRIVERS the verdict legs observe through (Phase 397 plan 04, D-11 / D-14).
+// The three surface DRIVERS the verdict legs observe through (Phase 397 plan 04, D-11 / D-14;
+// the dashboard door added 2026-08-21, Phase 400 plan 01).
 //
 // WHAT A DRIVER IS FOR, AND WHY IT IS NOT A CONVENIENCE. `adapters.ts` answers what a surface can
 // REACH; this file answers what a surface DOES when something is asked of it. Those are different
@@ -37,6 +38,7 @@
 // in.
 
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer as createHttpServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -56,7 +58,10 @@ import type {
 import { Command } from 'commander'
 import { vi } from 'vitest'
 
+import { CHAT_TURN_ROUTE, createChatRouter } from '@vostride/agent-qa-dashboard'
+
 import { createChatCommand } from '../../commands/chat.js'
+import { composeDashboardDoor } from '../../commands/dashboard.js'
 import { withMcpClient } from './adapters.js'
 import { CONFORMANCE_EXECUTION_CONTEXT } from './policy-fixtures.js'
 
@@ -327,7 +332,25 @@ export async function driveChatLines(
     setActiveExecutionContextResolver(() => previousContext)
   }
 
-  const agentQaRoot = join(root, '.agent-qa')
+  const observed = readRuntimeObservations(join(root, '.agent-qa'))
+
+  rmSync(root, { recursive: true, force: true })
+
+  return { ...observed, stdout: stdout.join('\n') }
+}
+
+/**
+ * What a drive wrote down, read off the runtime root the surface wrote it to.
+ *
+ * SHARED BY EVERY DRIVER IN THIS FILE, and that is the point rather than a convenience. The chat
+ * door and the dashboard door are different transports over ONE session substrate (400 D-04), so a
+ * second reader here would be a second answer to what a turn recorded — and the cells that compare
+ * the two doors would then be comparing two readings rather than two doors.
+ *
+ * NEVER SCRAPED FROM A RENDER. The printed line and the served JSON are both renders of these
+ * records, so a reader that parsed either could disagree with what the product wrote down.
+ */
+function readRuntimeObservations(agentQaRoot: string): Omit<ChatDriveObservation, 'stdout'> {
   const receipts: ClauseReceipt[] = []
   const results: ClauseResult[] = []
   const unhandled: string[] = []
@@ -360,10 +383,138 @@ export async function driveChatLines(
   const auditRows = readJsonLines(join(agentQaRoot, 'execution_audit.jsonl')).map(
     (row) => row as unknown as ExecutionAuditRow,
   )
+  return { receipts, results, auditRows, unhandled }
+}
 
+// ---- The dashboard surface (2026-08-21, Phase 400 plan 01, D-09/D-12) ---------------------------
+//
+// THE DRIVER STANDS THE SHIPPED DOOR UP AND TYPES AT IT OVER A SOCKET. `composeDashboardDoor` is
+// the function `agent-qa dashboard` calls and `createChatRouter` is the handler `createRouter`
+// mounts; what this file contributes is a port number, the request bytes and the reading of what
+// the surface wrote down. It decides nothing about verdicts, and — like its chat neighbour — it
+// never imports the gate or the registry, so a capability rerouted around `invokeFunction` is
+// invisible to it in exactly the way D-14's mutation needs.
+//
+// THE EXECUTION CONTEXT IS INJECTED THROUGH THE COMPOSITION, NOT PINNED ON THE PROCESS. This is the
+// one place the two drivers differ in mechanism and the difference is a product fact rather than a
+// preference: the CLI chat command resolves its context ambiently, so its driver has to set and
+// restore the process resolver; the dashboard door takes `resolveExecutionContext` as a composition
+// input (400-01), so the posture travels with the door and there is nothing to restore. Pitfall 5
+// closed structurally rather than by discipline.
+//
+// ONE SESSION PER DRIVE, THREADED. Each POST is a turn, so the session id the first turn minted is
+// carried into every later one — a `/pin` typed in one conversation denies for that conversation
+// and no other (392 W-03), and a driver that started a fresh session per line would have a pin that
+// applied to nothing while reading exactly like one that worked.
+
+/** What one dashboard drive typed, and under what posture. */
+export interface DriveDashboardDispatchInput {
+  /** The capability to reach, by registry op id. */
+  readonly opId: string
+  /** The op's own typed invocation fixture; the scenario row's `input`. */
+  readonly input: unknown
+  /** Action classes to `/pin` DENY before the op is asked for, each `fn:<opId>`. */
+  readonly pinBefore?: readonly string[]
+  /** The context every policy decision in this drive is taken in. Injected, never ambient. */
+  readonly executionContext?: ExecutionContext
+}
+
+/** What one dashboard drive produced, as the surface itself recorded it. */
+export interface DashboardDriveObservation extends Omit<ChatDriveObservation, 'stdout'> {
+  /** The HTTP status of every turn, in the order the turns were posted. */
+  readonly httpStatuses: readonly number[]
+  /** Every turn's served body, so a cell can compare what the wire carried to what was logged. */
+  readonly turns: readonly unknown[]
+  /** The response headers of the LAST turn, for the cells that assert what a door does not send. */
+  readonly lastHeaders: Headers | undefined
+}
+
+/** One drive keyed to ONE op, which is what every parity leg asks about. */
+export interface DashboardDispatchOutcome extends DashboardDriveObservation {
+  readonly receipt: ClauseReceipt | undefined
+}
+
+/**
+ * Type ARBITRARY lines at the shipped dashboard door, and report what it wrote down.
+ *
+ * The chat driver's shape, with the transport substituted and nothing else: same fixture workspace,
+ * same model-free posture, same session-log reading, same per-drive teardown.
+ */
+export async function driveDashboardLines(
+  typedLines: readonly string[],
+  executionContext?: ExecutionContext,
+): Promise<DashboardDriveObservation> {
+  const configPath = fixtureWorkspace()
+  const root = dirname(resolve(configPath))
+  let boundOrigin: string | undefined
+  const door = composeDashboardDoor({
+    agentQaRoot: join(root, '.agent-qa'),
+    configPath,
+    boundOrigin: () => boundOrigin,
+    resolveExecutionContext: () => executionContext ?? CONFORMANCE_EXECUTION_CONTEXT,
+  })
+  const server = createHttpServer(createChatRouter(door.agentHost))
+
+  const httpStatuses: number[] = []
+  const turns: unknown[] = []
+  let lastHeaders: Headers | undefined
+  try {
+    await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
+    const address = server.address()
+    if (address === null || typeof address === 'string') {
+      throw new TypeError('the dashboard door bound no port')
+    }
+    boundOrigin = `http://127.0.0.1:${String(address.port)}`
+
+    let sessionId: string | undefined
+    for (const line of typedLines) {
+      const response = await fetch(`${boundOrigin}${CHAT_TURN_ROUTE}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          sessionId === undefined ? { message: line } : { message: line, sessionId },
+        ),
+      })
+      httpStatuses.push(response.status)
+      lastHeaders = response.headers
+      const body = await response.json() as { result?: { sessionId?: unknown } }
+      turns.push(body)
+      if (typeof body.result?.sessionId === 'string') sessionId = body.result.sessionId
+    }
+  } finally {
+    await new Promise<void>((closed) => server.close(() => closed()))
+    await door.host.close()
+  }
+
+  const observed = readRuntimeObservations(join(root, '.agent-qa'))
   rmSync(root, { recursive: true, force: true })
+  return { ...observed, httpStatuses, turns, lastHeaders }
+}
 
-  return { receipts, results, auditRows, unhandled, stdout: stdout.join('\n') }
+/**
+ * Drive ONE capability through the dashboard door's own dispatch, model-free.
+ *
+ * `pinBefore` is the refuse-direction wall for the same measured reason it is on chat: both stage
+ * callers hold the whole closed scope union, so "an interactive-door caller missing a required
+ * scope" is not a state this product can be in, and `/pin` is the refusal a person can actually
+ * produce — consulted inside the one `evaluate()` call site, landing a real execution-audit row,
+ * independent of the execution context, and unreachable by a capability that dispatched outside the
+ * gate.
+ */
+export async function driveDashboardDispatch(
+  input: DriveDashboardDispatchInput,
+): Promise<DashboardDispatchOutcome> {
+  const observed = await driveDashboardLines(
+    [
+      ...(input.pinBefore ?? []).map((actionClass) => `/pin ${actionClass}`),
+      genericFnClause(input.opId, input.input),
+    ],
+    input.executionContext,
+  )
+  return {
+    ...observed,
+    receipt: observed.receipts.find((candidate) => candidate.functionId === input.opId),
+  }
 }
 
 // ---- The MCP surface ---------------------------------------------------------------------------

@@ -31,10 +31,9 @@ import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
-  composeDashboardAgentHost,
+  composeDashboardDoor,
   DASHBOARD_FUNCTION_CALLER,
 } from '../commands/dashboard.js'
-import { composeCliLocalAgent } from '../composition/local-agent-host.js'
 
 /**
  * A deterministic project the door can open a conversation in, and nothing more.
@@ -79,18 +78,26 @@ interface DoorFixture {
 async function openDoor(): Promise<DoorFixture> {
   const configPath = fixtureWorkspace()
   const configRoot = dirname(resolve(configPath))
-  const host = composeCliLocalAgent({
+  // The bound origin, closed over and written after `listen` — the same mutable box the shipped
+  // command uses, and driven here so D-16's second supplier is exercised rather than argued.
+  let boundOrigin: string | undefined
+  // THE SHIPPED COMPOSER, not an assembly beside it. `composeDashboardDoor` is the function
+  // `agent-qa dashboard` calls; a host built here from its parts would be a door this product does
+  // not ship, and every cell below would then be a statement about this file.
+  const { host, agentHost } = composeDashboardDoor({
     agentQaRoot: join(configRoot, '.agent-qa'),
     configPath,
+    boundOrigin: () => boundOrigin,
     resolveExecutionContext: () => 'local-interactive',
   })
-  const server = createServer(createChatRouter(composeDashboardAgentHost(host)))
+  const server = createServer(createChatRouter(agentHost))
   await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
   const address = server.address()
   if (address === null || typeof address === 'string') {
     throw new TypeError('the door bound no port')
   }
-  return { origin: `http://127.0.0.1:${String(address.port)}`, configRoot, host, server }
+  boundOrigin = `http://127.0.0.1:${String(address.port)}`
+  return { origin: boundOrigin, configRoot, host, server }
 }
 
 async function closeDoor(door: DoorFixture): Promise<void> {
