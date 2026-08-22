@@ -647,20 +647,33 @@ async function maybePrintPostRunUpdateNotice(context: AgentQaUpdateNoticeContext
   }
 }
 
-function formatParseErrors(errors: ParseError[]): void {
+/**
+ * The rendered parse-error report, as LINES rather than as console writes.
+ *
+ * 401-11: an input refusal CARRIES what it used to print, so the door that has a terminal renders
+ * it and a door that has none does something else with it. `formatParseErrors` below is now this
+ * function plus a loop, which is what keeps the two from drifting into two reports.
+ */
+function formatParseErrorLines(errors: ParseError[]): string[] {
+  const lines: string[] = []
   for (const err of errors) {
     const location = `${err.file}:${err.line}:${err.column}`
     const severity = err.severity === 'error' ? pc.red('error') : pc.yellow('warning')
-    console.error(`${severity}: ${err.message}`)
-    console.error(`  ${pc.blue('-->')} ${location}`)
+    lines.push(`${severity}: ${err.message}`)
+    lines.push(`  ${pc.blue('-->')} ${location}`)
     if (err.source) {
-      console.error(`  ${pc.blue('|')} ${err.source}`)
+      lines.push(`  ${pc.blue('|')} ${err.source}`)
     }
     if (err.suggestion) {
-      console.error(`  ${pc.blue('=')} ${pc.bold('help')}: ${err.suggestion}`)
+      lines.push(`  ${pc.blue('=')} ${pc.bold('help')}: ${err.suggestion}`)
     }
-    console.error()
+    lines.push('')
   }
+  return lines
+}
+
+function formatParseErrors(errors: ParseError[]): void {
+  for (const line of formatParseErrorLines(errors)) console.error(line)
 }
 
 function createTestRunId(): string {
@@ -1462,45 +1475,9 @@ async function executeSuites(
   const configFilePath = globalOpts.config ?? 'agent-qa.config.yaml'
   const configDir = path.dirname(path.resolve(configFilePath))
 
-  type PreloadedSuiteTest = {
-    fileContent: string
-    parseResult: ReturnType<typeof parseTestFile>
-  }
-  const parsedSuiteDefinitions = new Map<string, SuiteDefinition>()
-  const preloadedSuiteTests = new Map<string, PreloadedSuiteTest>()
-  const suiteProductMembers: InvocationProductMember[] = []
-
-  // Product identity is a read-only preflight. It completes before signal registration,
-  // dashboard creation, adapter setup, ordinal allocation, or startRun can mutate state.
-  for (const suiteFile of suiteFiles) {
-    const suite = await parseSuiteFile(suiteFile)
-    parsedSuiteDefinitions.set(suiteFile, suite)
-    if (suite.target !== undefined) {
-      suiteProductMembers.push({
-        label: `suite ${suite.name}`,
-        product: resolveTarget(config, suite.target).product,
-      })
-    }
-
-    for (const member of suite.tests) {
-      if (!isPathInsideDir(member.test, configDir)) continue
-      const absolutePath = path.resolve(configDir, member.test)
-      const fileContent = await readFile(absolutePath, 'utf-8')
-      const parseResult = parseTestFile(fileContent, absolutePath)
-      preloadedSuiteTests.set(absolutePath, { fileContent, parseResult })
-
-      if (suite.target === undefined) {
-        const test = parseResult.errors.length === 0 ? parseResult.tests[0] : undefined
-        if (test?.target !== undefined) {
-          suiteProductMembers.push({
-            label: `suite ${suite.name} member ${test.name}`,
-            product: resolveTarget(config, test.target).product,
-          })
-        }
-      }
-    }
-  }
-  const preflightRunProduct = requireSingleInvocationProduct(suiteProductMembers)
+  // 401-11: the read-only preflight is its own exported producer now — `--dry-run` stops on it,
+  // and a programmatic door reaches the same parse without reaching this command.
+  const preflight = await resolveSuitePreflight({ suiteFiles, config, configDir })
 
   // --dry-run RESOLVES AND REPORTS, THEN STOPS — and it stops HERE (401-04, RESEARCH Open Q2's
   // ratified disposition under D-02). `--dry-run` is not a kind of run; it is the answer to "what
@@ -1519,12 +1496,12 @@ async function executeSuites(
   // its command's two paths.
   if (opts.dryRun === true) {
     const suiteMemberCount = suiteFiles.reduce(
-      (total, suiteFile) => total + (parsedSuiteDefinitions.get(suiteFile)?.tests.length ?? 0),
+      (total, suiteFile) => total + (preflight.definitions.get(suiteFile)?.tests.length ?? 0),
       0,
     )
     console.log(pc.bold(`\nFound ${suiteFiles.length} suite(s), ${suiteMemberCount} test(s):\n`))
     for (const suiteFile of suiteFiles) {
-      const suite = parsedSuiteDefinitions.get(suiteFile)
+      const suite = preflight.definitions.get(suiteFile)
       if (suite === undefined) continue
       console.log(`  ${pc.green('●')} ${suite.name}`)
       for (const member of suite.tests) {
@@ -1548,12 +1525,6 @@ async function executeSuites(
     if (graceTimer) clearTimeout(graceTimer)
     graceTimer = undefined
   }
-  // SEAM-01/03 (362-06): the ONE run MaskingContext + per-run SafetyHookRunner, built at the runId
-  // mint below and captured here so the earlier-defined member/teardown closures (which only execute
-  // after startRun) resolve the run bundle at call time. `runMaskingContext` also feeds the D-06
-  // mid-run auth-state registration at teardown capture and the WM-flush report mask.
-  let runMaskingContext: RunMaskingContext | undefined
-  let runSafetyHooks: SafetyHookRunner | undefined
 
   // Best-effort suite-DB running→cancelled sweep, invoked by the controller on the first signal.
   const sweepSuiteDbs = () => {
@@ -1597,13 +1568,570 @@ async function executeSuites(
   process.on('SIGINT', shutdownController.handleSignal)
   process.on('SIGTERM', shutdownController.handleSignal)
 
-  const dashboardCfg = config.services?.dashboard as Record<string, unknown> | undefined
-  const reporterSelectionResult = resolveReporterSelection(opts, Boolean(dashboardCfg))
-  if (reporterSelectionResult.error) {
-    console.error(pc.red(`Error: ${reporterSelectionResult.error}`))
-    process.exit(2)
+
+  // 401-11 (D-01/D-02): the suite half's members and executor come from the ONE producer that owns
+  // that chain — the SAME function a door holding nothing but a `RunsStartInput` with a suite
+  // pattern reaches through `produceMembersFromPatterns`. `executeSuites` drives it; it no longer
+  // is it.
+  const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
+  const executionContext = resolveRunExecutionContext()
+  const produced = await produceSuiteRunMembers({
+    suiteFiles,
+    preflight,
+    config,
+    configDir,
+    configFilePath,
+    configContent,
+    effectiveLogLevel,
+    runId,
+    opts,
+    ...(variableContext === undefined ? {} : { variableContext }),
+    ...(hooksContext === undefined ? {} : { hooksContext }),
+    ...(analytics === undefined ? {} : { analytics }),
+    activeSuiteDbs,
+  })
+  const reporterSelection = requireReporterSelection(opts, Boolean(config.services?.dashboard))
+  const members = produced.members
+  const executor = produced.executor
+  const runProduct = produced.product
+  const suiteTargetClass = produced.targetClass
+  const suiteProbeUrl = produced.probeUrl
+  const buildTag = produced.buildTag
+  const knowledgeRoot = produced.knowledgeRoot
+  const runDigests = { runLevel: produced.configDigests }
+  let suiteQuarantined: readonly QuarantineAppliedEntry[] = []
+
+  // SEAM-01/03/04 (362-06): construct the run's real seeded MaskingContext (D-05/06/07), the per-run
+  // stamped audit sink (D-12/13), and the per-run SafetyHookRunner (D-01/15/10) — then run the whole
+  // run body inside runSafetyScope so every createModel egress masks and every tool call is gated +
+  // audited (D-02/D-04). The masking context needs no runId, so it seeds from the statically-resolved
+  // suite auth-state payloads the producer read best-effort.
+  //
+  // MASKING BOUNDARY (363-09, RESEARCH Q7 item 3): every placeholder-bearing string originates AFTER
+  // this seam (masked egress, tool gating, WM). Pre-run errors (config/parse/target resolution, the
+  // validation-error DB writes and crash-finalizer above) occur BEFORE the MaskingContext exists, so
+  // they carry NO placeholders and need NO unmask call — the console reporter (the sole unmasking
+  // surface) only handles post-seam envelopes; step-failure/deny prose reaches humans through it.
+  const maskingContext = buildRunMaskingContext({
+    secretStore: variableContext?.secretStore,
+    env: process.env,
+    ...(produced.maskingSeed?.authStatePayloads === undefined
+      ? {}
+      : { authStatePayloads: [...produced.maskingSeed.authStatePayloads] }),
+  })
+  const auditSink = buildRunAuditSink({ configDir, runId, executionContext })
+  const trustMode = opts.trustSession === true || config.safety?.trustMode === true
+  // D-11 (363-09): the console pause/resume seam shared with the ask-tier confirm decorator; bound to
+  // the console reporter inside `attachRunSubscribers` below. buildRunSafetyHooks composes the unmask
+  // decorator OVER the timed decorator so live confirm prompts show real values (masked machine surfaces).
+  const livePause = createLivePauseController()
+  const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext, trustMode, maskingContext, live: livePause })
+  produced.bindRunContext({ maskingContext, safetyHooks })
+
+  const lifecycle = { finalize: () => produced.finalize?.() ?? Promise.resolve() }
+
+  // 363-09: the run-level bus subscribers (Pitfall 8 — the SAME attach helper both of this door's
+  // paths use). Analytics rides the bus (D-16); the dashboard ingest (when a suite DB exists) writes
+  // runs/run_artifacts rows as a subscriber (D-08). Dashboard/analytics construction data the wire
+  // omits rides here.
+  const runLevelDashboardDb = produced.subscriberSeed?.dashboardDb
+  const extraSubscribers: RunSubscriberHandle[] = []
+  if (runLevelDashboardDb) {
+    const dashboardSubscriber = await buildDashboardIngestSubscriber({
+      db: runLevelDashboardDb,
+      configSnapshot: produced.subscriberSeed?.configSnapshot,
+      sourceSnapshot: produced.subscriberSeed?.sourceSnapshot,
+      attributes: produced.subscriberSeed?.attributes,
+    })
+    if (dashboardSubscriber) extraSubscribers.push(dashboardSubscriber)
   }
-  const reporterSelection = reporterSelectionResult.selection!
+  // 398-10 (D-17/D-20): the re-homed subscriber over the port this command composed at its root.
+  // `config` is NOT passed — the opt-out posture is already expressed by which transport that port
+  // holds, and a subscriber that re-read it would be the second decision site D-19 abolished.
+  if (analytics) {
+    const analyticsHost = await analytics()
+    extraSubscribers.push(buildAnalyticsRunSubscriber({
+      analytics: analyticsHost,
+      ...analyticsRunAttribution(resolveCliRunAttributes(
+        variableContext?.userRunAttributes ?? {},
+        'local',
+        variableContext?.inheritedRunAttributes,
+      )),
+    }))
+    // The run's masking context now exists; point the send seam at it (`bindMaskingContext`).
+    analyticsHost.bindMaskingContext(maskingContext)
+  }
+
+  // The started session and its subscribers, published by the core's `onSession` hook. They are
+  // `let`s rather than return values because the hook fires while the core is still inside
+  // `execute`, which is exactly when a subscriber has to attach.
+  let startedSession: RunSession | undefined
+  let startedSubscribers: { flush(): Promise<void> } | undefined
+  // The door's own confirm channel for the RUN-START gate (D-07). `undefined` on a piped or
+  // redirected stdio — this door does not claim a person is present because the process is running
+  // somewhere a person once was.
+  const runStartConfirm = createTtyConfirmPort()
+
+  // 401-04 (D-02): the SUITE path is now a caller of the same one policy-gated in-process
+  // invocation core the single-test path composes. It was the second — and last — direct
+  // `startRun` on this door; with it gone, no `agent-qa run` invocation of any shape can begin a
+  // run except through the ONE `evaluate()` (INVK-02 criterion 2 for the CLI/CI trigger family).
+  //
+  // WHAT THE DOOR STILL OWNS, AND WHY IT IS THIS AND NOT MORE: its TTY posture, its trust flag, its
+  // confirm channel, its target class and its assembly. Those are the five things only a door can
+  // answer. The ORDER is the core's, which is what makes "the probe and the ordinal happen after
+  // the verdict" a structural property here rather than a rule this file remembers.
+  const runCore = createRunInvocationCore({
+    configPath: configFilePath,
+    agentQaRoot: resolvePath(configDir, '.agent-qa'),
+    executionContext,
+    mintRunId: generateRunId,
+    auditSink,
+    trust: { trustMode },
+    // Absent on a piped/redirected stdio, which leaves the gate's DENY_CONFIRM default in place —
+    // the fail-closed arm is reached before the confirm arm anyway, so this port only ever speaks
+    // where there is somebody to answer it.
+    ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
+    resolveTargetClass: () => suiteTargetClass,
+    assembleRun: async (assemblyContext) => {
+      const assembly = await assembleCliRun({
+        runId: assemblyContext.runId,
+        executionContext: assemblyContext.executionContext,
+        configDir: assemblyContext.configDir,
+        knowledgeRoot,
+        ports: assemblyContext.ports,
+        confirmPausedMs,
+        maskingContext,
+        members,
+        executor,
+        configDigests: runDigests.runLevel,
+        product: runProduct,
+        ...(buildTag === undefined ? {} : { buildTag }),
+        ...(suiteProbeUrl === undefined ? {} : { probeUrl: suiteProbeUrl }),
+        warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
+      })
+      produced.applyAssembly({
+        buildOrdinal: assembly.buildOrdinal,
+        quarantined: assembly.quarantined,
+      })
+      suiteQuarantined = assembly.quarantined
+
+      // D-23 live bind, through the producer that owns the prepared suites. It moved in here with
+      // the ordinal it reads: `asOfBuild` is the advanced ordinal, and the advance is a durable
+      // write a refused run must not make — so the bind cannot precede the verdict either. It still
+      // precedes every member, because the core calls this assembler and only then `startRun`.
+      produced.bindKnowledge?.(assembly.buildOrdinal)
+
+      return assembly.config
+    },
+    onSession: (session) => {
+      activeRunSession = session
+      startedSession = session
+      // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest;
+      // analytics) via subscribe(0) — replay-then-live gives D-04 for free. Console options carry
+      // the run's flags. `suiteQuarantined` is already assigned: the core calls the assembler, then
+      // `startRun`, then this hook.
+      startedSubscribers = attachRunSubscribers({
+        session,
+        maskingContext,
+        console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
+        junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
+        extraSubscribers,
+        live: livePause,
+        // 390 D-15: the SAME resolved set the run was assembled with, so the reporters and the
+        // aggregate verdict rule describe one disposition rather than two.
+        quarantined: suiteQuarantined,
+      })
+    },
+  })
+
+  const exitCode = await runSafetyScope({ maskingContext, auditSink, executionContext }, async () => {
+    try {
+      // The core refuses, gates, assembles, starts, and awaits the run. A denial throws
+      // `RunDeniedError` from inside here, before a single run event exists.
+      //
+      // THE MARKERS RIDE THE REQUEST (INVK-06). `runMarkers` still maps this command's two options
+      // onto the two literal-`true` fields, but the field they land in is now `RunsStartInput`'s
+      // rather than `RunConfig`'s — request → RunConfig is the core's job, and there is no argv
+      // link left inside the invocation.
+      await runCore.execute({
+        runId: asRunId(runId),
+        ...runMarkers(opts),
+      })
+      const session = startedSession
+      const subscribers = startedSubscribers
+      if (session === undefined || subscribers === undefined) {
+        // Unreachable: the core notifies `onSession` before it awaits the run. Asserted rather than
+        // assumed, because a silently absent session would degrade into a run whose verdict nothing
+        // mapped.
+        throw new Error('The invocation core completed without reporting a run session.')
+      }
+
+      const { verdict } = await session.done
+      clearGraceTimer()
+      await lifecycle.finalize()
+      // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics drain)
+      // AFTER session.done + lifecycle.finalize() and BEFORE mapping the verdict to the exit code.
+      await subscribers.flush()
+      activeRunSession = undefined
+      // D-14: freeze the verdict-mapped code before the curation tail. A tail failure or a signal
+      // arriving while the drain owns its lease can stop learning, but can never replace this code.
+      const verdictExitCode = mapVerdictToExitCode(
+        shutdownRequested ? 'cancelled' : verdict,
+      )
+      // 388-02 D-01: ONE shared post-run tail serves both of this command's tail sites
+      // (Pitfall 1). The enqueue leg runs even under `--detach`; only the in-process chain
+      // drain is detach-gated. Neither can replace the code frozen on the line above.
+      const postRunTail = runPostRunTail({
+        runId,
+        agentQaRoot: resolvePath(configDir, '.agent-qa'),
+        configPath: resolvePath(configFilePath),
+        knowledgeConfig: config.knowledge,
+        configDir,
+        auditSink,
+        maskingContext,
+        ...(produced.getCurationModelDeps() === undefined
+          ? {}
+          : { modelDeps: produced.getCurationModelDeps()! }),
+        policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+        signal: curationAbortController.signal,
+        log: curationTailLog,
+      })
+      return await runVerdictFirstCurationTail({
+        exitCode: verdictExitCode,
+        detach: opts.detach === true,
+        enqueue: () => postRunTail.enqueue(),
+        runTail: () => postRunTail.drain(),
+        // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
+        finish: (input) => postRunTail.finish(input),
+        onUnexpectedError: () => {
+          curationTailLog.warn(
+            'Post-verdict knowledge curation incomplete; it will resume on the next run.',
+          )
+        },
+      })
+    } finally {
+      // Pitfall 8: dispose LAST — after session.done + lifecycle.finalize() (teardown auth capture +
+      // handoff assembly) so every late masker still replaces; a post-run stray egress sees no mask.
+      maskingContext.dispose()
+    }
+  })
+
+  clearGraceTimer()
+  shutdownController.dispose()
+  process.removeListener('SIGINT', shutdownController.handleSignal)
+  process.removeListener('SIGTERM', shutdownController.handleSignal)
+
+  releaseAppium()
+  return exitCode
+}
+
+/**
+ * A parse refusal, which is an input refusal that carries its own diagnostics.
+ *
+ * SUBCLASSED RATHER THAN COLLAPSED because the CLI door does one thing more with a parse failure
+ * than any other door does: when a dashboard database is configured it writes a `failed` run row and
+ * a run artifact carrying the errors. That is REPORTING, which belongs to the door and not to the
+ * in-process path — a daemon or a chat host sees an ordinary `CliRunInputError` and needs to know
+ * nothing about run rows.
+ *
+ * It extends the class from the LEAF module, never one re-exported through
+ * `in-process-run-execution.js`: `extends` is evaluated while the module graph is still
+ * initialising, and this file and that one import each other.
+ */
+export class CliRunParseError extends CliRunInputError {
+  constructor(
+    lines: readonly string[],
+    readonly parseErrors: readonly ParseError[],
+    readonly files: readonly string[],
+  ) {
+    super(lines, 2)
+    this.name = 'CliRunParseError'
+  }
+}
+
+/**
+ * The id mint, published so the ONE in-process drive can hand it to the core.
+ *
+ * `mintRunId` is a REQUIRED core option (401-03): `agent-local` does not depend on the id package,
+ * and an id shape invented there would be a second spelling of a run's identity. The drive lives in
+ * `packages/cli/src/composition/`, which may not name `@vostride/agent-qa-core` either — so the mint
+ * travels the same relative route every other producer here does.
+ */
+export const mintCliRunId = generateRunId
+
+/** What the mode-aware default producer is handed. */
+export interface PatternMemberProductionContext {
+  readonly inputs: RunInvocationInputs
+  readonly runId: string
+  readonly opts?: RunOptions
+  readonly reporterSelection?: ReporterSelection
+  readonly analytics?: () => Promise<CliAnalyticsHost>
+  readonly activeSuiteDbs?: Set<any>
+}
+
+/**
+ * THE MODE-AWARE DEFAULT MEMBER PRODUCER — the thing that makes the port composable from a bare
+ * `RunsStartInput`.
+ *
+ * WHY IT DISPATCHES AND DOES NOT JUST ASSUME TEST FILES. `createCliRunExecution` forwards a
+ * request's `patterns` after a `--` operand separator with NO mode flag
+ * (`composition/local-agent-host.ts`) — it cannot tell a test pattern from a suite pattern and does
+ * not try. So on the shipped wire a `runs.start` whose patterns resolve to suite files RUNS A SUITE,
+ * over the fn door and the daemon door alike. A single-test-shaped default would turn that live
+ * request into an input error at exactly the two doors this seam exists to unblock.
+ *
+ * THE POLARITY IS MIRRORED FROM THE COMMAND'S OWN GUARD, not restated from memory. `run.ts`'s
+ * dispatch reads `if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length === 0)` — the
+ * suite path is an EARLY RETURN taken only when discovery resolved no test files at all. So the
+ * test half wins whenever it applies, and a producer that preferred suites whenever any suite
+ * resolved would be a regression in the other direction (an `--all`-shaped invocation would stop
+ * running its tests).
+ *
+ * ABSENT PATTERNS resolve the configured default set through the same split, which is the
+ * argument-less `runs.start` edge.
+ */
+export async function produceMembersFromPatterns(
+  context: PatternMemberProductionContext,
+): Promise<ProducedCliRunMembers> {
+  const { tests, suites } = context.inputs.discovered
+
+  if (tests.length > 0) {
+    const { parseAllTestBindings } = await import('@vostride/agent-qa-core')
+    const parseResult = await parseAllTestBindings([...tests])
+    if (parseResult.errors.length > 0) {
+      throw new CliRunParseError(
+        [
+          pc.red(`Found ${parseResult.errors.length} parse error(s):`),
+          '',
+          ...formatParseErrorLines(parseResult.errors),
+        ],
+        parseResult.errors,
+        [...tests],
+      )
+    }
+    refuseZeroRunnableTests(tests, parseResult.bindings)
+    const product = requireSingleInvocationProduct(
+      parseResult.bindings.flatMap(({ test }) => {
+        if (test.target === undefined) return []
+        return [{
+          label: `test ${test.name}`,
+          product: resolveTarget(context.inputs.config, test.target).product,
+        }]
+      }),
+    )
+    return produceDirectRunMembers({
+      inputs: context.inputs,
+      bindings: parseResult.bindings,
+      ...(product === undefined ? {} : { product }),
+      ...(context.opts === undefined ? {} : { opts: context.opts }),
+      ...(context.reporterSelection === undefined ? {} : { reporterSelection: context.reporterSelection }),
+      ...(context.analytics === undefined ? {} : { analytics: context.analytics }),
+    })
+  }
+
+  if (suites.length > 0) {
+    const preflight = await resolveSuitePreflight({
+      suiteFiles: suites,
+      config: context.inputs.config,
+      configDir: context.inputs.configDir,
+    })
+    return produceSuiteRunMembers({
+      suiteFiles: suites,
+      preflight,
+      config: context.inputs.config,
+      configDir: context.inputs.configDir,
+      configFilePath: context.inputs.configFilePath,
+      configContent: context.inputs.configContent,
+      effectiveLogLevel: context.inputs.effectiveLogLevel,
+      runId: context.runId,
+      ...(context.opts === undefined ? {} : { opts: context.opts }),
+      ...(context.reporterSelection === undefined ? {} : { reporterSelection: context.reporterSelection }),
+      variableContext: {
+        envFileVars: context.inputs.envFileVars,
+        inlineVars: context.inputs.inlineVars,
+        cliVars: context.inputs.cliVars,
+        rawEnvFileContent: context.inputs.rawEnvFileContent,
+        resolvedEnvFilePath: context.inputs.resolvedEnvFilePath,
+        secretStore: context.inputs.runtimeSecrets.secretStore,
+        secretRedactor: context.inputs.runtimeSecrets.secretRedactor,
+        secretsFileMetadata: context.inputs.runtimeSecrets.secretsFileMetadata,
+        userRunAttributes: context.inputs.userRunAttributes,
+        ...(context.inputs.inheritedRunAttributes === undefined
+          ? {}
+          : { inheritedRunAttributes: context.inputs.inheritedRunAttributes }),
+      },
+      hooksContext: {
+        resolvedHooks: context.inputs.resolvedHooks,
+        sandboxOptions: context.inputs.sandboxOptions,
+      },
+      ...(context.analytics === undefined ? {} : { analytics: context.analytics }),
+      ...(context.activeSuiteDbs === undefined ? {} : { activeSuiteDbs: context.activeSuiteDbs }),
+    })
+  }
+
+  // Defense in depth: `resolveRunInvocationInputs` already refuses an empty split, so reaching here
+  // means a door produced its own inputs and produced nothing to run.
+  throw new CliRunInputError([pc.red('Error: No test or suite files resolved for this run.')], 2)
+}
+
+/**
+ * The read-only suite preflight: parse every suite and its members, and decide the invocation's
+ * single product. Nothing here touches a target, a device, a database or a counter.
+ *
+ * IT IS ITS OWN FUNCTION because `--dry-run` stops on exactly this and goes no further (401-04's
+ * ratified disposition of RESEARCH Open Q2): a run that will never happen has no authorization
+ * question to ask, so it must not reach the gate — and it cannot report what it WOULD run without
+ * having parsed it first.
+ */
+export interface SuitePreflight {
+  readonly definitions: Map<string, SuiteDefinition>
+  readonly preloadedTests: Map<string, PreloadedSuiteTest>
+  readonly product: string | undefined
+}
+
+export type PreloadedSuiteTest = {
+  fileContent: string
+  parseResult: { tests: TestDefinition[]; errors: ParseError[] }
+}
+
+export async function resolveSuitePreflight(input: {
+  readonly suiteFiles: readonly string[]
+  readonly config: AgentQaConfig
+  readonly configDir: string
+}): Promise<SuitePreflight> {
+  const { parseSuiteFile, parseTestFile } = await import('@vostride/agent-qa-core')
+  const { readFile } = await import('node:fs/promises')
+  const path = await import('node:path')
+
+  const definitions = new Map<string, SuiteDefinition>()
+  const preloadedTests = new Map<string, PreloadedSuiteTest>()
+  const suiteProductMembers: InvocationProductMember[] = []
+
+  for (const suiteFile of input.suiteFiles) {
+    const suite = await parseSuiteFile(suiteFile)
+    definitions.set(suiteFile, suite)
+    if (suite.target !== undefined) {
+      suiteProductMembers.push({
+        label: `suite ${suite.name}`,
+        product: resolveTarget(input.config, suite.target).product,
+      })
+    }
+
+    for (const member of suite.tests) {
+      if (!isPathInsideDir(member.test, input.configDir)) continue
+      const absolutePath = path.resolve(input.configDir, member.test)
+      const fileContent = await readFile(absolutePath, 'utf-8')
+      const parseResult = parseTestFile(fileContent, absolutePath)
+      preloadedTests.set(absolutePath, { fileContent, parseResult })
+
+      if (suite.target === undefined) {
+        const test = parseResult.errors.length === 0 ? parseResult.tests[0] : undefined
+        if (test?.target !== undefined) {
+          suiteProductMembers.push({
+            label: `suite ${suite.name} member ${test.name}`,
+            product: resolveTarget(input.config, test.target).product,
+          })
+        }
+      }
+    }
+  }
+
+  return {
+    definitions,
+    preloadedTests,
+    product: requireSingleInvocationProduct(suiteProductMembers),
+  }
+}
+
+/**
+ * THE SUITE-HALF MEMBER PRODUCER (Phase 401 plan 11).
+ *
+ * The counterpart of `produceDirectRunMembers`, and it exists for the same reason: the chain that
+ * turns a suite file into `assembleCliRun`'s required `members`/`executor` lived unexported inside
+ * `executeSuites`, so no door holding a `RunsStartInput` could reach it. That is the wall 401-06
+ * halted on, and it is why this half is extracted HERE rather than in a later plan: the default
+ * member producer must be able to run a suite, because `createCliRunExecution` forwards a request's
+ * patterns with NO mode flag and a suite pattern therefore runs a suite over the fn and daemon doors
+ * TODAY. Leaving the suite chain unexported would have handed 401-05 the same wall.
+ *
+ * `executeSuites` is now a caller of this function, so the two are one implementation rather than a
+ * copy and the thing it drives.
+ *
+ * WHAT IT DOES NOT DO, same as the test half: it does not resolve an execution context (the DOOR
+ * does, D-07), it does not mint the run id, it does not build the masking context or the audit sink
+ * (the drive does, once, and binds them back), and it cannot terminate its host — the five
+ * config-error refusals `prepareSuite` used to answer with `process.exit(2)` are `CliRunInputError`
+ * throws carrying the same rendered lines and the same code.
+ */
+export interface SuiteRunMemberProductionInput {
+  readonly suiteFiles: readonly string[]
+  readonly preflight: SuitePreflight
+  readonly config: AgentQaConfig
+  readonly configDir: string
+  readonly configFilePath: string
+  readonly configContent: string
+  readonly effectiveLogLevel: string
+  /** The run's identity, minted by the door — a run's id is never a producer's to invent. */
+  readonly runId: string
+  readonly opts?: RunOptions
+  readonly reporterSelection?: ReporterSelection
+  readonly variableContext?: SuiteVariableContext
+  readonly hooksContext?: { resolvedHooks: Map<string, HookDefinition>; sandboxOptions: SandboxRunnerOptions }
+  readonly analytics?: () => Promise<CliAnalyticsHost>
+  /** The door's live suite-database set, so its signal sweep can still find them. */
+  readonly activeSuiteDbs?: Set<any>
+}
+
+export interface SuiteVariableContext {
+  envFileVars: Record<string, string>
+  inlineVars: Record<string, string>
+  cliVars: Record<string, string>
+  rawEnvFileContent?: string | null
+  resolvedEnvFilePath?: string | null
+  secretStore?: SecretStore
+  secretRedactor?: SecretRedactor
+  secretsFileMetadata?: SecretsFileArtifactMetadata | null
+  userRunAttributes: RunAttributes
+  inheritedRunAttributes?: RunAttributes
+}
+
+export async function produceSuiteRunMembers(
+  input: SuiteRunMemberProductionInput,
+): Promise<ProducedCliRunMembers> {
+  const suiteFiles = [...input.suiteFiles]
+  const config = input.config
+  const configDir = input.configDir
+  const configFilePath = input.configFilePath
+  const configContent = input.configContent
+  const effectiveLogLevel = input.effectiveLogLevel
+  const runId = input.runId
+  const opts: RunOptions = input.opts ?? ({} as RunOptions)
+  const variableContext = input.variableContext
+  const hooksContext = input.hooksContext
+  const analytics = input.analytics
+  const activeSuiteDbs = input.activeSuiteDbs ?? new Set<any>()
+  const parsedSuiteDefinitions = input.preflight.definitions
+  const preloadedSuiteTests = input.preflight.preloadedTests
+  const preflightRunProduct = input.preflight.product
+
+  const { parseTestFile, patchTestForSuite } = await import('@vostride/agent-qa-core')
+  // 401-04: `startRun` is NOT among these — every path reaches it through the invocation core.
+  const { LLMPlanner, LLMVerifier } = await import('@vostride/agent-qa-runner')
+  const { readFile } = await import('node:fs/promises')
+  const path = await import('node:path')
+
+  // SEAM-01/03 (362-06): the ONE run MaskingContext + per-run SafetyHookRunner, BOUND by the drive
+  // after this producer returns and read at call time by the member/teardown closures below — which
+  // only ever execute after `startRun`. `runMaskingContext` also feeds the D-06 mid-run auth-state
+  // registration at teardown capture and the WM-flush report mask.
+  let runMaskingContext: RunMaskingContext | undefined
+  let runSafetyHooks: SafetyHookRunner | undefined
+  let activeRunSession: { cancel(): void } | undefined
+  void activeRunSession
+
+  const dashboardCfg = config.services?.dashboard as Record<string, unknown> | undefined
+  const reporterSelection = requireReporterSelection(opts, Boolean(dashboardCfg))
   const dashboardEnabled = reporterSelection.dashboard
 
   const createSuiteDashboardResources = async (): Promise<{ dashboardDb?: any; logStorage?: any }> => {
@@ -1710,7 +2238,7 @@ async function executeSuites(
     const suiteMembers: Array<Record<string, unknown>> = []
     for (const { test: relativePath, id: suiteEntryId } of suite.tests) {
       if (!isPathInsideDir(relativePath, configDir)) {
-        console.error(pc.red(`Path traversal rejected: ${relativePath}`))
+        const refusalLines = [pc.red(`Path traversal rejected: ${relativePath}`)]
         const runId = createSuiteRunId()
         if (dashboardDb) {
           const now = new Date().toISOString()
@@ -1742,7 +2270,7 @@ async function executeSuites(
         }
         printRunId(runId)
         printRunAttributes(suiteFailureAttributes)
-        process.exit(2)
+        throw new CliRunInputError(refusalLines, 2)
       }
 
       const absolutePath = path.resolve(configDir, relativePath)
@@ -1750,8 +2278,10 @@ async function executeSuites(
       const fileContent = preloaded?.fileContent ?? await readFile(absolutePath, 'utf-8')
       const parseResult = preloaded?.parseResult ?? parseTestFile(fileContent, absolutePath)
       if (parseResult.errors.length > 0) {
-        console.error(pc.red(`Parse errors in ${relativePath}:`))
-        formatParseErrors(parseResult.errors)
+        const refusalLines = [
+          pc.red(`Parse errors in ${relativePath}:`),
+          ...formatParseErrorLines(parseResult.errors),
+        ]
         const runId = createSuiteRunId()
         if (dashboardDb) {
           const now = new Date().toISOString()
@@ -1788,10 +2318,10 @@ async function executeSuites(
         }
         printRunId(runId)
         printRunAttributes(suiteFailureAttributes)
-        process.exit(2)
+        throw new CliRunInputError(refusalLines, 2)
       }
       if (parseResult.tests.length === 0) {
-        console.error(pc.red(`No test definition found in ${relativePath}`))
+        const refusalLines = [pc.red(`No test definition found in ${relativePath}`)]
         const runId = createSuiteRunId()
         if (dashboardDb) {
           const now = new Date().toISOString()
@@ -1823,19 +2353,21 @@ async function executeSuites(
         }
         printRunId(runId)
         printRunAttributes(suiteFailureAttributes)
-        process.exit(2)
+        throw new CliRunInputError(refusalLines, 2)
       }
 
       const testDef = parseResult.tests[0]
       const childAuthStateUse = getSelectedAuthStateUse(testDef.use as Record<string, unknown> | undefined)
       // The suite owns the shared browser context; child authState can only repeat the same logical state.
       if (suiteAuthStateUse && childAuthStateUse && childAuthStateUse.name !== suiteAuthStateUse.name) {
-        console.error(pc.red(`Suite auth state "${suiteAuthStateUse.name}" conflicts with child test auth state "${childAuthStateUse.name}". Use one primary auth state per suite.`))
-        process.exit(2)
+        throw new CliRunInputError(
+          [pc.red(`Suite auth state "${suiteAuthStateUse.name}" conflicts with child test auth state "${childAuthStateUse.name}". Use one primary auth state per suite.`)],
+          2,
+        )
       }
       if (testDef['test-id'] && testDef['test-id'] !== suiteEntryId) {
         const mismatchMsg = `ID mismatch in suite "${suite.name}": test file ${relativePath} has test-id "${testDef['test-id']}" but suite entry specifies id "${suiteEntryId}"`
-        console.error(pc.red(mismatchMsg))
+        const refusalLines = [pc.red(mismatchMsg)]
         const runId = createSuiteRunId()
         if (dashboardDb) {
           const now = new Date().toISOString()
@@ -1867,7 +2399,7 @@ async function executeSuites(
         }
         printRunId(runId)
         printRunAttributes(suiteFailureAttributes)
-        process.exit(2)
+        throw new CliRunInputError(refusalLines, 2)
       }
 
       suiteMembers.push({
@@ -2383,7 +2915,8 @@ async function executeSuites(
 
   // ---- Compose the ONE RunSession per invocation (D-01/D-04, SESSION-01/04/05) ---------------
   // Resolve every suite up front (parse/target/model/reporter/cache resolution + suiteConfig).
-  // Resolution errors still process.exit(2) inside prepareSuite (the config-error contract, D-14).
+  // 401-11: resolution errors are `CliRunInputError` throws inside `prepareSuite` now (the same
+  // config-error contract, D-14, minus the dead host — T-401-31).
   const preparedSuites: PreparedSuite[] = []
   for (const suiteFile of suiteFiles) {
     const suite = parsedSuiteDefinitions.get(suiteFile)
@@ -2591,11 +3124,10 @@ async function executeSuites(
   const runDigests = computeRunConfigDigests({ configContent, members: digestMembers })
   perMemberDigests = runDigests.perMember
 
-  const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
   const runProduct = preflightRunProduct
     ?? preparedSuites.find((p) => p.product)?.product
     ?? 'unknown'
-  const executionContext = resolveRunExecutionContext()
+
   const buildTag = resolveBuildTagSetting({
     flag: opts.buildTag,
     env: process.env.AGENT_QA_BUILD_TAG,
@@ -2677,123 +3209,59 @@ async function executeSuites(
   // validation-error DB writes and crash-finalizer above) occur BEFORE the MaskingContext exists, so
   // they carry NO placeholders and need NO unmask call — the console reporter (the sole unmasking
   // surface) only handles post-seam envelopes; step-failure/deny prose reaches humans through it.
+  // RETURNED, NOT CONSUMED. The masking context is built ONCE by the drive, for both of this
+  // door's paths and for every programmatic door; only the suite half has auth-state payloads to
+  // seed it with, so the seed travels out on the produced object and the drive folds it in.
   const authStatePayloads = (
     await Promise.all(preparedSuites.map((p) => readAuthStatePayloadBestEffort(p.authStateStoragePath)))
   ).filter((payload): payload is unknown => payload !== undefined)
-  const maskingContext = buildRunMaskingContext({
-    secretStore: variableContext?.secretStore,
-    env: process.env,
-    authStatePayloads,
-  })
-  const auditSink = buildRunAuditSink({ configDir, runId, executionContext })
-  const trustMode = opts.trustSession === true || config.safety?.trustMode === true
-  // D-11 (363-09): the console pause/resume seam shared with the ask-tier confirm decorator; bound to
-  // the console reporter inside `attachRunSubscribers` below. buildRunSafetyHooks composes the unmask
-  // decorator OVER the timed decorator so live confirm prompts show real values (masked machine surfaces).
-  const livePause = createLivePauseController()
-  const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext, trustMode, maskingContext, live: livePause })
-  runMaskingContext = maskingContext
-  runSafetyHooks = safetyHooks
-  // Point every suite's loop masking port at the ONE run context (ungated from cache — D-09/356).
-  for (const prepared of preparedSuites) prepared.suiteConfig.masking = maskingContext
 
   const lifecycle = createSuiteLifecycle()
   const executor = buildSuiteMemberExecutor({ lifecycle, bindings })
 
-  // 363-09: the run-level bus subscribers (Pitfall 8 — the SAME attach helper both of this door's
-  // paths use). Analytics rides the bus (D-16); the dashboard ingest (when a suite DB exists) writes
-  // runs/run_artifacts rows as a subscriber (D-08). Dashboard/analytics construction data the wire
-  // omits rides here.
-  const runLevelDashboardDb = preparedSuites.find((p) => p.dashboardDb)?.dashboardDb
-  const extraSubscribers: RunSubscriberHandle[] = []
-  if (runLevelDashboardDb) {
-    const suiteArtifact = preparedSuites.find((p) => p.dashboardDb)?.suiteArtifact as
-      | { config?: unknown; source?: unknown }
-      | undefined
-    const dashboardSubscriber = await buildDashboardIngestSubscriber({
-      db: runLevelDashboardDb,
-      configSnapshot: suiteArtifact?.config,
-      sourceSnapshot: suiteArtifact?.source,
-      attributes: preparedSuites.find((p) => p.dashboardDb)?.suiteAttributes,
-    })
-    if (dashboardSubscriber) extraSubscribers.push(dashboardSubscriber)
-  }
-  // 398-10 (D-17/D-20): the re-homed subscriber over the port this command composed at its root.
-  // `config` is NOT passed — the opt-out posture is already expressed by which transport that port
-  // holds, and a subscriber that re-read it would be the second decision site D-19 abolished.
-  if (analytics) {
-    const analyticsHost = await analytics()
-    extraSubscribers.push(buildAnalyticsRunSubscriber({
-      analytics: analyticsHost,
-      ...analyticsRunAttribution(resolveCliRunAttributes(
-        variableContext?.userRunAttributes ?? {},
-        'local',
-        variableContext?.inheritedRunAttributes,
-      )),
-    }))
-    // The run's masking context now exists; point the send seam at it (`bindMaskingContext`).
-    analyticsHost.bindMaskingContext(maskingContext)
-  }
-
-  // The started session and its subscribers, published by the core's `onSession` hook. They are
-  // `let`s rather than return values because the hook fires while the core is still inside
-  // `execute`, which is exactly when a subscriber has to attach.
-  let startedSession: RunSession | undefined
-  let startedSubscribers: { flush(): Promise<void> } | undefined
-  // The door's own confirm channel for the RUN-START gate (D-07). `undefined` on a piped or
-  // redirected stdio — this door does not claim a person is present because the process is running
-  // somewhere a person once was.
-  const runStartConfirm = createTtyConfirmPort()
-
-  // 401-04 (D-02): the SUITE path is now a caller of the same one policy-gated in-process
-  // invocation core the single-test path composes. It was the second — and last — direct
-  // `startRun` on this door; with it gone, no `agent-qa run` invocation of any shape can begin a
-  // run except through the ONE `evaluate()` (INVK-02 criterion 2 for the CLI/CI trigger family).
-  //
-  // WHAT THE DOOR STILL OWNS, AND WHY IT IS THIS AND NOT MORE: its TTY posture, its trust flag, its
-  // confirm channel, its target class and its assembly. Those are the five things only a door can
-  // answer. The ORDER is the core's, which is what makes "the probe and the ordinal happen after
-  // the verdict" a structural property here rather than a rule this file remembers.
-  const runCore = createRunInvocationCore({
-    configPath: configFilePath,
-    agentQaRoot: resolvePath(configDir, '.agent-qa'),
-    executionContext,
-    mintRunId: generateRunId,
-    auditSink,
-    trust: { trustMode },
-    // Absent on a piped/redirected stdio, which leaves the gate's DENY_CONFIRM default in place —
-    // the fail-closed arm is reached before the confirm arm anyway, so this port only ever speaks
-    // where there is somebody to answer it.
-    ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
-    resolveTargetClass: () => suiteTargetClass,
-    assembleRun: async (assemblyContext) => {
-      const assembly = await assembleCliRun({
-        runId: assemblyContext.runId,
-        executionContext: assemblyContext.executionContext,
-        configDir: assemblyContext.configDir,
-        knowledgeRoot,
-        ports: assemblyContext.ports,
-        confirmPausedMs,
-        maskingContext,
-        members,
-        executor,
-        configDigests: runDigests.runLevel,
-        product: runProduct,
-        ...(buildTag === undefined ? {} : { buildTag }),
-        ...(suiteProbeUrl === undefined ? {} : { probeUrl: suiteProbeUrl }),
-        warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
-      })
-      suiteBuildOrdinal = assembly.buildOrdinal
-      suiteQuarantined = assembly.quarantined
-
-      // D-23 live bind: the build ordinal is now fixed, so open one memoized reader/ledger/tool
-      // composition per prepared planner before any member can execute. Capable suite planners hold
-      // the stable map created at construction; populate that same identity with both memory tools.
-      //
-      // IT MOVED IN HERE WITH THE ORDINAL IT READS. `asOfBuild` is the advanced ordinal, and the
-      // advance is a durable write that a refused run must not make — so the bind cannot precede
-      // the verdict either. It still precedes every member, because the core calls this assembler
-      // and only then `startRun`.
+  return {
+    members,
+    executor,
+    configDigests: runDigests.runLevel,
+    product: runProduct,
+    configDir,
+    configFilePath,
+    knowledgeRoot,
+    targetClass: suiteTargetClass,
+    ...(suiteProbeUrl === undefined ? {} : { probeUrl: suiteProbeUrl }),
+    ...(buildTag === undefined ? {} : { buildTag }),
+    logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
+    maskingSeed: { authStatePayloads },
+    subscriberSeed: (() => {
+      const withDb = preparedSuites.find((p) => p.dashboardDb)
+      if (withDb === undefined) return {}
+      const suiteArtifact = withDb.suiteArtifact as { config?: unknown; source?: unknown } | undefined
+      return {
+        dashboardDb: withDb.dashboardDb,
+        configSnapshot: suiteArtifact?.config,
+        sourceSnapshot: suiteArtifact?.source,
+        attributes: withDb.suiteAttributes,
+      }
+    })(),
+    bindRunContext: ({ maskingContext, safetyHooks }) => {
+      runMaskingContext = maskingContext
+      runSafetyHooks = safetyHooks
+      // Point every suite's loop masking port at the ONE run context (ungated from cache — D-09/356).
+      for (const prepared of preparedSuites) prepared.suiteConfig.masking = maskingContext
+    },
+    applyAssembly: ({ buildOrdinal, quarantined }) => {
+      suiteBuildOrdinal = buildOrdinal
+      suiteQuarantined = quarantined
+    },
+    bindSession: (session) => { activeRunSession = session },
+    takeFrameworkError: () => undefined,
+    getCurationModelDeps: () => preparedSuites[0]?.curationModelDeps,
+    finalize: () => lifecycle.finalize(),
+    // The D-23 knowledge bind needs the ordinal the assembler just advanced, and every prepared
+    // planner's memoised composition has to exist before a member can execute. It rides here rather
+    // than in the door's assembler closure so BOTH doors get it from the producer that owns the
+    // prepared suites.
+    bindKnowledge: (buildOrdinal: number) => {
       for (const prepared of preparedSuites) {
         const knowledge = openRunKnowledgeComposition({
           knowledgeRoot,
@@ -2803,7 +3271,7 @@ async function executeSuites(
             tier: 'suite',
             key: prepared.suite['suite-id'] ?? prepared.suite.name,
           }],
-          asOfBuild: assembly.buildOrdinal,
+          asOfBuild: buildOrdinal,
           capabilities: prepared.knowledgeSeed.capabilities,
           accounting: prepared.knowledgeSeed.accounting,
           qaRulesText: prepared.knowledgeSeed.qaRulesText,
@@ -2815,107 +3283,873 @@ async function executeSuites(
           Object.assign(deferred, knowledge.nonActionTools)
         }
       }
+    },
+  }
+}
 
-      return assembly.config
-    },
-    onSession: (session) => {
-      activeRunSession = session
-      startedSession = session
-      // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest;
-      // analytics) via subscribe(0) — replay-then-live gives D-04 for free. Console options carry
-      // the run's flags. `suiteQuarantined` is already assigned: the core calls the assembler, then
-      // `startRun`, then this hook.
-      startedSubscribers = attachRunSubscribers({
-        session,
-        maskingContext,
-        console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
-        junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
-        extraSubscribers,
-        live: livePause,
-        // 390 D-15: the SAME resolved set the run was assembled with, so the reporters and the
-        // aggregate verdict rule describe one disposition rather than two.
-        quarantined: suiteQuarantined,
-      })
-    },
+/**
+ * THE TEST-HALF MEMBER PRODUCER (Phase 401 plan 11).
+ *
+ * `assembleCliRun` requires `members` and an `executor`; a `RunsStartInput` carries neither; and the
+ * chain that turns one into the other lived unexported inside this command's action body. That is
+ * the wall 401-06 halted on, and this function is the door out of it: the SAME producer both the
+ * `agent-qa run` single-test path and every programmatic door reach, so there is one members/executor
+ * assembly on this door rather than one per caller.
+ *
+ * IT STAYS IN THIS FILE. The member closure names `@vostride/agent-qa-android`, `-ios`, `-web`,
+ * `-model`, `-runner`, `-runner-local` and `-core`; `commands/run.ts` is the ONLY cli file ledgered
+ * for those under FUNC-02's surface firewall, the ledger only ever shrinks, and a file written after
+ * 2026-07-28 can never join it. What moved to `composition/in-process-run-execution.ts` is the
+ * COMPOSITION; the vocabulary stayed where the build allows it. A later reader who "tidies" this
+ * into a new module will be refused by `pnpm validate:arch`, not by a review comment.
+ *
+ * WHAT IT DOES NOT DO. It does not resolve an execution context (the DOOR does, D-07), it does not
+ * register signal handlers, it does not build the masking context or the audit sink (the drive does,
+ * once, and hands them back through `bindRunContext`), and it cannot terminate its host: the one
+ * refusal it makes is a `CliRunInputError`.
+ *
+ * THE LATE-BOUND SLOTS ARE THE SHIPPED SEMANTICS, PRESERVED. `maskingContext`, `safetyHooks`, the
+ * build ordinal and the quarantine set were `let`s the command assigned after the member closure was
+ * defined and the closure read at CALL time — because the ordinal does not exist until the assembler
+ * has advanced it, which happens after the gate. `bindRunContext` and `applyAssembly` are those same
+ * two assignments, named.
+ */
+export interface DirectRunMemberProductionInput {
+  /** The resolved preflight — the producer never re-resolves a config a door already read. */
+  readonly inputs: RunInvocationInputs
+  /** The parsed bindings. `refuseZeroRunnableTests` has already had its say about an empty one. */
+  readonly bindings: readonly ParsedTestBinding[]
+  /** The invocation's single product, when the door's own preflight already decided it. */
+  readonly product?: string
+  /** The door's flags. A programmatic door has none, and the empty object is the honest default. */
+  readonly opts?: RunOptions
+  /** Which reporters this door selected — read only for the screenshot-capture decision. */
+  readonly reporterSelection?: ReporterSelection
+  /** The dashboard database, when the door opened one, as the log manager's storage. */
+  readonly logStorage?: unknown
+  /** The invocation's memoised analytics host. Absent ⇒ no analytics, the daemon's posture. */
+  readonly analytics?: () => Promise<CliAnalyticsHost>
+  /** Reports each member's own run id. The command uses it to keep its crash-finalizer honest. */
+  readonly onMemberRunId?: (runId: string) => void
+}
+
+/** A minimal view of the log manager, so a caller need not name `@vostride/agent-qa-core`'s class. */
+export interface CliRunLoggerHandle {
+  setRunId(runId: string): void
+}
+
+/**
+ * What a member producer answers: everything `assembleCliRun` needs that only a door can build,
+ * plus the four late bindings the run's own lifecycle fills in.
+ */
+export interface ProducedCliRunMembers {
+  readonly members: readonly RunMemberDescriptor[]
+  readonly executor: MemberTestExecutor
+  readonly configDigests: ConfigDigests
+  readonly product: string
+  readonly configDir: string
+  readonly configFilePath: string
+  readonly knowledgeRoot: string
+  /** The DECLARED class the gate classifies — a config read, never a probe (D-06). */
+  readonly targetClass: RunTargetClass
+  readonly probeUrl?: string
+  readonly buildTag?: string
+  /**
+   * The run's log manager, when the producer built one. The suite half stamps its loggers per
+   * prepared suite and has no run-level one, so this is optional rather than a no-op stub.
+   */
+  readonly logger?: CliRunLoggerHandle
+  /**
+   * What the ONE masking context must be seeded with beyond the secret store. Only the suite half
+   * has any (its statically-resolved auth-state payloads), and the drive folds it in.
+   */
+  readonly maskingSeed?: { readonly authStatePayloads?: readonly unknown[] }
+  /**
+   * What a door's dashboard-ingest subscriber needs and only the producer knows: the suite database
+   * the prepared suites opened, plus the config/source snapshots and attributes the wire omits.
+   */
+  readonly subscriberSeed?: {
+    readonly dashboardDb?: any
+    readonly configSnapshot?: unknown
+    readonly sourceSnapshot?: unknown
+    readonly attributes?: RunAttributes
+  }
+  /**
+   * The D-23 live knowledge bind, which needs the ordinal the assembler just advanced. Suite-only:
+   * it opens one memoised reader/ledger/tool composition per prepared planner before any member can
+   * execute, and it cannot precede the verdict because the ordinal is a durable write.
+   */
+  bindKnowledge?(buildOrdinal: number): void
+  /** The drive's masking context and safety hooks, bound before the run starts. */
+  bindRunContext(input: { maskingContext: RunMaskingContext; safetyHooks: SafetyHookRunner }): void
+  /** The assembler's results, bound after the gate allowed the run and before `startRun`. */
+  applyAssembly(input: { buildOrdinal: number; quarantined: readonly QuarantineAppliedEntry[] }): void
+  /** The started session, so a member's framework error can cancel the run it is a member of. */
+  bindSession(session: { cancel(): void }): void
+  /** The first framework/setup error a member closure threw — the drive re-surfaces it. */
+  takeFrameworkError(): unknown | undefined
+  /** The planner profile/auth the curation tail reuses, once a member has resolved one. */
+  getCurationModelDeps(): CurationTailModelDeps | undefined
+  /** Any teardown the producer owns. The suite half finalises its lifecycle here. */
+  finalize?(): Promise<void>
+}
+
+export async function produceDirectRunMembers(
+  input: DirectRunMemberProductionInput,
+): Promise<ProducedCliRunMembers> {
+  const {
+    config,
+    configDir,
+    configFilePath,
+    configContent,
+    runtimeSecrets,
+    envFileVars,
+    cliVars,
+    inlineVars,
+    effectiveLogLevel,
+    userRunAttributes,
+    inheritedRunAttributes,
+    resolvedHooks,
+    sandboxOptions,
+    rawEnvFileContent,
+    resolvedEnvFilePath,
+  } = input.inputs
+  const opts: RunOptions = input.opts ?? ({} as RunOptions)
+  const reporterSelection: ReporterSelection = input.reporterSelection
+    ?? { console: false, junit: false, stdoutLive: false, dashboard: false }
+  // `any` because the log manager's storage port is `@vostride/agent-qa-core` vocabulary and this
+  // input is what a door hands over — a dashboard database or nothing.
+  const logStorage: any = input.logStorage
+  const analytics = input.analytics
+  const onMemberRunId = input.onMemberRunId
+  const filtered = [...input.bindings]
+  const directRunProduct = input.product
+
+  // The late-bound slots the run's own lifecycle fills. `singleMaskingContext`,
+  // `singleSafetyHooks`, `singleRunProduct` and `singleBuildOrdinal` are declared with the block
+  // below, exactly where the command declared them; these two are new only in the sense that the
+  // command held them in its own scope.
+  let frameworkError: unknown | undefined
+  let activeRunSession: { cancel(): void } | undefined
+  const dashboardEnabled = reporterSelection.dashboard
+
+  // 401-04: `startRun` is NOT among these. BOTH of this door's paths reach it through
+  // `createRunInvocationCore`, and a binding held here would be a second way in.
+  // 401-11: `mapVerdictToExitCode` is not among them either — mapping the verdict belongs to the
+  // ONE drive both paths call, not to each path's own copy of the arithmetic.
+  const { LLMPlanner, LLMVerifier } = await import('@vostride/agent-qa-runner')
+
+  const recordingEnabled = opts.record ?? config.services?.recording?.enabled ?? false
+
+  // Wire action cache from config (logger wired after LogManager creation below)
+  let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
+  // SEAM-01/03 (362-06): the ONE run MaskingContext + per-run SafetyHookRunner for this path,
+  // built at the singleRunId mint below and captured here so runOneDirectTest (defined before
+  // the mint) resolves the run bundle at call time — the second call site, same helpers
+  // (Pitfall 7). `singleMaskingContext` also feeds the D-06 mid-run auth registration.
+  let singleMaskingContext: RunMaskingContext | undefined
+  let singleSafetyHooks: SafetyHookRunner | undefined
+  let singleCurationModelDeps: CurationTailModelDeps | undefined
+  let singleRunProduct = 'unknown'
+  let singleBuildOrdinal = 0
+
+  // WM-01/WM-02: one run-scoped working-memory store per run, constructed with the run's
+  // SecretRedactor (capture-time redaction live); threaded into the loop and flushed
+  // redacted at run end (finally-positioned below).
+  const singleWorkingMemory = new WorkingMemoryStore(runtimeSecrets.secretRedactor)
+
+  // D-14 (Phase 360): one run-scoped storage-state store per run, rooted at the run's
+  // `.agent-qa` dir (the FsActionCache rooting idiom); threaded into the loop's storageState port.
+  const singleStorageState = await buildStorageStateStore(configDir)
+
+  // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
+  // subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics) attach in the
+  // core's `onSession` hook below via `attachRunSubscribers`. No reporter is threaded into the run
+  // path.
+  const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
+
+  const { LogManager } = await import('@vostride/agent-qa-core')
+
+  const logger = new LogManager({
+    runId: process.env.AGENT_QA_RUN_ID || undefined,
+    displayLevel: effectiveLogLevel as any,
+    storage: logStorage,
+    ndjson: process.env.AGENT_QA_LIVE_EVENTS === 'true',
+    redactor: runtimeSecrets.secretRedactor,
   })
 
-  const exitCode = await runSafetyScope({ maskingContext, auditSink, executionContext }, async () => {
+  // Wire the redesigned action cache (runner-local FsActionCache + branch policy); skip when
+  // --disable-cache. The loop's masking port now carries the run MaskingContext (assigned at
+  // the singleRunId mint below), no longer a cache-context identity mint (SEAM-01/D-09).
+  if (opts.disableCache !== true) {
+    const { resolve } = await import('node:path')
+    const ctx = await buildActionCacheContext({
+      cacheDir: resolve(configDir, config.services?.cache?.dir ?? RUNTIME_CACHE_DIR),
+      disableCache: false,
+      saveCache: opts.saveCache === true,
+    })
+    actionCache = ctx.cache
+  } else {
+    const cacheLog = logger.createScopedLogger('cache')
+    cacheLog.info('Cache disabled via --disable-cache', { operation: 'bypass' })
+  }
+
+  const results: TestResult[] = []
+
+  // One discovered test file = one member closure of the ONE RunSession (SESSION-01/04).
+  // Retry stays a single-test-path concern INSIDE this closure (runTestWithRetry); the shell
+  // derives the member outcome from the returned final TestResult exactly as for suite members
+  // (RESEARCH A2 — the suite path is single-attempt, this path keeps its retry). The run-shell
+  // ctx seams (events/abortSignal) and the member's cache digest pair are threaded in.
+  const runOneDirectTest = async (
+    binding: ParsedTestBinding,
+    ctx: MemberTestRunContext,
+    perMemberDigest: ConfigDigests | undefined,
+  ): Promise<TestResult> => {
+    const { test, filePath, fileContent: testFileContent } = binding
+    let currentPlatform: 'web' | 'android' | 'ios' | null = null
+    let currentAdapterKey: string | null = null
+    let adapter: import('@vostride/agent-qa-runner').PlatformAdapter | null = null
+    let analyticsRunId: string | undefined
+    let analyticsFilePath = filePath
+    let analyticsPlatform: 'web' | 'android' | 'ios' | undefined
+    let analyticsTestId: string | undefined
+    let analyticsAttributes: RunAttributes | undefined = resolveCliRunAttributes(
+      userRunAttributes,
+      'local',
+      inheritedRunAttributes,
+    )
+    let analyticsMobileTransport: string | undefined
+    let analyticsAppState: string | undefined
+    let analyticsStartedAt = Date.now()
+    let completedResult: TestResult | undefined
     try {
-      // The core refuses, gates, assembles, starts, and awaits the run. A denial throws
-      // `RunDeniedError` from inside here, before a single run event exists.
-      //
-      // THE MARKERS RIDE THE REQUEST (INVK-06). `runMarkers` still maps this command's two options
-      // onto the two literal-`true` fields, but the field they land in is now `RunsStartInput`'s
-      // rather than `RunConfig`'s — request → RunConfig is the core's job, and there is no argv
-      // link left inside the invocation.
-      await runCore.execute({
-        runId: asRunId(runId),
-        ...runMarkers(opts),
+    try {
+    let testResolvedTarget = resolveTarget(config, test.target!)
+    let testTargetUrl = testResolvedTarget.url
+
+    const testDef = {
+      ...test,
+      url: testTargetUrl,
+    }
+    analyticsTestId = testDef['test-id']
+
+    const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
+    analyticsRunId = runId
+    analyticsStartedAt = Date.now()
+    onMemberRunId?.(runId)
+    logger.setRunId(runId)
+
+    // Per-test config merge (global config < test YAML use: < CLI flags)
+    const testFlagOverrides: Record<string, unknown> = {}
+    if (opts.headless !== undefined) testFlagOverrides['browser'] = { headless: opts.headless }
+    if (opts.browser) testFlagOverrides['browser'] = { ...(testFlagOverrides['browser'] as Record<string, unknown> ?? {}), name: opts.browser }
+
+    const mergedUse = mergeUseBlocks(
+      config.use as Record<string, unknown>,
+      undefined,
+      test.use as Record<string, unknown> | undefined,
+      testFlagOverrides,
+    )
+    const testMergedConfig = { ...config, use: mergedUse } as AgentQaConfig
+    const effectiveCacheEnabled = !opts.disableCache && (mergedUse as Record<string, unknown>).cache !== false
+
+    if (opts.configDebug) {
+      console.log(pc.bold(`\nConfig for: ${test.name}`))
+      console.log(formatConfigDebug(config, test.use, testFlagOverrides))
+      console.log()
+    }
+
+    const testPlatform: 'web' | 'android' | 'ios' = testResolvedTarget.platform
+    analyticsPlatform = testPlatform
+    const testAuthStateUse = getSelectedAuthStateUse(mergedUse as Record<string, unknown>)
+    const testAuthState = await resolveSelectedAuthStateForRun({
+      config,
+      configDir,
+      resolvedTarget: testResolvedTarget,
+      authState: testAuthStateUse,
+    })
+    const testAuthStateCapturePaths = resolveAuthStateCapturePathsForRun({
+      config,
+      configDir,
+      resolvedTarget: testResolvedTarget,
+      authState: testAuthStateUse,
+    })
+    // D-06: register the loaded auth-state's sensitive values into the run context (runs inside
+    // runSafetyScope, after the mint — singleMaskingContext is live). Additive; stable placeholders.
+    if (singleMaskingContext && testAuthState) {
+      registerAuthStateIntoMaskingContext(
+        singleMaskingContext,
+        await readAuthStatePayloadBestEffort(testAuthState.storageStatePath),
+      )
+    }
+    let activeTestAuthState = testAuthState
+
+    const testMergedUse = (testMergedConfig as any).use ?? (config as any).use ?? {}
+    const testDeviceName = opts.device ?? testMergedUse.device as string | undefined
+
+    const testTimeoutsForSetup = {
+      step: (testMergedConfig as any).use?.timeout?.step ?? config.use?.timeout?.step,
+      test: (testMergedConfig as any).use?.timeout?.test ?? config.use?.timeout?.test,
+      navigation: (testMergedConfig as any).use?.timeout?.navigation ?? config.use?.timeout?.navigation,
+    }
+
+    const testLocalBindings = testPlatform === 'android' || testPlatform === 'ios'
+      ? loadLocalBindings()
+      : null
+    let testMobileResolved: ResolvedMobileRunConfig | undefined
+    let testResolvedDevice: ResolvedDevice | undefined
+    let testFarmSession: PlatformConfig['farmSession'] | undefined
+    if (testPlatform === 'android' || testPlatform === 'ios') {
+      testMobileResolved = resolveMobileRunOrThrow({
+        config: config as unknown as Record<string, any>,
+        targetName: testResolvedTarget.name,
+        platform: testPlatform,
+        explicitDeviceName: opts.device,
+        useDeviceName: testMergedUse.device as string | undefined,
+        appState: testMergedUse.mobile?.appState as 'preserve' | 'reset' | undefined,
+        localBindings: testLocalBindings,
+        configFilePath: resolvePath(configFilePath),
+        localConfigFilePath: testLocalBindings?.filePath,
+        appiumUrl: process.env.AGENT_QA_APPIUM_URL,
       })
-      const session = startedSession
-      const subscribers = startedSubscribers
-      if (session === undefined || subscribers === undefined) {
-        // Unreachable: the core notifies `onSession` before it awaits the run. Asserted rather than
-        // assumed, because a silently absent session would degrade into a run whose verdict nothing
-        // mapped.
-        throw new Error('The invocation core completed without reporting a run session.')
+      analyticsAppState = testMobileResolved.appState
+      const resolved = await resolveDeviceAndFarmSession(
+        config, testMobileResolved.deviceName, testPlatform,
+        `${test.name} — ${new Date().toISOString().slice(0, 19)}`,
+        testTimeoutsForSetup.test,
+        testMobileResolved.device,
+        testLocalBindings,
+        testMobileResolved,
+      )
+      testResolvedDevice = resolved.resolvedDevice
+      testFarmSession = resolved.farmSession
+      analyticsMobileTransport = testResolvedDevice?.transport
+    }
+
+    const useFarm = testResolvedDevice?.transport !== undefined && testResolvedDevice.transport !== 'local'
+    const testAttributes = resolveCliRunAttributes(
+      userRunAttributes,
+      resolveRunnerAttribute(testResolvedDevice?.transport),
+      inheritedRunAttributes,
+    )
+    analyticsAttributes = testAttributes
+    writeRunAttributesToEnv(testAttributes)
+    const adapterKey = JSON.stringify({
+      platform: testPlatform,
+      device: testResolvedDevice?.name,
+      appPackage: testMobileResolved?.app.appPackage,
+      appActivity: testMobileResolved?.app.appActivity,
+      bundleId: testMobileResolved?.app.bundleId,
+      appPath: testMobileResolved?.app.install?.path,
+      browserstackApp: testMobileResolved?.app.install?.browserstack,
+    })
+
+      // Each direct test owns its adapter so parallel batches cannot share mutable browser/mobile state.
+      if (testPlatform !== currentPlatform || adapterKey !== currentAdapterKey) {
+        currentPlatform = testPlatform
+        currentAdapterKey = adapterKey
+
+        // Auto-start Appium for mobile platforms (if not already running and not in farm mode)
+        if ((testPlatform === 'ios' || testPlatform === 'android') && !useFarm) {
+          try {
+            const appiumUrl = await acquireAppium(effectiveLogLevel)
+            if (testMobileResolved) {
+              testMobileResolved = { ...testMobileResolved, appium: { url: appiumUrl, managed: !process.env.AGENT_QA_APPIUM_URL } }
+            }
+          } catch (err) {
+            throw new MobileSetupError({
+              category: 'appium-startup',
+              message: `Could not auto-start Appium: ${err instanceof Error ? err.message : String(err)}`,
+              platform: testPlatform,
+              targetName: testResolvedTarget.name,
+              deviceName: testDeviceName,
+              cause: err,
+            })
+          }
+        }
+
+        adapter = await createPlatformAdapter(testPlatform)
+
+        const mergedBrowser = (mergedUse as Record<string, unknown>).browser as Record<string, unknown> | undefined
+        const platformConfig = buildPlatformConfig(testPlatform, testResolvedDevice, testTimeoutsForSetup, mergedBrowser ?? config.use?.browser, (testMergedConfig as any).use?.logCapture ?? config.use?.logCapture, testFarmSession, testMobileResolved)
+        platformConfig.authState = activeTestAuthState
+        platformConfig.verbose = effectiveLogLevel === 'debug'
+        if (opts.headless !== undefined) {
+          if (platformConfig.browser) {
+            platformConfig.browser.headless = opts.headless
+          }
+        }
+
+        // Wire recording config for this platform adapter
+        const anyTestNeedsRecording = filtered.some(({ test: candidate }) => (candidate.meta as any)?.record === true)
+        if (recordingEnabled || anyTestNeedsRecording) {
+          const recCfg = config.services?.recording as Record<string, unknown> | undefined
+          platformConfig.recording = {
+            enabled: true,
+            videoDir: resolveDashboardVideoDir(config, configDir, dashboardEnabled),
+            videoSize: recCfg?.videoSize as { width: number; height: number } | undefined,
+          }
+        }
+
+        await adapter.setup(platformConfig)
+
+        // Exit cleanup for farm sessions on mobile
+        if (useFarm && (testPlatform === 'android' || testPlatform === 'ios')) {
+          const farmAdapter = adapter
+          process.on('exit', () => { void Promise.resolve(farmAdapter.cleanup()).catch(() => {}) })
+        }
+
+        if (effectiveLogLevel === 'debug') {
+          console.log(pc.dim(`  Platform: ${testPlatform}${useFarm ? ` (farm: ${testResolvedDevice?.transport})` : ''}${testPlatform !== 'web' ? ' (adapter re-created)' : ''}`))
+        }
       }
 
-      const { verdict } = await session.done
-      clearGraceTimer()
-      await lifecycle.finalize()
-      // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics drain)
-      // AFTER session.done + lifecycle.finalize() and BEFORE mapping the verdict to the exit code.
-      await subscribers.flush()
-      activeRunSession = undefined
-      // D-14: freeze the verdict-mapped code before the curation tail. A tail failure or a signal
-      // arriving while the drain owns its lease can stop learning, but can never replace this code.
-      const verdictExitCode = mapVerdictToExitCode(
-        shutdownRequested ? 'cancelled' : verdict,
-      )
-      // 388-02 D-01: ONE shared post-run tail serves both of this command's tail sites
-      // (Pitfall 1). The enqueue leg runs even under `--detach`; only the in-process chain
-      // drain is detach-gated. Neither can replace the code frozen on the line above.
-      const postRunTail = runPostRunTail({
-        runId,
-        agentQaRoot: resolvePath(configDir, '.agent-qa'),
-        configPath: resolvePath(configFilePath),
-        knowledgeConfig: config.knowledge,
-        configDir,
-        auditSink,
-        maskingContext,
-        modelDeps: preparedSuites[0]!.curationModelDeps,
-        policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
-        signal: curationAbortController.signal,
-        log: curationTailLog,
+      // Per-test model creation using merged LLM config
+      const mergedForLLM = { registry: (config as any).registry, use: (testMergedConfig as any).use ?? (config as any).use }
+      const { planner: plannerCfg, verifier: verifierCfg, configName } = resolveLLMModels(mergedForLLM)
+      const resolvedAuth = await resolveModelAuth(configName, plannerCfg)
+      const { profile: plannerProfile, auth: plannerAuth } = toModelProfileAndAuth(plannerCfg, resolvedAuth)
+      const { profile: verifierProfile, auth: verifierAuth } = toModelProfileAndAuth(verifierCfg, resolvedAuth)
+      // D-03: retain the first already-resolved planner identity used by this RunSession.
+      // The post-verdict Curator reuses these exact objects and never resolves config again.
+      singleCurationModelDeps ??= { profile: plannerProfile, auth: plannerAuth }
+      const plannerCapabilities = resolveCapabilities(plannerProfile)
+      const verifierCapabilities = resolveCapabilities(verifierProfile)
+      const plannerDeclared: DeclaredModelProfile = {
+        provider: plannerProfile.provider,
+        modelId: plannerProfile.model,
+        vision: plannerCapabilities.vision,
+        maxOutputTokens: plannerCapabilities.maxOutput,
+      }
+      const verifierDeclared: DeclaredModelProfile = {
+        provider: verifierProfile.provider,
+        modelId: verifierProfile.model,
+        vision: verifierCapabilities.vision,
+        maxOutputTokens: verifierCapabilities.maxOutput,
+      }
+      process.env.AGENT_QA_LLM_MODEL = plannerCfg.model
+      process.env.AGENT_QA_LLM_PROVIDER = plannerCfg.provider
+      if (effectiveLogLevel === 'debug') {
+        console.log(pc.dim(`  Model: ${plannerCfg.model} (${plannerCfg.provider})`))
+      }
+      const plannerModel = createModel(plannerProfile, plannerAuth)
+      const verifierModel = createModel(verifierProfile, verifierAuth)
+      // D-04 lazy thunk + role-separated accounting instances (see suite-level site).
+      const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(plannerProfile) })
+      const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(verifierProfile) })
+      const plannerConfig = {
+        maxSubActions: testMergedConfig.use?.planner?.maxSubActions ?? 10,
+        previousStepCount: testMergedConfig.use?.planner?.previousStepCount ?? 3,
+      }
+
+      const testLogCapture = (testMergedConfig as any).use?.logCapture ?? config.use?.logCapture
+      let testCapabilityNotes = ''
+      if (testLogCapture?.console === false) {
+        testCapabilityNotes += '\nConsole log capture is DISABLED for this test run. The readConsoleLogs action will return no data. If a test step explicitly requires reading console logs, use stepFailed to fail the step — do not silently pass with empty data.'
+      }
+      if (testLogCapture?.network === false) {
+        testCapabilityNotes += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
+      }
+      const knowledge = openRunKnowledgeComposition({
+        knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
+        product: testResolvedTarget.product,
+        scope: { tier: 'test', key: testDef.name },
+        asOfBuild: singleBuildOrdinal,
+        capabilities: plannerCapabilities,
+        accounting: plannerAccounting,
+        qaRulesText: testCapabilityNotes,
+        workingContextText: JSON.stringify({
+          context: testDef.context,
+          steps: testDef.steps,
+        }),
       })
-      return await runVerdictFirstCurationTail({
-        exitCode: verdictExitCode,
-        detach: opts.detach === true,
-        enqueue: () => postRunTail.enqueue(),
-        runTail: () => postRunTail.drain(),
-        // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
-        finish: (input) => postRunTail.finish(input),
-        onUnexpectedError: () => {
-          curationTailLog.warn(
-            'Post-verdict knowledge curation incomplete; it will resume on the next run.',
-          )
+      const planner = new LLMPlanner(
+        plannerModel,
+        testPlatform,
+        logger.createScopedLogger('planner'),
+        testCapabilityNotes.trim() || undefined,
+        plannerAccounting,
+        plannerDeclared,
+        knowledge.nonActionTools,
+      )
+      const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
+
+      // Per-test timeouts from merged config
+      const testTimeouts = {
+        step: testMergedConfig.use?.timeout?.step,
+        test: testMergedConfig.use?.timeout?.test,
+        navigation: testMergedConfig.use?.timeout?.navigation,
+      }
+
+      // Per-test recording override: meta.record takes priority over global
+      let testRecording: import('@vostride/agent-qa-runner').PlatformConfig['recording'] | undefined
+      const testRecordMeta = (testDef.meta as any)?.record
+      if (testRecordMeta === true || recordingEnabled) {
+        const recCfg2 = config.services?.recording as Record<string, unknown> | undefined
+        testRecording = {
+          enabled: true,
+          videoDir: resolveDashboardVideoDir(config, configDir, dashboardEnabled),
+          videoSize: recCfg2?.videoSize as { width: number; height: number } | undefined,
+        }
+      }
+      if (testRecordMeta === false) {
+        testRecording = undefined
+      }
+
+      const artifactContext = buildRunArtifactContext({
+        kind: 'test',
+        configContent,
+        parsedConfig: config,
+        effectiveConfig: testMergedConfig,
+        envFilePath: resolvedEnvFilePath,
+        rawEnvFileContent,
+        envFileVars,
+        secretsFileMetadata: runtimeSecrets.secretsFileMetadata,
+        cliVars,
+        inlineVars,
+        hooks: resolvedHooks,
+        planner: { provider: plannerCfg.provider, model: plannerCfg.model },
+        verifier: { provider: verifierCfg.provider, model: verifierCfg.model },
+        platform: testPlatform,
+        target: testResolvedTarget,
+        deviceName: testDeviceName,
+        attributes: testAttributes,
+        timeouts: testTimeouts,
+        cache: {
+          enabled: effectiveCacheEnabled,
+          dir: config.services?.cache?.dir,
+          ttl: config.services?.cache?.ttl,
+        },
+        source: {
+          kind: 'test',
+          testId: testDef['test-id'] ?? null,
+          name: testDef.name,
+          filePath,
+          rawYaml: testFileContent || null,
+          resolvedDefinition: testDef,
+          loadStatus: 'loaded',
         },
       })
+
+      const getAuthAwareSandboxOptions = () => sandboxOptions && activeTestAuthState
+        ? { ...sandboxOptions, authState: activeTestAuthState }
+        : sandboxOptions
+      const authAwareSandboxOptions = getAuthAwareSandboxOptions()
+
+      // Per-test setup hooks: run BEFORE test execution (D-01, D-03)
+      let perTestSetupVars: Record<string, string> = {}
+      let testStartTime = Date.now()
+      let setupHookFailed = false
+      let setupFailureResult: TestResult | undefined
+      if (resolvedHooks && authAwareSandboxOptions && (testDef as any).setup?.length) {
+        const { runHooks } = await import('@vostride/agent-qa-runner')
+        const hookDefs: HookDefinition[] = []
+        let hookSetupError: string | undefined
+        for (const hookId of (testDef as any).setup) {
+          const hook = resolvedHooks.get(hookId)
+          if (!hook) { hookSetupError = `Hook ID "${hookId}" not found in hooks registry`; break }
+          hookDefs.push(hook)
+        }
+
+        if (!hookSetupError && hookDefs.length > 0) {
+          const allVars: Record<string, string> = { ...envFileVars }
+          if (inlineVars) Object.assign(allVars, inlineVars)
+          if ((testDef as any).variables) Object.assign(allVars, (testDef as any).variables)
+          if (cliVars) Object.assign(allVars, cliVars)
+
+          for (const hookDef of hookDefs) {
+            const hookResult = await runHooks([hookDef], { ...authAwareSandboxOptions, envVars: { ...authAwareSandboxOptions.envVars, ...allVars, ...perTestSetupVars } })
+            const hr = hookResult.results.get(hookDef.name)
+            if (!hr?.success) {
+              hookSetupError = `Setup hook "${hookDef.name}" failed: ${hr?.error ?? 'unknown'}`
+              break
+            }
+            Object.assign(perTestSetupVars, hr.variables)
+            Object.assign(allVars, hr.variables)
+          }
+        }
+
+        if (hookSetupError) {
+          setupHookFailed = true
+          const setupResult: TestResult = {
+            runId,
+            name: test.name,
+            filePath,
+            status: 'failed',
+            steps: [],
+            duration: Date.now() - testStartTime,
+            failureSummary: hookSetupError,
+          }
+          results.push(setupResult)
+          setupFailureResult = setupResult
+          printRunAttributes(testAttributes)
+        }
+      }
+
+      if (setupHookFailed) {
+        // Synthesized failed TestResult feeds the shell's member-outcome derivation (D-16).
+        return setupFailureResult!
+      }
+
+      // 363-11 (D-05): execute the member on runner soil via runMemberTest. The core
+      // runTest/runTestWithRetry wrapper is deleted; retry lives inside runMemberTest, and the
+      // adapter-backed handlers (runJS/appium/a11y/failure-shot) + secret resolver are wired by
+      // the shared buildMemberRunConfig helper (Pitfall 8 — the suite path uses the same helper).
+      const memberRunConfig = Object.assign(buildMemberRunConfig({
+        adapter: adapter!,
+        planner,
+        verifier,
+        cache: effectiveCacheEnabled ? actionCache : undefined,
+        // D-08/Q10: the sharp compressor injected from the composition root (sharp left core).
+        compressor: buildScreenshotCompressor(logger?.createScopedLogger('adapter')),
+        // SEAM-01/03: the ONE run context + gate, ungated from cache enablement (D-09/356).
+        masking: singleMaskingContext,
+        safetyHooks: singleSafetyHooks,
+        knowledgeReader: knowledge.reader,
+        knowledgeBudgets: knowledge.budgets,
+        knowledgeAsOfBuild: singleBuildOrdinal,
+        recordLedger: knowledge.recordLedger,
+        beginMemoryTurn: knowledge.beginMemoryTurn,
+        drainMemoryReadTraces: knowledge.drainMemoryReadTraces,
+        workingMemory: singleWorkingMemory,
+        storageState: singleStorageState,
+        configDigests: perMemberDigest,
+        plannerModel,
+        verifierModel,
+        envFileVars,
+        inlineVars,
+        cliVars,
+        hookSetupVars: perTestSetupVars,
+        inlineHookDefs: resolvedHooks,
+        sandboxOptions: authAwareSandboxOptions,
+        secretStore: runtimeSecrets.secretStore,
+        secretRedactor: runtimeSecrets.secretRedactor,
+        // D-02/D-03/D-20 run-shell seams: live event sink + run-level cancel + the member's
+        // cache digest pair.
+        sink: ctx.events,
+        testIndex: ctx.testIndex,
+        abortSignal: ctx.abortSignal,
+        // CASS-02: bind the run-scoped screenshot store the shell threaded onto the member ctx.
+        evidenceArtifacts: ctx.evidenceArtifacts,
+        captureScreenshots,
+        accessibility: config.services?.accessibility,
+        timeouts: testTimeouts,
+        plannerConfig,
+        logger,
+        logCapture: testLogCapture,
+        vision: resolveVisionConfig(config.services?.vision),
+        visionGate: resolveVisionGate({ vision: plannerCfg.vision ?? true }),
+        contextWindow: plannerCfg.contextWindow,
+        filePath,
+      }), {
+        modelProfiles: { planner: plannerDeclared, verifier: verifierDeclared },
+        onEvidenceContext: ctx.setEvidenceContext,
+      })
+      const result = await runMemberTest(toMemberTest(testDef, filePath), memberRunConfig)
+
+      if (!result.runId) result.runId = runId
+      completedResult = result
+
+      if (testAuthStateCapturePaths && result.status === 'passed') {
+        try {
+          activeTestAuthState = await captureAuthStateForRun({
+            adapter: adapter!,
+            paths: testAuthStateCapturePaths,
+          })
+          // D-06: a mid-run captured auth state may carry freshly-minted tokens — register its
+          // sensitive values so every subsequent egress masks them.
+          if (singleMaskingContext) {
+            registerAuthStateIntoMaskingContext(
+              singleMaskingContext,
+              await readAuthStatePayloadBestEffort(activeTestAuthState.storageStatePath),
+            )
+          }
+        } catch {
+          result.status = 'failed'
+          result.failureSummary = formatAuthStateCaptureFailure(testAuthStateCapturePaths)
+          result.metadata = {
+            ...result.metadata,
+            phase: 'auth-state-capture',
+          }
+        }
+      }
+
+      const teardownSandboxOptions = getAuthAwareSandboxOptions()
+
+      // Per-test teardown hooks: run AFTER test execution (D-01, D-03)
+      if (resolvedHooks && teardownSandboxOptions && (testDef as any).teardown?.length) {
+        const { runHooks } = await import('@vostride/agent-qa-runner')
+        for (const hookId of (testDef as any).teardown) {
+          const hook = resolvedHooks.get(hookId)
+          if (!hook) continue
+          try {
+            const allVars: Record<string, string> = { ...envFileVars, ...perTestSetupVars }
+            if (cliVars) Object.assign(allVars, cliVars)
+            await runHooks([hook], { ...teardownSandboxOptions, envVars: { ...teardownSandboxOptions.envVars, ...allVars } })
+          } catch {}
+        }
+      }
+
+      // Capture farm session URL and device context for metadata
+      if (useFarm && adapter) {
+        try {
+          const farmSessionUrl = (adapter as any).getSessionUrl?.()
+          result.metadata = {
+            ...result.metadata,
+            ...(farmSessionUrl ? { farmSessionUrl } : {}),
+            runDevice: testPlatform === 'web'
+              ? `${config.use?.browser?.name ?? 'chromium'} (remote)`
+              : `${testResolvedDevice?.name ?? testPlatform} (remote)`,
+          }
+          if (result.status === 'failed') {
+            (adapter as any).markFailed?.()
+          }
+        } catch { /* best-effort session URL capture */ }
+      } else {
+        result.metadata = {
+          ...result.metadata,
+          runDevice: testPlatform === 'web'
+            ? `${config.use?.browser?.name ?? 'chromium'} (local)`
+            : `${testResolvedDevice?.name ?? testPlatform} (local)`,
+        }
+      }
+
+      results.push(result)
+      printRunAttributes(testAttributes)
+
+      // Post-run cache invalidation is no longer done here (Phase 356, D-03/D-13):
+      // the redesigned per-key ActionPlanCache invalidates the exact failed decision
+      // point inside the runner loop (loop/index.ts on a failed step). The retired v1
+      // batch recompute cannot reproduce the new opaque masked keys (they fold a runtime
+      // screenIdentityHash and carry no raw step text on disk, D-06), so the loop owns
+      // invalidation and no CLI-side key recompute remains.
+
+      return result
     } finally {
-      // Pitfall 8: dispose LAST — after session.done + lifecycle.finalize() (teardown auth capture +
-      // handoff assembly) so every late masker still replaces; a post-run stray egress sees no mask.
-      maskingContext.dispose()
+      if (adapter) await adapter.cleanup()
+      // WM-02 (D-13): redacted flush + disposal on every run outcome (pass/fail/error).
+      // The helper never throws, so the run exit code is untouched (Pitfall 5).
+      await flushWorkingMemory(singleWorkingMemory, {
+        artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
+        mask: singleMaskingContext ? (value: string) => singleMaskingContext!.mask(value) : undefined,
+      })
     }
+    } catch (err) {
+      // 363-09 (D-16): mobile setup-failure telemetry previously fed the v1 AnalyticsRunReporter
+      // here. Analytics now rides the bus via `createAnalyticsRunSubscriber`; a pre-runner setup
+      // failure re-throws (below) into the framework-error path and emits no testFinished envelope,
+      // so this niche pre-runner telemetry is a known gap (re-addressable when the runner emits a
+      // failure envelope for it). The normal completion path is fully covered by the bus subscriber.
+      throw err
+    }
+  }
+  // Parser-minted bindings are the ONE source for member identity and digest bytes (D-20).
+  // Digests must still be resolved before startRun (D-04).
+  //
+  // 390-08 (CR-02 / D-01): `configDir` is handed in so the descriptor's identity leg is the
+  // WORKSPACE-RELATIVE form of the binding's own path — the same bytes on every checkout, which
+  // is what lets the committed ledger written on one machine suppress on another. The bindings
+  // keep their absolute paths for every read below.
+  const { members, digestMembers } = buildDirectRunMembers(filtered, configDir)
+  let perMemberDigests: ConfigDigests[] = []
+  const memberBindings: Array<(ctx: MemberTestRunContext) => Promise<TestResult>> =
+    filtered.map((binding, testIndex) =>
+      (ctx) => runOneDirectTest(binding, ctx, perMemberDigests[testIndex]),
+    )
+
+  // D-20: the ONE digest mint — per-member cache pairs (suiteFileContent absent ⇒ a
+  // single-member run collapses the run-level pair to the member values).
+  const runDigests = computeRunConfigDigests({ configContent, members: digestMembers })
+  perMemberDigests = runDigests.perMember
+
+  // RUNX-06 invariant (defense-in-depth): the `filtered.length === 0` guard above makes this
+  // unreachable, but assert it at the session boundary so no future refactor can start a
+  // zero-member RunSession that renders a silent "0 of 0" summary.
+  if (members.length === 0) {
+    throw new CliRunInputError(
+      [pc.red('Error: Refusing to start a run with zero members (no runnable tests resolved).')],
+      2,
+    )
+  }
+
+  // 401-03 (D-02/D-05/D-06): the target is resolved here because its DECLARED CLASS is what
+  // the run gate classifies, and the gate decides before anything touches the target. The
+  // resolution itself is a config read — the probe that fetches the URL moved into
+  // `assembleCliRun`, i.e. behind the verdict.
+  let singleTargetClass: RunTargetClass
+  let singleProbeUrl: string | undefined
+  try {
+    const singleResolvedTarget = resolveTarget(config, filtered[0].test.target!)
+    singleRunProduct = directRunProduct ?? singleResolvedTarget.product ?? 'unknown'
+    // UNDECLARED STAYS UNDECLARED HERE. `undefined` is carried into the descriptor builder,
+    // which is the one place D-06's undeclared-is-shared rule is applied. A default invented
+    // at this line would be a second answer to the question that decides the run.
+    singleTargetClass = singleResolvedTarget.environment
+    // D-04: run-start baseline probe — web targets only (mobile: device-session-create
+    // failure is the equivalent signal, no probe).
+    if (singleResolvedTarget.platform === 'web' && singleResolvedTarget.url) {
+      singleProbeUrl = singleResolvedTarget.url
+    }
+  } catch { /* best-effort; the member closure surfaces the real target error as a framework error */ }
+  const singleBuildTag = resolveBuildTagSetting({
+    flag: opts.buildTag,
+    env: process.env.AGENT_QA_BUILD_TAG,
+    use: config.use,
   })
+  // Assigned by the assembler, which the core calls after the gate allows the run. They are
+  // read by the member closures (`asOfBuild`) and by the reporters (the quarantine set), both
+  // of which only ever execute downstream of that call.
+  let singleQuarantined: readonly QuarantineAppliedEntry[] = []
 
-  clearGraceTimer()
-  shutdownController.dispose()
-  process.removeListener('SIGINT', shutdownController.handleSignal)
-  process.removeListener('SIGTERM', shutdownController.handleSignal)
+  const executor: MemberTestExecutor = async (member, ctx) => {
+    const binding = memberBindings[ctx.testIndex]
+    if (!binding) {
+      throw new Error(`No test-member binding for testIndex ${ctx.testIndex} (testId ${member.testId})`)
+    }
+    try {
+      return await binding(ctx)
+    } catch (err) {
+      if (frameworkError === undefined) {
+        frameworkError = err
+        try { activeRunSession?.cancel() } catch { /* best-effort */ }
+      }
+      return {
+        runId: member.testId,
+        name: member.name,
+        filePath: 'unknown',
+        status: 'failed',
+        steps: [],
+        duration: 0,
+        failureSummary: err instanceof Error ? err.message : String(err),
+      }
+    }
+  }
 
-  releaseAppium()
-  return exitCode
+  return {
+    members,
+    executor,
+    configDigests: runDigests.runLevel,
+    product: singleRunProduct,
+    configDir,
+    configFilePath,
+    knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
+    targetClass: singleTargetClass,
+    ...(singleProbeUrl === undefined ? {} : { probeUrl: singleProbeUrl }),
+    ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
+    logger,
+    bindRunContext: ({ maskingContext, safetyHooks }) => {
+      singleMaskingContext = maskingContext
+      singleSafetyHooks = safetyHooks
+    },
+    applyAssembly: ({ buildOrdinal, quarantined }) => {
+      singleBuildOrdinal = buildOrdinal
+      singleQuarantined = quarantined
+    },
+    bindSession: (session) => { activeRunSession = session },
+    takeFrameworkError: () => frameworkError,
+    getCurationModelDeps: () => singleCurationModelDeps,
+  }
 }
 
 export function createRunCommand(): Command {
@@ -3262,618 +4496,6 @@ export function createRunCommand(): Command {
           process.exit(0)
         }
 
-        // Actual execution
-        const startTime = Date.now()
-        // 401-04: `startRun` is NOT among these. BOTH of this command's paths reach it through
-        // `createRunInvocationCore`, and a binding held here would be a second way in.
-        const { LLMPlanner, LLMVerifier, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
-
-        const recordingEnabled = opts.record ?? config.services?.recording?.enabled ?? false
-
-        // Wire action cache from config (logger wired after LogManager creation below)
-        let actionCache: import('@vostride/agent-qa-runner').ActionPlanCache | undefined
-        // SEAM-01/03 (362-06): the ONE run MaskingContext + per-run SafetyHookRunner for this path,
-        // built at the singleRunId mint below and captured here so runOneDirectTest (defined before
-        // the mint) resolves the run bundle at call time — the second call site, same helpers
-        // (Pitfall 7). `singleMaskingContext` also feeds the D-06 mid-run auth registration.
-        let singleMaskingContext: RunMaskingContext | undefined
-        let singleSafetyHooks: SafetyHookRunner | undefined
-        let singleCurationModelDeps: CurationTailModelDeps | undefined
-        let singleRunProduct = 'unknown'
-        let singleBuildOrdinal = 0
-
-        // WM-01/WM-02: one run-scoped working-memory store per run, constructed with the run's
-        // SecretRedactor (capture-time redaction live); threaded into the loop and flushed
-        // redacted at run end (finally-positioned below).
-        const singleWorkingMemory = new WorkingMemoryStore(runtimeSecrets.secretRedactor)
-
-        // D-14 (Phase 360): one run-scoped storage-state store per run, rooted at the run's
-        // `.agent-qa` dir (the FsActionCache rooting idiom); threaded into the loop's storageState port.
-        const singleStorageState = await buildStorageStateStore(configDir)
-
-        // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
-        // subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics) attach in the
-        // core's `onSession` hook below via `attachRunSubscribers`. No reporter is threaded into the run
-        // path.
-        const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
-
-        const { LogManager } = await import('@vostride/agent-qa-core')
-
-        const logger = new LogManager({
-          runId: process.env.AGENT_QA_RUN_ID || undefined,
-          displayLevel: effectiveLogLevel as any,
-          storage: logStorage,
-          ndjson: process.env.AGENT_QA_LIVE_EVENTS === 'true',
-          redactor: runtimeSecrets.secretRedactor,
-        })
-
-        // Wire the redesigned action cache (runner-local FsActionCache + branch policy); skip when
-        // --disable-cache. The loop's masking port now carries the run MaskingContext (assigned at
-        // the singleRunId mint below), no longer a cache-context identity mint (SEAM-01/D-09).
-        if (opts.disableCache !== true) {
-          const { resolve } = await import('node:path')
-          const ctx = await buildActionCacheContext({
-            cacheDir: resolve(configDir, config.services?.cache?.dir ?? RUNTIME_CACHE_DIR),
-            disableCache: false,
-            saveCache: opts.saveCache === true,
-          })
-          actionCache = ctx.cache
-        } else {
-          const cacheLog = logger.createScopedLogger('cache')
-          cacheLog.info('Cache disabled via --disable-cache', { operation: 'bypass' })
-        }
-
-        const results: TestResult[] = []
-
-        // One discovered test file = one member closure of the ONE RunSession (SESSION-01/04).
-        // Retry stays a single-test-path concern INSIDE this closure (runTestWithRetry); the shell
-        // derives the member outcome from the returned final TestResult exactly as for suite members
-        // (RESEARCH A2 — the suite path is single-attempt, this path keeps its retry). The run-shell
-        // ctx seams (events/abortSignal) and the member's cache digest pair are threaded in.
-        const runOneDirectTest = async (
-          binding: ParsedTestBinding,
-          ctx: MemberTestRunContext,
-          perMemberDigest: ConfigDigests | undefined,
-        ): Promise<TestResult> => {
-          const { test, filePath, fileContent: testFileContent } = binding
-          let currentPlatform: 'web' | 'android' | 'ios' | null = null
-          let currentAdapterKey: string | null = null
-          let adapter: import('@vostride/agent-qa-runner').PlatformAdapter | null = null
-          let analyticsRunId: string | undefined
-          let analyticsFilePath = filePath
-          let analyticsPlatform: 'web' | 'android' | 'ios' | undefined
-          let analyticsTestId: string | undefined
-          let analyticsAttributes: RunAttributes | undefined = resolveCliRunAttributes(
-            userRunAttributes,
-            'local',
-            inheritedRunAttributes,
-          )
-          let analyticsMobileTransport: string | undefined
-          let analyticsAppState: string | undefined
-          let analyticsStartedAt = Date.now()
-          let completedResult: TestResult | undefined
-          try {
-          try {
-          let testResolvedTarget = resolveTarget(config, test.target!)
-          let testTargetUrl = testResolvedTarget.url
-
-          const testDef = {
-            ...test,
-            url: testTargetUrl,
-          }
-          analyticsTestId = testDef['test-id']
-
-          const runId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
-          analyticsRunId = runId
-          analyticsStartedAt = Date.now()
-          currentRunId = runId
-          logger.setRunId(runId)
-
-          // Per-test config merge (global config < test YAML use: < CLI flags)
-          const testFlagOverrides: Record<string, unknown> = {}
-          if (opts.headless !== undefined) testFlagOverrides['browser'] = { headless: opts.headless }
-          if (opts.browser) testFlagOverrides['browser'] = { ...(testFlagOverrides['browser'] as Record<string, unknown> ?? {}), name: opts.browser }
-
-          const mergedUse = mergeUseBlocks(
-            config.use as Record<string, unknown>,
-            undefined,
-            test.use as Record<string, unknown> | undefined,
-            testFlagOverrides,
-          )
-          const testMergedConfig = { ...config, use: mergedUse } as AgentQaConfig
-          const effectiveCacheEnabled = !opts.disableCache && (mergedUse as Record<string, unknown>).cache !== false
-
-          if (opts.configDebug) {
-            console.log(pc.bold(`\nConfig for: ${test.name}`))
-            console.log(formatConfigDebug(config, test.use, testFlagOverrides))
-            console.log()
-          }
-
-          const testPlatform: 'web' | 'android' | 'ios' = testResolvedTarget.platform
-          analyticsPlatform = testPlatform
-          const testAuthStateUse = getSelectedAuthStateUse(mergedUse as Record<string, unknown>)
-          const testAuthState = await resolveSelectedAuthStateForRun({
-            config,
-            configDir,
-            resolvedTarget: testResolvedTarget,
-            authState: testAuthStateUse,
-          })
-          const testAuthStateCapturePaths = resolveAuthStateCapturePathsForRun({
-            config,
-            configDir,
-            resolvedTarget: testResolvedTarget,
-            authState: testAuthStateUse,
-          })
-          // D-06: register the loaded auth-state's sensitive values into the run context (runs inside
-          // runSafetyScope, after the mint — singleMaskingContext is live). Additive; stable placeholders.
-          if (singleMaskingContext && testAuthState) {
-            registerAuthStateIntoMaskingContext(
-              singleMaskingContext,
-              await readAuthStatePayloadBestEffort(testAuthState.storageStatePath),
-            )
-          }
-          let activeTestAuthState = testAuthState
-
-          const testMergedUse = (testMergedConfig as any).use ?? (config as any).use ?? {}
-          const testDeviceName = opts.device ?? testMergedUse.device as string | undefined
-
-          const testTimeoutsForSetup = {
-            step: (testMergedConfig as any).use?.timeout?.step ?? config.use?.timeout?.step,
-            test: (testMergedConfig as any).use?.timeout?.test ?? config.use?.timeout?.test,
-            navigation: (testMergedConfig as any).use?.timeout?.navigation ?? config.use?.timeout?.navigation,
-          }
-
-          const testLocalBindings = testPlatform === 'android' || testPlatform === 'ios'
-            ? loadLocalBindings()
-            : null
-          let testMobileResolved: ResolvedMobileRunConfig | undefined
-          let testResolvedDevice: ResolvedDevice | undefined
-          let testFarmSession: PlatformConfig['farmSession'] | undefined
-          if (testPlatform === 'android' || testPlatform === 'ios') {
-            testMobileResolved = resolveMobileRunOrThrow({
-              config: config as unknown as Record<string, any>,
-              targetName: testResolvedTarget.name,
-              platform: testPlatform,
-              explicitDeviceName: opts.device,
-              useDeviceName: testMergedUse.device as string | undefined,
-              appState: testMergedUse.mobile?.appState as 'preserve' | 'reset' | undefined,
-              localBindings: testLocalBindings,
-              configFilePath: resolvePath(configFilePath),
-              localConfigFilePath: testLocalBindings?.filePath,
-              appiumUrl: process.env.AGENT_QA_APPIUM_URL,
-            })
-            analyticsAppState = testMobileResolved.appState
-            const resolved = await resolveDeviceAndFarmSession(
-              config, testMobileResolved.deviceName, testPlatform,
-              `${test.name} — ${new Date().toISOString().slice(0, 19)}`,
-              testTimeoutsForSetup.test,
-              testMobileResolved.device,
-              testLocalBindings,
-              testMobileResolved,
-            )
-            testResolvedDevice = resolved.resolvedDevice
-            testFarmSession = resolved.farmSession
-            analyticsMobileTransport = testResolvedDevice?.transport
-          }
-
-          const useFarm = testResolvedDevice?.transport !== undefined && testResolvedDevice.transport !== 'local'
-          const testAttributes = resolveCliRunAttributes(
-            userRunAttributes,
-            resolveRunnerAttribute(testResolvedDevice?.transport),
-            inheritedRunAttributes,
-          )
-          analyticsAttributes = testAttributes
-          writeRunAttributesToEnv(testAttributes)
-          const adapterKey = JSON.stringify({
-            platform: testPlatform,
-            device: testResolvedDevice?.name,
-            appPackage: testMobileResolved?.app.appPackage,
-            appActivity: testMobileResolved?.app.appActivity,
-            bundleId: testMobileResolved?.app.bundleId,
-            appPath: testMobileResolved?.app.install?.path,
-            browserstackApp: testMobileResolved?.app.install?.browserstack,
-          })
-
-            // Each direct test owns its adapter so parallel batches cannot share mutable browser/mobile state.
-            if (testPlatform !== currentPlatform || adapterKey !== currentAdapterKey) {
-              currentPlatform = testPlatform
-              currentAdapterKey = adapterKey
-
-              // Auto-start Appium for mobile platforms (if not already running and not in farm mode)
-              if ((testPlatform === 'ios' || testPlatform === 'android') && !useFarm) {
-                try {
-                  const appiumUrl = await acquireAppium(effectiveLogLevel)
-                  if (testMobileResolved) {
-                    testMobileResolved = { ...testMobileResolved, appium: { url: appiumUrl, managed: !process.env.AGENT_QA_APPIUM_URL } }
-                  }
-                } catch (err) {
-                  throw new MobileSetupError({
-                    category: 'appium-startup',
-                    message: `Could not auto-start Appium: ${err instanceof Error ? err.message : String(err)}`,
-                    platform: testPlatform,
-                    targetName: testResolvedTarget.name,
-                    deviceName: testDeviceName,
-                    cause: err,
-                  })
-                }
-              }
-
-              adapter = await createPlatformAdapter(testPlatform)
-
-              const mergedBrowser = (mergedUse as Record<string, unknown>).browser as Record<string, unknown> | undefined
-              const platformConfig = buildPlatformConfig(testPlatform, testResolvedDevice, testTimeoutsForSetup, mergedBrowser ?? config.use?.browser, (testMergedConfig as any).use?.logCapture ?? config.use?.logCapture, testFarmSession, testMobileResolved)
-              platformConfig.authState = activeTestAuthState
-              platformConfig.verbose = effectiveLogLevel === 'debug'
-              if (opts.headless !== undefined) {
-                if (platformConfig.browser) {
-                  platformConfig.browser.headless = opts.headless
-                }
-              }
-
-              // Wire recording config for this platform adapter
-              const anyTestNeedsRecording = filtered.some(({ test: candidate }) => (candidate.meta as any)?.record === true)
-              if (recordingEnabled || anyTestNeedsRecording) {
-                const recCfg = config.services?.recording as Record<string, unknown> | undefined
-                platformConfig.recording = {
-                  enabled: true,
-                  videoDir: resolveDashboardVideoDir(config, configDir, dashboardEnabled),
-                  videoSize: recCfg?.videoSize as { width: number; height: number } | undefined,
-                }
-              }
-
-              await adapter.setup(platformConfig)
-
-              // Exit cleanup for farm sessions on mobile
-              if (useFarm && (testPlatform === 'android' || testPlatform === 'ios')) {
-                const farmAdapter = adapter
-                process.on('exit', () => { void Promise.resolve(farmAdapter.cleanup()).catch(() => {}) })
-              }
-
-              if (effectiveLogLevel === 'debug') {
-                console.log(pc.dim(`  Platform: ${testPlatform}${useFarm ? ` (farm: ${testResolvedDevice?.transport})` : ''}${testPlatform !== 'web' ? ' (adapter re-created)' : ''}`))
-              }
-            }
-
-            // Per-test model creation using merged LLM config
-            const mergedForLLM = { registry: (config as any).registry, use: (testMergedConfig as any).use ?? (config as any).use }
-            const { planner: plannerCfg, verifier: verifierCfg, configName } = resolveLLMModels(mergedForLLM)
-            const resolvedAuth = await resolveModelAuth(configName, plannerCfg)
-            const { profile: plannerProfile, auth: plannerAuth } = toModelProfileAndAuth(plannerCfg, resolvedAuth)
-            const { profile: verifierProfile, auth: verifierAuth } = toModelProfileAndAuth(verifierCfg, resolvedAuth)
-            // D-03: retain the first already-resolved planner identity used by this RunSession.
-            // The post-verdict Curator reuses these exact objects and never resolves config again.
-            singleCurationModelDeps ??= { profile: plannerProfile, auth: plannerAuth }
-            const plannerCapabilities = resolveCapabilities(plannerProfile)
-            const verifierCapabilities = resolveCapabilities(verifierProfile)
-            const plannerDeclared: DeclaredModelProfile = {
-              provider: plannerProfile.provider,
-              modelId: plannerProfile.model,
-              vision: plannerCapabilities.vision,
-              maxOutputTokens: plannerCapabilities.maxOutput,
-            }
-            const verifierDeclared: DeclaredModelProfile = {
-              provider: verifierProfile.provider,
-              modelId: verifierProfile.model,
-              vision: verifierCapabilities.vision,
-              maxOutputTokens: verifierCapabilities.maxOutput,
-            }
-            process.env.AGENT_QA_LLM_MODEL = plannerCfg.model
-            process.env.AGENT_QA_LLM_PROVIDER = plannerCfg.provider
-            if (effectiveLogLevel === 'debug') {
-              console.log(pc.dim(`  Model: ${plannerCfg.model} (${plannerCfg.provider})`))
-            }
-            const plannerModel = createModel(plannerProfile, plannerAuth)
-            const verifierModel = createModel(verifierProfile, verifierAuth)
-            // D-04 lazy thunk + role-separated accounting instances (see suite-level site).
-            const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(plannerProfile) })
-            const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(verifierProfile) })
-            const plannerConfig = {
-              maxSubActions: testMergedConfig.use?.planner?.maxSubActions ?? 10,
-              previousStepCount: testMergedConfig.use?.planner?.previousStepCount ?? 3,
-            }
-
-            const testLogCapture = (testMergedConfig as any).use?.logCapture ?? config.use?.logCapture
-            let testCapabilityNotes = ''
-            if (testLogCapture?.console === false) {
-              testCapabilityNotes += '\nConsole log capture is DISABLED for this test run. The readConsoleLogs action will return no data. If a test step explicitly requires reading console logs, use stepFailed to fail the step — do not silently pass with empty data.'
-            }
-            if (testLogCapture?.network === false) {
-              testCapabilityNotes += '\nNetwork log capture is DISABLED for this test run. The readNetworkLogs action will return no data. If a test step explicitly requires reading network logs, use stepFailed to fail the step — do not silently pass with empty data.'
-            }
-            const knowledge = openRunKnowledgeComposition({
-              knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
-              product: testResolvedTarget.product,
-              scope: { tier: 'test', key: testDef.name },
-              asOfBuild: singleBuildOrdinal,
-              capabilities: plannerCapabilities,
-              accounting: plannerAccounting,
-              qaRulesText: testCapabilityNotes,
-              workingContextText: JSON.stringify({
-                context: testDef.context,
-                steps: testDef.steps,
-              }),
-            })
-            const planner = new LLMPlanner(
-              plannerModel,
-              testPlatform,
-              logger.createScopedLogger('planner'),
-              testCapabilityNotes.trim() || undefined,
-              plannerAccounting,
-              plannerDeclared,
-              knowledge.nonActionTools,
-            )
-            const verifier = new LLMVerifier(verifierModel, verifierAccounting, verifierDeclared)
-
-            // Per-test timeouts from merged config
-            const testTimeouts = {
-              step: testMergedConfig.use?.timeout?.step,
-              test: testMergedConfig.use?.timeout?.test,
-              navigation: testMergedConfig.use?.timeout?.navigation,
-            }
-
-            // Per-test recording override: meta.record takes priority over global
-            let testRecording: import('@vostride/agent-qa-runner').PlatformConfig['recording'] | undefined
-            const testRecordMeta = (testDef.meta as any)?.record
-            if (testRecordMeta === true || recordingEnabled) {
-              const recCfg2 = config.services?.recording as Record<string, unknown> | undefined
-              testRecording = {
-                enabled: true,
-                videoDir: resolveDashboardVideoDir(config, configDir, dashboardEnabled),
-                videoSize: recCfg2?.videoSize as { width: number; height: number } | undefined,
-              }
-            }
-            if (testRecordMeta === false) {
-              testRecording = undefined
-            }
-
-            const artifactContext = buildRunArtifactContext({
-              kind: 'test',
-              configContent,
-              parsedConfig: config,
-              effectiveConfig: testMergedConfig,
-              envFilePath: resolvedEnvFilePath,
-              rawEnvFileContent,
-              envFileVars,
-              secretsFileMetadata: runtimeSecrets.secretsFileMetadata,
-              cliVars,
-              inlineVars,
-              hooks: resolvedHooks,
-              planner: { provider: plannerCfg.provider, model: plannerCfg.model },
-              verifier: { provider: verifierCfg.provider, model: verifierCfg.model },
-              platform: testPlatform,
-              target: testResolvedTarget,
-              deviceName: testDeviceName,
-              attributes: testAttributes,
-              timeouts: testTimeouts,
-              cache: {
-                enabled: effectiveCacheEnabled,
-                dir: config.services?.cache?.dir,
-                ttl: config.services?.cache?.ttl,
-              },
-              source: {
-                kind: 'test',
-                testId: testDef['test-id'] ?? null,
-                name: testDef.name,
-                filePath,
-                rawYaml: testFileContent || null,
-                resolvedDefinition: testDef,
-                loadStatus: 'loaded',
-              },
-            })
-
-            const getAuthAwareSandboxOptions = () => sandboxOptions && activeTestAuthState
-              ? { ...sandboxOptions, authState: activeTestAuthState }
-              : sandboxOptions
-            const authAwareSandboxOptions = getAuthAwareSandboxOptions()
-
-            // Per-test setup hooks: run BEFORE test execution (D-01, D-03)
-            let perTestSetupVars: Record<string, string> = {}
-            let testStartTime = Date.now()
-            let setupHookFailed = false
-            let setupFailureResult: TestResult | undefined
-            if (resolvedHooks && authAwareSandboxOptions && (testDef as any).setup?.length) {
-              const { runHooks } = await import('@vostride/agent-qa-runner')
-              const hookDefs: HookDefinition[] = []
-              let hookSetupError: string | undefined
-              for (const hookId of (testDef as any).setup) {
-                const hook = resolvedHooks.get(hookId)
-                if (!hook) { hookSetupError = `Hook ID "${hookId}" not found in hooks registry`; break }
-                hookDefs.push(hook)
-              }
-
-              if (!hookSetupError && hookDefs.length > 0) {
-                const allVars: Record<string, string> = { ...envFileVars }
-                if (inlineVars) Object.assign(allVars, inlineVars)
-                if ((testDef as any).variables) Object.assign(allVars, (testDef as any).variables)
-                if (cliVars) Object.assign(allVars, cliVars)
-
-                for (const hookDef of hookDefs) {
-                  const hookResult = await runHooks([hookDef], { ...authAwareSandboxOptions, envVars: { ...authAwareSandboxOptions.envVars, ...allVars, ...perTestSetupVars } })
-                  const hr = hookResult.results.get(hookDef.name)
-                  if (!hr?.success) {
-                    hookSetupError = `Setup hook "${hookDef.name}" failed: ${hr?.error ?? 'unknown'}`
-                    break
-                  }
-                  Object.assign(perTestSetupVars, hr.variables)
-                  Object.assign(allVars, hr.variables)
-                }
-              }
-
-              if (hookSetupError) {
-                setupHookFailed = true
-                const setupResult: TestResult = {
-                  runId,
-                  name: test.name,
-                  filePath,
-                  status: 'failed',
-                  steps: [],
-                  duration: Date.now() - testStartTime,
-                  failureSummary: hookSetupError,
-                }
-                results.push(setupResult)
-                setupFailureResult = setupResult
-                printRunAttributes(testAttributes)
-              }
-            }
-
-            if (setupHookFailed) {
-              // Synthesized failed TestResult feeds the shell's member-outcome derivation (D-16).
-              return setupFailureResult!
-            }
-
-            // 363-11 (D-05): execute the member on runner soil via runMemberTest. The core
-            // runTest/runTestWithRetry wrapper is deleted; retry lives inside runMemberTest, and the
-            // adapter-backed handlers (runJS/appium/a11y/failure-shot) + secret resolver are wired by
-            // the shared buildMemberRunConfig helper (Pitfall 8 — the suite path uses the same helper).
-            const memberRunConfig = Object.assign(buildMemberRunConfig({
-              adapter: adapter!,
-              planner,
-              verifier,
-              cache: effectiveCacheEnabled ? actionCache : undefined,
-              // D-08/Q10: the sharp compressor injected from the composition root (sharp left core).
-              compressor: buildScreenshotCompressor(logger?.createScopedLogger('adapter')),
-              // SEAM-01/03: the ONE run context + gate, ungated from cache enablement (D-09/356).
-              masking: singleMaskingContext,
-              safetyHooks: singleSafetyHooks,
-              knowledgeReader: knowledge.reader,
-              knowledgeBudgets: knowledge.budgets,
-              knowledgeAsOfBuild: singleBuildOrdinal,
-              recordLedger: knowledge.recordLedger,
-              beginMemoryTurn: knowledge.beginMemoryTurn,
-              drainMemoryReadTraces: knowledge.drainMemoryReadTraces,
-              workingMemory: singleWorkingMemory,
-              storageState: singleStorageState,
-              configDigests: perMemberDigest,
-              plannerModel,
-              verifierModel,
-              envFileVars,
-              inlineVars,
-              cliVars,
-              hookSetupVars: perTestSetupVars,
-              inlineHookDefs: resolvedHooks,
-              sandboxOptions: authAwareSandboxOptions,
-              secretStore: runtimeSecrets.secretStore,
-              secretRedactor: runtimeSecrets.secretRedactor,
-              // D-02/D-03/D-20 run-shell seams: live event sink + run-level cancel + the member's
-              // cache digest pair.
-              sink: ctx.events,
-              testIndex: ctx.testIndex,
-              abortSignal: ctx.abortSignal,
-              // CASS-02: bind the run-scoped screenshot store the shell threaded onto the member ctx.
-              evidenceArtifacts: ctx.evidenceArtifacts,
-              captureScreenshots,
-              accessibility: config.services?.accessibility,
-              timeouts: testTimeouts,
-              plannerConfig,
-              logger,
-              logCapture: testLogCapture,
-              vision: resolveVisionConfig(config.services?.vision),
-              visionGate: resolveVisionGate({ vision: plannerCfg.vision ?? true }),
-              contextWindow: plannerCfg.contextWindow,
-              filePath,
-            }), {
-              modelProfiles: { planner: plannerDeclared, verifier: verifierDeclared },
-              onEvidenceContext: ctx.setEvidenceContext,
-            })
-            const result = await runMemberTest(toMemberTest(testDef, filePath), memberRunConfig)
-
-            if (!result.runId) result.runId = runId
-            completedResult = result
-
-            if (testAuthStateCapturePaths && result.status === 'passed') {
-              try {
-                activeTestAuthState = await captureAuthStateForRun({
-                  adapter: adapter!,
-                  paths: testAuthStateCapturePaths,
-                })
-                // D-06: a mid-run captured auth state may carry freshly-minted tokens — register its
-                // sensitive values so every subsequent egress masks them.
-                if (singleMaskingContext) {
-                  registerAuthStateIntoMaskingContext(
-                    singleMaskingContext,
-                    await readAuthStatePayloadBestEffort(activeTestAuthState.storageStatePath),
-                  )
-                }
-              } catch {
-                result.status = 'failed'
-                result.failureSummary = formatAuthStateCaptureFailure(testAuthStateCapturePaths)
-                result.metadata = {
-                  ...result.metadata,
-                  phase: 'auth-state-capture',
-                }
-              }
-            }
-
-            const teardownSandboxOptions = getAuthAwareSandboxOptions()
-
-            // Per-test teardown hooks: run AFTER test execution (D-01, D-03)
-            if (resolvedHooks && teardownSandboxOptions && (testDef as any).teardown?.length) {
-              const { runHooks } = await import('@vostride/agent-qa-runner')
-              for (const hookId of (testDef as any).teardown) {
-                const hook = resolvedHooks.get(hookId)
-                if (!hook) continue
-                try {
-                  const allVars: Record<string, string> = { ...envFileVars, ...perTestSetupVars }
-                  if (cliVars) Object.assign(allVars, cliVars)
-                  await runHooks([hook], { ...teardownSandboxOptions, envVars: { ...teardownSandboxOptions.envVars, ...allVars } })
-                } catch {}
-              }
-            }
-
-            // Capture farm session URL and device context for metadata
-            if (useFarm && adapter) {
-              try {
-                const farmSessionUrl = (adapter as any).getSessionUrl?.()
-                result.metadata = {
-                  ...result.metadata,
-                  ...(farmSessionUrl ? { farmSessionUrl } : {}),
-                  runDevice: testPlatform === 'web'
-                    ? `${config.use?.browser?.name ?? 'chromium'} (remote)`
-                    : `${testResolvedDevice?.name ?? testPlatform} (remote)`,
-                }
-                if (result.status === 'failed') {
-                  (adapter as any).markFailed?.()
-                }
-              } catch { /* best-effort session URL capture */ }
-            } else {
-              result.metadata = {
-                ...result.metadata,
-                runDevice: testPlatform === 'web'
-                  ? `${config.use?.browser?.name ?? 'chromium'} (local)`
-                  : `${testResolvedDevice?.name ?? testPlatform} (local)`,
-              }
-            }
-
-            results.push(result)
-            printRunAttributes(testAttributes)
-
-            // Post-run cache invalidation is no longer done here (Phase 356, D-03/D-13):
-            // the redesigned per-key ActionPlanCache invalidates the exact failed decision
-            // point inside the runner loop (loop/index.ts on a failed step). The retired v1
-            // batch recompute cannot reproduce the new opaque masked keys (they fold a runtime
-            // screenIdentityHash and carry no raw step text on disk, D-06), so the loop owns
-            // invalidation and no CLI-side key recompute remains.
-
-            return result
-          } finally {
-            if (adapter) await adapter.cleanup()
-            // WM-02 (D-13): redacted flush + disposal on every run outcome (pass/fail/error).
-            // The helper never throws, so the run exit code is untouched (Pitfall 5).
-            await flushWorkingMemory(singleWorkingMemory, {
-              artifactsDir: resolvePath(configDir, config.services?.dashboard?.artifactsDir ?? RUNTIME_ARTIFACTS_DIR),
-              mask: singleMaskingContext ? (value: string) => singleMaskingContext!.mask(value) : undefined,
-            })
-          }
-          } catch (err) {
-            // 363-09 (D-16): mobile setup-failure telemetry previously fed the v1 AnalyticsRunReporter
-            // here. Analytics now rides the bus via `createAnalyticsRunSubscriber`; a pre-runner setup
-            // failure re-throws (below) into the framework-error path and emits no testFinished envelope,
-            // so this niche pre-runner telemetry is a known gap (re-addressable when the runner emits a
-            // failure envelope for it). The normal completion path is fully covered by the bus subscriber.
-            throw err
-          }
-        }
-
         // ---- Compose the ONE RunSession per invocation (D-01/D-04, SESSION-01/04) ---------------
         // Each discovered test file is a member of ONE RunSession. Members carry NO failFastGroup —
         // ungrouped members never fail-fast (Plan 04 port contract), so today's run-all-then-aggregate
@@ -3914,87 +4536,39 @@ export function createRunCommand(): Command {
         process.on('SIGINT', shutdownController.handleSignal)
         process.on('SIGTERM', shutdownController.handleSignal)
 
-        // Parser-minted bindings are the ONE source for member identity and digest bytes (D-20).
-        // Digests must still be resolved before startRun (D-04).
-        //
-        // 390-08 (CR-02 / D-01): `configDir` is handed in so the descriptor's identity leg is the
-        // WORKSPACE-RELATIVE form of the binding's own path — the same bytes on every checkout, which
-        // is what lets the committed ledger written on one machine suppress on another. The bindings
-        // keep their absolute paths for every read below.
-        const { members, digestMembers } = buildDirectRunMembers(filtered, configDir)
-        let perMemberDigests: ConfigDigests[] = []
-        const memberBindings: Array<(ctx: MemberTestRunContext) => Promise<TestResult>> =
-          filtered.map((binding, testIndex) =>
-            (ctx) => runOneDirectTest(binding, ctx, perMemberDigests[testIndex]),
-          )
 
-        // D-20: the ONE digest mint — per-member cache pairs (suiteFileContent absent ⇒ a
-        // single-member run collapses the run-level pair to the member values).
-        const runDigests = computeRunConfigDigests({ configContent, members: digestMembers })
-        perMemberDigests = runDigests.perMember
-
-        // RUNX-06 invariant (defense-in-depth): the `filtered.length === 0` guard above makes this
-        // unreachable, but assert it at the session boundary so no future refactor can start a
-        // zero-member RunSession that renders a silent "0 of 0" summary.
-        if (members.length === 0) {
-          console.error(pc.red('Error: Refusing to start a run with zero members (no runnable tests resolved).'))
-          process.exit(2)
-        }
-
-        const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
-        // 401-03 (D-02/D-05/D-06): the target is resolved here because its DECLARED CLASS is what
-        // the run gate classifies, and the gate decides before anything touches the target. The
-        // resolution itself is a config read — the probe that fetches the URL moved into
-        // `assembleCliRun`, i.e. behind the verdict.
-        let singleTargetClass: RunTargetClass
-        let singleProbeUrl: string | undefined
-        try {
-          const singleResolvedTarget = resolveTarget(config, filtered[0].test.target!)
-          singleRunProduct = directRunProduct ?? singleResolvedTarget.product ?? 'unknown'
-          // UNDECLARED STAYS UNDECLARED HERE. `undefined` is carried into the descriptor builder,
-          // which is the one place D-06's undeclared-is-shared rule is applied. A default invented
-          // at this line would be a second answer to the question that decides the run.
-          singleTargetClass = singleResolvedTarget.environment
-          // D-04: run-start baseline probe — web targets only (mobile: device-session-create
-          // failure is the equivalent signal, no probe).
-          if (singleResolvedTarget.platform === 'web' && singleResolvedTarget.url) {
-            singleProbeUrl = singleResolvedTarget.url
-          }
-        } catch { /* best-effort; the member closure surfaces the real target error as a framework error */ }
-        const singleExecutionContext = resolveRunExecutionContext()
-        const singleBuildTag = resolveBuildTagSetting({
-          flag: opts.buildTag,
-          env: process.env.AGENT_QA_BUILD_TAG,
-          use: config.use,
+        // 401-11 (D-01/D-02): ONE members/executor assembly on this door, and this path is a
+        // CALLER of it rather than its only owner. The member closure, the descriptors, the digest
+        // mint, the declared target class, the probe URL and the executor wrapper all live in
+        // `produceDirectRunMembers` now — the SAME producer a door holding nothing but a
+        // `RunsStartInput` reaches through `produceMembersFromPatterns`. Two copies of this chain
+        // would be two answers to what a member of this run is.
+        const produced = await produceDirectRunMembers({
+          inputs,
+          bindings: filtered,
+          ...(directRunProduct === undefined ? {} : { product: directRunProduct }),
+          opts,
+          reporterSelection,
+          ...(logStorage === undefined ? {} : { logStorage }),
+          analytics,
+          onMemberRunId: (memberRunId) => { currentRunId = memberRunId },
         })
-        // Assigned by the assembler, which the core calls after the gate allows the run. They are
-        // read by the member closures (`asOfBuild`) and by the reporters (the quarantine set), both
-        // of which only ever execute downstream of that call.
+        const members = produced.members
+        const executor = produced.executor
+        const logger = produced.logger
+        const singleRunProduct = produced.product
+        const singleTargetClass = produced.targetClass
+        const singleProbeUrl = produced.probeUrl
+        const singleBuildTag = produced.buildTag
+        const runDigests = { runLevel: produced.configDigests }
         let singleQuarantined: readonly QuarantineAppliedEntry[] = []
 
-        const executor: MemberTestExecutor = async (member, ctx) => {
-          const binding = memberBindings[ctx.testIndex]
-          if (!binding) {
-            throw new Error(`No test-member binding for testIndex ${ctx.testIndex} (testId ${member.testId})`)
-          }
-          try {
-            return await binding(ctx)
-          } catch (err) {
-            if (frameworkError === undefined) {
-              frameworkError = err
-              try { activeRunSession?.cancel() } catch { /* best-effort */ }
-            }
-            return {
-              runId: member.testId,
-              name: member.name,
-              filePath: 'unknown',
-              status: 'failed',
-              steps: [],
-              duration: 0,
-              failureSummary: err instanceof Error ? err.message : String(err),
-            }
-          }
-        }
+        // The verdict map stays a door concern until task 3 hands the whole drive over.
+        const { mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
+
+        const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
+
+        const singleExecutionContext = resolveRunExecutionContext()
 
         // SEAM-01/03/04 (362-06): the SAME helpers as the suite path (Pitfall 7 — this is the common
         // local-dev invocation and 363's demo path, it must not lag). Seed from secrets + env (auth
@@ -4015,8 +4589,9 @@ export function createRunCommand(): Command {
         // below; buildRunSafetyHooks composes the unmask decorator OVER the timed decorator (Pitfall 4).
         const livePause = createLivePauseController()
         const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext: singleExecutionContext, trustMode, maskingContext, live: livePause })
-        singleMaskingContext = maskingContext
-        singleSafetyHooks = safetyHooks
+        // The run's masking context and safety hooks reach the member closures through the producer
+        // that owns them — the same late binding the command performed with two `let`s, named.
+        produced.bindRunContext({ maskingContext, safetyHooks })
 
         // 363-09: run-level bus subscribers (Pitfall 8 — the SAME attach helper the suite path uses).
         // Analytics rides the bus (D-16); the dashboard ingest (when the dashboard DB exists) writes
@@ -4030,7 +4605,7 @@ export function createRunCommand(): Command {
           const dashboardSubscriber = await buildDashboardIngestSubscriber({
             db: dashboardDb,
             attributes: resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
-            onRunCreated: (createdRunId: string) => { currentRunId = createdRunId; logger.setRunId(createdRunId) },
+            onRunCreated: (createdRunId: string) => { currentRunId = createdRunId; logger?.setRunId(createdRunId) },
           })
           if (dashboardSubscriber) singleExtraSubscribers.push(dashboardSubscriber)
         }
@@ -4092,12 +4667,16 @@ export function createRunCommand(): Command {
               ...(singleProbeUrl === undefined ? {} : { probeUrl: singleProbeUrl }),
               warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
             })
-            singleBuildOrdinal = assembly.buildOrdinal
+            produced.applyAssembly({
+              buildOrdinal: assembly.buildOrdinal,
+              quarantined: assembly.quarantined,
+            })
             singleQuarantined = assembly.quarantined
             return assembly.config
           },
           onSession: (session) => {
             activeRunSession = session
+            produced.bindSession(session)
             startedSession = session
             // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest;
             // analytics) — replay-then-live gives D-04 for free. `singleQuarantined` is already
@@ -4142,8 +4721,9 @@ export function createRunCommand(): Command {
             // Re-surface a captured framework/setup error so the existing exit-2 contract holds — the
             // throw stays inside the scope so dispose (finally) runs before it propagates. The grace
             // backstop is already cleared above, so the exit-2 re-throw path is unaffected.
-            if (frameworkError !== undefined) {
-              throw frameworkError
+            const memberFrameworkError = produced.takeFrameworkError()
+            if (memberFrameworkError !== undefined) {
+              throw memberFrameworkError
             }
 
             // Freeze the complete --all-aware exit code before the tail begins. Signals remain wired
@@ -4163,9 +4743,9 @@ export function createRunCommand(): Command {
               configDir,
               auditSink,
               maskingContext,
-              ...(singleCurationModelDeps === undefined
+              ...(produced.getCurationModelDeps() === undefined
                 ? {}
-                : { modelDeps: singleCurationModelDeps }),
+                : { modelDeps: produced.getCurationModelDeps()! }),
               policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
               signal: curationAbortController.signal,
               log: curationTailLog,

@@ -29,6 +29,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  produceMembersFromPatterns,
   refuseZeroRunnableTests,
   requireReporterSelection,
   resolveRunInvocationInputs,
@@ -257,4 +258,283 @@ describe('the in-process run path refuses inputs instead of terminating its host
       await target.close()
     }
   })
+})
+
+// ============================================================================================
+// TASK 2 — THE PORT ITSELF
+//
+// THE RED BASELINE, and it is a measured fact rather than a failing assertion. Pre-task there was
+// nothing to red: `assembleCliRun`'s input declares `members` and `executor` as REQUIRED,
+// `RunsStartInputSchema` carries neither, and the only chain that turns one into the other lived
+// unexported inside `run.ts`'s command body. A cell for the port could not be written against a
+// symbol that did not exist — which is the wall 401-06 halted on, stated as a measurement. The real
+// bar for these cells is the mutation ledger in task 4.
+//
+// EVERY RUN BELOW IS A REAL RUN, IN THIS PROCESS. The fixture's model points at an unbindable port
+// and `PLAYWRIGHT_BROWSERS_PATH` is an empty directory, so a member fails fast — but it fails
+// DOWNSTREAM of `startRun`, which is the whole point: the artifacts a started run leaves are what
+// these cells read.
+// ============================================================================================
+
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { afterEach, beforeEach } from 'vitest'
+
+import {
+  getActiveExecutionContext,
+  setActiveExecutionContextResolver,
+} from '@vostride/agent-qa-safety'
+import { RunDeniedError } from '@vostride/agent-qa-agent-local'
+import type { RunSession } from '@vostride/agent-qa-schema'
+
+import {
+  createInProcessCliRunExecution,
+  runInProcessCliRun,
+} from '../in-process-run-execution.js'
+import type { CliRunOutcome } from '../in-process-run-execution.js'
+import { auditRows, buildOrdinalsExist, eventTypes, runDirs } from './in-process-run-fixture.js'
+
+/** The process-global resolver is exactly that; a leaked pin poisons every sibling cell. */
+const shippedExecutionContextResolver = getActiveExecutionContext
+let restoreResolver: (() => void) | undefined
+
+beforeEach(() => {
+  restoreResolver = undefined
+})
+afterEach(() => {
+  restoreResolver?.()
+  restoreResolver = undefined
+})
+
+function pinAmbientExecutionContext(value: 'ci' | 'local-interactive' | 'local-headless'): void {
+  setActiveExecutionContextResolver(() => value as never)
+  restoreResolver = () => {
+    setActiveExecutionContextResolver(() => shippedExecutionContextResolver())
+  }
+}
+
+function fixtureOptions(fixture: { configPath: string; agentQaRoot: string; project: string }) {
+  // An empty browsers root, so the member's failure is a property of the fixture rather than of the
+  // machine — the same pin the parity generator uses.
+  const browsersRoot = join(fixture.project, 'no-browsers')
+  if (!existsSync(browsersRoot)) mkdirSync(browsersRoot, { recursive: true })
+  process.env.PLAYWRIGHT_BROWSERS_PATH = browsersRoot
+  return { configPath: fixture.configPath, agentQaRoot: fixture.agentQaRoot }
+}
+
+/** Every handoff the invocation persisted — the durable record a started run always leaves. */
+function handoffs(fixture: { project: string; suitePattern: string }): unknown[] {
+  return runDirs(fixture as never)
+    .map((dir) => join(dir, 'handoff.json'))
+    .filter((path) => existsSync(path))
+    .map((path) => JSON.parse(readFileSync(path, 'utf8')) as unknown)
+}
+
+describe('a door holding only a RunsStartInput gets a policy-gated run, in process (401-11)', () => {
+  it('THE COMPOSABILITY CELL — { patterns } and a posture, and a real run happens', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      let session: RunSession | undefined
+      const port = createInProcessCliRunExecution({
+        ...fixtureOptions(fixture),
+        // THE POSTURE TRAVELS EXPLICITLY (D-07). No CLI option is named anywhere in this call.
+        executionContext: 'local-headless',
+        onSession: (started) => { session = started },
+      })
+
+      // The member fails downstream of `startRun` (no browser binaries), and the drive re-surfaces
+      // that framework error exactly as the shipped door does. The run still HAPPENED, which is
+      // what every assertion below reads. Caught rather than asserted-against so this cell is about
+      // the seam and not about the fixture's failure mode.
+      let denial: unknown
+      try {
+        await port.execute({ patterns: [fixture.testPattern] })
+      } catch (err) {
+        denial = err
+      }
+      expect(denial).not.toBeInstanceOf(RunDeniedError)
+
+      // THE IN-PROCESS WITNESS. No child process can hand back a live object, so a cell that
+      // asserts this cannot pass over a spawn.
+      expect(session).toBeDefined()
+      expect(typeof session!.cancel).toBe('function')
+      expect(typeof session!.subscribe).toBe('function')
+      expect(typeof session!.id).toBe('string')
+
+      // The durable half: a run that began, under the composition's OWN `<configDir>/.agent-qa`.
+      expect(eventTypes(fixture as never)).toContain('runStarted')
+      expect(handoffs(fixture)).toHaveLength(1)
+      expect(runDirs(fixture as never).map((dir) => dir.split('/').pop())).toContain(
+        session!.id as unknown as string,
+      )
+      // The gate allowed it, so the baseline probe knocked — the converse of the denial control.
+      expect(target.hits).toEqual(['/in-process-thing'])
+      expect(buildOrdinalsExist(fixture as never)).toBe(true)
+      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('proceeded')
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('THE DENIAL CONTROL — one field different, and all five artifacts say refused', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      // `environment: 'shared'` instead of `'local'`. Same URL, same test, same everything else:
+      // the D-06 declaration is the axis, and D-05's classifier decides what the class means.
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
+      let session: RunSession | undefined
+      const port = createInProcessCliRunExecution({
+        ...fixtureOptions(fixture),
+        executionContext: 'local-headless',
+        onSession: (started) => { session = started },
+      })
+
+      let denial: unknown
+      try {
+        await port.execute({ patterns: [fixture.testPattern] })
+      } catch (err) {
+        denial = err
+      }
+
+      expect(denial).toBeInstanceOf(RunDeniedError)
+      // (a) the audit row's OUTCOME field, never a message substring
+      const rows = auditRows(fixture as never)
+      expect(rows).toHaveLength(1)
+      expect(rows[0]!.outcome).toBe('fail-closed-denied')
+      // (b) no run events — `runStarted` is seq 1 of any run that began at all
+      expect(eventTypes(fixture as never)).toEqual([])
+      expect(session).toBeUndefined()
+      // (c) the durable assembly side effect never happened
+      expect(buildOrdinalsExist(fixture as never)).toBe(false)
+      // (d) nobody knocked on the target
+      expect(target.hits).toEqual([])
+      // (e) the reason the caller sees is READ BACK off the row, not typed into this cell — which
+      // is what pins the door to rendering the gate's decision instead of composing its own.
+      expect((denial as RunDeniedError).reason).toBe(rows[0]!.reason)
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('THE SUITE ARM — the same bare request with a suite pattern runs the SUITE', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      const outcome: CliRunOutcome = await runInProcessCliRun(
+        { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+        // Still a bare `RunsStartInput`. Still no mode flag — which is exactly what
+        // `createCliRunExecution` forwards today, so a producer that could not do this would be a
+        // scope reduction of the shipped contract at the two doors this seam exists to unblock.
+        { patterns: [fixture.suitePattern] },
+      )
+
+      const events = eventTypes(fixture as never)
+      expect(events).toContain('runStarted')
+      // THE MEMBER RAN. Without this, a producer that dispatched to the test path and assembled
+      // zero members would pass on `runStarted` alone.
+      expect(events).toContain('testStarted')
+      expect(handoffs(fixture)).toHaveLength(1)
+      expect(target.hits).toEqual(['/in-process-thing'])
+      expect(runDirs(fixture as never).map((dir) => dir.split('/').pop())).toContain(outcome.runId)
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('THE DISPATCH BOUNDARY — when both kinds resolve, the TEST path wins', async () => {
+    // The direction that is easy to get backwards. `run.ts`'s shipped guard early-returns to the
+    // suite path ONLY when `discoveredTestFiles.length === 0`, so a dispatcher that preferred
+    // suites whenever any suite resolved would stop running an `--all`-shaped invocation's tests.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      const inputs = await withExitTrap(() =>
+        resolveRunInvocationInputs({ configPath: fixture.configPath, mode: 'all' }),
+      )
+      expect(inputs.discovered.tests.length).toBe(2)
+      expect(inputs.discovered.suites.length).toBe(1)
+
+      const produced = await produceMembersFromPatterns({ inputs, runId: 'r_dispatch-boundary' })
+      // The resolved member set is the TEST files', not the suite's single member.
+      expect(produced.members).toHaveLength(2)
+      expect(produced.members.map((member) => member.name).sort()).toEqual([
+        'the standalone test',
+        'the suite member',
+      ])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+})
+
+describe('D-07: the INJECTED execution context beats a varied ambient, on both arms (401-11)', () => {
+  it('ARM A — ambient says local-interactive, injected says ci: fail-closed, confirm never asked', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      // The ambient is pinned to the value that would ALLOW after a prompt.
+      pinAmbientExecutionContext('local-interactive')
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
+      let confirmCalls = 0
+      let denial: unknown
+      try {
+        await runInProcessCliRun(
+          {
+            ...fixtureOptions(fixture),
+            executionContext: 'ci',
+            confirm: () => { confirmCalls += 1; return true },
+          },
+          { patterns: [fixture.testPattern] },
+        )
+      } catch (err) {
+        denial = err
+      }
+
+      expect(denial).toBeInstanceOf(RunDeniedError)
+      expect(auditRows(fixture as never)[0]!.outcome).toBe('fail-closed-denied')
+      // THE SECOND DISCRIMINATOR. A module that read the ambient would have PROMPTED and proceeded
+      // — a completely different outcome, and the call count is what tells the two apart.
+      expect(confirmCalls).toBe(0)
+      expect(target.hits).toEqual([])
+      expect(buildOrdinalsExist(fixture as never)).toBe(false)
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('ARM B — ambient says ci, injected says local-interactive: the confirm IS asked and it proceeds', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      pinAmbientExecutionContext('ci')
+      // AGAINST THE SHARED-DECLARED TARGET, and that is load-bearing: against a `local` target the
+      // outcome is `proceeded` with call count 0 whatever the context, so an arm written to match
+      // observation would prove nothing.
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
+      let confirmCalls = 0
+      try {
+        await runInProcessCliRun(
+          {
+            ...fixtureOptions(fixture),
+            executionContext: 'local-interactive',
+            confirm: () => { confirmCalls += 1; return true },
+          },
+          { patterns: [fixture.testPattern] },
+        )
+      } catch { /* the member's framework error; the gate decision is what this cell reads */ }
+
+      expect(confirmCalls).toBe(1)
+      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('prompted-approved')
+      // A module that read the ambient would have failed closed and touched nothing.
+      expect(eventTypes(fixture as never)).toContain('runStarted')
+      expect(target.hits).toEqual(['/in-process-thing'])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
 })
