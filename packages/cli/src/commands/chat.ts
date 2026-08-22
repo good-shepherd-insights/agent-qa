@@ -299,6 +299,24 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
 
         const sessionId = resolveSessionId(composition.agentQaRoot, options)
 
+        /**
+         * WHICH CONVERSATION THIS REPL IS IN, held from here so the confirm port composed below
+         * can ask (401-01, D-13).
+         *
+         * DECLARED BEFORE THE HOST because the port is built with the host and must close over a
+         * box rather than a value — `--session` seeds it, and a fresh conversation has no id at
+         * all until the engine mints one on the first turn.
+         *
+         * KEPT CURRENT BY THE COMPOSITION'S OWN NOTIFICATION, not by the turn's return value
+         * alone. A confirm is raised MID-TURN, so on the first turn of a fresh conversation the
+         * returned `result.sessionId` arrives strictly after the approval that needed it, and a
+         * resolver reading only that would drop the row for every REPL conversation's first
+         * approval. `observeSessionEvent` fires on each durable append — including the ones the
+         * engine writes before any clause dispatches — so by the time a gate reaches a confirm the
+         * id is in hand, and it is the composition's own answer rather than this file's guess.
+         */
+        let activeSessionId = sessionId
+
         // 398-10 (D-17/D-19): THIS COMMAND'S ANALYTICS COMPOSITION ROOT, after `--list` has already
         // returned. A listing composes no host and emits nothing, and composing here would resolve
         // the identity store for a read that never opened a conversation.
@@ -366,10 +384,18 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
           // `confirm` absent and the gate's deny-by-default in place — v48 unchanged.
           chatConfirm: (bindings) => createChatConfirmPort({
             ...bindings,
+            // 401-01 (D-13): the conversation the decision is recorded against, answered per
+            // decision from this REPL's own open-session state. The dashboard answers the same
+            // question with `resolveTargetSession`; neither door guesses, and neither counts.
+            resolveSessionId: () => activeSessionId,
             ...(deps.isTty === undefined ? {} : { isTty: deps.isTty }),
             ...(deps.input === undefined ? {} : { input: deps.input }),
             ...(deps.output === undefined ? {} : { output: deps.output }),
           }),
+          // 401-01 (D-13): the composition's own notification that a conversation has appended an
+          // event, which is how the box above learns its id DURING the first turn rather than
+          // after it. Nothing else is done with it here — the REPL renders from the turn result.
+          observeSessionEvent: (id) => { activeSessionId = id },
           // 395-13, D-14: the mid-turn render, on THE SAME STREAM the confirm prompt one line up
           // and this file's own turn output write to. That is the entire requirement — a proposal
           // rendered anywhere else is a proposal the person answering the prompt is not reading —
@@ -464,7 +490,6 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
           promptClosed = true
         })
 
-        let activeSessionId = sessionId
         let announced = sessionId !== undefined
         if (announced) emitHuman(pc.dim(`session ${String(sessionId)}`))
 

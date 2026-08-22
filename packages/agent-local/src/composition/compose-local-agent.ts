@@ -1790,10 +1790,36 @@ export interface ComposeLocalAgentInput {
  */
 export interface ChatConfirmBindings {
   recordStandingApproval: (actionClass: string) => Promise<GrantRecordOutcome>
-  onDecision: (decision: {
-    readonly actionClass: string
-    readonly decision: 'accept' | 'accept-always' | 'deny'
-  }) => void | Promise<void>
+  onDecision: (decision: ChatApprovalDecisionRecord) => void | Promise<void>
+}
+
+/**
+ * What the session log records about one decision — the ONE declaration of it (401-01, D-13).
+ *
+ * DECLARED HERE AND NOWHERE ELSE. The cli surface used to carry a structurally-mirrored copy of
+ * this interface, and the two were free to drift the moment either producer changed. `cli` may
+ * import `agent-local` and the reverse is forbidden, so this is where the canon lives; the census
+ * cell beside the confirm suites reds if a second declaration is ever minted (the promote's
+ * companion invariant, on the one-sided-hardening class phases 388/390/392 and 400-17 disproved).
+ *
+ * `sessionId` IS REQUIRED, AND ITS REQUIREDNESS IS THE FIX. The writer below used to infer the
+ * conversation by counting turns in flight, which meant a person's approval vanished from their own
+ * transcript whenever a second conversation happened to be mid-turn (NEW-AUDIT-01, measured
+ * deterministic at 400-17). The caller is already resolved at every door — the dashboard scopes an
+ * asking session around each turn, the REPL holds its own — so the id is delivered rather than
+ * guessed, and an optional field would have let the drop persist on whichever door forgot to fill
+ * it in.
+ */
+export interface ChatApprovalDecisionRecord {
+  /** The `fn:`-prefixed class the GATE produced, never one a surface spelled (D-04 / 391-05). */
+  readonly actionClass: string
+  readonly decision: 'accept' | 'accept-always' | 'deny'
+  /**
+   * The conversation whose watcher answered. Resolved by the door that asked, never from a request
+   * payload: a caller that could name the conversation a decision is recorded against could write
+   * one person's approval into another person's transcript.
+   */
+  readonly sessionId: string
 }
 
 /**
@@ -2654,18 +2680,20 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // would be a row no reader could place. `source: 'gate'` is what keeps it distinguishable
       // from the `/pin` verb's own decision row.
       //
-      // WHICH TURN, ASKED OF THE SESSIONS THEMSELVES (392-12's attribution, re-keyed by plan 13).
-      // `chatState` used to hold one `activeTurnId` per composition, so on two live turns it named
-      // one of them arbitrarily. Each session now holds its own, so the honest question is how many
-      // turns are in flight at all: exactly one, and this decision belongs to it; more than one,
-      // and this port — which is handed a decision and no caller — cannot tell which, so it writes
-      // NO ROW. That is the same fail-safe direction plan 12 took, for the same reason: a row in
-      // the wrong conversation IS the defect, and an absent row is not.
-      const inFlight = [...chatScopes]
-        .map(([sessionId, scope]) => ({ sessionId, turnId: scope.state.read().activeTurnId }))
-        .filter((entry): entry is { sessionId: string; turnId: string } => entry.turnId !== undefined)
-      if (inFlight.length !== 1) return
-      const turnId = inFlight[0]!.turnId
+      // WHICH TURN, ASKED OF THE CONVERSATION THAT DECIDED (401-01, D-13). This used to count the
+      // turns in flight across the whole composition and write no row unless there was exactly one
+      // — a process-global uniqueness rule standing in for a caller the port claimed it could not
+      // name. That rationale stopped being true at 400-15: the door resolves its asking session and
+      // delivers it, so the decision names its own conversation and the honest question is a
+      // per-conversation one. Counting was not merely redundant, it was WRONG: any second
+      // conversation with a turn in flight — watched or not, ask-tier or not — deleted a real
+      // human approval from the transcript of the person who gave it (NEW-AUDIT-01).
+      //
+      // THE FAIL-SAFE DIRECTION IS UNCHANGED. No scope for this id, or no turn active on it, means
+      // this decision cannot be placed in a conversation; it gets NO ROW rather than a guessed one,
+      // because a row in the wrong conversation IS the defect and an absent row is not.
+      const turnId = chatScopes.get(decision.sessionId)?.state.read().activeTurnId
+      if (turnId === undefined) return
       // The session whose file already carries this turn (392-12). Absent means no open session
       // here recorded it — a row would have to be guessed into somebody's conversation, and a
       // guess is the defect that refactor removed.

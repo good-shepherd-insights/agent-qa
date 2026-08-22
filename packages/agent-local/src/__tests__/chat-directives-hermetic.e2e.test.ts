@@ -399,7 +399,16 @@ describe('the composed session directives reach something (D-04 / D-21 / RESEARC
       expect(typeof bindings?.onDecision).toBe('function')
       // The sink writes onto the SAME session log the engine writes, stamped with the turn in
       // flight — so a decision row can be placed by a reader folding the log linearly.
-      await bindings?.onDecision({ actionClass: 'fn:x', decision: 'accept' })
+      //
+      // AND IT NAMES ITS CONVERSATION (401-01, D-13). The id here is a REAL one — the session this
+      // host just answered a turn in — so the empty result below is the sink's turn guard rather
+      // than an unknown id falling off the front: that turn has RETURNED, nothing is in flight on
+      // it, and a decision that belongs to no turn is a row no reader could place.
+      await bindings?.onDecision({
+        actionClass: 'fn:x',
+        decision: 'accept',
+        sessionId: result.sessionId,
+      })
       expect(sessionEvents(result.sessionId).filter((e) => e.kind === 'approval_decision'))
         .toEqual([])
     })

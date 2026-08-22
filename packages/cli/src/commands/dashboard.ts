@@ -386,13 +386,21 @@ export function createDashboardConfirmFactory(input: {
   readonly resolveTargetSession: () => string | undefined
 }): NonNullable<ComposeLocalAgentInput['chatConfirm']> {
   return (bindings) => {
-    /** The session-log append is a RECORD of the decision, never a veto over it. */
+    /**
+     * The session-log append is a RECORD of the decision, never a veto over it.
+     *
+     * IT NAMES THE CONVERSATION IT IS RECORDING (401-01, D-13). The door has already resolved its
+     * asking session by the time any arm below decides anything, so the id is carried here rather
+     * than inferred at the far end — the composition used to guess it by counting turns in flight,
+     * and lost a real human approval every time a second conversation was mid-turn.
+     */
     const ledger = async (
       actionClass: string,
       decision: 'accept' | 'accept-always' | 'deny',
+      sessionId: string,
     ): Promise<void> => {
       try {
-        await bindings.onDecision({ actionClass, decision })
+        await bindings.onDecision({ actionClass, decision, sessionId })
       } catch {
         // Swallowed here and nowhere else, on the TTY wrapper's stated reasoning: letting a logging
         // failure out through a `ConfirmPort` would turn it into an exception where the gate
@@ -424,7 +432,7 @@ export function createDashboardConfirmFactory(input: {
         )
       }
       const recorded = outcome?.kind === 'recorded' || outcome?.kind === 'already-granted'
-      await ledger(action.name, recorded ? 'accept-always' : 'accept')
+      await ledger(action.name, recorded ? 'accept-always' : 'accept', sessionId)
     }
 
     return async (action) => {
@@ -432,7 +440,12 @@ export function createDashboardConfirmFactory(input: {
       if (sessionId === undefined) {
         // NOBODY TO ASK. The same answer the TTY wrapper gives a process with no terminal, reached
         // one layer later because liveness here is a per-turn fact rather than a per-process one.
-        await ledger(action.name, 'deny')
+        //
+        // AND NO TRANSCRIPT ROW (401-01, D-13): there is no conversation to carry one. The
+        // composition would refuse an unplaceable row anyway, and writing it into whichever
+        // conversation happened to be open is the wrong-transcript defect itself. The gate's
+        // `execution_audit` row remains the record of this denial — a different mechanism, and the
+        // measured blast radius of NEW-AUDIT-01 is exactly that this one is never the audit trail.
         return false
       }
 
@@ -448,7 +461,7 @@ export function createDashboardConfirmFactory(input: {
         await acceptAlways(action, sessionId)
         return true
       }
-      await ledger(action.name, answer === 'accept' ? 'accept' : 'deny')
+      await ledger(action.name, answer === 'accept' ? 'accept' : 'deny', sessionId)
       return answer === 'accept'
     }
   }

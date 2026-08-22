@@ -64,6 +64,7 @@ import type {
 import { composeLocalAgent, sensitiveEnvSlice } from '@vostride/agent-qa-agent-local'
 import type {
   CandidateProsePosture,
+  ChatApprovalDecisionRecord,
   ComposeLocalAgentInput,
   DraftAuthoringPort,
   DraftParseOutcome,
@@ -3363,12 +3364,11 @@ export function createTtyConfirmPort(
 // `proposals.accept --always` mints through. This wrapper is handed a closure over that same port
 // and calls it; it writes no ledger of its own, and there is no second mint to review.
 
-/** What the session log records about one decision. The wrapper produces it; composition appends it. */
-export interface ChatApprovalDecisionRecord {
-  /** The `fn:`-prefixed class the GATE produced, never one this file spelled (D-04 / 391-05). */
-  readonly actionClass: string
-  readonly decision: 'accept' | 'accept-always' | 'deny'
-}
+// WHAT THE SESSION LOG RECORDS ABOUT ONE DECISION IS DECLARED IN `agent-local`, NOT HERE (401-01,
+// D-13). This file used to carry its own `ChatApprovalDecisionRecord`, structurally mirroring the
+// composition's — two spellings of one contract, free to drift the moment either producer changed,
+// and the shape that let NEW-AUDIT-01 sit half-closed. `cli` may import `agent-local` and the
+// reverse is forbidden, so the canon lives at the composition root and this surface imports it.
 
 /**
  * The two things the wrapper does beside answering, both supplied by whoever composed the session.
@@ -3391,6 +3391,18 @@ export interface ChatConfirmBindings {
 }
 
 export interface CreateChatConfirmPortOptions extends ChatConfirmBindings {
+  /**
+   * WHICH CONVERSATION THIS TERMINAL IS IN, asked PER DECISION (401-01, D-13).
+   *
+   * A SUPPLIER RATHER THAN A VALUE, because the id does not exist when this port is built: the
+   * REPL composes its host before its first turn, and the engine mints the session id on that
+   * turn. Captured at construction it would be `undefined` forever.
+   *
+   * `undefined` MEANS NO APPEND, and that is the same fail-safe direction the composition takes:
+   * a decision that cannot name its conversation gets no row rather than a guessed one. It never
+   * substitutes another conversation, because a row in the wrong transcript IS the defect.
+   */
+  readonly resolveSessionId: () => string | undefined
   readonly isTty?: boolean
   readonly input?: NodeJS.ReadableStream
   readonly output?: NodeJS.WritableStream
@@ -3419,10 +3431,22 @@ export function createChatConfirmPort(
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
 
-  /** The ledger append is a RECORD of the decision, never a veto over it. */
-  const ledger = async (decision: ChatApprovalDecisionRecord): Promise<void> => {
+  /**
+   * The ledger append is a RECORD of the decision, never a veto over it.
+   *
+   * THE CONVERSATION IS RESOLVED HERE, ONCE PER DECISION (401-01, D-13) rather than passed down
+   * from each arm: every arm below records the same person's answer in the same terminal, so one
+   * resolution point is what keeps the three of them from being able to disagree. No conversation
+   * means no append — the composition would refuse an unplaceable row anyway, and refusing it here
+   * keeps the wrapper honest about what it can attribute.
+   */
+  const ledger = async (
+    decision: Omit<ChatApprovalDecisionRecord, 'sessionId'>,
+  ): Promise<void> => {
+    const sessionId = options.resolveSessionId()
+    if (sessionId === undefined) return
     try {
-      await options.onDecision(decision)
+      await options.onDecision({ ...decision, sessionId })
     } catch {
       // Swallowed HERE and nowhere else. A session log that cannot be written is a real problem
       // and it is the REPL's to report; letting it propagate through a `ConfirmPort` would turn a

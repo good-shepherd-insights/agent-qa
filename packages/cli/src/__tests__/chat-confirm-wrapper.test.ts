@@ -22,11 +22,12 @@ import type { GrantRecordOutcome, RiskActionDescriptor } from '@vostride/agent-q
 import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import type { ChatApprovalDecisionRecord } from '@vostride/agent-qa-agent-local'
+
 import {
   createChatConfirmPort,
   createTtyConfirmPort,
 } from '../composition/local-agent-host.js'
-import type { ChatApprovalDecisionRecord } from '../composition/local-agent-host.js'
 
 const ACTION: RiskActionDescriptor = {
   name: 'fn:knowledge.proposal.apply',
@@ -34,6 +35,15 @@ const ACTION: RiskActionDescriptor = {
   readOnly: false,
   declaredTier: 'mutating-shared',
 }
+
+/**
+ * The conversation this terminal is in (401-01, D-13).
+ *
+ * NAMED RATHER THAN BLANK, because every assertion below reads the whole record: a decision the
+ * wrapper could not attribute is not appended at all, so a fixture that resolved `undefined` would
+ * turn every `decisions` assertion here into an assertion about an empty array.
+ */
+const SESSION = 'chat-401-01-tty'
 
 const RECORDED: GrantRecordOutcome = {
   kind: 'recorded',
@@ -77,6 +87,7 @@ async function drive(
     isTty: true,
     input,
     output,
+    resolveSessionId: () => SESSION,
     recordStandingApproval: async (actionClass) => {
       minted.push({ actionClass })
       return mint(actionClass)
@@ -100,6 +111,7 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
     // own DENY_CONFIRM in place, so a scripted `ask` and a CI job stay on the v48 fail-closed arm
     // (D-03's "non-TTY unchanged"). Both streams decide it, not the command that was typed.
     const bindings = {
+      resolveSessionId: () => SESSION,
       recordStandingApproval: async () => RECORDED,
       onDecision: () => {},
     }
@@ -123,7 +135,9 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
     // The plain form reaches NO mint — not a mint that declines, no call. The same property
     // `proposals.accept` states for its own plain arm, asserted the same way.
     expect(minted).toEqual([])
-    expect(decisions).toEqual([{ actionClass: ACTION.name, decision: 'accept' }])
+    expect(decisions).toEqual([
+      { actionClass: ACTION.name, decision: 'accept', sessionId: SESSION },
+    ])
   })
 
   it('accepts and mints on a, through the port and with the gate-produced class', async () => {
@@ -133,7 +147,9 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
     // PRODUCED, NEVER TYPED (D-04): the class is the descriptor the gate handed over, so a rename
     // on the op moves this and a hand-spelled literal would keep matching a name nothing carries.
     expect(minted).toEqual([{ actionClass: ACTION.name }])
-    expect(decisions).toEqual([{ actionClass: ACTION.name, decision: 'accept-always' }])
+    expect(decisions).toEqual([
+      { actionClass: ACTION.name, decision: 'accept-always', sessionId: SESSION },
+    ])
   })
 
   it('accepts the long forms of both', async () => {
@@ -147,7 +163,7 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
       expect(answered, JSON.stringify(typed)).toBe(false)
       expect(minted, JSON.stringify(typed)).toEqual([])
       expect(decisions, JSON.stringify(typed)).toEqual([
-        { actionClass: ACTION.name, decision: 'deny' },
+        { actionClass: ACTION.name, decision: 'deny', sessionId: SESSION },
       ])
     }
   })
@@ -162,7 +178,9 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
     }))
 
     expect(answered).toBe(true)
-    expect(decisions).toEqual([{ actionClass: ACTION.name, decision: 'accept' }])
+    expect(decisions).toEqual([
+      { actionClass: ACTION.name, decision: 'accept', sessionId: SESSION },
+    ])
     expect(printed).toContain('protected')
   })
 
@@ -176,7 +194,9 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
     })
 
     expect(answered).toBe(true)
-    expect(decisions).toEqual([{ actionClass: ACTION.name, decision: 'accept' }])
+    expect(decisions).toEqual([
+      { actionClass: ACTION.name, decision: 'accept', sessionId: SESSION },
+    ])
   })
 
   it('answers even when the decision sink throws — a log is not a veto', async () => {
@@ -186,6 +206,7 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
       isTty: true,
       input,
       output,
+      resolveSessionId: () => SESSION,
       recordStandingApproval: async () => RECORDED,
       onDecision: () => {
         throw new Error('the session log is gone')
@@ -197,6 +218,32 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
     input.write('y\n')
     input.end()
     expect(await pending).toBe(true)
+  })
+
+  it('records nothing when the terminal is in no conversation, and still answers', async () => {
+    // 401-01 (D-13): the fail-safe arm of the per-decision resolver. A decision that cannot name
+    // its conversation gets NO ROW rather than one written into whichever conversation happened to
+    // be open — a row in the wrong transcript IS the defect this plan closes, and an absent row is
+    // not. The ANSWER is unaffected, because attribution is a record and never a veto.
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const decisions: ChatApprovalDecisionRecord[] = []
+    const confirm = createChatConfirmPort({
+      isTty: true,
+      input,
+      output,
+      resolveSessionId: () => undefined,
+      recordStandingApproval: async () => RECORDED,
+      onDecision: (decision) => { decisions.push(decision) },
+    })
+    if (confirm === undefined) throw new Error('a tty host must bind a chat confirm')
+
+    const pending = Promise.resolve(confirm(ACTION))
+    input.write('y\n')
+    input.end()
+
+    expect(await pending).toBe(true)
+    expect(decisions).toEqual([])
   })
 
   it('leaves the shipped one-form port exactly as it was', () => {

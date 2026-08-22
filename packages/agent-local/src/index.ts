@@ -163,6 +163,11 @@ export type {
   ApplyDelegate,
   ApplyReviewResult,
   CandidateProsePosture,
+  // 401-01 D-13: the ONE declaration of what a session log records about an approval decision.
+  // Published because the cli's TTY confirm wrapper produces this record and the dashboard's
+  // browser confirm produces it too — a surface that could not name it would have to spell its own
+  // copy, which is precisely the second spelling this promote deleted.
+  ChatApprovalDecisionRecord,
   ComposeLocalAgentInput,
   // 393 D-01: the keep-gate evaluator's HOST-side vocabulary. Three types and no value: what a
   // host must be able to say about a draft path, what a parsed draft looks like when it hands one
