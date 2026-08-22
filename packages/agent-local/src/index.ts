@@ -118,6 +118,9 @@ export type {
   RunConfig,
   RunMemberDescriptor,
 } from './composition/run-invocation-core.js'
+// 401-11: the two symbols the CLI's one in-process run drive needs and could not legally name.
+// They live in their own composition module — see its header for why not in the core.
+export { mapVerdictToExitCode, runSafetyScope } from './composition/run-drive-vocabulary.js'
 export { buildRunRiskDescriptor, RUN_START_RISK_ACTION_NAME } from './composition/run-risk.js'
 export type { RunTargetClass } from './composition/run-risk.js'
 
