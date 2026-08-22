@@ -452,11 +452,20 @@ describe('createRequire anchor census', () => {
     ).toBeGreaterThan(0)
   })
 
-  it('registers the three known non-createRequire argv sites the asserting property cannot see', () => {
+  // 2026-08-23 (401-06): THIS WAS THREE, AND THE THIRD RETIRED WITH ITS SUBJECT.
+  //
+  // `cli/src/daemon/host.ts`'s read was `input.cliEntry ?? process.argv[1] ?? ''` — the entry path
+  // the daemon handed the piped `agent-qa run` child it spawned. The daemon now runs the run in its
+  // own process, so there is no child to point at an entry script and the read is gone from the
+  // tree. It is REMOVED rather than relaxed: this list is a set of files that must be FOUND, so a
+  // member the tree no longer contains would be a permanently red pin, and the two survivors are
+  // asserted exactly as strictly as before. The counterpart of that removal — that nothing the
+  // daemon reaches launches a child any more — is asserted positively by the complete-set census in
+  // `daemon/__tests__/daemon-run-execution.test.ts`, so the fact did not merely stop being checked.
+  it('registers the two known non-createRequire argv sites the asserting property cannot see', () => {
     const registered = new Set(ARGV_REGISTER.map((entry) => entry.relPath))
     for (const known of [
       join('cli', 'src', 'composition', 'local-agent-host.ts'),
-      join('cli', 'src', 'daemon', 'host.ts'),
       join('knowledge-local', 'src', 'embedder-worker', 'worker-entry.ts'),
     ]) {
       expect(
