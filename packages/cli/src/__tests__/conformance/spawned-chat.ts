@@ -352,6 +352,21 @@ export async function driveChatSpawned(
  * bundle passes, reads as proof of today's `.tsx`, and certifies the wrong artifact. `dashboard-ui`
  * is anchored on `dist/index.html` rather than a hashed asset name, because the asset names change
  * every build and a guard that had to know them would be a second copy of the manifest.
+ *
+ * `dashboard-server` IS LOAD-BEARING AND NOT DECORATIVE, said here so nobody narrows this list back
+ * to the chat five (400-16). `dashboard-process-survival.test.ts` asks whether one unauthenticated
+ * request ends the SHIPPED process, and its whole subject is `server.ts`'s request listener —
+ * which the spawned `agent-qa dashboard` resolves through THIS artifact, because tsup leaves the
+ * workspace dependency external. A survival cell run against a stale `dashboard-server/dist` would
+ * spawn the pre-fix listener, die exactly as it used to, and report a fix that was never loaded.
+ * The refusal that prevents that names the file: `dashboard-server/src/server/server.ts is newer
+ * than dashboard-server/dist/index.js`.
+ *
+ * WHAT THIS LIST STILL DOES NOT COVER, so the next reader does not over-trust it: the workspace
+ * packages `dashboard-server` itself imports externally (`core`, `runner`, `schema`'s siblings, …)
+ * are not all enumerated, so a stale dist of one of THOSE is invisible here. Every cell that has
+ * needed this guard so far is asking about `cli`, `dashboard-server` or `dashboard-ui` source, and
+ * widening it further is a change that should arrive with a cell that needs it.
  */
 export const DASHBOARD_ANCHORED_BUILDS: readonly {
   readonly pkg: string
