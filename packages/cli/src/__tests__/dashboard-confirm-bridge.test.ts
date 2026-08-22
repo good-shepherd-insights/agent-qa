@@ -630,6 +630,176 @@ describe('a second conversation\'s stream cannot flip an unwatched conversation\
   }, 20_000)
 })
 
+// ---- BOTH axes at once: A watched AND in flight, while B asks (400-15, gap 3 round 2) ----------
+//
+// THE AXIS THE ROUND-1 CONTROL HELD CONSTANT. The cell above holds conversation A watched but
+// IDLE, so `watchedTurnSession` has no candidate and B fails closed for a reason that has nothing
+// to do with who asked. Cross it — A watched AND with a turn in flight — and the round-1
+// composition answered `local-interactive` for the WHOLE PROCESS: B's ask reached the gate's ask
+// arm, `resolveTargetSession()` named A because A was the sole watched-and-in-flight conversation,
+// B's question was written to A's socket, and B's audit row read `prompted-denied`. Had A's reader
+// clicked accept on that second bubble, B's ask-tier op would have EXECUTED.
+//
+// THREE CELLS OVER ONE SCENE, AND THE SPLIT IS THE POINT. 400-13 measured an earlier assertion
+// masking a later one under mutation: a cell aborts at its first red, so a second assertion behind
+// it can only be REASONED about, never observed. The two halves of this fix fail independently —
+// reverting the posture reds the audit row while the confirm target still holds, and reverting the
+// target as well reds the transcript — so each half is asserted in its OWN named cell, and each
+// cell's green is a thing that ran.
+//
+// EVERY CELL CARRIES THE ACCEPTS-CONTROL. A fix that answered `local-headless` everywhere, or a
+// confirm port that refused everybody, would satisfy all three assertions above; so each cell then
+// answers A's own outstanding question and requires A's turn to EXECUTE.
+
+/** A's confirm must outlive the scene; a mutation that routes B's question to A pays this in wall clock. */
+const DUAL_AXIS_CONFIRM_MS = 8_000
+
+interface DualAxisScene {
+  readonly sessionA: string
+  readonly sessionB: string
+  readonly streamA: LiveStream
+  readonly confirmA: { readonly confirmId: string; readonly actionClass: string }
+  readonly turnA: Promise<ChatTurnResponse>
+  readonly answeredB: ChatTurnResponse
+  readonly askRowsBefore: number
+}
+
+/**
+ * The scene, driven — no assertion about the fix, only the setup and the facts that make it real.
+ *
+ * ORDER MATTERS AND IS ASSERTED AT EACH STEP: B is minted BEFORE A goes in flight (so B's own
+ * session exists and the `:id` guard is not what refuses it), A's stream is registered by the
+ * SERVER's own answer rather than a sleep, and A's confirm is on the wire before B is driven — an
+ * "in flight" that had not yet reached the gate would make every cell below trivially green.
+ */
+async function driveDualAxis(door: DoorFixture): Promise<DualAxisScene> {
+  const sessionA = await openSession(door.origin)
+  const sessionB = await openSession(door.origin)
+  expect(sessionB, 'both turns landed in one conversation, so no axis is varied').not.toBe(sessionA)
+
+  const streamA = await openStream(door.origin, sessionA)
+  const opened = Date.now()
+  while (!door.confirms.liveSessionIds().includes(sessionA) && Date.now() - opened < 5_000) {
+    await new Promise<void>((settled) => setTimeout(settled, 10))
+  }
+  expect(door.confirms.liveSessionIds(), 'A is not watched, or B is — either way this scene is not '
+    + 'the one the defect lives in').toEqual([sessionA])
+
+  // AXIS TWO. Floating deliberately: the turn does not return until its own confirm resolves, and
+  // that outstanding confirm IS what "in flight" means to `watchedTurnSession`.
+  const turnA = postTurn(door.origin, { message: ASK_UTTERANCE, sessionId: sessionA })
+  const confirmA = confirmRequestOf(
+    await streamA.waitFor((frame) => frame.event === 'confirm_request'),
+  )
+  expect(
+    streamA.frames.filter((frame) => frame.event === 'confirm_request'),
+    'A holds something other than exactly its own one question, so the counts below measure nothing',
+  ).toHaveLength(1)
+
+  // THE MARK B'S ROWS ARE COUNTED FROM. Under the fix B fails closed the instant it is gated, so
+  // A's confirm is still outstanding and the slice below is exactly B's one row. MEASURED AT HEAD,
+  // the slice held TWO rows: B's question was parked on A's socket, so B's turn did not return
+  // until B's confirm timed out — by which time A's had too, and both had written
+  // `prompted-denied`. The mark is therefore taken rather than assumed, and the slice is read for
+  // what is in it rather than for a row count somebody predicted.
+  const askRowsBefore = askRowsFor(door.configRoot).length
+  const answeredB = await postTurn(door.origin, { message: ASK_UTTERANCE, sessionId: sessionB })
+  return { sessionA, sessionB, streamA, confirmA, turnA, answeredB, askRowsBefore }
+}
+
+/**
+ * The embedded accepts-control: A asked, A is watched, A says yes — and A's op RUNS.
+ *
+ * Without this every cell in this block is satisfiable by a door that refuses everybody, which is
+ * the overshoot a "make it fail closed" fix is one line away from.
+ */
+async function settleAcceptsControl(door: DoorFixture, scene: DualAxisScene): Promise<void> {
+  expect((await postConfirm(door.origin, {
+    sessionId: scene.sessionA,
+    confirmId: scene.confirmA.confirmId,
+    answer: 'accept',
+  })).status).toBe(200)
+  const answeredA = await scene.turnA
+  expect(
+    answeredA.result.receipts[0]?.outcome,
+    'the watched conversation that asked its own question and answered yes was refused anyway',
+  ).not.toBe('FunctionDeniedError')
+  await scene.streamA.close()
+}
+
+describe('a watched, in-flight conversation cannot lend its reachability to another', () => {
+  it('writes fail-closed-denied on the unwatched asker while A is watched AND in flight (dual axis, row)',
+    async () => {
+      const door = await openDoor({ timeoutMs: DUAL_AXIS_CONFIRM_MS })
+      const scene = await driveDualAxis(door)
+
+      expect(scene.answeredB.result.receipts.map((receipt) => ({
+        functionId: receipt.functionId,
+        status: receipt.status,
+        outcome: receipt.outcome,
+      }))).toEqual([{
+        functionId: 'knowledge.proposal.apply',
+        status: 'failed',
+        outcome: 'FunctionDeniedError',
+      }])
+
+      // THE ROW A PERSON READS AFTERWARDS. `prompted-denied` here is the door recording that it put
+      // a question in front of somebody on B's behalf; nobody was watching B, and the person who
+      // WAS watching never agreed to answer for them.
+      expect(
+        askRowsFor(door.configRoot).slice(scene.askRowsBefore).map((row) => row['outcome']),
+        'the unwatched asker\'s denial was recorded as a prompt somebody was shown',
+      ).toEqual(['fail-closed-denied'])
+
+      await settleAcceptsControl(door, scene)
+    }, 40_000)
+
+  it('leaves the watched transcript carrying exactly its own one question (dual axis, transcript)',
+    async () => {
+      const door = await openDoor({ timeoutMs: DUAL_AXIS_CONFIRM_MS })
+      const scene = await driveDualAxis(door)
+
+      // A SETTLE WINDOW FIRST, so a green cannot come from asserting in the tick B's turn returned
+      // in: a confirm routed to A is written to A's socket before B's turn resolves, but the reader
+      // that parses it is a separate task.
+      const settleBy = Date.now() + 500
+      const confirmFrames = (): readonly SseFrame[] =>
+        scene.streamA.frames.filter((frame) => frame.event === 'confirm_request')
+      while (Date.now() < settleBy && confirmFrames().length < 2) {
+        await new Promise<void>((settled) => setTimeout(settled, 10))
+      }
+
+      // THE ID LIST, NOT A COUNT. A's own question is named, so a second bubble carrying a
+      // different `confirmId` — the shape the verifier measured — is what this reds on.
+      expect(
+        confirmFrames().map((frame) => confirmRequestOf(frame).confirmId),
+        'B\'s question was put in front of the person watching A',
+      ).toEqual([scene.confirmA.confirmId])
+
+      await settleAcceptsControl(door, scene)
+    }, 40_000)
+
+  it('publishes local-headless for the unwatched asker while A is watched AND in flight (dual axis, posture)',
+    async () => {
+      const door = await openDoor({ timeoutMs: DUAL_AXIS_CONFIRM_MS })
+      const scene = await driveDualAxis(door)
+
+      // PRODUCTION'S OWN RULE, ASKED ABOUT A NAMED CONVERSATION — not a second copy of it written
+      // here. This is the structural corroboration of the audit row above: the row is the
+      // consequence, and this is the claim that produced it.
+      expect(
+        door.executionContext(scene.sessionB),
+        'the door claims a person is reachable on a conversation nobody has open',
+      ).toBe('local-headless')
+      expect(
+        door.executionContext(scene.sessionA),
+        'the posture collapsed to headless everywhere, which closes this gap by breaking the door',
+      ).toBe('local-interactive')
+
+      await settleAcceptsControl(door, scene)
+    }, 40_000)
+})
+
 // ---- The `:id` this process never minted (400-13, gap 3 leg 2) ----------------------------------
 //
 // THE ROUTE IS THE POSTURE'S INPUT, so the route is where an unowned id has to be refused. The
