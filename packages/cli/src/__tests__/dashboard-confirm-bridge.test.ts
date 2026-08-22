@@ -90,7 +90,7 @@ interface DoorFixture {
   readonly host: LocalAgentHost
   readonly server: Server
   readonly confirms: ConfirmRegistry
-  readonly executionContext: () => string
+  readonly executionContext: (sessionId: string) => string
 }
 
 const openDoors: DoorFixture[] = []
@@ -114,6 +114,12 @@ async function openDoor(options: { readonly timeoutMs?: number } = {}): Promise<
   // posture is a per-conversation fact only the composition can compute, so the door DERIVES it and
   // publishes what it derived. The honesty cell then measures production's own predicate rather
   // than a second copy of the rule written here.
+  //
+  // WHAT THE PUBLISHED HANDLE TAKES IS A CONVERSATION (400-15). The gate-facing resolver reads the
+  // AMBIENT asking session — the one the door scopes around each turn — which no cell is inside, so
+  // a zero-arg read from out here could only ever answer `local-headless`. The measurement API
+  // therefore names the conversation it is asking about, and resolves it through the same
+  // `postureFor` the gate does.
   const { host, agentHost, resolveExecutionContext } = composeDashboardDoor({
     agentQaRoot: join(configRoot, '.agent-qa'),
     configPath,
@@ -449,11 +455,13 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
     // `local-headless` everywhere would close gap 3 and break the door. This cell drives the
     // watched, in-flight, same-conversation case all the way to `prompted-approved`.
     const door = await openDoor({ timeoutMs: 60_000 })
-    // NO CHANNEL, NO CLAIM. A dashboard process with nobody watching is exactly as headless as a
-    // piped CLI, and saying otherwise is the dishonesty this seam exists to prevent.
-    expect(door.executionContext()).toBe('local-headless')
 
     const sessionId = await openSession(door.origin)
+    // NO CHANNEL, NO CLAIM. A dashboard process with nobody watching is exactly as headless as a
+    // piped CLI, and saying otherwise is the dishonesty this seam exists to prevent. Asked ABOUT A
+    // CONVERSATION since 400-15: the claim was always meant to be per-conversation, and now the
+    // question can be spelled that way.
+    expect(door.executionContext(sessionId)).toBe('local-headless')
     const stream = await openStream(door.origin, sessionId)
     // The server decides when the channel is registered, so the cell waits on the server's own
     // answer rather than sleeping a number.
@@ -464,7 +472,7 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
     // WATCHED IS NOT YET REACHABLE, and this line is the one a live-only candidate rule reds on. A
     // browser with no question outstanding is a person reading their transcript; the claim this
     // door makes is that it can hand THIS TURN's question to whoever asked it.
-    expect(door.executionContext()).toBe('local-headless')
+    expect(door.executionContext(sessionId)).toBe('local-headless')
 
     // A real ask-tier turn on the watched conversation. FLOATING: it does not return until the
     // confirm resolves, and the confirm is what proves the gate took its ask arm.
@@ -472,7 +480,7 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
     const raised = confirmRequestOf(
       await stream.waitFor((frame) => frame.event === 'confirm_request'),
     )
-    expect(door.executionContext()).toBe('local-interactive')
+    expect(door.executionContext(sessionId)).toBe('local-interactive')
 
     expect((await postConfirm(door.origin, {
       sessionId,
@@ -489,7 +497,7 @@ describe('an ask-tier op raises a confirm the browser can answer', () => {
     while (door.confirms.hasLiveChannel(sessionId) && Date.now() - closed < 5_000) {
       await new Promise<void>((settled) => setTimeout(settled, 10))
     }
-    expect(door.executionContext()).toBe('local-headless')
+    expect(door.executionContext(sessionId)).toBe('local-headless')
   }, 30_000)
 
   it('denies an ask with no channel open, fail-closed and without hanging (D-05/D-06)', async () => {
