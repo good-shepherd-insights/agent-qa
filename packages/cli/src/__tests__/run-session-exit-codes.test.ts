@@ -40,11 +40,29 @@ describe('D-14 exit map re-pinned at the CLI boundary', () => {
   })
 })
 
-// (a) Source anchors: BOTH composition paths compose startRun and derive the exit code from the
+// (a) Source anchors: BOTH composition paths reach `startRun` and derive the exit code from the
 // verdict — the ad-hoc `hasFailed ? 1 : 0` boolean aggregation is gone from the single-test path.
+//
+// 401-03 RESTATED THIS ANCHOR RATHER THAN RELAXING IT. Until this phase, "reaches startRun" and
+// "contains a `startRun({` literal" were the same sentence, so counting literals in run.ts was a
+// faithful pin. The single-test path now composes the ONE policy-gated invocation core (D-02) and
+// the core owns the `startRun` call — which is the point: a run may begin in exactly one place, and
+// that place is behind a gate. Counting literals here would now demand the very second call-site
+// this phase exists to remove. So the anchor says what it always meant, in two clauses:
+//
+//   * the suite path still composes `startRun` directly (it migrates in 401-04), and
+//   * the single-test path reaches it through `createRunInvocationCore`.
+//
+// The reachability the old count stood for is measured for real elsewhere, on artifacts rather than
+// on source text: `run-gate.e2e.test.ts` drives the shipped binary and asserts a `runStarted` event
+// on the allow control, and `run-invocation-core.test.ts` asserts the core's event log end to end.
 describe('both CLI run paths exit through the verdict map (T-361-08)', () => {
-  it('composes startRun in both the suite path and the single-test path', () => {
-    expect(count(runSource, 'startRun({')).toBeGreaterThanOrEqual(2)
+  it('the suite path composes startRun directly and the single-test path composes the gated core', () => {
+    expect(count(runSource, 'startRun({')).toBeGreaterThanOrEqual(1)
+    expect(count(runSource, 'createRunInvocationCore({')).toBe(1)
+    // Belt and braces on the direction of travel: the core is the only thing the single-test path
+    // may reach `startRun` through, so run.ts must not regrow a second direct call beside it.
+    expect(count(runSource, 'startRun({')).toBe(1)
   })
 
   it('maps the verdict to the exit code in both paths — no ad-hoc hasFailed boolean survives', () => {

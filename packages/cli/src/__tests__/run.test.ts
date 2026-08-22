@@ -767,6 +767,15 @@ beforeEach(() => {
     product: 'test-app',
     platform: 'web',
     url: 'https://example.com',
+    // 401-03 (D-06): these fixtures declare their class because the run gate now classifies
+    // every run by it, and an UNDECLARED target fails closed in a non-interactive context —
+    // which a vitest process is. `local` is the honest declaration here: nothing in this suite
+    // touches a network (the baseline probe is mocked above and the member runner is a double),
+    // so these runs drive a local fixture environment whatever the placeholder URL reads. The
+    // gate's own behaviour is measured where it belongs — `run-gate.e2e.test.ts` on the shipped
+    // binary and `run-invocation-core.test.ts` at the unit — and a control below proves these
+    // cells are green because they DECLARED, not because the gate went missing.
+    environment: 'local',
   })
   exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
     throw new Error('process.exit')
@@ -1006,6 +1015,7 @@ describe('run command — product-scoped handoff preflight', () => {
       product: target === 'alpha-target' ? 'alpha-product' : 'beta-product',
       platform: 'web',
       url: `https://${target}.example.test`,
+      environment: 'local',
     }))
 
     await runCommand('tests/**/*.yaml')
@@ -1037,6 +1047,7 @@ describe('run command — product-scoped handoff preflight', () => {
       product: target === 'alpha-target' ? 'alpha-product' : 'beta-product',
       platform: 'web',
       url: `https://${target}.example.test`,
+      environment: 'local',
     }))
 
     await runCommandWithGlobalArgs(['--config', configPath], '--suite')
@@ -1068,6 +1079,7 @@ describe('run command — product-scoped handoff preflight', () => {
       product: 'checkout-product',
       platform: 'web',
       url: `https://${target}.example.test`,
+      environment: 'local',
     }))
 
     await runCommand('tests/**/*.yaml')
@@ -1077,6 +1089,48 @@ describe('run command — product-scoped handoff preflight', () => {
       product: 'checkout-product',
     }))
     expect(mockRunMemberTest).toHaveBeenCalledTimes(2)
+  })
+})
+
+// 401-03 (D-06/D-16): the control on every `environment: 'local'` declaration in this file.
+//
+// WHY IT IS HERE AND NOT ONLY IN THE E2E. Every fixture above declares its class, and after that
+// declaration the whole suite runs the run body exactly as it always did. A reader is entitled to
+// ask whether those cells are green because they declared, or because the gate is inert and the
+// declaration is decoration. This cell answers it in the same harness, with the same command, by
+// changing exactly one field.
+describe('run command — the gate the declarations above are satisfying (401-03)', () => {
+  it('an UNDECLARED target denies fail-closed and never reaches the member runner', async () => {
+    // The same fixture shape the declared cells use — one discovered test, one member — so the
+    // ONLY difference between this cell and its green neighbours is the missing declaration.
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest({ target: 'test-app' })], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One',
+      filePath: 'tests/a.yaml',
+      status: 'passed',
+      steps: [],
+      duration: 100,
+    })
+    mockResolveTarget.mockReturnValue({
+      name: 'test-app',
+      product: 'test-app',
+      platform: 'web',
+      url: 'https://example.com',
+      // and no `environment`. Silence is not permission.
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+    // Assembly is behind the gate, so the build-ordinal counter is untouched as well.
+    expect(mockNextBuildOrdinal).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    // The person is told what was refused, in the gate's own words, with the way forward.
+    const rendered = errorSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n')
+    expect(rendered).toContain('Run denied')
+    expect(rendered).toContain('mutating-shared')
+    expect(rendered).toContain('agent-qa run --trust-session')
   })
 })
 
@@ -1132,6 +1186,7 @@ describe('run command — reduced flag surface and target resolution', () => {
       product: 'myapp',
       platform: 'web',
       url: 'https://myapp.example.com',
+      environment: 'local',
     })
     mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
@@ -1497,6 +1552,8 @@ describe('run command — auth state consumption', () => {
       product: 'mobile-app',
       platform: 'android',
       appPackage: 'com.example.app',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     mockResolveAuthStateForRun.mockRejectedValueOnce(
       new Error('auth state is only supported for web targets. For native mobile, use use.mobile.appState: preserve.'),
@@ -1658,6 +1715,8 @@ describe('run command — mobile app state and device resolution', () => {
       product: 'mobile-app',
       platform: 'android',
       appPackage: 'com.example.app',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
   }
 
@@ -1871,6 +1930,8 @@ describe('run command — mobile app state and device resolution', () => {
       product: 'test-app',
       platform: 'web',
       url: 'https://example.com',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     mockParseSuiteFile.mockResolvedValue({
       name: 'Web Suite',
@@ -2020,6 +2081,8 @@ describe('run command — run attributes', () => {
       product: 'mobile-browser',
       platform: 'android',
       url: 'https://example.com',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     vi.mocked(resolveMobileRunConfig).mockImplementationOnce((input: any) => ({
       deviceName: 'cloud-phone',
@@ -2084,6 +2147,8 @@ describe('run command — run attributes', () => {
       product: 'mobile-browser',
       platform: 'android',
       url: 'https://example.com',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     vi.mocked(resolveMobileRunConfig).mockImplementationOnce((input: any) => ({
       deviceName: 'cloud-phone',
@@ -2667,6 +2732,8 @@ describe('run command — reporter integration', () => {
       ...(platform === 'android'
         ? { appPackage: 'com.example.app' }
         : { bundleId: 'com.example.app' }),
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     process.env.AGENT_QA_RUN_ID = 'r_dashboard-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
     process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
@@ -2709,6 +2776,8 @@ describe('run command — reporter integration', () => {
       ...(platform === 'android'
         ? { appPackage: 'com.example.app' }
         : { bundleId: 'com.example.app' }),
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     mockGlob.mockResolvedValue(['tests/mobile.yaml'])
     mockParseAllTests.mockResolvedValue({

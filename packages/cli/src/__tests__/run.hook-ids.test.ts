@@ -428,6 +428,10 @@ beforeEach(async () => {
     product: 'test-app',
     platform: 'web',
     url: 'https://example.com',
+    // 401-03 (D-06): declared, because the run gate classifies every run by this field and an
+    // undeclared target fails closed in a non-interactive context. `local` is honest here —
+    // nothing in this suite reaches a network. See run.test.ts for the full note.
+    environment: 'local',
   })
   mockGlob.mockResolvedValue(['tests/hook-id.yaml'])
   mockParseHooksFile.mockResolvedValue({

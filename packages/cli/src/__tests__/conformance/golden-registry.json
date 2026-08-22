@@ -848,7 +848,7 @@
       "bindingStatusAtRoot": "bound",
       "classifies": true,
       "id": "runs.start",
-      "inputSchemaDigest": "c10ca468343dc38a41f9a2616ded542cfe8d2b9c4d1432c5c3e4c011ea31dd1b",
+      "inputSchemaDigest": "a1d47c889b37bab978687bc7bf5cb67d840e3d64854ca0d5b488da191b5fd172",
       "outputSchemaDigest": "f1a6d54bd40ea1746b6af8775764a18f0a369b9e9ac82a5dbb3f275f803db9fe",
       "partition": {
         "kind": "projected",

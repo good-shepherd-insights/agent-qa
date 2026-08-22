@@ -2042,6 +2042,9 @@
             },
             "type": "array"
           },
+          "runId": {
+            "type": "string"
+          },
           "scope": {
             "additionalProperties": false,
             "properties": {
@@ -2097,5 +2100,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "691827c25ffbddb8024b683bab2384e3343f354cc6d2de33db806945d1c28c2b"
+  "rowsDigest": "f5f3db279ae9146ab5822d53ee1609b11b05aa521c32b46fd6d56a4a7d9e65ec"
 }
