@@ -9,6 +9,8 @@ export interface ResolvedTarget {
   appPackage?: string
   appActivity?: string
   device?: string
+  /** D-06 (phase 401): the target's declared environment; `undefined` means undeclared. */
+  environment?: 'local' | 'shared'
 }
 
 export interface TargetSummary {
@@ -24,6 +26,7 @@ interface TargetEntry {
   appActivity?: string
   url?: string
   device?: string
+  environment?: 'local' | 'shared'
 }
 
 export function resolveTarget(
@@ -46,6 +49,9 @@ export function resolveTarget(
     appPackage: target.appPackage,
     appActivity: target.appActivity,
     device: target.device,
+    // Carried through UNCHANGED, undefined included: the resolver does not fill in a class for a
+    // target whose author did not declare one (D-06).
+    environment: target.environment,
   }
 }
 

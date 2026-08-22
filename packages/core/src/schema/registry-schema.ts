@@ -26,6 +26,12 @@ export const TargetSchema = z.object({
   appActivity: z.string().optional(),
   app: AppInstallSchema.optional(),
   url: z.string().optional(),
+  // D-06 (phase 401): which environment a run against this target actually touches. Deliberately
+  // `.optional()` with NO default — an undeclared target must stay visibly undeclared so the run
+  // gate's descriptor builder is the single place that decides undeclared means shared. A default
+  // here would make silence and an honest `shared` indistinguishable at every later reader, and
+  // `.strict()` above is what turns a typoed key into a refusal rather than a silent undeclared.
+  environment: z.enum(['local', 'shared']).optional(),
 }).strict().superRefine((val, ctx) => {
   if (val.platform === 'web' && !val.url) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Web targets must have a url' })

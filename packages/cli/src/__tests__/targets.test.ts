@@ -114,3 +114,26 @@ describe('resolveTarget — product field', () => {
     expect(r1.product).toBe(r2.product)
   })
 })
+
+describe('resolveTarget — environment declaration (D-06)', () => {
+  it('carries a declared local environment through', () => {
+    const config = makeConfig({
+      'local-form': { platform: 'web' as const, url: 'http://127.0.0.1:8931/form.html', environment: 'local' },
+    })
+    expect(resolveTarget(config, 'local-form').environment).toBe('local')
+  })
+
+  it('carries a declared shared environment through', () => {
+    const config = makeConfig({
+      'automation-exercise': { platform: 'web' as const, url: 'https://automationexercise.com', environment: 'shared' },
+    })
+    expect(resolveTarget(config, 'automation-exercise').environment).toBe('shared')
+  })
+
+  it('leaves an undeclared target undeclared rather than inventing a class', () => {
+    // The resolver must NOT default here. Undeclared→shared is the gate descriptor's decision
+    // (buildRunRiskDescriptor), made once, where the audit row records it.
+    const config = makeConfig(sampleTargets)
+    expect(resolveTarget(config, 'webapp').environment).toBeUndefined()
+  })
+})
