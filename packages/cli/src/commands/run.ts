@@ -34,7 +34,7 @@ import {
   RunDeniedError,
   type RunTargetClass,
 } from '@vostride/agent-qa-agent-local'
-import { assembleDirectRun } from '../composition/run-assembly.js'
+import { assembleCliRun } from '../composition/run-assembly.js'
 import { createTtyConfirmPort } from '../composition/local-agent-host.js'
 import { denialDetailLines } from './receipt-line.js'
 import {
@@ -410,14 +410,22 @@ export interface RunOptions {
 }
 
 /**
- * The two durable run markers, as the conditional spread `RunConfig` expects (393, WTST-06).
+ * The two durable run markers — this command's options mapped onto the two request fields (393
+ * WTST-06; re-aimed at `RunsStartInput` by 401-03/401-04).
  *
- * ONE spelling for BOTH `startRun` sites (the suite path and the single-run path). Pitfall 8's rule
- * applied to markers: a second literal spread would be a second place for the two paths to disagree
- * about whether a run was a gate-run, and the fold's exclusion reads the handoff either path wrote.
+ * WHAT THIS FUNCTION IS FOR, AFTER THE MIGRATION. The marker chain used to be
+ * request → port → child argv → command flag → `RunConfig`; on the invocation core it is
+ * request → `RunConfig`, mapped on ONE line inside `run-invocation-core.ts`. What survives here is
+ * the OTHER half — the half a person types. `--gate-run` and `--excluded-from-outcomes` are argv,
+ * and argv has to become request fields somewhere; this is that somewhere, spelled once for BOTH of
+ * this command's paths (Pitfall 8's rule applied to markers: a second literal spread would be a
+ * second place for the two paths to disagree about whether a run was a gate-run, and the outcome
+ * fold's exclusion reads the handoff either path wrote).
  *
- * Only literal `true` marks; a `false` or an absent flag leaves the field ABSENT, which is what the
- * carriers' `?: true` type and `AnalyzeRunPayloadSchema`'s refusal of a literal `false` both require.
+ * Only literal `true` marks; a `false` or an absent flag leaves the field ABSENT. That is what the
+ * carriers' `?: true` type requires, what `RunsStartInputSchema`'s `z.literal(true)` REFUSES a
+ * `false` for, and what `AnalyzeRunPayloadSchema` refuses a literal `false` for downstream — three
+ * independent statements of the same rule, which is why `false` may never be quietly coerced here.
  */
 export function runMarkers(opts: RunOptions): { gateRun?: true; excludedFromOutcomes?: true } {
   return {
@@ -1100,7 +1108,9 @@ async function executeSuites(
   analytics?: () => Promise<CliAnalyticsHost>,
 ): Promise<number> {
   const { parseSuiteFile, parseTestFile, patchTestForSuite } = await import('@vostride/agent-qa-core')
-  const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
+  // 401-04: `startRun` is NOT among these. BOTH of this command's paths reach it through
+  // `createRunInvocationCore`, and a binding held here would be a second way in.
+  const { LLMPlanner, LLMVerifier, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
   const { readFile } = await import('node:fs/promises')
   const path = await import('node:path')
 
@@ -1146,6 +1156,38 @@ async function executeSuites(
     }
   }
   const preflightRunProduct = requireSingleInvocationProduct(suiteProductMembers)
+
+  // --dry-run RESOLVES AND REPORTS, THEN STOPS — and it stops HERE (401-04, RESEARCH Open Q2's
+  // ratified disposition under D-02). `--dry-run` is not a kind of run; it is the answer to "what
+  // WOULD this invocation execute", so it must not reach the gate: a run that will never happen has
+  // no authorization question to ask, and an audit row for it would be a record of a decision about
+  // nothing. Everything above this line is the read-only preflight (parse + product identity) the
+  // comment there already names as running before signal registration, dashboard creation, adapter
+  // setup, ordinal allocation or a run can mutate state — so stopping on this line reports off
+  // fully resolved suites while nothing outside this process has been touched.
+  //
+  // THIS IS A BEHAVIOUR FIX, NOT A MIGRATION SIDE EFFECT. Until 401-04 the suite path had no
+  // `--dry-run` handling at all (only the single-test path did, at its own `opts.dryRun` guard), so
+  // `agent-qa run --dry-run <suite>` EXECUTED THE SUITE: measured on the pre-migration binary as a
+  // real run with a baseline probe at the target, an advanced build ordinal, a full event log and a
+  // handoff. A flag whose whole promise is "without executing" cannot keep that promise on one of
+  // its command's two paths.
+  if (opts.dryRun === true) {
+    const suiteMemberCount = suiteFiles.reduce(
+      (total, suiteFile) => total + (parsedSuiteDefinitions.get(suiteFile)?.tests.length ?? 0),
+      0,
+    )
+    console.log(pc.bold(`\nFound ${suiteFiles.length} suite(s), ${suiteMemberCount} test(s):\n`))
+    for (const suiteFile of suiteFiles) {
+      const suite = parsedSuiteDefinitions.get(suiteFile)
+      if (suite === undefined) continue
+      console.log(`  ${pc.green('●')} ${suite.name}`)
+      for (const member of suite.tests) {
+        console.log(`      ${member.test}`)
+      }
+    }
+    return 0
+  }
 
   const activeSuiteDbs = new Set<any>()
   let shutdownRequested = false
@@ -1704,8 +1746,9 @@ async function executeSuites(
 
     // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
     // subscribers (console unmasks; junit + wire stay masked; dashboard ingest; analytics) are
-    // attached at the ONE run-level startRun site below via `attachRunSubscribers`. No reporter is
-    // threaded into the runner config.
+    // attached in the core's `onSession` hook below via `attachRunSubscribers` — the ONE run-level
+    // attach point, which moved with the run start it follows (401-04). No reporter is threaded into
+    // the runner config.
 
     // Wire the redesigned action cache (runner-local FsActionCache + branch policy), injected into
     // the runner loop's cache port. The loop's masking port now carries the ONE run MaskingContext
@@ -2129,7 +2172,9 @@ async function executeSuites(
             safetyHooks: runSafetyHooks,
             knowledgeReader: prepared.knowledge?.reader,
             knowledgeBudgets: prepared.knowledge?.budgets,
-            knowledgeAsOfBuild: buildOrdinal,
+            // Read at call time, like `runSafetyHooks` above: these bindings are constructed before
+            // the gate, and the ordinal is assigned by the assembler the core calls after it.
+            knowledgeAsOfBuild: suiteBuildOrdinal,
             recordLedger: prepared.knowledge?.recordLedger,
             beginMemoryTurn: prepared.knowledge?.beginMemoryTurn,
             drainMemoryReadTraces: prepared.knowledge?.drainMemoryReadTraces,
@@ -2211,62 +2256,70 @@ async function executeSuites(
     env: process.env.AGENT_QA_BUILD_TAG,
     use: config.use,
   })
-  const buildOrdinal = await resolveRunBuildOrdinal({ configDir, product: runProduct, buildTag })
-  const runPorts = buildRunPorts({ configDir, runId })
-
-  // D-23 live bind: the build ordinal is now fixed, so open one memoized reader/ledger/tool
-  // composition per prepared planner before any member can execute. Capable suite planners hold
-  // the stable map created at construction; populate that same identity with both memory tools.
   const knowledgeRoot = resolveKnowledgeRoot(config.knowledge, configDir)
+
+  // 401-04 (D-02/D-05/D-06): the suite door's DECLARED TARGET CLASS, resolved here because the
+  // class is what the run gate classifies and the gate decides before anything touches a target.
+  // Resolution is a config read only — the probe that fetches the URL moved into `assembleCliRun`,
+  // i.e. behind the verdict, exactly as it did for the single-test path in 401-03.
+  //
+  // MOST RESTRICTIVE WINS ACROSS THE WHOLE INVOCATION. A suite run is ONE run and therefore ONE
+  // gate decision, so the class it is decided under has to cover every target it will drive. One
+  // shared member makes the invocation shared; one UNDECLARED member makes it undeclared, which
+  // `buildRunRiskDescriptor` reads as shared (D-06). Only an invocation whose every target is
+  // declared `local` is decided as local — otherwise a suite could smuggle a production target in
+  // behind a loopback sibling.
+  //
+  // AN EMPTY OR UNRESOLVABLE SET IS `undefined`, NOT `'local'`. A target we could not resolve is a
+  // target we know nothing about, and nothing-known is the undeclared case, which fails closed.
+  const declaredTargetClasses: RunTargetClass[] = []
   for (const prepared of preparedSuites) {
-    const knowledge = openRunKnowledgeComposition({
-      knowledgeRoot,
-      product: prepared.product ?? runProduct,
-      scope: { tier: 'product', key: prepared.product ?? runProduct },
-      parentScopes: [{
-        tier: 'suite',
-        key: prepared.suite['suite-id'] ?? prepared.suite.name,
-      }],
-      asOfBuild: buildOrdinal,
-      capabilities: prepared.knowledgeSeed.capabilities,
-      accounting: prepared.knowledgeSeed.accounting,
-      qaRulesText: prepared.knowledgeSeed.qaRulesText,
-      workingContextText: prepared.knowledgeSeed.workingContextText,
-    })
-    prepared.knowledge = knowledge
-    const deferred = prepared.knowledgeSeed.deferredNonActionTools
-    if (deferred !== undefined && knowledge.nonActionTools !== undefined) {
-      Object.assign(deferred, knowledge.nonActionTools)
+    const memberTargetNames = prepared.suite.target !== undefined
+      ? [prepared.suite.target]
+      : prepared.testEntries.map((entry) => entry.test.target)
+    for (const targetName of memberTargetNames) {
+      if (targetName === undefined) {
+        declaredTargetClasses.push(undefined)
+        continue
+      }
+      try {
+        declaredTargetClasses.push(resolveTarget(config, targetName).environment)
+      } catch {
+        // Unresolvable here is undeclared here. The member path still surfaces the real
+        // target-resolution error as the framework error it is.
+        declaredTargetClasses.push(undefined)
+      }
     }
   }
-
-  // 390 D-16: fold the committed quarantine ledger ONCE, here, before any member can execute. The
-  // resolved set rides RunConfig as plain data, so the disposition is fixed for the whole run and a
-  // mid-run ledger edit cannot change a build already under way. A read failure degrades to an
-  // empty set with a warning — a broken ledger never aborts a run (T-390-04).
-  const quarantined = resolveRunQuarantineSnapshot({
-    knowledgeRoot,
-    product: runProduct,
-    now: new Date().toISOString(),
-    warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
-  })
+  const suiteTargetClass: RunTargetClass =
+    declaredTargetClasses.length === 0 || declaredTargetClasses.includes(undefined)
+      ? undefined
+      : declaredTargetClasses.includes('shared')
+        ? 'shared'
+        : 'local'
 
   // D-04: run-start baseline probe — web targets only; ONE GET whose result threads in-memory via
-  // RunConfig into the deterministic root-cause classifier. A probe failure is a value (its own
-  // environment signal), never a run abort. Mobile targets skip the probe entirely — the
-  // device-session-create failure is the existing equivalent signal.
-  let baselineProbe: BaselineProbeResult | undefined
+  // RunConfig into the deterministic root-cause classifier. Only the URL is RESOLVED here (a config
+  // read); the fetch itself happens inside `assembleCliRun`, behind the gate. Mobile targets skip
+  // the probe entirely — the device-session-create failure is the existing equivalent signal.
+  let suiteProbeUrl: string | undefined
   for (const prepared of preparedSuites) {
     const probeTargetName = prepared.suite.target ?? prepared.testEntries[0]?.test.target
     if (!probeTargetName) continue
     try {
       const probeTarget = resolveTarget(config, probeTargetName)
       if (probeTarget.platform === 'web' && probeTarget.url) {
-        baselineProbe = await runBaselineProbe(probeTarget.url)
+        suiteProbeUrl = probeTarget.url
         break
       }
     } catch { /* pre-run target-resolution errors surface on the member path, not here */ }
   }
+
+  // Assigned by the assembler, which the core calls only after the gate allows the run. Both are
+  // read strictly downstream of that call — the ordinal by the member closures (`asOfBuild`) and by
+  // the D-23 knowledge bind inside the assembler, the quarantine set by the reporters.
+  let suiteBuildOrdinal = 0
+  let suiteQuarantined: readonly QuarantineAppliedEntry[] = []
 
   // SEAM-01/03/04 (362-06): construct the run's real seeded MaskingContext (D-05/06/07), the per-run
   // stamped audit sink (D-12/13), and the per-run SafetyHookRunner (D-01/15/10) — then run the whole
@@ -2302,9 +2355,10 @@ async function executeSuites(
   const lifecycle = createSuiteLifecycle()
   const executor = buildSuiteMemberExecutor({ lifecycle, bindings })
 
-  // 363-09: the run-level bus subscribers (Pitfall 8 — the SAME attach helper both startRun sites use).
-  // Analytics rides the bus (D-16); the dashboard ingest (when a suite DB exists) writes runs/run_artifacts
-  // rows as a subscriber (D-08). Dashboard/analytics construction data the wire omits rides here.
+  // 363-09: the run-level bus subscribers (Pitfall 8 — the SAME attach helper both of this door's
+  // paths use). Analytics rides the bus (D-16); the dashboard ingest (when a suite DB exists) writes
+  // runs/run_artifacts rows as a subscriber (D-08). Dashboard/analytics construction data the wire
+  // omits rides here.
   const runLevelDashboardDb = preparedSuites.find((p) => p.dashboardDb)?.dashboardDb
   const extraSubscribers: RunSubscriberHandle[] = []
   if (runLevelDashboardDb) {
@@ -2336,38 +2390,131 @@ async function executeSuites(
     analyticsHost.bindMaskingContext(maskingContext)
   }
 
-  const exitCode = await runSafetyScope({ maskingContext, auditSink, executionContext }, async () => {
-    try {
-      const session = startRun({
-        // generateRunId returns a plain string; brand it to the RunConfig's RunId without a schema dep.
-        runId: runId as unknown as Parameters<typeof startRun>[0]['runId'],
-        scope: { tier: 'product', key: runProduct },
-        executionContext,
-        configDigests: runDigests.runLevel,
-        buildOrdinal,
+  // The started session and its subscribers, published by the core's `onSession` hook. They are
+  // `let`s rather than return values because the hook fires while the core is still inside
+  // `execute`, which is exactly when a subscriber has to attach.
+  let startedSession: RunSession | undefined
+  let startedSubscribers: { flush(): Promise<void> } | undefined
+  // The door's own confirm channel for the RUN-START gate (D-07). `undefined` on a piped or
+  // redirected stdio — this door does not claim a person is present because the process is running
+  // somewhere a person once was.
+  const runStartConfirm = createTtyConfirmPort()
+
+  // 401-04 (D-02): the SUITE path is now a caller of the same one policy-gated in-process
+  // invocation core the single-test path composes. It was the second — and last — direct
+  // `startRun` on this door; with it gone, no `agent-qa run` invocation of any shape can begin a
+  // run except through the ONE `evaluate()` (INVK-02 criterion 2 for the CLI/CI trigger family).
+  //
+  // WHAT THE DOOR STILL OWNS, AND WHY IT IS THIS AND NOT MORE: its TTY posture, its trust flag, its
+  // confirm channel, its target class and its assembly. Those are the five things only a door can
+  // answer. The ORDER is the core's, which is what makes "the probe and the ordinal happen after
+  // the verdict" a structural property here rather than a rule this file remembers.
+  const runCore = createRunInvocationCore({
+    configPath: configFilePath,
+    agentQaRoot: resolvePath(configDir, '.agent-qa'),
+    executionContext,
+    mintRunId: generateRunId,
+    auditSink,
+    trust: { trustMode },
+    // Absent on a piped/redirected stdio, which leaves the gate's DENY_CONFIRM default in place —
+    // the fail-closed arm is reached before the confirm arm anyway, so this port only ever speaks
+    // where there is somebody to answer it.
+    ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
+    resolveTargetClass: () => suiteTargetClass,
+    assembleRun: async (assemblyContext) => {
+      const assembly = await assembleCliRun({
+        runId: assemblyContext.runId,
+        executionContext: assemblyContext.executionContext,
+        configDir: assemblyContext.configDir,
+        knowledgeRoot,
+        ports: assemblyContext.ports,
+        confirmPausedMs,
+        maskingContext,
         members,
         executor,
-        masking: maskingContext,
-        ports: { ...runPorts, confirmPausedMs },
-        ...runMarkers(opts),
-        ...(baselineProbe !== undefined ? { baselineProbe } : {}),
-        ...(quarantined.length > 0 ? { quarantined } : {}),
+        configDigests: runDigests.runLevel,
+        product: runProduct,
+        ...(buildTag === undefined ? {} : { buildTag }),
+        ...(suiteProbeUrl === undefined ? {} : { probeUrl: suiteProbeUrl }),
+        warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
       })
-      activeRunSession = session
+      suiteBuildOrdinal = assembly.buildOrdinal
+      suiteQuarantined = assembly.quarantined
 
-      // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics)
-      // via subscribe(0) — replay-then-live gives D-04 for free. Console options carry the run's flags.
-      const subscribers = attachRunSubscribers({
+      // D-23 live bind: the build ordinal is now fixed, so open one memoized reader/ledger/tool
+      // composition per prepared planner before any member can execute. Capable suite planners hold
+      // the stable map created at construction; populate that same identity with both memory tools.
+      //
+      // IT MOVED IN HERE WITH THE ORDINAL IT READS. `asOfBuild` is the advanced ordinal, and the
+      // advance is a durable write that a refused run must not make — so the bind cannot precede
+      // the verdict either. It still precedes every member, because the core calls this assembler
+      // and only then `startRun`.
+      for (const prepared of preparedSuites) {
+        const knowledge = openRunKnowledgeComposition({
+          knowledgeRoot,
+          product: prepared.product ?? runProduct,
+          scope: { tier: 'product', key: prepared.product ?? runProduct },
+          parentScopes: [{
+            tier: 'suite',
+            key: prepared.suite['suite-id'] ?? prepared.suite.name,
+          }],
+          asOfBuild: assembly.buildOrdinal,
+          capabilities: prepared.knowledgeSeed.capabilities,
+          accounting: prepared.knowledgeSeed.accounting,
+          qaRulesText: prepared.knowledgeSeed.qaRulesText,
+          workingContextText: prepared.knowledgeSeed.workingContextText,
+        })
+        prepared.knowledge = knowledge
+        const deferred = prepared.knowledgeSeed.deferredNonActionTools
+        if (deferred !== undefined && knowledge.nonActionTools !== undefined) {
+          Object.assign(deferred, knowledge.nonActionTools)
+        }
+      }
+
+      return assembly.config
+    },
+    onSession: (session) => {
+      activeRunSession = session
+      startedSession = session
+      // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest;
+      // analytics) via subscribe(0) — replay-then-live gives D-04 for free. Console options carry
+      // the run's flags. `suiteQuarantined` is already assigned: the core calls the assembler, then
+      // `startRun`, then this hook.
+      startedSubscribers = attachRunSubscribers({
         session,
         maskingContext,
         console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
         junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
         extraSubscribers,
         live: livePause,
-        // 390 D-15: the SAME resolved set `startRun` was handed above, so the reporters and the
+        // 390 D-15: the SAME resolved set the run was assembled with, so the reporters and the
         // aggregate verdict rule describe one disposition rather than two.
-        quarantined,
+        quarantined: suiteQuarantined,
       })
+    },
+  })
+
+  const exitCode = await runSafetyScope({ maskingContext, auditSink, executionContext }, async () => {
+    try {
+      // The core refuses, gates, assembles, starts, and awaits the run. A denial throws
+      // `RunDeniedError` from inside here, before a single run event exists.
+      //
+      // THE MARKERS RIDE THE REQUEST (INVK-06). `runMarkers` still maps this command's two options
+      // onto the two literal-`true` fields, but the field they land in is now `RunsStartInput`'s
+      // rather than `RunConfig`'s — request → RunConfig is the core's job, and there is no argv
+      // link left inside the invocation.
+      await runCore.execute({
+        runId: asRunId(runId),
+        ...runMarkers(opts),
+      })
+      const session = startedSession
+      const subscribers = startedSubscribers
+      if (session === undefined || subscribers === undefined) {
+        // Unreachable: the core notifies `onSession` before it awaits the run. Asserted rather than
+        // assumed, because a silently absent session would degrade into a run whose verdict nothing
+        // mapped.
+        throw new Error('The invocation core completed without reporting a run session.')
+      }
 
       const { verdict } = await session.done
       clearGraceTimer()
@@ -2885,7 +3032,9 @@ export function createRunCommand(): Command {
 
         // Actual execution
         const startTime = Date.now()
-        const { LLMPlanner, LLMVerifier, startRun, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
+        // 401-04: `startRun` is NOT among these. BOTH of this command's paths reach it through
+        // `createRunInvocationCore`, and a binding held here would be a second way in.
+        const { LLMPlanner, LLMVerifier, mapVerdictToExitCode } = await import('@vostride/agent-qa-runner')
 
         const recordingEnabled = opts.record ?? config.services?.recording?.enabled ?? false
 
@@ -2911,8 +3060,9 @@ export function createRunCommand(): Command {
         const singleStorageState = await buildStorageStateStore(configDir)
 
         // 363-09/363-11 (D-01 clean cut, CLI side): the v1 Reporter constructions are GONE. The bus
-        // subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics) attach at the
-        // startRun site below via `attachRunSubscribers`. No reporter is threaded into the run path.
+        // subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics) attach in the
+        // core's `onSession` hook below via `attachRunSubscribers`. No reporter is threaded into the run
+        // path.
         const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
         const { LogManager } = await import('@vostride/agent-qa-core')
@@ -3563,7 +3713,7 @@ export function createRunCommand(): Command {
         // 401-03 (D-02/D-05/D-06): the target is resolved here because its DECLARED CLASS is what
         // the run gate classifies, and the gate decides before anything touches the target. The
         // resolution itself is a config read — the probe that fetches the URL moved into
-        // `assembleDirectRun`, i.e. behind the verdict.
+        // `assembleCliRun`, i.e. behind the verdict.
         let singleTargetClass: RunTargetClass
         let singleProbeUrl: string | undefined
         try {
@@ -3694,7 +3844,7 @@ export function createRunCommand(): Command {
           ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
           resolveTargetClass: () => singleTargetClass,
           assembleRun: async (assemblyContext) => {
-            const assembly = await assembleDirectRun({
+            const assembly = await assembleCliRun({
               runId: assemblyContext.runId,
               executionContext: assemblyContext.executionContext,
               configDir: assemblyContext.configDir,
@@ -3727,7 +3877,7 @@ export function createRunCommand(): Command {
               junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
               extraSubscribers: singleExtraSubscribers,
               live: livePause,
-              // 390 D-15: the SAME resolved set `startRun` was handed (Pitfall 8 — both sites).
+              // 390 D-15: the SAME resolved set the run was assembled with (Pitfall 8 — both paths).
               quarantined: singleQuarantined,
             })
           },

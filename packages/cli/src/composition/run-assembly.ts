@@ -22,6 +22,15 @@
 // calls (`resolveRunBuildOrdinal`, `resolveRunQuarantineSnapshot`, `runBaselineProbe`); nothing is
 // re-implemented, so the suite path's migration in 401-04 is a move of its own orchestration onto
 // this function rather than a reconciliation of two divergent copies.
+//
+// 401-04 CASHED THAT IN, AND THE NAME MOVED WITH IT. This function was `assembleDirectRun` while
+// only the single-test path called it. The suite path's migration found the two inputs IDENTICAL —
+// same probe, same ordinal advance, same quarantine fold, same `RunConfig` shape, differing only in
+// the members and the executor a door hands over — so the suite path calls THIS function rather
+// than a sibling of it. A second `assembleSuiteRun` beside it would have been the fork the comment
+// above says this extraction exists to prevent, and it would have re-opened the ordering question
+// (probe/ordinal before or after the verdict?) once per copy. One assembler, one order, one name
+// that says which door it belongs to: `assembleCliRun`.
 
 import type { QuarantineAppliedEntry, RunId } from '@vostride/agent-qa-schema'
 import {
@@ -44,7 +53,7 @@ import type {
 
 import { runBaselineProbe } from '../commands/baseline-probe.js'
 
-export interface DirectRunAssemblyInput {
+export interface CliRunAssemblyInput {
   /** The run's identity, minted by the door and carried through the core. */
   readonly runId: string
   /** The context the gate decided in — recorded on the run unchanged. */
@@ -76,7 +85,7 @@ export interface DirectRunAssemblyInput {
   readonly warn: (message: string) => void
 }
 
-export interface DirectRunAssembly {
+export interface CliRunAssembly {
   /** The `RunConfig` the core hands `startRun` (identity + markers stamped on top by the core). */
   readonly config: RunConfig
   /**
@@ -94,7 +103,10 @@ export interface DirectRunAssembly {
 }
 
 /**
- * Assemble the direct (single-test) run.
+ * Assemble the run for the `agent-qa run` door — BOTH of its paths (401-03 single-test, 401-04
+ * suite). The door hands over what only it knows (its members, its executor closure, its masking
+ * context, its product); everything with an effect outside this process happens here, which is to
+ * say after the verdict.
  *
  * THE PROBE'S FAILURE IS NOT THE RUN'S FAILURE. `runBaselineProbe` is a best-effort health reading
  * for the root-cause classifier; a throw here would turn an unreachable target into a framework
@@ -102,9 +114,9 @@ export interface DirectRunAssembly {
  * (`run.ts` wrapped the same call in a swallowing try), preserved verbatim — the catch covers the
  * PROBE and nothing else, so it is not a defensive wrapper around the run (D-03).
  */
-export async function assembleDirectRun(
-  input: DirectRunAssemblyInput,
-): Promise<DirectRunAssembly> {
+export async function assembleCliRun(
+  input: CliRunAssemblyInput,
+): Promise<CliRunAssembly> {
   let baselineProbe: BaselineProbeResult | undefined
   if (input.probeUrl !== undefined) {
     try {

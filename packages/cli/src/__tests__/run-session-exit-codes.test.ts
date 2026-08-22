@@ -17,6 +17,13 @@ const compositionSource = readFileSync(
   fileURLToPath(new URL('../run-session-composition.ts', import.meta.url)),
   'utf8',
 )
+// 401-04: the door's ONE `RunConfig` assembler, which both paths now hand their run MaskingContext
+// to. It is a source anchor's third file for the same reason the second exists — the property being
+// pinned did not change, the line it lives on did.
+const assemblySource = readFileSync(
+  fileURLToPath(new URL('../composition/run-assembly.ts', import.meta.url)),
+  'utf8',
+)
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1
@@ -53,16 +60,25 @@ describe('D-14 exit map re-pinned at the CLI boundary', () => {
 //   * the suite path still composes `startRun` directly (it migrates in 401-04), and
 //   * the single-test path reaches it through `createRunInvocationCore`.
 //
+// 401-04 FINISHED THE SENTENCE. The suite path migrated, so the first clause is now false by
+// design: run.ts holds ZERO direct calls and TWO core compositions, which is what "no CLI
+// invocation reaches `startRun` except through the one gated core" means when written as code.
+// What survives here is only the half this file uniquely owns — that BOTH paths compose the core
+// and BOTH derive their exit code from the verdict.
+//
+// THE ABSENCE ITSELF IS NOT ASSERTED HERE, on purpose (one producer per claim). "No file in this
+// package acquires `startRun`" is a complete-set claim over 150-odd files, and a count of literals
+// in ONE file cannot make it — it would pass a door that regrew the call next door. It is produced
+// by `run-door-invocation-census.test.ts`, whose predicate self-checks against its own acquisition
+// forms and whose discovery is pinned to named members before it is allowed to judge anything.
+//
 // The reachability the old count stood for is measured for real elsewhere, on artifacts rather than
-// on source text: `run-gate.e2e.test.ts` drives the shipped binary and asserts a `runStarted` event
-// on the allow control, and `run-invocation-core.test.ts` asserts the core's event log end to end.
+// on source text: `run-gate.e2e.test.ts` and `run-gate-suite.e2e.test.ts` drive the shipped binary
+// and assert a `runStarted` event on each path's allow control, and `run-invocation-core.test.ts`
+// asserts the core's event log end to end.
 describe('both CLI run paths exit through the verdict map (T-361-08)', () => {
-  it('the suite path composes startRun directly and the single-test path composes the gated core', () => {
-    expect(count(runSource, 'startRun({')).toBeGreaterThanOrEqual(1)
-    expect(count(runSource, 'createRunInvocationCore({')).toBe(1)
-    // Belt and braces on the direction of travel: the core is the only thing the single-test path
-    // may reach `startRun` through, so run.ts must not regrow a second direct call beside it.
-    expect(count(runSource, 'startRun({')).toBe(1)
+  it('both paths compose the gated core — neither reaches the run shell any other way', () => {
+    expect(count(runSource, 'createRunInvocationCore({')).toBe(2)
   })
 
   it('maps the verdict to the exit code in both paths — no ad-hoc hasFailed boolean survives', () => {
@@ -84,8 +100,16 @@ describe('the suite path seeds a real run MaskingContext inside runSafetyScope (
   it('wraps at least one run body in runSafetyScope with a real seeded run MaskingContext', () => {
     expect(count(runSource, 'runSafetyScope(')).toBeGreaterThanOrEqual(1)
     expect(count(runSource, 'buildRunMaskingContext(')).toBeGreaterThanOrEqual(1)
-    // The suite RunConfig masking is the run context, not the identity mint.
-    expect(runSource).toContain('masking: maskingContext')
+    // The suite RunConfig masking is the run context, not the identity mint — RESTATED by 401-04
+    // rather than relaxed. The property is unchanged; the line moved. run.ts no longer literally
+    // writes `masking: maskingContext` because run.ts no longer literally writes a `RunConfig`: it
+    // hands the seeded run context to the door's ONE assembler, and the assembler is the single
+    // place either path's `RunConfig.masking` is set. Both halves are pinned, so a door that
+    // stopped handing over the run context, or an assembler that started minting its own, is a
+    // failure here just as the old single literal was.
+    expect(runSource).toContain('maskingContext,')
+    expect(assemblySource).toContain('masking: input.maskingContext')
+    expect(count(assemblySource, 'masking:')).toBe(1)
   })
 
   it('threads the per-run SafetyHookRunner into the suite member executor', () => {
