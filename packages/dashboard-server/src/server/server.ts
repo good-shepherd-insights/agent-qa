@@ -4,6 +4,7 @@ import { join, extname, resolve } from 'node:path'
 import { cpus } from 'node:os'
 import type { DashboardDatabase } from '../db/database.js'
 import { createRouter } from './routes.js'
+import { backstopServerError, refuseUnparseableRequest, tryParseRequestUrl } from './request-url.js'
 import { TestRunner } from '../execution/test-runner.js'
 import { JobQueue } from '../queue/job-queue.js'
 import { TestFileManager } from '../tests/test-file-manager.js'
@@ -468,73 +469,106 @@ export async function startServer(opts: StartServerOptions): Promise<{
     ...(agentHost === undefined ? {} : { agentHost }),
   })
 
+  // THE PROCESS-LEVEL BACKSTOP AND THE GUARDED PARSE (400-16, gap 7). Every request enters here, so
+  // this is the choke point: an unparseable request line is answered 400 before any frame below can
+  // see it, and the whole body runs inside a `try` so a synchronous throw out of `apiRouter` — or a
+  // rejection of anything awaited below — becomes a 500 instead of an unhandled rejection that ends
+  // the process. `server.ts`'s listener is `async`, which is why the ONE `catch` covers both. The
+  // full throw-path enumeration, and what each frame owns, lives in `./request-url.ts`.
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', 'http://localhost')
-    const path = url.pathname
+    try {
+      const url = tryParseRequestUrl(req)
+      if (url === undefined) {
+        refuseUnparseableRequest(res)
+        return
+      }
+      const path = url.pathname
 
-    // API routes
-    if (path.startsWith('/api/')) {
-      apiRouter(req, res)
-      return
-    }
+      // API routes
+      if (path.startsWith('/api/')) {
+        apiRouter(req, res)
+        return
+      }
 
-    // OPTIONS preflight
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      })
-      res.end()
-      return
-    }
+      // OPTIONS preflight
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+        })
+        res.end()
+        return
+      }
 
-    // Static file serving
-    if (uiDir) {
-      const filePath = path === '/' ? join(uiDir, 'index.html') : join(uiDir, path)
+      // Static file serving
+      if (uiDir) {
+        const filePath = path === '/' ? join(uiDir, 'index.html') : join(uiDir, path)
 
-      try {
-        const fileStat = await stat(filePath)
-        if (fileStat.isFile()) {
-          const content = await readFile(filePath)
-          const ext = extname(filePath)
-          const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+        try {
+          const fileStat = await stat(filePath)
+          if (fileStat.isFile()) {
+            const content = await readFile(filePath)
+            const ext = extname(filePath)
+            const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+            res.writeHead(200, {
+              'Content-Type': contentType,
+              'Content-Length': content.length,
+              'Access-Control-Allow-Origin': '*',
+            })
+            res.end(content)
+            return
+          }
+        } catch {
+          // File not found — fall through to SPA fallback
+        }
+
+        // SPA fallback: serve index.html for non-file paths
+        try {
+          const indexPath = join(uiDir, 'index.html')
+          const content = await readFile(indexPath)
           res.writeHead(200, {
-            'Content-Type': contentType,
+            'Content-Type': 'text/html',
             'Content-Length': content.length,
             'Access-Control-Allow-Origin': '*',
           })
           res.end(content)
           return
+        } catch {
+          // No index.html available
         }
-      } catch {
-        // File not found — fall through to SPA fallback
       }
 
-      // SPA fallback: serve index.html for non-file paths
-      try {
-        const indexPath = join(uiDir, 'index.html')
-        const content = await readFile(indexPath)
-        res.writeHead(200, {
-          'Content-Type': 'text/html',
-          'Content-Length': content.length,
-          'Access-Control-Allow-Origin': '*',
-        })
-        res.end(content)
-        return
-      } catch {
-        // No index.html available
-      }
+      res.writeHead(404, { 'Content-Type': 'text/plain' })
+      res.end('Not Found')
+    } catch (error) {
+      backstopServerError(res, req, error)
     }
+  })
 
-    res.writeHead(404, { 'Content-Type': 'text/plain' })
-    res.end('Not Found')
+  // Bytes Node's own parser rejects never reach the listener above, and an unhandled `clientError`
+  // is an uncaught error on the server. Answering it in fixed bytes keeps that class inside the
+  // same posture as the rest of the enumeration.
+  server.on('clientError', (_error, socket) => {
+    if (socket.destroyed) return
+    if (socket.writable) {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+      return
+    }
+    socket.destroy()
   })
 
   const wss = new WebSocketServer({ noServer: true })
 
   server.on('upgrade', (request, socket, head) => {
-    const url = new URL(request.url ?? '/', 'http://localhost')
+    // SYNCHRONOUS, so a throw here is an uncaught EXCEPTION the listener's backstop cannot reach.
+    // The guarded parse is the only thing standing between `GET //%` with an `Upgrade` header and a
+    // dead process; `undefined` takes this handler's existing refusal idiom.
+    const url = tryParseRequestUrl(request)
+    if (url === undefined) {
+      socket.destroy()
+      return
+    }
     if (url.pathname === '/api/live-editor/ws') {
       const sessionId = url.searchParams.get('sessionId')
       if (!sessionId) {

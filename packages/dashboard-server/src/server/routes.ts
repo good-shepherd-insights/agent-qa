@@ -12,6 +12,7 @@ import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
+import { tryParseRequestUrl } from './request-url.js'
 import { CHAT_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
 import type { AgentHost } from '../chat/host.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
@@ -437,10 +438,6 @@ function llmConnectionTestTimeoutMs(config: { provider?: unknown; baseURL?: unkn
     return LOCAL_COMPATIBLE_LLM_CONNECTION_TEST_TIMEOUT_MS
   }
   return REMOTE_LLM_CONNECTION_TEST_TIMEOUT_MS
-}
-
-function parseUrl(req: IncomingMessage): URL {
-  return new URL(req.url ?? '/', 'http://localhost')
 }
 
 function json(res: ServerResponse, data: unknown, status = 200): void {
@@ -1355,7 +1352,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
   const vidDir = deps.artifactsDir ? join(deps.artifactsDir, 'videos') : undefined
 
   return (req: IncomingMessage, res: ServerResponse) => {
-    const url = parseUrl(req)
+    // 400-16 (gap 7): the SAME guarded parse `server.ts`'s listener uses, not a second copy. In the
+    // shipped process the listener has already refused an unparseable request line, so this arm is
+    // defence in depth — but this router is EXPORTED and mounted directly (the conformance suite
+    // stands it up on its own `node:http` server), and on that mount an unguarded parse is a live
+    // throw. The refusal is answered before the chat-prefix dispatch and before every route, so no
+    // frame below ever sees a URL that could not be parsed.
+    const url = tryParseRequestUrl(req)
+    if (url === undefined) {
+      json(res, { error: 'Bad Request' }, 400)
+      return
+    }
     const path = url.pathname
 
     // ---- The fourth door (400-01, D-02) --------------------------------------------------------
