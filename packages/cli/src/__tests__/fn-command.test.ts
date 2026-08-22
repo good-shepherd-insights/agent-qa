@@ -842,10 +842,19 @@ describe('agent-qa fn (generic function invoker)', () => {
 
     expect(result.exitCode).toBe(1)
     expect(result.stdout).toBe('')
-    expect(result.stderr).toContain('UnsupportedRunRequestError')
+    // 401-05: the SUCCESSOR name. The refusal moved from the spawn port's own pre-filter to the
+    // in-process drive, reading the core's exported field set — `UnsupportedRunRequestError` dies
+    // with `createCliRunExecution` in 401-10 and is no longer on this path.
+    expect(result.stderr).toContain('RunRequestFieldRefusedError')
     expect(result.stderr).toContain('scope')
     expect(result.stderr).not.toContain('FunctionNotBoundError')
     expect(result.stderr).not.toContain('Unknown function')
+    // AND NOTHING WAS READ ON THE WAY TO IT, which is the half a name change could have quietly
+    // dropped. This fixture's config declares an auth plugin that is NOT installed, so a refusal
+    // that arrived after the project's config resolution would report `PluginNotInstalledError`
+    // here — third-party code loaded for a request this seam was always going to refuse. That is
+    // the exact regression the drive's own hoisted check exists to hold.
+    expect(result.stderr).not.toContain('PluginNotInstalledError')
   })
 
   it('reports an unknown function id without throwing out of the action', async () => {

@@ -58,6 +58,8 @@ import type {
 // install the run's safety scope and map its verdict, and both of those live in packages this file
 // may not name directly.
 import {
+  REFUSED_RUN_REQUEST_FIELDS,
+  RunRequestFieldRefusedError,
   buildRunAuditSink,
   buildRunMaskingContext,
   createRunInvocationCore,
@@ -216,10 +218,36 @@ export interface InProcessCliRunExecutionOptions {
  * budget/abort machinery is the orderly containment. The `finally` below disposes the masking
  * context and does nothing else.
  */
+/**
+ * Refuse the request fields this seam does not honour, BEFORE anything is read (401-05).
+ *
+ * THE CORE MAKES THIS CHECK TOO, and its own header explains why it is first there: a refused
+ * request must leave nothing behind. That property is the core's to state but not the core's to
+ * KEEP once something stands in front of it. Everything the drive does before composing the core
+ * resolves the caller's project config, and `resolveRunInvocationInputs` LOADS AUTH PLUGINS —
+ * third-party code executed on behalf of a request this seam was always going to refuse.
+ *
+ * Measured at the fn door rather than reasoned about: `agent-qa fn runs.start` carrying `scope`,
+ * against a project declaring an auth plugin that is not installed, reported the PLUGIN's error
+ * instead of the refusal. `__tests__/fn-command.test.ts` asserts both halves — the refusal's name
+ * AND the absence of that plugin error — so the order cannot regress silently.
+ *
+ * EXPORTED because a door that reads its own preflight (the `inputs?` contract) does that read
+ * before it calls in, so the drive's own call to this is too late for it. One function, one
+ * constant, one error class, N call sites — never a second spelling of which fields are refused.
+ */
+export function refuseUnhonourableRequestFields(request: RunsStartInput): void {
+  const refused = REFUSED_RUN_REQUEST_FIELDS.filter((field) => request[field] !== undefined)
+  if (refused.length > 0) throw new RunRequestFieldRefusedError(refused)
+}
+
 export async function runInProcessCliRun(
   options: InProcessCliRunExecutionOptions,
   request: RunsStartInput,
 ): Promise<CliRunOutcome> {
+  // (0) THE REFUSAL, BEFORE ANYTHING IS READ. See `refuseUnhonourableRequestFields`.
+  refuseUnhonourableRequestFields(request)
+
   const configPath = request.configPath ?? options.configPath
   const runId = request.runId ?? mintCliRunId()
 

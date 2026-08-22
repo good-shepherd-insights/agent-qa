@@ -61,7 +61,11 @@ import type {
   TestDraftApplyRequestLike,
   TestDraftApplyResultLike,
 } from '@vostride/agent-qa-agent'
-import { composeLocalAgent, sensitiveEnvSlice } from '@vostride/agent-qa-agent-local'
+import {
+  composeLocalAgent,
+  resolveRunExecutionContext,
+  sensitiveEnvSlice,
+} from '@vostride/agent-qa-agent-local'
 import type {
   CandidateProsePosture,
   ChatApprovalDecisionRecord,
@@ -70,6 +74,7 @@ import type {
   DraftParseOutcome,
   DraftStageOutcome,
   LocalAgentHost,
+  RunExecutionContext,
   RunExecutionPort,
   SuiteTextEntry,
 } from '@vostride/agent-qa-agent-local'
@@ -454,6 +459,105 @@ export function createCliRunExecution(input: CreateCliRunExecutionInput): RunExe
         env: { ...process.env, AGENT_QA_RUN_ID: runId },
       })
       return { runId: runId as RunId }
+    },
+  }
+}
+
+/**
+ * The chat / `fn` / MCP door's run execution: the ONE in-process, policy-gated drive (401-05).
+ *
+ * D-01 — THIS RETIRES THE SECOND SPAWN FAMILY. `createCliRunExecution` above re-entered
+ * `agent-qa run` as a child process; every field a caller could not express became a `--` operand
+ * and every policy denial died in the child's stderr. That is not a theory: 401-06 measured the
+ * daemon's identical wire handing callers `RunProducedNoEventsError` while the gate's real reason
+ * and its remedies were lost. This door hands the caller `RunDeniedError` with the row's reason
+ * intact, because the gate ran in this process.
+ *
+ * D-07 — THE POSTURE TRAVELS EXPLICITLY, AND IT IS THIS DOOR'S OWN ANSWER. `executionContext` and
+ * the confirm port are resolved HERE and handed over; the core never sniffs. Both are resolved the
+ * same way the op-level gate at this host resolves them, so the two gates a single `runs.start`
+ * crosses cannot disagree about who is asking:
+ *
+ *   - the context is `input.resolveExecutionContext` when the host supplied one — the dashboard
+ *     door's live-confirm-channel answer (Pitfall 3) — and this process's real TTY/CI detection
+ *     otherwise, which is exactly what `agent-qa run` resolves for the same gate;
+ *   - the confirm is the host's own port, read by FIELD PRESENCE rather than by value (396-01
+ *     D-09), so the MCP host's `confirm: undefined` REFUSES the prompt at this gate too rather
+ *     than falling back to a tty write on the JSON-RPC channel.
+ *
+ * THE DOOR READS ITS OWN PREFLIGHT, for the reason the daemon's does: `config.safety.trustMode` is
+ * a project-level opt-in the retired child honoured because the child read the config itself, and
+ * letting it stop reaching the gate here would be a one-sided tightening nobody ratified. The
+ * resolved inputs are then handed to the drive through `inputs`, so the config, the env file and
+ * the secrets file are read once rather than twice.
+ *
+ * WHAT IS DELIBERATELY ABSENT, each because an option nothing reads is a stub with a type on it:
+ * `reader` (the D-08 dispatch-grant overlay is plan 08's, and nothing mints a `run:start` grant
+ * today), `onSession` (the D-09 dashboard bridge is 401-07's), `produceMembers` (the default
+ * dispatcher is MODE-AWARE, which is what makes an argument-less request and a suite pattern both
+ * work at this door), `subscribers` (D-04: the typed bus event log is the run's record; a reporter
+ * here would be the console tee under another name), `afterVerdict` (a `runs.start` ack is a START,
+ * not an outcome — there is no door-level fold to apply), and `trust.credential` (402's parameter).
+ *
+ * IT IS ACQUIRED THROUGH A DEFERRED IMPORT, and that is load-bearing rather than stylistic.
+ * `composition/in-process-run-execution.ts` imports `commands/run.js`'s producers statically — the
+ * surface firewall's only legal route for that vocabulary — and `commands/run.ts` imports THIS file
+ * for `createTtyConfirmPort`. A static import back would close that cycle at module-evaluation
+ * time; an ESM cycle survives only while every edge is call-time. Both of the drive's own call
+ * sites and the daemon's composition defer for the same reason.
+ */
+function createComposedRunExecution(input: {
+  readonly configPath: string
+  readonly agentQaRoot: string
+  readonly resolveExecutionContext: ComposeLocalAgentInput['resolveExecutionContext']
+  readonly confirm: ComposeLocalAgentInput['confirm']
+}): RunExecutionPort {
+  return {
+    async execute(request: RunsStartInput): Promise<{ runId: RunId }> {
+      const { resolveRunInvocationInputs } = await import('../commands/run.js')
+      const {
+        refuseUnhonourableRequestFields,
+        runInProcessCliRun,
+      } = await import('./in-process-run-execution.js')
+
+      // THE REFUSAL COMES FIRST, and at THIS door rather than only inside the drive. Reading the
+      // preflight below resolves the caller's project config and loads its auth plugins; doing
+      // that for a request the seam was always going to refuse would execute third-party code on
+      // behalf of a refused call. It is the drive's own exported predicate over the core's own
+      // field set — one spelling, applied where the ordering claim is still true.
+      refuseUnhonourableRequestFields(request)
+
+      // The request may name another config; the drive resolves against exactly this expression, so
+      // a preflight read here that used a different one would resolve a different project.
+      const configPath = request.configPath ?? input.configPath
+      // Both `warn` seams, pointed at one place. `console.warn` writes to stderr, which is the only
+      // channel free at every door this host serves: `agent-qa fn --json` owns stdout and the MCP
+      // host's stdout IS the JSON-RPC connection. Dropping them — the drive's own default — would
+      // make this the one door where a quarantine fold happens silently.
+      const warn = (message: string): void => { console.warn(message) }
+      const inputs = await resolveRunInvocationInputs({
+        configPath,
+        ...(request.patterns === undefined ? {} : { patterns: request.patterns }),
+        warn,
+      })
+
+      const outcome = await runInProcessCliRun(
+        {
+          configPath,
+          agentQaRoot: input.agentQaRoot,
+          executionContext:
+            (input.resolveExecutionContext?.() ?? resolveRunExecutionContext()) as RunExecutionContext,
+          trust: { trustMode: inputs.config.safety?.trustMode === true },
+          ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
+          inputs,
+          warn,
+        },
+        request,
+      )
+      // A NON-ZERO EXIT CODE IS A REAL RUN, not an error — the same rule the child's exit code
+      // carried. What decides whether a run happened is the durable evidence
+      // `createLocalRunInvocation` reads back, which no code here can fake.
+      return { runId: outcome.runId as RunId }
     },
   }
 }
@@ -3545,11 +3649,32 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     const config = await resolveConfig({ configPath: input.configPath, loadAuthPlugins: false })
     return resolveKnowledgeRoot(config.knowledge, dirname(resolve(input.configPath)))
   }
+  // THE DOOR'S CONFIRM, RESOLVED ONCE FOR BOTH GATES (401-05, D-07).
+  //
+  // It was resolved inline in the `composeLocalAgent` literal below until this host gained a second
+  // gate to answer for. Two resolutions of "is there somebody at this door" would be free to
+  // disagree — and the way they would disagree is the dangerous direction: the op-level gate
+  // refusing to prompt while the run gate wrote a tty prompt onto a JSON-RPC connection.
+  //
+  // 396-01 D-09's rule is preserved exactly, because it is the whole reason this is a hoist rather
+  // than a `??`: the FIELD's presence is read, not its value. `confirm: undefined` (the MCP host)
+  // REFUSES to ask at both gates; an absent field defaults to "prompt where there is somebody to
+  // prompt", which is every other CLI invocation.
+  const doorConfirm = 'confirm' in input ? input.confirm : createTtyConfirmPort()
 
   return composeLocalAgent({
     agentQaRoot: input.agentQaRoot,
     mintQuarantineIdentityPath: createQuarantineIdentityMint(input.configPath),
-    runExecution: input.runExecution ?? createCliRunExecution({ configPath: input.configPath }),
+    // 401-05 (D-01/D-07): the default is the in-process policy-gated drive. `createCliRunExecution`
+    // — the child spawn — is still declared above because 401-10 owns its deletion once every
+    // consumer is gone; it is no longer composed anywhere. `input.runExecution` stays the
+    // injectable override, which is what the pre-401 cells substitute.
+    runExecution: input.runExecution ?? createComposedRunExecution({
+      configPath: input.configPath,
+      agentQaRoot: input.agentQaRoot,
+      resolveExecutionContext: input.resolveExecutionContext,
+      confirm: doorConfirm,
+    }),
     // 393 D-01: the keep-gate evaluator's host half, bound UNCONDITIONALLY on this host — a CLI
     // always has a config path, therefore a checkout root, therefore both verbs. Together with the
     // run executor one line up, this is what makes `authoring.draft.verify` read `bound` in this
@@ -3693,9 +3818,6 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // answer, and for the MCP host they must not be: its stdout is the JSON-RPC channel, so a tty
     // prompt written there does not go unanswered, it breaks every client on the connection. An
     // absent field still defaults to "prompt where there is somebody to prompt".
-    ...(() => {
-      const confirm = 'confirm' in input ? input.confirm : createTtyConfirmPort()
-      return confirm === undefined ? {} : { confirm }
-    })(),
+    ...(doorConfirm === undefined ? {} : { confirm: doorConfirm }),
   })
 }
