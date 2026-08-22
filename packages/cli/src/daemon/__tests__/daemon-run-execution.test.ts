@@ -1,0 +1,446 @@
+// The daemon dispatches runs through the ONE in-process core (Phase 401 plan 06, INVK-02).
+//
+// WHAT THESE CELLS ARE ABOUT. The daemon used to answer `runs.start` by spawning a piped
+// `agent-qa run` child, tee-ing its stdout/stderr into two files beside the run and recording the
+// child's exit code. Three facts change with that retirement and each one needs saying out loud:
+//
+//   1. THE POSTURE IS CARRIED, NOT SNIFFED (D-07). The daemon hands the drive an EXPLICIT
+//      `local-headless` and no confirm port, so ask-tier work with no credential fails closed BY
+//      CONSTRUCTION. The old wire decided in the CHILD, whose context came from the child's own
+//      ambient — which is why the retired cell asserted `executionContext: 'ci'` when
+//      `GITHUB_ACTIONS` was set. So the cell below VARIES the ambient and requires the injected
+//      value to win. A cell that passed because the ambient default happened to be
+//      `local-headless` would prove nothing: this process pins exactly that at daemon startup.
+//   2. THE BUS EVENT LOG IS THE RECORD (D-04). No `run-child.stdout.log`, no
+//      `run-child.stderr.log`, ever again. The ABSENCE is asserted by listing the run directory,
+//      not by trusting the code path that stopped writing them.
+//   3. THE JOB-OUTCOME ANALYTICS SURVIVES THE MOVE. Same event name, same closed key set, same
+//      `job_kind`, same two-valued `outcome` — now read off the run's own completion instead of a
+//      child's exit code. The pre-change reading these are differenced against was taken on the
+//      old wire before a line moved and is pasted in `401-06-SUMMARY.md`.
+//
+// DRIVEN THROUGH THE PRODUCTION FRAMES. Every cell starts a REAL `runDaemonHost`, dispatches
+// through the REAL socket with `invokeViaDaemon`, and composes the REAL production run execution —
+// nothing here injects a `runExecution`. The 399/400 scar is a fixture that mounted the unit
+// without its production frames and proved a process-level truth on a bare router; the truths above
+// are all about what a daemon PROCESS does, so a bare port in a fixture could not carry them.
+//
+// EVERY RUN BELOW IS A REAL RUN. The fixture's model points at an unbindable port and
+// `PLAYWRIGHT_BROWSERS_PATH` is an empty directory, so a member fails fast — but it fails DOWNSTREAM
+// of `startRun`, which is the point: the artifacts a started run leaves are what these cells read.
+
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+
+import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import {
+  getActiveExecutionContext,
+  setActiveExecutionContextResolver,
+} from '@vostride/agent-qa-safety'
+import { afterEach, describe, expect, it } from 'vitest'
+
+import { composeAnalyticsHost } from '../../composition/analytics-host.js'
+import {
+  CountingTarget,
+  auditRows,
+  buildOrdinalsExist,
+  createInProcessFixture,
+  eventTypes,
+  runDirs,
+} from '../../composition/__tests__/in-process-run-fixture.js'
+import type { InProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import { invokeViaDaemon } from '../client.js'
+import { DAEMON_EVENTS_FILE } from '../events.js'
+import { runDaemonHost } from '../host.js'
+import type { DaemonHostOperations } from '../host.js'
+
+/**
+ * The capture files that retired with the child (D-04).
+ *
+ * Spelled here rather than imported, and that is the point: nothing in the daemon's own closure
+ * names them any more, so there is no constant left to import.
+ */
+const RETIRED_CAPTURE_FILES = ['run-child.stdout.log', 'run-child.stderr.log'] as const
+
+const TEST_MODEL: JobModelCapability = {
+  modelId: 'test:daemon-run-execution',
+  generate: () => Promise.resolve({ text: 'unused' }),
+}
+
+function testConfig(configPath: string): ConfigReaderPort {
+  return {
+    getMasked: () => Promise.resolve({ schemaVersion: 1, configPath, entries: [] }),
+  }
+}
+
+const temporaryRoots: string[] = []
+
+/** The process-global resolver is exactly that; a leaked pin poisons every sibling cell. */
+const shippedExecutionContextResolver = getActiveExecutionContext
+let restoreResolver: (() => void) | undefined
+
+/**
+ * Vary the ambient AFTER the daemon has started, which is what makes the D-07 claim measurable.
+ *
+ * `runDaemonHost`'s first effect is `pinLocalHeadlessExecutionContext()`, so an ambient read taken
+ * at any point during a dispatched run would answer `local-headless` for free. Re-pinning here
+ * DEFEATS that startup pin, so a run that still gates as `local-headless` can only be doing it
+ * because the daemon CARRIED the value into the invocation.
+ *
+ * BOTH AMBIENT CHANNELS ARE TURNED, not one. The resolver is what an in-process reader would
+ * consult; `GITHUB_ACTIONS` is what a SPAWNED reader would have consulted, and it is set here as
+ * well so this cell reds against the retired child wire too (measured: the pre-change daemon's
+ * child recorded `executionContext: 'ci'` under exactly this env). One channel would have left the
+ * other as a way for an ambient read to survive the cell.
+ */
+function varyAmbientExecutionContext(value: 'ci' | 'local-interactive'): void {
+  const savedGithubActions = process.env.GITHUB_ACTIONS
+  process.env.GITHUB_ACTIONS = '1'
+  setActiveExecutionContextResolver(() => value as never)
+  restoreResolver = () => {
+    setActiveExecutionContextResolver(() => shippedExecutionContextResolver())
+    if (savedGithubActions === undefined) delete process.env.GITHUB_ACTIONS
+    else process.env.GITHUB_ACTIONS = savedGithubActions
+  }
+}
+
+afterEach(() => {
+  restoreResolver?.()
+  restoreResolver = undefined
+  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+interface DaemonProject {
+  readonly fixture: InProcessFixture
+  readonly knowledgeRoot: string
+}
+
+/** A run project the daemon will serve from, plus the empty browsers root the member fails on. */
+function daemonProject(input: { origin: string; environment: 'local' | 'shared' }): DaemonProject {
+  const fixture = createInProcessFixture({ origin: input.origin, environment: input.environment })
+  temporaryRoots.push(fixture.project)
+  const browsersRoot = join(fixture.project, 'no-browsers')
+  if (!existsSync(browsersRoot)) mkdirSync(browsersRoot, { recursive: true })
+  process.env.PLAYWRIGHT_BROWSERS_PATH = browsersRoot
+  const knowledgeRoot = join(fixture.project, 'agent-qa-knowledge')
+  return { fixture, knowledgeRoot }
+}
+
+function signalHarness(): {
+  readonly operations: Partial<DaemonHostOperations>
+  signal(signal: NodeJS.Signals): void
+} {
+  const listeners = new Map<NodeJS.Signals, () => void>()
+  return {
+    operations: {
+      setInterval: (_callback, intervalMs) => (
+        intervalMs as unknown as ReturnType<typeof setInterval>
+      ),
+      clearInterval: () => undefined,
+      onSignal: (signal, listener) => listeners.set(signal, listener),
+      offSignal: (signal, listener) => {
+        if (listeners.get(signal) === listener) listeners.delete(signal)
+      },
+      hardExit: (code) => {
+        throw new Error(`unexpected daemon hard exit ${code}`)
+      },
+    },
+    signal(signal) {
+      const listener = listeners.get(signal)
+      if (listener === undefined) throw new Error(`${signal} listener was not installed`)
+      listener()
+    },
+  }
+}
+
+async function waitUntil(
+  predicate: () => boolean,
+  message: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(message)
+    await new Promise((settle) => setTimeout(settle, 10))
+  }
+}
+
+function readDaemonEvents(agentQaRoot: string): Array<Record<string, unknown>> {
+  const path = join(agentQaRoot, DAEMON_EVENTS_FILE)
+  if (!existsSync(path)) return []
+  return readFileSync(path, 'utf8')
+    .trim()
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+/** Every file the invocation left in every run directory — the list the D-04 absence reads. */
+function runDirFiles(fixture: InProcessFixture): string[] {
+  return runDirs(fixture as never).flatMap((dir) => readdirSync(dir))
+}
+
+interface CapturedEvent {
+  readonly name: string
+  readonly properties: Record<string, unknown>
+}
+
+/**
+ * Drive one real daemon over one real dispatch, with the SHIPPED analytics composition and only the
+ * transport replaced — the opt-out decision, the identity gate and the closed union are the real
+ * ones. Nothing here injects a `runExecution`: what is measured is the production binding.
+ */
+async function dispatchThroughDaemon(input: {
+  readonly project: DaemonProject
+  readonly patterns: readonly string[]
+  readonly varyAmbient?: 'ci' | 'local-interactive'
+}): Promise<{
+  /** The ack, when the dispatch succeeded. */
+  acknowledged: unknown
+  /**
+   * What the CALLER got instead, when it did not.
+   *
+   * `invokeViaDaemon` rehydrates a function-layer failure into a thrown `Error` rather than
+   * returning an envelope, so a denial arrives here — and this is the surface a person sees.
+   */
+  refusal: unknown
+  analyticsEvents: CapturedEvent[]
+  hostErrors: string[]
+}> {
+  const { fixture, knowledgeRoot } = input.project
+  const signals = signalHarness()
+  const sent: CapturedEvent[] = []
+  const hostErrors: string[] = []
+  let started = false
+
+  const analytics = await composeAnalyticsHost({
+    surface: 'daemon',
+    env: {},
+    transportOverride: {
+      capture: (payload) => { sent.push(payload.event as CapturedEvent) },
+      flush: () => {},
+      shutdown: () => {},
+    },
+    resolveIdentity: async () => ({ distinctId: 'u_daemon-cell', runtimeContext: 'user' }),
+  })
+
+  const running = runDaemonHost({
+    agentQaRoot: fixture.agentQaRoot,
+    knowledgeRoot,
+    configPath: fixture.configPath,
+    config: testConfig(fixture.configPath),
+    model: () => TEST_MODEL,
+    operations: signals.operations,
+    analytics,
+    logger: {
+      info: () => { started = true },
+      error: (message) => hostErrors.push(message),
+    },
+  })
+  await waitUntil(() => started, 'daemon did not finish starting')
+
+  // AFTER startup, so the startup pin is the thing being defeated rather than the thing relied on.
+  if (input.varyAmbient !== undefined) varyAmbientExecutionContext(input.varyAmbient)
+
+  let acknowledged: unknown
+  let refusal: unknown
+  try {
+    acknowledged = await invokeViaDaemon({
+      agentQaRoot: fixture.agentQaRoot,
+      functionId: 'runs.start',
+      input: { patterns: [...input.patterns] },
+    })
+  } catch (error) {
+    refusal = error
+  } finally {
+    await analytics.flush()
+    signals.signal('SIGTERM')
+    await running
+  }
+
+  return { acknowledged, refusal, analyticsEvents: sent, hostErrors }
+}
+
+describe('the daemon dispatches runs through the in-process core (401-06, INVK-02)', () => {
+  it(
+    'PARITY — the dispatched run happens in process: job analytics, a run-completed daemon event, and NO capture files',
+    async () => {
+      const target = new CountingTarget()
+      await target.listen()
+      try {
+        const project = daemonProject({ origin: target.origin, environment: 'local' })
+        const { fixture } = project
+        const { acknowledged, refusal, analyticsEvents } = await dispatchThroughDaemon({
+          project,
+          patterns: [fixture.suitePattern],
+        })
+
+        // THE RUN HAPPENED, and the ack came off the durable record the composition read back.
+        expect(refusal, `runs.start refused: ${String(refusal)}`).toBeUndefined()
+        const runId = (acknowledged as { runId?: string }).runId
+        expect(runId, `runs.start did not acknowledge a run: ${JSON.stringify(acknowledged)}`)
+          .toMatch(/^r_/)
+        const events = eventTypes(fixture as never)
+        expect(events).toContain('runStarted')
+        // THE MEMBER RAN. Without this a dispatch that assembled zero members would pass on
+        // `runStarted` alone — which is the suite half's own failure mode.
+        expect(events).toContain('testStarted')
+        // The gate allowed it, so the run-start baseline probe knocked: the converse of the denial.
+        expect(target.hits).toEqual(['/in-process-thing'])
+        expect(buildOrdinalsExist(fixture as never)).toBe(true)
+
+        // D-07, THE ALLOW ARM: the row records the context the daemon CARRIED.
+        const rows = auditRows(fixture as never)
+        expect(rows.map((row) => row.outcome)).toContain('proceeded')
+        expect(rows.map((row) => row.executionContext)).toEqual(
+          rows.map(() => 'local-headless'),
+        )
+
+        // D-04: THE ABSENCE, read off the directory listing rather than off the code path.
+        const files = runDirFiles(fixture)
+        expect(files).toContain('events.jsonl')
+        expect(files).toContain('handoff.json')
+        for (const retired of RETIRED_CAPTURE_FILES) {
+          expect(files, `${retired} is still being written`).not.toContain(retired)
+        }
+
+        // The durable daemon event: the honest successor of `run-child-exit` (there is no child).
+        const completions = readDaemonEvents(fixture.agentQaRoot)
+          .filter((event) => event.kind === 'run-completed')
+        expect(completions).toHaveLength(1)
+        expect(completions[0]).toEqual({
+          ts: expect.any(String),
+          kind: 'run-completed',
+          runId,
+          outcome: 'failed',
+        })
+        expect(readDaemonEvents(fixture.agentQaRoot).map((event) => event.kind))
+          .not.toContain('run-child-exit')
+
+        // THE ANALYTICS PARITY DIFFERENTIAL. Same event, same closed key set, same `job_kind` — and
+        // an `outcome` READ BACK off the run's own handoff rather than typed into this cell, so a
+        // daemon that emitted a constant reds here instead of agreeing with itself.
+        const jobEvents = analyticsEvents
+          .filter((event) => event.name === 'agent-qa.daemon.job.completed')
+        expect(jobEvents).toHaveLength(1)
+        const handoffPath = runDirs(fixture as never)
+          .map((dir) => join(dir, 'handoff.json'))
+          .find((path) => existsSync(path))
+        const aggregateVerdict = (
+          JSON.parse(readFileSync(handoffPath!, 'utf8')) as { aggregateVerdict: string }
+        ).aggregateVerdict
+        // Non-vacuity: the read-back is only a discriminator while the two arms can differ.
+        expect(aggregateVerdict).toBe('failed')
+        expect(jobEvents[0]?.properties).toMatchObject({
+          job_kind: 'run',
+          outcome: aggregateVerdict === 'passed' ? 'completed' : 'failed',
+          run_id: runId,
+          surface: 'daemon',
+        })
+        // Byte-identical to the key set the OLD wire emitted (measured pre-change; see SUMMARY).
+        expect(Object.keys(jobEvents[0]?.properties ?? {}).sort()).toEqual([
+          '$process_person_profile',
+          'agent_qa_version',
+          'job_kind',
+          'outcome',
+          'run_id',
+          'runtime_context',
+          'surface',
+        ])
+      } finally {
+        await target.close()
+      }
+    },
+    180_000,
+  )
+
+  it(
+    'DENIAL — ask-tier work denies fail-closed under the daemon\'s EXPLICIT carriage, with the ambient varied against it',
+    async () => {
+      const target = new CountingTarget()
+      await target.listen()
+      try {
+        // ONE FIELD DIFFERENT from the parity cell: `environment: shared` instead of `local`.
+        const project = daemonProject({ origin: target.origin, environment: 'shared' })
+        const { fixture } = project
+        const { acknowledged, refusal } = await dispatchThroughDaemon({
+          project,
+          patterns: [fixture.suitePattern],
+          // THE CROSSING. `local-interactive` is the ambient under which this exact input would
+          // have been PROMPTED — and, with no confirm port, recorded `prompted-denied`. The row
+          // below says `fail-closed-denied`, which only the injected `local-headless` produces.
+          varyAmbient: 'local-interactive',
+        })
+
+        // (a) the audit row's OUTCOME field, never a message substring
+        const rows = auditRows(fixture as never)
+        expect(rows).toHaveLength(1)
+        expect(rows[0]!.outcome).toBe('fail-closed-denied')
+        // …and the context it decided in is the one the daemon carried, not the one in the air.
+        expect(rows[0]!.executionContext).toBe('local-headless')
+        // (b) no run events — `runStarted` is seq 1 of any run that began at all
+        expect(eventTypes(fixture as never)).toEqual([])
+        // (c) the durable assembly side effect never happened
+        expect(buildOrdinalsExist(fixture as never)).toBe(false)
+        // (d) nobody knocked on the target
+        expect(target.hits).toEqual([])
+        // (e) the reason the CALLER sees, read back off the row rather than typed in here — which
+        // pins the door to rendering the gate's decision instead of composing its own.
+        expect(acknowledged).toBeUndefined()
+        expect(String((refusal as Error | undefined)?.message)).toContain(rows[0]!.reason)
+
+        // The daemon recorded the refused job HONESTLY: a typed denial, not a crash.
+        const completions = readDaemonEvents(fixture.agentQaRoot)
+          .filter((event) => event.kind === 'run-completed')
+        expect(completions).toHaveLength(1)
+        expect(completions[0]).toMatchObject({ kind: 'run-completed', outcome: 'failed' })
+      } finally {
+        await target.close()
+      }
+    },
+    180_000,
+  )
+
+  it(
+    'THE CROSSING IS REAL — the same input under local-interactive records prompted-denied, not fail-closed-denied',
+    async () => {
+      // WHY THIS CELL EXISTS. The denial above is only a D-07 measurement while the ambient it
+      // defeats would genuinely have produced something else. Against a `local` target the outcome
+      // is `proceeded` in every context; against `ci` it is `fail-closed-denied` in every context.
+      // So the discriminating pair is `local-headless` vs `local-interactive`, and this is the OTHER
+      // side of it, measured on the same fixture shape with the same absent confirm port.
+      //
+      // DRIVEN AT THE DRIVE, deliberately. The claim here is about the gate's own arms, not about
+      // what a daemon does — the daemon cannot be asked to carry `local-interactive`, because
+      // carrying `local-headless` is the thing under test one cell up.
+      const target = new CountingTarget()
+      await target.listen()
+      try {
+        const { fixture } = daemonProject({ origin: target.origin, environment: 'shared' })
+        const { runInProcessCliRun } = await import('../../composition/in-process-run-execution.js')
+        let denial: unknown
+        try {
+          await runInProcessCliRun(
+            {
+              configPath: fixture.configPath,
+              agentQaRoot: fixture.agentQaRoot,
+              executionContext: 'local-interactive',
+            },
+            { patterns: [fixture.suitePattern] },
+          )
+        } catch (error) {
+          denial = error
+        }
+
+        expect(denial).toBeDefined()
+        const rows = auditRows(fixture as never)
+        expect(rows).toHaveLength(1)
+        expect(rows[0]!.outcome).toBe('prompted-denied')
+        expect(rows[0]!.executionContext).toBe('local-interactive')
+      } finally {
+        await target.close()
+      }
+    },
+    180_000,
+  )
+})
