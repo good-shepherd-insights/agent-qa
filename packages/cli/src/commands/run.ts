@@ -1335,8 +1335,14 @@ async function resolveSelectedAuthStateForRun(input: {
       target: { platform: input.resolvedTarget.platform },
     })
   } catch (err) {
-    console.error(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
-    process.exit(2)
+    // 401-11: a config refusal, not a dead host. Found by the task-4 census's TRANSITIVE route-2
+    // scan — this helper is two calls from the in-process path (`produceDirectRunMembers` → the
+    // member closure → here), so a daemon serving a run whose auth-state config is wrong would have
+    // exited on it. A scan that stopped at the exported bodies would have called the path clean.
+    throw new CliRunInputError(
+      [pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`)],
+      2,
+    )
   }
 }
 
@@ -1356,8 +1362,11 @@ function resolveAuthStateCapturePathsForRun(input: {
       target: { platform: input.resolvedTarget.platform },
     })
   } catch (err) {
-    console.error(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
-    process.exit(2)
+    // Same class, same finding, same fix as its sibling above.
+    throw new CliRunInputError(
+      [pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`)],
+      2,
+    )
   }
 }
 
