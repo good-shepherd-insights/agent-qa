@@ -319,61 +319,20 @@ interface AskingSessionScope {
 }
 
 /**
- * WHICH conversation this door can put a question in front of, right now (400-13, gap 3 / D-05).
- *
- * ONE PREDICATE WITH TWO CONSUMERS, AND THAT IS THE WHOLE REPAIR. The confirm port needs a target
- * ("which watched conversation has a turn in flight") and the execution-context resolver needs a
- * posture ("can this door actually deliver an ask-tier question to a person"). Those used to be two
- * rules with two spellings, and they disagreed in the one direction that matters: the resolver
- * asked whether ANY channel was live anywhere, so a stream held open on one conversation made a
- * DIFFERENT, unwatched conversation's ask-tier denial read `prompted-denied` on the audit row — a
- * prompt nobody was shown, where the same op with no stream at all is recorded `fail-closed-denied`.
- * Answering both from here makes `local-interactive` mean exactly "the confirm reaches the asker".
- *
- * WATCHED **AND** IN FLIGHT. A live channel says a browser is there; an active turn id says that
- * conversation is the one waiting on an answer. Neither alone identifies the asker.
- *
- * FAIL-SAFE ON AMBIGUITY (392-12): a `ConfirmPort` is handed an action and no caller, so with more
- * than one candidate it cannot tell which conversation is asking — and a question shown in the
- * wrong transcript IS the defect, where a denial is not. Two watched mid-turn conversations
- * therefore now fail closed IN THE GATE, by name, instead of reaching the port and being refused
- * there under a `prompted-denied` row.
- *
- * THE TWO REGISTRY READS ARE ASKED SEPARATELY ON PURPOSE. `liveSessionIds()` enumerates candidates;
- * `hasLiveChannel(sessionId)` is what makes reachability a per-conversation answer rather than a
- * property of that list, so an enumeration that ever widened could not smuggle an unreachable
- * conversation through.
- *
- * STRUCTURALLY TYPED over the two members it reads, so this module keeps its type-only relationship
- * with `@vostride/agent-qa-dashboard` — the CLI loads that package lazily, and a value import here
- * would put the whole dashboard server on the startup path of every `agent-qa` invocation.
- */
-export function watchedTurnSession(
-  confirms: Pick<ConfirmRegistry, 'liveSessionIds' | 'hasLiveChannel'> | undefined,
-  hasTurnInFlight: (sessionId: string) => boolean,
-): string | undefined {
-  if (confirms === undefined) return undefined
-  const candidates = confirms.liveSessionIds()
-    .filter((sessionId) => confirms.hasLiveChannel(sessionId) && hasTurnInFlight(sessionId))
-  return candidates.length === 1 ? candidates[0] : undefined
-}
-
-/**
  * Is a person reachable RIGHT NOW, ON THE CONVERSATION BEING GATED? (400-03 / 400-13 / 400-15,
  * D-05 · RESEARCH Pattern 2.)
  *
- * THE CLAIM TAKES THE ASKER, and that argument is the whole of gap 3's round-2 repair. 400-13 made
- * this answer resolve through {@link watchedTurnSession} — which conversation this door can hand a
- * question to — but it never asked WHO WAS ASKING, so the answer stayed a fact about the PROCESS. A
- * verifier held conversation A watched and in flight and drove an ask-tier op on an unwatched
- * conversation B: the door answered `local-interactive` for B, the gate took its ask arm, B's
- * question was rendered into A's transcript, and B's audit row recorded `prompted-denied` — a
- * prompt B's reader was never shown, one click away from executing B's op on A's say-so.
+ * THE CLAIM TAKES THE ASKER AND ASKS ABOUT THE ASKER. The question is whether THIS conversation —
+ * the one being gated — has a channel live on it AND a turn in flight on it. A live channel says a
+ * browser is there; an active turn id says that conversation is the one waiting on an answer.
+ * Neither alone identifies a reachable asker, and neither is a fact about the process.
  *
- * THE COMPARISON IS THE MECHANISM: interactive exactly when the conversation this door could reach
- * IS the conversation that asked. The round-13 predicate is REUSED rather than re-spelled, so its
- * `>1-watched → undefined` fail-safe survives untouched (two watched mid-turn conversations compare
- * unequal to every asker and still fail closed in the gate), and this adds only `=== the asker`.
+ * WHICH IS WHY NOTHING HERE COUNTS ASKERS (400-17, ratified 2026-08-22). Two conversations that are
+ * each watched and each in flight are each interactive FOR THEMSELVES: each raises its own question
+ * in its own transcript, and answering one settles nothing of the other's. The wrong-transcript
+ * defect stays closed STRUCTURALLY rather than by uniqueness — the confirm target is the ambient
+ * asking conversation (400-15), so a question can only ever reach the conversation that asked it or
+ * be refused, and widening this posture to concurrent conversations cannot widen who approves.
  *
  * AN UNNAMED ASKER IS HEADLESS BY CONSTRUCTION, which is WINDOWS #192 rather than an oversight: a
  * dashboard conversation's FIRST turn carries no session id — the engine mints it — and a browser
@@ -392,9 +351,9 @@ export function watchedTurnSession(
  */
 export function postureFor(
   askingSession: string | undefined,
-  watched: () => string | undefined,
+  watchedAndInFlight: (sessionId: string) => boolean,
 ): ExecutionContext {
-  return askingSession !== undefined && watched() === askingSession
+  return askingSession !== undefined && watchedAndInFlight(askingSession)
     ? 'local-interactive'
     : 'local-headless'
 }
@@ -517,9 +476,9 @@ export interface DashboardDoorInput {
    * computed INSIDE the composition, because it reads the composed host's own turn state through
    * the mutable box below. A caller outside cannot answer it, so production used to hand in the
    * one answer it COULD compute (any channel anywhere) and the door stated a posture it had no way
-   * to know. Absent now means the door derives it from {@link postureFor} over
-   * {@link watchedTurnSession} and the ambient asking conversation; supplied is the spec's
-   * explicit-override rung, which is the conformance suite's posture and unchanged.
+   * to know. Absent now means the door derives it from {@link postureFor} over its own
+   * per-conversation watched-and-in-flight predicate and the ambient asking conversation; supplied
+   * is the spec's explicit-override rung, which is the conformance suite's posture and unchanged.
    *
    * WHAT IS NOT DEFAULTED IS THE PROCESS. Neither arm ever falls back to TTY and CI markers, which
    * is the ambient reach this seam exists to remove.
@@ -632,15 +591,14 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
   const askingSessions = new AsyncLocalStorage<AskingSessionScope>()
   const askingSession = (): string | undefined => askingSessions.getStore()?.askingSession
 
-  // THE ONE PREDICATE, read through the box above: WHICH conversation this door could hand a
-  // question to right now. It is a fact about the door, and on its own it is not a posture — see
-  // `watchedTurnSession` for the fail-safe it carries, and `postureFor` for the comparison that
-  // turns it into a claim about the conversation actually being gated.
-  const watchedSession = (): string | undefined =>
-    watchedTurnSession(
-      confirms,
-      (sessionId) => composed?.chat.stateFor(sessionId)?.activeTurnId !== undefined,
-    )
+  // THE ONE SPELLING of "is THIS conversation watched and in flight", read through the mutable box
+  // above because the composed host does not exist yet at composition time. It is asked about a
+  // NAMED conversation and about nothing else; `postureFor` is what turns it into a claim about the
+  // conversation actually being gated, by asking it of the asker.
+  const watchedAndInFlight = (sessionId: string): boolean =>
+    confirms !== undefined
+    && confirms.hasLiveChannel(sessionId)
+    && composed?.chat.stateFor(sessionId)?.activeTurnId !== undefined
 
   /**
    * The posture this door decides under, for a NAMED conversation (400-15).
@@ -648,12 +606,12 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
    * The explicit-override rung first — supplied is the spec §2.2 rung the conformance suite
    * composes, and it answers for the whole door by construction because that is what an injected
    * context IS. Absent, the honest per-conversation claim. No `confirms` needs no separate arm: the
-   * predicate answers `undefined` for a door with no channel at all, so every asker compares
-   * unequal and the translated no-TTY posture falls out of the one rule.
+   * predicate answers false for every asker on a door with no confirm channel, so the translated
+   * no-TTY posture falls out of the one rule.
    */
   const postureOf = (sessionId: string | undefined): ExecutionContext =>
     input.resolveExecutionContext === undefined
-      ? postureFor(sessionId, watchedSession)
+      ? postureFor(sessionId, watchedAndInFlight)
       : input.resolveExecutionContext()
 
   // WHAT THE GATE READS. Zero-arg because `invoke.ts` calls it with nothing — the narrowing happens
