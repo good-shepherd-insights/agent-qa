@@ -191,10 +191,21 @@ export const AuthoringDraftWriteInputSchema = z.object({
    * THE `.describe()` BELOW IS THE HUMAN-FACING HALF, AND IT IS WHY IT IS A `.describe()` RATHER
    * THAN THIS DOC BLOCK (400-04, D-19). A JSDoc comment documents this field for whoever opens
    * this file; it reaches no reader of the product. The capability catalog is PRODUCED from the
-   * declarations — `params` is the JSON-Schema projection of this very object — and `/help`,
-   * `explain` and the chat type-ahead are all projections of that ONE committed artifact. So a
-   * description attached HERE is the single edit that documents `scope` on every human-facing
-   * surface at once, and a paragraph anywhere else is a paragraph the product never says.
+   * declarations — `params` is the JSON-Schema projection of this very object — so a description
+   * attached HERE is the single edit that documents `scope` on the surfaces that project `params`,
+   * and a paragraph anywhere else is a paragraph the product never says.
+   *
+   * WHICH SURFACES THOSE ARE WAS MEASURED, NOT ASSUMED (400-12, WINDOWS #189). An earlier version
+   * of this block claimed `/help`, `explain` and the chat type-ahead were "all projections of that
+   * ONE committed artifact". They are not, and the claim was measured FALSE: `/help` and the
+   * type-ahead render `row.description` (the op summary) rather than `params`, and `explain`
+   * deliberately withholds params from its prompt (`explain-port.ts:17`, D-10-sanctioned charter
+   * design). They project a different FIELD of the same artifact. The surfaces this `.describe()`
+   * actually reaches are the capability catalog row, `init --agent`, MCP `tools/list`, and the
+   * dashboard's served `GET /api/chat/catalog` — the D-19 letter as RATIFIED on 2026-08-22, and
+   * pinned in both directions by `packages/cli/src/__tests__/scope-doc-surfaces.test.ts`.
+   * Projecting `params` into `/help` and the type-ahead stays open as a Rule-4 design question
+   * (WINDOWS #189); it needs resolver-table surgery, not a wider sentence here.
    *
    * The 399 rehearsal measured what its absence costs: `/fn authoring.draft.write` ROUTES, meets
    * the confirm interactively, and then fails on `AuthoringScopeUnresolvableError` naming targets
@@ -367,8 +378,11 @@ export const AuthoringFunnelGetInputSchema = z.object({
    * AND THE HUMAN IS THE ONLY READER THIS TEXT HAS. `window` is host-stamped for the planner —
    * `WINDOW_STAMPED_FUNCTION_IDS` carries this op, so `modelFacingInput()` drops `window` from
    * `required` and the model is told it will be supplied. So this description is not planner
-   * guidance at all; it exists for `/help`, `explain` and the type-ahead, which is precisely the
-   * surface D-19 says was undocumented.
+   * guidance at all; it exists for the human-facing surfaces D-19 says were undocumented — which,
+   * as MEASURED by 400-12 (WINDOWS #189), are the capability catalog row, `init --agent`, MCP
+   * `tools/list` and the dashboard's served `GET /api/chat/catalog`. NOT `/help`, `explain` or the
+   * type-ahead: those render `row.description`, or withhold params by charter. See the `scope`
+   * field's doc block above for the full measurement and the D-19 ratification.
    */
   window: AuthoringFunnelWindowSchema.describe(
     'Which drafts to count — a span of history, NOT a product. `{"scope":"session","sessionRef":'
