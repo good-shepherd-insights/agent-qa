@@ -35,6 +35,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { RunsStartInputSchema } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 /** `packages/cli/src/__tests__` → one level up is the package's whole shipped source tree. */
@@ -189,4 +190,45 @@ describe('no file in the CLI package acquires startRun (T-401-11, INVK-02 criter
     // single composition would mean one of the two paths quietly stopped starting runs.
     expect(runSource.match(/createRunInvocationCore\(/g) ?? []).toHaveLength(2)
   })
+})
+
+// ---------------------------------------------------------------------------------------------
+// The other half of RESEARCH Open Q2's disposition, which is an ABSENCE and therefore needs saying.
+//
+// Three of this command's options were open questions when the core was designed: `--dry-run`,
+// `--junit-output` and `--detach`. D-02's ratified answer is that all three stay CLI-SURFACE
+// concerns the command composes AROUND the core, and that NONE of them enters `RunsStartInput`.
+// The `--dry-run` half is a behaviour, measured on the shipped binary
+// (`run-gate-suite.e2e.test.ts`). The other two are an absence: junit is a bus subscriber the door
+// attaches in `onSession`, detach gates the curation drain after `execute` returns, and neither is
+// a field a caller could name.
+//
+// AN ABSENCE ASSERTED ON THE CONTRACT ITSELF, not on a grep for the words. `RunsStartInput` is the
+// wire; its key set is the complete list of what a caller may say. Pinning the SET (rather than
+// checking three names are missing from it) is what makes this survive the next field somebody
+// adds: a fourth CLI-surface option quietly promoted to a request field fails here, and so does a
+// legitimate addition — which is correct, because a change to what a caller may ask for is a
+// contract change and should have to be written down twice.
+describe('the CLI-surface options never entered the invocation contract (Open Q2 / D-02)', () => {
+  const REQUEST_FIELDS = [
+    'patterns',
+    'runId',
+    'scope',
+    'executionContext',
+    'configPath',
+    'gateRun',
+    'excludedFromOutcomes',
+  ] as const
+
+  it('RunsStartInput is exactly these seven fields', () => {
+    expect(Object.keys(RunsStartInputSchema.shape).sort()).toEqual([...REQUEST_FIELDS].sort())
+  })
+
+  it.each(['junitOutput', 'detach', 'dryRun', 'trustSession'])(
+    'a caller naming %s is REFUSED rather than silently ignored (the strict shape)',
+    (option) => {
+      const result = RunsStartInputSchema.safeParse({ [option]: true })
+      expect(result.success).toBe(false)
+    },
+  )
 })
