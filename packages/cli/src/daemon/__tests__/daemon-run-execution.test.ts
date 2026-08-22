@@ -30,7 +30,8 @@
 // of `startRun`, which is the point: the artifacts a started run leaves are what these cells read.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
@@ -464,4 +465,176 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
     },
     180_000,
   )
+})
+
+// ==============================================================================================
+// TRUTH 2 AS A COMPLETE-SET CENSUS — the daemon has NO capture-file writer and NO piped-child
+// consumer, anywhere it can reach.
+//
+// WHY A CENSUS AND NOT A READING. "The capture files are gone" is a claim about the files nobody
+// opened. The parity cell above proves that ONE dispatch left none behind; it cannot say that no
+// other daemon path writes one, and `daemon/` is not the boundary of what a daemon runs — the
+// dispatch reaches `commands/run.ts` and its whole member-production graph.
+//
+// AND IT IS CLOSED TRANSITIVELY, which is 401-11's scar spelled out: that plan's own census found
+// two functions that terminated the host TWO CALLS from the in-process entry, while a scan of the
+// pinned exported bodies reported clean. A closure that stopped at `daemon/**` would report this
+// daemon clean while a capture write sat one import away.
+//
+// THE DISCOVERY PREDICATE SELF-CHECKS, both directions:
+//   (i)  every acquisition form is planted in synthetic source and must be SEEN — the raw filename,
+//        a static import of the launcher, a destructured dynamic import, a namespace member call and
+//        a bare call. Not one remembered spelling;
+//   (ii) a DECLARATION of the launcher must NOT be seen, and neither must a prose mention. This is
+//        the case the package actually presents: `composition/local-agent-host.ts` still declares
+//        `createPipedLaunchChild` (401-10 deletes it) and is in this closure, so a census that could
+//        not tell a declaration from a call would be red at rest — or, worse, "fixed" by deleting
+//        the converse witness;
+//  (iii) the closure is pinned to its own known members and floored, so a walk with a wrong root or
+//        an over-eager filter cannot return a small set and sweep it clean.
+// ==============================================================================================
+
+/** `packages/cli/src/daemon/__tests__` → two levels up is the package's shipped source tree. */
+const CLI_SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+
+/**
+ * Drop block and line comments so a name that appears only in prose is never read as code.
+ *
+ * The `[^:]` guard keeps a protocol-relative URL from being mistaken for a line comment, which is
+ * how this kind of stripper usually eats a file. One stripper idiom for the phase, so a reader
+ * compares this census like with `run-door-invocation-census.test.ts`.
+ */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+}
+
+/** Does this source WRITE a run-child capture file? The filename literal is the whole surface. */
+function writesCaptureFile(source: string): boolean {
+  const code = stripComments(source)
+  return RETIRED_CAPTURE_FILES.some((name) => code.includes(name))
+}
+
+/**
+ * Does this source CONSUME the piped-child launcher?
+ *
+ * A call, an import or a namespace member — but never the declaration, which is what the file that
+ * still owns the function has. `function`/`const`/`let`/`class` immediately before the name is the
+ * declaration form; everything else that names it in code is a consumer.
+ */
+function consumesPipedLauncher(source: string): boolean {
+  const code = stripComments(source)
+  const mentions = [...code.matchAll(/(?:^|[^A-Za-z0-9_$.])(\w+\.)?createPipedLaunchChild\b/g)]
+  return mentions.some((match) => {
+    const before = code.slice(Math.max(0, match.index - 40), match.index + match[0].length)
+    return !/\b(?:function|const|let|var|class)\s+createPipedLaunchChild\b/.test(before)
+  })
+}
+
+/**
+ * Every first-party module the daemon host can reach, transitively.
+ *
+ * Static imports, `export … from` re-exports and DYNAMIC imports all count: this file's own three
+ * production seams are `await import('…')`, so a walker that read only static edges would miss the
+ * run execution entirely — and the run execution is the subject.
+ */
+function daemonReachableModules(entry: string): { modules: string[]; unresolved: string[] } {
+  const seen = new Set<string>()
+  const unresolved: string[] = []
+  const queue = [entry]
+  while (queue.length > 0) {
+    const current = queue.pop()!
+    if (seen.has(current)) continue
+    seen.add(current)
+    const source = readFileSync(current, 'utf8')
+    const specifiers = [
+      ...[...stripComments(source).matchAll(/from\s+'(\.[^']+)'/g)].map((m) => m[1]!),
+      ...[...stripComments(source).matchAll(/import\(\s*'(\.[^']+)'\s*\)/g)].map((m) => m[1]!),
+    ]
+    for (const specifier of specifiers) {
+      const resolved = join(dirname(current), specifier.replace(/\.js$/, '.ts'))
+      if (existsSync(resolved)) queue.push(resolved)
+      else unresolved.push(`${current} -> ${specifier}`)
+    }
+  }
+  return { modules: [...seen].sort(), unresolved }
+}
+
+describe('the daemon has no capture-file writer and no piped-child consumer (401-06, D-01/D-04)', () => {
+  const DAEMON_ENTRY = join(CLI_SRC, 'daemon', 'host.ts')
+
+  /** Named here rather than read off the scan: a walker that stops reaching these must FAIL. */
+  const REQUIRED_CLOSURE_MEMBERS = [
+    'daemon/host.ts',
+    'daemon/events.ts',
+    'composition/in-process-run-execution.ts',
+    'composition/local-agent-host.ts',
+    'composition/run-assembly.ts',
+    'commands/run.ts',
+  ] as const
+
+  it('(i) the scanner sees what it forbids — before any verdict about any module', () => {
+    // Every acquisition form, planted. Not one remembered spelling.
+    expect(writesCaptureFile("await writeFile(join(dir, 'run-child.stdout.log'), out)")).toBe(true)
+    expect(writesCaptureFile("const p = `${dir}/run-child.stderr.log`")).toBe(true)
+    expect(consumesPipedLauncher("import { createPipedLaunchChild } from './x.js'")).toBe(true)
+    expect(consumesPipedLauncher("const { createPipedLaunchChild } = await import('./x.js')")).toBe(true)
+    expect(consumesPipedLauncher('launchChild: createPipedLaunchChild(entry, onClose)')).toBe(true)
+    expect(consumesPipedLauncher('host.createPipedLaunchChild(entry, onClose)')).toBe(true)
+  })
+
+  it('(ii) …and does NOT see a declaration, or a mention in prose', () => {
+    // The case this package actually presents: the function still exists, in one file, undeleted.
+    expect(consumesPipedLauncher('export function createPipedLaunchChild(\n  entry: string,\n) {}'))
+      .toBe(false)
+    expect(consumesPipedLauncher('// the daemon used to call createPipedLaunchChild here'))
+      .toBe(false)
+    expect(writesCaptureFile('// run-child.stdout.log retired with the child (D-04)')).toBe(false)
+    // The stripper must not eat code it should keep (the protocol-relative-URL trap).
+    expect(stripComments("const u = 'https://example.test/x'").trim())
+      .toBe("const u = 'https://example.test/x'")
+  })
+
+  it('(iii) the closure ranges what the claim is about — the discovery self-check', () => {
+    const { modules, unresolved } = daemonReachableModules(DAEMON_ENTRY)
+    const relative = modules.map((path) => path.slice(CLI_SRC.length + 1))
+    // A floor, so an empty or near-empty walk cannot read as a clean daemon.
+    expect(relative.length).toBeGreaterThan(40)
+    // …and the named members, which is the assertion a floor cannot make.
+    for (const member of REQUIRED_CLOSURE_MEMBERS) {
+      expect(relative, `the census is not ranging ${member}`).toContain(member)
+    }
+    // A specifier the walk could not resolve is a silently truncated closure, not a clean one.
+    expect(unresolved).toEqual([])
+  })
+
+  it('THE COMPLETE SET IS EMPTY — nothing the daemon reaches writes a capture file', () => {
+    const { modules } = daemonReachableModules(DAEMON_ENTRY)
+    const offenders = modules
+      .filter((path) => writesCaptureFile(readFileSync(path, 'utf8')))
+      .map((path) => path.slice(CLI_SRC.length + 1))
+    expect(offenders, 'a module the daemon reaches still writes a run-child capture file')
+      .toEqual([])
+  })
+
+  it('THE COMPLETE SET IS EMPTY — nothing the daemon reaches consumes the piped-child launcher', () => {
+    const { modules } = daemonReachableModules(DAEMON_ENTRY)
+    const offenders = modules
+      .filter((path) => consumesPipedLauncher(readFileSync(path, 'utf8')))
+      .map((path) => path.slice(CLI_SRC.length + 1))
+    expect(offenders, 'a module the daemon reaches still launches a piped run child').toEqual([])
+  })
+
+  it('THE CONVERSE WITNESS — the launcher still exists, undeleted, inside this very closure', () => {
+    // Without this, a census over a package that had deleted the symbol outright would look
+    // identical — and "zero consumers" would be a statement about a name rather than about a wire.
+    // 401-10 owns the deletion; until then the declaration is the thing this census steps around.
+    const host = readFileSync(join(CLI_SRC, 'composition', 'local-agent-host.ts'), 'utf8')
+    expect(stripComments(host)).toContain('export function createPipedLaunchChild(')
+    expect(consumesPipedLauncher(host)).toBe(false)
+    const { modules } = daemonReachableModules(DAEMON_ENTRY)
+    expect(modules.map((path) => path.slice(CLI_SRC.length + 1)))
+      .toContain('composition/local-agent-host.ts')
+  })
 })
