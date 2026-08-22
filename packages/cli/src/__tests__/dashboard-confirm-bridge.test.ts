@@ -582,17 +582,19 @@ describe('a second conversation\'s stream cannot flip an unwatched conversation\
     const streamA = await openStream(door.origin, sessionA)
     // The server decides when the channel is registered, so the cell waits on the server's own
     // answer rather than sleeping a number.
-    const opened = Date.now()
-    while (!door.confirms.liveSessionIds().includes(sessionA) && Date.now() - opened < 5_000) {
-      await new Promise<void>((settled) => setTimeout(settled, 10))
-    }
-    expect(door.confirms.liveSessionIds(), 'A is not watched, so this cell would be a second copy '
-      + 'of the no-channel cell above').toEqual([sessionA])
+    await awaitLiveChannel(door, sessionA)
+    expect(door.confirms.hasLiveChannel(sessionA), 'A is not watched, so this cell would be a '
+      + 'second copy of the no-channel cell above').toBe(true)
 
     // Conversation B: minted by its own turn, and nobody is watching it.
     const sessionB = await openSession(door.origin)
     expect(sessionB, 'both turns landed in one conversation, so no axis is varied')
       .not.toBe(sessionA)
+    // THE OTHER HALF OF THE AXIS, NAMED (401-01, D-14). This used to ride an enumeration of every
+    // watched conversation pinned to `[sessionA]`, which said "B is unwatched" only by B's absence
+    // from a list; asking about B is the same claim asked of the conversation it is about.
+    expect(door.confirms.hasLiveChannel(sessionB), 'B is watched, so its fail-closed denial below '
+      + 'would not be the honest answer this cell is measuring').toBe(false)
 
     // THE ASK-TIER OP, ON THE UNWATCHED CONVERSATION.
     const answered = await postTurn(door.origin, { message: ASK_UTTERANCE, sessionId: sessionB })
@@ -679,12 +681,14 @@ async function driveDualAxis(door: DoorFixture): Promise<DualAxisScene> {
   expect(sessionB, 'both turns landed in one conversation, so no axis is varied').not.toBe(sessionA)
 
   const streamA = await openStream(door.origin, sessionA)
-  const opened = Date.now()
-  while (!door.confirms.liveSessionIds().includes(sessionA) && Date.now() - opened < 5_000) {
-    await new Promise<void>((settled) => setTimeout(settled, 10))
-  }
-  expect(door.confirms.liveSessionIds(), 'A is not watched, or B is — either way this scene is not '
-    + 'the one the defect lives in').toEqual([sessionA])
+  await awaitLiveChannel(door, sessionA)
+  // BOTH HALVES OF THE HELD AXIS, EACH ASKED OF THE CONVERSATION IT IS ABOUT (401-01, D-14):
+  // exactly one live channel, and it is A's. The enumeration this replaced said the second half
+  // only by B's absence from a list.
+  expect(door.confirms.hasLiveChannel(sessionA), 'A is not watched, so this scene is not the one '
+    + 'the defect lives in').toBe(true)
+  expect(door.confirms.hasLiveChannel(sessionB), 'B is watched, so this scene is not the one the '
+    + 'defect lives in — it is the watched-pair scene below').toBe(false)
 
   // AXIS TWO. Floating deliberately: the turn does not return until its own confirm resolves, and
   // that outstanding confirm IS what "in flight" means to the door's per-asker
@@ -805,7 +809,7 @@ describe('a watched, in-flight conversation cannot lend its reachability to anot
 // ---- WATCHED × WATCHED: two conversations, each watched AND in flight (400-17, gap round 3) -----
 //
 // THE AXIS EVERY PRIOR CONTROL HELD CONSTANT. The round-13 cell holds A watched but IDLE; the
-// round-15 driver pins `liveSessionIds()` to `[sessionA]` — exactly ONE live channel — so in both
+// round-15 driver watches A and not B — exactly ONE live channel — so in both
 // of them B is unwatched, and B's fail-closed denial is the honest answer. This scene holds TWO
 // live channels, both in flight, which is the scene 400-UAT.md Test 2 measured: B's own reader is
 // watching B, B asks on B's own conversation, and B is entitled to its own bubble in its own
@@ -855,13 +859,17 @@ async function driveWatchedPair(door: DoorFixture): Promise<WatchedPairScene> {
   await awaitLiveChannel(door, sessionA)
   const streamB = await openStream(door.origin, sessionB)
   await awaitLiveChannel(door, sessionB)
-  // THE CROSSED AXIS, NAMED. `driveDualAxis` pins this same list to `[sessionA]`; a scene that did
+  // THE CROSSED AXIS, NAMED. `driveDualAxis` holds a channel on A and none on B; a scene that did
   // not hold TWO live channels would re-measure round 2 rather than the gap this block exists for.
   expect(
-    [...door.confirms.liveSessionIds()].sort(),
-    'both conversations must be watched at once — the sibling dual-axis driver pins this list to '
-    + '[sessionA], and that is the axis this scene crosses',
-  ).toEqual([sessionA, sessionB].sort())
+    door.confirms.hasLiveChannel(sessionA),
+    'A must be watched — this scene crosses the axis the dual-axis driver holds constant',
+  ).toBe(true)
+  expect(
+    door.confirms.hasLiveChannel(sessionB),
+    'both conversations must be watched at once — the sibling dual-axis driver watches only A, '
+    + 'and that is the axis this scene crosses',
+  ).toBe(true)
 
   // AXIS TWO, ON A. Floating deliberately: the turn does not return until its own confirm resolves,
   // and that outstanding confirm is what puts A in flight.
@@ -1102,8 +1110,10 @@ describe('the turn-events route serves only sessions this process minted', () =>
       )
       expect(refused.status).toBe(404)
       expect(await refused.json()).toEqual({ error: 'Not found' })
-      // No channel, and therefore no posture input, was created by naming an id.
-      expect(door.confirms.liveSessionIds()).toEqual([])
+      // No channel, and therefore no posture input, was created by naming an id — asked about the
+      // id that was named, which is the claim (401-01, D-14; the process-wide enumeration this
+      // replaced could only say it by an empty list).
+      expect(door.confirms.hasLiveChannel('chat-400-13-never-minted')).toBe(false)
 
       // THE ACCEPTS-CONTROL, DRIVEN: a session a real turn minted streams normally — 200, the
       // `:ok` prelude, and that turn's own events replayed.

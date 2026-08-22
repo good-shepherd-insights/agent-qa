@@ -23,7 +23,6 @@ const {
   // every cell below then measures a command that never ran.
   mockCreateConfirmRegistry: vi.fn(() => ({
     openChannel: vi.fn(() => vi.fn()),
-    liveSessionIds: vi.fn(() => []),
     hasLiveChannel: vi.fn(() => false),
     subscribe: vi.fn(() => vi.fn()),
     request: vi.fn(async () => 'deny' as const),

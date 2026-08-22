@@ -114,10 +114,15 @@ export interface ConfirmRegistry {
    * one tab closing look like the person leaving.
    */
   openChannel(sessionId: string): () => void
-  /** Every session with at least one live channel — the caller's input for choosing a target. */
-  liveSessionIds(): readonly string[]
   /**
    * Whether THIS conversation has a live channel (400-13, gap 3).
+   *
+   * THE ONLY LIVENESS QUESTION THIS REGISTRY ANSWERS. `liveSessionIds()` is deleted (401-01,
+   * D-14 / WR-05): it sat right here enumerating every watched conversation in the process, still
+   * documented as "the caller's input for choosing a target" — a second spelling of exactly the
+   * process-global class the paragraph below exists to remove, orphaned of production consumers
+   * when 400-17 took its last one and left available for the next caller to re-acquire. Removed
+   * rather than re-documented, because nothing remains to re-pin it to.
    *
    * SESSION-SCOPED, AND THE ZERO-ARG FORM IS DELETED RATHER THAN KEPT BESIDE IT. `hasLiveChannel()`
    * answered `channels.size > 0` — a fact about the PROCESS, and the only fact this registry ever
@@ -218,10 +223,6 @@ export function createConfirmRegistry(
           resolve(confirmId, 'deny', 'channel-closed')
         }
       }
-    },
-
-    liveSessionIds() {
-      return [...channels.keys()]
     },
 
     hasLiveChannel(sessionId) {
