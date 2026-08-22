@@ -1,14 +1,18 @@
 // The evaluate() named-set pin (Phase 384, FUNC-02 / D-12 / SC2).
 //
-// Two — and only two — legitimate gate domains exist in this repo:
+// Three — and only three — legitimate gate domains exist in this repo:
 //
 //   1. IN-RUN TOOL ACTIONS. safety's own policy gate hook adapts the v48 gate into the
 //      async tool_call attachment point the first-party registrar wires.
 //   2. SURFACE CAPABILITIES. agent's `invokeFunction` is the single dispatch path every
 //      surface crosses, and it gates every invocation without exception (D-11).
+//   3. RUN INVOCATION (2026-08-23, Phase 401 D-02). agent-local's run invocation core is
+//      the one place a run may be STARTED in-process, and it classifies the run against
+//      the declared class of the environment it drives — a different question from
+//      domain 2's "may this caller invoke this op", asked about a different action name.
 //
-// Plus the export seam: safety's package barrel republishes the symbol so domain 2 can
-// reach it at all. Three files, enumerated below. A FOURTH is a second gate call-site,
+// Plus the export seam: safety's package barrel republishes the symbol so domains 2 and 3
+// can reach it at all. Four files, enumerated below. A FIFTH is a second gate call-site,
 // which SC2 makes build-impossible rather than review-caught.
 //
 // WHAT COUNTS AS ACQUISITION, and why the obvious detector is wrong.
@@ -49,6 +53,8 @@ export const EVALUATE_PIN: Readonly<Record<string, string>> = {
     'The export seam (2026-07-28): re-export only. Nothing in this file calls the gate; it republishes the symbol so the surface-capability domain can acquire it across a package boundary at all.',
   'packages/agent/src/functions/invoke.ts':
     'Domain 2 (2026-07-28): the surface-CAPABILITY gate. The single dispatch path every surface crosses, gating every invocation including reads (D-11), so scope enforcement never becomes a second gate in disguise.',
+  'packages/agent-local/src/composition/run-invocation-core.ts':
+    'Domain 3 (2026-08-23, Phase 401 D-02): the RUN-INVOCATION gate. Starting a run is not a tool action and not a surface capability — the op-level `fn:runs.start` gate classifies the request to start one, and this classifies the RUN, against the declared class of the environment it is about to drive (`run:start`, D-05/D-06). It is the only place a run may begin in-process, so a fourth entry in this map for a run path would be a second answer to "may this run happen".',
 }
 
 export interface EvaluatePinSource {

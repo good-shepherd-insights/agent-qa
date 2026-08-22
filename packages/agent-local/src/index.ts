@@ -87,6 +87,40 @@ export {
 } from './composition/knowledge-reader.js'
 export type { ConstructKnowledgeReaderInput } from './composition/knowledge-reader.js'
 
+// Phase 401 D-02: the one policy-gated in-process run invocation core, and the two typed refusals
+// it can raise. Published for the reason the run composition is: it is the seam every host is
+// supposed to share, and a host that cannot reach it composes a run of its own — which is the
+// dual-mechanism class this phase exists to remove. `buildRunRiskDescriptor` travels with it
+// because the doors' own denial cells assert against the descriptor the core classifies.
+export {
+  createRunInvocationCore,
+  REFUSED_RUN_REQUEST_FIELDS,
+  RunDeniedError,
+  RunRequestFieldRefusedError,
+} from './composition/run-invocation-core.js'
+export type {
+  RunAssembler,
+  RunAssemblyContext,
+  RunInvocationCoreOptions,
+} from './composition/run-invocation-core.js'
+// The assembler port's own vocabulary, re-exported from the package that declares it.
+//
+// THE PORT AND ITS TYPES TRAVEL TOGETHER, and that is what makes this hop principled rather than a
+// convenience. A host writes a `RunAssembler`; a `RunAssembler` returns a `RunConfig` built out of
+// runner descriptors. A surface that had to name `@vostride/agent-qa-runner` to write one would be
+// reaching past its composition root for the vocabulary of a port that root defined — which is the
+// firewall's (FUNC-02) whole subject. These are TYPES: erased before anything runs, granting no
+// power the barrel does not already publish.
+export type {
+  BaselineProbeResult,
+  ConfigDigests,
+  MemberTestExecutor,
+  RunConfig,
+  RunMemberDescriptor,
+} from './composition/run-invocation-core.js'
+export { buildRunRiskDescriptor, RUN_START_RISK_ACTION_NAME } from './composition/run-risk.js'
+export type { RunTargetClass } from './composition/run-risk.js'
+
 // 390 D-16: the run-start quarantine snapshot. Published because the run host calls it at both of
 // its startRun composition sites — the fold happens here, on the reader entry, and the host only
 // ever sees the resolved plain data it hands to the runner.

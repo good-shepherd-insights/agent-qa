@@ -299,6 +299,20 @@ export const PostProcessingStatusSchema = z.object({
 export const RunsStartInputSchema = z.object({
   /** Test file paths or glob patterns to run; absent means the configured default set. */
   patterns: z.array(z.string()).optional(),
+  /**
+   * The run id to start under; absent means the composition mints one (Phase 401, D-02).
+   *
+   * ADDITIVE, and additive is what this object was built for: the strict shape refuses an
+   * unrecognized key, so a field arrives as a contract change rather than as a silently ignored
+   * request. Nothing about the acknowledgment law moves — every ack field is still read off the
+   * durable record, and a run id nobody ran under still fails `RunNotRecordedError`.
+   *
+   * WHY A CALLER MAY NAME IT AT ALL. The retiring spawn port already let one: it minted the id and
+   * handed it to the child through `AGENT_QA_RUN_ID`, so "the door that starts the run chooses its
+   * id" is the shipped trust level, not a new one. Carrying it on the request is that same fact
+   * with the child process removed from underneath it — which is the whole of D-01.
+   */
+  runId: runIdSchema.optional(),
   /** Scope the run addresses; absent resolves from the config. */
   scope: scopeKeySchema.optional(),
   /** Execution context to record on the run; absent resolves from the environment. */

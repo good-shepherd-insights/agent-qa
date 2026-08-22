@@ -798,9 +798,11 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
 const PIN_GATE_HOOK = 'packages/safety/src/policy/gate-hook.ts'
 const PIN_SAFETY_BARREL = 'packages/safety/src/index.ts'
 const PIN_INVOKE = 'packages/agent/src/functions/invoke.ts'
+// Domain 3 (Phase 401 D-02): the in-process run invocation core.
+const PIN_RUN_CORE = 'packages/agent-local/src/composition/run-invocation-core.ts'
 
 /**
- * Synthetic stand-ins for the three pinned files, each carrying the acquisition form the
+ * Synthetic stand-ins for the four pinned files, each carrying the acquisition form the
  * real file uses. Every fixture scan starts here so the pin's stale direction stays quiet
  * and the case under test is the only thing that can speak.
  */
@@ -809,6 +811,7 @@ function pinnedFixtureSources(): EvaluatePinSource[] {
     { file: PIN_GATE_HOOK, source: 'import { evaluate, type GateTrust } from "./gate"' },
     { file: PIN_SAFETY_BARREL, source: 'export { evaluate } from "./policy/gate"' },
     { file: PIN_INVOKE, source: 'import { evaluate } from "@vostride/agent-qa-safety"' },
+    { file: PIN_RUN_CORE, source: 'import { evaluate } from "@vostride/agent-qa-safety"' },
   ]
 }
 
@@ -817,9 +820,9 @@ function pinScan(...extra: readonly EvaluatePinSource[]): string[] {
 }
 
 describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () => {
-  it('pins exactly three production files, each with a dated rationale', () => {
+  it('pins exactly four production files, each with a dated rationale', () => {
     expect(Object.keys(EVALUATE_PIN).sort()).toEqual(
-      [PIN_INVOKE, PIN_SAFETY_BARREL, PIN_GATE_HOOK].sort(),
+      [PIN_INVOKE, PIN_SAFETY_BARREL, PIN_GATE_HOOK, PIN_RUN_CORE].sort(),
     )
     for (const [file, rationale] of Object.entries(EVALUATE_PIN)) {
       expect(rationale.trim()).not.toEqual('')
@@ -828,7 +831,7 @@ describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () =
   })
 
   it('fires on all THREE real acquisition forms, one of which is not an import at all', () => {
-    const acquisitions = [PIN_GATE_HOOK, PIN_SAFETY_BARREL, PIN_INVOKE].flatMap(file =>
+    const acquisitions = [PIN_GATE_HOOK, PIN_SAFETY_BARREL, PIN_INVOKE, PIN_RUN_CORE].flatMap(file =>
       findEvaluateAcquisitions(readRepoFile(file), file),
     )
 
@@ -852,6 +855,13 @@ describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () =
         specifier: '@vostride/agent-qa-safety',
         form: 'named',
       },
+      // domain 3, the run invocation core — same form as domain 2, a different question
+      {
+        file: PIN_RUN_CORE,
+        keyword: 'import',
+        specifier: '@vostride/agent-qa-safety',
+        form: 'named',
+      },
     ])
     for (const acquisition of acquisitions) {
       expect(acquisition.line).toBeGreaterThan(0)
@@ -859,7 +869,7 @@ describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () =
 
     expect(
       findEvaluatePinOffenders(
-        [PIN_GATE_HOOK, PIN_SAFETY_BARREL, PIN_INVOKE].map(file => ({
+        [PIN_GATE_HOOK, PIN_SAFETY_BARREL, PIN_INVOKE, PIN_RUN_CORE].map(file => ({
           file,
           source: readRepoFile(file),
         })),
@@ -867,7 +877,7 @@ describe('validate:arch evaluate() pin (FUNC-02 / D-12) held-out fixtures', () =
     ).toEqual([])
   })
 
-  it('reports a FOURTH importer, whatever name it binds the symbol to', () => {
+  it('reports an UN-PINNED importer, whatever name it binds the symbol to', () => {
     const fourth = 'packages/runner/src/loop/second-gate.ts'
 
     expect(

@@ -12,7 +12,13 @@ import { resolveDevice, loadLocalBindings, resolveProviderCredentials, type Reso
 import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
 import type { ParsedTestBinding, TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
-import type { DeclaredModelProfile, ModelCapabilities } from '@vostride/agent-qa-schema'
+import { asRunId } from '@vostride/agent-qa-schema'
+import type {
+  DeclaredModelProfile,
+  ModelCapabilities,
+  QuarantineAppliedEntry,
+  RunSession,
+} from '@vostride/agent-qa-schema'
 import type { SecretStore, SecretRedactor, HookDefinition, NonActionToolMap, SandboxRunnerOptions } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
@@ -22,6 +28,15 @@ import { runBaselineProbe } from './baseline-probe.js'
 // 390 D-16: the run-start ledger fold lives at the local composition root (the CLI's shipped source
 // does not name the knowledge package — 387 D-20); this host calls the ONE resolved helper.
 import { resolveRunQuarantineSnapshot } from '@vostride/agent-qa-agent-local'
+// 401-03 (D-02): the one policy-gated in-process invocation core this door now runs through.
+import {
+  createRunInvocationCore,
+  RunDeniedError,
+  type RunTargetClass,
+} from '@vostride/agent-qa-agent-local'
+import { assembleDirectRun } from '../composition/run-assembly.js'
+import { createTtyConfirmPort } from '../composition/local-agent-host.js'
+import { denialDetailLines } from './receipt-line.js'
 import {
   buildMemberRunConfig,
   buildRunAuditSink,
@@ -3545,14 +3560,23 @@ export function createRunCommand(): Command {
         }
 
         const singleRunId = process.env.AGENT_QA_RUN_ID ?? generateRunId()
-        let singleBaselineProbe: BaselineProbeResult | undefined
+        // 401-03 (D-02/D-05/D-06): the target is resolved here because its DECLARED CLASS is what
+        // the run gate classifies, and the gate decides before anything touches the target. The
+        // resolution itself is a config read — the probe that fetches the URL moved into
+        // `assembleDirectRun`, i.e. behind the verdict.
+        let singleTargetClass: RunTargetClass
+        let singleProbeUrl: string | undefined
         try {
           const singleResolvedTarget = resolveTarget(config, filtered[0].test.target!)
           singleRunProduct = directRunProduct ?? singleResolvedTarget.product ?? 'unknown'
-          // D-04: run-start baseline probe — web targets only; result threads in-memory via
-          // RunConfig (mobile: device-session-create failure is the equivalent signal, no probe).
+          // UNDECLARED STAYS UNDECLARED HERE. `undefined` is carried into the descriptor builder,
+          // which is the one place D-06's undeclared-is-shared rule is applied. A default invented
+          // at this line would be a second answer to the question that decides the run.
+          singleTargetClass = singleResolvedTarget.environment
+          // D-04: run-start baseline probe — web targets only (mobile: device-session-create
+          // failure is the equivalent signal, no probe).
           if (singleResolvedTarget.platform === 'web' && singleResolvedTarget.url) {
-            singleBaselineProbe = await runBaselineProbe(singleResolvedTarget.url)
+            singleProbeUrl = singleResolvedTarget.url
           }
         } catch { /* best-effort; the member closure surfaces the real target error as a framework error */ }
         const singleExecutionContext = resolveRunExecutionContext()
@@ -3561,21 +3585,10 @@ export function createRunCommand(): Command {
           env: process.env.AGENT_QA_BUILD_TAG,
           use: config.use,
         })
-        singleBuildOrdinal = await resolveRunBuildOrdinal({
-          configDir,
-          product: singleRunProduct,
-          buildTag: singleBuildTag,
-        })
-        const singleRunPorts = buildRunPorts({ configDir, runId: singleRunId })
-
-        // 390 D-16: the SAME one snapshot helper the multi-suite site above calls — folded once,
-        // before startRun, so both paths see one rule and neither can drift.
-        const singleQuarantined = resolveRunQuarantineSnapshot({
-          knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
-          product: singleRunProduct,
-          now: new Date().toISOString(),
-          warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
-        })
+        // Assigned by the assembler, which the core calls after the gate allows the run. They are
+        // read by the member closures (`asOfBuild`) and by the reporters (the quarantine set), both
+        // of which only ever execute downstream of that call.
+        let singleQuarantined: readonly QuarantineAppliedEntry[] = []
 
         const executor: MemberTestExecutor = async (member, ctx) => {
           const binding = memberBindings[ctx.testIndex]
@@ -3650,36 +3663,92 @@ export function createRunCommand(): Command {
         singleAnalytics.bindMaskingContext(maskingContext)
 
 
-        const singleExit = await runSafetyScope({ maskingContext, auditSink, executionContext: singleExecutionContext }, async () => {
-          try {
-            const session = startRun({
-              runId: singleRunId as unknown as Parameters<typeof startRun>[0]['runId'],
-              scope: { tier: 'product', key: singleRunProduct },
-              executionContext: singleExecutionContext,
-              configDigests: runDigests.runLevel,
-              buildOrdinal: singleBuildOrdinal,
+        // The started session and its subscribers, published by the core's `onSession` hook. They
+        // are `let`s rather than return values because the hook fires while the core is still
+        // inside `execute`, which is exactly when a subscriber has to attach.
+        let startedSession: RunSession | undefined
+        let startedSubscribers: { flush(): Promise<void> } | undefined
+        // The door's own confirm channel for the RUN-START gate (D-07). `undefined` on a piped or
+        // redirected stdio — this door does not claim a person is present because the process is
+        // running somewhere a person once was.
+        const runStartConfirm = createTtyConfirmPort()
+
+        // 401-03 (D-02): the single-test path is a CALLER of the one policy-gated in-process
+        // invocation core. What used to be an inline `startRun` is now: this door resolves what only
+        // it knows — its TTY posture, its trust flag, its confirm channel, its assembly — and the
+        // core owns the ORDER, with the one `evaluate()` before anything touches the target.
+        //
+        // THE CONTEXT AND THE CONFIRM PORT TRAVEL EXPLICITLY (D-07). The core never asks the process
+        // what it is; a resolver reaching for ambient state would answer for the machine when the
+        // question is about this door.
+        const runCore = createRunInvocationCore({
+          configPath: configFilePath,
+          agentQaRoot: resolvePath(configDir, '.agent-qa'),
+          executionContext: singleExecutionContext,
+          mintRunId: generateRunId,
+          auditSink,
+          trust: { trustMode },
+          // Absent on a piped/redirected stdio, which leaves the gate's DENY_CONFIRM default in
+          // place — the fail-closed arm is reached before the confirm arm anyway, so this port only
+          // ever speaks where there is somebody to answer it.
+          ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
+          resolveTargetClass: () => singleTargetClass,
+          assembleRun: async (assemblyContext) => {
+            const assembly = await assembleDirectRun({
+              runId: assemblyContext.runId,
+              executionContext: assemblyContext.executionContext,
+              configDir: assemblyContext.configDir,
+              knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
+              ports: assemblyContext.ports,
+              confirmPausedMs,
+              maskingContext,
               members,
               executor,
-              masking: maskingContext,
-              ports: { ...singleRunPorts, confirmPausedMs },
-              ...runMarkers(opts),
-              ...(singleBaselineProbe !== undefined ? { baselineProbe: singleBaselineProbe } : {}),
-              ...(singleQuarantined.length > 0 ? { quarantined: singleQuarantined } : {}),
+              configDigests: runDigests.runLevel,
+              product: singleRunProduct,
+              ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
+              ...(singleProbeUrl === undefined ? {} : { probeUrl: singleProbeUrl }),
+              warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
             })
+            singleBuildOrdinal = assembly.buildOrdinal
+            singleQuarantined = assembly.quarantined
+            return assembly.config
+          },
+          onSession: (session) => {
             activeRunSession = session
-
-            // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest; analytics)
-            // via subscribe(0) — replay-then-live gives D-04 for free.
-            const subscribers = attachRunSubscribers({
+            startedSession = session
+            // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest;
+            // analytics) — replay-then-live gives D-04 for free. `singleQuarantined` is already
+            // assigned: the core calls the assembler, then `startRun`, then this hook.
+            startedSubscribers = attachRunSubscribers({
               session,
               maskingContext,
               console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
               junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
               extraSubscribers: singleExtraSubscribers,
               live: livePause,
-              // 390 D-15: the SAME resolved set `startRun` was handed above (Pitfall 8 — both sites).
+              // 390 D-15: the SAME resolved set `startRun` was handed (Pitfall 8 — both sites).
               quarantined: singleQuarantined,
             })
+          },
+        })
+
+        const singleExit = await runSafetyScope({ maskingContext, auditSink, executionContext: singleExecutionContext }, async () => {
+          try {
+            // The core refuses, gates, assembles, starts, and awaits the run. A denial throws
+            // `RunDeniedError` from inside here, before a single run event exists.
+            await runCore.execute({
+              runId: asRunId(singleRunId),
+              ...runMarkers(opts),
+            })
+            const session = startedSession
+            const subscribers = startedSubscribers
+            if (session === undefined || subscribers === undefined) {
+              // Unreachable: the core notifies `onSession` before it awaits the run. Asserted
+              // rather than assumed, because a silently absent session would degrade into a run
+              // whose verdict nothing mapped.
+              throw new Error('The invocation core completed without reporting a run session.')
+            }
 
             const { verdict } = await session.done
             clearGraceTimer()
@@ -3759,6 +3828,19 @@ export function createRunCommand(): Command {
         await drainAnalytics() // 398-15 (WR-06): terminal exit 2 of 3 — the verdict path.
         process.exit(exitCode)
       } catch (err) {
+        // 401-03 (D-15/D-16): the policy refused this run, so the run never started — there is no
+        // run row to finalize, no crash to report, and nothing for `formatFrameworkError` to say.
+        // THE DOOR THAT ISSUED THE REFUSAL IS THE DOOR THAT ANSWERS "now what": the gate mints the
+        // canonical reason and structured remedies, and this projects the ones a CLI reader can
+        // actually take (`fn.ts` renders the same pair for a denied capability).
+        //
+        // EXIT 2, NOT 1. `1` is "the tests failed", and a denial must never read as a failing
+        // suite: nothing ran. `2` is this command's existing "no verdict was produced" code.
+        if (err instanceof RunDeniedError) {
+          console.error(pc.red(denialDetailLines(`Run denied: ${err.reason}`, err.remedies).join('\n')))
+          await drainAnalytics()
+          process.exit(2)
+        }
         const errMsg = err instanceof Error ? err.message : String(err)
         const errStack = err instanceof Error ? err.stack ?? '' : ''
         const formattedError = formatFrameworkError(errMsg)

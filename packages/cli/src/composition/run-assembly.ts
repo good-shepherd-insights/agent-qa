@@ -1,0 +1,150 @@
+// The CLI's run assembly — the `RunAssembler` the in-process invocation core calls (Phase 401, D-02).
+//
+// WHAT MOVED HERE AND WHY IT MOVED. `run.ts`'s single-test path used to compute all of this inline,
+// immediately before its own `startRun`. Three of the steps have effects on the world outside this
+// process, and the whole point of the core is that they happen AFTER the policy verdict:
+//
+//   - the run-start baseline probe FETCHES THE TARGET URL. It is the network touch the D-16 denial
+//     cell asserts does not happen for a denied run;
+//   - `resolveRunBuildOrdinal` ADVANCES A DURABLE PER-PRODUCT COUNTER under `.agent-qa`. A run that
+//     was never allowed to start must not consume a build ordinal;
+//   - the quarantine fold reads the committed ledger.
+//
+// So they live behind this function, and this function is reached from exactly one line in the core
+// — the line after the gate. The ordering is structural rather than remembered: `run.ts` cannot
+// probe before the gate because `run.ts` no longer holds the probe.
+//
+// IT IS A CLI MODULE, NOT A COMPOSITION-PACKAGE ONE, for the reason the `RunAssembler` port exists:
+// members, the executor closure, reporters and the masking context are decisions a host answers for
+// itself. What crosses into `agent-local` is the TYPE. What stays here is the assembly.
+//
+// NOT A SECOND SPELLING OF ANYTHING. Every step below calls the SAME shared helper the suite path
+// calls (`resolveRunBuildOrdinal`, `resolveRunQuarantineSnapshot`, `runBaselineProbe`); nothing is
+// re-implemented, so the suite path's migration in 401-04 is a move of its own orchestration onto
+// this function rather than a reconciliation of two divergent copies.
+
+import type { QuarantineAppliedEntry, RunId } from '@vostride/agent-qa-schema'
+import {
+  resolveRunBuildOrdinal,
+  resolveRunQuarantineSnapshot,
+} from '@vostride/agent-qa-agent-local'
+// The runner vocabulary travels through the composition root, which is where the `RunAssembler`
+// port this module implements is declared (FUNC-02: a surface names its composition root, not the
+// private packages behind it).
+import type {
+  BaselineProbeResult,
+  ConfigDigests,
+  MemberTestExecutor,
+  RunConfig,
+  RunExecutionContext,
+  RunMaskingContext,
+  RunMemberDescriptor,
+  RunPersistencePorts,
+} from '@vostride/agent-qa-agent-local'
+
+import { runBaselineProbe } from '../commands/baseline-probe.js'
+
+export interface DirectRunAssemblyInput {
+  /** The run's identity, minted by the door and carried through the core. */
+  readonly runId: string
+  /** The context the gate decided in — recorded on the run unchanged. */
+  readonly executionContext: RunExecutionContext
+  /** The project directory (the config's own directory). */
+  readonly configDir: string
+  /** The knowledge root the quarantine ledger is read from. */
+  readonly knowledgeRoot: string
+  /** The durable ports the core built under `<configDir>/.agent-qa` (Pitfall 5). */
+  readonly ports: RunPersistencePorts
+  /** The D-10 confirm-pause supplier, so human decision time never charges the run budget. */
+  readonly confirmPausedMs: () => number
+  readonly maskingContext: RunMaskingContext
+  readonly members: readonly RunMemberDescriptor[]
+  readonly executor: MemberTestExecutor
+  readonly configDigests: ConfigDigests
+  /** The run's product — the scope key and the build-ordinal/quarantine partition. */
+  readonly product: string
+  /** The resolved `--build-tag`/env/config setting, when one is set. */
+  readonly buildTag?: string
+  /**
+   * The target URL to probe, when this run drives a web target.
+   *
+   * ABSENT MEANS NO PROBE, which is the mobile posture: a device-session-create failure is the
+   * equivalent environment signal there, so there is nothing to fetch (`RunConfig.baselineProbe`).
+   */
+  readonly probeUrl?: string
+  /** Where a quarantine-fold warning goes. The command owns its own rendering. */
+  readonly warn: (message: string) => void
+}
+
+export interface DirectRunAssembly {
+  /** The `RunConfig` the core hands `startRun` (identity + markers stamped on top by the core). */
+  readonly config: RunConfig
+  /**
+   * The advanced build ordinal, returned as well as embedded because the member closures read it
+   * for their knowledge `asOfBuild` window.
+   */
+  readonly buildOrdinal: number
+  /**
+   * The resolved quarantine set, returned because the reporters must be handed the SAME set
+   * `startRun` was given (390 D-15/D-16, Pitfall 8 — a second fold could disagree with the first).
+   */
+  readonly quarantined: readonly QuarantineAppliedEntry[]
+  /** The probe result, or `undefined` on a mobile target / a probe that could not be taken. */
+  readonly baselineProbe?: BaselineProbeResult
+}
+
+/**
+ * Assemble the direct (single-test) run.
+ *
+ * THE PROBE'S FAILURE IS NOT THE RUN'S FAILURE. `runBaselineProbe` is a best-effort health reading
+ * for the root-cause classifier; a throw here would turn an unreachable target into a framework
+ * error before the member could report it as the test failure it is. That is the shipped posture
+ * (`run.ts` wrapped the same call in a swallowing try), preserved verbatim — the catch covers the
+ * PROBE and nothing else, so it is not a defensive wrapper around the run (D-03).
+ */
+export async function assembleDirectRun(
+  input: DirectRunAssemblyInput,
+): Promise<DirectRunAssembly> {
+  let baselineProbe: BaselineProbeResult | undefined
+  if (input.probeUrl !== undefined) {
+    try {
+      baselineProbe = await runBaselineProbe(input.probeUrl)
+    } catch {
+      // Best-effort: the member closure surfaces the real target error.
+    }
+  }
+
+  const buildOrdinal = await resolveRunBuildOrdinal({
+    configDir: input.configDir,
+    product: input.product,
+    ...(input.buildTag === undefined ? {} : { buildTag: input.buildTag }),
+  })
+
+  const quarantined = resolveRunQuarantineSnapshot({
+    knowledgeRoot: input.knowledgeRoot,
+    product: input.product,
+    now: new Date().toISOString(),
+    warn: input.warn,
+  })
+
+  const config: RunConfig = {
+    runId: input.runId as RunId,
+    scope: { tier: 'product', key: input.product },
+    executionContext: input.executionContext,
+    configDigests: input.configDigests,
+    buildOrdinal,
+    members: input.members,
+    executor: input.executor,
+    masking: input.maskingContext,
+    ports: { ...input.ports, confirmPausedMs: input.confirmPausedMs },
+    ...(baselineProbe !== undefined ? { baselineProbe } : {}),
+    ...(quarantined.length > 0 ? { quarantined } : {}),
+  }
+
+  return {
+    config,
+    buildOrdinal,
+    quarantined,
+    ...(baselineProbe === undefined ? {} : { baselineProbe }),
+  }
+}
