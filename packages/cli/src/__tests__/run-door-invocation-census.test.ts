@@ -186,9 +186,21 @@ describe('no file in the CLI package acquires startRun (T-401-11, INVK-02 criter
 
   it('both of the door\'s paths reach it through the core, and through nothing else', () => {
     const runSource = stripComments(readFileSync(join(CLI_SRC, 'commands', 'run.ts'), 'utf8'))
-    // Two compositions: the suite path (401-04) and the single-test path (401-03). Not one — a
-    // single composition would mean one of the two paths quietly stopped starting runs.
-    expect(runSource.match(/createRunInvocationCore\(/g) ?? []).toHaveLength(2)
+    const driveSource = stripComments(
+      readFileSync(join(CLI_SRC, 'composition', 'in-process-run-execution.ts'), 'utf8'),
+    )
+    // 401-11 RESTATED THIS RATHER THAN RELAXING IT, and the restatement is strictly stronger.
+    //
+    // The two compositions this counted were the suite path's and the single-test path's — two
+    // copies of one composition, and the count existed to catch a path that quietly stopped
+    // starting runs. Both paths now call ONE in-process drive, so the pin becomes: `run.ts`
+    // composes the core ZERO times (a composition beside the drive is exactly the regrowth the old
+    // count forbade, and `0` says so where `2` could not), the drive composes it ONCE, and BOTH of
+    // the door's paths still reach that drive. A path that stopped starting runs fails on the last
+    // clause exactly as it used to fail on the count.
+    expect(runSource.match(/createRunInvocationCore\(/g) ?? []).toHaveLength(0)
+    expect(driveSource.match(/createRunInvocationCore\(/g) ?? []).toHaveLength(1)
+    expect(runSource.match(/runInProcessCliRun as typeof RunInProcessCliRun\)\(/g) ?? []).toHaveLength(2)
   })
 })
 

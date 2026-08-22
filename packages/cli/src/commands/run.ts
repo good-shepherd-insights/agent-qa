@@ -28,13 +28,21 @@ import { runBaselineProbe } from './baseline-probe.js'
 // 390 D-16: the run-start ledger fold lives at the local composition root (the CLI's shipped source
 // does not name the knowledge package — 387 D-20); this host calls the ONE resolved helper.
 import { resolveRunQuarantineSnapshot } from '@vostride/agent-qa-agent-local'
-// 401-03 (D-02): the one policy-gated in-process invocation core this door now runs through.
+// 401-11 (D-02): the door renders the core's refusal; it no longer COMPOSES the core. That moved,
+// with the assembler hand-off, the masking context, the audit sink, the safety-hook runner and the
+// safety scope, into the ONE in-process drive both of this door's paths now call.
 import {
-  createRunInvocationCore,
   RunDeniedError,
   type RunTargetClass,
 } from '@vostride/agent-qa-agent-local'
-import { assembleCliRun } from '../composition/run-assembly.js'
+// 401-11: the ONE in-process drive. BOTH of this door's paths are callers of it — the door supplies
+// its posture, its members and its post-verdict tail; the drive owns the order.
+//
+// DEFERRED, NOT STATIC. `in-process-run-execution.ts` imports this file's producers relatively (the
+// surface firewall's answer for vocabulary that may not leave `commands/run.ts`), so a static import
+// here closes an ESM cycle at module-evaluation time. A call-time `await import` keeps every edge in
+// that cycle a call-time edge, which is the condition under which ESM tolerates one at all.
+import type { runInProcessCliRun as RunInProcessCliRun } from '../composition/in-process-run-execution.js'
 // 401-11: the typed input failure this file's preflight now THROWS instead of exiting on.
 // It lives in a leaf module rather than in `in-process-run-execution.ts` because that module
 // imports this one's producers — see `cli-run-input-error.ts`'s header.
@@ -43,8 +51,6 @@ import { createTtyConfirmPort } from '../composition/local-agent-host.js'
 import { denialDetailLines } from './receipt-line.js'
 import {
   buildMemberRunConfig,
-  buildRunAuditSink,
-  buildRunMaskingContext,
   buildRunPorts,
   buildScreenshotCompressor,
   buildSuiteMemberExecutor,
@@ -65,12 +71,9 @@ import {
 import {
   attachRunSubscribers,
   buildAnalyticsRunSubscriber,
-  buildRunSafetyHooks,
-  createLivePauseController,
 } from '../run-session-composition.js'
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import type { CliAnalyticsHost } from '../composition/analytics-host.js'
-import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import {
   defaultGuardrailPolicyInput,
   loadGuardrailPolicy,
@@ -1601,35 +1604,6 @@ async function executeSuites(
   const runDigests = { runLevel: produced.configDigests }
   let suiteQuarantined: readonly QuarantineAppliedEntry[] = []
 
-  // SEAM-01/03/04 (362-06): construct the run's real seeded MaskingContext (D-05/06/07), the per-run
-  // stamped audit sink (D-12/13), and the per-run SafetyHookRunner (D-01/15/10) — then run the whole
-  // run body inside runSafetyScope so every createModel egress masks and every tool call is gated +
-  // audited (D-02/D-04). The masking context needs no runId, so it seeds from the statically-resolved
-  // suite auth-state payloads the producer read best-effort.
-  //
-  // MASKING BOUNDARY (363-09, RESEARCH Q7 item 3): every placeholder-bearing string originates AFTER
-  // this seam (masked egress, tool gating, WM). Pre-run errors (config/parse/target resolution, the
-  // validation-error DB writes and crash-finalizer above) occur BEFORE the MaskingContext exists, so
-  // they carry NO placeholders and need NO unmask call — the console reporter (the sole unmasking
-  // surface) only handles post-seam envelopes; step-failure/deny prose reaches humans through it.
-  const maskingContext = buildRunMaskingContext({
-    secretStore: variableContext?.secretStore,
-    env: process.env,
-    ...(produced.maskingSeed?.authStatePayloads === undefined
-      ? {}
-      : { authStatePayloads: [...produced.maskingSeed.authStatePayloads] }),
-  })
-  const auditSink = buildRunAuditSink({ configDir, runId, executionContext })
-  const trustMode = opts.trustSession === true || config.safety?.trustMode === true
-  // D-11 (363-09): the console pause/resume seam shared with the ask-tier confirm decorator; bound to
-  // the console reporter inside `attachRunSubscribers` below. buildRunSafetyHooks composes the unmask
-  // decorator OVER the timed decorator so live confirm prompts show real values (masked machine surfaces).
-  const livePause = createLivePauseController()
-  const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext, trustMode, maskingContext, live: livePause })
-  produced.bindRunContext({ maskingContext, safetyHooks })
-
-  const lifecycle = { finalize: () => produced.finalize?.() ?? Promise.resolve() }
-
   // 363-09: the run-level bus subscribers (Pitfall 8 — the SAME attach helper both of this door's
   // paths use). Analytics rides the bus (D-16); the dashboard ingest (when a suite DB exists) writes
   // runs/run_artifacts rows as a subscriber (D-08). Dashboard/analytics construction data the wire
@@ -1648,8 +1622,8 @@ async function executeSuites(
   // 398-10 (D-17/D-20): the re-homed subscriber over the port this command composed at its root.
   // `config` is NOT passed — the opt-out posture is already expressed by which transport that port
   // holds, and a subscriber that re-read it would be the second decision site D-19 abolished.
-  if (analytics) {
-    const analyticsHost = await analytics()
+  const analyticsHost = analytics === undefined ? undefined : await analytics()
+  if (analyticsHost !== undefined) {
     extraSubscribers.push(buildAnalyticsRunSubscriber({
       analytics: analyticsHost,
       ...analyticsRunAttribution(resolveCliRunAttributes(
@@ -1658,169 +1632,106 @@ async function executeSuites(
         variableContext?.inheritedRunAttributes,
       )),
     }))
-    // The run's masking context now exists; point the send seam at it (`bindMaskingContext`).
-    analyticsHost.bindMaskingContext(maskingContext)
   }
 
-  // The started session and its subscribers, published by the core's `onSession` hook. They are
-  // `let`s rather than return values because the hook fires while the core is still inside
-  // `execute`, which is exactly when a subscriber has to attach.
-  let startedSession: RunSession | undefined
-  let startedSubscribers: { flush(): Promise<void> } | undefined
   // The door's own confirm channel for the RUN-START gate (D-07). `undefined` on a piped or
   // redirected stdio — this door does not claim a person is present because the process is running
   // somewhere a person once was.
   const runStartConfirm = createTtyConfirmPort()
+  const trustMode = opts.trustSession === true || config.safety?.trustMode === true
 
-  // 401-04 (D-02): the SUITE path is now a caller of the same one policy-gated in-process
-  // invocation core the single-test path composes. It was the second — and last — direct
-  // `startRun` on this door; with it gone, no `agent-qa run` invocation of any shape can begin a
-  // run except through the ONE `evaluate()` (INVK-02 criterion 2 for the CLI/CI trigger family).
-  //
-  // WHAT THE DOOR STILL OWNS, AND WHY IT IS THIS AND NOT MORE: its TTY posture, its trust flag, its
-  // confirm channel, its target class and its assembly. Those are the five things only a door can
-  // answer. The ORDER is the core's, which is what makes "the probe and the ordinal happen after
-  // the verdict" a structural property here rather than a rule this file remembers.
-  const runCore = createRunInvocationCore({
-    configPath: configFilePath,
-    agentQaRoot: resolvePath(configDir, '.agent-qa'),
-    executionContext,
-    mintRunId: generateRunId,
-    auditSink,
-    trust: { trustMode },
-    // Absent on a piped/redirected stdio, which leaves the gate's DENY_CONFIRM default in place —
-    // the fail-closed arm is reached before the confirm arm anyway, so this port only ever speaks
-    // where there is somebody to answer it.
-    ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
-    resolveTargetClass: () => suiteTargetClass,
-    assembleRun: async (assemblyContext) => {
-      const assembly = await assembleCliRun({
-        runId: assemblyContext.runId,
-        executionContext: assemblyContext.executionContext,
-        configDir: assemblyContext.configDir,
-        knowledgeRoot,
-        ports: assemblyContext.ports,
-        confirmPausedMs,
-        maskingContext,
-        members,
-        executor,
-        configDigests: runDigests.runLevel,
-        product: runProduct,
-        ...(buildTag === undefined ? {} : { buildTag }),
-        ...(suiteProbeUrl === undefined ? {} : { probeUrl: suiteProbeUrl }),
+  // 401-11 (D-01/D-02): THE SUITE PATH IS A CALLER OF THE SAME ONE IN-PROCESS DRIVE the single-test
+  // path calls. With this, `createRunInvocationCore` is composed in exactly ONE place in the whole
+  // CLI door, and the two near-identical post-`done` bodies became one.
+  const { runInProcessCliRun } = await import('../composition/in-process-run-execution.js')
+  let exitCode: number
+  try {
+    const outcome = await (runInProcessCliRun as typeof RunInProcessCliRun)(
+      {
+        configPath: configFilePath,
+        agentQaRoot: resolvePath(configDir, '.agent-qa'),
+        executionContext,
+        trust: { trustMode },
+        ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
+        // The members this door already produced — the SAME suite factory the default dispatcher
+        // reaches for a suite pattern, handed over rather than re-run.
+        produceMembers: async () => produced,
+        onSession: (session) => {
+          activeRunSession = session
+        },
+        subscribers: ({ session, quarantined, maskingContext, live }) => {
+          // The run's masking context now exists; point the analytics send seam at it.
+          analyticsHost?.bindMaskingContext(maskingContext)
+          return attachRunSubscribers({
+            session,
+            maskingContext,
+            console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
+            junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
+            extraSubscribers,
+            live,
+            // 390 D-15: the SAME resolved set the run was assembled with, so the reporters and the
+            // aggregate verdict rule describe one disposition rather than two.
+            quarantined,
+          })
+        },
         warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
-      })
-      produced.applyAssembly({
-        buildOrdinal: assembly.buildOrdinal,
-        quarantined: assembly.quarantined,
-      })
-      suiteQuarantined = assembly.quarantined
-
-      // D-23 live bind, through the producer that owns the prepared suites. It moved in here with
-      // the ordinal it reads: `asOfBuild` is the advanced ordinal, and the advance is a durable
-      // write a refused run must not make — so the bind cannot precede the verdict either. It still
-      // precedes every member, because the core calls this assembler and only then `startRun`.
-      produced.bindKnowledge?.(assembly.buildOrdinal)
-
-      return assembly.config
-    },
-    onSession: (session) => {
-      activeRunSession = session
-      startedSession = session
-      // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest;
-      // analytics) via subscribe(0) — replay-then-live gives D-04 for free. Console options carry
-      // the run's flags. `suiteQuarantined` is already assigned: the core calls the assembler, then
-      // `startRun`, then this hook.
-      startedSubscribers = attachRunSubscribers({
-        session,
-        maskingContext,
-        console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
-        junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
-        extraSubscribers,
-        live: livePause,
-        // 390 D-15: the SAME resolved set the run was assembled with, so the reporters and the
-        // aggregate verdict rule describe one disposition rather than two.
-        quarantined: suiteQuarantined,
-      })
-    },
-  })
-
-  const exitCode = await runSafetyScope({ maskingContext, auditSink, executionContext }, async () => {
-    try {
-      // The core refuses, gates, assembles, starts, and awaits the run. A denial throws
-      // `RunDeniedError` from inside here, before a single run event exists.
-      //
-      // THE MARKERS RIDE THE REQUEST (INVK-06). `runMarkers` still maps this command's two options
-      // onto the two literal-`true` fields, but the field they land in is now `RunsStartInput`'s
-      // rather than `RunConfig`'s — request → RunConfig is the core's job, and there is no argv
-      // link left inside the invocation.
-      await runCore.execute({
+        afterVerdict: async ({ verdict, maskingContext, auditSink }) => {
+          clearGraceTimer()
+          activeRunSession = undefined
+          // D-14: freeze the verdict-mapped code before the curation tail. A tail failure or a
+          // signal arriving while the drain owns its lease can stop learning, but can never
+          // replace this code.
+          const verdictExitCode = mapVerdictToExitCode(
+            shutdownRequested ? 'cancelled' : (verdict as never),
+          )
+          // 388-02 D-01: ONE shared post-run tail serves both of this command's tail sites
+          // (Pitfall 1). The enqueue leg runs even under `--detach`; only the in-process chain
+          // drain is detach-gated. Neither can replace the code frozen on the line above.
+          const postRunTail = runPostRunTail({
+            runId,
+            agentQaRoot: resolvePath(configDir, '.agent-qa'),
+            configPath: resolvePath(configFilePath),
+            knowledgeConfig: config.knowledge,
+            configDir,
+            auditSink,
+            maskingContext,
+            ...(produced.getCurationModelDeps() === undefined
+              ? {}
+              : { modelDeps: produced.getCurationModelDeps()! }),
+            policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+            signal: curationAbortController.signal,
+            log: curationTailLog,
+          })
+          return await runVerdictFirstCurationTail({
+            exitCode: verdictExitCode,
+            detach: opts.detach === true,
+            enqueue: () => postRunTail.enqueue(),
+            runTail: () => postRunTail.drain(),
+            // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
+            finish: (input) => postRunTail.finish(input),
+            onUnexpectedError: () => {
+              curationTailLog.warn(
+                'Post-verdict knowledge curation incomplete; it will resume on the next run.',
+              )
+            },
+          })
+        },
+      },
+      {
+        // THE MARKERS RIDE THE REQUEST (INVK-06). `runMarkers` maps this command's two options onto
+        // the two literal-`true` fields; request → RunConfig is the core's job, and there is no argv
+        // link left inside the invocation.
         runId: asRunId(runId),
         ...runMarkers(opts),
-      })
-      const session = startedSession
-      const subscribers = startedSubscribers
-      if (session === undefined || subscribers === undefined) {
-        // Unreachable: the core notifies `onSession` before it awaits the run. Asserted rather than
-        // assumed, because a silently absent session would degrade into a run whose verdict nothing
-        // mapped.
-        throw new Error('The invocation core completed without reporting a run session.')
-      }
-
-      const { verdict } = await session.done
-      clearGraceTimer()
-      await lifecycle.finalize()
-      // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics drain)
-      // AFTER session.done + lifecycle.finalize() and BEFORE mapping the verdict to the exit code.
-      await subscribers.flush()
-      activeRunSession = undefined
-      // D-14: freeze the verdict-mapped code before the curation tail. A tail failure or a signal
-      // arriving while the drain owns its lease can stop learning, but can never replace this code.
-      const verdictExitCode = mapVerdictToExitCode(
-        shutdownRequested ? 'cancelled' : verdict,
-      )
-      // 388-02 D-01: ONE shared post-run tail serves both of this command's tail sites
-      // (Pitfall 1). The enqueue leg runs even under `--detach`; only the in-process chain
-      // drain is detach-gated. Neither can replace the code frozen on the line above.
-      const postRunTail = runPostRunTail({
-        runId,
-        agentQaRoot: resolvePath(configDir, '.agent-qa'),
-        configPath: resolvePath(configFilePath),
-        knowledgeConfig: config.knowledge,
-        configDir,
-        auditSink,
-        maskingContext,
-        ...(produced.getCurationModelDeps() === undefined
-          ? {}
-          : { modelDeps: produced.getCurationModelDeps()! }),
-        policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
-        signal: curationAbortController.signal,
-        log: curationTailLog,
-      })
-      return await runVerdictFirstCurationTail({
-        exitCode: verdictExitCode,
-        detach: opts.detach === true,
-        enqueue: () => postRunTail.enqueue(),
-        runTail: () => postRunTail.drain(),
-        // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
-        finish: (input) => postRunTail.finish(input),
-        onUnexpectedError: () => {
-          curationTailLog.warn(
-            'Post-verdict knowledge curation incomplete; it will resume on the next run.',
-          )
-        },
-      })
-    } finally {
-      // Pitfall 8: dispose LAST — after session.done + lifecycle.finalize() (teardown auth capture +
-      // handoff assembly) so every late masker still replaces; a post-run stray egress sees no mask.
-      maskingContext.dispose()
-    }
-  })
-
-  clearGraceTimer()
-  shutdownController.dispose()
-  process.removeListener('SIGINT', shutdownController.handleSignal)
-  process.removeListener('SIGTERM', shutdownController.handleSignal)
+      },
+    )
+    exitCode = outcome.exitCode
+  } finally {
+    clearGraceTimer()
+    shutdownController.dispose()
+    process.removeListener('SIGINT', shutdownController.handleSignal)
+    process.removeListener('SIGTERM', shutdownController.handleSignal)
+  }
 
   releaseAppium()
   return exitCode
@@ -3231,7 +3142,10 @@ export async function produceSuiteRunMembers(
     ...(suiteProbeUrl === undefined ? {} : { probeUrl: suiteProbeUrl }),
     ...(buildTag === undefined ? {} : { buildTag }),
     logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
-    maskingSeed: { authStatePayloads },
+    maskingSeed: {
+      ...(variableContext?.secretStore === undefined ? {} : { secretStore: variableContext.secretStore }),
+      authStatePayloads,
+    },
     subscriberSeed: (() => {
       const withDb = preparedSuites.find((p) => p.dashboardDb)
       if (withDb === undefined) return {}
@@ -3363,7 +3277,11 @@ export interface ProducedCliRunMembers {
    * What the ONE masking context must be seeded with beyond the secret store. Only the suite half
    * has any (its statically-resolved auth-state payloads), and the drive folds it in.
    */
-  readonly maskingSeed?: { readonly authStatePayloads?: readonly unknown[] }
+  readonly maskingSeed?: {
+    /** The run's secret store — the drive seeds the ONE masking context from it. */
+    readonly secretStore?: SecretStore
+    readonly authStatePayloads?: readonly unknown[]
+  }
   /**
    * What a door's dashboard-ingest subscriber needs and only the producer knows: the suite database
    * the prepared suites opened, plus the config/source snapshots and attributes the wire omits.
@@ -4138,6 +4056,7 @@ export async function produceDirectRunMembers(
     ...(singleProbeUrl === undefined ? {} : { probeUrl: singleProbeUrl }),
     ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
     logger,
+    maskingSeed: { secretStore: runtimeSecrets.secretStore },
     bindRunContext: ({ maskingContext, safetyHooks }) => {
       singleMaskingContext = maskingContext
       singleSafetyHooks = safetyHooks
@@ -4570,32 +4489,19 @@ export function createRunCommand(): Command {
 
         const singleExecutionContext = resolveRunExecutionContext()
 
-        // SEAM-01/03/04 (362-06): the SAME helpers as the suite path (Pitfall 7 — this is the common
-        // local-dev invocation and 363's demo path, it must not lag). Seed from secrets + env (auth
-        // registers dynamically per-test via D-06 at resolve/capture), stamp the per-run sink, build
-        // the per-run gate, and run the whole body inside runSafetyScope; dispose the context LAST.
+        // 401-11 (D-01/D-02): THE SINGLE-TEST PATH IS A CALLER OF THE ONE IN-PROCESS DRIVE.
         //
-        // MASKING BOUNDARY (363-09, RESEARCH Q7 item 3): placeholders only exist AFTER this seam. The
-        // pre-run validation-error DB writes + crash-finalizer above run BEFORE the MaskingContext, so
-        // they carry no placeholders and need no unmask call; humans see post-seam prose through the
-        // console reporter (the sole unmasking surface).
-        const maskingContext = buildRunMaskingContext({
-          secretStore: runtimeSecrets.secretStore,
-          env: process.env,
-        })
-        const auditSink = buildRunAuditSink({ configDir, runId: singleRunId, executionContext: singleExecutionContext })
-        const trustMode = opts.trustSession === true || config.safety?.trustMode === true
-        // D-11 (363-09): the console pause/resume seam bound to the console reporter in attachRunSubscribers
-        // below; buildRunSafetyHooks composes the unmask decorator OVER the timed decorator (Pitfall 4).
-        const livePause = createLivePauseController()
-        const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({ auditSink, executionContext: singleExecutionContext, trustMode, maskingContext, live: livePause })
-        // The run's masking context and safety hooks reach the member closures through the producer
-        // that owns them — the same late binding the command performed with two `let`s, named.
-        produced.bindRunContext({ maskingContext, safetyHooks })
-
-        // 363-09: run-level bus subscribers (Pitfall 8 — the SAME attach helper the suite path uses).
-        // Analytics rides the bus (D-16); the dashboard ingest (when the dashboard DB exists) writes
-        // runs/run_artifacts rows as a subscriber (D-08), adopting the plain/retry correlation env.
+        // What used to be an inline `startRun`, then an inline `createRunInvocationCore`, is now a
+        // call. The drive owns the ORDER and the run-scoped machinery every door needs identically —
+        // the ONE masking context, the ONE audit sink, the safety-hook runner, the safety scope, the
+        // assembler hand-off and the verdict map. This door supplies what only a door can answer: its
+        // TTY posture, its trust flag, its confirm channel, its members, its reporters, and what to
+        // do after the verdict.
+        //
+        // WHAT STAYS HERE, DELIBERATELY: signal registration and the grace timer, `activeRunSession`
+        // (through `onSession`), the reporters and their flush ordering, `releaseAppium()`, closing
+        // the dashboard db, the curation tail, the `--all` exit-code fold and the three terminal
+        // exits. A drive that reached for any of those would be a library that owns its host.
         const singleExtraSubscribers: RunSubscriberHandle[] = []
         if (dashboardDb) {
           // The primary run row is adopted from AGENT_QA_RUN_ID and refreshed from the bus envelope
@@ -4617,161 +4523,110 @@ export function createRunCommand(): Command {
             resolveCliRunAttributes(userRunAttributes, 'local', inheritedRunAttributes),
           ),
         }))
-        singleAnalytics.bindMaskingContext(maskingContext)
 
-
-        // The started session and its subscribers, published by the core's `onSession` hook. They
-        // are `let`s rather than return values because the hook fires while the core is still
-        // inside `execute`, which is exactly when a subscriber has to attach.
-        let startedSession: RunSession | undefined
-        let startedSubscribers: { flush(): Promise<void> } | undefined
         // The door's own confirm channel for the RUN-START gate (D-07). `undefined` on a piped or
         // redirected stdio — this door does not claim a person is present because the process is
         // running somewhere a person once was.
         const runStartConfirm = createTtyConfirmPort()
+        const singleTrustMode = opts.trustSession === true || config.safety?.trustMode === true
 
-        // 401-03 (D-02): the single-test path is a CALLER of the one policy-gated in-process
-        // invocation core. What used to be an inline `startRun` is now: this door resolves what only
-        // it knows — its TTY posture, its trust flag, its confirm channel, its assembly — and the
-        // core owns the ORDER, with the one `evaluate()` before anything touches the target.
-        //
-        // THE CONTEXT AND THE CONFIRM PORT TRAVEL EXPLICITLY (D-07). The core never asks the process
-        // what it is; a resolver reaching for ambient state would answer for the machine when the
-        // question is about this door.
-        const runCore = createRunInvocationCore({
-          configPath: configFilePath,
-          agentQaRoot: resolvePath(configDir, '.agent-qa'),
-          executionContext: singleExecutionContext,
-          mintRunId: generateRunId,
-          auditSink,
-          trust: { trustMode },
-          // Absent on a piped/redirected stdio, which leaves the gate's DENY_CONFIRM default in
-          // place — the fail-closed arm is reached before the confirm arm anyway, so this port only
-          // ever speaks where there is somebody to answer it.
-          ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
-          resolveTargetClass: () => singleTargetClass,
-          assembleRun: async (assemblyContext) => {
-            const assembly = await assembleCliRun({
-              runId: assemblyContext.runId,
-              executionContext: assemblyContext.executionContext,
-              configDir: assemblyContext.configDir,
-              knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
-              ports: assemblyContext.ports,
-              confirmPausedMs,
-              maskingContext,
-              members,
-              executor,
-              configDigests: runDigests.runLevel,
-              product: singleRunProduct,
-              ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
-              ...(singleProbeUrl === undefined ? {} : { probeUrl: singleProbeUrl }),
+        const { runInProcessCliRun } = await import('../composition/in-process-run-execution.js')
+        let singleExit: number
+        try {
+          const outcome = await (runInProcessCliRun as typeof RunInProcessCliRun)(
+            {
+              configPath: configFilePath,
+              agentQaRoot: resolvePath(configDir, '.agent-qa'),
+              executionContext: singleExecutionContext,
+              trust: { trustMode: singleTrustMode },
+              // Absent on a piped/redirected stdio, which leaves the gate's DENY_CONFIRM default in
+              // place — the fail-closed arm is reached before the confirm arm anyway, so this port
+              // only ever speaks where there is somebody to answer it.
+              ...(runStartConfirm === undefined ? {} : { confirm: runStartConfirm }),
+              inputs,
+              // The members this door already produced. The SAME producer a bare-request door
+              // reaches through `produceMembersFromPatterns` — handed over rather than re-run,
+              // because this door needed them for `--list-tests`, `--dry-run` and its parse-error
+              // report before it could get here.
+              produceMembers: async () => produced,
+              onSession: (session) => {
+                activeRunSession = session
+              },
+              subscribers: ({ session, quarantined, maskingContext, live }) => {
+                singleAnalytics.bindMaskingContext(maskingContext)
+                // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard
+                // ingest; analytics) — replay-then-live gives D-04 for free. `quarantined` is the
+                // SAME resolved set the run was assembled with (390 D-15, Pitfall 8).
+                return attachRunSubscribers({
+                  session,
+                  maskingContext,
+                  console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
+                  junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
+                  extraSubscribers: singleExtraSubscribers,
+                  live,
+                  quarantined,
+                })
+              },
               warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
-            })
-            produced.applyAssembly({
-              buildOrdinal: assembly.buildOrdinal,
-              quarantined: assembly.quarantined,
-            })
-            singleQuarantined = assembly.quarantined
-            return assembly.config
-          },
-          onSession: (session) => {
-            activeRunSession = session
-            produced.bindSession(session)
-            startedSession = session
-            // Attach the bus subscribers (console unmasks; junit + wire masked; dashboard ingest;
-            // analytics) — replay-then-live gives D-04 for free. `singleQuarantined` is already
-            // assigned: the core calls the assembler, then `startRun`, then this hook.
-            startedSubscribers = attachRunSubscribers({
-              session,
-              maskingContext,
-              console: reporterSelection.console ? { verbose: false, logLevel: effectiveLogLevel } : false,
-              junitOutputPath: reporterSelection.junit ? opts.junitOutput : undefined,
-              extraSubscribers: singleExtraSubscribers,
-              live: livePause,
-              // 390 D-15: the SAME resolved set the run was assembled with (Pitfall 8 — both paths).
-              quarantined: singleQuarantined,
-            })
-          },
-        })
-
-        const singleExit = await runSafetyScope({ maskingContext, auditSink, executionContext: singleExecutionContext }, async () => {
-          try {
-            // The core refuses, gates, assembles, starts, and awaits the run. A denial throws
-            // `RunDeniedError` from inside here, before a single run event exists.
-            await runCore.execute({
+              // The post-verdict tail, run INSIDE the run's own safety scope so its curation egress
+              // masks like every other. The `--all` fold happens on the freeze line below and is
+              // untouched by this rework.
+              afterVerdict: async ({ verdict, maskingContext, auditSink }) => {
+                clearGraceTimer()
+                activeRunSession = undefined
+                // Freeze the complete --all-aware exit code before the tail begins. Signals remain
+                // wired until the tail releases its lease, but neither abort nor failure may
+                // replace this code.
+                const verdictExitCode = mapVerdictToExitCode(
+                  shutdownRequested ? 'cancelled' : (verdict as never),
+                )
+                const exitCode =
+                  verdictExitCode !== 0 ? verdictExitCode : (suitesFailed ? 1 : 0)
+                // 388-02: the same shared tail as the multi-suite site above.
+                const postRunTail = runPostRunTail({
+                  runId: singleRunId,
+                  agentQaRoot: resolvePath(configDir, '.agent-qa'),
+                  configPath: configFilePath,
+                  knowledgeConfig: config.knowledge,
+                  configDir,
+                  auditSink,
+                  maskingContext,
+                  ...(produced.getCurationModelDeps() === undefined
+                    ? {}
+                    : { modelDeps: produced.getCurationModelDeps()! }),
+                  policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
+                  signal: curationAbortController.signal,
+                  log: curationTailLog,
+                })
+                return await runVerdictFirstCurationTail({
+                  exitCode,
+                  detach: opts.detach === true,
+                  enqueue: () => postRunTail.enqueue(),
+                  runTail: () => postRunTail.drain(),
+                  // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
+                  finish: (input) => postRunTail.finish(input),
+                  onUnexpectedError: () => {
+                    curationTailLog.warn(
+                      'Post-verdict knowledge curation incomplete; it will resume on the next run.',
+                    )
+                  },
+                })
+              },
+            },
+            {
               runId: asRunId(singleRunId),
               ...runMarkers(opts),
-            })
-            const session = startedSession
-            const subscribers = startedSubscribers
-            if (session === undefined || subscribers === undefined) {
-              // Unreachable: the core notifies `onSession` before it awaits the run. Asserted
-              // rather than assumed, because a silently absent session would degrade into a run
-              // whose verdict nothing mapped.
-              throw new Error('The invocation core completed without reporting a run session.')
-            }
-
-            const { verdict } = await session.done
-            clearGraceTimer()
-            // Pitfall 6/8: await EVERY subscriber flush (junit write, dashboard finalize, analytics drain)
-            // AFTER session.done and BEFORE mapping the verdict / re-throwing a framework error.
-            await subscribers.flush()
-            activeRunSession = undefined
-
-            // Re-surface a captured framework/setup error so the existing exit-2 contract holds — the
-            // throw stays inside the scope so dispose (finally) runs before it propagates. The grace
-            // backstop is already cleared above, so the exit-2 re-throw path is unaffected.
-            const memberFrameworkError = produced.takeFrameworkError()
-            if (memberFrameworkError !== undefined) {
-              throw memberFrameworkError
-            }
-
-            // Freeze the complete --all-aware exit code before the tail begins. Signals remain wired
-            // until the tail releases its lease, but neither abort nor failure may replace this code.
-            const verdictExitCode = mapVerdictToExitCode(
-              shutdownRequested ? 'cancelled' : verdict,
-            )
-            const exitCode =
-              verdictExitCode !== 0 ? verdictExitCode : (suitesFailed ? 1 : 0)
-            // 388-02: the same shared tail as the multi-suite site above. The `--all` fold
-            // happens BEFORE the freeze on the line above and is untouched by this rework.
-            const postRunTail = runPostRunTail({
-              runId: singleRunId,
-              agentQaRoot: resolvePath(configDir, '.agent-qa'),
-              configPath: configFilePath,
-              knowledgeConfig: config.knowledge,
-              configDir,
-              auditSink,
-              maskingContext,
-              ...(produced.getCurationModelDeps() === undefined
-                ? {}
-                : { modelDeps: produced.getCurationModelDeps()! }),
-              policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
-              signal: curationAbortController.signal,
-              log: curationTailLog,
-            })
-            return await runVerdictFirstCurationTail({
-              exitCode,
-              detach: opts.detach === true,
-              enqueue: () => postRunTail.enqueue(),
-              runTail: () => postRunTail.drain(),
-              // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
-              finish: (input) => postRunTail.finish(input),
-              onUnexpectedError: () => {
-                curationTailLog.warn(
-                  'Post-verdict knowledge curation incomplete; it will resume on the next run.',
-                )
-              },
-            })
-          } finally {
-            // Keep both process signals live through the drain; then dispose masking absolutely last.
-            clearGraceTimer()
-            shutdownController.dispose()
-            process.removeListener('SIGINT', shutdownController.handleSignal)
-            process.removeListener('SIGTERM', shutdownController.handleSignal)
-            maskingContext.dispose()
-          }
-        })
+            },
+          )
+          singleExit = outcome.exitCode
+        } finally {
+          // Keep both process signals live through the drain, then release them. The masking
+          // context is disposed inside the drive, absolutely last within the run's own scope.
+          clearGraceTimer()
+          shutdownController.dispose()
+          process.removeListener('SIGINT', shutdownController.handleSignal)
+          process.removeListener('SIGTERM', shutdownController.handleSignal)
+        }
 
         releaseAppium()
 

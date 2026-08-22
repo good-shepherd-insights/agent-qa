@@ -192,12 +192,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
   },
   {
     file: 'packages/cli/src/commands/run.ts',
-    specifier: '@vostride/agent-qa-safety-local',
-    clearedBy: '386',
-    reason: 'the run command wires runner, safety, and every platform driver by hand; relocates with the run-session composition root',
-  },
-  {
-    file: 'packages/cli/src/commands/run.ts',
     specifier: '@vostride/agent-qa-web',
     clearedBy: '386',
     reason: 'the run command wires runner, safety, and every platform driver by hand; relocates with the run-session composition root',

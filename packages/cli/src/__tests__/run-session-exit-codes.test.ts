@@ -24,6 +24,18 @@ const assemblySource = readFileSync(
   fileURLToPath(new URL('../composition/run-assembly.ts', import.meta.url)),
   'utf8',
 )
+// 401-11: the door's ONE in-process drive, and a FOURTH anchor file for the same reason the third
+// exists. Every seam this suite pins — the core composition, the safety scope, the run masking
+// context, the per-run safety-hook runner, the dispose-last ordering — used to be written twice in
+// `run.ts`, once per path, and this suite counted the two copies. They are written ONCE now, in the
+// module both paths call. The property is unchanged and stronger: "at both sites, with the same
+// helpers" was always a proxy for "one seam, shared", and a count of two copies cannot survive the
+// copies being merged. So the count moved to where the thing it counts lives, and `run.ts` is
+// asserted to hold NONE of them — which a `>= 2` could never have said.
+const driveSource = readFileSync(
+  fileURLToPath(new URL('../composition/in-process-run-execution.ts', import.meta.url)),
+  'utf8',
+)
 
 function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1
@@ -78,11 +90,21 @@ describe('D-14 exit map re-pinned at the CLI boundary', () => {
 // asserts the core's event log end to end.
 describe('both CLI run paths exit through the verdict map (T-361-08)', () => {
   it('both paths compose the gated core — neither reaches the run shell any other way', () => {
-    expect(count(runSource, 'createRunInvocationCore({')).toBe(2)
+    // 401-11 RESTATED THIS, and in the direction that makes it stronger. The two core compositions
+    // this line counted were two copies of one composition; they are one now, in the drive both
+    // paths call. So: `run.ts` composes the core ZERO times (a second composition beside the drive
+    // would be exactly the regrowth the old count existed to forbid), the drive composes it ONCE,
+    // and BOTH of the door's paths reach the drive.
+    expect(count(runSource, 'createRunInvocationCore({')).toBe(0)
+    expect(count(driveSource, 'createRunInvocationCore({')).toBe(1)
+    expect(count(runSource, 'runInProcessCliRun as typeof RunInProcessCliRun)(')).toBe(2)
   })
 
   it('maps the verdict to the exit code in both paths — no ad-hoc hasFailed boolean survives', () => {
+    // Still two, and still in `run.ts`: each path folds its OWN post-verdict answer (`--all` on one,
+    // a pending cancel on both) and the drive maps the run's own verdict once beneath them.
     expect(count(runSource, 'mapVerdictToExitCode(')).toBeGreaterThanOrEqual(2)
+    expect(count(driveSource, 'mapVerdictToExitCode(')).toBe(1)
     expect(runSource).not.toContain('hasFailed')
   })
 })
@@ -98,8 +120,12 @@ describe('the suite path seeds a real run MaskingContext inside runSafetyScope (
   })
 
   it('wraps at least one run body in runSafetyScope with a real seeded run MaskingContext', () => {
-    expect(count(runSource, 'runSafetyScope(')).toBeGreaterThanOrEqual(1)
-    expect(count(runSource, 'buildRunMaskingContext(')).toBeGreaterThanOrEqual(1)
+    // 401-11: ONE run body, in the drive, and `run.ts` wraps none of its own — which is what "the
+    // suite path runs inside a safety scope" means once the two paths share a body.
+    expect(count(driveSource, 'runSafetyScope(')).toBe(1)
+    expect(count(runSource, 'runSafetyScope(')).toBe(0)
+    expect(count(driveSource, 'buildRunMaskingContext(')).toBe(1)
+    expect(count(runSource, 'buildRunMaskingContext(')).toBe(0)
     // The suite RunConfig masking is the run context, not the identity mint — RESTATED by 401-04
     // rather than relaxed. The property is unchanged; the line moved. run.ts no longer literally
     // writes `masking: maskingContext` because run.ts no longer literally writes a `RunConfig`: it
@@ -113,17 +139,29 @@ describe('the suite path seeds a real run MaskingContext inside runSafetyScope (
   })
 
   it('threads the per-run SafetyHookRunner into the suite member executor', () => {
-    expect(count(runSource, 'buildRunSafetyHooks(')).toBeGreaterThanOrEqual(1)
+    // The runner is BUILT once, in the drive, and BOUND back into the producer that owns the member
+    // closures — so both halves are pinned: one construction, and a `safetyHooks:` still reaching
+    // the suite member config in `run.ts`.
+    expect(count(driveSource, 'buildRunSafetyHooks(')).toBe(1)
+    expect(count(runSource, 'buildRunSafetyHooks(')).toBe(0)
     expect(count(runSource, 'safetyHooks:')).toBeGreaterThanOrEqual(1)
+    // The drive binds it back into the producer that owns the member closures, and BOTH producers
+    // in `run.ts` implement that binding — so the runner still reaches the suite member executor.
+    expect(driveSource).toContain('produced.bindRunContext({ maskingContext, safetyHooks })')
+    expect(count(runSource, 'bindRunContext: ({ maskingContext, safetyHooks }) =>')).toBe(2)
   })
 
-  it('disposes the run MaskingContext inside a finally, lexically after lifecycle.finalize()', () => {
-    const finalizeIdx = runSource.indexOf('await lifecycle.finalize()')
-    const disposeIdx = runSource.indexOf('maskingContext.dispose()')
+  it('disposes the run MaskingContext inside a finally, lexically after the producer finalises', () => {
+    // 401-11: the ordering is unchanged and it moved with the body it orders. `lifecycle.finalize()`
+    // is `produced.finalize?.()` now — the suite half's lifecycle, reached through the producer that
+    // owns it — and dispose is still the last statement of the scope's `finally`.
+    const finalizeIdx = driveSource.indexOf('await produced.finalize?.()')
+    const disposeIdx = driveSource.indexOf('maskingContext.dispose()')
     expect(finalizeIdx).toBeGreaterThan(0)
     expect(disposeIdx).toBeGreaterThan(finalizeIdx)
-    // A `finally {` opens between finalize and dispose — dispose is the last statement in the scope.
-    expect(runSource.slice(finalizeIdx, disposeIdx)).toContain('finally {')
+    expect(driveSource.slice(finalizeIdx, disposeIdx)).toContain('finally {')
+    // And `run.ts` disposes nothing of its own — a second dispose would be a second lifecycle.
+    expect(count(runSource, 'maskingContext.dispose()')).toBe(0)
   })
 })
 
@@ -155,7 +193,10 @@ describe('both handleShutdown paths arm + clear a bounded force-exit backstop (S
 // single-test runTest config, and trust reaches the gate only via the flag/config channel (D-15).
 describe('the single-test path activates the seams with no identity mint remaining (SEAM-01/03, 362-06)', () => {
   it('wraps BOTH run bodies in runSafetyScope', () => {
-    expect(count(runSource, 'runSafetyScope(')).toBeGreaterThanOrEqual(2)
+    // There is ONE run body now and both paths enter it, which is what "both are wrapped" meant.
+    // Pinned as: one scope in the drive, none in the door, and two calls into the drive from it.
+    expect(count(driveSource, 'runSafetyScope(')).toBe(1)
+    expect(count(runSource, 'runInProcessCliRun as typeof RunInProcessCliRun)(')).toBe(2)
   })
 
   it('constructs no identity MaskingContext anywhere in production composition (Pitfall 7 warning sign)', () => {
@@ -163,9 +204,14 @@ describe('the single-test path activates the seams with no identity mint remaini
     expect(count(compositionSource, 'buildIdentityMasking')).toBe(0)
   })
 
-  it('builds the run MaskingContext + SafetyHookRunner at BOTH sites with the same helpers', () => {
-    expect(count(runSource, 'buildRunMaskingContext(')).toBeGreaterThanOrEqual(2)
-    expect(count(runSource, 'buildRunSafetyHooks(')).toBeGreaterThanOrEqual(2)
+  it('builds the run MaskingContext + SafetyHookRunner ONCE, for both sites, with the same helpers', () => {
+    // "the same helpers at both sites" is now literally the same call, once. The regression this
+    // guarded against — one path drifting onto its own masking/hook construction — is caught by the
+    // zero-in-`run.ts` half rather than by a count of two.
+    expect(count(driveSource, 'buildRunMaskingContext(')).toBe(1)
+    expect(count(driveSource, 'buildRunSafetyHooks(')).toBe(1)
+    expect(count(runSource, 'buildRunMaskingContext(')).toBe(0)
+    expect(count(runSource, 'buildRunSafetyHooks(')).toBe(0)
   })
 
   it('threads the run context + hooks into the single-test runTest config', () => {
@@ -175,6 +221,8 @@ describe('the single-test path activates the seams with no identity mint remaini
 
   it('routes trust to the gate only via --trust-session / config.safety.trustMode (no env-var bypass, D-15)', () => {
     expect(count(runSource, 'opts.trustSession === true || config.safety?.trustMode === true')).toBeGreaterThanOrEqual(2)
+    // And the drive reads trust from its options and from nowhere else.
+    expect(driveSource).toContain('options.trust?.trustMode === true')
     // No env var feeds trustMode — guard against a smuggled AGENT_QA_TRUST-style implicit grant.
     expect(runSource).not.toMatch(/trustMode:\s*[^,\n)]*process\.env/)
     expect(runSource).not.toMatch(/process\.env\.[A-Z_]*TRUST/)

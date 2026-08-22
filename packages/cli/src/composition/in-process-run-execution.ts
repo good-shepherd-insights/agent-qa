@@ -95,7 +95,8 @@ export interface RunMemberProductionContext {
   readonly configPath: string
   readonly runId: string
   readonly executionContext: RunExecutionContext
-  readonly inputs: RunInvocationInputs
+  /** The resolved preflight, when the door already read it. Absent for a bare-request door. */
+  readonly inputs?: RunInvocationInputs
 }
 
 export type RunMemberProducer = (
@@ -220,22 +221,29 @@ export async function runInProcessCliRun(
   request: RunsStartInput,
 ): Promise<CliRunOutcome> {
   const configPath = request.configPath ?? options.configPath
-  const inputs = options.inputs ?? await resolveRunInvocationInputs({
-    configPath,
-    ...(request.patterns === undefined ? {} : { patterns: request.patterns }),
-  })
   const runId = request.runId ?? mintCliRunId()
 
-  const produced = await (options.produceMembers ?? defaultProducer)({
-    request,
-    configPath,
-    runId,
-    executionContext: options.executionContext,
-    inputs,
-  })
+  // A DOOR THAT BROUGHT ITS OWN PRODUCER BROUGHT ITS OWN INPUTS TOO. Resolving them here anyway
+  // would re-read the config and the secrets file for a door that already has both, and would make
+  // `agent-qa run`'s `--list-tests`/`--dry-run`/parse-error preflight a thing this seam repeats.
+  const produced = options.produceMembers === undefined
+    ? await produceMembersFromPatterns({
+        inputs: options.inputs ?? await resolveRunInvocationInputs({
+          configPath,
+          ...(request.patterns === undefined ? {} : { patterns: request.patterns }),
+        }),
+        runId,
+      })
+    : await options.produceMembers({
+        request,
+        configPath,
+        runId,
+        executionContext: options.executionContext,
+        ...(options.inputs === undefined ? {} : { inputs: options.inputs }),
+      })
 
   const maskingContext = buildRunMaskingContext({
-    secretStore: inputs.runtimeSecrets.secretStore,
+    secretStore: produced.maskingSeed?.secretStore,
     env: process.env,
     ...(produced.maskingSeed?.authStatePayloads === undefined
       ? {}
@@ -354,9 +362,6 @@ export async function runInProcessCliRun(
     },
   )
 }
-
-const defaultProducer: RunMemberProducer = (context) =>
-  produceMembersFromPatterns({ inputs: context.inputs, runId: context.runId })
 
 /**
  * The `RunExecutionPort` a door composes.
