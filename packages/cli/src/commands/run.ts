@@ -35,6 +35,10 @@ import {
   type RunTargetClass,
 } from '@vostride/agent-qa-agent-local'
 import { assembleCliRun } from '../composition/run-assembly.js'
+// 401-11: the typed input failure this file's preflight now THROWS instead of exiting on.
+// It lives in a leaf module rather than in `in-process-run-execution.ts` because that module
+// imports this one's producers — see `cli-run-input-error.ts`'s header.
+import { CliRunInputError } from '../composition/cli-run-input-error.js'
 import { createTtyConfirmPort } from '../composition/local-agent-host.js'
 import { denialDetailLines } from './receipt-line.js'
 import {
@@ -444,13 +448,13 @@ interface ReporterSelection {
   dashboard: boolean
 }
 
-interface SecretsFileArtifactMetadata {
+export interface SecretsFileArtifactMetadata {
   path: string | null
   status: 'loaded' | 'missing' | 'unreadable' | 'invalid'
   count?: number
 }
 
-interface RuntimeSecretsContext {
+export interface RuntimeSecretsContext {
   secretStore: SecretStore
   secretRedactor: SecretRedactor
   secretsFileMetadata: SecretsFileArtifactMetadata
@@ -764,24 +768,34 @@ async function loadRuntimeSecrets(input: {
 }): Promise<RuntimeSecretsContext> {
   const configuredSecretsFile = (input.config as any).workspace?.secretsFile
   if (typeof configuredSecretsFile !== 'string' || configuredSecretsFile.trim().length === 0) {
-    console.error(pc.red('Error: workspace.secretsFile is required. Run `agent-qa init` or set it in agent-qa.config.yaml.'))
-    process.exit(1)
+    throw new CliRunInputError(
+      [pc.red('Error: workspace.secretsFile is required. Run `agent-qa init` or set it in agent-qa.config.yaml.')],
+      1,
+    )
   }
 
   const secretsPath = input.secretsFilePath ?? resolvePath(input.configDir, configuredSecretsFile)
   if (!input.existsSync(secretsPath)) {
-    console.error(pc.red(`Error: Secrets file not found: ${secretsPath}`))
-    console.error(pc.dim('Create the file before running tests. It may be empty, but it must exist.'))
-    process.exit(1)
+    throw new CliRunInputError(
+      [
+        pc.red(`Error: Secrets file not found: ${secretsPath}`),
+        pc.dim('Create the file before running tests. It may be empty, but it must exist.'),
+      ],
+      1,
+    )
   }
 
   let secretsContent: string
   try {
     secretsContent = input.readFileSync(secretsPath, 'utf-8')
   } catch {
-    console.error(pc.red(`Error: Secrets file could not be read: ${secretsPath}`))
-    console.error(pc.dim('Check the path and file permissions before running tests.'))
-    process.exit(1)
+    throw new CliRunInputError(
+      [
+        pc.red(`Error: Secrets file could not be read: ${secretsPath}`),
+        pc.dim('Check the path and file permissions before running tests.'),
+      ],
+      1,
+    )
   }
 
   try {
@@ -798,8 +812,339 @@ async function loadRuntimeSecrets(input: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.error(pc.red(`Error: Secrets file is invalid: ${message}`))
-    process.exit(1)
+    throw new CliRunInputError([pc.red(`Error: Secrets file is invalid: ${message}`)], 1)
+  }
+}
+
+/**
+ * RUNX-06, as a refusal a door can CALL.
+ *
+ * `filtered` is `parseAllTestBindings`' bindings verbatim — no grep narrows it — so an empty one
+ * means discovery RESOLVED at least one test file (the "no files found" refusal already proved
+ * that) and parsing produced ZERO runnable tests. Starting a run from there would assemble a
+ * zero-member `RunSession` and render a benign-looking "Tests: 0 of 0 passed" summary: a silent
+ * green non-run. An existing resolved target must FAIL LOUDLY instead, on the same config/usage
+ * contract as the discovery refusals (T-365-04b).
+ *
+ * It became a throw for the reason every other preflight refusal did: this guard is now on a path
+ * a daemon calls, and a daemon that exits 2 because somebody committed an empty test file is the
+ * failure T-401-31 names.
+ */
+export function refuseZeroRunnableTests(
+  files: readonly string[],
+  bindings: readonly ParsedTestBinding[],
+): void {
+  if (bindings.length > 0) return
+  throw new CliRunInputError(
+    [
+      pc.red('Error: Resolved test file(s) but found 0 runnable tests.'),
+      ...files.map((file) => pc.red(`  ${file}`)),
+      pc.dim('Each test file must define at least one test (a top-level `name` + `steps`, or a `tests:` list).'),
+    ],
+    2,
+  )
+}
+
+/**
+ * Reporter selection, as a refusal rather than an exit.
+ *
+ * The selection itself is argv vocabulary and stays a door concern — a programmatic door supplies
+ * its own subscribers and never reaches this. What changed is the failure shape: the refusal is a
+ * value the caller decides about, so no module on this path terminates its host.
+ */
+export function requireReporterSelection(
+  opts: RunOptions,
+  dashboardConfigured: boolean,
+): ReporterSelection {
+  const result = resolveReporterSelection(opts, dashboardConfigured)
+  if (result.error) {
+    throw new CliRunInputError([pc.red(`Error: ${result.error}`)], 2)
+  }
+  return result.selection!
+}
+
+/** What a door asks the input preflight for. Every field is something only a door knows. */
+export interface RunInvocationInputRequest {
+  /** `--config` on the CLI, `request.configPath` on a programmatic door. */
+  readonly configPath?: string
+  /** The operands. EMPTY means the configured default set, which is a live contract. */
+  readonly patterns?: readonly string[]
+  /** `--test` / `--suite` / `--all`. Absent is the default: tests via `workspace.testMatch`. */
+  readonly mode?: 'test' | 'suite' | 'all'
+  /** Config overrides a flag expressed (`--browser`). */
+  readonly flagOverrides?: Record<string, unknown>
+  /** `--dry-run`/`--list-tests` resolve config without loading auth plugins. */
+  readonly loadAuthPlugins?: boolean
+  /** The door's own resolved log level; the config's own setting is the fallback. */
+  readonly logLevel?: string
+  /** `--var KEY=VALUE`, repeatable. */
+  readonly varFlags?: readonly string[]
+  /** `--run-attr KEY=VALUE`, repeatable. */
+  readonly runAttrFlags?: readonly string[]
+  /** Where a non-fatal preflight warning goes. The door owns its rendering. */
+  readonly warn?: (message: string) => void
+}
+
+/** Everything the run path needs before it can produce a member, and nothing it does not. */
+export interface RunInvocationInputs {
+  readonly config: AgentQaConfig
+  readonly configFilePath: string
+  readonly configDir: string
+  readonly workspacePaths: ResolvedWorkspacePaths
+  readonly configContent: string
+  readonly runtimeSecrets: RuntimeSecretsContext
+  readonly envFileVars: Record<string, string>
+  readonly rawEnvFileContent: string | null
+  readonly resolvedEnvFilePath: string | null
+  readonly resolvedHooks: Map<string, HookDefinition>
+  readonly sandboxOptions: SandboxRunnerOptions
+  readonly effectiveLogLevel: string
+  readonly cliVars: Record<string, string>
+  readonly inlineVars: Record<string, string>
+  readonly userRunAttributes: RunAttributes
+  readonly inheritedRunAttributes: RunAttributes | undefined
+  /**
+   * BOTH HALVES OF THE DISCOVERY SPLIT, untouched.
+   *
+   * `discoverFilesForCliPatterns` already answers `{ tests, suites }` and the command already
+   * captured both. Collapsing the split here would make the mode-aware member dispatch unbuildable:
+   * a request carries patterns and NO mode flag (that is exactly what `createCliRunExecution`
+   * forwards today), so the only thing that can tell a suite invocation from a test invocation is
+   * which half of this pair came back non-empty.
+   */
+  readonly discovered: { readonly tests: string[]; readonly suites: string[] }
+}
+
+/**
+ * THE INPUT PREFLIGHT, as a producer a door can CALL rather than a block a command performs.
+ *
+ * This is a verbatim lift of `agent-qa run`'s own preflight — same reads, same order, same rendered
+ * strings — with one change: every failure that used to render and call `process.exit` now throws a
+ * `CliRunInputError` carrying those same rendered lines and that same exit code. The command prints
+ * `lines` and terminates with `exitCode`, so its observable behaviour is unchanged to the byte;
+ * every other door gets a typed refusal instead of a dead host (T-401-31).
+ *
+ * IT STAYS IN THIS FILE, and that is the surface firewall's answer rather than a preference. The
+ * preflight needs `@vostride/agent-qa-core`'s parser, workspace walker and env reader plus the two
+ * private helpers below it; `commands/run.ts` is the only cli file ledgered for those packages, the
+ * ledger only ever shrinks, and a file written after 2026-07-28 can never join it. What moved into
+ * `composition/in-process-run-execution.ts` is the COMPOSITION; the vocabulary stays here.
+ */
+export async function resolveRunInvocationInputs(
+  request: RunInvocationInputRequest = {},
+): Promise<RunInvocationInputs> {
+  const warn = request.warn ?? ((message: string) => { console.warn(message) })
+
+  const config = await resolveConfig({
+    configPath: request.configPath,
+    flags: request.flagOverrides ?? {},
+    loadAuthPlugins: request.loadAuthPlugins ?? true,
+  })
+
+  // Read raw config file content for cache key scoping
+  const configFilePath = resolvePath(request.configPath ?? 'agent-qa.config.yaml')
+  const workspacePaths = resolveWorkspacePaths({ config, configPath: configFilePath })
+  let configContent = ''
+  try {
+    const { readFile: readConfigFile } = await import('node:fs/promises')
+    configContent = await readConfigFile(configFilePath, 'utf-8')
+  } catch { /* best-effort: resolveConfig already required the file */ }
+
+  // Load variables from env file, config inline, and CLI flags
+  const { parseEnvFile } = await import('@vostride/agent-qa-core')
+  const { readFileSync, existsSync } = await import('node:fs')
+  const configDir = workspacePaths.configDir
+
+  const cliVars = parseVarFlags(request.varFlags === undefined ? undefined : [...request.varFlags])
+  const inheritedContextRunId = process.env.AGENT_QA_RUN_ID
+    ?? process.env.AGENT_QA_SUITE_QUEUE_ID
+    ?? process.env.AGENT_QA_PARENT_RUN_ID
+  const inheritedRunAttributes = inheritedContextRunId
+    ? readRunAttributesFromEnv()
+    : undefined
+  let userRunAttributes: RunAttributes
+  try {
+    const parsedRunAttrs = parseRunAttrFlags(
+      request.runAttrFlags === undefined ? undefined : [...request.runAttrFlags],
+    )
+    userRunAttributes = parsedRunAttrs.attributes
+    for (const duplicateKey of parsedRunAttrs.duplicateKeys) {
+      warn(`Warning: duplicate --run-attr key "${duplicateKey}"; using last value`)
+    }
+  } catch (err) {
+    throw new CliRunInputError(
+      [pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`)],
+      2,
+    )
+  }
+  const inlineVars: Record<string, string> = {}
+
+  const runtimeSecrets = await loadRuntimeSecrets({
+    config,
+    configDir,
+    secretsFilePath: workspacePaths.secretsFile.absolutePath,
+    readFileSync,
+    existsSync,
+  })
+
+  let envFileVars: Record<string, string> = {}
+  let rawEnvFileContent: string | null = null
+  const resolvedEnvFilePath: string | null = workspacePaths.envFile.absolutePath
+  if (!existsSync(workspacePaths.envFile.absolutePath)) {
+    throw new CliRunInputError(
+      [pc.red(`Error: Env file not found: ${workspacePaths.envFile.absolutePath}`)],
+      1,
+    )
+  }
+  try {
+    rawEnvFileContent = readFileSync(workspacePaths.envFile.absolutePath, 'utf-8')
+    envFileVars = parseEnvFile(rawEnvFileContent)
+  } catch {
+    throw new CliRunInputError(
+      [pc.red(`Error: Env file could not be read: ${workspacePaths.envFile.absolutePath}`)],
+      1,
+    )
+  }
+
+  let resolvedHooks: Map<string, HookDefinition>
+  let sandboxOptions: SandboxRunnerOptions
+
+  const hooksFilePath = workspacePaths.hooksFile.absolutePath
+  if (!existsSync(hooksFilePath)) {
+    throw new CliRunInputError([pc.red(`Error: Hooks file not found: ${hooksFilePath}`)], 1)
+  }
+  try {
+    const { parseHooksFile } = await import('@vostride/agent-qa-core')
+    const { hooks, errors } = await parseHooksFile(hooksFilePath)
+    if (errors.length > 0) {
+      throw new CliRunInputError(
+        [
+          pc.red('Hooks configuration errors:'),
+          ...errors.map((err: string) => pc.red(`  - ${err}`)),
+        ],
+        1,
+      )
+    }
+    resolvedHooks = new Map(hooks.map((h: HookDefinition) => [h.id, h]))
+    // D-06: construct the runner-local Docker hook executor once at this composition
+    // root and thread it inside the sandboxOptions carrier to every hook site.
+    sandboxOptions = {
+      executor: new DockerHookExecutor(),
+      secretStore: runtimeSecrets.secretStore,
+      secretRedactor: runtimeSecrets.secretRedactor,
+    }
+  } catch (err: any) {
+    // THE RE-THROW IS LOAD-BEARING, not defensive. The hooks-error branch above used to be a
+    // `process.exit(1)`, which never returns and therefore never reached this catch. Now that it is
+    // a throw, an unguarded catch would swallow the specific "Hooks configuration errors:" report
+    // and replace it with the generic "could not be read" one — a silent downgrade of a diagnostic,
+    // introduced by the conversion itself.
+    if (err instanceof CliRunInputError) throw err
+    throw new CliRunInputError(
+      [
+        pc.red(`Error: Hooks file could not be read: ${hooksFilePath}`),
+        ...(err instanceof Error && err.message ? [pc.dim(err.message)] : []),
+      ],
+      1,
+    )
+  }
+
+  // Workspace agent-rules loading removed in Phase 373 (KDIR-03); policy serving
+  // returns via Reader L0 policies in Phase 380.
+
+  // Resolve effective log level: the door's own fold (CLI flag > --verbose/--quiet) > config > fallback
+  const effectiveLogLevel = request.logLevel
+    ?? (config as any).services?.logging?.level
+    ?? 'warn'
+
+  let discoveredTestFiles: string[] = []
+  let discoveredSuiteFiles: string[] = []
+  const patterns = [...(request.patterns ?? [])]
+
+  if (patterns.length > 0) {
+    try {
+      const selected = await discoverFilesForCliPatterns(workspacePaths, patterns)
+      discoveredTestFiles = selected.tests
+      discoveredSuiteFiles = selected.suites
+    } catch (err) {
+      throw new CliRunInputError(
+        [pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`)],
+        1,
+      )
+    }
+
+    if (discoveredTestFiles.length === 0 && discoveredSuiteFiles.length === 0) {
+      const patternKind = patterns.every((pattern) => classifyRunPattern(pattern) === 'suite') ? 'suite' : 'test'
+      throw new CliRunInputError(
+        [
+          pc.red(`Error: No ${patternKind} files found matching patterns:`),
+          ...patterns.map((p) => pc.red(`  ${p}`)),
+        ],
+        2,
+      )
+    }
+  } else if (request.mode === 'suite') {
+    discoveredSuiteFiles = (await discoverWorkspaceFiles({ workspace: workspacePaths, kind: 'suite' }))
+      .map(record => record.absolutePath)
+    if (discoveredSuiteFiles.length === 0) {
+      throw new CliRunInputError(
+        [
+          pc.red('Error: No suite files found matching workspace.suiteMatch'),
+          ...workspacePaths.suiteMatch.map((p) => pc.red(`  ${p}`)),
+        ],
+        2,
+      )
+    }
+  } else if (request.mode === 'all') {
+    discoveredTestFiles = (await discoverWorkspaceFiles({ workspace: workspacePaths, kind: 'test' }))
+      .map(record => record.absolutePath)
+    discoveredSuiteFiles = (await discoverWorkspaceFiles({ workspace: workspacePaths, kind: 'suite' }))
+      .map(record => record.absolutePath)
+
+    if (discoveredTestFiles.length === 0 && discoveredSuiteFiles.length === 0) {
+      throw new CliRunInputError(
+        [pc.red('Error: No test or suite files found. Check workspace.testMatch and workspace.suiteMatch in agent-qa.config.yaml')],
+        2,
+      )
+    }
+  } else {
+    if (!workspacePaths.testMatch || workspacePaths.testMatch.length === 0) {
+      throw new CliRunInputError(
+        [pc.red('Error: No testMatch patterns in config. Add workspace.testMatch to agent-qa.config.yaml.')],
+        2,
+      )
+    }
+    discoveredTestFiles = (await discoverWorkspaceFiles({ workspace: workspacePaths, kind: 'test' }))
+      .map(record => record.absolutePath)
+    if (discoveredTestFiles.length === 0) {
+      throw new CliRunInputError(
+        [
+          pc.red('Error: No test files found matching workspace.testMatch'),
+          ...workspacePaths.testMatch.map((p) => pc.red(`  ${p}`)),
+        ],
+        2,
+      )
+    }
+  }
+
+  return {
+    config,
+    configFilePath,
+    configDir,
+    workspacePaths,
+    configContent,
+    runtimeSecrets,
+    envFileVars,
+    rawEnvFileContent,
+    resolvedEnvFilePath,
+    resolvedHooks,
+    sandboxOptions,
+    effectiveLogLevel,
+    cliVars,
+    inlineVars,
+    userRunAttributes,
+    inheritedRunAttributes,
+    discovered: { tests: discoveredTestFiles, suites: discoveredSuiteFiles },
   }
 }
 
@@ -2642,6 +2987,11 @@ export function createRunCommand(): Command {
       }
 
       try {
+        // ARGV-ONLY VALIDATION STAYS WITH THE DOOR. A `RunsStartInput` has no mode flags to make
+        // mutually exclusive, so this refusal is unreachable from every other door and belongs to
+        // the one that has an argv. `--list-tests`, `--dry-run`, the suite early return, the two
+        // shutdown controllers and the three terminal verdict exits stay here for the same reason:
+        // the module owns computation, the door owns process termination.
         const modeFlags = [opts.test, opts.suite, opts.all].filter(Boolean).length
         if (modeFlags > 1) {
           console.error(pc.red('Error: --test, --suite, and --all are mutually exclusive.'))
@@ -2659,11 +3009,59 @@ export function createRunCommand(): Command {
           // headless is handled per-platform in platformConfig setup below
         }
 
-        const config = await resolveConfig({
-          configPath: globalOpts.config,
-          flags: flagOverrides,
+        // 401-11: THE INPUT PREFLIGHT IS A PRODUCER NOW, and this door is one of its callers.
+        // Everything it used to do inline — resolve the config, read the raw config bytes, parse
+        // `--var`/`--run-attr`, load the secrets store, read the env file, read and validate the
+        // hooks file, and discover BOTH halves of the `{ tests, suites }` split — happens in
+        // `resolveRunInvocationInputs`, in the same order, producing the same strings. What changed
+        // is who terminates: the producer throws a `CliRunInputError` and THIS door prints its
+        // `lines` and exits with its `exitCode` (see the action's catch), so a daemon composing the
+        // same producer survives a missing `.env` instead of dying on it (T-401-31).
+        const inputs = await resolveRunInvocationInputs({
+          ...(globalOpts.config === undefined ? {} : { configPath: globalOpts.config }),
+          patterns: patterns ?? [],
+          ...(opts.suite === true
+            ? { mode: 'suite' as const }
+            : opts.all === true
+              ? { mode: 'all' as const }
+              : opts.test === true
+                ? { mode: 'test' as const }
+                : {}),
+          flagOverrides,
           loadAuthPlugins: !(opts.dryRun || opts.listTests),
+          // The CLI's own fold: an explicit --log-level beats --verbose/--quiet; the config's
+          // setting and the 'warn' fallback are the producer's, shared with every other door.
+          ...(() => {
+            const doorLevel = globalOpts.logLevel
+              ?? (globalOpts.verbose ? 'debug' : undefined)
+              ?? (globalOpts.quiet ? 'silent' : undefined)
+            return doorLevel === undefined ? {} : { logLevel: doorLevel }
+          })(),
+          ...(opts.var === undefined ? {} : { varFlags: opts.var }),
+          ...(opts.runAttr === undefined ? {} : { runAttrFlags: opts.runAttr }),
+          warn: (message) => { console.warn(message) },
         })
+
+        const {
+          config,
+          configFilePath,
+          configDir,
+          workspacePaths,
+          configContent,
+          runtimeSecrets,
+          envFileVars,
+          rawEnvFileContent,
+          resolvedEnvFilePath,
+          resolvedHooks,
+          sandboxOptions,
+          effectiveLogLevel,
+          cliVars,
+          inlineVars,
+          userRunAttributes,
+          inheritedRunAttributes,
+        } = inputs
+        let discoveredTestFiles: string[] = [...inputs.discovered.tests]
+        const discoveredSuiteFiles: string[] = [...inputs.discovered.suites]
 
         // 398-10 (D-17/D-19/D-20): THIS COMMAND'S ANALYTICS COMPOSITION ROOT. One decision, one
         // identity, one port for the whole invocation — including a `--all` run that drives the
@@ -2678,162 +3076,6 @@ export function createRunCommand(): Command {
         const analytics = async (): Promise<CliAnalyticsHost> => (
           composedAnalytics ??= await composeAnalyticsHost({ surface: 'cli', config })
         )
-
-        // Read raw config file content for cache key scoping
-        const configFilePath = resolvePath(globalOpts.config ?? 'agent-qa.config.yaml')
-        const workspacePaths = resolveWorkspacePaths({
-          config,
-          configPath: configFilePath,
-        })
-        let configContent = ''
-        try {
-          const { readFile: readConfigFile } = await import('node:fs/promises')
-          configContent = await readConfigFile(configFilePath, 'utf-8')
-        } catch { /* best-effort: resolveConfig already required the file */ }
-
-        // Load variables from env file, config inline, and CLI flags
-        const { parseEnvFile } = await import('@vostride/agent-qa-core')
-        const { readFileSync, existsSync } = await import('node:fs')
-        const configDir = workspacePaths.configDir
-
-        const cliVars = parseVarFlags(opts.var)
-        const inheritedContextRunId = process.env.AGENT_QA_RUN_ID
-          ?? process.env.AGENT_QA_SUITE_QUEUE_ID
-          ?? process.env.AGENT_QA_PARENT_RUN_ID
-        const inheritedRunAttributes = inheritedContextRunId
-          ? readRunAttributesFromEnv()
-          : undefined
-        let userRunAttributes: RunAttributes
-        try {
-          const parsedRunAttrs = parseRunAttrFlags(opts.runAttr)
-          userRunAttributes = parsedRunAttrs.attributes
-          for (const duplicateKey of parsedRunAttrs.duplicateKeys) {
-            console.warn(`Warning: duplicate --run-attr key "${duplicateKey}"; using last value`)
-          }
-        } catch (err) {
-          console.error(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
-          process.exit(2)
-        }
-        const inlineVars: Record<string, string> = {}
-
-        const runtimeSecrets = await loadRuntimeSecrets({
-          config,
-          configDir,
-          secretsFilePath: workspacePaths.secretsFile.absolutePath,
-          readFileSync,
-          existsSync,
-        })
-
-        let envFileVars: Record<string, string> = {}
-        let rawEnvFileContent: string | null = null
-        let resolvedEnvFilePath: string | null = null
-        resolvedEnvFilePath = workspacePaths.envFile.absolutePath
-        if (!existsSync(workspacePaths.envFile.absolutePath)) {
-          console.error(pc.red(`Error: Env file not found: ${workspacePaths.envFile.absolutePath}`))
-          process.exit(1)
-        }
-        try {
-          rawEnvFileContent = readFileSync(workspacePaths.envFile.absolutePath, 'utf-8')
-          envFileVars = parseEnvFile(rawEnvFileContent)
-        } catch {
-          console.error(pc.red(`Error: Env file could not be read: ${workspacePaths.envFile.absolutePath}`))
-          process.exit(1)
-        }
-
-        let resolvedHooks: Map<string, HookDefinition> | undefined
-        let sandboxOptions: SandboxRunnerOptions | undefined
-
-        const hooksFilePath = workspacePaths.hooksFile.absolutePath
-        if (!existsSync(hooksFilePath)) {
-          console.error(pc.red(`Error: Hooks file not found: ${hooksFilePath}`))
-          process.exit(1)
-        }
-        try {
-          const { parseHooksFile } = await import('@vostride/agent-qa-core')
-          const { hooks, errors } = await parseHooksFile(hooksFilePath)
-          if (errors.length > 0) {
-            console.error(pc.red('Hooks configuration errors:'))
-            for (const err of errors) console.error(pc.red(`  - ${err}`))
-            process.exit(1)
-          }
-          resolvedHooks = new Map(hooks.map((h: HookDefinition) => [h.id, h]))
-          // D-06: construct the runner-local Docker hook executor once at this composition
-          // root and thread it inside the sandboxOptions carrier to every hook site.
-          sandboxOptions = {
-            executor: new DockerHookExecutor(),
-            secretStore: runtimeSecrets.secretStore,
-            secretRedactor: runtimeSecrets.secretRedactor,
-          }
-        } catch (err: any) {
-          console.error(pc.red(`Error: Hooks file could not be read: ${hooksFilePath}`))
-          if (err instanceof Error && err.message) console.error(pc.dim(err.message))
-          process.exit(1)
-        }
-
-        // Workspace agent-rules loading removed in Phase 373 (KDIR-03); policy serving
-        // returns via Reader L0 policies in Phase 380.
-
-        // Resolve effective log level: CLI flag > --verbose/--quiet > config > fallback
-        const effectiveLogLevel = globalOpts.logLevel
-          ?? (globalOpts.verbose ? 'debug' : undefined)
-          ?? (globalOpts.quiet ? 'silent' : undefined)
-          ?? (config as any).services?.logging?.level
-          ?? 'warn'
-
-        let discoveredTestFiles: string[] = []
-        let discoveredSuiteFiles: string[] = []
-
-        if (patterns && patterns.length > 0) {
-          try {
-            const selected = await discoverFilesForCliPatterns(workspacePaths, patterns)
-            discoveredTestFiles = selected.tests
-            discoveredSuiteFiles = selected.suites
-          } catch (err) {
-            console.error(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
-            process.exit(1)
-          }
-
-          if (discoveredTestFiles.length === 0 && discoveredSuiteFiles.length === 0) {
-            const patternKind = patterns.every((pattern) => classifyRunPattern(pattern) === 'suite') ? 'suite' : 'test'
-            console.error(pc.red(`Error: No ${patternKind} files found matching patterns:`))
-            for (const p of patterns) console.error(pc.red(`  ${p}`))
-            process.exit(2)
-          }
-        } else if (opts.suite) {
-          discoveredSuiteFiles = (await discoverWorkspaceFiles({ workspace: workspacePaths, kind: 'suite' }))
-            .map(record => record.absolutePath)
-          if (discoveredSuiteFiles.length === 0) {
-            console.error(pc.red('Error: No suite files found matching workspace.suiteMatch'))
-            for (const p of workspacePaths.suiteMatch) {
-              console.error(pc.red(`  ${p}`))
-            }
-            process.exit(2)
-          }
-        } else if (opts.all) {
-          discoveredTestFiles = (await discoverWorkspaceFiles({ workspace: workspacePaths, kind: 'test' }))
-            .map(record => record.absolutePath)
-          discoveredSuiteFiles = (await discoverWorkspaceFiles({ workspace: workspacePaths, kind: 'suite' }))
-            .map(record => record.absolutePath)
-
-          if (discoveredTestFiles.length === 0 && discoveredSuiteFiles.length === 0) {
-            console.error(pc.red('Error: No test or suite files found. Check workspace.testMatch and workspace.suiteMatch in agent-qa.config.yaml'))
-            process.exit(2)
-          }
-        } else {
-          if (!workspacePaths.testMatch || workspacePaths.testMatch.length === 0) {
-            console.error(pc.red('Error: No testMatch patterns in config. Add workspace.testMatch to agent-qa.config.yaml.'))
-            process.exit(2)
-          }
-          discoveredTestFiles = (await discoverWorkspaceFiles({ workspace: workspacePaths, kind: 'test' }))
-            .map(record => record.absolutePath)
-          if (discoveredTestFiles.length === 0) {
-            console.error(pc.red('Error: No test files found matching workspace.testMatch'))
-            for (const p of workspacePaths.testMatch) {
-              console.error(pc.red(`  ${p}`))
-            }
-            process.exit(2)
-          }
-        }
 
         // Handle suite execution (early return)
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length === 0) {
@@ -2883,12 +3125,7 @@ export function createRunCommand(): Command {
         // initialize the dashboard here so their established diagnostic artifacts remain intact.
         let logStorage: any
         const dashboardCfg2 = config.services?.dashboard as Record<string, unknown> | undefined
-        const reporterSelectionResult = resolveReporterSelection(opts, Boolean(dashboardCfg2))
-        if (reporterSelectionResult.error) {
-          console.error(pc.red(`Error: ${reporterSelectionResult.error}`))
-          process.exit(2)
-        }
-        const reporterSelection = reporterSelectionResult.selection!
+        const reporterSelection = requireReporterSelection(opts, Boolean(dashboardCfg2))
         const dashboardEnabled = reporterSelection.dashboard
         let dashboardDb: any
         let currentRunId: string | undefined
@@ -3010,12 +3247,7 @@ export function createRunCommand(): Command {
         // summary (console-reporter printStandaloneSummary) — a silent green non-run. An existing
         // resolved target must instead FAIL LOUDLY (exit 2, the same config/usage contract as the
         // "no files found" guards), never a silent empty run. (T-365-04b)
-        if (filtered.length === 0) {
-          console.error(pc.red('Error: Resolved test file(s) but found 0 runnable tests.'))
-          for (const f of files) console.error(pc.red(`  ${f}`))
-          console.error(pc.dim('Each test file must define at least one test (a top-level `name` + `steps`, or a `tests:` list).'))
-          process.exit(2)
-        }
+        refuseZeroRunnableTests(files, filtered)
 
         if (opts.dryRun) {
           console.log(pc.bold(`\nFound ${filtered.length} test(s):\n`))
@@ -3978,6 +4210,20 @@ export function createRunCommand(): Command {
         await drainAnalytics() // 398-15 (WR-06): terminal exit 2 of 3 — the verdict path.
         process.exit(exitCode)
       } catch (err) {
+        // 401-11 (T-401-31): AN INPUT REFUSAL, RENDERED BY THE DOOR THAT HAS A TERMINAL.
+        //
+        // Every input failure on the in-process path — a missing `.env`, an unreadable hooks file,
+        // a secrets file that is not there, a pattern that matched nothing, a file that parsed to
+        // zero runnable tests — used to render and call `process.exit` where it was discovered.
+        // They are typed throws now, and this is the ONE place the command turns one back into
+        // rendered output and an exit code. The bytes and the code are the ones the discovery site
+        // used to print, so the door's observable behaviour is unchanged; what changed is that a
+        // daemon composing the same producer no longer dies on a config typo.
+        //
+        if (err instanceof CliRunInputError) {
+          for (const line of err.lines) console.error(line)
+          process.exit(err.exitCode)
+        }
         // 401-03 (D-15/D-16): the policy refused this run, so the run never started — there is no
         // run row to finalize, no crash to report, and nothing for `formatFrameworkError` to say.
         // THE DOOR THAT ISSUED THE REFUSAL IS THE DOOR THAT ANSWERS "now what": the gate mints the
