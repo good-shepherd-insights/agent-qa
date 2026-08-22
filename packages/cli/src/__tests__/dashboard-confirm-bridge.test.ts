@@ -1018,6 +1018,65 @@ describe('two watched, in-flight conversations are each interactive for themselv
 
       await settleWatchedPair(door, scene, confirmB.confirmId)
     }, 40_000)
+
+  // ---- NEW-AUDIT-01: the approval a person gave, in the transcript they gave it in (401-01, D-13)
+  //
+  // THE ONLY INSTRUMENT THAT CAN SEE THE DEFECT. Every other cell pinning `approval_decision` is
+  // single-conversation, and the writer drops the row only when MORE THAN ONE turn is in flight —
+  // so a one-conversation cell is green under both the defect and its fix. This one drives the
+  // shipped watched-pair scene above (the same `driveWatchedPair`/`settleWatchedPair` the three
+  // cells beside it use, deliberately: a bespoke reconstruction would be measuring a scene nobody
+  // ships).
+  //
+  // THE AUDIT ROWS ARE ASSERTED FIRST, AND THAT ORDER IS THE WHOLE OF THE RED-FOR-THE-RIGHT-REASON
+  // claim. `execution_audit.jsonl` is a DIFFERENT mechanism (`gate.ts`) and it keeps its
+  // `prompted-approved` pair either way, so a red on the audit line would mean the scene never ran;
+  // a red on the transcript line below it means the scene ran and only the conversation record is
+  // missing. That is the defect, and nothing else produces that pattern.
+  //
+  // A IS THE WITHIN-CELL CONTROL. `settleWatchedPair` answers B FIRST, while A's turn is still in
+  // flight (two in flight ⇒ B's row dropped), and answers A second, after B's turn has returned
+  // (one in flight ⇒ A's row written). So on the pre-fix build A passes and B fails in the same
+  // run: the writer is reached, it works, and it discards exactly the row whose conversation had
+  // company.
+  it('records each conversation\'s own approval in its own transcript (watched pair, decision row)',
+    async () => {
+      const door = await openDoor({ timeoutMs: DUAL_AXIS_CONFIRM_MS })
+      const scene = await driveWatchedPair(door)
+
+      const confirmB = confirmRequestOf(
+        await scene.streamB.waitFor((frame) => frame.event === 'confirm_request'),
+      )
+      await settleWatchedPair(door, scene, confirmB.confirmId)
+
+      // THE RUN HAPPENED. Both askers were prompted and both said yes — the gate's own record,
+      // written by a mechanism this fix does not touch.
+      expect(
+        askRowsFor(door.configRoot).slice(scene.askRowsBefore).map((row) => row['outcome']),
+        'the scene did not reach two prompted approvals, so the transcript claim below measures '
+        + 'nothing',
+      ).toEqual(['prompted-approved', 'prompted-approved'])
+
+      const decisionsIn = (sessionId: string): readonly Record<string, unknown>[] =>
+        loggedEvents(door.configRoot, sessionId)
+          .filter((event) => event['kind'] === 'approval_decision')
+
+      // THE CONTROL SIDE, and it is a real one: A is answered when nothing else is in flight, so
+      // this row is written by the pre-fix writer too. A fix that stopped writing rows entirely
+      // fails here.
+      expect(
+        decisionsIn(scene.sessionA).map((event) => event['decision']),
+        'A approved in A\'s own conversation and A\'s transcript has no record of it',
+      ).toEqual(['accept'])
+
+      // THE DEFECT. B answered its OWN question, on its OWN watched conversation, and the row is
+      // dropped because a second conversation happened to have a turn in flight.
+      expect(
+        decisionsIn(scene.sessionB).map((event) => event['decision']),
+        'B approved in B\'s own conversation and B\'s transcript has no record of it — the '
+        + 'approval_decision row was dropped because another conversation had a turn in flight',
+      ).toEqual(['accept'])
+    }, 40_000)
 })
 
 
