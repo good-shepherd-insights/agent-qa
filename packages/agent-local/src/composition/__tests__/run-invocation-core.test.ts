@@ -15,7 +15,8 @@
 
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -338,5 +339,133 @@ describe('the invocation core — the refused request fields (D-07 / Pitfall 7)'
     expect(refusal).toBeInstanceOf(RunRequestFieldRefusedError)
     expect(refusal).not.toBeInstanceOf(RunDeniedError)
     expect(assembler.calls).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// The hygiene census (plan 03, Task 3).
+//
+// The three cells above measure BEHAVIOUR. These measure the two properties behaviour cannot show
+// on its own: that the gate is called from exactly ONE place in this file, and that the file never
+// reaches for ambient process state. Both are claims about the SOURCE, so both are asserted against
+// the source — and each scan is self-checked against its own known members first, because a census
+// whose predicate cannot see the thing it forbids is green at rest.
+
+/**
+ * Drop block and line comments so a name that appears only in prose is never read as code.
+ *
+ * THIS IS THE LOAD-BEARING HALF, not a nicety. The core's header explains at length that it does
+ * NOT call `resolveRunExecutionContext` or `getActiveExecutionContext` — so those names are in the
+ * file, in comments, and a raw substring scan would report the file as an offender forever (or,
+ * worse, be "fixed" by deleting the explanation). The `[^:]` guard keeps a protocol-relative URL
+ * from being mistaken for a line comment, which is how this kind of stripper usually eats a file.
+ */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+}
+
+/**
+ * The ambient-context family, as a COMPLETE SET rather than as the one name somebody remembered.
+ *
+ * Every member is a shipped export that answers "what is the ambient state of this process?" —
+ * `safety`'s three active-resolver pairs, `safety-local`'s detector, and the run composition's own
+ * wrapper around it. D-07 makes all of them wrong here for one reason: the core answers to a DOOR,
+ * and a door's posture is not a property of the machine it runs on.
+ */
+const AMBIENT_RESOLVERS = [
+  'resolveRunExecutionContext',
+  'detectExecutionContext',
+  'getActiveExecutionContext',
+  'setActiveExecutionContextResolver',
+  'getActiveAuditSink',
+  'setActiveAuditSinkResolver',
+  'getActiveMaskingContext',
+  'setActiveMaskingContextResolver',
+  'runSafetyScope',
+  'AsyncLocalStorage',
+] as const
+
+const CORE_SOURCE_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'run-invocation-core.ts',
+)
+
+describe('the core hygiene census (D-02 / D-07, pinned to the core file)', () => {
+  it('the scanner sees what it forbids — the predicate self-check, before any verdict about the core', () => {
+    // (i) each member of the complete set is detected in code…
+    for (const resolver of AMBIENT_RESOLVERS) {
+      const planted = `import { ${resolver} } from '@vostride/agent-qa-safety'\nconst ctx = ${resolver}()\n`
+      expect(
+        stripComments(planted).includes(resolver),
+        `the scan cannot see ${resolver} — it would pass the core vacuously`,
+      ).toBe(true)
+    }
+    // (ii) …and NOT in prose, which is the case the core file actually presents.
+    expect(stripComments('// this file never calls getActiveExecutionContext\n')).not.toContain(
+      'getActiveExecutionContext',
+    )
+    expect(stripComments('/* no resolveRunExecutionContext here */\nconst x = 1\n')).not.toContain(
+      'resolveRunExecutionContext',
+    )
+    // (iii) and the stripper does not eat code it should keep.
+    expect(stripComments("const url = 'https://example.com' // trailing\n")).toContain(
+      "https://example.com",
+    )
+  })
+
+  it('the core reads NO ambient context — and its comments prove the scan is not vacuous', () => {
+    const raw = readFileSync(CORE_SOURCE_PATH, 'utf8')
+    const code = stripComments(raw)
+
+    // The non-vacuity witness, and it is the file itself: the header NAMES two members of the
+    // family while explaining why it does not call them. If the scan were a raw substring test it
+    // would fire here; if the stripper were broken the next assertion could not pass.
+    expect(raw).toContain('resolveRunExecutionContext')
+    expect(raw).toContain('getActiveExecutionContext')
+
+    for (const resolver of AMBIENT_RESOLVERS) {
+      expect(code, `${resolver} is reachable from the core's CODE (D-07)`).not.toContain(resolver)
+    }
+  })
+
+  it('exactly ONE evaluate() call-site lives in the core', () => {
+    const code = stripComments(readFileSync(CORE_SOURCE_PATH, 'utf8'))
+    const calls = code.match(/\bevaluate\s*\(/g) ?? []
+    expect(calls).toHaveLength(1)
+
+    // The count is a property of this file; WHICH files may hold gate power at all is a property of
+    // the workspace, and the build already enforces it. Asserted here so removing the pin entry
+    // fails the core's own suite as well as `validate:arch` — read as TEXT rather than imported,
+    // because agent-local does not depend on the arch package and must not start.
+    const pin = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', 'arch', 'src', 'lint', 'evaluate-pin.ts'),
+      'utf8',
+    )
+    expect(pin).toContain("'packages/agent-local/src/composition/run-invocation-core.ts':")
+  })
+
+  it('the gate has already decided by the time assembly is reached (the ordering, from inside)', async () => {
+    // The deny cells prove assembly is NOT reached. This proves the converse leg: when it IS
+    // reached, the decision is already made and already recorded — so nothing assembly does (the
+    // probe, the ordinal advance) can precede the verdict. The assembler reads the run's audit
+    // trail at the moment it is called; a gate moved below assembly would find it empty.
+    let rowsVisibleToAssembly: ExecutionAuditRow[] = []
+    const inner = recordingAssembler()
+    const core = makeCore({
+      targetClass: 'local',
+      mintRunId: () => 'run_ordering_probe',
+      assemble: (context) => {
+        rowsVisibleToAssembly = recordedAuditRows('run_ordering_probe')
+        return inner.assemble(context)
+      },
+    })
+
+    await core.execute({})
+
+    expect(rowsVisibleToAssembly.map((row) => row.outcome)).toEqual(['proceeded'])
+    expect(rowsVisibleToAssembly[0].action).toBe(RUN_START_RISK_ACTION_NAME)
   })
 })
