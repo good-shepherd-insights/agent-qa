@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { rmSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { isDeepStrictEqual } from 'node:util'
@@ -20,6 +19,7 @@ import {
   EmbedderWorkerTimeoutError,
   ENTITY_INDEX_SWEEP_INTERVAL_MS,
   LOCAL_DAEMON_CAPABILITIES,
+  RunDeniedError,
   SYSTEM_CLOCK,
   sweepEntityIndexProjection,
 } from '@vostride/agent-qa-agent-local'
@@ -38,6 +38,7 @@ import type {
   ReleaseLeaseOutcome,
 } from '@vostride/agent-qa-agent-local'
 import {
+  asRunId,
   DEFAULT_EMBEDDING_PROFILE,
   type GuardrailPolicy,
 } from '@vostride/agent-qa-schema'
@@ -135,9 +136,20 @@ type OwnedEmbedderWorkerRegistration = Parameters<
   typeof LOCAL_DAEMON_CAPABILITIES.removeEmbedderWorkerRegistration
 >[1]
 
-/** Run-scoped daemon captures; raw child streams never enter daemon-events.jsonl. */
-export const RUN_CHILD_STDOUT_FILE = 'run-child.stdout.log'
-export const RUN_CHILD_STDERR_FILE = 'run-child.stderr.log'
+// 2026-08-23 — D-04: THE TYPED BUS EVENT LOG IS THE RUN'S RECORD, and the two run-scoped capture
+// constants that used to live on this line are gone with the child that produced them.
+//
+// The daemon answered `runs.start` by spawning a piped `agent-qa run`, tee-ing the child's stdout
+// and stderr into `run-child.stdout.log` / `run-child.stderr.log` beside the run, and recording a
+// `run-child-exit` daemon event carrying the child's exit code. All three retire together: the run
+// now happens IN THIS PROCESS, so there is no second process whose console output could be a
+// record of anything, and the run's own `events.jsonl` — written by the v49 bus, typed, ordered and
+// already the thing every reader reads — is the successor (runner.md §3's own words).
+//
+// ANYTHING LATER FOUND MISSING GETS A TYPED EVENT, NEVER A STDOUT TEE. No console-capture shim, no
+// untyped side channel re-minted under another name. The daemon event kept from the old pair is
+// renamed to `run-completed` (`runId` + `outcome`) because that is the fact it now records; the
+// rename is asserted, not merely described, by `__tests__/daemon-run-execution.test.ts`.
 
 export type DaemonHostTraceStep =
   | 'posture-pinned'
@@ -285,8 +297,6 @@ export interface DaemonHostOptions {
   runExecution?: RunExecutionPort
   /** Exact resolved project config path. Presence binds the production run executor. */
   configPath?: string
-  /** Test-only real-child fixture entry. Production re-enters the current CLI entry. */
-  cliEntry?: string
   /** Plan 05 binds the recorded path to the live invoke server. */
   socketPath?: string
   /**
@@ -563,6 +573,140 @@ async function resolveDraftApply(
 }
 
 /**
+ * Compose this daemon's run execution over the ONE in-process drive (401-06, D-01/D-04/D-07).
+ *
+ * REACHED THROUGH A DEFERRED IMPORT, for the same two reasons the three resolvers above are, plus
+ * one this seam adds. `composition/in-process-run-execution.ts` imports `commands/run.ts`'s member
+ * producers STATICALLY — that is the surface firewall's only legal route for the platform, model
+ * and runner vocabulary those producers need — so a static import back from this file would close
+ * an ESM cycle at MODULE-EVALUATION time rather than at call time, which is the only kind ESM does
+ * not survive. The deferral also keeps the CLI composition graph out of a `configPath`-less legacy
+ * or test host, which is what it was written for in the first place.
+ *
+ * ═══ 2026-08-23 — D-03: THE ACCEPTED CRASH RISK, RECORDED SO AUDITS DO NOT RE-FILE IT ═══
+ *
+ * A dispatched run now executes IN THIS PROCESS. A hard-crashing run — a native crash, an OOM, an
+ * escaped rejection — may therefore take the daemon down with it, and that is the owner's ratified
+ * posture rather than an oversight. The reasoning, recorded verbatim in spirit: crash-through is a
+ * PLUS, because it surfaces bugs instead of silently handling them. The runner's own budget/abort
+ * machinery is the orderly containment for a run that misbehaves within its means, and process
+ * death is answered by the daemon's existing restart/resume machinery — the lease, the registration
+ * recovery and the fence are all built for a daemon that stopped without saying goodbye.
+ *
+ * SO THERE IS NO DEFENSIVE CATCH HERE, and a later reader must not add one. The single `catch`
+ * below re-throws everything; what it does with what it sees is RECORD, never suppress. The one
+ * class it converts into a return is a run that already STARTED and then surfaced a member's
+ * framework error, which is the in-process spelling of the child's non-zero exit — the old wire
+ * treated that as a real run too, deliberately, and turning it into a rejected `runs.start` would
+ * break the ack law for exactly the runs that left evidence behind. An ordinary control-flow
+ * failure (an unreadable config, a pattern that matches nothing) is a typed refusal from the drive
+ * and never a dead daemon; that is what 401-11's `CliRunInputError` conversion bought.
+ */
+async function composeDaemonRunExecution(input: {
+  readonly configPath: string
+  readonly agentQaRoot: string
+  readonly analytics: CliAnalyticsHost | undefined
+  readonly recordDaemonEvent: (event: DaemonEvent) => void
+  readonly logger: DaemonHostLogger
+}): Promise<RunExecutionPort> {
+  const { resolveRunInvocationInputs } = await import('../commands/run.js')
+  const { runInProcessCliRun } = await import('../composition/in-process-run-execution.js')
+
+  /**
+   * The one place a dispatched run is known to have finished, and both per-run effects live here.
+   *
+   * 398-10 (D-18) moved with the wire unchanged. `job_kind: 'run'` and no other arm: the union's
+   * kinds are run/suite/recovery/unknown, and the curation drain — this daemon's other queue — is
+   * none of them, so reporting it would put a number on a chart saying a job of an unnamed kind
+   * happened, which is worse than silence. `duration_ms` stays absent because nothing here measured
+   * an interval; a duration off this callback's clock would be the time since this process noticed.
+   */
+  const recordRunOutcome = (runId: string, outcome: 'completed' | 'failed'): void => {
+    input.recordDaemonEvent({ kind: 'run-completed', runId, outcome })
+    input.analytics?.port.capture(
+      analyticsEvent(input.analytics, 'agent-qa.daemon.job.completed', {
+        job_kind: 'run',
+        outcome,
+        // Through the union's OWN filter: `run_id` is a known-id codec, nothing parses an event on
+        // the way to the transport, and a foreign string here would be sent rather than refused.
+        // A non-canonical id becomes an absence.
+        ...(analyticsRunId(runId) === undefined ? {} : { run_id: runId }),
+      }),
+    )
+  }
+
+  return {
+    async execute(request) {
+      // The request may name another config; the drive resolves against exactly this expression, so
+      // a preflight read here that used a different one would resolve a different project.
+      const configPath = request.configPath ?? input.configPath
+      // THE DOOR READS ITS OWN PREFLIGHT, for two reasons that are both about this host rather than
+      // about speed. (1) `config.safety.trustMode` is a project-level opt-in every other door
+      // honours, and the retired child honoured it because it read the config itself; dropping it
+      // here would have been a one-sided tightening nobody ratified. (2) the preflight's non-fatal
+      // warnings default to `console.warn`, and a daemon's diagnostics belong in the daemon's own
+      // log rather than on a console nothing is reading. `inputs` is then handed to the drive, so
+      // the config and the secrets file are read once and not twice.
+      const inputs = await resolveRunInvocationInputs({
+        configPath,
+        ...(request.patterns === undefined ? {} : { patterns: request.patterns }),
+        warn: (message: string) => input.logger.info(message),
+      })
+
+      let startedRunId: string | undefined
+      try {
+        const finished = await runInProcessCliRun(
+          {
+            configPath,
+            agentQaRoot: input.agentQaRoot,
+            // D-07: THE POSTURE TRAVELS EXPLICITLY, and this literal is the whole of truth 1. The
+            // startup `pinLocalHeadlessExecutionContext()` STAYS — it is the op-level gate's
+            // default and answers a different question — but the run gate reads THIS value, so a
+            // varied ambient cannot move the decision. Asserted, not asserted-about, in
+            // `__tests__/daemon-run-execution.test.ts`.
+            executionContext: 'local-headless',
+            // NO `confirm`, and the absence is the posture: there is nobody at a daemon, so
+            // ask-tier work with no credential meets the gate's `DENY_CONFIRM` default and fails
+            // closed BY CONSTRUCTION (T-401-15). A port that answered would be a daemon approving
+            // on a human's behalf.
+            //
+            // NO `subscribers` either — D-04. The typed bus event log is the run's record; a
+            // reporter here would be the console tee under another name.
+            trust: { trustMode: inputs.config.safety?.trustMode === true },
+            inputs,
+            onSession: (session) => { startedRunId = session.id as unknown as string },
+            warn: (message: string) => input.logger.info(message),
+          },
+          request,
+        )
+        // The run's OWN completion. `exitCode` here is `mapVerdictToExitCode(verdict)` and nothing
+        // else — this door supplies no `afterVerdict`, so no fold of its own can have touched it —
+        // which is why the outcome is read off it rather than off a second verdict table minted
+        // here. Byte-identical semantics to the child's exit code it replaces.
+        recordRunOutcome(finished.runId, finished.exitCode === 0 ? 'completed' : 'failed')
+        return { runId: asRunId(finished.runId) }
+      } catch (error) {
+        if (error instanceof RunDeniedError) {
+          // A refused run is a failed JOB and never a crashed daemon; the denial itself travels on
+          // to the caller with the gate's own reason.
+          recordRunOutcome(error.runId, 'failed')
+          throw error
+        }
+        if (startedRunId === undefined) throw error
+        // The run BEGAN and then surfaced a framework error. See the D-03 note above: this is the
+        // in-process spelling of a non-zero child exit, the evidence exists, and the composition's
+        // own evidence check is what decides whether the ack is real.
+        input.logger.error(
+          `Dispatched run ${startedRunId} failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
+        recordRunOutcome(startedRunId, 'failed')
+        return { runId: asRunId(startedRunId) }
+      }
+    },
+  }
+}
+
+/**
  * Run the foreground daemon until a signal or lease-heartbeat refusal closes it.
  *
  * Startup order is part of the safety contract: pin posture, acquire authority, heartbeat once,
@@ -586,51 +730,12 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   }
   let runExecution = input.runExecution
   if (runExecution === undefined && input.configPath !== undefined) {
-    // Keep legacy/test hosts that omit configPath independent of the CLI-only composition graph.
-    // Production has the resolved path and loads its real child boundary exactly once at startup.
-    const { createCliRunExecution, createPipedLaunchChild } = await import(
-      '../composition/local-agent-host.js'
-    )
-    const configPath = input.configPath
-    const cliEntry = input.cliEntry ?? process.argv[1] ?? ''
-    runExecution = createCliRunExecution({
-      configPath,
-      cliEntry,
-      launchChild: createPipedLaunchChild(cliEntry, async (closed) => {
-        const runDir = completedRunDir(input.agentQaRoot, closed.runId)
-        await mkdir(runDir, { recursive: true })
-        await Promise.all([
-          writeFile(join(runDir, RUN_CHILD_STDOUT_FILE), closed.stdout, 'utf8'),
-          writeFile(join(runDir, RUN_CHILD_STDERR_FILE), closed.stderr, 'utf8'),
-        ])
-        recordDaemonEvent({
-          kind: 'run-child-exit',
-          runId: closed.runId,
-          exitCode: closed.exitCode,
-        })
-        // 398-10 (D-18): the daemon's job-outcome member, emitted at the ONE place a dispatched run
-        // is known to have finished — the child's close, beside the durable event that records it.
-        //
-        // `job_kind: 'run'` and no other arm. The union's kinds are run/suite/recovery/unknown, and
-        // the curation drain — this daemon's other queue — is none of them: it is neither a run nor
-        // a suite, and reporting it as `unknown` would put a number on a chart that says a job of an
-        // unnamed kind happened, which is worse than silence. Retune: when the union grows a
-        // `curation` arm, `drainCuration`'s session end is the seam that fills it.
-        //
-        // `duration_ms` is absent because nothing here measured one: the launcher reports a closed
-        // child, not an interval, and a duration derived from the callback's own clock would be the
-        // time since this process noticed rather than the time the run took.
-        input.analytics?.port.capture(
-          analyticsEvent(input.analytics, 'agent-qa.daemon.job.completed', {
-            job_kind: 'run',
-            outcome: closed.exitCode === 0 ? 'completed' : 'failed',
-            // Through the union's OWN filter: `run_id` is a known-id codec, nothing parses an
-            // event on the way to the transport, and a foreign string here would be sent rather
-            // than refused. A non-canonical id becomes an absence.
-            ...(analyticsRunId(closed.runId) === undefined ? {} : { run_id: closed.runId }),
-          }),
-        )
-      }),
+    runExecution = await composeDaemonRunExecution({
+      configPath: input.configPath,
+      agentQaRoot: input.agentQaRoot,
+      analytics: input.analytics,
+      recordDaemonEvent,
+      logger,
     })
   }
   // `operations` is test-only. Legacy injected drain fixtures opt out unless they also provide

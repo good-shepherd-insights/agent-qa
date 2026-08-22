@@ -37,7 +37,7 @@ import {
   getActiveExecutionContext,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { composeAnalyticsHost } from '../../composition/analytics-host.js'
 import {
@@ -206,12 +206,15 @@ async function dispatchThroughDaemon(input: {
   refusal: unknown
   analyticsEvents: CapturedEvent[]
   hostErrors: string[]
+  /** Whether anything reached this process's stdout while the daemon served the dispatch. */
+  stdoutWrites: number
 }> {
   const { fixture, knowledgeRoot } = input.project
   const signals = signalHarness()
   const sent: CapturedEvent[] = []
   const hostErrors: string[] = []
   let started = false
+  let writesToStdout = 0
 
   const analytics = await composeAnalyticsHost({
     surface: 'daemon',
@@ -242,6 +245,12 @@ async function dispatchThroughDaemon(input: {
   // AFTER startup, so the startup pin is the thing being defeated rather than the thing relied on.
   if (input.varyAmbient !== undefined) varyAmbientExecutionContext(input.varyAmbient)
 
+  // CARRIED FORWARD from the retired child cell: a daemon serving a dispatch writes nothing to this
+  // process's stdout. It mattered when the run was a piped child whose streams could leak; it
+  // matters MORE now that the run happens in this process and a reporter attached by mistake would
+  // print the run's console output into the daemon's own terminal.
+  const stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+
   let acknowledged: unknown
   let refusal: unknown
   try {
@@ -253,12 +262,15 @@ async function dispatchThroughDaemon(input: {
   } catch (error) {
     refusal = error
   } finally {
+    const stdoutWrites = stdoutWrite.mock.calls.length
+    stdoutWrite.mockRestore()
+    writesToStdout = stdoutWrites
     await analytics.flush()
     signals.signal('SIGTERM')
     await running
   }
 
-  return { acknowledged, refusal, analyticsEvents: sent, hostErrors }
+  return { acknowledged, refusal, analyticsEvents: sent, hostErrors, stdoutWrites: writesToStdout }
 }
 
 describe('the daemon dispatches runs through the in-process core (401-06, INVK-02)', () => {
@@ -270,16 +282,25 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
       try {
         const project = daemonProject({ origin: target.origin, environment: 'local' })
         const { fixture } = project
-        const { acknowledged, refusal, analyticsEvents } = await dispatchThroughDaemon({
-          project,
-          patterns: [fixture.suitePattern],
-        })
+        const { acknowledged, refusal, analyticsEvents, stdoutWrites } =
+          await dispatchThroughDaemon({ project, patterns: [fixture.suitePattern] })
 
         // THE RUN HAPPENED, and the ack came off the durable record the composition read back.
         expect(refusal, `runs.start refused: ${String(refusal)}`).toBeUndefined()
         const runId = (acknowledged as { runId?: string }).runId
         expect(runId, `runs.start did not acknowledge a run: ${JSON.stringify(acknowledged)}`)
           .toMatch(/^r_/)
+        // THE ACK LAW, carried forward from the retired child cell: every field is read off the
+        // completed-run record, so an ack that is richer than the evidence cannot be produced. The
+        // `executionContext` here is D-07 arriving on the CALLER's surface — the ack a person or a
+        // dashboard reads says which posture the run was taken in.
+        expect(acknowledged).toMatchObject({
+          runId,
+          executionContext: 'local-headless',
+          testCount: 1,
+        })
+        // A daemon serving a dispatch prints nothing: no reporters (D-04), no console tee.
+        expect(stdoutWrites).toBe(0)
         const events = eventTypes(fixture as never)
         expect(events).toContain('runStarted')
         // THE MEMBER RAN. Without this a dispatch that assembled zero members would pass on

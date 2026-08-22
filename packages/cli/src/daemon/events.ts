@@ -31,7 +31,12 @@ export const DAEMON_EVENT_KINDS = [
   'embedder-worker-start',
   'embedder-worker-exit',
   'embedder-worker-terminate-escalated',
-  'run-child-exit',
+  // 401-06 (D-01/D-04): the successor of `run-child-exit`, and the rename is the honest half of
+  // the retirement rather than a tidy-up. There is no child to exit any more — the daemon runs the
+  // run in its own process — so the fact this row records is the RUN's completion (`runId` +
+  // `outcome`), not a process's exit code. Keeping the old spelling would have left a reader of
+  // this ledger looking for a child that no longer exists.
+  'run-completed',
   'shutdown-stage-failed',
   'daemon-stopped',
 ] as const
