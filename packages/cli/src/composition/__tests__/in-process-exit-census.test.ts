@@ -149,6 +149,10 @@ function inProcessModuleClosure(): string[] {
  * is what makes the carve-out a bounded allowance rather than a hole shaped like a whole file.
  */
 const PINNED_RUN_TS_IMPORTS = [
+  // 401-20 (CR-04): the mint's inverse. `isMintedRunId` is a REQUIRED core option with no default,
+  // and it travels the same relative route the mint does — a shape check invented in `agent-local`
+  // would be a second spelling of a run's identity.
+  'isMintedCliRunId',
   'mintCliRunId',
   'produceMembersFromPatterns',
   'resolveRunInvocationInputs',

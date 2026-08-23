@@ -464,6 +464,7 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
     resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
   generateRunId: mockGenerateRunId,
+  isCanonicalRunId: (value: string): boolean => /^r_/.test(value),
   isPathInsideDir: vi.fn((candidatePath: string) => !candidatePath.includes('..')),
   resolveWorkspacePaths: vi.fn(({ config, configPath }: any) => {
     const configDir = String(configPath).includes('/')
@@ -684,8 +685,26 @@ let logSpy: any
 let errorSpy: any
 const tempDirs: string[] = []
 
+/**
+ * A run id unique to this test, and to this process (401-20 · CR-04).
+ *
+ * A caller-named run id that already names a run is now REFUSED, and these fixtures write REAL run
+ * directories into `packages/cli/.agent-qa/runs/` which survive the process. A constant id
+ * therefore worked exactly once per workspace and collided on every later run of this file. Unique
+ * A FRESH ID PER CALL by default, because `--all` starts a suite run and a direct run in ONE
+ * process and a shared mint would make the second collide with the first. Cells that need one
+ * stable value across a single run pin it themselves with `mockReturnValue(freshRunId(...))`; the
+ * one cell that asserts the printed id reads it back off the mint rather than typing it in.
+ */
+let runIdOrdinal = 0
+function freshRunId(stem: string): string {
+  runIdOrdinal += 1
+  return `r_${stem}-${process.pid.toString(36)}-${runIdOrdinal.toString(36)}`
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  mockGenerateRunId.mockImplementation(() => freshRunId('able-baker-charlie-delta-echo'))
   const secretsDir = mkdtempSync(join(tmpdir(), 'agent-qa-run-secrets-'))
   tempDirs.push(secretsDir)
   defaultSecretsFilePath = join(secretsDir, '.env.secrets.local')
@@ -2021,7 +2040,7 @@ describe('run command — run attributes', () => {
   })
 
   it('rejects invalid inherited protected run attributes before execution', async () => {
-    process.env.AGENT_QA_RUN_ID = 'r_dashboard-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
+    process.env.AGENT_QA_RUN_ID = freshRunId('dashboard')
     process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
       'agent-qa.trigger': 'dashboard',
       'agent-qa.runner': 'local',
@@ -2102,7 +2121,7 @@ describe('run command — run attributes', () => {
     }))
     process.env.BROWSERSTACK_USERNAME = 'user'
     process.env.BROWSERSTACK_ACCESS_KEY = 'key'
-    process.env.AGENT_QA_RUN_ID = 'r_dashboard-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
+    process.env.AGENT_QA_RUN_ID = freshRunId('dashboard')
     process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
       'agent-qa.trigger': 'dashboard',
       'agent-qa.runner': 'local',
@@ -2261,7 +2280,9 @@ describe('run command — exit codes', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput).toContain('Run ID: r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet')
+    // Read off the MINT rather than typed in — the id is salted per test now (401-20), and a
+    // literal here would pin one execution's value.
+    expect(allOutput).toContain(`Run ID: ${mockGenerateRunId.mock.results[0]!.value as string}`)
   })
 
   it('exits 2 when no files match glob', async () => {
@@ -2735,7 +2756,7 @@ describe('run command — reporter integration', () => {
       // 401-03 (D-06): declared local — see the note on the default fixture above.
       environment: 'local',
     })
-    process.env.AGENT_QA_RUN_ID = 'r_dashboard-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
+    process.env.AGENT_QA_RUN_ID = freshRunId('dashboard')
     process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
       'agent-qa.trigger': 'dashboard',
       'agent-qa.runner': 'local',
@@ -2993,7 +3014,7 @@ describe('run command — reporter integration', () => {
   })
 
   it('threads one generated run ID onto the passing member result', async () => {
-    const runId = 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'
+    const runId = freshRunId('able')
     // One RunSession mints a run-level id up front AND the member closure mints the per-test id;
     // pin both so the per-test id lands on the member result (363-11: no v1 reporter to observe).
     mockGenerateRunId.mockReturnValue(runId)
@@ -3022,7 +3043,7 @@ describe('run command — reporter integration', () => {
   })
 
   it('threads one generated run ID onto the failed member result', async () => {
-    const runId = 'r_harbor-iris-jade-kilo-lima-maple-nova-orbit-pearl-quartz'
+    const runId = freshRunId('harbor')
     mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -3046,7 +3067,7 @@ describe('run command — reporter integration', () => {
   })
 
   it('reuses queued AGENT_QA_RUN_ID for the single-test member result', async () => {
-    const runId = 'r_queue-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const runId = freshRunId('queue')
     process.env.AGENT_QA_RUN_ID = runId
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -3070,7 +3091,7 @@ describe('run command — reporter integration', () => {
   })
 
   it('threads the run ID onto a cancelled member result', async () => {
-    const runId = 'r_cancel-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const runId = freshRunId('cancel')
     mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -3093,7 +3114,7 @@ describe('run command — reporter integration', () => {
   })
 
   it('fails the run before execution when a setup hook fails', async () => {
-    const runId = 'r_setup-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const runId = freshRunId('setup')
     mockGenerateRunId.mockReturnValue(runId)
     const { rootDir, testPath, configPath } = await createTempSuiteWorkspace()
     await writeFile(join(rootDir, 'hooks.yaml'), 'hooks:\n  - id: hook-seed\n')

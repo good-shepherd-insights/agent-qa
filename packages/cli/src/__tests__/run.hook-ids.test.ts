@@ -251,7 +251,17 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
   resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
     path.resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
-  generateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
+  // 401-20 (CR-04): a fresh id per CALL — a colliding caller-named run id is now refused, and this
+  // fixture writes a real run directory that survives the process, so a constant would collide on
+  // the second execution of this file. No cell here compares two mints, so per-call is enough.
+  generateRunId: vi.fn(((): (() => string) => {
+    let ordinal = 0
+    return () => {
+      ordinal += 1
+      return `r_able-baker-charlie-delta-echo-${process.pid.toString(36)}-${ordinal.toString(36)}`
+    }
+  })()),
+  isCanonicalRunId: (value: string): boolean => /^r_/.test(value),
   resolveWorkspacePaths: vi.fn(({ config, configPath }: any) => {
     const configDir = String(configPath).includes('/')
       ? String(configPath).split('/').slice(0, -1).join('/')
