@@ -8,7 +8,8 @@ import type {
   TrustScope,
 } from '@vostride/agent-qa-schema'
 import type { ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
-import type { StandingApprovalReader } from '../../ports/policy-ports'
+import type { ConfirmPort, StandingApprovalReader } from '../../ports/policy-ports'
+import { DENY_CONFIRM } from '../../ports/policy-ports'
 import {
   baseVerdict,
   buildExecutionAuditRow,
@@ -314,5 +315,140 @@ describe('buildExecutionAuditRow', () => {
       reason: 'restricted action blocked',
     })
     expect(row).not.toHaveProperty('ts')
+  })
+})
+
+// ---- G-401-17: the confirm rung records a SURFACE the composition declared -------------------
+//
+// Measured in a real browser (UAT item 15 §4): a click in Chromium landed an `execution_audit` row
+// reading `trustSource: tty-prompt`, because rung (e) of `resolveAsk`'s ladder hardcoded the
+// mechanism it EXPECTED rather than the surface that actually answered. Rungs (a)-(c) name
+// MECHANISMS and are correct; (e) was the only rung naming a surface and it named the wrong one.
+//
+// THE CONTROL IS THE TERMINAL CELL BESIDE THE BROWSER ONE. A blanket rename of the literal would
+// pass a browser-only assertion while proving nothing; the pair is what makes the claim "the row
+// names WHICHEVER surface was declared" rather than "the row names the browser now".
+
+const terminalConfirm: ConfirmPort = {
+  surface: 'tty-prompt',
+  ask: () => true,
+}
+
+const browserConfirm: ConfirmPort = {
+  surface: 'browser-click',
+  ask: () => true,
+}
+
+describe('G-401-17: an approval names the surface that answered it', () => {
+  it('records the browser when a browser answered', async () => {
+    const { result, row } = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
+      confirm: browserConfirm,
+    })
+
+    expect(result).toMatchObject({ verdict: 'allow', riskTier: 'destructive' })
+    expect(row).toMatchObject({
+      verdict: 'allow',
+      outcome: 'prompted-approved',
+      trustSource: 'browser-click',
+    })
+  })
+
+  it('records the terminal when a terminal answered — the control for the cell above', async () => {
+    const { result, row } = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
+      confirm: terminalConfirm,
+    })
+
+    expect(result).toMatchObject({ verdict: 'allow', riskTier: 'destructive' })
+    expect(row).toMatchObject({
+      verdict: 'allow',
+      outcome: 'prompted-approved',
+      trustSource: 'tty-prompt',
+    })
+  })
+
+  it('carries no trust source through a denial, whichever surface refused', async () => {
+    for (const surface of ['tty-prompt', 'browser-click'] as const) {
+      const { row } = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
+        confirm: { surface, ask: () => false },
+      })
+
+      expect(row).toMatchObject({ verdict: 'deny', outcome: 'prompted-denied' })
+      expect(row).not.toHaveProperty('trustSource')
+    }
+  })
+
+  it('leaves the two approvals byte-identical apart from the surface they name', async () => {
+    const viaBrowser = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
+      confirm: browserConfirm,
+    })
+    const viaTerminal = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
+      confirm: terminalConfirm,
+    })
+
+    // THE PROOF THAT THE FIX IS AT THE WRITE SITE, not in a reader. `buildDecisionReason` and
+    // `buildDecisionNeutralReason` are untouched in this plan's diff; a repair that had reached
+    // into either of them would show up here as two prose sentences that differ.
+    expect(viaBrowser.result.reason).toBe(viaTerminal.result.reason)
+    expect(viaBrowser.result.neutralReason).toBe(viaTerminal.result.neutralReason)
+    expect({ ...viaBrowser.row, trustSource: undefined })
+      .toEqual({ ...viaTerminal.row, trustSource: undefined })
+  })
+
+  it('leaves the MECHANISM rungs and their reason sentences exactly where they were', async () => {
+    // Pinned as literal strings rather than a snapshot: these three sentences pre-date this plan
+    // and the point of the cell is that widening the trust-source union moved none of them.
+    const viaTrustMode = await evaluateWithAudit(destructiveAction, 'local-interactive', {
+      trustMode: true,
+    })
+    expect(viaTrustMode.row).toMatchObject({
+      outcome: 'proceeded',
+      trustSource: 'session-trust-mode',
+    })
+    expect(viaTrustMode.row.reason).toContain('ask satisfied by session-trust-mode')
+
+    const viaCredential = await evaluateWithAudit(destructiveAction, 'ci', {
+      credential: { scope: { project: 'A' } },
+      actionScope: { project: 'A' },
+    })
+    expect(viaCredential.row).toMatchObject({
+      outcome: 'proceeded',
+      trustSource: 'trust-credential',
+    })
+    expect(viaCredential.row.reason).toContain('ask satisfied by trust-credential')
+
+    const viaGrant = await evaluateWithAudit(
+      destructiveAction,
+      'ci',
+      { actionScope: { project: 'A' } },
+      { reader: grantReader({ project: 'A' }) },
+    )
+    expect(viaGrant.row).toMatchObject({
+      outcome: 'proceeded',
+      trustSource: 'standing-approval',
+    })
+    expect(viaGrant.row.reason).toContain('ask satisfied by standing-approval')
+  })
+
+  it('cannot grant an approval through a binding that declares no surface', async () => {
+    // `DENY_CONFIRM`'s own declaration, said out loud: a port with nobody behind it has nobody to
+    // attribute an approval to, so it cannot mint one. Driven with an `ask` that LIES and answers
+    // yes, because the constant's own `() => false` would prove this by coincidence.
+    const { result, row } = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
+      confirm: { surface: null, ask: () => true },
+    })
+
+    expect(result.verdict).toBe('deny')
+    expect(row).toMatchObject({ verdict: 'deny', outcome: 'prompted-denied' })
+    expect(row).not.toHaveProperty('trustSource')
+  })
+
+  it('keeps DENY_CONFIRM composable and surfaceless', async () => {
+    const { row } = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
+      confirm: DENY_CONFIRM,
+    })
+
+    expect(DENY_CONFIRM.surface).toBeNull()
+    expect(row).toMatchObject({ verdict: 'deny', outcome: 'prompted-denied' })
+    expect(row).not.toHaveProperty('trustSource')
   })
 })
