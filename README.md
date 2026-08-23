@@ -73,6 +73,48 @@ Run tests from the CLI:
 npx agent-qa run tests/hacker-news-top-story.yaml
 ```
 
+## Live events on stdout (opt-in)
+
+Set `AGENT_QA_LIVE_EVENTS=true` and a run prints a machine-readable line-oriented event stream to
+**stdout**, alongside the usual human-readable output. It is **off by default**, and nothing in
+agent-qa turns it on for you: no command, no config key and no child process sets the variable, so a
+process that sees these lines is one whose operator asked for them deliberately.
+
+```sh
+AGENT_QA_LIVE_EVENTS=true npx agent-qa run tests/hacker-news-top-story.yaml
+```
+
+Every line has the same shape — the 15-character prefix `AGENT_QA_EVENT:` immediately followed by
+one compact JSON object, then a newline. Nothing else is inserted between the prefix and the JSON,
+so a consumer can split on newlines, drop lines that do not start with the prefix, and `JSON.parse`
+the remainder of each one that does.
+
+```text
+AGENT_QA_EVENT:{"type":"...", ...}
+```
+
+**There are two writers on that prefix, and a consumer will see both interleaved.**
+
+| Writer | Source | What it emits |
+| --- | --- | --- |
+| Run-event reporter | `packages/cli/src/reporters/wire-reporter.ts` | One line per run-event envelope — the same envelopes the dashboard and the console reporter subscribe to (run/test/step lifecycle, verdicts, artifacts). The JSON is the envelope itself. |
+| Log NDJSON emitter | `packages/core/src/logging/log-manager.ts` | One line per log entry, as `{"type":"log", ...}` — the entry's `runId`, `testId`, `stepId`, `level`, `source`, `message`, `data` and `timestamp`. |
+
+Both are armed by the same variable and neither can be enabled without the other: the reporter is
+attached to every run session and checks the variable itself on each envelope, and the log manager
+is constructed with NDJSON on when the variable is `true`. Treat the two as one channel with two
+record shapes, discriminated by the JSON.
+
+**Payloads are printed verbatim, and they are already masked.** Masking happens at the sink that
+produces each record — envelope payloads are masked before the reporter sees them, and log entries
+pass through the same secret redactor that the human-readable output uses. This channel performs no
+second redaction and never restores an original value, so what a consumer reads is exactly what the
+run decided to disclose. Note that the human-readable log display goes to **stderr**, so redirecting
+stdout gives you the event stream on its own.
+
+The channel is supported and stable in this shape. If you consume it, pin on the prefix and on the
+JSON fields you actually read, not on line ordering between the two writers.
+
 ## Docs
 
 - [Full docs](https://vostride.com/docs/agent-qa)

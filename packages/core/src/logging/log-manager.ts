@@ -66,6 +66,15 @@ export class LogManager {
     return LOG_LEVEL_PRIORITY[entryLevel] <= LOG_LEVEL_PRIORITY[this.displayLevel]
   }
 
+  /**
+   * The SECOND writer on the `AGENT_QA_EVENT:` stdout channel — the first is the CLI's
+   * `reporters/wire-reporter.ts`, which prints run-event envelopes on the same prefix. Both are
+   * armed by `AGENT_QA_LIVE_EVENTS=true` (this one indirectly: `commands/run.ts` passes
+   * `ndjson: process.env.AGENT_QA_LIVE_EVENTS === 'true'`), both are off by default, and nothing in
+   * the product sets that variable. Entries are already redacted above, and are printed verbatim.
+   * A supported opt-in; the user-facing contract for both writers is the CLI README's
+   * "Live events on stdout (opt-in)". Do not change this line shape without mirroring it there.
+   */
   private emitNdjson(entry: LogEntry): void {
     process.stdout.write(
       `AGENT_QA_EVENT:${JSON.stringify({ type: 'log', ...entry })}\n`,
