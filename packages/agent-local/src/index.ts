@@ -102,6 +102,7 @@ export type {
   RunAssembler,
   RunAssemblyContext,
   RunInvocationCoreOptions,
+  RunTargetDeclaration,
 } from './composition/run-invocation-core.js'
 // The assembler port's own vocabulary, re-exported from the package that declares it.
 //
@@ -121,7 +122,7 @@ export type {
 // 401-11: the two symbols the CLI's one in-process run drive needs and could not legally name.
 // They live in their own composition module — see its header for why not in the core.
 export { mapVerdictToExitCode, runSafetyScope } from './composition/run-drive-vocabulary.js'
-export { buildRunRiskDescriptor, RUN_START_RISK_ACTION_NAME } from './composition/run-risk.js'
+export { buildRunDisclosure, buildRunRiskDescriptor, RUN_START_RISK_ACTION_NAME } from './composition/run-risk.js'
 export type { RunTargetClass } from './composition/run-risk.js'
 // 401-08 (D-08): the dispatch-scoped grant overlay. Published because a composition ROOT — not
 // only `composeLocalAgent` — may own the dispatch scope: the 394 authoring confirm is answered at

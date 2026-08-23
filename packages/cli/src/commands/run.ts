@@ -3138,6 +3138,9 @@ export async function produceSuiteRunMembers(
   // which is the SAME function the direct path calls (401-12). Collecting the members is per-door;
   // deciding what their classes add up to is not.
   const declaredTargetClasses: RunTargetClass[] = []
+  // 401-14: the NAMES, collected on the same iteration that yields the class — the disclosure the
+  // gate shows a person is built from this pass and no other.
+  const suiteTargetNames: string[] = []
   for (const prepared of preparedSuites) {
     const memberTargetNames = prepared.suite.target !== undefined
       ? [prepared.suite.target]
@@ -3147,6 +3150,10 @@ export async function produceSuiteRunMembers(
         declaredTargetClasses.push(undefined)
         continue
       }
+      // The DECLARED name, recorded before resolution has its say: a member that names a target
+      // the config cannot resolve still names it, and a preview that hid it would be describing a
+      // smaller run than the one being approved.
+      if (!suiteTargetNames.includes(targetName)) suiteTargetNames.push(targetName)
       try {
         declaredTargetClasses.push(resolveTarget(config, targetName).environment)
       } catch {
@@ -3211,6 +3218,7 @@ export async function produceSuiteRunMembers(
     configFilePath,
     knowledgeRoot,
     targetClass: suiteTargetClass,
+    targetNames: suiteTargetNames,
     ...(suiteProbeUrl === undefined ? {} : { probeUrl: suiteProbeUrl }),
     ...(buildTag === undefined ? {} : { buildTag }),
     logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
@@ -3345,6 +3353,18 @@ export interface ProducedCliRunMembers {
   readonly knowledgeRoot: string
   /** The DECLARED class the gate classifies — a config read, never a probe (D-06). */
   readonly targetClass: RunTargetClass
+  /**
+   * The DISTINCT declared target names, in first-appearance member order (401-14, W-1).
+   *
+   * BESIDE `targetClass` AND FROM THE SAME LOOP, never from a second `resolveTarget` pass: the
+   * names describe the very members whose classes were folded into the tier, and the disclosure a
+   * person approves on is built from both. Two passes would be free to disagree, which is the
+   * defect class this phase has hit more than once. Members declaring no target contribute
+   * nothing — an all-undeclared run arrives as `[]`, not as a list of invented names.
+   *
+   * DISPLAY-ONLY. It reaches the gate through `RiskActionDescriptor.disclosure` and nowhere else.
+   */
+  readonly targetNames: readonly string[]
   readonly probeUrl?: string
   readonly buildTag?: string
   /**
@@ -4084,6 +4104,8 @@ export async function produceDirectRunMembers(
   // `foldMostRestrictiveTargetClass`, the same function the suite path calls; its rationale lives
   // there rather than being spelled a second time here.
   const directDeclaredClasses: RunTargetClass[] = []
+  // 401-14: the NAMES, on the same iteration as the class (see `ProducedCliRunMembers.targetNames`).
+  const directTargetNames: string[] = []
   let firstResolvedProduct: string | undefined
   let singleProbeUrl: string | undefined
   for (const binding of filtered) {
@@ -4095,6 +4117,8 @@ export async function produceDirectRunMembers(
       directDeclaredClasses.push(undefined)
       continue
     }
+    // Declared is declared, whether or not it resolves — same rule as the suite loop above.
+    if (!directTargetNames.includes(memberTargetName)) directTargetNames.push(memberTargetName)
     try {
       const memberTarget = resolveTarget(config, memberTargetName)
       directDeclaredClasses.push(memberTarget.environment)
@@ -4158,6 +4182,7 @@ export async function produceDirectRunMembers(
     configFilePath,
     knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
     targetClass: singleTargetClass,
+    targetNames: directTargetNames,
     ...(singleProbeUrl === undefined ? {} : { probeUrl: singleProbeUrl }),
     ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
     logger,

@@ -348,7 +348,15 @@ export async function runInProcessCliRun(
     ...(options.reader === undefined ? {} : { reader: options.reader }),
     // A CONFIG READ, NEVER A PROBE. The producer resolved the declared class before anything could
     // touch a target, and `buildRunRiskDescriptor` — not this door — decides what a class means.
-    resolveTargetClass: () => produced.targetClass,
+    //
+    // ONE RESOLUTION ANSWERS BOTH FIELDS (401-14). The names come off the SAME producer pass that
+    // folded the class, so the disclosure a person approves on describes the members whose classes
+    // decided the tier. This door composes no preview prose of its own — `buildRunDisclosure` in
+    // `agent-local` is the one spelling, and the core is its one consumer.
+    resolveTargetDeclaration: () => ({
+      targetClass: produced.targetClass,
+      targetNames: produced.targetNames,
+    }),
     assembleRun: async (assemblyContext) => {
       const assembly = await assembleCliRun({
         runId: assemblyContext.runId,

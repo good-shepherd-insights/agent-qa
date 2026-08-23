@@ -50,7 +50,7 @@ import type { RunConfig } from '@vostride/agent-qa-runner'
 
 import { buildRunAuditSink, buildRunPorts } from './run-composition.js'
 import type { RunExecutionContext, RunPersistencePorts } from './run-composition.js'
-import { buildRunRiskDescriptor } from './run-risk.js'
+import { buildRunDisclosure, buildRunRiskDescriptor } from './run-risk.js'
 import type { RunTargetClass } from './run-risk.js'
 
 /**
@@ -135,6 +135,29 @@ export class RunDeniedError extends Error {
   }
 }
 
+/**
+ * What one resolution of this request's targets answers (401-14).
+ *
+ * THE CLASS AND THE NAMES COME BACK TOGETHER because they are two renderings of ONE pass over the
+ * run's members: `targetClass` is the most-restrictive fold that decides the tier, `targetNames`
+ * the declared names of the members it folded over. A door that answered them from two passes
+ * could hand the gate a tier resolved from one reading of the config and a preview resolved from
+ * another, and the person approving would be reading a sentence about a different run.
+ */
+export interface RunTargetDeclaration {
+  /** The DECLARED class the gate classifies — a config read, never a probe (D-06). */
+  readonly targetClass: RunTargetClass
+  /**
+   * The distinct declared target names, in first-appearance member order.
+   *
+   * DISPLAY-ONLY (T-401-G3b). It reaches the classifier through nothing: the descriptor carries it
+   * inside `disclosure`, which `RiskActionDescriptor`'s own schema law puts outside classification.
+   * Members that declare no target contribute nothing, which is how an all-undeclared run arrives
+   * here as an empty list rather than as a list of invented names.
+   */
+  readonly targetNames: readonly string[]
+}
+
 /** What the assembler is handed: everything the core resolved, and nothing it did not. */
 export interface RunAssemblyContext {
   /** The run's identity, already resolved. The core starts the run under THIS id and no other. */
@@ -185,20 +208,27 @@ export interface RunInvocationCoreOptions {
    */
   readonly executionContext: RunExecutionContext
   /**
-   * Resolve the target's DECLARED class for this request (D-06).
+   * Resolve what this request's targets DECLARE (D-06; names added 401-14).
    *
-   * INJECTED BECAUSE THE CONFIG LIVES BEHIND THE DOOR, not because the class is negotiable. Target
+   * INJECTED BECAUSE THE CONFIG LIVES BEHIND THE DOOR, not because any of it is negotiable. Target
    * resolution needs the CLI's `resolveTarget`/`AgentQaConfig` vocabulary, which this package may
-   * not name. The resolver's answer is a bare `'local' | 'shared' | undefined` — it cannot name a
-   * risk TIER, and `buildRunRiskDescriptor` (not the door) decides what a class means. `undefined`
-   * is undeclared and classifies shared.
+   * not name. The resolver's `targetClass` is a bare `'local' | 'shared' | undefined` — it cannot
+   * name a risk TIER, and `buildRunRiskDescriptor` (not the door) decides what a class means.
+   * `undefined` is undeclared and classifies shared.
    *
-   * Must not touch the target. A resolver that probed the URL would put a network call before the
-   * gate, which is the one ordering this file exists to hold.
+   * ONE RESOLUTION, TWO FIELDS, AND THAT IS THE POINT OF THE SHAPE. `targetNames` is DISPLAY-ONLY
+   * — it reaches the descriptor through `disclosure`, which the classifier never reads — but it
+   * must describe the same members the class was folded over, so it travels back from the same
+   * pass rather than from a second call a door made later. Two resolutions of "what is this run
+   * about to drive" are free to disagree, and a preview that disagreed with the tier a person is
+   * being asked about is worse than no preview at all.
+   *
+   * Must not touch the target, and must not probe. A resolver that read a URL would put a network
+   * call before the gate, which is the one ordering this file exists to hold.
    */
-  readonly resolveTargetClass: (
+  readonly resolveTargetDeclaration: (
     request: RunsStartInput,
-  ) => RunTargetClass | Promise<RunTargetClass>
+  ) => RunTargetDeclaration | Promise<RunTargetDeclaration>
   /** Build the `RunConfig`. Called ONLY on an allow verdict. */
   readonly assembleRun: RunAssembler
   /**
@@ -264,9 +294,11 @@ export function createRunInvocationCore(
       // codec-validated by `RunsStartInputSchema` before it reaches here.
       const runId = request.runId ?? options.mintRunId()
 
-      // (3) The class, from the config's own declaration. Cheap, and it must stay cheap: this is
-      // the last thing that happens before the gate.
-      const targetClass = await options.resolveTargetClass(request)
+      // (3) The declaration, from the config itself. Cheap, and it must stay cheap: this is the
+      // last thing that happens before the gate. The class decides the tier; the names only
+      // describe it to whoever is asked.
+      const declaration = await options.resolveTargetDeclaration(request)
+      const targetClass = declaration.targetClass
 
       const auditSink =
         options.auditSink ??
@@ -281,7 +313,12 @@ export function createRunInvocationCore(
       // resolver this file reached for. `actionScope` is the pinned constant both the grant mint
       // and this call read — a caller-named scope could widen any grant into a match.
       const policy = await evaluate(
-        buildRunRiskDescriptor(targetClass),
+        // 401-14 (W-1): the descriptor carries a DISCLOSURE. This parameter had exactly one
+        // production call-site — this one — and it passed nothing, so every run:start ever put
+        // in front of a person said `run:start` and no more: approve a run against a shared
+        // target, without being told which target. The preview the browser renders IS this
+        // string (`confirm-registry.ts` — the frame's `preview` is the action's `disclosure`).
+        buildRunRiskDescriptor(targetClass, buildRunDisclosure(targetClass, declaration.targetNames)),
         options.executionContext,
         {
           actionScope: STANDING_APPROVAL_SCOPE,

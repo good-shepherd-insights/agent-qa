@@ -116,7 +116,7 @@ function coreExecution(
     // and a denial leaves none. The gate's own refusals are measured next door, in
     // `run-invocation-core.test.ts` and in the cli door's `runs-start-gate.test.ts`.
     executionContext: 'ci',
-    resolveTargetClass: () => 'local',
+    resolveTargetDeclaration: () => ({ targetClass: 'local', targetNames: ['the-evidence-target'] }),
     mintRunId,
     assembleRun: (context) => assembleFixtureRun(context, stamped),
   }) as RunExecutionPort

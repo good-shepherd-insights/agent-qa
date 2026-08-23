@@ -69,3 +69,46 @@ export function buildRunRiskDescriptor(
     ...(disclosure === undefined ? {} : { disclosure }),
   }
 }
+
+/**
+ * The sentence a person is asked to approve a run ON (401-14, D-11, W-1).
+ *
+ * ONE SPELLING, HERE, for `buildRunRiskDescriptor`'s own reason: a preview composed at each door
+ * is a preview each door can word differently, and the whole point of one gate at `startRun` is
+ * that every host's run is described to a person the same way. There is exactly one production
+ * consumer — the core's single `evaluate()` call-site — and no door composes its own prose.
+ *
+ * DISPLAY-ONLY, UNDER THE SAME LAW AS THE FIELD IT FILLS. `RiskActionDescriptor.disclosure` is
+ * never read by the classifier, so nothing here can move an action up or down the ladder: this
+ * function names no tier, and `targetNames` reaches the descriptor through `disclosure` and
+ * nowhere else. It is the human-readable projection of the same resolution that produced
+ * `targetClass` — one resolution, two renderings — which is why the names arrive beside the class
+ * rather than from a second pass a door made later (two passes are free to disagree, and a
+ * disclosure that disagreed with the tier would be the worst possible version of this field).
+ *
+ * IT SAYS `undeclared` OUT LOUD. D-06 classifies an undeclared target as shared, and a preview
+ * that rendered that as a bare "shared" would be telling a person the config says something it
+ * does not. Both facts fit in one clause, so both are stated.
+ *
+ * AN EMPTY NAME LIST STILL YIELDS A SENTENCE. A run whose members declare no target at all is
+ * exactly the case a person most needs told; an empty string here would render as no preview at
+ * all and put this back where W-1 found it.
+ */
+export function buildRunDisclosure(
+  targetClass: RunTargetClass,
+  targetNames: readonly string[],
+): string {
+  const environment =
+    targetClass === 'local'
+      ? 'local'
+      : targetClass === 'shared'
+        ? 'shared'
+        : 'undeclared, which classifies as shared'
+  const targets =
+    targetNames.length === 0
+      ? 'no declared target'
+      : targetNames.length === 1
+        ? `target ${targetNames[0]!}`
+        : `targets ${targetNames.join(', ')}`
+  return `Start a run against ${targets} (environment: ${environment}).`
+}

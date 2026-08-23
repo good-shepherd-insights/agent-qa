@@ -87,12 +87,17 @@ function recordingAssembler(): {
   }
 }
 
+/** The name the fake resolver declares, so a disclosure assertion has something to find. */
+const FAKE_TARGET_NAME = 'the-fixture-target'
+
 interface CoreInput {
   targetClass: RunTargetClass
+  /** What this run's members DECLARE. Defaults to the one name every cell here resolves against. */
+  targetNames?: readonly string[]
   executionContext?: RunExecutionContext
   trustMode?: boolean
   credential?: TrustCredential
-  confirm?: (action: { name: string }) => Promise<boolean>
+  confirm?: (action: { name: string; disclosure?: string }) => Promise<boolean>
   assemble?: (context: RunAssemblyContext) => RunConfig
   onSession?: (session: RunSession) => void
   mintRunId?: () => string
@@ -104,7 +109,10 @@ function makeCore(input: CoreInput): ReturnType<typeof createRunInvocationCore> 
     agentQaRoot: agentQaRoot(),
     executionContext: input.executionContext ?? 'ci',
     mintRunId: input.mintRunId ?? (() => 'run_minted_by_the_core'),
-    resolveTargetClass: () => input.targetClass,
+    resolveTargetDeclaration: () => ({
+      targetClass: input.targetClass,
+      targetNames: input.targetNames ?? [FAKE_TARGET_NAME],
+    }),
     assembleRun: input.assemble ?? recordingAssembler().assemble,
     ...(input.trustMode === undefined && input.credential === undefined
       ? {}
@@ -295,6 +303,35 @@ describe('the invocation core — the deny leg (D-16 criterion 3, at the unit)',
     expect(recordedAuditRows(denial.runId).map((row) => row.outcome)).toEqual(['prompted-denied'])
     expect(assembler.calls).toHaveLength(0)
     expect(recordedEvents(denial.runId)).toHaveLength(0)
+  })
+
+  it('the descriptor the ONE evaluate() builds carries a disclosure naming the target (401-14, W-1)', async () => {
+    // THE PARAMETER USED TO BE DEAD. `buildRunRiskDescriptor(targetClass, disclosure?)` had exactly
+    // one production call-site — the core's — and it passed one argument, so `disclosure` was
+    // `undefined` on every run:start any surface ever raised. This cell reads the descriptor off
+    // the CONFIRM PORT, which is the same object the gate hands a person's door (`gate.ts` calls
+    // `confirm(action)`), so it measures what a browser's frame is built from rather than what a
+    // helper returns when a cell calls it directly.
+    const asked: { name: string; disclosure?: string }[] = []
+    const core = makeCore({
+      targetClass: 'shared',
+      targetNames: [FAKE_TARGET_NAME, 'a-second-target'],
+      executionContext: 'local-interactive',
+      confirm: async (action) => { asked.push(action); return true },
+    })
+
+    await core.execute({})
+
+    expect(asked).toHaveLength(1)
+    const disclosure = asked[0]!.disclosure
+    expect(disclosure, 'the gate was asked with no disclosure — approve WHAT?').toBeTruthy()
+    // EVERY declared name, not just the first: a run whose second member drives something else is
+    // exactly the run a person needs the whole list for (the same fold-over-all-members reasoning
+    // 401-12 applied to the CLASS, reaching the sentence the class is explained in).
+    expect(disclosure).toContain(FAKE_TARGET_NAME)
+    expect(disclosure).toContain('a-second-target')
+    // And the class the gate decided under, in the sentence the person reads.
+    expect(disclosure).toContain('shared')
   })
 })
 
