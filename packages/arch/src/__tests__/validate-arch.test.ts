@@ -70,6 +70,12 @@ import {
   type EvaluatePinSource,
 } from '../lint/evaluate-pin.js'
 import {
+  findStartRunAcquisitions,
+  findStartRunPinOffenders,
+  STARTRUN_PIN,
+  type StartRunPinSource,
+} from '../lint/startrun-pin.js'
+import {
   AGENT_BARREL_FILE,
   EXPECTED_AGENT_BARREL_EXPORTS,
   EXPECTED_AGENT_BARREL_TYPE_EXPORTS,
@@ -233,6 +239,9 @@ describe('validate:arch (LINT-01..05)', () => {
     offenders.push(...findSurfaceFirewallOffenders(surfaceScans, SURFACE_FIREWALL_LEDGER))
     offenders.push(...findSurfaceClassGoldenSetOffenders(contracts))
     offenders.push(...findEvaluatePinOffenders(pinSources))
+    // 401-20 (W-2): the SECOND pin, over the SAME sources — so `__tests__` are out of scope by
+    // construction here too, and the two pins can never come to range different file sets.
+    offenders.push(...findStartRunPinOffenders(pinSources as StartRunPinSource[]))
     offenders.push(...findAgentBarrelOffenders(readRepoFile(AGENT_BARREL_FILE)))
     offenders.push(...findCycleOffenders(contracts))
     offenders.push(...findDirectionOffenders(contracts))

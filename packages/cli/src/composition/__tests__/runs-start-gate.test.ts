@@ -810,9 +810,9 @@ describe('the door census — every way a caller can name a run id (CR-04)', () 
   /**
    * ONE PASS, so neither comment form can begin inside the other.
    *
-   * The residual limitation, stated rather than left to be discovered: a `/*` inside a STRING
-   * literal still opens a phantom block. Nothing in the scanned set carries one today, and a
-   * predicate that tokenised TypeScript to find out would be a parser rather than a census.
+   * The residual limitation, stated rather than left to be discovered: a comment opener inside a
+   * STRING literal is still mistaken for one. What changes is the blast radius — a `/*` in a
+   * string no longer swallows every byte up to the next `*` + `/`, it loses that one line.
    */
   function stripComments(source: string): string {
     return source.replace(
