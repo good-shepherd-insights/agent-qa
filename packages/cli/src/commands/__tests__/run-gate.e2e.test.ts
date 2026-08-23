@@ -133,6 +133,31 @@ beforeEach(() => {
       '      platform: web',
       `      url: ${probeOrigin}/local-thing`,
       '      environment: local',
+      // THE MULTI-MEMBER SET (401-12, CR-01). Three more targets that differ from each other ONLY
+      // in `environment` — same axis as above — and that differ from the three above in exactly one
+      // further respect: they all declare the SAME EXPLICIT `product`.
+      //
+      // The explicit product is NOT decoration. `resolveTarget` defaults `product` to the target's
+      // own NAME (targets.ts:45), so any two arbitrary targets carry two different products, and
+      // `requireSingleInvocationProduct` (run.ts:106) refuses a mixed-product invocation BEFORE the
+      // gate is ever consulted. A multi-member cell built on the three targets above would measure
+      // that refusal and read green under a completely broken gate. The shared product is what lets
+      // the invocation REACH the classification under test.
+      '    multi-local-a:',
+      '      platform: web',
+      `      url: ${probeOrigin}/multi-local-a`,
+      '      environment: local',
+      '      product: one-product',
+      '    multi-local-b:',
+      '      platform: web',
+      `      url: ${probeOrigin}/multi-local-b`,
+      '      environment: local',
+      '      product: one-product',
+      '    multi-shared:',
+      '      platform: web',
+      `      url: ${probeOrigin}/multi-shared`,
+      '      environment: shared',
+      '      product: one-product',
       'use:',
       '  mobile:',
       '    appState: preserve',
@@ -143,7 +168,10 @@ beforeEach(() => {
   writeFileSync(join(project, '.env'), '')
   writeFileSync(join(project, '.env.secrets.local'), '')
 
-  for (const target of ['shared-thing', 'undeclared-thing', 'local-thing']) {
+  for (const target of [
+    'shared-thing', 'undeclared-thing', 'local-thing',
+    'multi-local-a', 'multi-local-b', 'multi-shared',
+  ]) {
     writeFileSync(
       join(project, 'tests', `${target}.yaml`),
       [
@@ -302,6 +330,110 @@ describe('the CLI door denies fail-closed and the run never starts (D-16, INVK-0
     // The tier did NOT move — trust satisfies the ask, it does not reclassify the action.
     expect(gateRows[0].riskTier).toBe('mutating-shared')
     expect(eventTypes()[0]).toBe('runStarted')
+    expect(result.stderr).not.toContain('Run denied')
+  }, 180_000)
+})
+
+/**
+ * THE REACH GUARD. Every multi-member arm calls this BEFORE it asserts anything about a verdict.
+ *
+ * A multi-member fixture has more ways to never arrive at the gate than a single-member one — the
+ * mixed-product refusal, a parse error, a discovery miss — and every one of them leaves the same
+ * empty artifacts a denial leaves. The verifier's own first CR-01 probe was vacuous in exactly this
+ * way. So: the `run:start` row must EXIST and must carry a non-empty `riskTier`. A fixture that
+ * stopped short of the classification fails here, loudly, instead of reading like a clean denial.
+ */
+function reachedGate(): AuditRow {
+  const gateRows = auditRows().filter((row) => row.action === 'run:start')
+  expect(gateRows).toHaveLength(1)
+  expect(typeof gateRows[0].riskTier).toBe('string')
+  expect(gateRows[0].riskTier.length).toBeGreaterThan(0)
+  return gateRows[0]
+}
+
+/**
+ * The denial surface of a multi-member arm — the same five artifacts the single-member cells use,
+ * asserted identically, so the ONLY thing that varies between the two order arms below is the order
+ * of two filenames on a command line.
+ */
+async function expectMultiMemberDenial(...args: string[]): Promise<void> {
+  const result = await runCli(...args)
+
+  // Reach first: this arm measured the classification, not a preflight refusal.
+  const gateRow = reachedGate()
+
+  // (a) one shared member makes the WHOLE invocation shared — most restrictive wins.
+  expect(gateRow.riskTier).toBe('mutating-shared')
+  expect(gateRow.verdict).toBe('deny')
+  expect(gateRow.outcome).toBe('fail-closed-denied')
+
+  // (b) no run began, (c) no assembly, (c2) and neither target was knocked on — including the
+  // LOCAL one, which a `filtered[0]`-classified allow would have driven.
+  expect(eventTypes()).toEqual([])
+  expect(buildOrdinalsExist()).toBe(false)
+  expect(probeHits).toEqual([])
+
+  // (d) the person saw the gate's own reason.
+  expect(result.stderr).toContain(gateRow.reason)
+  expect(result.status).not.toBe(0)
+}
+
+/**
+ * 401-12 (CR-01): THE DIRECT DOOR CLASSIFIES THE WHOLE INVOCATION, NOT ITS FIRST ARGUMENT.
+ *
+ * Every denial cell above drives ONE member, which is structurally why nothing caught this: the
+ * direct path derived its class from `filtered[0]` alone while the suite path folded
+ * most-restrictive-wins over every member (run.ts:3121-3145). Same config, same two members, same
+ * piped stdio, no trust — and ARGUMENT ORDER decided authorization.
+ *
+ * THE RED BASELINE, measured on the PRE-FIX build (submodule `553f179b`, `pnpm build` then this
+ * file) by driving `dist/cli.js` on the fixture above. Verbatim, both orders:
+ *
+ *   $ agent-qa run tests/multi-local-a.yaml tests/multi-shared.yaml     ← THE DEFECT
+ *     auditRows  : [{"action":"run:start","riskTier":"mutating-local","verdict":"allow","outcome":"proceeded"}]
+ *     events     : ["runStarted","testStarted","testFinished","verdict","runFinished"]
+ *     probeHits  : ["/multi-local-a"]
+ *     ordinals   : {"one-product":1}
+ *     runDirFiles: ["artifact.json","events.jsonl","execution_audit.jsonl","handoff.json"]
+ *
+ *   $ agent-qa run tests/multi-shared.yaml tests/multi-local-a.yaml     ← same set, other order
+ *     auditRows  : [{"action":"run:start","riskTier":"mutating-shared","verdict":"deny","outcome":"fail-closed-denied"}]
+ *     events     : []   probeHits: []   ordinals: ABSENT
+ *
+ * and in this file, on that build: `AssertionError: expected 'mutating-local' to be
+ * 'mutating-shared'`. The RED lands on the CLASSIFICATION, not on reach — `reachedGate()` passed,
+ * so the arm did arrive at the gate and found the fold absent. That is the defect, measured.
+ */
+describe('a multi-member direct invocation is classified as a whole (401-12, CR-01, D-05/D-06)', () => {
+  // Both orders of the SAME two files. If the fold is real, order cannot matter; if the class comes
+  // from `filtered[0]`, exactly one of these two passes — which is the shape of the defect.
+  // `it.fails` FOR THIS ONE COMMIT ONLY, and it is the RED itself rather than a suppression: on the
+  // build this commit sits on, the assertions above MUST throw, and `it.fails` turns that into a
+  // pass — so a tree where the defect were somehow already absent would go red HERE. Plan 401-12
+  // Task 2 flips this to `it` in the same breath as the fix. If you are reading this on a build
+  // where the fold exists, this line is a bug.
+  it.fails('a no-tty two-member run is refused when the shared member is LAST', async () => {
+    await expectMultiMemberDenial('tests/multi-local-a.yaml', 'tests/multi-shared.yaml')
+  }, 180_000)
+
+  it('a no-tty two-member run is refused when the shared member is FIRST', async () => {
+    await expectMultiMemberDenial('tests/multi-shared.yaml', 'tests/multi-local-a.yaml')
+  }, 180_000)
+
+  it('the multi-member allow control: two members, both declared local, still proceeds', async () => {
+    const result = await runCli('tests/multi-local-a.yaml', 'tests/multi-local-b.yaml')
+
+    const gateRow = reachedGate()
+
+    // A fold that answered `shared` for every multi-member set would deny everything and pass both
+    // arms above while breaking every legitimate multi-test invocation. This is what forbids that.
+    expect(gateRow.riskTier).toBe('mutating-local')
+    expect(gateRow.verdict).toBe('allow')
+    expect(gateRow.outcome).toBe('proceeded')
+    expect(eventTypes()[0]).toBe('runStarted')
+    expect(buildOrdinalsExist()).toBe(true)
+    // (This run then dies at the framework error the fixture has no model provider for — exactly as
+    // the single-member allow control above does. The gate half is what is asserted.)
     expect(result.stderr).not.toContain('Run denied')
   }, 180_000)
 })
