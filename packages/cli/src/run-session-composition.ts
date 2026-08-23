@@ -87,15 +87,22 @@ export function buildUnmaskingConfirm(input: {
   maskingContext: RunMaskingContext
   live?: LivePauseController
 }): ConfirmPort {
-  return async (action) => {
-    input.live?.pauseLive()
-    try {
-      const displayName = unmaskForHumanOutput(input.maskingContext, action.name)
-      const displayAction = displayName === action.name ? action : { ...action, name: displayName }
-      return await input.base(displayAction)
-    } finally {
-      input.live?.resumeLive()
-    }
+  return {
+    // THE WRAPPED PORT'S SURFACE, FORWARDED (G-401-17). Unmasking changes what the person READS;
+    // it does not change who they are or where they are standing, so this decorator has no surface
+    // of its own to declare and reads the one it wraps. It is the third of three decorators over
+    // this port and each is an independent chance to drop the value.
+    surface: input.base.surface,
+    ask: async (action) => {
+      input.live?.pauseLive()
+      try {
+        const displayName = unmaskForHumanOutput(input.maskingContext, action.name)
+        const displayAction = displayName === action.name ? action : { ...action, name: displayName }
+        return await input.base.ask(displayAction)
+      } finally {
+        input.live?.resumeLive()
+      }
+    },
   }
 }
 

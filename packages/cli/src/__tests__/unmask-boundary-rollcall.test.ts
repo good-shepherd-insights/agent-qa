@@ -515,12 +515,15 @@ const HUMAN_SURFACES: HumanSurface[] = [
     // Drive the REAL Plan-09 unmasking confirm decorator: the base port receives the UNMASKED name.
     render: async () => {
       const seen: string[] = []
-      const base: ConfirmPort = (action: RiskActionDescriptor) => {
-        seen.push(action.name)
-        return false
+      const base: ConfirmPort = {
+        surface: 'tty-prompt',
+        ask: (action: RiskActionDescriptor) => {
+          seen.push(action.name)
+          return false
+        },
       }
       const confirm = buildUnmaskingConfirm({ base, maskingContext: FIXTURE.ctx })
-      await confirm({ name: FIXTURE.confirmActionName, recognized: true })
+      await confirm.ask({ name: FIXTURE.confirmActionName, recognized: true })
       return seen.join('\n')
     },
   },

@@ -162,7 +162,7 @@ function registryFor(entry: ProposalInboxEntryDto, options: { bindApply?: boolea
       // is the arm the CLI host binds. Without it the call denies before dispatching anything, and
       // every cell below would pass while measuring nothing.
       resolveExecutionContext: () => 'local-interactive',
-      confirm: () => true,
+      confirm: { surface: 'tty-prompt', ask: () => true },
     }),
   }
 }

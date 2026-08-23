@@ -85,6 +85,7 @@ import {
   writeDaemonRegistration,
 } from '../daemon/registration.js'
 import type { DaemonRegistration } from '../daemon/registration.js'
+import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 const CHILD_ROOT_ENV = 'AGENT_QA_DAEMON_HOST_ROOT'
 const CHILD_HOST_URL_ENV = 'AGENT_QA_DAEMON_HOST_URL'
@@ -803,7 +804,8 @@ describe('runDaemonHost — D-09 execution-posture pin (386-04 #2)', () => {
     await withInteractiveAmbient(async () => {
       const paths = makePaths('posture-pin-ask')
       const harness = hostHarness()
-      const confirm = vi.fn(() => Promise.resolve(true))
+      const ask = vi.fn(() => Promise.resolve(true))
+      const confirm: ConfirmPort = { surface: 'tty-prompt', ask }
 
       // Control: the ambient posture WOULD prompt. Without this the denial below proves nothing.
       const ambient = await evaluate(
@@ -813,8 +815,8 @@ describe('runDaemonHost — D-09 execution-posture pin (386-04 #2)', () => {
         { confirm },
       )
       expect(ambient).toMatchObject({ verdict: 'allow' })
-      expect(confirm).toHaveBeenCalledTimes(1)
-      confirm.mockClear()
+      expect(ask).toHaveBeenCalledTimes(1)
+      ask.mockClear()
 
       const running = runDaemonHost({
         agentQaRoot: paths.agentQaRoot,
@@ -837,7 +839,7 @@ describe('runDaemonHost — D-09 execution-posture pin (386-04 #2)', () => {
         { confirm },
       )
 
-      expect(confirm).not.toHaveBeenCalled()
+      expect(ask).not.toHaveBeenCalled()
       expect(underPin.verdict).toBe('deny')
       expect(underPin.riskTier).toBe('mutating-shared')
       expect(underPin.reason).toContain('fail-closed: ask in local-headless without trust')

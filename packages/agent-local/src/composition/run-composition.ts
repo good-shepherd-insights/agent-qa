@@ -646,13 +646,21 @@ export function buildRunSessionSafetyHooks(
 ): { safetyHooks: SafetyHookRunner; confirmPausedMs: () => number } {
   let pausedMs = 0
   const baseConfirm = input.presentation.confirm
-  const timedConfirm: ConfirmPort = async (action) => {
-    const start = performance.now()
-    try {
-      return await baseConfirm(action)
-    } finally {
-      pausedMs += performance.now() - start
-    }
+  const timedConfirm: ConfirmPort = {
+    // THE WRAPPED PORT'S SURFACE, FORWARDED (G-401-17). A decorator names no surface of its own:
+    // it does not ask anybody anything, it measures how long the port underneath took to be
+    // answered. Substituting a literal here — or letting the field be optional and defaulted —
+    // would turn an honest browser row back into a terminal row with no compile error to catch it,
+    // because a wrapper that lies about its surface still satisfies the type.
+    surface: baseConfirm.surface,
+    ask: async (action) => {
+      const start = performance.now()
+      try {
+        return await baseConfirm.ask(action)
+      } finally {
+        pausedMs += performance.now() - start
+      }
+    },
   }
 
   // The host decoration composes OVER the timing decorator, preserving the nesting this pipeline

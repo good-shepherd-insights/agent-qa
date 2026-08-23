@@ -52,6 +52,7 @@ import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
+import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 const CONFIG_FILE = 'agent-qa.config.yaml'
 
@@ -193,7 +194,8 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       // answer. Here the confirm is a SPY standing in for that prompt and nothing else is
       // substituted: the same registry, the same route, the same op, the same durable store.
       const planner = scriptedWriteTestPlanner()
-      const confirm = vi.fn(() => true)
+      const ask = vi.fn(() => true)
+      const confirm: ConfirmPort = { surface: 'tty-prompt', ask }
       const host = composeCliLocalAgent({
         agentQaRoot,
         configPath,
@@ -220,7 +222,7 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       // THE WHOLE RULING, AS A CALL COUNT. `config.proposal.apply` is the gated verb whose
       // invocation IS the prompt, so zero calls is the fact that nobody was asked to approve a
       // configuration change they had been shown nothing of.
-      expect(confirm.mock.calls.length).toBe(0)
+      expect(ask.mock.calls.length).toBe(0)
 
       // AND THE TURN SAYS SO. `fail_closed` carrying the refusal's own sentence — not the route's
       // generic unconfigured detail, which would tell a person to name a site they already named.
@@ -249,10 +251,11 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       const planner = scriptedWriteTestPlanner()
       const events: string[] = []
       const rendered: string[] = []
-      const confirm = vi.fn(() => {
+      const ask = vi.fn(() => {
         events.push('confirm')
         return true
       })
+      const confirm: ConfirmPort = { surface: 'tty-prompt', ask }
       const host = composeCliLocalAgent({
         agentQaRoot,
         configPath,
@@ -282,7 +285,7 @@ describe('agent-qa ask, at a terminal, over a project with nothing to test again
       expect(rendered).toHaveLength(1)
       expect(events.indexOf('present')).toBe(0)
       expect(events.indexOf('confirm')).toBeGreaterThan(events.indexOf('present'))
-      expect(confirm.mock.calls.length).toBeGreaterThanOrEqual(1)
+      expect(ask.mock.calls.length).toBeGreaterThanOrEqual(1)
 
       // AND WHAT WAS RENDERED IS THIS PROPOSAL: its summary line, the config file it touches, and a
       // true unified diff. Asserted as properties of the real op's own answer rather than as a

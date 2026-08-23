@@ -37,8 +37,10 @@ describe('createReadlineConfirm', () => {
       output: createOutput(false),
     })
 
-    await expect(confirm(action)).resolves.toBe(false)
+    await expect(confirm.ask(action)).resolves.toBe(false)
     expect(input.readCalls).toBe(0)
+    // G-401-17: the readline port speaks for a terminal, and says so at the site that builds it.
+    expect(confirm.surface).toBe('tty-prompt')
   })
 
   it.each([
@@ -55,7 +57,7 @@ describe('createReadlineConfirm', () => {
       output: createOutput(true),
     })
 
-    const result = confirm(action)
+    const result = confirm.ask(action)
     input.end(answer)
 
     await expect(result).resolves.toBe(expected)

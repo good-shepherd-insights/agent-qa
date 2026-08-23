@@ -54,6 +54,7 @@ import {
   resolveExecutionContext,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
+import type { ConfirmPort } from '@vostride/agent-qa-safety'
 import { FsEventLog, HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
   AUTHORING_DEDUP_CONTINUATIONS,
@@ -720,15 +721,19 @@ function draftAuthoring(workspace: string, suiteText: readonly {
  * can compare the rendered figure against `authoringFanOutBound` rather than against a literal.
  */
 function recordingConfirm(answer: boolean): {
-  readonly port: (action: RiskActionDescriptor) => boolean
+  readonly port: ConfirmPort
   readonly actions: RiskActionDescriptor[]
 } {
   const actions: RiskActionDescriptor[] = []
   return {
     actions,
-    port: (action: RiskActionDescriptor) => {
-      actions.push(action)
-      return answer
+    port: {
+      // A TERMINAL double: every scene in this suite is a CLI dispatch (G-401-17).
+      surface: 'tty-prompt',
+      ask: (action: RiskActionDescriptor) => {
+        actions.push(action)
+        return answer
+      },
     },
   }
 }
@@ -770,7 +775,7 @@ describe('authoring.draft.write end to end through the composition root', () => 
     readonly executor?: RunExecutionPort
     readonly authoring?: DraftAuthoringPort
     readonly model?: () => JobModelCapability
-    readonly confirm?: (action: RiskActionDescriptor) => boolean
+    readonly confirm?: ConfirmPort
     readonly draftApply?: ComposeLocalAgentInput['draftApply']
   }): LocalAgentHost {
     const host = composeLocalAgent({
@@ -783,7 +788,7 @@ describe('authoring.draft.write end to end through the composition root', () => 
       // An APPROVING confirm by default, so every case that is not about the gate keeps measuring
       // what it was written to measure. The decline arm is a cell of its own, and it supplies its
       // own port — a default that denied would have turned every unrelated cell into a gate test.
-      confirm: input.confirm ?? (() => true),
+      confirm: input.confirm ?? { surface: 'tty-prompt', ask: () => true },
       ...(input.executor === undefined ? {} : { runExecution: input.executor }),
       ...(input.authoring === undefined ? {} : { draftAuthoring: input.authoring }),
     })

@@ -124,7 +124,14 @@ function makeCore(input: CoreInput): ReturnType<typeof createRunInvocationCore> 
         }),
     ...(input.confirm === undefined
       ? {}
-      : { confirm: input.confirm as Parameters<typeof createRunInvocationCore>[0]['confirm'] }),
+      : {
+          confirm: {
+            // A TERMINAL double, declared (G-401-17): every scene in this suite is a CLI run, and
+            // the browser's own scene is measured in a real browser rather than mimed here.
+            surface: 'tty-prompt',
+            ask: input.confirm,
+          } as Parameters<typeof createRunInvocationCore>[0]['confirm'],
+        }),
     ...(input.onSession === undefined ? {} : { onSession: input.onSession }),
   })
 }
@@ -310,7 +317,7 @@ describe('the invocation core — the deny leg (D-16 criterion 3, at the unit)',
     // one production call-site — the core's — and it passed one argument, so `disclosure` was
     // `undefined` on every run:start any surface ever raised. This cell reads the descriptor off
     // the CONFIRM PORT, which is the same object the gate hands a person's door (`gate.ts` calls
-    // `confirm(action)`), so it measures what a browser's frame is built from rather than what a
+    // `confirm.ask(action)`), so it measures what a browser's frame is built from rather than what a
     // helper returns when a cell calls it directly.
     const asked: { name: string; disclosure?: string }[] = []
     const core = makeCore({

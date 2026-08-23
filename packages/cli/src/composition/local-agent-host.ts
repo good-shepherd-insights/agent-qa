@@ -3266,42 +3266,50 @@ export function createTtyConfirmPort(
 
   const input = options.input ?? process.stdin
   const output = options.output ?? process.stdout
-  return (action) => new Promise<boolean>((answer) => {
-    const prompt = createInterface({ input, output })
-    let settled = false
-    const settle = (approved: boolean): void => {
-      if (settled) return
-      settled = true
-      prompt.close()
-      answer(approved)
-    }
+  return {
+    // THE SURFACE, DECLARED WHERE THE PROMPT IS BUILT (G-401-17). This port is a `readline`
+    // question on this process's own stdio, so the person answering it is at a terminal — and the
+    // tty check three lines up is exactly the fact that makes that true. The gate used to assume
+    // it for EVERY confirm binding, which is how a click in a browser was recorded as a terminal
+    // prompt on the row a person audits.
+    surface: 'tty-prompt',
+    ask: (action) => new Promise<boolean>((answer) => {
+      const prompt = createInterface({ input, output })
+      let settled = false
+      const settle = (approved: boolean): void => {
+        if (settled) return
+        settled = true
+        prompt.close()
+        answer(approved)
+      }
 
-    // EOF IS A REFUSAL, and it needs its own handler rather than falling out of the question.
-    // `question` never settles when the stream simply ends — it waits for a line that is not
-    // coming — so a piped or closed stdin that slipped past the tty check above would leave a
-    // capability call hanging forever instead of denying. Measured, not anticipated: the
-    // closed-stream case in this port's own suite timed out at 30s until this handler existed.
-    prompt.on('close', () => {
-      settle(false)
-    })
+      // EOF IS A REFUSAL, and it needs its own handler rather than falling out of the question.
+      // `question` never settles when the stream simply ends — it waits for a line that is not
+      // coming — so a piped or closed stdin that slipped past the tty check above would leave a
+      // capability call hanging forever instead of denying. Measured, not anticipated: the
+      // closed-stream case in this port's own suite timed out at 30s until this handler existed.
+      prompt.on('close', () => {
+        settle(false)
+      })
 
-    // The ACTION NAME, verbatim — the same string the audit row carries and the same one a
-    // standing grant would have to match. A friendlier paraphrase here would leave a person
-    // unable to connect what they were asked about to what a `grants.list` later shows them.
-    //
-    // THE DISCLOSURE IS A SEPARATE LINE, ABOVE (394-08 D-03 / WTST-08). It says what THIS
-    // invocation is about to cost, which the class name cannot; keeping it on its own line is what
-    // lets the name stay verbatim rather than becoming a paraphrase with a number in it. Absent on
-    // every action that has nothing invocation-specific to say, which is almost all of them.
-    writeDisclosure(output, action)
-    prompt.question(
-      `agent-qa: ${action.name} needs your approval. Proceed? [y/N] `,
-      (typed: string) => {
-        const normalized = typed.trim().toLowerCase()
-        settle(normalized === 'y' || normalized === 'yes')
-      },
-    )
-  })
+      // The ACTION NAME, verbatim — the same string the audit row carries and the same one a
+      // standing grant would have to match. A friendlier paraphrase here would leave a person
+      // unable to connect what they were asked about to what a `grants.list` later shows them.
+      //
+      // THE DISCLOSURE IS A SEPARATE LINE, ABOVE (394-08 D-03 / WTST-08). It says what THIS
+      // invocation is about to cost, which the class name cannot; keeping it on its own line is what
+      // lets the name stay verbatim rather than becoming a paraphrase with a number in it. Absent on
+      // every action that has nothing invocation-specific to say, which is almost all of them.
+      writeDisclosure(output, action)
+      prompt.question(
+        `agent-qa: ${action.name} needs your approval. Proceed? [y/N] `,
+        (typed: string) => {
+          const normalized = typed.trim().toLowerCase()
+          settle(normalized === 'y' || normalized === 'yes')
+        },
+      )
+    }),
+  }
 }
 
 // ---- chat's three-way inline confirm (Phase 392 plan 08, D-03 / D-22 / T-392-26) -------------
@@ -3459,45 +3467,53 @@ export function createChatConfirmPort(
     await ledger({ actionClass: action.name, decision: recorded ? 'accept-always' : 'accept' })
   }
 
-  return (action) => new Promise<boolean>((answer) => {
-    const prompt = createInterface({ input, output })
-    let settled = false
-    const settle = (approved: boolean, record: () => Promise<void>): void => {
-      if (settled) return
-      settled = true
-      prompt.close()
-      void record().then(() => {
-        answer(approved)
-      })
-    }
+  return {
+    // THE SAME TERMINAL, DECLARED AGAIN AT THIS BINDING SITE rather than inherited from the
+    // one-form port above (G-401-17). This wrapper is an EXTENSION of that port, not a decorator
+    // over it: it builds its own `readline` interface on its own streams, so it is its own
+    // producer and owes its own declaration. Two spellings of `tty-prompt` is the correct number
+    // here — a shared default would be the thing that let the browser port inherit one silently.
+    surface: 'tty-prompt',
+    ask: (action) => new Promise<boolean>((answer) => {
+      const prompt = createInterface({ input, output })
+      let settled = false
+      const settle = (approved: boolean, record: () => Promise<void>): void => {
+        if (settled) return
+        settled = true
+        prompt.close()
+        void record().then(() => {
+          answer(approved)
+        })
+      }
 
-    prompt.on('close', () => {
-      // EOF IS A REFUSAL. See the one-form port's own comment for the measurement behind this.
-      settle(false, () => ledger({ actionClass: action.name, decision: 'deny' }))
-    })
-
-    // Both forms show the same disclosure, for the reason this wrapper is an extension rather than
-    // a fork: the person answering `a` is deciding about the same call as the person answering `y`,
-    // and a standing approval granted without the cost in front of them would be the widest answer
-    // taken with the least information.
-    writeDisclosure(output, action)
-    prompt.question(
-      `agent-qa: ${action.name} needs your approval. Proceed? [y/a/N] `
-      + '(y = once, a = always allow this action class) ',
-      (typed: string) => {
-        const normalized = typed.trim().toLowerCase()
-        if (normalized === 'a' || normalized === 'always') {
-          settle(true, () => acceptAlways(action))
-          return
-        }
-        if (normalized === 'y' || normalized === 'yes') {
-          settle(true, () => ledger({ actionClass: action.name, decision: 'accept' }))
-          return
-        }
+      prompt.on('close', () => {
+        // EOF IS A REFUSAL. See the one-form port's own comment for the measurement behind this.
         settle(false, () => ledger({ actionClass: action.name, decision: 'deny' }))
-      },
-    )
-  })
+      })
+
+      // Both forms show the same disclosure, for the reason this wrapper is an extension rather than
+      // a fork: the person answering `a` is deciding about the same call as the person answering `y`,
+      // and a standing approval granted without the cost in front of them would be the widest answer
+      // taken with the least information.
+      writeDisclosure(output, action)
+      prompt.question(
+        `agent-qa: ${action.name} needs your approval. Proceed? [y/a/N] `
+        + '(y = once, a = always allow this action class) ',
+        (typed: string) => {
+          const normalized = typed.trim().toLowerCase()
+          if (normalized === 'a' || normalized === 'always') {
+            settle(true, () => acceptAlways(action))
+            return
+          }
+          if (normalized === 'y' || normalized === 'yes') {
+            settle(true, () => ledger({ actionClass: action.name, decision: 'accept' }))
+            return
+          }
+          settle(false, () => ledger({ actionClass: action.name, decision: 'deny' }))
+        },
+      )
+    }),
+  }
 }
 
 export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAgentHost {

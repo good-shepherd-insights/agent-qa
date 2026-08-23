@@ -247,7 +247,7 @@ function registryFor(test: Harness) {
     deps: test.deps,
     auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
     resolveExecutionContext: () => 'local-interactive',
-    confirm: () => true,
+    confirm: { surface: 'tty-prompt', ask: () => true },
   })
 }
 
@@ -825,7 +825,7 @@ describe('the config action class is CLOSED, and the registry is where that is l
       deps: withoutScan as unknown as FunctionDeps,
       auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
       resolveExecutionContext: () => 'local-interactive',
-      confirm: () => true,
+      confirm: { surface: 'tty-prompt', ask: () => true },
     })
 
     const samples: readonly [string, unknown][] = [

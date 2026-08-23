@@ -334,9 +334,12 @@ describe('accept-with-always over a test-draft — the refusal is the protected 
       // shut for this op (no trust mode through `invokeFunction`, no standing approval over a
       // protected class). The interactive door is the production path the CLI binds.
       resolveExecutionContext: () => 'local-interactive',
-      confirm: (action) => {
-        confirmed.push(action)
-        return true
+      confirm: {
+        surface: 'tty-prompt',
+        ask: (action: RiskActionDescriptor) => {
+          confirmed.push(action)
+          return true
+        },
       },
     })
 

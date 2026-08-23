@@ -284,9 +284,12 @@ function registryFor(options: { readonly confirm?: boolean } = {}) {
     ...(options.confirm === undefined
       ? {}
       : {
-        confirm: () => {
-          confirms += 1
-          return options.confirm as boolean
+        confirm: {
+          surface: 'tty-prompt' as const,
+          ask: () => {
+            confirms += 1
+            return options.confirm as boolean
+          },
         },
       }),
   })
@@ -708,14 +711,18 @@ async function invokeComposed(input: {
   readonly error?: Error
   readonly confirmCalls: number
 }> {
-  const confirm = vi.fn(() => input.confirmAnswer)
-  const host = composeCliLocalAgent({ agentQaRoot, configPath, confirm })
+  const ask = vi.fn(() => input.confirmAnswer)
+  const host = composeCliLocalAgent({
+    agentQaRoot,
+    configPath,
+    confirm: { surface: 'tty-prompt', ask },
+  })
   try {
     const answer = await runSafetyScope({ executionContext: 'local-interactive' }, async () =>
       await invokeFunction(host.registry, input.functionId, input.payload, CLI_FUNCTION_CALLER))
-    return { answer, confirmCalls: confirm.mock.calls.length }
+    return { answer, confirmCalls: ask.mock.calls.length }
   } catch (error) {
-    return { error: error as Error, confirmCalls: confirm.mock.calls.length }
+    return { error: error as Error, confirmCalls: ask.mock.calls.length }
   } finally {
     await host.close()
   }

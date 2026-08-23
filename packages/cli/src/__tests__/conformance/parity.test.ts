@@ -1774,11 +1774,11 @@ describe('the parity suite ranges the registry census over every rostered surfac
       const answers = {
         chat: await gateAnswerFor(declaration.id, row!.input, callers.chat, {
           resolveExecutionContext: conformanceResolveExecutionContext,
-          confirm: () => { consulted.chat = true; return false },
+          confirm: { surface: 'tty-prompt', ask: () => { consulted.chat = true; return false } },
         }),
         mcp: await gateAnswerFor(declaration.id, row!.input, callers.mcp, {
           resolveExecutionContext: conformanceResolveExecutionContext,
-          confirm: () => { consulted.mcp = true; return false },
+          confirm: { surface: 'tty-prompt', ask: () => { consulted.mcp = true; return false } },
         }),
       }
       expect(
@@ -1826,7 +1826,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         // classifier would then read as a dispatch. Measured, not assumed: that was the first
         // spelling here and it made the cell green for the wrong reason.
         standingApprovalReader: () => EVERY_ASK_STANDING_APPROVED,
-        confirm: () => { consulted[side] = true; return false },
+        confirm: { surface: 'tty-prompt', ask: () => { consulted[side] = true; return false } },
       })
       const onChat = await gateAnswerFor(opId, row!.input, callers.chat, optionsFor('chat'))
       const onMcp = await gateAnswerFor(opId, row!.input, callers.mcp, optionsFor('mcp'))

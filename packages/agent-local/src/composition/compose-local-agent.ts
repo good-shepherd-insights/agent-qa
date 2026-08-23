@@ -3341,6 +3341,13 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
     //
     // A chat confirm WINS over a plain one where a host supplied both, because it is the same
     // decision with one more form on it — never a second prompt, and never both.
+    //
+    // THE SURFACE TRAVELS WITH WHICHEVER PORT WINS (G-401-17), and it does so structurally rather
+    // than by anything this line remembers to do. Two ports meet here and one is chosen at
+    // composition time; the surface is a property OF the chosen object, so the row can only ever
+    // name the port that actually answered. A surface resolved beside this `??` — a separate
+    // field, a host-supplied literal — would be a second fact free to disagree with the first, and
+    // the way it would disagree is a chat confirm answered in a browser recorded as a terminal.
     ...(() => {
       const confirm = chatConfirmPort ?? input.confirm
       return confirm === undefined ? {} : { confirm }

@@ -225,9 +225,12 @@ export async function deriveAskCapableOpIds(
       {},
       {
         reader: NO_STANDING_APPROVALS,
-        confirm: () => {
-          confirmConsulted = true
-          return false
+        confirm: {
+          surface: 'tty-prompt',
+          ask: () => {
+            confirmConsulted = true
+            return false
+          },
         },
       },
     )

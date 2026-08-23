@@ -255,14 +255,18 @@ async function acceptAlways(proposalId: string): Promise<{
   readonly answer: ProposalsAcceptOutput
   readonly confirmCalls: number
 }> {
-  const confirm = vi.fn(() => true)
-  const host = composeCliLocalAgent({ agentQaRoot, configPath, confirm })
+  const ask = vi.fn(() => true)
+  const host = composeCliLocalAgent({
+    agentQaRoot,
+    configPath,
+    confirm: { surface: 'tty-prompt', ask },
+  })
   try {
     const answer = await runSafetyScope({ executionContext: 'local-interactive' }, async () =>
       await invokeFunction(
         host.registry, 'proposals.accept', { proposalId, always: true }, CLI_FUNCTION_CALLER,
       ) as ProposalsAcceptOutput)
-    return { answer, confirmCalls: confirm.mock.calls.length }
+    return { answer, confirmCalls: ask.mock.calls.length }
   } finally {
     await host.close()
   }

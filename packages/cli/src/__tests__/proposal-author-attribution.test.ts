@@ -175,7 +175,7 @@ function applyingHost(workspace: Workspace): Parameters<typeof invokeFunction>[0
     agentQaRoot: workspace.agentQaRoot,
     configPath: workspace.configPath,
     resolveExecutionContext: () => 'local-interactive',
-    confirm: () => true,
+    confirm: { surface: 'tty-prompt', ask: () => true },
   }).registry
 }
 
@@ -220,7 +220,7 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
       configPath: workspace.configPath,
       mintingSurface: CHAT_DOOR_SURFACE,
       resolveExecutionContext: () => 'local-interactive',
-      confirm: () => true,
+      confirm: { surface: 'tty-prompt', ask: () => true },
     })
 
     const proposalId = await mint(registry, CLI_FUNCTION_CALLER, '45s')
@@ -246,7 +246,7 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
       configPath: workspace.configPath,
       mintingSurface: 'voice> <someone-else@example.invalid',
       resolveExecutionContext: () => 'local-interactive',
-      confirm: () => true,
+      confirm: { surface: 'tty-prompt', ask: () => true },
     })
 
     const proposalId = await mint(registry, CLI_FUNCTION_CALLER, '45s')

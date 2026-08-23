@@ -262,7 +262,7 @@ describe('the fn/MCP door refuses an ungated run and acks a gated one (401-05, D
         { patterns: [fixture.testPattern] },
         {
           resolveExecutionContext: () => 'local-headless',
-          confirm: () => { confirmCalls += 1; return true },
+          confirm: { surface: 'tty-prompt', ask: () => { confirmCalls += 1; return true } },
         },
       )
 
@@ -293,7 +293,7 @@ describe('the fn/MCP door refuses an ungated run and acks a gated one (401-05, D
         { patterns: [fixture.testPattern] },
         {
           resolveExecutionContext: () => 'local-interactive',
-          confirm: () => { confirmCalls += 1; return true },
+          confirm: { surface: 'tty-prompt', ask: () => { confirmCalls += 1; return true } },
         },
       )
 

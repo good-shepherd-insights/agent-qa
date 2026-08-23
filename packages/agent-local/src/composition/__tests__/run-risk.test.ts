@@ -134,12 +134,12 @@ describe('run:start hits neither destructive lexicon', () => {
 
 describe('D-05: a local-declared target allows in EVERY execution context, credential-free', () => {
   it.each(ALL_CONTEXTS)('allows in %s with no trust at all', async (ctx) => {
-    const confirm = vi.fn(() => true)
+    const ask = vi.fn(() => true)
     const { result, row } = await evaluateWithAudit(
       buildRunRiskDescriptor('local'),
       ctx,
       {},
-      { confirm },
+      { confirm: { surface: 'tty-prompt', ask } },
     )
 
     expect(result).toMatchObject({ verdict: 'allow', riskTier: 'mutating-local' })
@@ -151,7 +151,7 @@ describe('D-05: a local-declared target allows in EVERY execution context, crede
     })
     // Never reached an ask, so nobody was asked — the CI guarantee is the ABSENCE of a prompt,
     // not a prompt that happens to be auto-answered.
-    expect(confirm).not.toHaveBeenCalled()
+    expect(ask).not.toHaveBeenCalled()
     expect(row).not.toHaveProperty('trustSource')
   })
 })
@@ -166,12 +166,12 @@ describe('D-06: a shared-declared or undeclared target fails closed without trus
     it.each(NON_INTERACTIVE_CONTEXTS)(
       `denies a ${label} target in %s with outcome fail-closed-denied`,
       async (ctx) => {
-        const confirm = vi.fn(() => true)
+        const ask = vi.fn(() => true)
         const { result, row } = await evaluateWithAudit(
           buildRunRiskDescriptor(value),
           ctx,
           {},
-          { confirm },
+          { confirm: { surface: 'tty-prompt', ask } },
         )
 
         expect(result).toMatchObject({ verdict: 'deny', riskTier: 'mutating-shared' })
@@ -186,7 +186,7 @@ describe('D-06: a shared-declared or undeclared target fails closed without trus
         expect(row).not.toHaveProperty('trustSource')
         // The fail-closed check runs BEFORE the confirm — an ask in a headless context is a deny,
         // not a question asked into a void and recorded as answered.
-        expect(confirm).not.toHaveBeenCalled()
+        expect(ask).not.toHaveBeenCalled()
       },
     )
   }
@@ -223,12 +223,15 @@ describe('the allow-controls on the same door', () => {
   })
 
   it('proceeds for an undeclared target in a context where a human can actually answer', async () => {
-    const confirm = vi.fn(() => true)
+    const ask = vi.fn(() => true)
     const { row } = await evaluateWithAudit(
       buildRunRiskDescriptor(undefined),
       'local-interactive',
       {},
-      { confirm },
+      // A TERMINAL scene, declared (G-401-17). This is one of the two CONTROLS for the browser
+      // cell: if a blanket rename had swept every assertion site to the new surface, the browser
+      // cell would pass while proving nothing, and this is what catches that.
+      { confirm: { surface: 'tty-prompt', ask } },
     )
 
     expect(row).toMatchObject({
@@ -236,7 +239,7 @@ describe('the allow-controls on the same door', () => {
       outcome: 'prompted-approved',
       trustSource: 'tty-prompt',
     })
-    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(ask).toHaveBeenCalledTimes(1)
   })
 })
 

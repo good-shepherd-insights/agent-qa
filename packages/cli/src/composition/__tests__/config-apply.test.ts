@@ -240,7 +240,7 @@ function registryFor(options: { readonly bindApply?: boolean } = {}) {
     // The production door for an accept: `mutating-shared` asks in every context, and this is the
     // arm the CLI host binds. Without it every cell below would pass while measuring nothing.
     resolveExecutionContext: () => 'local-interactive',
-    confirm: () => true,
+    confirm: { surface: 'tty-prompt', ask: () => true },
   })
 }
 

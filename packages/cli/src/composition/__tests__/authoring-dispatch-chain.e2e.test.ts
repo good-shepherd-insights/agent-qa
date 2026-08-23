@@ -197,9 +197,12 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
         resolveExecutionContext: () => 'local-interactive',
         // Approves the ONE ask and refuses everything else — see the header. This is the control
         // that makes a lost store a red rather than a silent second prompt.
-        confirm: (action: RiskActionDescriptor) => {
-          asked.push(action.name)
-          return action.name === THE_ONE_ASK
+        confirm: {
+          surface: 'tty-prompt',
+          ask: (action: RiskActionDescriptor) => {
+            asked.push(action.name)
+            return action.name === THE_ONE_ASK
+          },
         },
         model: () => ({
           modelId: 'fixture:authoring-dispatch-chain',

@@ -24,6 +24,7 @@ import {
 // alone still resolves here: it is the CLI's assembly of the readline default and the human-output
 // decorator over the relocated registrar.
 import { buildRunSafetyHooks } from '../run-session-composition.js'
+import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 // D-20: computeRunConfigDigests is the ONE digest mint. Both the cache path (per-member) and
 // the handoff header (run-level) draw from a single call, so run identity and handoff identity
@@ -467,9 +468,12 @@ describe('buildRunSafetyHooks (D-01/D-15/D-10 — per-run registrar invocation)'
     const configDir = mkdtempSync(join(tmpdir(), 'run-hooks-'))
     const runId = 'r_hooks-pause'
     const auditSink = buildRunAuditSink({ configDir, runId, executionContext: 'local-interactive' })
-    const confirm = async () => {
-      await new Promise((r) => setTimeout(r, 10))
-      return true
+    const confirm: ConfirmPort = {
+      surface: 'tty-prompt',
+      ask: async () => {
+        await new Promise((r) => setTimeout(r, 10))
+        return true
+      },
     }
     const { safetyHooks, confirmPausedMs } = buildRunSafetyHooks({
       auditSink,

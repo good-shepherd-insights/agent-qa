@@ -98,7 +98,9 @@ async function drive(
   })
   if (confirm === undefined) throw new Error('a tty host must bind a chat confirm')
 
-  const pending = Promise.resolve(confirm(ACTION))
+  // G-401-17: the chat wrapper builds its own readline prompt, so it declares the terminal.
+  expect(confirm.surface).toBe('tty-prompt')
+  const pending = Promise.resolve(confirm.ask(ACTION))
   if (typed !== undefined) input.write(typed)
   input.end()
   const answered = await pending
@@ -214,7 +216,7 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
     })
     if (confirm === undefined) throw new Error('a tty host must bind a chat confirm')
 
-    const pending = Promise.resolve(confirm(ACTION))
+    const pending = Promise.resolve(confirm.ask(ACTION))
     input.write('y\n')
     input.end()
     expect(await pending).toBe(true)
@@ -238,7 +240,7 @@ describe('the chat confirm renders 391 two forms and mints through nothing of it
     })
     if (confirm === undefined) throw new Error('a tty host must bind a chat confirm')
 
-    const pending = Promise.resolve(confirm(ACTION))
+    const pending = Promise.resolve(confirm.ask(ACTION))
     input.write('y\n')
     input.end()
 

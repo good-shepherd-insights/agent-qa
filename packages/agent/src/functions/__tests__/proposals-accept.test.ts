@@ -316,9 +316,12 @@ function host(options: {
       resolveExecutionContext: () => options.context ?? 'local-interactive',
       // THE DOOR, bound explicitly. A spy rather than `() => true` so every case that dispatches
       // also proves the ask arm was consulted, and consulted about the right action.
-      confirm: (action) => {
-        confirmed.push(action)
-        return true
+      confirm: {
+        surface: 'tty-prompt',
+        ask: (action: RiskActionDescriptor) => {
+          confirmed.push(action)
+          return true
+        },
       },
     }),
   }

@@ -293,6 +293,7 @@ import {
 } from '../in-process-run-execution.js'
 import type { CliRunOutcome } from '../in-process-run-execution.js'
 import { auditRows, buildOrdinalsExist, eventTypes, runDirs } from './in-process-run-fixture.js'
+import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
 /** The process-global resolver is exactly that; a leaked pin poisons every sibling cell. */
 const shippedExecutionContextResolver = getActiveExecutionContext
@@ -532,7 +533,7 @@ describe('D-07: the INJECTED execution context beats a varied ambient, on both a
           {
             ...fixtureOptions(fixture),
             executionContext: 'ci',
-            confirm: () => { confirmCalls += 1; return true },
+            confirm: { surface: 'tty-prompt', ask: () => { confirmCalls += 1; return true } },
           },
           { patterns: [fixture.testPattern] },
         )
@@ -567,7 +568,7 @@ describe('D-07: the INJECTED execution context beats a varied ambient, on both a
           {
             ...fixtureOptions(fixture),
             executionContext: 'local-interactive',
-            confirm: () => { confirmCalls += 1; return true },
+            confirm: { surface: 'tty-prompt', ask: () => { confirmCalls += 1; return true } },
           },
           { patterns: [fixture.testPattern] },
         )
@@ -611,7 +612,10 @@ describe('the descriptor the CLI door hands the gate names every target it will 
           {
             ...fixtureOptions(fixture),
             executionContext: 'local-interactive',
-            confirm: (action) => { asked.push(action); return true },
+            confirm: {
+              surface: 'tty-prompt',
+              ask: (action: RiskActionDescriptor) => { asked.push(action); return true },
+            },
           },
           { patterns: [fixture.testPattern, fixture.secondTestPattern!] },
         )

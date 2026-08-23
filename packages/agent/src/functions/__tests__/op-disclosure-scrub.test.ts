@@ -68,9 +68,12 @@ async function askedWith(label: string): Promise<RiskActionDescriptor> {
     deps: {} as unknown as FunctionDeps,
     auditSink: noOpSink(),
     resolveExecutionContext: LOCAL_INTERACTIVE,
-    confirm: (action) => {
-      asked.push(action)
-      return true
+    confirm: {
+      surface: 'tty-prompt',
+      ask: (action: RiskActionDescriptor) => {
+        asked.push(action)
+        return true
+      },
     },
   })
 

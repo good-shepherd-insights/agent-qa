@@ -210,9 +210,12 @@ describe('the grant loop: a person accepts with always, and a later headless app
       auditSink: sink,
       standingApprovalReader: () => createStandingApprovalReader({ knowledgeRoot }),
       resolveExecutionContext: () => context,
-      confirm: (action) => {
-        confirmed.push(action)
-        return true
+      confirm: {
+        surface: 'tty-prompt',
+        ask: (action: RiskActionDescriptor) => {
+          confirmed.push(action)
+          return true
+        },
       },
     })
   }

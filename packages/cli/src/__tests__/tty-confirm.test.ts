@@ -41,7 +41,10 @@ async function ask(typed: string): Promise<{ answered: boolean; printed: string 
   const confirm = createTtyConfirmPort({ isTty: true, input, output })
   if (confirm === undefined) throw new Error('a tty host must bind a confirm')
 
-  const pending = Promise.resolve(confirm(ACTION))
+  // G-401-17: the one-form port builds a readline prompt on this process's streams, so it
+  // declares the terminal at the site that builds it.
+  expect(confirm.surface).toBe('tty-prompt')
+  const pending = Promise.resolve(confirm.ask(ACTION))
   input.write(typed)
   input.end()
   const answered = await pending
@@ -115,7 +118,7 @@ async function askWith(action: RiskActionDescriptor, typed: string): Promise<str
   const confirm = createTtyConfirmPort({ isTty: true, input, output })
   if (confirm === undefined) throw new Error('a tty host must bind a confirm')
 
-  const pending = Promise.resolve(confirm(action))
+  const pending = Promise.resolve(confirm.ask(action))
   input.write(typed)
   input.end()
   await pending

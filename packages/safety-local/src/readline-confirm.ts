@@ -12,21 +12,29 @@ export interface ReadlineConfirmIO {
 export function createReadlineConfirm(
   io: ReadlineConfirmIO = { input: stdin, output: stdout },
 ): ConfirmPort {
-  return async (action) => {
-    if (!io.output.isTTY) {
-      return false
-    }
+  return {
+    // THE SURFACE, DECLARED WHERE THE CHANNEL IS BUILT (G-401-17). This port writes a question to a
+    // stream and reads a line back, so the person answering it is at a terminal — and this function
+    // is the only place in the workspace that knows that about this port. The gate used to assume
+    // it for every confirm binding, which is how a click in a browser came to be recorded as a
+    // terminal prompt.
+    surface: 'tty-prompt',
+    ask: async (action) => {
+      if (!io.output.isTTY) {
+        return false
+      }
 
-    const rl = createInterface({
-      input: io.input,
-      output: io.output,
-    })
+      const rl = createInterface({
+        input: io.input,
+        output: io.output,
+      })
 
-    try {
-      const answer = (await rl.question(`Proceed with ${action.name}? [Y/n] `)).trim().toLowerCase()
-      return answer === '' || answer === 'y' || answer === 'yes'
-    } finally {
-      rl.close()
-    }
+      try {
+        const answer = (await rl.question(`Proceed with ${action.name}? [Y/n] `)).trim().toLowerCase()
+        return answer === '' || answer === 'y' || answer === 'yes'
+      } finally {
+        rl.close()
+      }
+    },
   }
 }

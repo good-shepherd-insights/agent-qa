@@ -132,7 +132,7 @@ describe('CFGM-03 / D-06: an accepted config apply cascades into nothing', () =>
       const host = composeCliLocalAgent({
         agentQaRoot,
         configPath,
-        confirm: () => true,
+        confirm: { surface: 'tty-prompt', ask: () => true },
         model: () => TEST_MODEL,
       })
       try {

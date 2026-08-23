@@ -16,6 +16,7 @@ import {
 import { QUARANTINE_TEST_ANNOTATION } from '../reporters/console-reporter.js'
 import { JUNIT_QUARANTINE_MARKER_BLOCK } from '../reporters/junit-reporter.js'
 import { QUARANTINED_CHECKOUT, buildReporterFixture, createCapture } from './reporters/fixtures.js'
+import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 // 363-09 Task 2 / Task 1 — the composition swap seam: the D-11 unmasking confirm decorator and the
 // shared `attachRunSubscribers` helper both startRun sites use (Pitfall 8). Reporter RENDERING is
@@ -32,10 +33,11 @@ describe('buildUnmaskingConfirm (D-11 / Pitfall 4)', () => {
     expect(maskedName).toContain('<')
 
     const seen: RiskActionDescriptor[] = []
-    const base = vi.fn(async (action: RiskActionDescriptor) => {
+    const asked = vi.fn(async (action: RiskActionDescriptor) => {
       seen.push(action)
       return false // deny
     })
+    const base: ConfirmPort = { surface: 'tty-prompt', ask: asked }
 
     const events: string[] = []
     const live = createLivePauseController()
@@ -46,7 +48,7 @@ describe('buildUnmaskingConfirm (D-11 / Pitfall 4)', () => {
 
     const confirm = buildUnmaskingConfirm({ base, maskingContext: ctx, live })
     const maskedAction: RiskActionDescriptor = { name: maskedName, recognized: true }
-    const answer = await confirm(maskedAction)
+    const answer = await confirm.ask(maskedAction)
 
     // (1) the human-facing prompt (delivered to the stubbed readline) shows the ORIGINAL value
     expect(seen).toHaveLength(1)
@@ -66,12 +68,12 @@ describe('buildUnmaskingConfirm (D-11 / Pitfall 4)', () => {
     const live = createLivePauseController()
     live.bind({ pauseLive: () => events.push('pause'), resumeLive: () => events.push('resume') })
     const confirm = buildUnmaskingConfirm({
-      base: async () => { throw new Error('readline blew up') },
+      base: { surface: 'tty-prompt', ask: async () => { throw new Error('readline blew up') } },
       maskingContext: ctx,
       live,
     })
 
-    await expect(confirm({ name: 'plain action', recognized: true })).rejects.toThrow('readline blew up')
+    await expect(confirm.ask({ name: 'plain action', recognized: true })).rejects.toThrow('readline blew up')
     expect(events).toEqual(['pause', 'resume'])
   })
 })
@@ -273,7 +275,7 @@ describe('human decoration composes OUTSIDE the pause timing (385-08 / D-10 / D-
       auditSink,
       executionContext: 'local-interactive',
       trustMode: false,
-      confirm: async () => true,
+      confirm: { surface: 'tty-prompt', ask: async () => true },
       maskingContext: ctx,
       live,
     })

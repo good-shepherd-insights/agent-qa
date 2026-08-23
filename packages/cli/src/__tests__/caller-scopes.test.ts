@@ -39,6 +39,7 @@ import { describe, expect, it } from 'vitest'
 
 import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
 import { DAEMON_FUNCTION_CALLER } from '../daemon/server.js'
+import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 /**
  * A brief the op's `.strict()` input contract accepts, and nothing more.
@@ -69,7 +70,11 @@ const EDIT_BRIEF: AuthoringDraftEditInput = {
  * could have made, rather than relying on `evaluate()`'s default deny-confirm and then claiming
  * the prompt was reached.
  */
-function benchAt(ctx: ExecutionContext, confirm?: () => boolean) {
+function benchAt(ctx: ExecutionContext, ask?: () => boolean) {
+  const confirm: ConfirmPort | undefined = ask === undefined
+    ? undefined
+    // A TERMINAL double: this bench's interactive cell stands in for a CLI (G-401-17).
+    : { surface: 'tty-prompt', ask }
   return createFunctionRegistry({
     deps: {} as unknown as FunctionDeps,
     resolveExecutionContext: () => ctx,

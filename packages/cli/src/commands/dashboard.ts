@@ -400,6 +400,34 @@ export function postureFor(
  * it is absent this port REFUSES, and it never substitutes somebody else. A confirm shown in the
  * wrong transcript IS the defect; a denial is not.
  */
+/**
+ * THE SURFACE THIS DOOR ANSWERS ON (G-401-17), declared ONCE for the two gates it serves.
+ *
+ * ONE VALUE FOR BOTH SCOPES, and the next reader will wonder whether the run-trigger button
+ * deserves its own: it does not. A trust source names the SURFACE a person used, not the feature
+ * they used it from — somebody clicking "accept" in a browser did the same thing in the same place
+ * whether the question came from the chat panel or the run button, and two values would put two
+ * words for one human act into a durable audit vocabulary.
+ *
+ * ONE CONSTANT READ TWICE rather than two literals, for the reason the port itself is one object
+ * at both gates (401-09, D-11): the factory below builds the port, and the run gate's forwarder
+ * further down wraps it, and a second spelling is a place for the two halves of one door to
+ * disagree about who was standing at it.
+ */
+/**
+ * Typed THROUGH the composition input rather than off `@vostride/agent-qa-safety` directly: a
+ * `commands/` module is behind the surface firewall and may not reach into safety un-ledgered
+ * (`validate:arch` LINT-01..05 refuses it). Deriving the vocabulary from the seam this file already
+ * binds is the stronger spelling anyway — the value it may declare and the value the composition
+ * accepts are one type by construction, not two that happen to agree today.
+ */
+type DashboardConfirmSurface = Exclude<
+  NonNullable<ComposeLocalAgentInput['confirm']>['surface'],
+  null
+>
+
+const DASHBOARD_CONFIRM_SURFACE: DashboardConfirmSurface = 'browser-click'
+
 export function createDashboardConfirmFactory(input: {
   readonly confirms: ConfirmRegistry
   /**
@@ -469,34 +497,37 @@ export function createDashboardConfirmFactory(input: {
       await ledger(action.name, recorded ? 'accept-always' : 'accept', sessionId)
     }
 
-    return async (action) => {
-      const sessionId = input.resolveConfirmScope()
-      if (sessionId === undefined) {
-        // NOBODY TO ASK. The same answer the TTY wrapper gives a process with no terminal, reached
-        // one layer later because liveness here is a per-turn fact rather than a per-process one.
-        //
-        // AND NO TRANSCRIPT ROW (401-01, D-13): there is no conversation to carry one. The
-        // composition would refuse an unplaceable row anyway, and writing it into whichever
-        // conversation happened to be open is the wrong-transcript defect itself. The gate's
-        // `execution_audit` row remains the record of this denial — a different mechanism, and the
-        // measured blast radius of NEW-AUDIT-01 is exactly that this one is never the audit trail.
-        return false
-      }
+    return {
+      surface: DASHBOARD_CONFIRM_SURFACE,
+      ask: async (action) => {
+        const sessionId = input.resolveConfirmScope()
+        if (sessionId === undefined) {
+          // NOBODY TO ASK. The same answer the TTY wrapper gives a process with no terminal, reached
+          // one layer later because liveness here is a per-turn fact rather than a per-process one.
+          //
+          // AND NO TRANSCRIPT ROW (401-01, D-13): there is no conversation to carry one. The
+          // composition would refuse an unplaceable row anyway, and writing it into whichever
+          // conversation happened to be open is the wrong-transcript defect itself. The gate's
+          // `execution_audit` row remains the record of this denial — a different mechanism, and the
+          // measured blast radius of NEW-AUDIT-01 is exactly that this one is never the audit trail.
+          return false
+        }
 
-      const answer = await input.confirms.request({
-        scopeId: sessionId,
-        actionClass: action.name,
-        // The action's OWN disclosure — what this invocation is about to cost, composed by the op
-        // and carried as inert data. Absent on almost every action, exactly as at the terminal.
-        ...(action.disclosure === undefined ? {} : { preview: action.disclosure }),
-      })
+        const answer = await input.confirms.request({
+          scopeId: sessionId,
+          actionClass: action.name,
+          // The action's OWN disclosure — what this invocation is about to cost, composed by the op
+          // and carried as inert data. Absent on almost every action, exactly as at the terminal.
+          ...(action.disclosure === undefined ? {} : { preview: action.disclosure }),
+        })
 
-      if (answer === 'accept-always') {
-        await acceptAlways(action, sessionId)
-        return true
-      }
-      await ledger(action.name, answer === 'accept' ? 'accept' : 'deny', sessionId)
-      return answer === 'accept'
+        if (answer === 'accept-always') {
+          await acceptAlways(action, sessionId)
+          return true
+        }
+        await ledger(action.name, answer === 'accept' ? 'accept' : 'deny', sessionId)
+        return answer === 'accept'
+      },
     }
   }
 }
@@ -792,7 +823,14 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
       //
       // `false` BEFORE THE COMPOSITION FINISHES is unreachable in practice — nothing can start a
       // run before the host exists — and is the fail-closed direction if it ever were.
-      confirm: async (action) => browserConfirm !== undefined && await browserConfirm(action),
+      confirm: {
+        // The SAME surface the boxed port declares, read off the one constant above rather than
+        // spelled again — this forwarder cannot read `browserConfirm.surface` because the box is
+        // still empty when this literal is built, and a second literal would be a second answer
+        // to a question this file has already closed once (G-401-17).
+        surface: DASHBOARD_CONFIRM_SURFACE,
+        ask: async (action) => browserConfirm !== undefined && await browserConfirm.ask(action),
+      },
       // Pattern 5: cost previews and diffs land in the transcript BEFORE the confirm bubble, on
       // the same channel and routed to the same conversation. Dropped where no conversation can be
       // identified, for the reason the confirm is denied there.

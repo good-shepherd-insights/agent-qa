@@ -143,9 +143,14 @@ describe('differential 4: a covering standing approval never overrides a restric
         // The confirm that would approve. Present so a restricted denial cannot be confused with
         // "there was nothing left to ask" — a fail-closed denial and a blocked one are different
         // facts, and only one of them is about finality.
-        confirm: (descriptor) => {
-          prompted.push(descriptor)
-          return Promise.resolve(true)
+        confirm: {
+          // A TERMINAL scene, declared (G-401-17) — which is what makes the `tty-prompt`
+          // assertion further down a CONTROL for the browser cell rather than a copy of it.
+          surface: 'tty-prompt',
+          ask: (descriptor: RiskActionDescriptor) => {
+            prompted.push(descriptor)
+            return Promise.resolve(true)
+          },
         },
       },
     )

@@ -327,7 +327,11 @@ describe('CFGM-02 on the surfaces a person reads (D-10/D-12)', () => {
     // reached — and a denial would answer a question about the gate instead of about the blocked
     // payload. The context scoping and the injected confirm are the same two lines
     // `proposals-digest-commands.test.ts` uses for the same reason.
-    const host = composeCliLocalAgent({ agentQaRoot, configPath, confirm: () => true })
+    const host = composeCliLocalAgent({
+      agentQaRoot,
+      configPath,
+      confirm: { surface: 'tty-prompt', ask: () => true },
+    })
     let accepted: ProposalsAcceptOutput
     try {
       accepted = await runSafetyScope({ executionContext: 'local-interactive' }, async () =>
