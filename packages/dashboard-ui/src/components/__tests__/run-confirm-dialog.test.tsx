@@ -8,11 +8,19 @@
 // What only this file can say is what a PERSON is offered: three answers and no fourth, the
 // action's own disclosure beside them, and a denial that reads as a denial rather than as a wait.
 
+import { readFileSync } from "node:fs"
+import { resolve as resolvePath } from "node:path"
+
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RunConfirmDialog, RunConfirmHost } from "@/components/run-confirm-dialog"
+import {
+  MAX_QUEUED_CONFIRMS,
+  RESOLVED_DIALOG_LINGER_MS,
+  RunConfirmDialog,
+  RunConfirmHost,
+} from "@/components/run-confirm-dialog"
 import { CONFIRM_ANSWER_VOCABULARY } from "@/lib/api"
 
 // THE CHANNEL, CAPTURED — the seam the SHIPPED host reads (401-14, CR-05).
@@ -32,6 +40,10 @@ const channel = vi.hoisted(() => ({
         onConfirmRequest?: (frame: { confirmId: string; actionClass: string; preview?: string }) => void
         onConfirmResolved?: (frame: { confirmId: string; answer: string; by: string }) => void
       },
+  // What the host wrote into `api.ts`'s module-level scope box, and how many times it closed the
+  // socket — both read by the cleanup cell, which is the only one that can see either.
+  scopeWrites: [] as (string | undefined)[],
+  closes: 0,
 }))
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -42,9 +54,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // would make that assertion agree with this file instead of with the wire.
     openRunConfirmChannel: (callbacks: NonNullable<typeof channel.callbacks>) => {
       channel.callbacks = callbacks
-      return { close: () => {} } as unknown as EventSource
+      return { close: () => { channel.closes += 1 } } as unknown as EventSource
     },
-    setRunConfirmScope: () => {},
+    setRunConfirmScope: (scopeId?: string) => { channel.scopeWrites.push(scopeId) },
     answerRunConfirm: async () => ({ ok: true }),
   }
 })
@@ -65,6 +77,8 @@ function mount(element: ReactElement): HTMLDivElement {
 
 beforeEach(() => {
   channel.callbacks = undefined
+  channel.scopeWrites = []
+  channel.closes = 0
   // A CONSTRUCTOR THAT DOES NOTHING, only so the host's `typeof EventSource === "undefined"` guard
   // is not the thing under test. The mocked `openRunConfirmChannel` never constructs one.
   ;(globalThis as { EventSource?: unknown }).EventSource = class {}
@@ -75,6 +89,7 @@ afterEach(() => {
   container?.remove()
   container = null
   root = null
+  vi.useRealTimers()
   delete (globalThis as { EventSource?: unknown }).EventSource
 })
 
@@ -207,5 +222,258 @@ describe("the run confirm host answers only its own question (401-14, CR-05)", (
     expect(host.querySelector("[data-run-confirm-dialog]")?.getAttribute("data-confirm-resolution"))
       .toBe("accept")
     expect(host.querySelectorAll("[data-confirm-answer]")).toHaveLength(0)
+  })
+})
+
+describe("the run confirm host QUEUES an arriving question behind an unresolved one (401-16, G-401-15)", () => {
+  // THE DEFECT THIS CLOSES. `onConfirmRequest` set `pendingConfirmIdRef.current = frame.confirmId`
+  // unconditionally and then `setPending(frame)`, so a second question replaced the first within
+  // about a second: A was not disabled, not marked superseded, not stacked, not queued — it was
+  // gone from the document. Thirty seconds later A's own `confirm_resolved` arrived on the same
+  // socket and 401-14's keyed guard CORRECTLY dropped it, because A was no longer the pending
+  // question. So the person clicked Run twice, answered once, got one run, and was never told the
+  // other was refused — and the 401-14 guard is what made that loss silent rather than
+  // misattributed. Measured on the real wire in `run-confirm-browser.e2e.test.ts` (UAT item 15 §5).
+  //
+  // THE RULING (UAT test 1, 2026-08-23) IS QUEUE, NOT REFUSE: B waits behind A; A stays answerable
+  // and resolves normally. These cells measure that ruling, plus the three edges the ruling's
+  // sketch does not name — a queued question whose window closed, a drain that must be reachable
+  // from wherever the pending id is cleared, and a bound.
+  //
+  // FAKE TIMERS, because the drain happens after the resolved dialog's 6 s linger and this file is
+  // not going to spend thirty real seconds proving it. `RESOLVED_DIALOG_LINGER_MS` is imported
+  // rather than spelled, so a change to the linger moves these cells with it.
+
+  function request(confirmId: string): void {
+    act(() => {
+      channel.callbacks!.onConfirmRequest!({
+        confirmId,
+        actionClass: "run:start",
+        preview: `Start a run against target "t" (declared: every target local). [${confirmId}]`,
+      })
+    })
+  }
+
+  function resolveFrame(confirmId: string, answer: string, by: string): void {
+    act(() => { channel.callbacks!.onConfirmResolved!({ confirmId, answer, by }) })
+  }
+
+  function linger(): void {
+    act(() => { vi.advanceTimersByTime(RESOLVED_DIALOG_LINGER_MS) })
+  }
+
+  function shown(host: HTMLElement): {
+    id: string | null
+    resolution: string | null
+    resolvedBy: string | null
+    answers: number
+    outcome: string | null
+  } {
+    const dialog = host.querySelector("[data-run-confirm-dialog]")
+    if (dialog === null) {
+      return { id: null, resolution: null, resolvedBy: null, answers: 0, outcome: null }
+    }
+    return {
+      id: dialog.getAttribute("data-confirm-id"),
+      resolution: dialog.getAttribute("data-confirm-resolution"),
+      resolvedBy: dialog.getAttribute("data-confirm-resolved-by"),
+      answers: dialog.querySelectorAll("[data-confirm-answer]").length,
+      outcome: dialog.querySelector("[data-confirm-outcome]")?.textContent ?? null,
+    }
+  }
+
+  function mountHost(): HTMLDivElement {
+    const host = mount(<RunConfirmHost />)
+    // DELIVERY FIRST — a host that took its no-EventSource early return would make every assertion
+    // below a statement about a component that never opened anything.
+    expect(channel.callbacks, "the host opened no channel — nothing below measures anything")
+      .toBeDefined()
+    return host
+  }
+
+  it("an arriving question WAITS — the one on screen keeps its identity and its three answers", () => {
+    vi.useFakeTimers()
+    const host = mountHost()
+
+    request("confirm-A")
+    expect(shown(host).id).toBe("confirm-A")
+
+    request("confirm-B")
+
+    // EXACTLY ONE DIALOG, AND IT IS STILL A'S. This is the assertion the shipped code fails: it
+    // rendered B here, and A's confirmId was nowhere in the document.
+    expect(host.querySelectorAll("[data-run-confirm-dialog]")).toHaveLength(1)
+    expect(shown(host).id, "the arriving question replaced the one being asked").toBe("confirm-A")
+    expect(shown(host).resolution, "A was rendered as resolved by B's mere arrival").toBeNull()
+    expect(shown(host).answers, "A stopped being answerable").toBe(3)
+    // B IS NOT RENDERED AT ALL — it is waiting, not stacked, not a second dialog.
+    expect(host.innerHTML.includes("confirm-B"), "the waiting question was rendered").toBe(false)
+  })
+
+  it("the answered question resolves ON ITSELF, and the waiting one is raised only afterwards", () => {
+    vi.useFakeTimers()
+    const host = mountHost()
+
+    request("confirm-A")
+    request("confirm-B")
+
+    resolveFrame("confirm-A", "accept", "answer")
+
+    // A's own answer, on A. Under the shipped code this frame arrived for a question that was no
+    // longer pending and was dropped, which is exactly how the loss became silent.
+    expect(shown(host).id).toBe("confirm-A")
+    expect(shown(host).resolution).toBe("accept")
+    expect(shown(host).answers, "a resolved question still offers answers").toBe(0)
+    // AND B IS STILL WAITING — the person is reading A's outcome and is not being handed the next
+    // question underneath it.
+    expect(host.innerHTML.includes("confirm-B"), "B was raised before A's outcome was seen")
+      .toBe(false)
+
+    linger()
+
+    expect(shown(host).id, "the waiting question was never raised").toBe("confirm-B")
+    expect(shown(host).resolution).toBeNull()
+    expect(shown(host).answers, "the raised question is not answerable").toBe(3)
+  })
+
+  it("a question that dies at its OWN window dies ON SCREEN, and then the next one is raised", () => {
+    vi.useFakeTimers()
+    const host = mountHost()
+
+    request("confirm-A")
+    request("confirm-B")
+
+    // Nobody answered A; the server denied it at its window and said so on this socket. THIS IS
+    // THE SENTENCE WHOSE ABSENCE WAS THE GAP.
+    resolveFrame("confirm-A", "deny", "timeout")
+
+    expect(shown(host).id).toBe("confirm-A")
+    expect(shown(host).resolvedBy).toBe("timeout")
+    expect(shown(host).outcome).toBe("denied — nobody answered before the window closed")
+
+    linger()
+
+    expect(shown(host).id).toBe("confirm-B")
+    expect(shown(host).answers).toBe(3)
+  })
+
+  it("a question whose window closed WHILE IT WAITED is never handed to the person", () => {
+    // THE EDGE THE RULING'S SKETCH DOES NOT COVER. A queued question's server-side window keeps
+    // running while it waits, so by the time the drain reaches it the answer may already be
+    // refused. Raising it would trade a silent denial for a click that does nothing — worse, not
+    // better, because the person would believe they had just approved a run.
+    vi.useFakeTimers()
+    const host = mountHost()
+    const raised: (string | null)[] = []
+    const record = (): void => {
+      const id = shown(host).id
+      if (raised[raised.length - 1] !== id) raised.push(id)
+    }
+
+    request("confirm-A")
+    record()
+    request("confirm-B")
+    request("confirm-C")
+    record()
+
+    // B's window closes while B is still WAITING.
+    resolveFrame("confirm-B", "deny", "timeout")
+    record()
+    // 401-14's guard still holds for the question on screen: B's frame resolved nothing.
+    expect(shown(host).id).toBe("confirm-A")
+    expect(shown(host).resolution, "a waiting question's resolution resolved the pending one")
+      .toBeNull()
+    expect(shown(host).answers).toBe(3)
+
+    resolveFrame("confirm-A", "accept", "answer")
+    record()
+    linger()
+    record()
+
+    expect(shown(host).id, "the drain skipped past the dead question to the live one").toBe("confirm-C")
+    expect(shown(host).answers).toBe(3)
+    expect(raised, "a question whose window had already closed was raised as answerable")
+      .not.toContain("confirm-B")
+  })
+
+  it("the queue is BOUNDED, and an arrival past the bound is dropped rather than accumulating", () => {
+    vi.useFakeTimers()
+    const host = mountHost()
+    const raised: string[] = []
+
+    request("confirm-A")
+    raised.push(shown(host).id!)
+    // One more arrival than the bound admits.
+    for (let index = 1; index <= MAX_QUEUED_CONFIRMS + 1; index += 1) {
+      request(`confirm-q${String(index)}`)
+    }
+
+    // Drain the whole queue by answering each raised question in turn.
+    for (let index = 0; index < MAX_QUEUED_CONFIRMS + 2; index += 1) {
+      const current = shown(host).id
+      if (current === null) break
+      resolveFrame(current, "accept", "answer")
+      linger()
+      const next = shown(host).id
+      if (next !== null) raised.push(next)
+    }
+
+    const expected = ["confirm-A"]
+    for (let index = 1; index <= MAX_QUEUED_CONFIRMS; index += 1) {
+      expected.push(`confirm-q${String(index)}`)
+    }
+    expect(raised, "the queue admitted more than its bound, or dropped the wrong end").toEqual(expected)
+    expect(shown(host).id, "the queue never emptied").toBeNull()
+  })
+
+  it("the queue does not outlive the channel — it dies with the host, like the pending id and the scope", () => {
+    // THE REGRESSION THIS GUARDS. `setRunConfirmScope` writes into a MODULE-LEVEL box in `api.ts`,
+    // and a queue hoisted to module scope for the same reason would survive a remount and raise a
+    // question belonging to a channel that no longer exists.
+    vi.useFakeTimers()
+    mountHost()
+    const firstRoot = root
+    const firstContainer = container
+
+    request("confirm-A")
+    request("confirm-B")
+
+    act(() => { firstRoot!.unmount() })
+    firstContainer!.remove()
+    root = null
+    container = null
+
+    expect(channel.closes, "the channel was never closed").toBe(1)
+    expect(
+      channel.scopeWrites[channel.scopeWrites.length - 1],
+      "a closed channel left a scope behind, so a later trigger would name a browser that is gone",
+    ).toBeUndefined()
+
+    const second = mountHost()
+    linger()
+    expect(
+      shown(second).id,
+      "a question queued against a closed channel was raised on a fresh host",
+    ).toBeNull()
+  })
+
+  it("SOURCE: the queue is a ref, and 401-14's keyed guard is untouched", () => {
+    // TWO SOURCE CLAIMS THAT NO RENDER CAN MAKE.
+    //
+    // (1) THE STALENESS TRAP THIS FILE'S OWN SUBJECT NAMES. The channel's callbacks are captured
+    // ONCE at mount, so React state read inside them is the state as of that render and stays
+    // there forever — a queue held in `useState` would be read as `[]` by every later arrival, and
+    // the cells above would still pass for a one-deep queue while silently losing the third.
+    //
+    // (2) 401-14's keyed resolution guard must survive this change verbatim for the PENDING
+    // question. The queued-resolution bookkeeping is a separate concern and must not weaken it.
+    const source = readFileSync(
+      resolvePath(process.cwd(), "src/components/run-confirm-dialog.tsx"),
+      "utf8",
+    )
+    expect(source, "the queue is in React state, read from a mount-captured callback")
+      .toMatch(/queue\w*Ref\s*=\s*useRef/)
+    expect(source, "401-14's keyed resolution guard was weakened or removed")
+      .toContain("frame.confirmId !== pendingConfirmIdRef.current")
   })
 })

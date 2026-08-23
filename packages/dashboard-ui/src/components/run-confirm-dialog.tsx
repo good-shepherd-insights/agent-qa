@@ -147,7 +147,15 @@ export function RunConfirmDialog({
  * be SEEN to have been denied; closing it the instant the frame arrives would make a fail-closed
  * denial indistinguishable from a dialog that never appeared.
  */
-const RESOLVED_DIALOG_LINGER_MS = 6_000
+export const RESOLVED_DIALOG_LINGER_MS = 6_000
+
+/**
+ * How many arriving questions may WAIT behind the one on screen.
+ *
+ * EXPORTED SO THE CELLS READ THIS VALUE rather than spell a second one: a bound written twice is a
+ * bound that agrees with the test file right up until somebody changes it here.
+ */
+export const MAX_QUEUED_CONFIRMS = 4
 
 export function RunConfirmHost() {
   const [pending, setPending] = useState<ChatConfirmRequestFrame | undefined>(undefined)
