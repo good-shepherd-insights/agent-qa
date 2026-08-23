@@ -539,4 +539,25 @@ describe('the spawn vocabulary is gone from this module (401-07, INVK-01 source 
     expect(code).not.toContain('tree-kill')
     expect(code).not.toContain('SIGKILL')
   })
+
+  it('THE REFUSAL FACTS ARE READ STRUCTURALLY — no class name, no regex over the message (401-18)', () => {
+    // The two things a repair here could reach for and must not. Naming the class would be an
+    // import `validate:arch` forbids; a regex over the message would be a second parser over prose
+    // another package composes — the defect this repair exists to close, one layer down.
+    const REFUSAL_CLASS_CHECK = /instanceof\s+\w*(?:Denied|Refused)\w*Error/
+    const REGEX_OVER_MESSAGE = /(?:message|reason)\s*\.(?:match|search)\(|\.test\(\s*(?:message|reason)\s*\)/
+    expect(code).not.toContain('RunDeniedError')
+    expect(code).not.toContain('FunctionDeniedError')
+    expect(code).not.toMatch(REFUSAL_CLASS_CHECK)
+    expect(code).not.toMatch(REGEX_OVER_MESSAGE)
+    // What it DOES: reads the field off the value, exactly as `dashboardRemediesOf` reads remedies.
+    expect(code).toContain('neutralReason?: unknown')
+    expect(code).toContain('handle.session === undefined')
+    // NON-VACUITY, BEFORE THE VERDICT ABOVE IS WORTH ANYTHING: both predicates must fire on the
+    // very shapes they forbid, or two `not.toMatch`es are green because they match nothing at all.
+    expect('if (error instanceof RunDeniedError) return error.neutralReason')
+      .toMatch(REFUSAL_CLASS_CHECK)
+    expect('if (/fail-closed/.test(message)) return message').toMatch(REGEX_OVER_MESSAGE)
+    expect('const hit = message.match(/--trust-session/)').toMatch(REGEX_OVER_MESSAGE)
+  })
 })
