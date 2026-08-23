@@ -142,13 +142,30 @@ export function requireSingleInvocationProduct(
  * classified the whole invocation from `filtered[0]` alone, so the same two members allowed or
  * denied a run depending on which filename came first on the command line. Two spellings of a
  * security fold is how one of them stays wrong, so there is one, and both callers call it.
+ *
+ * WRITTEN POSITIVELY, SO THE ELSE-BRANCH IS THE REFUSAL (401-19, WR-02). `local` is answered only
+ * for a set this function can PROVE is entirely local; every other set falls through to the
+ * fail-closed answer. The enumerative spelling this replaces denied two known-bad shapes and
+ * allowed everything else, which made a value neither `undefined` nor `'shared'` a whole
+ * invocation's `mutating-local` — allowed in every context, with no credential and no confirm.
+ * That value has a road: `resolveTarget` returns `targets[targetName] as TargetEntry` over an
+ * `any` with no runtime check of its own (targets.ts:35-53), so a host that BUILDS a config in
+ * memory instead of loading one through the validating reader reaches this fold with any string
+ * it likes on `environment`. Defence-in-depth against a real seam, not a theoretical one — and on
+ * every input the config CAN produce the two spellings are behaviourally identical.
+ *
+ * UNDECLARED OUTRANKS SHARED, and the order below says so. Both classify as shared downstream, so
+ * the tier is the same either way; what differs is the SENTENCE a person approves, which names an
+ * undeclared member as undeclared rather than calling it a declared shared one (401-15, WR-06).
  */
 export function foldMostRestrictiveTargetClass(
   declared: readonly RunTargetClass[],
 ): RunTargetClass {
-  if (declared.length === 0 || declared.includes(undefined)) return undefined
+  if (declared.length === 0) return undefined
+  if (declared.every((declaration) => declaration === 'local')) return 'local'
+  if (declared.includes(undefined)) return undefined
   if (declared.includes('shared')) return 'shared'
-  return 'local'
+  return undefined
 }
 
 /**
