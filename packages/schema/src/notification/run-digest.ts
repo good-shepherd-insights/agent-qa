@@ -28,14 +28,14 @@ import { z } from 'zod'
 
 import { AnalysisClusterViewSchema } from '../functions/analysis-get'
 import type { AnalysisClusterView } from '../functions/analysis-get'
-import { asRunId } from '../run/run-id'
+import { runIdSchema } from '../run/run-id'
 import { POST_PROCESSING_CHIP_STATUSES } from './post-processing-status'
 import type { PostProcessingChipStatus } from './post-processing-status'
 import type { RunNotificationOutcome } from './run-notification'
 
 /** `runs.digest` addresses exactly one run by id — the `runs.postprocessing` shape. */
 export const RunsDigestInputSchema = z.object({
-  runId: z.string().transform(asRunId),
+  runId: runIdSchema,
 }).strict()
 
 export type RunsDigestInput = z.infer<typeof RunsDigestInputSchema>

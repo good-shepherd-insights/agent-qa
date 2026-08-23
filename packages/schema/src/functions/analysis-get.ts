@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { asRunId } from '../run/run-id'
+import { runIdSchema } from '../run/run-id'
 import type { Verdict } from '../verdict/verdict'
 
 // The `analysis.get` op contracts (Phase 389, D-11/D-15 — minted in schema per 384 D-16).
@@ -14,8 +14,6 @@ import type { Verdict } from '../verdict/verdict'
 // Clusters mint NO identity (D-16): fingerprint value, count, member refs and a
 // representative — no short-ID, no `agentqa://` address, no `BUG-`. Durable problem
 // identity belongs to the issue engine's identity-key model (387 D-03).
-
-const runIdSchema = z.string().transform(asRunId)
 
 const verdictClassValues = [
   'test_bug',

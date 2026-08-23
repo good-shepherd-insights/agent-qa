@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { asRunId } from '../run/run-id'
+import { runIdSchema } from '../run/run-id'
 import type { RunId } from '../run/run-id'
 import { asJobId } from './job-id'
 import type { JobId } from './job-id'
@@ -87,7 +87,6 @@ const jobConclusionKindValues = [
 ] as const satisfies readonly JobConclusionKind[]
 
 const jobIdSchema = z.string().transform(asJobId)
-const runIdSchema = z.string().transform(asRunId)
 
 export const jobSchema = z.object({
   id: jobIdSchema,

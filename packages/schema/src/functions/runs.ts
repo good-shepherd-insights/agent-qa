@@ -8,7 +8,7 @@ import type { PostProcessingChips, PostProcessingStatus } from '../notification/
 import { RUN_EVENT_TYPES } from '../run/bus-events'
 import type { RunEventEnvelope, RunEventPayload } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
-import { asRunId } from '../run/run-id'
+import { runIdSchema } from '../run/run-id'
 import type { RunId } from '../run/run-id'
 import { EXECUTION_CONTEXT_VALUES } from '../run/run-status'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
@@ -59,8 +59,6 @@ const scopeKeySchema = z.object({
   tier: z.enum(scopeTierValues),
   key: z.string(),
 }).strict()
-
-const runIdSchema = z.string().transform(asRunId)
 
 export const RunSummarySchema = z.object({
   runId: runIdSchema,
