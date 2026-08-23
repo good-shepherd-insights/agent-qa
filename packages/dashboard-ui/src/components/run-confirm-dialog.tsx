@@ -153,6 +153,13 @@ export function RunConfirmHost() {
   const [pending, setPending] = useState<ChatConfirmRequestFrame | undefined>(undefined)
   const [resolution, setResolution] = useState<RunConfirmDialogProps["resolution"]>(undefined)
   const scopeRef = useRef<string | undefined>(undefined)
+  // THE QUESTION THIS HOST IS CURRENTLY ASKING (401-14, CR-05).
+  //
+  // A REF FOR THE SAME REASON `scopeRef` IS ONE: the channel's callbacks are captured ONCE at
+  // mount, so React state read inside them is the state as of that render and stays there forever.
+  // A guard written against `pending` would compare every later frame against `undefined` and
+  // therefore ignore every resolution, including the right one.
+  const pendingConfirmIdRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     // NO SSE, NO CHANNEL, NO CLAIM — and the page still renders. A document that cannot hold a
@@ -169,10 +176,21 @@ export function RunConfirmHost() {
           setRunConfirmScope(frame.scopeId)
         },
         onConfirmRequest: (frame) => {
+          pendingConfirmIdRef.current = frame.confirmId
           setResolution(undefined)
           setPending(frame)
         },
         onConfirmResolved: (frame) => {
+          // ONLY THIS QUESTION'S OWN RESOLUTION (401-14, CR-05) — the keyed semantic the chat
+          // sibling has always applied at its reducer (`use-chat-turn.ts` matches on `confirmId`
+          // before it writes a resolution onto an entry). Without it a stale or overlapping frame
+          // rendered the pending question as resolved with ANOTHER question's answer, and the
+          // linger timer below then cleared it — costing the person the chance to answer.
+          //
+          // NOT A SECURITY GUARD, and it must not be mistaken for one: `answerRunConfirm` posts
+          // the real confirmId and the SERVER decides, so a spurious "approved" render approved
+          // nothing. What was lost was the answer, not the decision.
+          if (frame.confirmId !== pendingConfirmIdRef.current) return
           setResolution({ answer: frame.answer, by: frame.by })
         },
       })
@@ -181,6 +199,7 @@ export function RunConfirmHost() {
     }
     return () => {
       source.close()
+      pendingConfirmIdRef.current = undefined
       // CLEARED ON THE WAY OUT. A stale scope on a closed channel would make every later trigger
       // name a browser that is no longer there — the run would still deny fail-closed, but it would
       // deny after claiming somebody was reachable, which is the dishonest half.
@@ -192,6 +211,9 @@ export function RunConfirmHost() {
   useEffect(() => {
     if (resolution === undefined) return
     const timer = setTimeout(() => {
+      // The pending id is cleared WITH the question it belongs to — one place clears both, so a
+      // frame arriving after the linger cannot match an id no dialog is showing.
+      pendingConfirmIdRef.current = undefined
       setPending(undefined)
       setResolution(undefined)
     }, RESOLVED_DIALOG_LINGER_MS)
