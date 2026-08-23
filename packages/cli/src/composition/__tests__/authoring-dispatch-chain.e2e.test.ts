@@ -238,7 +238,19 @@ describe('one human ask, N gated runs, driven from the authoring loop (D-08 · U
       // assertion below vacuous, so that race is a LOUD failure rather than a skipped probe.
       await Promise.race([
         dispatchLive,
-        settled.then(() => { throw new Error('the dispatch closed before the probe window opened') }),
+        settled.then(() => {
+          // THE GUARD REPORTS WHY. A lost store denies the FIRST gate run, so no run ever reaches
+          // `flush` and the window never opens — this is the shape a continuity break takes here,
+          // and a bare "window never opened" would send a reader looking at the harness instead of
+          // at the chain. The two facts that discriminate are the confirm ledger and the rows.
+          throw new Error(
+            'the dispatch closed before the probe window opened — asks: '
+            + `${JSON.stringify(asked)}; run:start rows: `
+            + JSON.stringify(gateRows(fixture).map((row) => ({
+              outcome: row.outcome, trustSource: row.trustSource, context: row.executionContext,
+            }))),
+          )
+        }),
       ])
 
       const hitsBeforeProbe = target.hits.length
