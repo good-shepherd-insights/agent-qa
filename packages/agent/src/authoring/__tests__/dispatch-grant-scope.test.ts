@@ -6,10 +6,18 @@
 // real run in `packages/cli/src/composition/__tests__/dispatch-grant-gate.e2e.test.ts`. A cell here
 // that claimed a run was allowed would be asserting its own fake.
 //
-// ORDERING IS ASSERTED AS A SEQUENCE, not as a pair of call counts. "The scope was opened" and "a
-// run was started" are both true of a loop that opens the scope AFTER the first gate run — which is
+// ORDERING IS ASSERTED AS A SEQUENCE, not as a pair of call counts. "The scope was entered" and "a
+// run was started" are both true of a loop that enters the scope AFTER the first gate run — which is
 // exactly the defect: that run crosses the gate with no grant in force and denies. So the bench
 // records one interleaved trace and the cells compare it whole.
+//
+// 401-13 (verification gap CR-03) MOVED THE PORT from a lease pair to a SCOPE, and the trace is
+// what makes the difference measurable here rather than merely typed. `enter`/`exit` are recorded
+// by a bench whose `within` actually runs the continuation, so a loop that entered the scope and
+// then started its runs somewhere else — the shape that would leave the dispatch's own gate-runs
+// uncovered after the fix — produces a trace with the runs outside the enter/exit pair. It is also
+// why the throw cell still passes: `exit` is written by the bench's own `finally`, which is where
+// the real overlay writes its disposal too.
 //
 // vitest does not typecheck `.test.ts` (`typecheck.include` is `*.test-d.ts`); `tsc --noEmit` is
 // this file's only type authority.
@@ -75,7 +83,7 @@ function keepEligibleReceipt(runIds: readonly string[]): DraftReceipt {
   })
 }
 
-type TraceEntry = 'open' | 'dispose' | 'model' | `start:${string}`
+type TraceEntry = 'enter' | 'exit' | 'model' | `start:${string}`
 
 interface Bench {
   readonly deps: AuthoringLoopDeps
@@ -117,12 +125,16 @@ function bench(input: {
     ...(input.bindDispatchGrants
       ? {
           dispatchGrants: {
-            open() {
-              trace.push('open')
-              return {
-                dispose() {
-                  trace.push('dispose')
-                },
+            // THE BENCH RUNS THE CONTINUATION. A fake `within` that recorded `enter`/`exit` and
+            // never called `fn` would make every ordering cell below vacuous AND would silently
+            // change what the loop returns — the shape of the port is that the dispatch happens
+            // INSIDE it, and a bench that did not honour that would be measuring its own fake.
+            async within<T>(fn: () => Promise<T>): Promise<T> {
+              trace.push('enter')
+              try {
+                return await fn()
+              } finally {
+                trace.push('exit')
               }
             },
           },
@@ -181,7 +193,7 @@ const LOOP_INPUT: AuthoringLoopInput = {
 }
 
 describe('one approval, N gated runs, one scope (D-08)', () => {
-  it('THE SCOPE OPENS BEFORE THE FIRST RUN AND CLOSES AFTER THE LAST — the whole sequence', async () => {
+  it('THE SCOPE IS ENTERED BEFORE THE FIRST RUN AND LEFT AFTER THE LAST — the whole sequence', async () => {
     const harness = bench({ gateRuns: 3, bindDispatchGrants: true })
     await runAuthoringLoop(LOOP_INPUT, harness.deps)
 
@@ -193,36 +205,48 @@ describe('one approval, N gated runs, one scope (D-08)', () => {
     expect(harness.trace).toEqual([
       'model',
       'model',
-      'open',
+      'enter',
       'start:r_gate-0',
       'start:r_gate-1',
       'start:r_gate-2',
-      'dispose',
+      'exit',
     ])
+    // AND THE RUNS ARE STRICTLY BETWEEN THE TWO, stated as its own claim (401-13). The sequence
+    // above says it, but it says it by literal equality over a fixed fixture; this says the
+    // property the fix depends on — every gate run happened INSIDE the scope's own call tree, which
+    // is now the only thing that earns it the grant.
+    const entered = harness.trace.indexOf('enter')
+    const left = harness.trace.indexOf('exit')
+    const starts = harness.trace
+      .map((entry, index) => (entry.startsWith('start:') ? index : -1))
+      .filter((index) => index >= 0)
+    expect(starts).toHaveLength(3)
+    expect(starts.every((index) => index > entered && index < left)).toBe(true)
   })
 
-  it('ONE OPEN FOR N RUNS — the loop does not re-approve itself per run', async () => {
-    // The prohibited shape D-08 names: a scope opened around each run would be the loop granting
-    // itself, which makes the human ask decorative. One `open`, one `dispose`, three runs.
+  it('ONE ENTRY FOR N RUNS — the loop does not re-approve itself per run', async () => {
+    // The prohibited shape D-08 names: a scope entered around each run would be the loop granting
+    // itself, which makes the human ask decorative. One `enter`, one `exit`, three runs.
     const harness = bench({ gateRuns: 3, bindDispatchGrants: true })
     await runAuthoringLoop(LOOP_INPUT, harness.deps)
 
-    expect(harness.trace.filter((entry) => entry === 'open')).toHaveLength(1)
-    expect(harness.trace.filter((entry) => entry === 'dispose')).toHaveLength(1)
+    expect(harness.trace.filter((entry) => entry === 'enter')).toHaveLength(1)
+    expect(harness.trace.filter((entry) => entry === 'exit')).toHaveLength(1)
     expect(harness.trace.filter((entry) => entry.startsWith('start:'))).toHaveLength(3)
   })
 
   it('EVERY MODEL CALL IS OUTSIDE IT — a compile does not hold a run approval open', async () => {
     const harness = bench({ gateRuns: 1, bindDispatchGrants: true })
     await runAuthoringLoop(LOOP_INPUT, harness.deps)
-    expect(harness.trace.lastIndexOf('model')).toBeLessThan(harness.trace.indexOf('open'))
+    expect(harness.trace.lastIndexOf('model')).toBeLessThan(harness.trace.indexOf('enter'))
     expect(harness.trace.filter((entry) => entry === 'model')).toHaveLength(2)
   })
 
-  it('A THROWN DISPATCH STILL DISPOSES — the grant has no path that outlives the invocation', async () => {
+  it('A THROWN DISPATCH STILL LEAVES THE SCOPE — the grant has no path that outlives the invocation', async () => {
     // T-401-22 stated as a measurement. Stage 4 throwing is a real path (a credential screen, an
     // unparsable receipt, a host error), and a grant surviving it would be an approval with no
-    // expiry at all.
+    // expiry at all. Since 401-13 the loop owns no `finally` of its own — the throw propagates
+    // through the SCOPE's, which is where the real overlay retires its token.
     const harness = bench({ gateRuns: 2, bindDispatchGrants: true, failVerify: true })
     await expect(runAuthoringLoop(LOOP_INPUT, harness.deps)).rejects.toThrow(
       'the evaluator could not judge this draft',
@@ -230,14 +254,14 @@ describe('one approval, N gated runs, one scope (D-08)', () => {
     expect(harness.trace).toEqual([
       'model',
       'model',
-      'open',
+      'enter',
       'start:r_gate-0',
       'start:r_gate-1',
-      'dispose',
+      'exit',
     ])
   })
 
-  it('A DEDUP REFUSAL OPENS NOTHING — an invocation that spends no run is granted nothing', async () => {
+  it('A DEDUP REFUSAL ENTERS NOTHING — an invocation that spends no run is granted nothing', async () => {
     // Stage 2 returns before the scope, and the fan-out report for that arm is
     // `NO_RUNS_FAN_OUT_BOUND` for the same reason: this invocation was never going to run anything.
     const harness = bench({ gateRuns: 3, bindDispatchGrants: true, duplicateIntent: true })
@@ -256,7 +280,11 @@ describe('one approval, N gated runs, one scope (D-08)', () => {
     const granted = await runAuthoringLoop(LOOP_INPUT, withOverlay.deps)
     const ungranted = await runAuthoringLoop(LOOP_INPUT, withoutOverlay.deps)
 
+    // THE RESULT SURVIVES THE SCOPE (401-13). `within` returns what the dispatch returned, and a
+    // port that dropped it would turn a keep-eligible draft into `undefined` on the granted arm
+    // only — a difference the trace cannot see and the ungranted arm cannot reproduce.
     expect(ungranted.stages).toEqual(granted.stages)
+    expect(ungranted.outcome).toEqual(granted.outcome)
     expect(ungranted.outcome.kind).toBe(granted.outcome.kind)
     expect(ungranted.fanOut).toEqual(granted.fanOut)
     expect(withoutOverlay.trace).toEqual([
