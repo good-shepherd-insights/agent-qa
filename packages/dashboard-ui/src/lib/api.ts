@@ -554,8 +554,31 @@ export async function fetchActiveExecutions(): Promise<{ executions: ActiveExecu
   return request('/api/execution/active')
 }
 
-export async function triggerRun(opts: { file?: string; patterns?: string[]; noCache?: boolean; local?: boolean }): Promise<{ runId: string; status: string }> {
-  return postJson('/api/runs/trigger', opts)
+/**
+ * The confirm scope this page is currently askable on, or nothing (401-09, D-11).
+ *
+ * A MODULE-LEVEL BOX AND NOT A PARAMETER, and the reason is what the value MEANS. It is not a
+ * property of any one trigger — it is "which browser is asking", which is a property of this page,
+ * and this page has one person in front of it. There are nine call sites that start a run (the runs
+ * table, the tests table, the suites table, three editors, two viewers, the rerun button); threading
+ * a scope through all of them would be nine places to forget, and forgetting means an ask-tier run
+ * silently falls back to `local-headless` and denies with nobody asked. Registered once by
+ * {@link RunConfirmHost}, read here, and cleared when the channel closes.
+ *
+ * ABSENT IS THE HONEST DEFAULT: no channel, no claim, and the run fails closed by name.
+ */
+let currentRunConfirmScope: string | undefined
+
+/** Set by the confirm host when its channel opens; cleared when it closes. */
+export function setRunConfirmScope(scopeId: string | undefined): void {
+  currentRunConfirmScope = scopeId
+}
+
+export function triggerRun(opts: { file?: string; patterns?: string[]; noCache?: boolean; local?: boolean }): Promise<{ runId: string; status: string }> {
+  return postJson('/api/runs/trigger', {
+    ...opts,
+    ...(currentRunConfirmScope === undefined ? {} : { confirmScope: currentRunConfirmScope }),
+  })
 }
 
 export async function cancelRun(runId: string): Promise<{ cancelled: boolean }> {
@@ -1340,8 +1363,19 @@ export interface ChatTurnResponse {
   folds: ChatTurnFold[]
 }
 
-/** The three answers the browser confirm offers — the TTY's `[y/a/N]`, in a medium with buttons. */
-export type ChatConfirmAnswer = 'accept' | 'accept-always' | 'deny'
+/**
+ * The three answers a browser confirm offers — the TTY's `[y/a/N]`, in a medium with buttons.
+ *
+ * A VALUE AND A TYPE DERIVED FROM IT, rather than a bare union (401-09). Both confirm surfaces —
+ * chat's inline bubble and the run trigger's dialog — render one button per member, and a
+ * hand-written list at either render site would be a second spelling of the vocabulary that agreed
+ * with the server right up until somebody changed one of them. It mirrors the server's own
+ * `CHAT_CONFIRM_ANSWERS`, which the answer routes validate against with a closed `z.enum`, so a
+ * fourth answer is a 400 rather than an `undefined` somewhere downstream.
+ */
+export const CONFIRM_ANSWER_VOCABULARY = ['accept', 'accept-always', 'deny'] as const
+
+export type ChatConfirmAnswer = (typeof CONFIRM_ANSWER_VOCABULARY)[number]
 
 export interface ChatConfirmRequestFrame {
   confirmId: string
@@ -1414,6 +1448,69 @@ export async function fetchChatCapabilityCatalog(): Promise<ChatCapabilityCatalo
  * consumer that folded them into one handler would be inviting the reconnect to ask for an id no
  * window could hold.
  */
+// ---- The RUN TRIGGER's confirm door (401-09, D-11) -------------------------------------------
+//
+// THE SAME THREE ANSWERS AS CHAT, ON A SURFACE WITH NO CONVERSATION. The registry, the single-use
+// ids, the two DENY reapers and the mint are all the ones the chat confirm already rides; what is
+// different here is only the address a question is delivered to, and that this browser has to ASK
+// to be askable before it triggers anything.
+//
+// THE ORDER IS FORCED, NOT PREFERRED. The dashboard's queue dispatches a run in the same tick the
+// trigger route enqueues it, so a channel opened after `triggerRun` resolved would be racing the
+// run's own policy gate. The channel is opened first, the server mints the scope on it and
+// announces it as the first frame, and the trigger names that scope.
+
+/** The frame a freshly opened trigger channel announces itself with. */
+export interface RunConfirmScopeFrame {
+  scopeId: string
+}
+
+/**
+ * Become askable, and stay askable until this connection closes.
+ *
+ * `onScope` FIRES BEFORE ANY QUESTION CAN ARRIVE, because the server writes the scope frame before
+ * it registers the channel. A caller that triggered a run before this fired would be triggering as
+ * an unaskable browser, which is why {@link setRunConfirmScope} is what the host calls from here.
+ */
+export function openRunConfirmChannel(
+  callbacks: {
+    onScope?: (frame: RunConfirmScopeFrame) => void
+    onConfirmRequest?: (frame: ChatConfirmRequestFrame) => void
+    onConfirmResolved?: (frame: ChatConfirmResolvedFrame) => void
+    onPresent?: (text: string) => void
+  },
+): EventSource {
+  const source = new EventSource(`${API_BASE}/api/run-confirm/channel`)
+  source.addEventListener('confirm_scope', (e) => {
+    callbacks.onScope?.(JSON.parse((e as MessageEvent).data) as RunConfirmScopeFrame)
+  })
+  source.addEventListener('confirm_request', (e) => {
+    callbacks.onConfirmRequest?.(JSON.parse((e as MessageEvent).data) as ChatConfirmRequestFrame)
+  })
+  source.addEventListener('confirm_resolved', (e) => {
+    callbacks.onConfirmResolved?.(JSON.parse((e as MessageEvent).data) as ChatConfirmResolvedFrame)
+  })
+  source.addEventListener('chat_present', (e) => {
+    callbacks.onPresent?.((JSON.parse((e as MessageEvent).data) as { text: string }).text)
+  })
+  return source
+}
+
+/**
+ * Answer one outstanding run-trigger confirm.
+ *
+ * `scopeId` IS NOT REDUNDANT WITH THE CONFIRM ID, on the chat answer route's own reasoning: the
+ * registry compares it against the scope the question was parked for, so an id that leaked
+ * somewhere it should not have cannot be spent on another browser's question.
+ */
+export async function answerRunConfirm(input: {
+  scopeId: string
+  confirmId: string
+  answer: ChatConfirmAnswer
+}): Promise<{ resolved: boolean; answer: ChatConfirmAnswer }> {
+  return postJson<{ resolved: boolean; answer: ChatConfirmAnswer }>('/api/run-confirm/answer', input)
+}
+
 export function subscribeToChatSessionEvents(
   sessionId: string,
   callbacks: {

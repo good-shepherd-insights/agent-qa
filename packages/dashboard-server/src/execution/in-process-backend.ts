@@ -45,7 +45,8 @@
 
 import { EventEmitter } from 'node:events'
 
-import type { RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
+import { GATE_REMEDY_KINDS, remediesRenderableBy } from '@vostride/agent-qa-schema'
+import type { GateRemedy, RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 
 import type {
   ExecuteOptions,
@@ -313,7 +314,9 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
 
   private settle(handle: RunHandle, error?: unknown): void {
     if (handle.timeoutTimer) clearTimeout(handle.timeoutTimer)
+    let remedies: readonly GateRemedy[] | undefined
     if (error !== undefined) {
+      remedies = dashboardRemediesOf(error)
       const message = error instanceof Error ? error.message : String(error)
       for (const line of message.split('\n')) handle.output.push(line)
       // A rejection reaching here without a started session is a denial / refusal / input error —
@@ -335,6 +338,11 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
       status: handle.status,
       duration,
       ...(handle.completionReason ? { reason: handle.completionReason } : {}),
+      // 401-09 (D-15): on the buffered envelope as well as in the settle details, because these are
+      // two different readers — the SSE stream a browser is watching live, and the host's own
+      // reconciliation. A refusal that reached only one of them would be visible to whichever
+      // surface happened to be connected.
+      ...(remedies === undefined ? {} : { remedies }),
     })
 
     // `'run-settled'` rather than a constructor callback, so the HOST that owns the db, the queue
@@ -342,6 +350,7 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     // shape of the injection (`startServer`'s `agentHost` precedent).
     const details: RunSettledDetails = {
       ...(handle.completionReason === undefined ? {} : { reason: handle.completionReason }),
+      ...(remedies === undefined ? {} : { remedies }),
       output: [...handle.output],
     }
     this.emit('run-settled', handle.runId, handle.status, details)
@@ -353,6 +362,45 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     }, this.retentionMs)
     cleanup.unref()
   }
+}
+
+/**
+ * The typed remedies a rejection is carrying, projected for the browser (401-09, D-15).
+ *
+ * READ STRUCTURALLY OFF THE ERROR RATHER THAN BY CLASS, and that is not a shortcut. The error is a
+ * `RunDeniedError` minted in `agent-local`, and this package may not import `agent`, `agent-local`
+ * or `safety` — `pnpm validate:arch` is the mechanical proof. What it MAY name is the remedy
+ * vocabulary itself, which lives in `schema` precisely because four packages render it.
+ *
+ * VALIDATED AGAINST THE CLOSED VOCABULARY, so an arbitrary object that happened to carry a
+ * `remedies` array cannot put an unrenderable kind on a browser's screen. A kind this build does
+ * not know is dropped rather than passed through: the render table is total over the vocabulary,
+ * and a stranger in it is a value with no arm.
+ *
+ * THE PROJECTION HAPPENS HERE, ONCE. `remediesRenderableBy` is the ONE filter (T-400-06); a
+ * consumer that filtered again would be a second opinion about what this surface can offer, and one
+ * that did not filter at all would show a browser `--trust-session`, which is declared on exactly
+ * one CLI command and is the unreachable-remedy defect the vocabulary exists to close.
+ */
+function dashboardRemediesOf(error: unknown): readonly GateRemedy[] | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const carried = (error as { remedies?: unknown }).remedies
+  if (!Array.isArray(carried)) return undefined
+  const known = new Set<string>(GATE_REMEDY_KINDS)
+  const remedies: GateRemedy[] = []
+  for (const entry of carried as unknown[]) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const kind = (entry as { kind?: unknown }).kind
+    if (typeof kind !== 'string' || !known.has(kind)) continue
+    const params = (entry as { params?: unknown }).params
+    remedies.push({
+      kind: kind as GateRemedy['kind'],
+      ...(typeof params === 'object' && params !== null
+        ? { params: params as Readonly<Record<string, string>> }
+        : {}),
+    })
+  }
+  return remediesRenderableBy('dashboard', remedies)
 }
 
 export function createInProcessExecutionBackend(

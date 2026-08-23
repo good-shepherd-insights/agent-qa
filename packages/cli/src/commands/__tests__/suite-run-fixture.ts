@@ -53,11 +53,21 @@ import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 export const CLI_DIST = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'dist', 'cli.js')
 
 export interface AuditRow {
+  /**
+   * When the decision was taken (401-09).
+   *
+   * ON THE TYPE BECAUSE A MULTI-RUN CELL NEEDS IT. `auditRows` concatenates one run-scoped sink per
+   * run directory, in directory order, which is not the order the decisions were taken in — so a
+   * cell with two runs has to sort, and could not.
+   */
+  ts: string
   action: string
   riskTier: string
   verdict: string
   outcome: string
   reason: string
+  /** Which rung of `resolveAsk` allowed it, when one did. Absent on a denial and on a plain allow. */
+  trustSource?: string
   runId: string
   executionContext: string
 }

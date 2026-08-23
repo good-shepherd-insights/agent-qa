@@ -1,4 +1,5 @@
 import type { RunAttributes } from '@vostride/agent-qa-core'
+import type { GateRemedy } from '@vostride/agent-qa-schema'
 import type { EventEmitter } from 'node:events'
 
 /**
@@ -57,6 +58,19 @@ export interface ExecuteOptions {
 export interface RunSettledDetails {
   /** A human-readable reason when the run did not simply finish. */
   readonly reason?: string
+  /**
+   * What the refused caller can actually DO about it, typed (401-09, D-15).
+   *
+   * ALREADY PROJECTED FOR THIS SURFACE. The gate mints the full set and every door runs it through
+   * `remediesRenderableBy` before rendering, because the gate cannot write prose that is
+   * simultaneously right for a terminal, a chat transcript, an MCP client and a browser — which is
+   * the whole argument for the vocabulary being data. What reaches here is the `dashboard` slice,
+   * so a consumer renders what it is given and filters nothing.
+   *
+   * ABSENT WHERE THE FAILURE IS NOT A REFUSAL, and empty where a refusal has no way forward this
+   * surface can offer. Honest absence is a supported answer; it is never filled with guidance.
+   */
+  readonly remedies?: readonly GateRemedy[]
   /** Diagnostic lines — a rejection's own message. The typed successor to scraped stderr. */
   readonly output: readonly string[]
 }

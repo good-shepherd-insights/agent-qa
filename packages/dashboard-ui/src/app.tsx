@@ -15,6 +15,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { CommandPalette } from "@/components/command-palette"
 import { ChatPanel } from "@/components/chat-panel"
+import { RunConfirmHost } from "@/components/run-confirm-dialog"
 import { ChatSessionProvider } from "@/chat/chat-session-context"
 import { RouteErrorBoundary } from "@/components/error-boundary"
 import { ProductTourProvider, ProductTourOverlay } from "@/components/product-tour"
@@ -136,6 +137,11 @@ function AppLayout() {
             renders the same `<ChatTranscript />` module `/chat` renders, over the same session —
             never a second transcript. */}
         <ChatPanel />
+        {/* 401-09 (D-11): the run trigger's confirm channel and its dialog, mounted ONCE beside the
+            other global overlays. Being on this page is what makes an ask-tier run askable — there
+            are nine places that start a run and the queue dispatches in the same tick one is
+            requested, so a channel opened per click would be racing the run's own gate. */}
+        <RunConfirmHost />
       </ProductTourProvider>
       </ChatSessionProvider>
     </SidebarProvider>

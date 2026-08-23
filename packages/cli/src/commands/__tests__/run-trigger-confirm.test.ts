@@ -20,7 +20,7 @@
 // five, plus the D-15 remedies, and is paired with an allow control that differs in EXACTLY ONE
 // thing — the answer a person gave.
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -60,8 +60,19 @@ function opAuditRows(fixture: Fixture): AuditRow[] {
     .map((line) => JSON.parse(line) as AuditRow)
 }
 
+/**
+ * Every `run:start` decision this project recorded, IN THE ORDER THEY WERE TAKEN.
+ *
+ * SORTED, AND THE SORT IS LOAD-BEARING. Each run writes to its OWN run-scoped sink, so
+ * `auditRows` concatenates one file per run directory in whatever order the directory listing
+ * yields — which is not chronological, and is stable enough to look chronological in a one-run
+ * cell. A two-run cell that indexed positionally would read the second run's verdict off the first
+ * run's row roughly half the time; measured, in the always-arm cell below, before this existed.
+ */
 function runStartRows(fixture: Fixture): AuditRow[] {
-  return (auditRows(fixture) as AuditRow[]).filter((row) => row.action === 'run:start')
+  return (auditRows(fixture) as AuditRow[])
+    .filter((row) => row.action === 'run:start')
+    .sort((left, right) => String(left.ts).localeCompare(String(right.ts)))
 }
 
 interface Scene {
@@ -88,6 +99,13 @@ async function openScene(input: {
   readonly timeoutMs?: number
 }): Promise<Scene> {
   const { fixture } = input
+  // AN EMPTY BROWSERS ROOT, so a member's failure is a property of the fixture rather than of the
+  // machine — `dashboard-run-door.test.ts`'s own pin, for its own reason. Without it an APPROVED
+  // run launches a real browser and knocks on the counting target a second time, and every
+  // "nobody knocked" / "knocked once" assertion starts measuring what is installed here.
+  const browsersRoot = join(fixture.project, 'no-browsers')
+  if (!existsSync(browsersRoot)) mkdirSync(browsersRoot, { recursive: true })
+  process.env.PLAYWRIGHT_BROWSERS_PATH = browsersRoot
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   const confirms = createConfirmRegistry(
     input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs },
@@ -369,6 +387,146 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       expect(opAuditRows(fixture).filter((r) => r.action === 'fn:runs.start')).toHaveLength(1)
 
       await stream.close()
+    } finally {
+      await target.close()
+    }
+  }, 240_000)
+
+  it('THE ALLOW CONTROL — one thing different (the answer), and the run happens', async () => {
+    // THE DENY-ON-SILENCE CELL'S PAIR, and it differs in EXACTLY ONE thing: somebody clicked Yes.
+    // Same undeclared target, same tier, same scope, same channel. Without this control a fix that
+    // denied every trigger — or a confirm port that could only ever say no — would satisfy every
+    // assertion in the cell above.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin })
+      const scene = await openScene({ fixture, timeoutMs: 60_000 })
+      const stream = await openRunConfirmStream(scene)
+      const runId = await triggerRun(scene, stream.scopeId)
+
+      const raised = confirmRequestOf(
+        await stream.waitFor((frame) => frame.event === 'confirm_request'),
+      )
+      const answered = await answerRunConfirm(scene, {
+        scopeId: stream.scopeId,
+        confirmId: raised.confirmId,
+        answer: 'accept',
+      })
+      expect(answered.status).toBe(200)
+      // SINGLE USE: the id is spent by the answer that spent it, so a leaked id cannot be replayed
+      // onto whatever question is outstanding next.
+      expect((await answerRunConfirm(scene, {
+        scopeId: stream.scopeId,
+        confirmId: raised.confirmId,
+        answer: 'accept',
+      })).status).toBe(404)
+
+      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
+
+      const rows = runStartRows(fixture)
+      expect(rows).toHaveLength(1)
+      // THE ROW A PERSON READS: an ask that really was put in front of somebody, and answered.
+      expect(rows[0]!.outcome).toBe('prompted-approved')
+      expect(rows[0]!.executionContext).toBe('local-interactive')
+      // And all five artifacts of a run that HAPPENED, each the negation of the denial cell's.
+      expect(eventTypes(fixture)).toContain('runStarted')
+      expect(buildOrdinalsExist(fixture)).toBe(true)
+      expect(target.hits).toEqual(['/in-process-thing'])
+      expect(scene.buffered(runId).map((event) => event['type'])).toContain('runStarted')
+      expect(scene.db.getRun(runId)?.status).not.toBe('pending')
+
+      await stream.close()
+    } finally {
+      await target.close()
+    }
+  }, 240_000)
+
+  it('ALWAYS — the one mint records a standing approval, and the NEXT run is not asked', async () => {
+    // THE `a` ARM, END TO END. What makes this cell worth its wall clock is the SECOND run: a
+    // ledger line proves a write happened, and only a second ask proves the write is what the gate
+    // reads. The grant is minted through the composition's own `standingGrants.record` — the same
+    // instance `proposals.accept --always` mints through, with its protected-class refusal and its
+    // committed ledger — because this door contributes three answers and a socket, never a mint.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin })
+      const scene = await openScene({ fixture, timeoutMs: 60_000 })
+      const stream = await openRunConfirmStream(scene)
+
+      const firstRun = await triggerRun(scene, stream.scopeId)
+      const raised = confirmRequestOf(
+        await stream.waitFor((frame) => frame.event === 'confirm_request'),
+      )
+      expect(raised.actionClass).toBe('run:start')
+      expect((await answerRunConfirm(scene, {
+        scopeId: stream.scopeId,
+        confirmId: raised.confirmId,
+        answer: 'accept-always',
+      })).status).toBe(200)
+      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
+      expect(runStartRows(fixture).map((row) => row.outcome)).toEqual(['prompted-approved'])
+
+      // THE SECOND RUN, ON THE SAME CHANNEL. The channel stays open deliberately: if the grant were
+      // not in force this run WOULD be asked, and a cell that closed the channel first would
+      // instead be measuring the fail-closed arm and calling it a standing approval.
+      const secondRun = await triggerRun(scene, stream.scopeId)
+      await waitFor(() => { expect(scene.settled()).toHaveLength(2) })
+
+      const rows = runStartRows(fixture)
+      expect(rows).toHaveLength(2)
+      // The first run is the one that was asked; the second is the one the grant covered.
+      expect(rows[0]!.outcome).toBe('prompted-approved')
+      // SATISFIED BY THE GATE'S OWN STANDING-APPROVAL READ PATH, which is the assertion a ledger
+      // line cannot make: `trustSource` is written by `resolveAsk`, three rungs above the confirm.
+      expect(rows[1]!.outcome).toBe('proceeded')
+      expect(rows[1]!.trustSource).toBe('standing-approval')
+      // AND NOBODY WAS ASKED A SECOND TIME. One question on this channel, ever.
+      expect(
+        stream.frames.filter((frame) => frame.event === 'confirm_request'),
+        'the standing approval did not stop the ask recurring',
+      ).toHaveLength(1)
+      expect(scene.confirms.pendingCount()).toBe(0)
+
+      expect(firstRun).not.toBe(secondRun)
+      await stream.close()
+    } finally {
+      await target.close()
+    }
+  }, 300_000)
+
+  it('CHANNEL VANISH — closing the tab denies at once, not at the window', async () => {
+    // A SIXTY-SECOND WINDOW, far past this cell's own budget for the assertions after the close. If
+    // the disconnect reaper were removed the cell could only pass by waiting out the timer, which
+    // it does not have time to do — so a green here is the reaper and cannot be the timeout. That
+    // is the difference between this cell and the deny-on-silence one, which is the whole reason
+    // both exist.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin })
+      const scene = await openScene({ fixture, timeoutMs: 60_000 })
+      const stream = await openRunConfirmStream(scene)
+      await triggerRun(scene, stream.scopeId)
+
+      await stream.waitFor((frame) => frame.event === 'confirm_request')
+      expect(scene.confirms.pendingCount()).toBe(1)
+
+      const closedAt = Date.now()
+      await stream.close()
+
+      await waitFor(() => { expect(scene.settled()).toHaveLength(1) }, 15_000)
+      expect(
+        Date.now() - closedAt,
+        'the denial arrived on the window rather than on the close',
+      ).toBeLessThan(30_000)
+
+      const rows = runStartRows(fixture)
+      expect(rows.map((row) => row.outcome)).toEqual(['prompted-denied'])
+      expect(scene.confirms.pendingCount()).toBe(0)
+      expect(eventTypes(fixture)).toEqual([])
+      expect(target.hits).toEqual([])
     } finally {
       await target.close()
     }
