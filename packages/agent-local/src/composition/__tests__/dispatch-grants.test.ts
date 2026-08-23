@@ -10,6 +10,8 @@
 // failure; their bar is the mutation ledger in this plan's SUMMARY, and each cell names the
 // mutation that reds it.
 
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import { NO_STANDING_APPROVALS } from '@vostride/agent-qa-safety'
@@ -213,6 +215,32 @@ describe('the composition carries the overlay to the run gate (D-08)', () => {
     // was built rather than by what is true now.
     expect(execution.readers).toHaveLength(2)
     expect(inDispatch).not.toBe(atRest)
+  })
+
+  it('ONE OVERLAY PER COMPOSITION — the shelf and the run gate cannot be handed different objects', () => {
+    // THE ONE SEAM NO BEHAVIOURAL CELL IN THIS PLAN CAN SEE, so it is pinned at its source.
+    //
+    // The loop's lease and the run gate's reader are only the same approval because they come from
+    // the SAME object. A composition that minted a second overlay for the shelf binding would pass
+    // every other cell here and every cell at the door — the lease would open on one object and the
+    // gate would read the other, and every child gate run would deny after a person approved. There
+    // is no fixture in this plan that can drive `authoring.draft.write` end to end (its op gate is
+    // `mutating-shared` and fail-closed under vitest, and stage 3 needs a model), so the guard is
+    // structural: `createDispatchGrants()` is CALLED in exactly one place in first-party source.
+    //
+    // Its honest limit, stated: this says there is one instance, not that the two readers of it are
+    // the same expression. A second `const` aliasing the same object would still pass.
+    const composition = readFileSync(
+      new URL('../compose-local-agent.ts', import.meta.url),
+      'utf8',
+    )
+    const calls = composition.split('\n')
+      .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+      .filter((line) => line.includes('createDispatchGrants('))
+    expect(calls).toHaveLength(1)
+    // Both consumers read the one binding the line above produces.
+    expect(composition).toContain('dispatchGrants.readerOver(')
+    expect(composition).toContain('open: () => dispatchGrants.open()')
   })
 
   it('NO RESOLVER, NO FIELD — a composition that supplies none hands the host nothing', async () => {
