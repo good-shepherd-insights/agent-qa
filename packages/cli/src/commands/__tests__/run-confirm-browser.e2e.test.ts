@@ -230,6 +230,32 @@ async function waitForFrame(
   }
 }
 
+/**
+ * Wait until the page's own recorder satisfies a predicate over the WHOLE wire. No sleeps.
+ *
+ * `waitForFrame` answers "did one frame like this arrive"; this answers "is the page's history in
+ * this state yet" — which is what a claim about two questions coexisting needs, since neither of
+ * the two frames alone says anything about the other.
+ */
+async function waitForWire(
+  page: Page,
+  predicate: (wire: PageWire) => boolean,
+  budgetMs = 90_000,
+): Promise<PageWire> {
+  const deadline = Date.now() + budgetMs
+  for (;;) {
+    const wire = await readWire(page)
+    if (predicate(wire)) return wire
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `the page's wire never reached the expected state within ${String(budgetMs)}ms; it saw `
+        + JSON.stringify(wire.frames.map((frame) => frame.event)),
+      )
+    }
+    await page.waitForTimeout(50)
+  }
+}
+
 // ---- the scene ---------------------------------------------------------------------------------
 
 interface Scene {
@@ -518,17 +544,28 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
     }
   }, 300_000)
 
-  it('OVERLAPPING CONFIRMS — the second question silently replaces the first, and the person is never told the first was denied (WR-05)', async () => {
-    // THIS CELL MEASURES, IT DOES NOT PRESCRIBE. Whether overlapping confirms should queue, or
-    // whether an unresolved question should refuse to be replaced, is an owner decision that is
-    // open. What is written down here is what the shipped code DOES, on the real wire, so the
-    // decision can be taken against an observation rather than a reading.
+  it('OVERLAPPING CONFIRMS — the arriving question WAITS, the one on screen resolves on itself, and the waiting one is raised afterwards and dies visibly (G-401-15)', async () => {
+    // THE RULING THIS CELL MEASURES (UAT test 1, 2026-08-23): QUEUE overlapping confirms — B waits
+    // behind A; A stays answerable and resolves normally. Before 401-16 this cell measured the
+    // DEFECT: within about a second the dialog's `data-confirm-id` became B, A's confirmId was
+    // nowhere in `document.body.innerHTML`, and when A's `confirm_resolved` arrived thirty seconds
+    // later on this very socket 401-14's keyed guard correctly dropped it, so NOTHING RENDERED. The
+    // person clicked Run twice, answered once, got one run, and was never told the other was
+    // refused. That is gap G-401-15, and the assertions below are the repaired shape of it.
     //
     // `parallelRuns` IS WHAT MAKES OVERLAP REACHABLE AT ALL, and finding that out was half the
-    // measurement: `JobQueue.findNextEligible` gives a NON-parallel web run exclusive access to
-    // every slot, so two default-configured dashboard runs reach their gates strictly one after
-    // the other and their questions never coexist. With `use.parallel` — the config's own shipped
-    // knob — both runs are eligible at once and both gates ask.
+    // original measurement: `JobQueue.findNextEligible` gives a NON-parallel web run exclusive
+    // access to every slot, so two default-configured dashboard runs reach their gates strictly one
+    // after the other and their questions never coexist. With `use.parallel` — the config's own
+    // shipped knob — both runs are eligible at once and both gates ask.
+    //
+    // WHY THE *SECOND* QUESTION IS THE ONE LEFT UNANSWERED, stated because it looks like a
+    // softening of the gap and is not. Both windows start when their own question is parked, about
+    // a second apart, so a question that waits behind another is raised one linger AFTER the first
+    // one closes — which under the queued behaviour makes the FIRST question the one a person can
+    // still answer and the SECOND the one that can run out of window while they read the outcome.
+    // The claim the gap was filed for is "a question that resolves unanswered is SEEN to have been
+    // refused", and it is asserted here on the question that actually dies that way.
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -537,15 +574,16 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
         environment: 'shared',
         parallelRuns: true,
       })
-      // Long enough that the SECOND question provably arrives inside the FIRST one's window (the
-      // gap measured between the two triggers is ~1s), and short enough that this cell pays for
-      // the first question's death in seconds rather than the two-minute default.
+      // 30s: long enough that the SECOND question provably arrives inside the FIRST one's window
+      // (the gap measured between the two triggers is ~1s) and still has most of its own window
+      // left when the queue drains it one linger later; short enough that this cell pays for the
+      // second question's death in seconds rather than the two-minute default.
       const scene = await openScene({ fixture, timeoutMs: 30_000 })
       const { page } = await openDashboard(scene)
 
       // WHICH RUN IS WHICH, read off the trigger route's own responses in the order the browser
       // made them. Without this the cell could say "one run died" but not "the run whose question
-      // was taken away is the one that died", which is the whole of what a person loses here.
+      // was never answered is the one that died", which is the whole of what a person loses here.
       const triggeredRunIds: string[] = []
       page.on('response', (response) => {
         if (!response.url().endsWith('/api/runs/trigger')) return
@@ -565,99 +603,151 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       await dialog.waitFor({ state: 'visible', timeout: 60_000 })
       const firstId = await dialog.getAttribute('data-confirm-id')
       expect(firstId, 'the first question never reached the browser').toBeTruthy()
-      // The first question is ANSWERABLE at this point — three live buttons, no resolution.
       expect(await dialog.locator('[data-confirm-answer]').count()).toBe(3)
       expect(await dialog.getAttribute('data-confirm-resolution')).toBeNull()
 
       // ... and now a second ask-tier run is started while the first is still on screen. The SAME
       // selection is run again, which is the shortest true story: a person clicked Run twice.
       await clickRunLocal(page)
-      await page.waitForFunction(
-        (previous) => {
-          const el = document.querySelector('[data-run-confirm-dialog]')
-          return el !== null && el.getAttribute('data-confirm-id') !== previous
-        },
-        firstId,
-        { timeout: 60_000 },
-      )
-      const secondId = await dialog.getAttribute('data-confirm-id')
 
-      // BOTH QUESTIONS REALLY WERE ASKED, and the second really did arrive while the first was
-      // still outstanding — asserted off the wire before anything is claimed about the DOM.
-      const afterSecond = await readWire(page)
+      // ARRIVAL FIRST, ALWAYS. The second question's identity is read off the WIRE and not off the
+      // DOM, because under the ruled behaviour it is never rendered at this point — and a cell that
+      // waited for the DOM to change would be waiting for the defect.
+      const afterSecond = await waitForWire(
+        page,
+        (wire) => confirmRequests(wire).length >= 2,
+        90_000,
+      )
       const asked = confirmRequests(afterSecond)
-      expect(asked.map((frame) => frame.confirmId)).toEqual([firstId, secondId])
+      expect(asked, 'the second question never reached this browser').toHaveLength(2)
+      expect(asked[0]!.confirmId).toBe(firstId)
+      const secondId = asked[1]!.confirmId
       expect(
         confirmResolutions(afterSecond).map((frame) => frame.confirmId),
         'the first question had already resolved before the second arrived, so these two never '
-        + 'overlapped in the browser — which is also exactly what a WR-05 repair (queue instead of '
-        + 'clobber) would produce, and this whole cell would then need rewriting against it',
+        + 'overlapped in the browser and nothing below is about overlapping confirms',
       ).not.toContain(firstId)
 
-      // WHAT THE PERSON SEES: one dialog, showing the SECOND question. The first is gone from the
-      // document entirely — not disabled, not marked superseded, not stacked behind. Gone.
+      // WHAT THE PERSON SEES: still exactly one dialog, still the FIRST question, still answerable.
+      // This is the assertion the shipped code failed — it rendered the second question here.
       expect(await dialog.count()).toBe(1)
       expect(
-        await page.evaluate((id) => document.body.innerHTML.includes(id), firstId!),
-        'the first question is still referenced somewhere in the document',
+        await dialog.getAttribute('data-confirm-id'),
+        'the arriving question replaced the one being asked',
+      ).toBe(firstId)
+      expect(
+        await dialog.locator('[data-confirm-answer]').count(),
+        'the question on screen stopped being answerable when the next one arrived',
+      ).toBe(3)
+      expect(await dialog.getAttribute('data-confirm-resolution')).toBeNull()
+      expect(
+        await page.evaluate((id) => document.body.innerHTML.includes(id), secondId),
+        'the waiting question was rendered — it is meant to be waiting, not stacked',
       ).toBe(false)
 
-      // The person answers the question they can see.
+      // The person answers the question they were asked FIRST, which they still can.
       await dialog.locator('[data-confirm-answer="accept"]').click()
-
-      // The first question dies at its window, and the SERVER says so on this very socket — which
-      // is what makes the silence below a silence in the BROWSER rather than a frame that never
-      // arrived.
-      const firstDeath = await waitForFrame(page, (frame) => {
+      await waitForFrame(page, (frame) => {
         if (frame.event !== 'confirm_resolved') return false
         return (JSON.parse(frame.data) as { confirmId: string }).confirmId === firstId
       }, 90_000)
-      expect(JSON.parse(firstDeath.data)).toMatchObject({
-        confirmId: firstId,
+
+      // AND THE WAITING QUESTION IS RAISED ONLY AFTERWARDS, under its OWN confirmId, answerable.
+      await page.waitForFunction(
+        (id) => {
+          const el = document.querySelector('[data-run-confirm-dialog]')
+          return el !== null && el.getAttribute('data-confirm-id') === id
+        },
+        secondId,
+        { timeout: 60_000 },
+      )
+      expect(
+        await dialog.locator('[data-confirm-answer]').count(),
+        'the question that had been waiting was raised without its answers',
+      ).toBe(3)
+      expect(await dialog.getAttribute('data-confirm-resolution')).toBeNull()
+
+      // THE ORDER, read off the whole render history rather than off the two snapshots above: the
+      // first state carrying the second question came AFTER a state that carried the first
+      // question's own answer. A queue that raised the next question early would satisfy every
+      // assertion so far and fail this one.
+      const historyAtDrain = (await readWire(page)).dialogs.filter((shot) => shot.present)
+      const approvedAt = historyAtDrain
+        .findIndex((shot) => shot.confirmId === firstId && shot.resolution === 'accept')
+      const raisedAt = historyAtDrain.findIndex((shot) => shot.confirmId === secondId)
+      expect(approvedAt, 'the first question never rendered the approval the server sent back')
+        .toBeGreaterThanOrEqual(0)
+      expect(raisedAt, 'the waiting question was never rendered at all').toBeGreaterThanOrEqual(0)
+      expect(raisedAt, 'the waiting question was raised before the first one had been answered')
+        .toBeGreaterThan(approvedAt)
+
+      // NOBODY ANSWERS THE SECOND QUESTION. It dies at its own window, the server says so on this
+      // very socket — and THE PERSON IS TOLD, which is the exact thing that never happened in the
+      // measured failure.
+      const secondDeath = await waitForFrame(page, (frame) => {
+        if (frame.event !== 'confirm_resolved') return false
+        return (JSON.parse(frame.data) as { confirmId: string }).confirmId === secondId
+      }, 90_000)
+      expect(JSON.parse(secondDeath.data)).toMatchObject({
+        confirmId: secondId,
         answer: 'deny',
         by: 'timeout',
       })
-
-      // AND NOTHING EVER TOLD THE PERSON. Asserted over EVERY state the DOM held, not one
-      // snapshot, because "was never shown" is a claim about the whole history of the render.
-      const wire = await readWire(page)
-      const rendered = wire.dialogs.filter((shot) => shot.present)
-      expect(
-        rendered.some((shot) => shot.confirmId === firstId),
-        'the first question was never rendered at all, so this cell is measuring the wrong thing',
-      ).toBe(true)
-      expect(
-        rendered.filter((shot) => shot.confirmId === firstId && shot.resolution != null),
-        'the first question DID render an outcome — WR-05 does not reproduce',
-      ).toEqual([])
-      // The exact sentence the product would have shown, had it shown anything: the dialog's own
-      // `timeout` copy. Its absence is the observation, spelled as the string a person would read.
+      await page.waitForFunction(
+        (id) => {
+          const el = document.querySelector('[data-run-confirm-dialog]')
+          return el !== null
+            && el.getAttribute('data-confirm-id') === id
+            && el.getAttribute('data-confirm-resolution') !== null
+        },
+        secondId,
+        { timeout: 60_000 },
+      )
+      // The product's own timeout sentence, on the page, while the resolved dialog lingers.
       expect(
         await page.evaluate(() => document.body.innerText),
-        'the page told the person a run was denied on silence',
-      ).not.toContain('denied — nobody answered before the window closed')
+        'the page never told the person the second run was denied on silence',
+      ).toContain('denied — nobody answered before the window closed')
+
+      // AND OVER THE WHOLE RENDER HISTORY, not one snapshot, because "the person was told" is a
+      // claim about everything the DOM ever held.
+      const rendered = (await readWire(page)).dialogs.filter((shot) => shot.present)
+      const toldAbout = rendered
+        .filter((shot) => shot.confirmId === secondId && shot.resolution != null)
+      expect(
+        toldAbout,
+        'no rendered state carried the unanswered question together with its resolution',
+      ).not.toEqual([])
+      expect(toldAbout.map((shot) => shot.resolvedBy)).toContain('timeout')
+      expect(
+        toldAbout.map((shot) => shot.outcome),
+      ).toContain('denied — nobody answered before the window closed')
+      expect(
+        toldAbout.every((shot) => shot.answers?.length === 0),
+        'a question the server had already refused was still offering answers',
+      ).toBe(true)
 
       // THE TWO RUNS' FINAL OUTCOMES, mapped to the two triggers. One person, one "Yes", two runs:
-      // the one they were shown ran, and the one whose question was taken away was refused.
+      // the one they answered ran, and the one whose window ran out while they read the answer was
+      // refused — and, unlike before, refused where they could see it.
       await waitFor(() => { expect(triggeredRunIds).toHaveLength(2) })
       const [runA, runB] = triggeredRunIds as [string, string]
       await waitFor(() => { expect(scene.settled()).toHaveLength(2) })
       expect(
-        scene.buffered(runB).map((event) => event['type']),
+        scene.buffered(runA).map((event) => event['type']),
         'the run whose question the person answered never started',
       ).toContain('runStarted')
       expect(
-        scene.buffered(runA).map((event) => event['type']),
-        'the run whose question was replaced started anyway',
+        scene.buffered(runB).map((event) => event['type']),
+        'the run whose question was never answered started anyway',
       ).not.toContain('runStarted')
-      const deniedSettle = scene.settled().find((entry) => entry.runId === runA)
-      expect(deniedSettle, 'the replaced run never settled').toBeDefined()
+      const deniedSettle = scene.settled().find((entry) => entry.runId === runB)
+      expect(deniedSettle, 'the refused run never settled').toBeDefined()
       expect(
         deniedSettle!.details['remedies'],
         'the refused run carried no way forward',
       ).toEqual([{ kind: 'answer-confirm' }])
-      // WHAT THE FIRST RUN'S RECORD SAYS — the only place its fate is written down, since the
-      // person watching was told nothing. Pinned VERBATIM because two of these strings are
+      // WHAT THE REFUSED RUN'S RECORD SAYS. Pinned VERBATIM because two of these strings are
       // findings in their own right, and a cell that only asserted "it failed" would hide both:
       //
       //   * `failureSummary` — the line a runs list shows — says a PROCESS EXITED. No process
@@ -668,7 +758,7 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       //     are correctly `answer-confirm` above); the prose channel still carries it.
       //
       // RECORDED, NOT ENDORSED. If either is repaired this assertion reds, which is the point.
-      const deniedRun = scene.db.getRun(runA)
+      const deniedRun = scene.db.getRun(runB)
       expect(deniedRun?.status).toBe('failed')
       expect(
         deniedRun?.failureSummary,
@@ -683,6 +773,13 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
         'a CLI flag is offered as the way forward to somebody in a browser',
       ).toContain('--trust-session')
 
+      // AND THE APPROVED RUN REALLY STARTED — read off the run's own artifacts, never the UI's
+      // optimism. `target.hits` is a MEMBERSHIP assertion and never a count: `playwright-core`
+      // caches its browsers root, so `openScene`'s empty-browsers pin is inert here and an
+      // approved run drives a real browser at the counting target.
+      expect(eventTypes(fixture)).toContain('runStarted')
+      expect(buildOrdinalsExist(fixture)).toBe(true)
+      expect(target.hits, 'the approved run never touched the target').toContain('/in-process-thing')
       const outcomes = runStartRows(fixture).map((row) => row.outcome).sort()
       expect(outcomes).toEqual(['prompted-approved', 'prompted-denied'])
     } finally {
