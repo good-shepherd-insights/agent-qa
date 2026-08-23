@@ -339,6 +339,18 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       )
       expect(raised.actionClass).toBe('run:start')
       expect(raised.confirmId).toBeTruthy()
+      // AND THE QUESTION SAYS WHAT IT IS ASKING ABOUT (401-14, W-1 / D-11). The frame's `preview`
+      // IS the action's own `disclosure` (`confirm-registry.ts`), so this asserts the descriptor
+      // the CORE built at its one `evaluate()` call — not a prop a cell handed a component. Before
+      // this plan the field was `undefined` on every run:start ever raised: a person was asked to
+      // approve a run against a shared target and was told only the action class.
+      expect(raised.preview, 'the ask carried no preview — approve WHAT?').toBeTruthy()
+      // The target's own name, read off the FIXTURE's definition rather than retyped here, so a
+      // rename cannot leave this cell agreeing with a string nothing produces.
+      expect(raised.preview).toContain(fixture.targetName)
+      // AND THE CLASS THE GATE DECIDED UNDER, honestly: this fixture declares no `environment:`,
+      // which D-06 classifies SHARED — the tier that is why anybody is being asked at all.
+      expect(raised.preview!.toLowerCase()).toContain('shared')
       // AND IT IS PARKED IN THE SHIPPED REGISTRY'S OWN LOT — not in a second one this door built.
       expect(scene.confirms.pendingCount()).toBe(1)
 

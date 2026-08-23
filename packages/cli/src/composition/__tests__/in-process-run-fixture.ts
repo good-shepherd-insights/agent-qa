@@ -49,6 +49,8 @@ export interface InProcessFixture {
   readonly memberTestId: string
   /** The standalone test's id. */
   readonly directTestId: string
+  /** The name the one target is declared under — `IN_PROCESS_TARGET_NAME`, carried per fixture. */
+  readonly targetName: string
 }
 
 export interface InProcessFixtureInput {
@@ -78,6 +80,16 @@ export interface InProcessFixtureInput {
 export const UNINSTALLED_AUTH_PLUGIN_PACKAGE = '@acme/auth-plugin-401-10-NOT-INSTALLED'
 
 /**
+ * The ONE name the fixture's target is declared under, in the config AND in every test file.
+ *
+ * EXPORTED SO A CELL NEED NOT RETYPE IT (401-14). A disclosure assertion that spelled the name
+ * itself would agree with the fixture right up until somebody renamed the target here — and would
+ * then be asserting that the preview contains a string nothing produces. The config writer below
+ * interpolates this constant, so the value a cell reads is provably the value the run resolves.
+ */
+export const IN_PROCESS_TARGET_NAME = 'in-process-thing'
+
+/**
  * Write a project with one target, one standalone test and one suite over its own member.
  *
  * Every knob above changes EXACTLY ONE thing, which is what lets a denial cell and its allow
@@ -104,7 +116,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
       '  secretsFile: .env.secrets.local',
       'registry:',
       '  targets:',
-      '    in-process-thing:',
+      `    ${IN_PROCESS_TARGET_NAME}:`,
       '      platform: web',
       `      url: ${input.origin}/in-process-thing`,
       ...(input.environment === undefined ? [] : [`      environment: ${input.environment}`]),
@@ -134,7 +146,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
       : [
           `test-id: ${directTestId}`,
           'name: the standalone test',
-          'target: in-process-thing',
+          `target: ${IN_PROCESS_TARGET_NAME}`,
           'steps:',
           '  - Verify the page says "Example"',
           '',
@@ -145,7 +157,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
     [
       `test-id: ${memberTestId}`,
       'name: the suite member',
-      'target: in-process-thing',
+      `target: ${IN_PROCESS_TARGET_NAME}`,
       'steps:',
       '  - Verify the page says "Example"',
       '',
@@ -156,7 +168,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
     [
       `suite-id: ${generateSuiteId()}`,
       'name: the in-process suite',
-      'target: in-process-thing',
+      `target: ${IN_PROCESS_TARGET_NAME}`,
       'tests:',
       '  - test: tests/member.yaml',
       `    id: ${memberTestId}`,
@@ -172,5 +184,6 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
     suitePattern: 'suites/gate.suite.yaml',
     memberTestId,
     directTestId,
+    targetName: IN_PROCESS_TARGET_NAME,
   }
 }
