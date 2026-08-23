@@ -16,7 +16,12 @@ import type {
   StandingApprovalReader,
 } from '@vostride/agent-qa-safety'
 
-import { buildRunRiskDescriptor, RUN_START_RISK_ACTION_NAME } from '../run-risk.js'
+import {
+  buildRunDisclosure,
+  buildRunRiskDescriptor,
+  RUN_START_RISK_ACTION_NAME,
+} from '../run-risk.js'
+import type { RunTargetClass } from '../run-risk.js'
 
 // The gate.test.ts house fixture, copied rather than re-invented: the gate's own suite asserts on
 // the audit ROW, and so does this one. A denial asserted on stderr text or an exit code is the
@@ -273,5 +278,88 @@ describe('grants cannot leak between the op-level gate and the core-level gate',
       outcome: 'proceeded',
       trustSource: 'standing-approval',
     })
+  })
+})
+
+
+// ---- the sentence a person approves a run ON (401-15, WR-06) ----------------------------------
+//
+// THE CLAUSES ARE SPELLED HERE AS LITERALS, not imported from the producer. An expectation derived
+// from `buildRunDisclosure` would agree with whatever that function currently says, including the
+// asserting clause this plan exists to remove — the mutation ledger's M1 would then red nothing.
+
+/** What the disclosure says when the fold answered `local`. */
+const LOCAL_CLAUSE = 'declared: every target local'
+/** What it says when the fold answered `shared`. */
+const SHARED_CLAUSE = 'declared: at least one target shared'
+/** What it says when the fold answered UNDECLARED over a non-empty member set. */
+const UNDECLARED_CLAUSE = 'declared: at least one target undeclared, which classifies as shared'
+
+describe('buildRunDisclosure ATTRIBUTES the declaration instead of asserting an environment', () => {
+  const answers: readonly { label: string; value: RunTargetClass; clause: string }[] = [
+    { label: 'local', value: 'local', clause: LOCAL_CLAUSE },
+    { label: 'shared', value: 'shared', clause: SHARED_CLAUSE },
+    { label: 'undeclared', value: undefined, clause: UNDECLARED_CLAUSE },
+  ]
+
+  it.each(answers)(
+    'the $label fold answer states its own clause and neither of the other two',
+    ({ value, clause }) => {
+      const sentence = buildRunDisclosure(value, ['alpha', 'beta'])
+
+      expect(sentence).toContain(clause)
+      for (const other of [LOCAL_CLAUSE, SHARED_CLAUSE, UNDECLARED_CLAUSE]) {
+        if (other === clause) continue
+        // `UNDECLARED_CLAUSE` starts with `SHARED_CLAUSE`'s words up to `at least one target`, so
+        // an unguarded not-contain would be a false failure; the clauses diverge at the noun.
+        if (clause.startsWith(other)) continue
+        expect(sentence, `${clause} sentence also carried: ${other}`).not.toContain(other)
+      }
+    },
+  )
+
+  it('NEVER UNDERSTATES: the all-local clause appears for the local answer and for nothing else', () => {
+    // The tier is decided elsewhere and this field is display-only — which is exactly why an
+    // understating SENTENCE is the dangerous failure: the run is correctly gated as shared and the
+    // person is told the config declared everything local, so they approve on a false reading.
+    for (const { value, clause } of answers) {
+      const sentence = buildRunDisclosure(value, ['alpha', 'beta'])
+      expect(sentence.includes(LOCAL_CLAUSE), `${clause}: `.concat(sentence)).toBe(value === 'local')
+    }
+  })
+
+  it('a MIXED [shared, undeclared] set names both facts and mislabels neither member (WR-06)', () => {
+    // THE MEASURED DEFECT, verbatim from UAT test 4: `[shared, undefined]` folds to `undefined`,
+    // and the shipped sentence read
+    //   `targets staging, weird (environment: undeclared, which classifies as shared)`
+    // — telling the reader that `staging` is UNDECLARED when the config declares it `shared`. The
+    // tier was never understated; the FACT was wrong, at the one moment a person is deciding.
+    const sentence = buildRunDisclosure(undefined, ['staging', 'weird'])
+
+    // Both members are still named — the fix must not buy honesty by dropping a name.
+    expect(sentence).toContain('staging')
+    expect(sentence).toContain('weird')
+    // The claim is SCOPED to a member rather than asserted of the set.
+    expect(sentence).toContain(UNDECLARED_CLAUSE)
+    // And the asserting form is gone: no clause states an environment FOR THE WHOLE SET.
+    expect(sentence).not.toMatch(/environment: /)
+  })
+
+  it('an all-local pair says the declaration covers every target', () => {
+    const sentence = buildRunDisclosure('local', ['alpha', 'beta'])
+
+    expect(sentence).toContain('alpha')
+    expect(sentence).toContain('beta')
+    expect(sentence).toContain(LOCAL_CLAUSE)
+  })
+
+  it('an EMPTY name list is still an honest sentence, and never an empty string', () => {
+    const sentence = buildRunDisclosure(undefined, [])
+
+    expect(sentence.length).toBeGreaterThan(0)
+    // It must not claim "at least one target undeclared" of a set with no targets in it at all.
+    expect(sentence).not.toContain(UNDECLARED_CLAUSE)
+    // The consequence still has to be visible: nothing declared is what D-06 reads as shared.
+    expect(sentence).toContain('classifies as shared')
   })
 })
