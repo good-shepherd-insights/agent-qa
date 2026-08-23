@@ -47,6 +47,8 @@ export interface InProcessFixture {
   readonly suitePattern: string
   /** The suite member's own test id, so a cell can assert the MEMBER ran. */
   readonly memberTestId: string
+  /** The second suite member's test id, present only under `secondSuiteMember`. */
+  readonly secondMemberTestId?: string
   /** The standalone test's id. */
   readonly directTestId: string
   /** The name the one target is declared under — `IN_PROCESS_TARGET_NAME`, carried per fixture. */
@@ -95,6 +97,39 @@ export interface InProcessFixtureInput {
    * by `input.environment` exactly as it is without the knob and only the NAME LIST changes.
    */
   readonly secondTarget?: boolean
+  /**
+   * Declare `use.browser` explicitly as a HEADED chromium (401 UAT item 14).
+   *
+   * WHY A KNOB AND NOT A CONSTANT. The cancel-isolation cell needs a member it can HOLD OPEN, and
+   * the only production frame a browser-less machine can be parked in is `adapter.setup`'s
+   * `chromium.launch(...)` — parked there by planting a stand-in executable under a temp
+   * `PLAYWRIGHT_BROWSERS_PATH`. Playwright resolves a DIFFERENT binary for each mode
+   * (`chromium_headless_shell-<rev>/…` headless, `chromium-<rev>/…` headed) and publishes exactly
+   * one of them through its own API, `chromium.executablePath()` — the headed one. Declaring the
+   * mode here is what lets the cell name the planted path from playwright's own answer instead of
+   * hand-spelling a revision-and-platform path that would rot on the next bump.
+   *
+   * `name:` rides along because `use.browser` is validated as a whole and refuses a nameless block.
+   * Absent leaves the config's bytes exactly as they were, which is every other cell's posture:
+   * `buildPlatformConfig` defaults to `chromium` + `headless: true` with no `use.browser` at all.
+   */
+  readonly headedBrowser?: boolean
+  /**
+   * List a SECOND member in the suite (401 UAT item 14).
+   *
+   * WHY IT EXISTS. A one-member suite cannot show a TRUNCATED event log: whether the member is
+   * aborted mid-flight or fails on its own, the run publishes one member's events and stops, so the
+   * cancelled run and the un-cancelled one carry the same member count. With two members the
+   * difference is the run's own remaining work — the shell's cancel branch skips member 1 SILENTLY
+   * (`skippedPerTestOutcome`, no publish), while a run that was allowed to reach its member-0
+   * failure poisons the fail-fast group and publishes member 1's `testFinished`. That one envelope
+   * is the difference between "the abort stopped the run" and "the run finished on its own", which
+   * is the whole claim.
+   *
+   * The second member names the SAME target and has the same shape as the first, so it changes the
+   * member COUNT and nothing else.
+   */
+  readonly secondSuiteMember?: boolean
 }
 
 /** The package name the knob above declares. Not installed, and named so a reader can tell. */
@@ -164,6 +199,9 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
         ? ['plugins:', '  auth:', `    - package: '${UNINSTALLED_AUTH_PLUGIN_PACKAGE}'`]
         : []),
       'use:',
+      ...(input.headedBrowser === true
+        ? ['  browser:', '    name: chromium', '    headless: false']
+        : []),
       '  llm: unreachable',
       '  mobile:',
       '    appState: preserve',
@@ -213,6 +251,20 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
       '',
     ].join('\n'),
   )
+  const secondMemberTestId = generateTestId()
+  if (input.secondSuiteMember === true) {
+    writeFileSync(
+      join(project, 'tests', 'member-2.yaml'),
+      [
+        `test-id: ${secondMemberTestId}`,
+        'name: the second suite member',
+        `target: ${IN_PROCESS_TARGET_NAME}`,
+        'steps:',
+        '  - Verify the page says "Example"',
+        '',
+      ].join('\n'),
+    )
+  }
   writeFileSync(
     join(project, 'suites', 'gate.suite.yaml'),
     [
@@ -222,6 +274,9 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
       'tests:',
       '  - test: tests/member.yaml',
       `    id: ${memberTestId}`,
+      ...(input.secondSuiteMember === true
+        ? ['  - test: tests/member-2.yaml', `    id: ${secondMemberTestId}`]
+        : []),
       '',
     ].join('\n'),
   )
@@ -233,6 +288,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
     testPattern: 'tests/direct.yaml',
     suitePattern: 'suites/gate.suite.yaml',
     memberTestId,
+    ...(input.secondSuiteMember === true ? { secondMemberTestId } : {}),
     directTestId,
     targetName: IN_PROCESS_TARGET_NAME,
     ...(input.secondTarget === true
