@@ -1091,6 +1091,135 @@ function sanitizeQueuedRunMetadata(metadata: Record<string, unknown> | undefined
   return safeMetadata
 }
 
+// ---- CR-02 (401-18): the confirm scope stops leaving on the READ path ---------------------------
+
+/**
+ * The `runs.metadata` keys a RESPONSE may carry.
+ *
+ * AN ALLOWLIST, NOT A KEYED REMOVAL, and the choice is the whole point of the repair. `confirmScope`
+ * is the field that was measured leaving, but a `delete metadata.confirmScope` is one future
+ * `metadata.<anything> = <a capability>` away from the identical defect — and this phase has spent
+ * four rounds on precisely that class of half-fix. An allowlist fails CLOSED: a field nobody has
+ * invented yet does not leave, and adding it here is a deliberate act with this comment attached.
+ *
+ * WHAT IS ON IT, and why each one:
+ *   - `args`, `isSuite`, `target` — what the queue was asked to run. Already published on every
+ *     run-reading response since v1; the write path's `sanitizeQueuedRunMetadata` refuses them from
+ *     a CLIENT, which is a different question from whether a reader may see the server's own.
+ *   - `timeout`, `timeoutSource`, `timeoutBaseMs`, `timeoutBufferMs` — the resolved execution
+ *     budget and where it came from, written by `toExecutionTimeoutMetadata`.
+ *   - `suiteIndex` — read by the run-detail timeline (`live-timeline.ts`).
+ *   - `farmSessionUrl`, `runDevice` — read by the run navbar for a device-farm run.
+ *
+ * WHAT IS DELIBERATELY OFF IT: `confirmScope`, the leak this closes — and everything a caller
+ * stuffed into `POST /api/queue/enqueue`'s free-form `metadata`, which used to round-trip verbatim
+ * to any cross-origin reader. A queue API that accepts arbitrary keys and a run API that hands them
+ * back is a self-service exfiltration channel; that it never carried anything sensitive in practice
+ * is not a property anything checks.
+ */
+const RESPONSE_SAFE_RUN_METADATA_KEYS: ReadonlySet<string> = new Set([
+  'args',
+  'isSuite',
+  'target',
+  'timeout',
+  'timeoutSource',
+  'timeoutBaseMs',
+  'timeoutBufferMs',
+  'suiteIndex',
+  'farmSessionUrl',
+  'runDevice',
+])
+
+/**
+ * `sanitizeQueuedRunMetadata`'s READ-PATH counterpart (401-18, CR-02).
+ *
+ * Built in its shape and pointed the other way: that one refuses fields a CLIENT may WRITE, this
+ * one refuses fields a RESPONSE may CARRY. `null` and absence round-trip unchanged, so a run with no
+ * metadata is serialized exactly as it was.
+ */
+function sanitizeRunMetadataForResponse(
+  metadata: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null {
+  if (metadata === null || metadata === undefined) return metadata ?? null
+  const safe: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(metadata)) {
+    if (RESPONSE_SAFE_RUN_METADATA_KEYS.has(key)) safe[key] = value
+  }
+  return safe
+}
+
+/**
+ * Every `DashboardDatabase` read that hands this router a run row.
+ *
+ * EXPORTED SO THE CENSUS CAN SCORE IT. `routes.runs.test.ts` parses `database.ts` for the public
+ * methods whose return annotation names `RunRow` or `RunArtifactBundle` and asserts SET EQUALITY
+ * with this list — so a run-row read added to the database, or one dropped from here, reds rather
+ * than quietly opening a seventh door.
+ */
+export const RESPONSE_SAFE_RUN_READ_METHODS = [
+  'getNextPendingRun',
+  'getPendingRuns',
+  'getRun',
+  'getRunArtifactBundle',
+  'getRuns',
+  'getRunsByParent',
+  'getRunsBySuiteId',
+  'getRunsByTestName',
+] as const
+
+/**
+ * The database as the RESPONSE LAYER may read it (401-18, CR-02).
+ *
+ * WHY A WRAPPER AT THE ROUTER AND NOT A STRIP AT EACH DOOR. The re-derived census found SIX
+ * run-serializing responses, not the two the ruling named — the run list, the run detail, the
+ * artifact bundle's `run` and `children[].run`, queue status's `pending`/`running`/`recent`, and
+ * both analytics run lists. Six doors is a strong argument that the seventh is the one nobody
+ * writes the strip into. This is the choke point they all pass through, so a door added next phase
+ * is covered by construction rather than by remembering.
+ *
+ * AND WHY NOT `mapRunRow`, WHICH IS THE OTHER CHOKE POINT. The queue consumer reads
+ * `meta.confirmScope` off the persisted row to address the browser that triggered the run
+ * (`server.ts`); stripping at the DB→row boundary would delete the feature instead of closing the
+ * leak. `server.ts` and `job-queue.ts` hold the RAW handle and are untouched — this projection
+ * exists only inside `createRouter`, which is exactly the layer that serializes.
+ *
+ * THE PERSISTED VALUE IS NEVER TOUCHED. This is a read projection; the write at the trigger route
+ * still stores the scope, and `run-trigger-confirm.test.ts` holds the cell proving a queued run
+ * still starts against the browser that asked for it.
+ */
+function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
+  const scrubRow = <T>(row: T): T => {
+    if (row === null || row === undefined || typeof row !== 'object') return row
+    const record = row as unknown as { metadata?: Record<string, unknown> | null }
+    if (!('metadata' in record)) return row
+    return { ...record, metadata: sanitizeRunMetadataForResponse(record.metadata) } as unknown as T
+  }
+  const scrubRows = <T>(rows: readonly T[]): T[] => rows.map(scrubRow)
+  return Object.create(db, {
+    getNextPendingRun: { value: () => scrubRow(db.getNextPendingRun()) },
+    getPendingRuns: { value: () => scrubRows(db.getPendingRuns()) },
+    getRun: { value: (id: string) => scrubRow(db.getRun(id)) },
+    getRuns: {
+      value: (...args: Parameters<DashboardDatabase['getRuns']>) => scrubRows(db.getRuns(...args)),
+    },
+    getRunsByParent: { value: (parentRunId: string) => scrubRows(db.getRunsByParent(parentRunId)) },
+    getRunsBySuiteId: {
+      value: (...args: Parameters<DashboardDatabase['getRunsBySuiteId']>) =>
+        scrubRows(db.getRunsBySuiteId(...args)),
+    },
+    getRunsByTestName: {
+      value: (...args: Parameters<DashboardDatabase['getRunsByTestName']>) =>
+        scrubRows(db.getRunsByTestName(...args)),
+    },
+    getRunArtifactBundle: {
+      value: (runId: string) => {
+        const bundle = db.getRunArtifactBundle(runId)
+        return { ...bundle, children: bundle.children.map((child) => ({ ...child, run: scrubRow(child.run) })) }
+      },
+    },
+  }) as DashboardDatabase
+}
+
 function resolveArtifactPath(
   candidatePath: string,
   rootDir: string,
@@ -1349,7 +1478,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
   const deps: RouterDeps = 'db' in dbOrDeps && typeof (dbOrDeps as RouterDeps).db === 'object' && 'getRuns' in ((dbOrDeps as RouterDeps).db ?? {})
     ? dbOrDeps as RouterDeps
     : { db: dbOrDeps as DashboardDatabase, artifactsDir }
-  const { db, executionBackend, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
+  const { executionBackend, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
+  // CR-02 (401-18): the response layer reads run rows through the projection, never raw. The host's
+  // own reconciliation and the queue keep `deps.db` — see `withResponseSafeRunReads`.
+  const db = withResponseSafeRunReads(deps.db)
   // The fourth door (400-01). ONE router for the whole `/api/chat/` prefix, built once, and the
   // same function the conformance adapter and the tracer cell drive — a second mount here would be
   // a second answer to what the door is.

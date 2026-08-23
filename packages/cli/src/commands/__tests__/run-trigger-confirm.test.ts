@@ -460,6 +460,57 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
     }
   }, 240_000)
 
+  it('CR-02 — the queue still addresses the triggering browser, and no read-path response hands the scope back (401-18)', async () => {
+    // THE TWO HALVES OF ONE RULING, ON ONE RUN. The strip had to go on the RESPONSE path because the
+    // queue consumer reads `meta.confirmScope` off the PERSISTED row to decide which browser to ask;
+    // a strip at `mapRunRow` would have closed the leak by deleting the feature. So this cell drives
+    // the shipped trigger → queue → confirm → run chain and then reads the run back over HTTP.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin })
+      const scene = await openScene({ fixture, timeoutMs: 60_000 })
+      const stream = await openRunConfirmStream(scene)
+      const runId = await triggerRun(scene, stream.scopeId)
+
+      // HALF ONE — THE FEATURE IS ALIVE. A question reached THIS browser's stream, which only
+      // happens because the queue read the scope off the row it persisted. Asserted as ARRIVAL
+      // before anything is claimed about it.
+      const raised = confirmRequestOf(
+        await stream.waitFor((frame) => frame.event === 'confirm_request'),
+      )
+      expect(raised.confirmId, 'the queue never asked the browser that triggered the run').toBeTruthy()
+      const answered = await answerRunConfirm(scene, {
+        scopeId: stream.scopeId,
+        confirmId: raised.confirmId,
+        answer: 'accept',
+      })
+      expect(answered.status).toBe(200)
+      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
+      expect(runStartRows(fixture)[0]?.outcome).toBe('prompted-approved')
+      // And the value really is on the row — the read projection is a projection, not a delete.
+      expect(scene.db.getRun(runId)?.metadata?.confirmScope).toBe(stream.scopeId)
+
+      // HALF TWO — THE LEAK IS CLOSED, on the same run, over the real wire, at both doors.
+      for (const path of [`/api/runs/${runId}`, '/api/runs']) {
+        const response = await fetch(`${scene.origin}${path}`)
+        expect(response.status).toBe(200)
+        const body = await response.text()
+        expect(body, `${path} still hands out the confirm scope`).not.toContain(stream.scopeId)
+      }
+      // The detail response really did serve THIS run — an empty body would satisfy the above.
+      const detail = await (await fetch(`${scene.origin}/api/runs/${runId}`)).json() as {
+        run: { id: string; metadata: Record<string, unknown> | null }
+      }
+      expect(detail.run.id).toBe(runId)
+      expect(detail.run.metadata).not.toHaveProperty('confirmScope')
+
+      await stream.close()
+    } finally {
+      await target.close()
+    }
+  }, 240_000)
+
   it('ALWAYS — the one mint records a standing approval, and the NEXT run is not asked', async () => {
     // THE `a` ARM, END TO END. What makes this cell worth its wall clock is the SECOND run: a
     // ledger line proves a write happened, and only a second ask proves the write is what the gate
