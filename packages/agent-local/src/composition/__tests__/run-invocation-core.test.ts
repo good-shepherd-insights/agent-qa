@@ -13,7 +13,8 @@
 // really happened — or somebody would "fix" it by deleting the anti-fabrication check. So the cells
 // below read events through that same construction rather than through a path they compose.
 
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -28,6 +29,8 @@ import type { RunExecutionContext } from '../run-composition.js'
 import {
   createRunInvocationCore,
   RunDeniedError,
+  RunIdAlreadyInUseError,
+  RunIdNotMintedError,
   RunRequestFieldRefusedError,
 } from '../run-invocation-core.js'
 import type { RunAssemblyContext, RunConfig } from '../run-invocation-core.js'
@@ -90,6 +93,16 @@ function recordingAssembler(): {
 /** The name the fake resolver declares, so a disclosure assertion has something to find. */
 const FAKE_TARGET_NAME = 'the-fixture-target'
 
+/**
+ * This fixture's own mint shape (401-20).
+ *
+ * The core takes `isMintedRunId` as an injected predicate precisely so the canonical id shape stays
+ * in the package that owns it, which this one may not name. A fixture therefore supplies a fixture
+ * predicate — the core's contract is that it ASKS, and every cell below turns on what it does with
+ * the answer, never on which spelling the answer was about.
+ */
+const FIXTURE_MINTED_RUN_ID = (value: string): boolean => /^run_[a-z_]+$/.test(value)
+
 interface CoreInput {
   targetClass: RunTargetClass
   /** What this run's members DECLARE. Defaults to the one name every cell here resolves against. */
@@ -101,6 +114,8 @@ interface CoreInput {
   assemble?: (context: RunAssemblyContext) => RunConfig
   onSession?: (session: RunSession) => void
   mintRunId?: () => string
+  /** 401-20: the shape predicate. Defaults to the canonical one every production door supplies. */
+  isMintedRunId?: (value: string) => boolean
 }
 
 function makeCore(input: CoreInput): ReturnType<typeof createRunInvocationCore> {
@@ -109,6 +124,7 @@ function makeCore(input: CoreInput): ReturnType<typeof createRunInvocationCore> 
     agentQaRoot: agentQaRoot(),
     executionContext: input.executionContext ?? 'ci',
     mintRunId: input.mintRunId ?? (() => 'run_minted_by_the_core'),
+    isMintedRunId: input.isMintedRunId ?? FIXTURE_MINTED_RUN_ID,
     resolveTargetDeclaration: () => ({
       targetClass: input.targetClass,
       targetNames: input.targetNames ?? [FAKE_TARGET_NAME],
@@ -139,6 +155,25 @@ function makeCore(input: CoreInput): ReturnType<typeof createRunInvocationCore> 
 /** Read the run's events back through the SAME construction the composition's evidence check uses. */
 function recordedEvents(runId: string): RunEventEnvelope[] {
   return [...buildRunPorts({ configDir: projectDir, runId }).eventLog.read(0)]
+}
+
+/**
+ * A byte digest of every artifact in a run's directory (401-20).
+ *
+ * SHA of the CONTENTS, not a mtime or a size: "the victim is untouched" has to be a statement
+ * about bytes, and an appended line that happened to replace one of the same length would be
+ * invisible to anything weaker.
+ */
+function artifactDigests(runDir: string): Record<string, string> {
+  if (!existsSync(runDir)) return {}
+  const digests: Record<string, string> = {}
+  for (const entry of readdirSync(runDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue
+    digests[entry.name] = createHash('sha256')
+      .update(readFileSync(join(runDir, entry.name)))
+      .digest('hex')
+  }
+  return digests
 }
 
 /** Every execution-audit row the run dir holds, parsed off the jsonl the gate really wrote. */
@@ -511,5 +546,190 @@ describe('the core hygiene census (D-02 / D-07, pinned to the core file)', () =>
 
     expect(rowsVisibleToAssembly.map((row) => row.outcome)).toEqual(['proceeded'])
     expect(rowsVisibleToAssembly[0].action).toBe(RUN_START_RISK_ACTION_NAME)
+  })
+})
+
+// ---------------------------------------------------------------------------------------------
+// THE IDENTITY STEP (2026-08-23, plan 20 · CR-04).
+//
+// THE RED BASELINE, measured on real artifacts through the shipped fn door before a line changed,
+// and recorded here rather than paraphrased. Two `runs.start` calls naming the SAME id:
+//
+//   victim BEFORE  events.jsonl b2957897f4ab4d2d bytes=2111 lines=7
+//                  handoff.json e0554efee1793bcb bytes=2127
+//                  execution_audit.jsonl 84540238fb09b9e3 bytes=270 lines=1
+//   victim AFTER   events.jsonl 1c007db24ed9a09b bytes=4221 lines=14   ← APPENDED
+//                  handoff.json bc93c2fc8320f59c bytes=2127            ← OVERWRITTEN
+//                  execution_audit.jsonl a7ae81b3df13d68d bytes=540 lines=2
+//
+// …and the acknowledgment came back naming the victim's own id with `buildOrdinal: 2`. The same
+// probe found `runId: '../../escape'` acknowledged (run dir `escape`) and `runId: ''` running a
+// whole run into a shared `runs/default/` before the op reported `RunNotRecordedError`.
+//
+// WHY THE ABSENCES BELOW ARE THE CORRECT EVIDENCE, and not the never-got-there failure mode 401-12
+// shipped. Every other denial in this file asserts a `run:start` audit row EXISTS with a non-empty
+// `riskTier` before believing its verdict, because a deny and a never-reached are otherwise the
+// same empty directory. These refusals are DIFFERENT BY DESIGN: they land above the gate, so there
+// is no row to read and the absence of one is the claim. What discriminates them from a broken
+// harness is the paired control immediately below each — one field different, the run proceeds,
+// and the row the refusal cells say is absent is the row the control reads back.
+describe('the invocation core — the identity step refuses before anything (CR-04)', () => {
+  it('REFUSES an id this system would not have minted, by name, having written nothing', async () => {
+    const assembler = recordingAssembler()
+    const core = makeCore({ targetClass: 'local', assemble: assembler.assemble })
+
+    await expect(core.execute({ runId: 'not-a-minted-id' as never })).rejects.toThrow(
+      RunIdNotMintedError,
+    )
+
+    // Nothing was minted, read or written: no run directory at all, so no audit row, no events.
+    expect(existsSync(join(agentQaRoot(), 'runs'))).toBe(false)
+    expect(assembler.calls).toEqual([])
+  })
+
+  it('THE CONTROL — one field different (a minted id) and the same request runs', async () => {
+    const assembler = recordingAssembler()
+    const core = makeCore({ targetClass: 'local', assemble: assembler.assemble })
+
+    const started = await core.execute({ runId: 'run_a_minted_shape' as never })
+
+    expect(started.runId).toBe('run_a_minted_shape')
+    expect(assembler.calls).toHaveLength(1)
+    // The row the refusal cell above says is ABSENT is the row this one reads back — which is what
+    // makes that absence a decision rather than a harness that never arrived.
+    expect(recordedAuditRows('run_a_minted_shape').map((row) => row.action))
+      .toContain(RUN_START_RISK_ACTION_NAME)
+  })
+
+  it('the predicate is ASKED about the caller-named id, and only about that one', async () => {
+    const asked: string[] = []
+    const core = makeCore({
+      targetClass: 'local',
+      isMintedRunId: (value) => { asked.push(value); return true },
+      mintRunId: () => 'run_the_core_minted_it',
+    })
+
+    await core.execute({})
+    // A minted id is the system's own; asking a caller's predicate about it would be the core
+    // second-guessing the mint it was handed.
+    expect(asked).toEqual([])
+
+    await core.execute({ runId: 'run_the_caller_named_it' as never })
+    expect(asked).toEqual(['run_the_caller_named_it'])
+  })
+
+  it('REFUSES an id that already names a run, and the victim is byte-identical after', async () => {
+    const victimId = 'run_the_victim'
+    const core = makeCore({ targetClass: 'local' })
+
+    await core.execute({ runId: victimId as never })
+    const runDir = join(agentQaRoot(), 'runs', victimId)
+    const before = artifactDigests(runDir)
+    // Non-vacuity: the victim really has the three artifacts a collision would tamper with.
+    expect(Object.keys(before).sort()).toEqual(
+      expect.arrayContaining(['events.jsonl', 'execution_audit.jsonl', 'handoff.json']),
+    )
+
+    const second = makeCore({ targetClass: 'local' })
+    await expect(second.execute({ runId: victimId as never })).rejects.toThrow(
+      RunIdAlreadyInUseError,
+    )
+
+    expect(artifactDigests(runDir)).toEqual(before)
+  })
+
+  it('the collision refusal lands ABOVE the gate — no second row, no second event, no assembly', async () => {
+    const victimId = 'run_the_second_victim'
+    await makeCore({ targetClass: 'local' }).execute({ runId: victimId as never })
+
+    const rowsBefore = recordedAuditRows(victimId).length
+    const eventsBefore = recordedEvents(victimId).length
+    expect(rowsBefore).toBe(1)
+    expect(eventsBefore).toBeGreaterThan(0)
+
+    const assembler = recordingAssembler()
+    const declarations: number[] = []
+    const second = createRunInvocationCore({
+      configPath: join(projectDir, 'agent-qa.config.yaml'),
+      agentQaRoot: agentQaRoot(),
+      executionContext: 'ci',
+      mintRunId: () => 'run_never_minted',
+      isMintedRunId: FIXTURE_MINTED_RUN_ID,
+      resolveTargetDeclaration: () => {
+        declarations.push(1)
+        return { targetClass: 'local', targetNames: [FAKE_TARGET_NAME] }
+      },
+      assembleRun: assembler.assemble,
+    })
+
+    await expect(second.execute({ runId: victimId as never })).rejects.toThrow(
+      RunIdAlreadyInUseError,
+    )
+
+    // The refusal is above the DECLARATION resolve, which is itself above the gate — so nothing
+    // between the request and the run's own directory was even consulted.
+    expect(declarations).toEqual([])
+    expect(assembler.calls).toEqual([])
+    expect(recordedAuditRows(victimId)).toHaveLength(rowsBefore)
+    expect(recordedEvents(victimId)).toHaveLength(eventsBefore)
+  })
+
+  it('the MINT-YOUR-OWN path is untouched — no predicate call, no collision question', async () => {
+    let collisionsAsked = 0
+    const core = makeCore({
+      targetClass: 'local',
+      isMintedRunId: () => { collisionsAsked += 1; return true },
+      mintRunId: () => 'run_minted_twice_over',
+    })
+
+    const first = await core.execute({})
+    expect(first.runId).toBe('run_minted_twice_over')
+    expect(collisionsAsked).toBe(0)
+
+    // …and a MINTED id colliding with itself is not this refusal's business either: the core does
+    // not police its own mint, which is the door's contract to keep. Stated so a later reader does
+    // not read the collision refusal as a uniqueness guarantee over minted ids.
+    const again = await core.execute({})
+    expect(again.runId).toBe('run_minted_twice_over')
+  })
+
+  it('the two refusals are NAMED and distinguishable from each other and from a denial', () => {
+    expect(new RunIdNotMintedError('x').name).toBe('RunIdNotMintedError')
+    expect(new RunIdAlreadyInUseError('x').name).toBe('RunIdAlreadyInUseError')
+    expect(new RunIdNotMintedError('x')).not.toBeInstanceOf(RunIdAlreadyInUseError)
+    expect(new RunIdAlreadyInUseError('x')).not.toBeInstanceOf(RunDeniedError)
+    expect(new RunIdNotMintedError('x')).not.toBeInstanceOf(RunRequestFieldRefusedError)
+  })
+
+  it('the shape predicate is REQUIRED, with no default and no fallback (source)', () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'run-invocation-core.ts'),
+      'utf8',
+    )
+    // `readonly isMintedRunId:` and not `readonly isMintedRunId?:` — an optional predicate with a
+    // permissive fallback is the accept-any-string defect wearing a type.
+    expect(source).toContain('readonly isMintedRunId: (value: string) => boolean')
+    expect(source).not.toContain('isMintedRunId?')
+    expect(source).not.toMatch(/options\.isMintedRunId\s*\?\?/)
+    // The compiler agrees, and it said so: dropping the option from the two fixtures in this
+    // package produced, verbatim,
+    //   run-invocation-core.test.ts(107,34): error TS2345: Argument of type '{ … }' is not
+    //   assignable to parameter of type 'RunInvocationCoreOptions'.
+    //   run-invocation-evidence.test.ts(112,34): error TS2345: … same shape …
+    // — which is the half a source assertion cannot make and a type can.
+  })
+
+  it('NO defensive catch was added on the gate path (D-03, re-run as a census)', () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'run-invocation-core.ts'),
+      'utf8',
+    )
+    const code = source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+    expect(code).not.toMatch(/\bcatch\b/)
+    expect(code).not.toMatch(/\.catch\s*\(/)
+    // Non-vacuity: the stripper left the file's actual code behind.
+    expect(code).toContain('const policy = await evaluate(')
   })
 })

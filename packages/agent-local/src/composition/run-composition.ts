@@ -606,8 +606,21 @@ export function buildRunAuditSink(input: {
   runId: string
   executionContext: RunExecutionContext
 }): AuditSink {
-  const runDir = resolve(input.configDir, '.agent-qa', RUNS_SUBDIR, slugBranch(input.runId))
-  return stampAuditSink(new JsonlAuditSink(runDir), input.runId, input.executionContext)
+  return stampAuditSink(new JsonlAuditSink(runDirFor(input)), input.runId, input.executionContext)
+}
+
+/**
+ * The one composition of a run's own directory (401-20, CR-04).
+ *
+ * EXTRACTED RATHER THAN COPIED, and that is the whole point of it existing. The core's collision
+ * refusal has to ask "does this id already name a run", and the only honest way to ask is against
+ * the SAME path the run's artifacts are written to. A second spelling of
+ * `runs/<slugBranch(runId)>/` would be free to drift from this one, and a refusal that looked in
+ * the wrong place would be green while a colliding id walked past it — path forking is the failure
+ * mode this function's own caller already warns about.
+ */
+export function runDirFor(input: { configDir: string; runId: string }): string {
+  return resolve(input.configDir, '.agent-qa', RUNS_SUBDIR, slugBranch(input.runId))
 }
 
 // ---- (8) per-run safety-hooks registrar (D-01/D-15/D-10/D-11) --------------------------------

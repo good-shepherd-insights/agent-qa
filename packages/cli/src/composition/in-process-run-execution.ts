@@ -75,6 +75,7 @@ import type {
 import { assembleCliRun } from './run-assembly.js'
 import { attachRunSubscribers, buildRunSafetyHooks, createLivePauseController } from '../run-session-composition.js'
 import {
+  isMintedCliRunId,
   mintCliRunId,
   produceMembersFromPatterns,
   resolveRunInvocationInputs,
@@ -342,6 +343,10 @@ export async function runInProcessCliRun(
     agentQaRoot: options.agentQaRoot,
     executionContext: options.executionContext,
     mintRunId: mintCliRunId,
+    // 401-20 (CR-04): the shape predicate, from the package that owns the mint. REQUIRED on the
+    // core with no default, so this line is not a policy this door chose — its absence is a
+    // compile error.
+    isMintedRunId: isMintedCliRunId,
     auditSink,
     ...(options.trust === undefined ? {} : { trust: options.trust }),
     ...(options.confirm === undefined ? {} : { confirm: options.confirm }),

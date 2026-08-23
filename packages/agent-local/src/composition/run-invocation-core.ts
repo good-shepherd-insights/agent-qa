@@ -33,6 +33,7 @@
 // context would answer "am I interactive?" for a machine rather than for a caller. A daemon
 // serving a browser and a terminal on the same machine need different answers.
 
+import { existsSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { evaluate } from '@vostride/agent-qa-safety'
@@ -48,7 +49,7 @@ import type {
 import { startRun } from '@vostride/agent-qa-runner'
 import type { RunConfig } from '@vostride/agent-qa-runner'
 
-import { buildRunAuditSink, buildRunPorts } from './run-composition.js'
+import { buildRunAuditSink, buildRunPorts, runDirFor } from './run-composition.js'
 import type { RunExecutionContext, RunPersistencePorts } from './run-composition.js'
 import { buildRunDisclosure, buildRunRiskDescriptor } from './run-risk.js'
 import type { RunTargetClass } from './run-risk.js'
@@ -110,6 +111,59 @@ export class RunRequestFieldRefusedError extends Error {
         'would be a caller naming the terms of its own authorization.',
     )
     this.name = 'RunRequestFieldRefusedError'
+  }
+}
+
+/**
+ * The request named a run id this system would not have minted (2026-08-23, 401-20 · CR-04).
+ *
+ * A DECISION, NOT A FAULT, and it joins `RunRequestFieldRefusedError` under the same rule: the
+ * caller asked for something this seam declines, and says so by name before anything happens.
+ *
+ * WHY IT IS ASKED HERE AND NOT IN THE SCHEMA. `packages/schema` owns PATH-SAFETY on the id — the
+ * id becomes a directory name and that is judgeable with no dependencies — but it may not name
+ * `@vostride/agent-qa-ids` and must not re-spell the canonical id shape. So "is this an id this
+ * system would have minted" is asked here, through a predicate supplied beside `mintRunId` and for
+ * `mintRunId`'s stated reason: a locally invented answer would be a second spelling of a run's
+ * identity. Measured pre-fix: `runId: 'not-a-minted-id'` was acknowledged, and `runId: ''` ran a
+ * whole run into a shared `runs/default/` directory before the op reported `RunNotRecordedError`.
+ */
+export class RunIdNotMintedError extends Error {
+  constructor(readonly runId: string) {
+    super(
+      `agent-qa cannot start a run under ${JSON.stringify(runId)}: a caller-named run id must be `
+        + 'one this system minted. Start the run without naming an id and read the id back off the '
+        + 'acknowledgment, or name an id `agent-qa` handed you.',
+    )
+    this.name = 'RunIdNotMintedError'
+  }
+}
+
+/**
+ * The request named a run id that already belongs to a run (2026-08-23, 401-20 · CR-04).
+ *
+ * WHAT A COLLISION COSTS, measured rather than reasoned about. Pre-fix, a second `runs.start`
+ * naming a completed run's id APPENDED seven more envelopes to that run's `events.jsonl`
+ * (2111 → 4221 bytes), OVERWROTE its `handoff.json`, and added a second row to its
+ * `execution_audit.jsonl` — and then acknowledged the caller with the victim's own id. The
+ * acknowledgment law makes that worse rather than better: `runs.start` reads every ack field back
+ * off the run's durable record specifically so a host cannot fabricate one, and a colliding id
+ * satisfies that read with a PRIOR run's record. So the refusal has to land before the record is
+ * touched at all — which is why it sits in the identity step, above the gate and above assembly.
+ *
+ * THE TEST IS THE RUN'S OWN DIRECTORY, derived through `runDirFor` — the same composition
+ * `buildRunAuditSink` uses — because every artifact a collision could tamper with lives inside it.
+ * Asking after `handoff.json` alone would let a run that crashed before writing one be silently
+ * appended to.
+ */
+export class RunIdAlreadyInUseError extends Error {
+  constructor(readonly runId: string) {
+    super(
+      `agent-qa cannot start a run under ${JSON.stringify(runId)}: that id already names a run in `
+        + 'this project. Starting a second run under it would append to the first run\'s event log '
+        + 'and overwrite its handoff. Start the run without naming an id.',
+    )
+    this.name = 'RunIdAlreadyInUseError'
   }
 }
 
@@ -240,6 +294,21 @@ export interface RunInvocationCoreOptions {
    */
   readonly mintRunId: () => string
   /**
+   * Is this a run id this system would have minted? (2026-08-23, 401-20 · CR-04)
+   *
+   * REQUIRED, WITH NO DEFAULT AND NO FALLBACK, for exactly `mintRunId`'s reason and one more. The
+   * canonical predicate lives in `@vostride/agent-qa-ids`, which this package does not depend on,
+   * and a locally invented shape check would be a second spelling of a run's identity — the same
+   * argument that made minting an option. The extra reason is that an OPTIONAL predicate with a
+   * permissive fallback is this defect wearing a type: every composition that forgot it would be
+   * back to accepting any string, and the build would say nothing. A composition that omits this
+   * does not compile.
+   *
+   * It answers about the SHAPE only. Whether the id is free is this file's own question, asked
+   * against the run's own directory.
+   */
+  readonly isMintedRunId: (value: string) => boolean
+  /**
    * Session trust for this invocation. `trustMode` is `--trust-session`/`config.safety.trustMode`
    * parity; `credential` is the POLICY-FUT-01 parameter 402's authed service fills in.
    */
@@ -289,9 +358,31 @@ export function createRunInvocationCore(
       const refused = REFUSED_RUN_REQUEST_FIELDS.filter((field) => request[field] !== undefined)
       if (refused.length > 0) throw new RunRequestFieldRefusedError(refused)
 
-      // (2) Identity. A caller-supplied id carries exactly the trust the old `AGENT_QA_RUN_ID`
-      // child environment variable carried — the door minting it is the door running it — and is
-      // codec-validated by `RunsStartInputSchema` before it reaches here.
+      // (2) Identity, and it REFUSES before it resolves (401-20, CR-04).
+      //
+      // A caller-supplied id carries exactly the trust the old `AGENT_QA_RUN_ID` child environment
+      // variable carried — the door minting it is the door running it. What it does NOT carry, and
+      // used to be described here as if it did, is a guarantee about the id itself: 394-11 removed
+      // host-side id minting from the CLI precisely because a run's identity is not a caller's to
+      // invent, and `RunsStartInputSchema` now refuses a path-shaped one but cannot ask the other
+      // two questions. Both land here, and both land BEFORE anything is minted, read or written:
+      //
+      //   SHAPE — is this an id this system would have minted? The predicate is injected, because
+      //     the canonical shape lives in a package this one does not depend on.
+      //   FREEDOM — does it already name a run? Asked against the run's OWN directory, through the
+      //     same `runDirFor` the audit sink is rooted at.
+      //
+      // ORDER IS THE CONTROL. Both refusals sit above the declaration resolve, above the audit
+      // sink, above the gate and above assembly — so a refused request leaves no audit row, no run
+      // directory, no build-ordinal bump and, above all, not one byte changed in the run it named.
+      // A refusal that half-wrote into somebody else's run directory would be the defect
+      // performing itself.
+      if (request.runId !== undefined) {
+        if (!options.isMintedRunId(request.runId)) throw new RunIdNotMintedError(request.runId)
+        if (existsSync(runDirFor({ configDir, runId: request.runId }))) {
+          throw new RunIdAlreadyInUseError(request.runId)
+        }
+      }
       const runId = request.runId ?? options.mintRunId()
 
       // (3) The declaration, from the config itself. Cheap, and it must stay cheap: this is the

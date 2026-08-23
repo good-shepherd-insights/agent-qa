@@ -87,8 +87,10 @@ export {
 } from './composition/knowledge-reader.js'
 export type { ConstructKnowledgeReaderInput } from './composition/knowledge-reader.js'
 
-// Phase 401 D-02: the one policy-gated in-process run invocation core, and the two typed refusals
-// it can raise. Published for the reason the run composition is: it is the seam every host is
+// Phase 401 D-02: the one policy-gated in-process run invocation core, and the typed refusals it
+// can raise (two in D-02; 401-20 added the two identity refusals, so a caller can tell "you may
+// not name that id" apart from "that id is already somebody's" apart from a policy denial without
+// reading a message). Published for the reason the run composition is: it is the seam every host is
 // supposed to share, and a host that cannot reach it composes a run of its own — which is the
 // dual-mechanism class this phase exists to remove. `buildRunRiskDescriptor` travels with it
 // because the doors' own denial cells assert against the descriptor the core classifies.
@@ -96,6 +98,8 @@ export {
   createRunInvocationCore,
   REFUSED_RUN_REQUEST_FIELDS,
   RunDeniedError,
+  RunIdAlreadyInUseError,
+  RunIdNotMintedError,
   RunRequestFieldRefusedError,
 } from './composition/run-invocation-core.js'
 export type {

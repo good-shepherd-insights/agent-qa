@@ -3,7 +3,7 @@ import { resolve as resolvePath } from 'node:path'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig, mergeWithTestConfig, mergeUseBlocks, formatConfigDebug, loadEnvOverrides } from '../config.js'
-import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
+import { ATTR_RUNNER, ATTR_TRIGGER, AUTH_STATE_SCHEMA_VERSION, buildInternalRunAttributes, DEFAULT_AGENT_QA_ARTIFACTS_DIR, DEFAULT_AGENT_QA_CACHE_DIR, DEFAULT_AGENT_QA_VIDEOS_DIR, formatRunAttributesBlock, generateRunId, isCanonicalRunId, mergeRunAttributes, MobileSetupError, normalizeAuthStateUse, parseRunAttrFlags, redactAuthStateValue, resolveAuthStateForRun, resolveAuthStatePaths, resolveKnowledgeRoot, resolveMobileRunConfig, validateTrustedRunAttributes } from '@vostride/agent-qa-core'
 import { discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, resolveWorkspacePaths, workspaceRelativeIdentityPath } from '@vostride/agent-qa-core'
 import type { AgentQaConfig, AuthStateMetadata, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileRunConfig, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate } from '@vostride/agent-qa-model'
@@ -1917,6 +1917,21 @@ export class CliRunParseError extends CliRunInputError {
  * travels the same relative route every other producer here does.
  */
 export const mintCliRunId = generateRunId
+
+/**
+ * The mint's inverse, published the same way and for the same reason (401-20 · CR-04).
+ *
+ * `isMintedRunId` is a REQUIRED core option with no default: an optional predicate with a
+ * permissive fallback would be the accept-any-string defect wearing a type. It travels beside
+ * `mintCliRunId` so the two are read together and cannot come to answer about different shapes —
+ * an id this returns `false` for is one `mintCliRunId` could not have produced.
+ *
+ * THIS IS ALSO WHAT COVERS THE ENVIRONMENT DOOR. `AGENT_QA_RUN_ID` reaches a run id without ever
+ * passing `RunsStartInputSchema` — the command builds the request literal in-process — so the
+ * schema's path-safety refusal does not range it. The core's shape refusal does, because every
+ * door composes the core.
+ */
+export const isMintedCliRunId = isCanonicalRunId
 
 /** What the mode-aware default producer is handed. */
 export interface PatternMemberProductionContext {

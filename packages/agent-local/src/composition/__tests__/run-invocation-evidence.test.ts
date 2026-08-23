@@ -118,6 +118,9 @@ function coreExecution(
     executionContext: 'ci',
     resolveTargetDeclaration: () => ({ targetClass: 'local', targetNames: ['the-evidence-target'] }),
     mintRunId,
+    // 401-20: the injected shape predicate. This file's runs are minted by the core, so the
+    // predicate is never consulted; it is required, so it is supplied.
+    isMintedRunId: (value: string): boolean => /^run_[a-z_]+$/.test(value),
     assembleRun: (context) => assembleFixtureRun(context, stamped),
   }) as RunExecutionPort
 }
