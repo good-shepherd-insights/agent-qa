@@ -51,6 +51,10 @@ export interface InProcessFixture {
   readonly directTestId: string
   /** The name the one target is declared under — `IN_PROCESS_TARGET_NAME`, carried per fixture. */
   readonly targetName: string
+  /** The second target's name, present only under `secondTarget` — `SECOND_TARGET_NAME`. */
+  readonly secondTargetName?: string
+  /** The workspace-relative path of the test naming the second target, under `secondTarget`. */
+  readonly secondTestPattern?: string
 }
 
 export interface InProcessFixtureInput {
@@ -74,6 +78,23 @@ export interface InProcessFixtureInput {
    * refusal. With the plugin absent from the config the two orderings are indistinguishable.
    */
   readonly declareUninstalledAuthPlugin?: boolean
+  /**
+   * Declare a SECOND target and a second standalone test naming it (401-14).
+   *
+   * WHY IT EXISTS. Every other cell in this phase drives one target, so a preview that named only
+   * the first member's target would be indistinguishable from one that named them all. This knob
+   * is the only way to put two DECLARED names in front of one invocation through the shipped CLI
+   * producer.
+   *
+   * BOTH TARGETS THEN CARRY THE SAME EXPLICIT `product:`, on `run-gate.e2e.test.ts`'s own
+   * reasoning: `resolveTarget` defaults `product` to the target's NAME, so two arbitrary targets
+   * are two products and `requireSingleInvocationProduct` refuses the invocation BEFORE the gate —
+   * a cell written without this would die on that refusal and never reach a descriptor at all.
+   *
+   * The second target declares `environment: local` unconditionally, so the run's CLASS is decided
+   * by `input.environment` exactly as it is without the knob and only the NAME LIST changes.
+   */
+  readonly secondTarget?: boolean
 }
 
 /** The package name the knob above declares. Not installed, and named so a reader can tell. */
@@ -88,6 +109,9 @@ export const UNINSTALLED_AUTH_PLUGIN_PACKAGE = '@acme/auth-plugin-401-10-NOT-INS
  * interpolates this constant, so the value a cell reads is provably the value the run resolves.
  */
 export const IN_PROCESS_TARGET_NAME = 'in-process-thing'
+
+/** The second target's name, declared only when `secondTarget` is set. Its own one definition. */
+export const SECOND_TARGET_NAME = 'the-second-thing'
 
 /**
  * Write a project with one target, one standalone test and one suite over its own member.
@@ -120,6 +144,17 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
       '      platform: web',
       `      url: ${input.origin}/in-process-thing`,
       ...(input.environment === undefined ? [] : [`      environment: ${input.environment}`]),
+      // Only under the knob, so the default fixture's bytes are exactly what they were.
+      ...(input.secondTarget === true ? ['      product: one-product'] : []),
+      ...(input.secondTarget === true
+        ? [
+            `    ${SECOND_TARGET_NAME}:`,
+            '      platform: web',
+            `      url: ${input.origin}/the-second-thing`,
+            '      environment: local',
+            '      product: one-product',
+          ]
+        : []),
       '  llms:',
       '    - name: unreachable',
       '      provider: openai-compatible',
@@ -152,6 +187,21 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
           '',
         ].join('\n'),
   )
+  const secondTestId = generateTestId()
+  if (input.secondTarget === true) {
+    writeFileSync(
+      join(project, 'tests', 'second.yaml'),
+      [
+        `test-id: ${secondTestId}`,
+        'name: the second target\'s test',
+        `target: ${SECOND_TARGET_NAME}`,
+        'steps:',
+        '  - Verify the page says "Example"',
+        '',
+      ].join('\n'),
+    )
+  }
+
   writeFileSync(
     join(project, 'tests', 'member.yaml'),
     [
@@ -185,5 +235,8 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
     memberTestId,
     directTestId,
     targetName: IN_PROCESS_TARGET_NAME,
+    ...(input.secondTarget === true
+      ? { secondTargetName: SECOND_TARGET_NAME, secondTestPattern: 'tests/second.yaml' }
+      : {}),
   }
 }

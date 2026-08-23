@@ -583,3 +583,53 @@ describe('D-07: the INJECTED execution context beats a varied ambient, on both a
     }
   }, 120_000)
 })
+
+describe('the descriptor the CLI door hands the gate names every target it will drive (401-14, W-1)', () => {
+  it('a TWO-TARGET invocation is previewed with BOTH declared names and the class it was folded to', async () => {
+    // THE DOOR'S OWN ROAD, not the core's. `run-invocation-core.test.ts` measures the disclosure
+    // over a FAKE resolver, so a producer that supplied only the first member's name would leave
+    // that cell green — measured, by mutating `resolveTargetDeclaration` to
+    // `produced.targetNames.slice(0, 1)`: 15/15 still passed. This cell is what that mutation reds,
+    // because the whole chain is in its road: the CLI producer's collection loop → the one
+    // production resolver → the core's single `evaluate()` → the descriptor the confirm port is
+    // handed. That port is where a browser's `preview` frame is built from.
+    //
+    // THE SECOND TARGET IS DECLARED `local` AND THE FIRST `shared`, so the run is asked about for
+    // the FIRST member's reason and the fold's most-restrictive-wins answer is unchanged. What
+    // varies from every other cell in this file is only the number of declared NAMES.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({
+        origin: target.origin,
+        environment: 'shared',
+        secondTarget: true,
+      })
+      const asked: { name: string; disclosure?: string }[] = []
+      try {
+        await runInProcessCliRun(
+          {
+            ...fixtureOptions(fixture),
+            executionContext: 'local-interactive',
+            confirm: (action) => { asked.push(action); return true },
+          },
+          { patterns: [fixture.testPattern, fixture.secondTestPattern!] },
+        )
+      } catch { /* the members' framework errors; the descriptor is what this cell reads */ }
+
+      // ASKED AT ALL, FIRST. A cell that went straight to the disclosure would report "no names"
+      // for an invocation that was refused before the gate — `requireSingleInvocationProduct` is
+      // one line away and is exactly the refusal the fixture's shared `product:` exists to avoid.
+      expect(asked, 'the gate never asked — nothing below measures a disclosure').toHaveLength(1)
+      const disclosure = asked[0]!.disclosure
+      expect(disclosure, 'the ask carried no preview — approve WHAT?').toBeTruthy()
+      // BOTH names, read off the fixture's own definitions.
+      expect(disclosure).toContain(fixture.targetName)
+      expect(disclosure).toContain(fixture.secondTargetName!)
+      // And the class the fold decided, which the second target's `local` did not lower.
+      expect(disclosure).toContain('shared')
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+})
