@@ -900,20 +900,58 @@ describe('CR-02 — no run-reading response hands out the confirm scope', () => 
     expect(res.body).not.toContain(LEAKED_SCOPE)
   })
 
-  it('DOOR 3 — GET /api/runs/:id/artifact carries none, in `run` and in `children[].run`', async () => {
+  it('DOOR 3 — GET /api/runs/:id/artifact carries none, in `run`, in `children[].run` AND in the artifact PAYLOAD', async () => {
+    // THE SEVENTH DOOR (G-401-18-CR01). The 401-18 version of this cell seeded
+    // `db.insertRunArtifact({ runId, kind: 'test' })` — an artifact with NO PAYLOAD — so its
+    // `not.toContain(LEAKED_SCOPE)` was structurally incapable of failing on the very field its
+    // name claims. The payload below is shaped the way the PRODUCTION WRITER shapes it
+    // (`job-queue.ts:75-78`: `metadata: { ...opts.metadata, attributes }`), which is the only way
+    // this cell can be about the door that leaked rather than about an empty object.
     seedScopedRun(db, { id: 'run-artifact-scope' })
     seedScopedRun(db, { id: 'run-artifact-child', parentRunId: 'run-artifact-scope' })
-    db.insertRunArtifact({ runId: 'run-artifact-scope', kind: 'test' })
+    const writerShapedPayload = {
+      runtime: { platform: 'web', queued: true },
+      source: { name: 'Scoped Run', filePath: '/w/tests/scoped.yaml', loadStatus: 'queued' },
+      metadata: {
+        args: ['/w/tests/scoped.yaml'],
+        confirmScope: LEAKED_SCOPE,
+        laterField: FUTURE_FIELD_VALUE,
+        attributes: { 'ci.provider': 'local' },
+      },
+    }
+    db.insertRunArtifact({ runId: 'run-artifact-scope', kind: 'test', payload: writerShapedPayload })
+    db.insertRunArtifact({ runId: 'run-artifact-child', kind: 'test', payload: writerShapedPayload })
     const res = await invokeRoute(router, '/api/runs/run-artifact-scope/artifact')
     expect(res.status).toBe(200)
     const data = JSON.parse(res.body) as {
       run: { metadata: Record<string, unknown> | null }
-      children: Array<{ run: { id: string; metadata: Record<string, unknown> | null } }>
+      artifact: { payload: Record<string, unknown> } | null
+      children: Array<{
+        run: { id: string; metadata: Record<string, unknown> | null }
+        artifact: { payload: Record<string, unknown> } | null
+      }>
     }
     expect(data.run.metadata).not.toHaveProperty('confirmScope')
     expect(data.children).toHaveLength(1)
     expect(data.children[0]!.run.metadata).not.toHaveProperty('confirmScope')
+
+    // THE PAYLOAD REALLY WAS SERVED before anything is claimed about what it does not contain.
+    expect(data.artifact, 'the artifact door served no artifact — the cell would be vacuous').not.toBeNull()
+    const served = data.artifact!.payload['metadata'] as Record<string, unknown>
+    expect(served, 'the served payload carried no `metadata` object').toBeDefined()
+    expect(served).not.toHaveProperty('confirmScope')
+    expect(served).not.toHaveProperty('laterField')
+    // AN ALLOWLIST APPLIED TO THE CLIENT OBJECT, NOT A DELETE OF THE FIELD: `attributes` is minted
+    // by the queue beside the client's keys and the run-detail drawer reads it.
+    expect(served['attributes']).toEqual({ 'ci.provider': 'local' })
+    expect(served['args']).toEqual(['/w/tests/scoped.yaml'])
+
+    // The child artifact goes through the same sanitizer at its own call site.
+    const childServed = data.children[0]!.artifact!.payload['metadata'] as Record<string, unknown>
+    expect(childServed).not.toHaveProperty('confirmScope')
+
     expect(res.body).not.toContain(LEAKED_SCOPE)
+    expect(res.body).not.toContain(FUTURE_FIELD_VALUE)
   })
 
   it('DOOR 4 — GET /api/queue/status carries none, in `pending`, `running` and `recent`', async () => {

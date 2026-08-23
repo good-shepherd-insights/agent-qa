@@ -20,6 +20,7 @@
 // five, plus the D-15 remedies, and is paired with an allow control that differs in EXACTLY ONE
 // thing — the answer a person gave.
 
+import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -82,6 +83,16 @@ interface Scene {
   readonly db: DashboardDatabase
   settled(): { runId: string; status: string; details: Record<string, unknown> }[]
   buffered(runId: string): Record<string, unknown>[]
+  /**
+   * Every `ExecuteOptions` the queue handed the SHIPPED execution backend, in order.
+   *
+   * THE SEAM ITSELF, not a projection of it. `server.ts` reads `meta.timeout` off the persisted row
+   * and passes it into `executionBackend.execute` — so a cell that wants to know what a planted
+   * timeout does has to read the argument the backend was actually called with. Recorded by
+   * patching the instance method the queue already holds a reference to, which leaves the backend's
+   * own behaviour (and its emitter) untouched.
+   */
+  executed(): Record<string, unknown>[]
   close(): Promise<void>
 }
 
@@ -121,6 +132,15 @@ async function openScene(input: {
   runDoor.bindHost(door.host)
   runDoor.bindTriggerScope(door.enterRunTriggerScope)
 
+  const executed: Record<string, unknown>[] = []
+  const backendExecute = runDoor.backend.execute.bind(runDoor.backend)
+  ;(runDoor.backend as { execute: (opts: Record<string, unknown>) => unknown }).execute = (
+    opts: Record<string, unknown>,
+  ) => {
+    executed.push(opts)
+    return backendExecute(opts as never)
+  }
+
   const settled: { runId: string; status: string; details: Record<string, unknown> }[] = []
   runDoor.backend.on(
     'run-settled',
@@ -153,6 +173,7 @@ async function openScene(input: {
     db,
     settled: () => settled,
     buffered: (runId) => runDoor.backend.getBufferedEvents(runId) as unknown as Record<string, unknown>[],
+    executed: () => executed,
     close: async () => {
       started.close()
       await door.host.close()
@@ -640,6 +661,223 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       await target.close()
     }
   }, 240_000)
+})
+
+// ---- G-401-18-CR01: the SEVENTH door, and the write door that plants into it -------------------
+//
+// 401-18 closed the confirm-scope leak on `runs.metadata` and shipped a census asserting it had
+// found every door. It had not. `JobQueue.enqueue` writes the SAME client-supplied `opts.metadata`
+// object twice — once to `runs.metadata` and once to `run_artifacts.payload.metadata`
+// (`job-queue.ts:75-78`) — and `GET /api/runs/:id/artifact` serves the second one verbatim. The
+// census could not see it because its predicate was a RETURN-ANNOTATION grep over `database.ts`,
+// and `getRunArtifact(runId): RunArtifactRow | null` names no run row; DOOR 3's own cell seeded an
+// artifact with no payload at all, so its `not.toContain` was incapable of failing.
+//
+// THE PREDICATE THIS CELL USES INSTEAD, stated: **every GET whose response payload can transitively
+// contain a run's metadata object**. That question is answered by driving the PRODUCTION WRITER —
+// enqueue a run carrying a scope and read every such door back off one real run — not by asking
+// which database methods spell `RunRow`. A fixture that does not drive the production writer cannot
+// falsify the production writer.
+//
+// AND THE WRITE HALF, decided in 401-23 under the owner's standing delegation. Reading a scope buys
+// ADDRESSING a victim's dialog; PLANTING one buys choosing the run that dialog is asked about. The
+// pair is the escalation, so both doors close here — a read-side strip with an open write door is
+// half a fix, and this project has measured one-sided hardening minting regressions three times.
+
+/**
+ * Every GET whose response payload can transitively contain a run's metadata object.
+ *
+ * DERIVED FROM THE WRITER, NOT FROM A HAND-LIST OF THE DOORS THIS ROUND HAPPENED TO FIND.
+ * `JobQueue.enqueue` persists the caller's `metadata` in exactly two places — the run row and the
+ * run artifact's payload — so the set is: every endpoint that serializes a run row (the detail, the
+ * list, the queue's own status view) plus the one that serializes an artifact payload.
+ */
+function runMetadataBearingReads(runId: string): readonly string[] {
+  return [
+    `/api/runs/${runId}`,
+    '/api/runs',
+    '/api/queue/status?completed=true',
+    `/api/runs/${runId}/artifact`,
+  ]
+}
+
+describe('G-401-18-CR01 — the confirm scope leaves on no door and can be planted on no run', () => {
+  it('READ HALF — a run driven through JobQueue.enqueue hands its scope back on none of the metadata-bearing GETs', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin })
+      // The reaper window is short on purpose: this cell wants a SETTLED run (so the queue's
+      // `recent` bucket carries it too) and pays for the wait in wall clock. Nobody answers.
+      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+      const stream = await openRunConfirmStream(scene)
+      const runId = await triggerRun(scene, stream.scopeId)
+
+      // THE SCOPE REALLY IS ON BOTH PERSISTENCE SITES. Asserted FIRST and off the RAW handle, or
+      // every absence below would be a statement about a run that never carried the value —
+      // which is exactly the shape the vacuous DOOR 3 cell had.
+      await waitFor(() => {
+        expect(scene.db.getRun(runId)?.metadata?.confirmScope).toBe(stream.scopeId)
+      })
+      expect(
+        (scene.db.getRunArtifact(runId)?.payload as { metadata?: Record<string, unknown> } | undefined)?.metadata,
+        'the writer did not copy the scope into the artifact payload — this cell would be vacuous',
+      ).toMatchObject({ confirmScope: stream.scopeId })
+
+      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
+
+      // THE ARTIFACT DOOR REALLY SERVED THIS RUN'S PAYLOAD — asserted BEFORE any absence, because
+      // an empty body, a `null` artifact or a payload with no `metadata` satisfies every absence
+      // below for the wrong reason. That is the precise failure 401-18's DOOR 3 shipped.
+      const bundle = await (await fetch(`${scene.origin}/api/runs/${runId}/artifact`)).json() as {
+        run: { id: string }
+        artifact: { payload: Record<string, unknown> } | null
+      }
+      expect(bundle.run.id).toBe(runId)
+      expect(bundle.artifact, 'the artifact door served no artifact').not.toBeNull()
+      const servedMetadata = bundle.artifact!.payload['metadata'] as Record<string, unknown> | undefined
+      expect(servedMetadata, 'the served payload carried no `metadata` object').toBeDefined()
+      // AND THE STRIP IS AN ALLOWLIST APPLIED TO A CLIENT OBJECT, NOT A DELETE OF THE WHOLE FIELD:
+      // `attributes` is minted by the queue (`job-queue.ts:77`) and the run-detail drawer reads it.
+      expect(servedMetadata).toHaveProperty('attributes')
+
+      // EVERY DOOR IN ONE PASS, COLLECTED RATHER THAN SHORT-CIRCUITED, and asserted as a SET so the
+      // failure names WHICH doors leak. The split — one door of four — is the evidence that the
+      // fixture is sound and the door is not; a broken fixture reds all four or none.
+      const leaking: string[] = []
+      for (const path of runMetadataBearingReads(runId)) {
+        const response = await fetch(`${scene.origin}${path}`)
+        expect(response.status, `${path} did not answer`).toBe(200)
+        if ((await response.text()).includes(stream.scopeId)) leaking.push(path)
+      }
+      expect(
+        leaking,
+        'a run-reading GET still hands out the triggering browser\'s confirm scope',
+      ).toEqual([])
+
+      expect(servedMetadata).not.toHaveProperty('confirmScope')
+
+      await stream.close()
+    } finally {
+      await target.close()
+    }
+  }, 240_000)
+
+  it('WRITE HALF — POST /api/queue/enqueue cannot plant a confirm scope on a persisted run', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin })
+      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+
+      // A FOREIGN SCOPE OF EXACTLY THE MINTED SHAPE. `run-trigger:<uuid>` is what
+      // `mintRunTriggerConfirmScope` produces, so a refusal here cannot be coming from the value
+      // looking wrong — the queue door has no business accepting the key at all.
+      const planted = `run-trigger:${randomUUID()}`
+      const response = await fetch(`${scene.origin}/api/queue/enqueue`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'planted',
+          file: fixture.testPattern,
+          metadata: { confirmScope: planted },
+        }),
+      })
+      expect(
+        response.status,
+        'the queue door accepted a client-supplied `confirmScope`',
+      ).toBe(400)
+
+      // AND NO ROW ANYWHERE CARRIES IT — the refusal is the control, this is the fact. Read off the
+      // RAW handle, because the response projection would hide a planted value that really landed.
+      const planted_rows = scene.db.getRuns({ limit: 100 })
+        .filter((run) => (run.metadata as Record<string, unknown> | null)?.['confirmScope'] === planted)
+      expect(planted_rows, 'a client-planted confirm scope reached a persisted run row').toEqual([])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('WRITE HALF — POST /api/queue/enqueue cannot plant an execution timeout either', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin })
+      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+
+      const response = await fetch(`${scene.origin}/api/queue/enqueue`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'planted-timeout',
+          file: fixture.testPattern,
+          metadata: { timeout: 9_007_199_254_740_991 },
+        }),
+      })
+      expect(
+        response.status,
+        'the queue door accepted a client-supplied `timeout` — the run-reclamation knob',
+      ).toBe(400)
+
+      const timed = scene.db.getRuns({ limit: 100 })
+        .filter((run) => (run.metadata as Record<string, unknown> | null)?.['timeout'] !== undefined)
+      expect(timed, 'a client-planted execution timeout reached a persisted run row').toEqual([])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('THE CONSUMER SEAM — a bad `metadata.timeout` on a row never reaches executionBackend.execute, a good one does', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin })
+      const scene = await openScene({ fixture, timeoutMs: 1_500 })
+      const testPath = join(fixture.project, 'tests', 'direct.yaml')
+
+      // THE PRECONDITION-GUARDED PAIR, ON THE SHIPPED SEAM. The rejected value is not merely
+      // "large": `-1` is the interesting one, because `in-process-backend.ts:211` reads
+      // `opts.timeout ?? this.options.defaultTimeout` — a non-nullish invalid value SKIPS the
+      // default and leaves the run with NO reclamation timer at all. The admitted value is a
+      // server-computed one of exactly the shape `toExecutionTimeoutMetadata` writes, so the cell
+      // shows the guard validating the feature rather than deleting it.
+      const rejected = scene.db.insertPendingRun({
+        name: 'bad-timeout',
+        filePath: testPath,
+        metadata: { args: [testPath], timeout: -1 },
+      })
+      const admitted = scene.db.insertPendingRun({
+        name: 'good-timeout',
+        filePath: testPath,
+        metadata: { args: [testPath], timeout: 660_000, timeoutSource: 'config.use.timeout.test' },
+      })
+
+      const executedFor = (runId: string): Record<string, unknown> | undefined =>
+        scene.executed().find((opts) => opts['runId'] === runId)
+
+      await waitFor(() => {
+        expect(executedFor(rejected), 'the queue never dispatched the bad-timeout run').toBeDefined()
+        expect(executedFor(admitted), 'the queue never dispatched the good-timeout run').toBeDefined()
+      }, 60_000)
+
+      expect(
+        executedFor(rejected)!['timeout'],
+        'a `-1` off the persisted row reached the backend, which skips the default timer for any '
+        + 'non-nullish value — the run would never have been reclaimed',
+      ).toBeUndefined()
+      expect(
+        executedFor(admitted)!['timeout'],
+        'the guard deleted the server-computed timeout instead of validating it',
+      ).toBe(660_000)
+
+      // BOTH RUNS ARE DRAINED BEFORE THE SCENE CLOSES. The queue polls its own database; a run
+      // still in flight when `close()` drops the connection settles into a closed handle and
+      // surfaces as an unhandled `ERR_INVALID_STATE`, which is this cell's litter, not a defect.
+      await waitFor(() => { expect(scene.settled().length).toBeGreaterThanOrEqual(2) }, 120_000)
+    } finally {
+      await target.close()
+    }
+  }, 180_000)
 })
 
 // ---- The honest-claim rule, both ways (401-09, Pitfall 3 / D-07) -------------------------------
