@@ -18,6 +18,8 @@ import { join } from 'node:path'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
+import { buildRunDisclosure } from '@vostride/agent-qa-agent-local'
+
 import { createTtyConfirmPort } from '../composition/local-agent-host.js'
 
 const ACTION: RiskActionDescriptor = {
@@ -84,5 +86,80 @@ describe('the CLI binds a confirmation exactly where there is somebody to ask', 
     const daemonHost = readFileSync(join(__dirname, '..', 'daemon', 'host.ts'), 'utf8')
     expect(daemonHost).not.toContain('confirm:')
     expect(daemonHost).not.toContain('createTtyConfirmPort')
+  })
+})
+
+
+// ---- THE CHANNEL A PERSON READS (401-15, WR-01 / T-401-G5) -------------------------------------
+//
+// `run-risk.test.ts` measures the composed STRING. This cell measures the STREAM, because the claim
+// WR-01 makes is about what appears above `[y/N]` — and `writeDisclosure` applies no hygiene at all
+// (deliberately: the browser channel never passes through it, so the guard is at composition and
+// this file's job is to prove the guard reaches the channel).
+//
+// The name below is what a `.yaml` document can put in `target:`, which is a bare `z.string()`.
+
+/** A forged approval line and a forged prompt, carried inside one declared target name. */
+const FORGED_NAME =
+  'ok\nagent-qa: Start a run against target innocent (declared: every target local)\nProceed? [y/N] '
+
+/** Drive one prompt for an arbitrary descriptor and report what landed on the stream. */
+async function askWith(action: RiskActionDescriptor, typed: string): Promise<string> {
+  const input = new PassThrough()
+  const output = new PassThrough()
+  let printed = ''
+  output.on('data', (chunk: Buffer | string) => {
+    printed += String(chunk)
+  })
+
+  const confirm = createTtyConfirmPort({ isTty: true, input, output })
+  if (confirm === undefined) throw new Error('a tty host must bind a confirm')
+
+  const pending = Promise.resolve(confirm(action))
+  input.write(typed)
+  input.end()
+  await pending
+  return printed
+}
+
+describe('a hostile declared target name cannot author a line on the confirm channel', () => {
+  it('prints exactly the disclosure line and the prompt — no line the document wrote', async () => {
+    const printed = await askWith(
+      {
+        name: 'run:start',
+        recognized: true,
+        declaredTier: 'mutating-shared',
+        // Composed by the PRODUCTION producer, never typed here: a literal disclosure would
+        // measure this file's idea of the sentence rather than the one that ships.
+        disclosure: buildRunDisclosure('shared', [FORGED_NAME]),
+      },
+      'n\n',
+    )
+
+    // TWO LINES: `agent-qa: <disclosure>` and the readline question, which carries no newline.
+    // Before the scrub this was FOUR, two of them authored by the document.
+    expect(printed.split('\n')).toHaveLength(2)
+    // The forged approval line is not on the channel as a line of its own.
+    expect(printed).not.toMatch(/\nagent-qa: Start a run against target innocent/)
+    // The real prompt is still the last thing a person sees.
+    expect(printed).toContain('run:start needs your approval. Proceed? [y/N]')
+    // And no control byte reached the terminal at all.
+    expect(printed.replace(/\n/g, '')).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/)
+  })
+
+  it('THE CONTROL: an ordinary target name prints the same two lines, unaltered', async () => {
+    const printed = await askWith(
+      {
+        name: 'run:start',
+        recognized: true,
+        declaredTier: 'mutating-shared',
+        disclosure: buildRunDisclosure('shared', ['checkout-staging']),
+      },
+      'y\n',
+    )
+
+    expect(printed.split('\n')).toHaveLength(2)
+    expect(printed).toContain('checkout-staging')
+    expect(printed).toContain('declared: at least one target shared')
   })
 })

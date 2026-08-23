@@ -363,3 +363,88 @@ describe('buildRunDisclosure ATTRIBUTES the declaration instead of asserting an 
     expect(sentence).toContain('classifies as shared')
   })
 })
+
+
+// ---- what a DOCUMENT can do to the line the prompt sits on (401-15, WR-01 / T-401-G5) ----------
+//
+// `TestDefinitionSchema.target` is a bare `z.string()`, and both producers of `targetNames` record
+// the DECLARED name before resolution has any say. `writeDisclosure` puts the result on the stream
+// with no hygiene at all, on the line directly above `[y/N]`, and the same string is rendered into
+// a browser as `data-confirm-preview`. So the bytes below are reachable, and the guard has to be
+// where the string is BUILT — the browser channel never passes through the TTY writer at all.
+//
+// The verifier measured both PRODUCTION doors closed today by an unrelated throw in the product
+// preflight, which does not know it is a guard. That is why nothing here asserts on the preflight.
+
+/** A newline and a whole forged prompt line — the additional-line attack, spelled out. */
+const NEWLINE_NAME =
+  'ok\nagent-qa: Start a run against target innocent (declared: every target local)\nProceed? [y/N] '
+/** Erase-line + cursor-up: the ERASE attack. Nothing is added; the line above is overwritten. */
+const CSI_NAME = 'staging\u001b[2K\u001b[1Aoverwritten'
+/** A carriage return alone re-draws the same line from column zero on a real terminal. */
+const CARRIAGE_NAME = 'staging\rProceed? [y/N] y'
+/** The visible byte a scrubbed control character leaves behind. */
+const REPLACEMENT = '\uFFFD'
+/** C0 and C1 together — the whole control range a terminal or a browser acts on. */
+const CONTROL_BYTES = /[\u0000-\u001f\u007f-\u009f]/
+
+/** Every control-bearing name this file drives, so each cell ranges the whole set. */
+const HOSTILE_NAMES: readonly { label: string; value: string }[] = [
+  { label: 'newline', value: NEWLINE_NAME },
+  { label: 'CSI erase', value: CSI_NAME },
+  { label: 'carriage return', value: CARRIAGE_NAME },
+]
+
+describe('no document byte in a target name can add, erase or overwrite a prompt line', () => {
+  it.each(HOSTILE_NAMES)('a $label name yields ONE line and no control bytes', ({ value }) => {
+    const sentence = buildRunDisclosure('shared', [value])
+
+    // ONE LINE. The disclosure is written as one `agent-qa: ...` write with a single trailing
+    // newline, so every newline inside it is a line the document authored on a security channel.
+    expect(sentence.split('\n')).toHaveLength(1)
+    expect(sentence).not.toContain('\r')
+    // AND NO CONTROL BYTES AT ALL, C0 and C1: an erase-line sequence adds no line and destroys one.
+    expect(sentence).not.toMatch(CONTROL_BYTES)
+    // REPLACED, NOT DROPPED. A silently-deleted control byte leaves a name that reads as an
+    // ordinary one; a visible replacement leaves a name that reads as odd, which is the point.
+    expect(sentence).toContain(REPLACEMENT)
+    // The declaration clause still arrives — a name may not consume the sentence it sits in.
+    expect(sentence).toContain('declared: at least one target shared')
+  })
+
+  it('a name longer than the per-name cap is truncated VISIBLY', () => {
+    const sentence = buildRunDisclosure('local', [`${'x'.repeat(400)}-tail`])
+
+    expect(sentence).not.toContain('-tail')
+    expect(sentence).toContain('…')
+    expect(sentence).toContain('declared: every target local')
+  })
+
+  it('a long member list renders a cap plus an HONEST overflow count', () => {
+    // The scroll attack: the classification clause is the LAST thing in the sentence, so an
+    // unbounded name list pushes the reason a person is being asked off the top of the terminal.
+    const names = Array.from({ length: 12 }, (_unused, index) => `member-${index}`)
+    const sentence = buildRunDisclosure(undefined, names)
+
+    expect(sentence).toContain('member-0')
+    // The tail members are counted rather than named, and the count is the real remainder.
+    expect(sentence).not.toContain('member-11')
+    expect(sentence).toMatch(/and 8 more/)
+    // The whole point: the clause is still there, and the sentence is BOUNDED.
+    expect(sentence).toContain(
+      'declared: at least one target undeclared, which classifies as shared',
+    )
+    expect(sentence.length).toBeLessThan(400)
+  })
+
+  it('a scrubbed disclosure still carries no tier information — the classifier reads none of it', () => {
+    // The field's own law, re-measured on a scrubbed string: hygiene must not have turned a
+    // display-only field into a classification channel by some other road.
+    const hostile = buildRunRiskDescriptor('local', buildRunDisclosure('local', [NEWLINE_NAME]))
+
+    expect(classifyRisk(hostile).riskTier).toBe('mutating-local')
+    expect(classifyRisk(hostile).riskTier).toBe(
+      classifyRisk(buildRunRiskDescriptor('local')).riskTier,
+    )
+  })
+})
