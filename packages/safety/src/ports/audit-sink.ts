@@ -29,8 +29,10 @@ export interface ExecutionAuditRow {
   outcome: string
   reason: string
   /**
-   * Trust source that satisfied an ask:
-   * session-trust-mode, trust-credential, standing-approval, or tty-prompt.
+   * Trust source that satisfied an ask. Either a MECHANISM —
+   * session-trust-mode, trust-credential, standing-approval —
+   * or, when a person was asked, the SURFACE they answered on (G-401-17):
+   * tty-prompt (a terminal) or browser-click (a click in a browser).
    * Omitted for allow, deny, and fail-closed outcomes.
    */
   trustSource?: string

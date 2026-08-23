@@ -10,7 +10,11 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import type { AuditSink, ExecutionAuditRow } from '../ports/audit-sink'
-import type { ConfirmPort, StandingApprovalReader } from '../ports/policy-ports'
+import type {
+  ConfirmAnsweringSurface,
+  ConfirmPort,
+  StandingApprovalReader,
+} from '../ports/policy-ports'
 import { DENY_CONFIRM, NO_STANDING_APPROVALS } from '../ports/policy-ports'
 import { requiresFailClosed } from './execution-context'
 import { classifyRisk } from './risk-classifier'
@@ -32,7 +36,13 @@ export type ExecutionPolicyTrustSource =
   | 'session-trust-mode'
   | 'trust-credential'
   | 'standing-approval'
-  | 'tty-prompt'
+  // G-401-17: the first three arms name MECHANISMS and are unchanged. The fourth names the SURFACE
+  // a person answered on, and it is the surface union ITSELF rather than a restatement of it —
+  // `tty-prompt` is a member of that union and means here exactly what it always meant. Spelling
+  // the values again would let the vocabulary a composition may declare and the vocabulary the
+  // audit trail may carry drift apart, and the direction they would drift is a surface that can be
+  // declared but not recorded.
+  | ConfirmAnsweringSurface
 
 export interface GateTrust {
   trustMode?: boolean
@@ -148,11 +158,23 @@ export async function resolveAsk(input: ResolveAskInput): Promise<ResolveAskResu
     }
   }
 
-  if (await input.confirm(input.action)) {
-    return {
-      verdict: 'allow',
-      outcome: 'prompted-approved',
-      trustSource: 'tty-prompt',
+  // THE SURFACE THE COMPOSITION DECLARED, never the one this rung expects (G-401-17). This line
+  // used to read `trustSource: 'tty-prompt'`, and a browser answer routed through the same port
+  // abstraction landed a row saying a terminal approved something nobody was sitting at. The
+  // confirm port is an abstraction over WHO IS ASKED; only the composition that bound it knows
+  // where that person is, so only it can say.
+  if (await input.confirm.ask(input.action)) {
+    const surface = input.confirm.surface
+    // A binding that declares NO surface has nobody to attribute an approval to, and an
+    // unattributable approval is exactly the row this gap was about. So it does not get one — it
+    // falls through to the denial below. `DENY_CONFIRM` answers `false` anyway; this narrowing is
+    // what makes that a property of the contract rather than a coincidence of one constant's body.
+    if (surface !== null) {
+      return {
+        verdict: 'allow',
+        outcome: 'prompted-approved',
+        trustSource: surface,
+      }
     }
   }
 

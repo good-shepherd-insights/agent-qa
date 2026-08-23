@@ -140,7 +140,7 @@ describe('evaluate', () => {
         credential,
         actionScope: { project: 'A' },
       },
-      { reader, confirm: () => true },
+      { reader, confirm: { surface: 'tty-prompt', ask: () => true } },
     )
 
     expect(result).toMatchObject({ verdict: 'deny', riskTier: 'restricted' })
@@ -154,7 +154,8 @@ describe('evaluate', () => {
   })
 
   it('fails closed for non-interactive ask actions without trust before prompting', async () => {
-    const confirm = vi.fn(() => true)
+    const ask = vi.fn(() => true)
+    const confirm: ConfirmPort = { surface: 'tty-prompt', ask }
 
     const { result, row } = await evaluateWithAudit(mutatingSharedAction, 'ci', {}, { confirm })
 
@@ -165,7 +166,7 @@ describe('evaluate', () => {
       outcome: 'fail-closed-denied',
     })
     expect(row).not.toHaveProperty('trustSource')
-    expect(confirm).not.toHaveBeenCalled()
+    expect(ask).not.toHaveBeenCalled()
   })
 
   it('lets session trust mode satisfy an ask in a non-interactive context', async () => {
@@ -229,7 +230,7 @@ describe('evaluate', () => {
 
   it('resolves local interactive prompts through injected confirm and denies by default', async () => {
     const approved = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
-      confirm: () => true,
+      confirm: { surface: 'tty-prompt', ask: () => true },
     })
     expect(approved.result).toMatchObject({ verdict: 'allow', riskTier: 'destructive' })
     expect(approved.row).toMatchObject({
@@ -239,7 +240,7 @@ describe('evaluate', () => {
     })
 
     const denied = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
-      confirm: () => false,
+      confirm: { surface: 'tty-prompt', ask: () => false },
     })
     expect(denied.result).toMatchObject({ verdict: 'deny', riskTier: 'destructive' })
     expect(denied.row).toMatchObject({
@@ -279,7 +280,7 @@ describe('§2.1 mutating-local conformance and D-16 remediation reasons', () => 
 
   it('carries remediation in a prompted-denied reason', async () => {
     const { result, row } = await evaluateWithAudit(destructiveAction, 'local-interactive', {}, {
-      confirm: () => false,
+      confirm: { surface: 'tty-prompt', ask: () => false },
     })
 
     expect(result.verdict).toBe('deny')

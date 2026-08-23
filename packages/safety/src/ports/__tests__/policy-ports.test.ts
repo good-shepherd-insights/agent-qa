@@ -13,8 +13,11 @@ const actionScope: TrustScope = {
 }
 
 describe('policy ports', () => {
-  it('denies confirmation by default', async () => {
-    await expect(Promise.resolve(DENY_CONFIRM(action))).resolves.toBe(false)
+  it('denies confirmation by default, and declares no surface to approve from', async () => {
+    await expect(Promise.resolve(DENY_CONFIRM.ask(action))).resolves.toBe(false)
+    // G-401-17: the null-object's honest declaration. It never approves anything, so there is no
+    // surface for the gate to attribute an approval to — and the gate refuses to mint one.
+    expect(DENY_CONFIRM.surface).toBeNull()
   })
 
   it('returns no standing approval grants by default', () => {

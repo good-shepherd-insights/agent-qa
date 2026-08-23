@@ -34,7 +34,7 @@ import type {
   TrustScope,
 } from '@vostride/agent-qa-schema'
 import type { ExecutionAuditRow, GuardrailAuditRow } from '../../ports/audit-sink'
-import type { StandingApprovalReader } from '../../ports/policy-ports'
+import type { ConfirmPort, StandingApprovalReader } from '../../ports/policy-ports'
 import { evaluate, type GateDeps, type GateTrust } from '../gate'
 
 class FakeAuditSink {
@@ -141,7 +141,8 @@ describe('ARM A — the pin present and tightening', () => {
   })
 
   it('turns an ask into a deny WITHOUT prompting the human', async () => {
-    const confirm = vi.fn(() => true)
+    const ask = vi.fn(() => true)
+    const confirm: ConfirmPort = { surface: 'tty-prompt', ask }
 
     const { result, row } = await evaluateWithAudit(
       destructiveAction,
@@ -154,7 +155,7 @@ describe('ARM A — the pin present and tightening', () => {
     expect(row).toMatchObject({ verdict: 'deny', outcome: 'session-pin-denied' })
     // Asking a person to confirm something they themselves pinned, and then refusing it whatever
     // they answer, would be a prompt with no outcome attached to it.
-    expect(confirm).not.toHaveBeenCalled()
+    expect(ask).not.toHaveBeenCalled()
   })
 
   it('is not resurrected by a covering standing approval (§2.4: a grant never overrides a deny)',
@@ -247,7 +248,7 @@ describe('ARM B — the pin absent, and the ladder byte-identical', () => {
       }
       const shared: Omit<GateDeps, 'auditSink' | 'deny'> = {
         reader: grantReader({ project: 'A' }),
-        confirm: () => true,
+        confirm: { surface: 'tty-prompt', ask: () => true },
       }
 
       const absentSink = new FakeAuditSink()
@@ -303,7 +304,7 @@ describe('the widening attempt, refused', () => {
 
     const failClosed = await evaluateWithAudit(destructiveAction, 'ci', {}, {
       deny: DENY_NOTHING,
-      confirm: () => true,
+      confirm: { surface: 'tty-prompt', ask: () => true },
     })
     expect(failClosed.result.verdict).toBe('deny')
     expect(failClosed.row.outcome).toBe('fail-closed-denied')

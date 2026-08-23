@@ -36,6 +36,7 @@ type ExpectedTrustSource =
   | 'trust-credential'
   | 'standing-approval'
   | 'tty-prompt'
+  | 'browser-click'
   | undefined
 
 interface ScenarioCase {
@@ -68,10 +69,14 @@ function expectSecretFree(rows: readonly ExecutionAuditRow[]): void {
 
 async function evaluateScenario(testCase: ScenarioCase): Promise<ExecutionAuditRow> {
   const sink = new FakeAuditSink()
-  const confirm = vi.fn(() => false)
+  const ask = vi.fn(() => false)
   const result = await evaluate(testCase.action, testCase.ctx, testCase.trust ?? {}, {
     auditSink: sink,
-    confirm,
+    // Every scenario below resolves BEFORE the confirm rung, which is what `ask` never having been
+    // called asserts at the foot of this helper. The surface it declares is therefore arbitrary —
+    // and declaring one at all is the point: post-G-401-17 there is no way to bind a confirm
+    // channel here without saying who answers on it, not even for a port nothing ever calls.
+    confirm: { surface: 'tty-prompt', ask },
     reader: testCase.reader,
   })
 
@@ -95,7 +100,7 @@ async function evaluateScenario(testCase: ScenarioCase): Promise<ExecutionAuditR
     expect(row.trustSource).toBe(testCase.expectedTrustSource)
   }
   expect(row).not.toHaveProperty('ts')
-  expect(confirm).not.toHaveBeenCalled()
+  expect(ask).not.toHaveBeenCalled()
 
   return row
 }

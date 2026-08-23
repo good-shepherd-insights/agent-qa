@@ -245,7 +245,7 @@ describe('a surface-neutral reason rides beside the canonical prose (D-15 prose 
   it('carries the declined prompt and nothing after it on the prompted-denied arm', async () => {
     const classificationReason = classifyRisk(mutatingSharedAction).reason
     const result = await evaluate(mutatingSharedAction, 'local-interactive', {}, {
-      confirm: () => Promise.resolve(false),
+      confirm: { surface: 'tty-prompt', ask: () => Promise.resolve(false) },
     })
 
     expect(result.verdict).toBe('deny')

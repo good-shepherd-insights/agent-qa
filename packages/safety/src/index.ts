@@ -95,4 +95,13 @@ export type {
   SessionDenyOverlay,
 } from './policy/gate'
 export type { AuditSink, ExecutionAuditRow, GuardrailAuditRow } from './ports/audit-sink'
-export type { StandingApprovalReader, ConfirmPort } from './ports/policy-ports'
+export type {
+  StandingApprovalReader,
+  ConfirmPort,
+  ConfirmAsk,
+  // G-401-17: published beside `ConfirmPort` for the reason `SessionDenyOverlay` is published
+  // above — a composition root that must DECLARE which surface it speaks for and cannot name the
+  // vocabulary would spell the literal locally, and a second spelling of an audit vocabulary is
+  // where a value that can be declared but not recorded comes from.
+  ConfirmAnsweringSurface,
+} from './ports/policy-ports'
