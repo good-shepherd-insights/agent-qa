@@ -123,6 +123,11 @@ export type {
 export { mapVerdictToExitCode, runSafetyScope } from './composition/run-drive-vocabulary.js'
 export { buildRunRiskDescriptor, RUN_START_RISK_ACTION_NAME } from './composition/run-risk.js'
 export type { RunTargetClass } from './composition/run-risk.js'
+// 401-08 (D-08): the dispatch-scoped grant overlay. Published because a composition ROOT — not
+// only `composeLocalAgent` — may own the dispatch scope: the 394 authoring confirm is answered at
+// the root, and a root composing several agents holds ONE approval across them.
+export { createDispatchGrants } from './composition/dispatch-grants.js'
+export type { DispatchGrantLease, DispatchGrants } from './composition/dispatch-grants.js'
 
 // 390 D-16: the run-start quarantine snapshot. Published because the run host calls it at both of
 // its startRun composition sites — the fold happens here, on the reader entry, and the host only

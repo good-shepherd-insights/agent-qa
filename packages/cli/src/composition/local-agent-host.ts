@@ -498,9 +498,13 @@ export function createCliRunExecution(input: CreateCliRunExecutionInput): RunExe
  * resolved inputs are then handed to the drive through `inputs`, so the config, the env file and
  * the secrets file are read once rather than twice.
  *
+ * `reader` ARRIVES PER CALL SINCE 401-08 (D-08), through the port's own optional `gate` argument.
+ * The composition resolves it — the durable grant ledger unioned with any open dispatch scope —
+ * because which approvals are in force is a fact about the moment a run starts, not about the
+ * moment this door was built, and because this file may name neither the ledger nor `safety`.
+ *
  * WHAT IS DELIBERATELY ABSENT, each because an option nothing reads is a stub with a type on it:
- * `reader` (the D-08 dispatch-grant overlay is plan 08's, and nothing mints a `run:start` grant
- * today), `produceMembers` (the default
+ * `produceMembers` (the default
  * dispatcher is MODE-AWARE, which is what makes an argument-less request and a suite pattern both
  * work at this door), `afterVerdict` (a `runs.start` ack is a START, not an outcome — there is no
  * door-level fold to apply), and `trust.credential` (402's parameter).
@@ -526,7 +530,15 @@ function createComposedRunExecution(input: {
   readonly runBridge?: ComposeCliLocalAgentInput['runBridge']
 }): RunExecutionPort {
   return {
-    async execute(request: RunsStartInput): Promise<{ runId: RunId }> {
+    // `gate` is the composition's answer to the run gate's standing-approvals question, resolved
+    // per call and handed down here (401-08, D-08). This door does not resolve it and must not:
+    // the grant ledger and the dispatch overlay are `agent-local`/`safety` vocabulary, and this
+    // file's surface-firewall ledger has exactly one entry and only ever shrinks. It is FORWARDED
+    // and nothing else — the type comes from the port it implements, so no safety type is named.
+    async execute(
+      request: RunsStartInput,
+      gate?: Parameters<RunExecutionPort['execute']>[1],
+    ): Promise<{ runId: RunId }> {
       const { resolveRunInvocationInputs } = await import('../commands/run.js')
       const {
         refuseUnhonourableRequestFields,
@@ -564,6 +576,9 @@ function createComposedRunExecution(input: {
               (input.resolveExecutionContext?.() ?? resolveRunExecutionContext()) as RunExecutionContext,
             trust: { trustMode: inputs.config.safety?.trustMode === true },
             ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
+            // Conditionally spread on this file's own house rule: an absent authority must be an
+            // ABSENT field, so the gate's `NO_STANDING_APPROVALS` default lives in one place.
+            ...(gate?.reader === undefined ? {} : { reader: gate.reader }),
             inputs,
             // THE LOCAL CAPTURE FIRST, THEN THE HOST'S BRIDGE (401-07). The capture is what the
             // `catch` below reads to tell a run that STARTED from one that never did, so it can
@@ -626,6 +641,15 @@ export interface ComposeCliLocalAgentInput {
    * prompt's behaviour can be driven without a real tty behind it.
    */
   confirm?: ComposeLocalAgentInput['confirm']
+  /**
+   * The dispatch-scoped grant overlay this host's run gate consults (401-08, D-08).
+   *
+   * Forwarded UNTOUCHED to `composeLocalAgent`, on the passthrough idiom every neighbour here uses
+   * and typed by indexed access so this file names no `agent-local` internal it does not already
+   * name. Absent leaves the composition minting its own — which is the shipped default and the
+   * posture every caller had before this field existed.
+   */
+  dispatchGrants?: ComposeLocalAgentInput['dispatchGrants']
   /**
    * How a chat SESSION asks (392 plan 08, D-03).
    *
@@ -3751,6 +3775,9 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       confirm: doorConfirm,
       ...(input.runBridge === undefined ? {} : { runBridge: input.runBridge }),
     }),
+    // D-08 (401-08): forwarded untouched, conditionally spread on this literal's own house rule.
+    // Absent leaves `composeLocalAgent` minting its own dispatch scope.
+    ...(input.dispatchGrants === undefined ? {} : { dispatchGrants: input.dispatchGrants }),
     // 393 D-01: the keep-gate evaluator's host half, bound UNCONDITIONALLY on this host — a CLI
     // always has a config path, therefore a checkout root, therefore both verbs. Together with the
     // run executor one line up, this is what makes `authoring.draft.verify` read `bound` in this

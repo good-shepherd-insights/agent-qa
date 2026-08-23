@@ -972,6 +972,55 @@ export async function runAuthoringLoop(
   // COVER REPAIR — `repairDraft` screens each patched candidate at its own site, per iteration.
   screenDraftForCredentials(draft)
 
+  // D-08's DISPATCH SCOPE OPENS HERE, and the position is the whole of what this loop decides.
+  //
+  // ABOVE stage 4 because stage 4 is the FIRST line that can spend a run: `verifyDraft` dispatches
+  // the evaluation, which takes the initial stability gate, and `routeAfterVerify` below takes the
+  // repair probes and the final gate. Everything before this point — the brief, the dedup screen,
+  // the compile, the refinement round, the credential screen — reaches a model and a corpus and
+  // never a target, so a scope opened at the top of this function would hold an approval open
+  // across a model call for no reason at all.
+  //
+  // AND IT OPENS ONLY WHERE THE APPROVAL WAS ACTUALLY GIVEN. This function is unreachable unless
+  // `fn:authoring.draft.write`'s gate allowed — it is `mutating-shared` and it renders the fan-out
+  // preview, which is D-03's one ask — so reaching this line IS the approval, and the stage-2
+  // dedup refusal above returns before it, never opening a scope for an invocation that was never
+  // going to run anything.
+  //
+  // THE `finally` IS NOT DEFENSIVE BOOKKEEPING. Stage 4 can throw (a credential screen, an
+  // unparsable receipt, a host error), and a grant that survived a thrown dispatch would be an
+  // approval with no expiry at all — the exact elevation T-401-22 names. Disposal happens on every
+  // exit, including the ones nobody planned.
+  const dispatch = deps.shelf.dispatchGrants?.open()
+  try {
+    return await runAuthoringLoopDispatch(input, deps, { stages, previewed, dedup, draft, refinement })
+  } finally {
+    dispatch?.dispose()
+  }
+}
+
+/**
+ * Stages 4-6 — everything inside D-08's dispatch scope.
+ *
+ * SPLIT OUT SO THE SCOPE IS A BLOCK rather than a pair of statements a later edit could drift
+ * apart. `stages`, `previewed` and `dedup` are threaded rather than recomputed: `previewed` in
+ * particular must stay the SAME value the caller derived, because the fan-out report's whole claim
+ * is that the number a person approved and the number they are shown afterwards are one function
+ * of one input.
+ */
+async function runAuthoringLoopDispatch(
+  input: AuthoringLoopInput,
+  deps: AuthoringLoopDeps,
+  carried: {
+    readonly stages: AuthoringLoopStage[]
+    readonly previewed: FanOutBound
+    readonly dedup: DedupScreening
+    readonly draft: ParsedDraftLike
+    readonly refinement: RefinementOutcome
+  },
+): Promise<AuthoringLoopResult> {
+  const { stages, previewed, dedup, draft, refinement } = carried
+
   stages.push('verify')
   // WHERE ACCEPTING WOULD WRITE IT, computed ONCE for the whole invocation through the SAME
   // exported recipe the proposal arm uses (`testDraftProposal`'s `targetPath`) — so the suite the
