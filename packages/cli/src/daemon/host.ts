@@ -537,8 +537,7 @@ async function resolveQuarantineIdentityMint(
  * waives an exact (file, specifier) PAIR and `daemon/host.ts` holds no entry for core; and the
  * ledger only ever SHRINKS, so a new leak in a file written after 2026-07-28 is fixed rather than
  * waived. `composition/local-agent-host.ts` already carries the pair, so the factory is minted
- * there and reached from here exactly as `createQuarantineIdentityMint` (390-12) and
- * `createCliRunExecution` (385) are. The import also keeps the CLI composition graph out of a
+ * there and reached from here exactly as `createQuarantineIdentityMint` (390-12) is. The import also keeps the CLI composition graph out of a
  * `configPath`-less legacy or test host, which is the second reason all three are deferred.
  *
  * ABSENT WHERE THERE IS NO CONFIG PATH, and the absence is the report. A host with no workspace

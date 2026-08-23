@@ -485,11 +485,12 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
 //   (i)  every acquisition form is planted in synthetic source and must be SEEN — the raw filename,
 //        a static import of the launcher, a destructured dynamic import, a namespace member call and
 //        a bare call. Not one remembered spelling;
-//   (ii) a DECLARATION of the launcher must NOT be seen, and neither must a prose mention. This is
-//        the case the package actually presents: `composition/local-agent-host.ts` still declares
-//        `createPipedLaunchChild` (401-10 deletes it) and is in this closure, so a census that could
-//        not tell a declaration from a call would be red at rest — or, worse, "fixed" by deleting
-//        the converse witness;
+//   (ii) a DECLARATION of the launcher must NOT be seen, and neither must a prose mention. While
+//        `composition/local-agent-host.ts` still declared `createPipedLaunchChild`, that was the
+//        case the package actually presented, and a converse witness asserted the declaration was
+//        there so "zero consumers" could not be read as "zero occurrences". 401-10 DELETED the
+//        declaration, so the witness went with it; the planted-declaration case below is what still
+//        keeps a census that cannot tell a declaration from a call from passing;
 //  (iii) the closure is pinned to its own known members and floored, so a walk with a wrong root or
 //        an over-eager filter cannot return a small set and sweep it clean.
 // ==============================================================================================
@@ -585,7 +586,9 @@ describe('the daemon has no capture-file writer and no piped-child consumer (401
   })
 
   it('(ii) …and does NOT see a declaration, or a mention in prose', () => {
-    // The case this package actually presents: the function still exists, in one file, undeleted.
+    // Synthetic since 401-10: no file declares it any more. The distinction still has to hold, or
+    // a future re-mint that only DECLARED the launcher would read as a consumer and mask the real
+    // question — and, in the other direction, prose naming the retirement would read as a wire.
     expect(consumesPipedLauncher('export function createPipedLaunchChild(\n  entry: string,\n) {}'))
       .toBe(false)
     expect(consumesPipedLauncher('// the daemon used to call createPipedLaunchChild here'))
@@ -624,17 +627,5 @@ describe('the daemon has no capture-file writer and no piped-child consumer (401
       .filter((path) => consumesPipedLauncher(readFileSync(path, 'utf8')))
       .map((path) => path.slice(CLI_SRC.length + 1))
     expect(offenders, 'a module the daemon reaches still launches a piped run child').toEqual([])
-  })
-
-  it('THE CONVERSE WITNESS — the launcher still exists, undeleted, inside this very closure', () => {
-    // Without this, a census over a package that had deleted the symbol outright would look
-    // identical — and "zero consumers" would be a statement about a name rather than about a wire.
-    // 401-10 owns the deletion; until then the declaration is the thing this census steps around.
-    const host = readFileSync(join(CLI_SRC, 'composition', 'local-agent-host.ts'), 'utf8')
-    expect(stripComments(host)).toContain('export function createPipedLaunchChild(')
-    expect(consumesPipedLauncher(host)).toBe(false)
-    const { modules } = daemonReachableModules(DAEMON_ENTRY)
-    expect(modules.map((path) => path.slice(CLI_SRC.length + 1)))
-      .toContain('composition/local-agent-host.ts')
   })
 })

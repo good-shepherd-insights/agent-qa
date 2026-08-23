@@ -445,6 +445,51 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
     }
   }, 120_000)
 
+  it('THE REQUEST NAMES THE CONFIG — `request.configPath` decides what is resolved and gated', async () => {
+    // CARRIED FORWARD BY 401-10 from `fn-runs-start.test.ts`, which died with the child it drove.
+    // The old cell read the `--config` operand the port put in front of the child. The contract
+    // survived the retirement (`runInProcessCliRun`: `request.configPath ?? options.configPath`)
+    // and had no other cell, so it is re-asserted here at the EFFECT — the stronger reading, since
+    // a port that accepted the field and dropped it produces no argv to be wrong about.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const composed = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      const named = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      expect(named.configPath).not.toBe(composed.configPath)
+
+      try {
+        await runInProcessCliRun(
+          { ...fixtureOptions(composed), executionContext: 'local-headless' },
+          { configPath: named.configPath, patterns: [named.testPattern] },
+        )
+      } catch { /* the member's framework error; where the run LANDED is what this cell reads */ }
+
+      // THE GATE RAN AGAINST THE CONFIG THE REQUEST NAMED. The audit row is the gate's own record
+      // and it is written beside the config whose target declaration it read — so this is the
+      // assertion that a dropped `configPath` could not survive: the classification would have come
+      // off the composition's project instead.
+      expect(auditRows(named as never).map((row) => row.outcome)).toEqual(['proceeded'])
+      expect(auditRows(composed as never)).toEqual([])
+
+      // AND THE RUN'S DURABLE EVIDENCE FOLLOWS `agentQaRoot`, WHICH THE REQUEST CANNOT NAME. This
+      // is asserted rather than smoothed over: the two halves of one run land in two projects when
+      // a door's config and its request's config differ. It is not the retired wire's behaviour —
+      // the child resolved BOTH from `--config`, which put the evidence somewhere the composition's
+      // own evidence check could not read, and the ack failed. Recorded in the phase's
+      // deferred-items as a contract question with an owner, not decided here.
+      expect(eventTypes(composed as never)).toContain('runStarted')
+      expect(eventTypes(named as never)).toEqual([])
+      expect(buildOrdinalsExist(composed as never)).toBe(true)
+      expect(buildOrdinalsExist(named as never)).toBe(false)
+      // One run, one id, both halves — not two runs.
+      expect(runDirs(named as never).map((dir) => dir.split('/').pop()))
+        .toEqual(runDirs(composed as never).map((dir) => dir.split('/').pop()))
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
   it('THE DISPATCH BOUNDARY — when both kinds resolve, the TEST path wins', async () => {
     // The direction that is easy to get backwards. `run.ts`'s shipped guard early-returns to the
     // suite path ONLY when `discoveredTestFiles.length === 0`, so a dispatcher that preferred

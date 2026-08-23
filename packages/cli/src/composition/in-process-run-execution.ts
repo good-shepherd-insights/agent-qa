@@ -173,10 +173,10 @@ export interface InProcessCliRunExecutionOptions {
    * The seam a door with members of its own overrides.
    *
    * ABSENT ⇒ the pattern-based producer, which is MODE-AWARE and dispatches to the suite half
-   * itself. That is a shipped contract rather than a nicety: `createCliRunExecution` forwards a
-   * request's patterns after a `--` operand separator with no mode flag, so a `runs.start` whose
-   * patterns resolve to a suite file runs a SUITE today, over the fn door and the daemon door
-   * alike. A single-test-shaped default would turn a live request into an input error.
+   * itself. That is a shipped contract rather than a nicety: a `runs.start` carries patterns and no
+   * mode flag, so a request whose patterns resolve to a suite file runs a SUITE today, over the fn
+   * door and the daemon door alike — as it did over the child port 401-10 deleted, which forwarded
+   * the same patterns after a `--` operand separator. A single-test-shaped default would turn a live request into an input error.
    */
   readonly produceMembers?: RunMemberProducer
   /**

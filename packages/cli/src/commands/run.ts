@@ -954,9 +954,10 @@ export interface RunInvocationInputs {
    *
    * `discoverFilesForCliPatterns` already answers `{ tests, suites }` and the command already
    * captured both. Collapsing the split here would make the mode-aware member dispatch unbuildable:
-   * a request carries patterns and NO mode flag (that is exactly what `createCliRunExecution`
-   * forwards today), so the only thing that can tell a suite invocation from a test invocation is
-   * which half of this pair came back non-empty.
+   * a request carries patterns and NO mode flag (that is exactly what `runInProcessCliRun`
+   * forwards, and what the child port 401-10 deleted forwarded before it), so the only thing that
+   * can tell a suite invocation from a test invocation is which half of this pair came back
+   * non-empty.
    */
   readonly discovered: { readonly tests: string[]; readonly suites: string[] }
 }
@@ -1831,11 +1832,11 @@ export interface PatternMemberProductionContext {
  * THE MODE-AWARE DEFAULT MEMBER PRODUCER — the thing that makes the port composable from a bare
  * `RunsStartInput`.
  *
- * WHY IT DISPATCHES AND DOES NOT JUST ASSUME TEST FILES. `createCliRunExecution` forwards a
- * request's `patterns` after a `--` operand separator with NO mode flag
- * (`composition/local-agent-host.ts`) — it cannot tell a test pattern from a suite pattern and does
- * not try. So on the shipped wire a `runs.start` whose patterns resolve to suite files RUNS A SUITE,
- * over the fn door and the daemon door alike. A single-test-shaped default would turn that live
+ * WHY IT DISPATCHES AND DOES NOT JUST ASSUME TEST FILES. A `runs.start` carries `patterns` and no
+ * mode flag — the request contract cannot tell a test pattern from a suite pattern and does not try.
+ * (Nor could the child port 401-10 deleted, which forwarded the same patterns after a `--` operand
+ * separator.) So on the shipped wire a `runs.start` whose patterns resolve to suite files RUNS A
+ * SUITE, over the fn door and the daemon door alike. A single-test-shaped default would turn that live
  * request into an input error at exactly the two doors this seam exists to unblock.
  *
  * THE POLARITY IS MIRRORED FROM THE COMMAND'S OWN GUARD, not restated from memory. `run.ts`'s
@@ -2010,9 +2011,8 @@ export async function resolveSuitePreflight(input: {
  * turns a suite file into `assembleCliRun`'s required `members`/`executor` lived unexported inside
  * `executeSuites`, so no door holding a `RunsStartInput` could reach it. That is the wall 401-06
  * halted on, and it is why this half is extracted HERE rather than in a later plan: the default
- * member producer must be able to run a suite, because `createCliRunExecution` forwards a request's
- * patterns with NO mode flag and a suite pattern therefore runs a suite over the fn and daemon doors
- * TODAY. Leaving the suite chain unexported would have handed 401-05 the same wall.
+ * member producer must be able to run a suite, because a `runs.start` carries patterns with NO mode
+ * flag and a suite pattern therefore runs a suite over the fn and daemon doors TODAY. Leaving the suite chain unexported would have handed 401-05 the same wall.
  *
  * `executeSuites` is now a caller of this function, so the two are one implementation rather than a
  * copy and the thing it drives.
