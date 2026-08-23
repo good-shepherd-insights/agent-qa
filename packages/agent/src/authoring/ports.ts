@@ -97,28 +97,28 @@ export interface DraftRunPortLike {
 }
 
 /**
- * One open dispatch scope, as this package sees it (401-08, D-08).
+ * Where the 394 dispatch confirm's ONE approval becomes something the child gate runs can use.
  *
  * A MIRROR, and this one earns the mirror discipline `DraftRunPortLike` is exempt from: the real
  * shape lives in `agent-local`'s composition and is spelled in `@vostride/agent-qa-safety`
- * vocabulary, neither of which this package may name. What crosses is one verb with no arguments
- * and no return value, which is the whole of what the loop needs to say.
- */
-export interface DispatchGrantLeaseLike {
-  dispose(): void
-}
-
-/**
- * Where the 394 dispatch confirm's ONE approval becomes something the child gate runs can use.
+ * vocabulary, neither of which this package may name. What crosses is one verb taking one
+ * continuation, which is the whole of what the loop needs to say.
  *
- * `open()` TAKES NOTHING. The loop is not permitted to name the action class it is being granted,
- * the scope it is granted in, or how many runs the grant covers — all three are composition
- * facts, and a parameter for any of them would be a channel for widening an approval a person
- * already gave. What the loop owns is the LIFETIME: it opens the scope before the first stage that
- * can spend a run and disposes it in a `finally`.
+ * `within(fn)` NAMES NOTHING. The loop is not permitted to name the action class it is being
+ * granted, the scope it is granted in, or how many runs the grant covers — all three are
+ * composition facts, and a parameter for any of them would be a channel for widening an approval a
+ * person already gave. Its one parameter is the work to run.
+ *
+ * A SCOPE AND NOT A LEASE HANDLE (401-13, verification gap CR-03). The lease shape this replaced
+ * could only tell the run gate that SOME dispatch was running, so while one was open every
+ * concurrent caller on the host — a dashboard run-button click, a second conversation, an MCP
+ * caller — collected the same grant. Running the dispatch INSIDE the scope is what lets the gate
+ * distinguish the runs this dispatch started from the runs it did not, and it is why the loop no
+ * longer owns a `finally`: disposal is the scope's own, on every exit including a throw
+ * (T-401-22).
  */
 export interface DispatchGrantPortLike {
-  open(): DispatchGrantLeaseLike
+  within<T>(fn: () => Promise<T>): Promise<T>
 }
 
 /**

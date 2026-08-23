@@ -149,10 +149,16 @@ describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
       const dispatchGrants = createDispatchGrants()
       const ledgerBefore = grantsLedgerBytes(fixture)
 
-      const dispatch = dispatchGrants.open()
-      const first = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
-      const second = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
-      dispatch.dispose()
+      // 401-13: the two runs are started INSIDE the dispatch's own scope, which is what makes them
+      // the dispatch's OWN gate-runs rather than merely concurrent with it. Every await between
+      // here and `grantsFor` — `invokeFunction`, the op gate, the bound invocation, the async
+      // `resolveRunGrants`, the core's `evaluate()` — is inside this callback's async tree, and a
+      // green here is the measurement that the scope reaches all of them.
+      const { first, second } = await dispatchGrants.within(async () => {
+        const firstRun = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
+        const secondRun = await invokeRunsStart(fixture, dispatchGrants, { patterns: [fixture.testPattern] })
+        return { first: firstRun, second: secondRun }
+      })
 
       expect(first.error).toBeUndefined()
       expect(second.error).toBeUndefined()
@@ -235,8 +241,12 @@ describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
       const dispatchGrants = createDispatchGrants()
 
       // The dispatch happened and ENDED. T-401-22: an approval that outlived its dispatch would be
-      // an elevation with no expiry, and the loop's own `finally` is what closes it in production.
-      dispatchGrants.open().dispose()
+      // an elevation with no expiry, and since 401-13 the scope's own `finally` is what closes it —
+      // the loop can no longer forget to.
+      await dispatchGrants.within(async () => {
+        expect(dispatchGrants.openScopes).toBe(1)
+        await Promise.resolve()
+      })
       expect(dispatchGrants.openScopes).toBe(0)
 
       const { ack, error } = await invokeRunsStart(

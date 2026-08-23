@@ -3165,9 +3165,12 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
           // exactly the host whose approval to start one can be scoped — a shelf bound with `runs`
           // and without this would be a host that spends a person's approval and cannot carry it.
           //
-          // `open()` takes NO arguments, so the loop cannot name what it is being granted.
+          // `within(fn)` takes NO argument but the work to run, so the loop cannot name what it is
+          // being granted — not the action class, not the scope, not a run budget, and (401-13)
+          // not a dispatch to attach itself to. Coverage follows from being INSIDE the scope,
+          // which nothing outside the loop's own call tree can be.
           dispatchGrants: {
-            open: () => dispatchGrants.open(),
+            within: <T>(fn: () => Promise<T>): Promise<T> => dispatchGrants.within(fn),
           },
           verifyDraft: async (verifyInput: AuthoringVerifyDraftInput): Promise<DraftReceipt> => {
             if (composedRegistry === undefined) {

@@ -987,16 +987,23 @@ export async function runAuthoringLoop(
   // dedup refusal above returns before it, never opening a scope for an invocation that was never
   // going to run anything.
   //
-  // THE `finally` IS NOT DEFENSIVE BOOKKEEPING. Stage 4 can throw (a credential screen, an
-  // unparsable receipt, a host error), and a grant that survived a thrown dispatch would be an
-  // approval with no expiry at all — the exact elevation T-401-22 names. Disposal happens on every
-  // exit, including the ones nobody planned.
-  const dispatch = deps.shelf.dispatchGrants?.open()
-  try {
-    return await runAuthoringLoopDispatch(input, deps, { stages, previewed, dedup, draft, refinement })
-  } finally {
-    dispatch?.dispose()
-  }
+  // DISPOSAL IS THE SCOPE'S OWN `finally`, not this function's (401-13). Stage 4 can throw (a
+  // credential screen, an unparsable receipt, a host error), and a grant that survived a thrown
+  // dispatch would be an approval with no expiry at all — the exact elevation T-401-22 names. The
+  // scope releases on every exit, including the ones nobody planned, and the loop cannot forget to.
+  //
+  // AND RUNNING THE DISPATCH *INSIDE* THE SCOPE IS THE POINT (verification gap CR-03). The lease
+  // pair this replaced told the run gate only that SOME dispatch was open, so every concurrent
+  // caller on the host collected the grant. Everything this call starts — stage 4's evaluation, the
+  // repair probes, the final gate — runs in the scope's own async tree, and that is the fact the
+  // gate reads. A run started anywhere else is a run this dispatch did not ask for.
+  const scope = deps.shelf.dispatchGrants
+  const dispatch = async (): Promise<AuthoringLoopResult> =>
+    await runAuthoringLoopDispatch(input, deps, { stages, previewed, dedup, draft, refinement })
+  // ABSENT PORT, UNCHANGED POSTURE: the loop runs the dispatch directly, exactly as it did before
+  // D-08 existed. An optional affordance must not become a binding requirement.
+  if (scope === undefined) return await dispatch()
+  return await scope.within(dispatch)
 }
 
 /**

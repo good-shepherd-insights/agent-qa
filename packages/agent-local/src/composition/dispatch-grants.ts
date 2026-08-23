@@ -18,12 +18,33 @@
 // `trustSource: 'standing-approval'` — one ask, N gated runs, N attributable rows. Nothing here can
 // make a run skip the gate, because all this answers is the grants question the gate asks.
 //
-// THE GRANT IS COMPOSITION-DERIVED, NEVER NAMED BY A CALLER. `open()` takes no action name on
-// purpose. A `record(actionClass)` seam — the shape the plan sketched — would let whatever holds
-// the lease name the class it is granting itself, which is the same widening `STANDING_APPROVAL_SCOPE`
-// is composition-supplied to prevent (`invoke.ts`: "a caller that could name the scope its own
-// action is evaluated under could widen any grant into a match"). The action class here is the run
-// gate's own pinned constant and there is no parameter to move it with.
+// THE GRANT IS COMPOSITION-DERIVED, NEVER NAMED BY A CALLER. `within(fn)` takes no action name on
+// purpose — its one parameter is the continuation to run, and nothing else. A `record(actionClass)`
+// seam — the shape 401-08's plan sketched — would let whatever holds the scope name the class it is
+// granting itself, which is the same widening `STANDING_APPROVAL_SCOPE` is composition-supplied to
+// prevent (`invoke.ts`: "a caller that could name the scope its own action is evaluated under could
+// widen any grant into a match"). The action class here is the run gate's own pinned constant and
+// there is no parameter to move it with.
+//
+// AND THE FIFTH LAW, ADDED BY 401-13 (verification gap CR-03): COVERAGE IS DISPATCH-TREE-SCOPED.
+// Until this plan `grantsFor` branched on `open.size === 0` and referenced nobody — so while ANY
+// authoring dispatch was open on a host, EVERY concurrent `run:start` through that host was
+// satisfied by it. A dashboard run-button click, a second conversation and an MCP caller all
+// recorded `trustSource: 'standing-approval'`, byte-identical to a run that had actually earned it,
+// which made the widening unattributable in the record. D-08 as ratified covers "exactly the
+// previewed gate-runs", so the overlay now answers the union ONLY for a call whose own async
+// context lies inside an open dispatch's call tree.
+//
+// WHY AN ASYNC SCOPE AND NOT A TOKEN ON THE REQUEST. The verifier offered two shapes. A token
+// carried to the consumer would put a bearer credential into `RunsStartInputSchema` — a
+// caller-suppliable wire field on exactly the surface reachable from `agent-qa fn` and MCP — and an
+// unrelated caller would simply name the open dispatch, which is the SAME widening the paragraph
+// above rules out, in a new costume. An `AsyncLocalStorage` scope crosses no schema and cannot be
+// entered from outside the dispatch's own call tree, and it has shipped in-repo precedent at this
+// exact seam class (`dashboard.ts`'s `askingSessions`, `safety-local`'s one-store run-safety scope).
+// D-07's ban is on the CORE sniffing ambient context; this is composition vocabulary consulted
+// through the reader the composition already resolves per run, and the core still receives a plain
+// `StandingApprovalReader` it cannot tell apart from the durable ledger's.
 //
 // IT MINTS NOTHING DURABLE. `grants.jsonl` has ONE writer (`createGrantOperations`, hoisted in
 // `compose-local-agent.ts` so a person's `a` keystroke has exactly one destination). This overlay
@@ -31,22 +52,13 @@
 // and dies with the closure that opened it. A second mint would be a second answer to which
 // approvals are in force — and it would be the one that outlived the dispatch.
 
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
 import type { RiskActionDescriptor, StandingApprovalGrant, TrustScope } from '@vostride/agent-qa-schema'
 import type { StandingApprovalReader } from '@vostride/agent-qa-safety'
 
 import { RUN_START_RISK_ACTION_NAME } from './run-risk.js'
-
-/**
- * One open dispatch scope.
- *
- * `dispose()` is IDEMPOTENT and total: a lease is released from a `finally`, and a second release
- * — a caller that disposes and then unwinds through the same `finally` — must not retire a
- * DIFFERENT dispatch's grant. Each lease holds its own token and deletes only that token.
- */
-export interface DispatchGrantLease {
-  dispose(): void
-}
 
 /**
  * The overlay a composition holds for the lifetime of its host.
@@ -56,11 +68,22 @@ export interface DispatchGrantLease {
  * data rather than of who is holding a reference.
  */
 export interface DispatchGrants {
-  /** Open a dispatch scope covering the run gate's action class at the pinned scope. */
-  open(): DispatchGrantLease
+  /**
+   * Run `fn` inside a dispatch scope covering the run gate's action class at the pinned scope.
+   *
+   * A SCOPE AND NOT A LEASE HANDLE, because the coverage question is "was this call made by the
+   * dispatch" and a handle can only answer "is some dispatch running". Disposal is structural: the
+   * scope's token leaves the open set in this function's own `finally`, so there is no exit — a
+   * return, a throw, a rejection — that leaves a grant behind (T-401-22), and no second release for
+   * a caller to get wrong.
+   *
+   * Nesting composes: an inner scope has its own token, and when it ends the enclosing scope's
+   * token is what the async context restores.
+   */
+  within<T>(fn: () => Promise<T>): Promise<T>
   /**
    * The reader the run gate consults: `durable`'s answer for this action, unioned with the
-   * dispatch grant of every scope currently open.
+   * dispatch grant of the open scope THIS CALL IS BEING MADE INSIDE — and with nothing else.
    *
    * A UNION AND NOT A REPLACEMENT. The durable half is the ledger a person can write by hand
    * (`grants.jsonl`), and dropping it here would mean a hand-written `run:start` approval stopped
@@ -88,18 +111,27 @@ function dispatchGrant(): StandingApprovalGrant {
 
 export function createDispatchGrants(): DispatchGrants {
   // Tokens, not a counter. Two dispatches can overlap — a host serving two conversations, or a
-  // repair probe taken while an outer scope is open — and a counter would let the inner scope's
-  // `dispose()` retire the outer scope's grant the moment the two interleaved.
+  // repair probe taken while an outer scope is open — and a counter would let the inner scope
+  // ending retire the outer scope's grant the moment the two interleaved.
   const open = new Set<symbol>()
+  // The call-tree channel. COMPOSITION-LOCAL, on `dashboard.ts`'s `askingSessions` precedent:
+  // created here, entered only by this overlay's own `within`, read only by this overlay's own
+  // reader. Nothing outside can set it, so a second composition in the same process cannot be
+  // answered with this one's dispatch — and no caller can name a scope it is not already inside.
+  const scope = new AsyncLocalStorage<symbol>()
 
   return {
-    open(): DispatchGrantLease {
+    async within<T>(fn: () => Promise<T>): Promise<T> {
       const token = Symbol('dispatch-grant')
       open.add(token)
-      return {
-        dispose(): void {
-          open.delete(token)
-        },
+      try {
+        return await scope.run(token, fn)
+      } finally {
+        // BOTH HALVES MATTER, and they are different halves. The async context unwinds on its own
+        // when `run` returns; this `delete` is what makes the grant EXPIRE — a continuation
+        // captured inside the scope and resumed after the dispatch ended still carries the token
+        // in its context, and the open set is the only thing that can tell it is stale.
+        open.delete(token)
       }
     },
     readerOver(durable: StandingApprovalReader | undefined): StandingApprovalReader {
@@ -109,11 +141,17 @@ export function createDispatchGrants(): DispatchGrants {
           actionScope: TrustScope,
         ): readonly StandingApprovalGrant[] {
           const persisted = durable?.grantsFor(action, actionScope) ?? []
-          // READ AT ANSWER TIME, never captured when the reader was built. The reader the run
-          // invocation hands the core is built per call, but a door that held one across calls
-          // must still see a dispatch that opened after it took its reference — otherwise the
-          // overlay's whole lifetime claim would depend on when somebody asked for the reader.
-          if (open.size === 0) return persisted
+          // READ AT ANSWER TIME, never captured when the reader was built — both the open set and
+          // the asking call's context. The run invocation builds a reader per call, but a door that
+          // held one across calls must still see a dispatch that opened after it took its
+          // reference, and must resolve the CALLER from the call rather than from the construction.
+          //
+          // TWO CONDITIONS, AND EACH ONE IS A DIFFERENT DEFECT. No token at all is the CR-03 case:
+          // a dashboard click or an MCP caller running outside every dispatch's tree, which now
+          // gets exactly the durable ledger's answer. A token the open set no longer holds is the
+          // T-401-22 case: a call inside a tree whose dispatch has already ended.
+          const token = scope.getStore()
+          if (token === undefined || !open.has(token)) return persisted
           return [...persisted, dispatchGrant()]
         },
       }
