@@ -71,6 +71,40 @@ export interface RunSettledDetails {
    * surface can offer. Honest absence is a supported answer; it is never filled with guidance.
    */
   readonly remedies?: readonly GateRemedy[]
+  /**
+   * The run NEVER BEGAN — the gate or the host refused it (401-18, G-401-16).
+   *
+   * A FACT, NOT AN INFERENCE. `settle` has always known this — a rejection with no started session
+   * is a denial, a refused request field or an input error — and threw the knowledge away, leaving
+   * the host's reconciliation to guess from a regex over the diagnostic lines. It guessed
+   * `Process exited before test completed`, which is a sentence about a process, for a run where
+   * nothing was ever started to exit.
+   *
+   * DELIBERATELY A BOOLEAN AND NOT A CLASS. Which refusal it was — `fail-closed-denied`, `blocked`,
+   * `session-pin-denied`, an unrecognised request field, a plain input error — is not something the
+   * reconciliation branches on, and a prose name for it here would be the same defect one layer
+   * down. If a class is ever needed it arrives as a closed-set value owned by `schema`, the way the
+   * remedy vocabulary already does.
+   *
+   * ABSENT ON A RUN THAT STARTED, including one that started and then failed. That asymmetry is the
+   * scope guarantee: every other arm of the reconciliation reads exactly what it read before.
+   */
+  readonly refusedBeforeStart?: true
+  /**
+   * The refusal said without naming any surface's affordance (401-18, G-401-16).
+   *
+   * THE PROSE HALF OF THE SAME REPAIR THE REMEDIES ARE THE TYPED HALF OF. The gate composes two
+   * sentences per decision: the canonical one, which names `--trust-session` and lands in the
+   * execution-audit row, and the neutral one, which stops at the classification and the outcome.
+   * A browser reader was being handed the first, so the record's only account of why a run never
+   * happened told them to pass a flag to a command they were not running.
+   *
+   * READ STRUCTURALLY OFF THE REJECTION, on `dashboardRemediesOf`'s precedent, and ABSENT where the
+   * rejection carries no neutral form — an input error is not a gate decision and has no second
+   * phrasing. The consumer then falls back to the rejection's own message, which for those refusals
+   * names no surface's affordance either.
+   */
+  readonly neutralReason?: string
   /** Diagnostic lines — a rejection's own message. The typed successor to scraped stderr. */
   readonly output: readonly string[]
 }

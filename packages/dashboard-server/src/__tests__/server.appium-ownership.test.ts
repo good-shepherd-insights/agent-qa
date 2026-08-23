@@ -27,6 +27,12 @@ interface RunnerInstance {
   getBufferedEvents: Mock
   getActiveExecutions: Mock
   closeRun: (runId: string, status: CloseStatus, output?: string[]) => void
+  /** 401-18: a run the gate or the host refused before it began — never a `closeRun` with a flag. */
+  refuseRun: (runId: string, details: {
+    reason: string
+    neutralReason?: string
+    remedies?: readonly { kind: string }[]
+  }) => void
 }
 
 /**

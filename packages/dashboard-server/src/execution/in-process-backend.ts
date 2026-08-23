@@ -315,13 +315,22 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
   private settle(handle: RunHandle, error?: unknown): void {
     if (handle.timeoutTimer) clearTimeout(handle.timeoutTimer)
     let remedies: readonly GateRemedy[] | undefined
+    // 401-18 (G-401-16): the two facts the host used to have to guess at. Declared beside
+    // `remedies` because they travel with it — one decision, three projections of it.
+    let refusedBeforeStart = false
+    let neutralReason: string | undefined
     if (error !== undefined) {
       remedies = dashboardRemediesOf(error)
+      neutralReason = dashboardNeutralReasonOf(error)
       const message = error instanceof Error ? error.message : String(error)
       for (const line of message.split('\n')) handle.output.push(line)
       // A rejection reaching here without a started session is a denial / refusal / input error —
       // the run never began. With one, it is a post-start framework error on a run that did.
-      handle.completionReason = handle.session === undefined
+      //
+      // 401-18: THAT DISTINCTION NOW LEAVES THIS FUNCTION. It was computed here and spent on a
+      // prefix, so the host had to re-derive it from prose and got it wrong. Same test, carried.
+      refusedBeforeStart = handle.session === undefined
+      handle.completionReason = refusedBeforeStart
         ? message
         : `Run failed after start: ${message}`
       if (!handle.cancelRequested) handle.status = 'failed'
@@ -351,6 +360,8 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     const details: RunSettledDetails = {
       ...(handle.completionReason === undefined ? {} : { reason: handle.completionReason }),
       ...(remedies === undefined ? {} : { remedies }),
+      ...(refusedBeforeStart ? { refusedBeforeStart: true as const } : {}),
+      ...(neutralReason === undefined ? {} : { neutralReason }),
       output: [...handle.output],
     }
     this.emit('run-settled', handle.runId, handle.status, details)
@@ -401,6 +412,35 @@ function dashboardRemediesOf(error: unknown): readonly GateRemedy[] | undefined 
     })
   }
   return remediesRenderableBy('dashboard', remedies)
+}
+
+/**
+ * The surface-neutral prose a rejection is carrying, if it carries any (401-18, G-401-16).
+ *
+ * READ STRUCTURALLY, ON `dashboardRemediesOf`'s EXACT PRECEDENT, and for the same architectural
+ * reason: the rejection is minted in `agent-local` or `agent`, and this package may not import
+ * `agent`, `agent-local` or `safety` — `pnpm validate:arch` is the mechanical proof. So the field is
+ * read off the value, never through a class test.
+ *
+ * AND NEVER BY A REGEX OVER THE MESSAGE. Splitting the canonical sentence apart here would be a
+ * second parser over prose another package composes, which is the defect class this whole repair
+ * exists to close — the gate composes both phrasings from one decision, or neither is trustworthy.
+ *
+ * ABSENT IS A SUPPORTED ANSWER. Only a gate decision has a second phrasing; an unrecognised request
+ * field, an input error and "the host was asked to start a run before it was composed" do not, and
+ * they name no surface's affordance in their own messages either. The consumer falls back to the
+ * rejection's own message for those, which is what it should show.
+ *
+ * VALIDATED AS FAR AS PROSE CAN BE: a non-empty string, or nothing. There is no closed vocabulary
+ * to check it against — unlike the remedies, whose kinds live in `schema` precisely because they
+ * are data — so what this refuses is a non-string and an empty one, and it passes through no
+ * instructions of its own.
+ */
+function dashboardNeutralReasonOf(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) return undefined
+  const carried = (error as { neutralReason?: unknown }).neutralReason
+  if (typeof carried !== 'string' || carried.trim().length === 0) return undefined
+  return carried
 }
 
 export function createInProcessExecutionBackend(

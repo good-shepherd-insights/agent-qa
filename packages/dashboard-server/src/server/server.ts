@@ -150,6 +150,10 @@ export async function startServer(opts: StartServerOptions): Promise<{
         let dbStatus: string
         let failureSummary: string | undefined
         let errorLog: string | undefined
+        // 401-18 (G-401-16): the neutral prose a REFUSAL is carrying, held aside so the errorLog
+        // composition below can prefer it over the diagnostic lines. Undefined on every other arm,
+        // which is what keeps those arms byte-identical.
+        let refusalProse: string | undefined
         const explicitCancellation = run.status === 'cancelled' || status === 'cancelled'
         if (explicitCancellation) {
           dbStatus = 'cancelled'
@@ -157,6 +161,27 @@ export async function startServer(opts: StartServerOptions): Promise<{
         } else if (status === 'timeout') {
           dbStatus = 'failed'
           failureSummary = 'Test timed out -- process was killed'
+        } else if (details.refusedBeforeStart) {
+          // A REFUSAL IS NOT A PROCESS EXIT (401-18, G-401-16).
+          //
+          // Branched on the FACT the settle carries, above the `completed` arm and above the regex
+          // fallback, because both of those describe a run that ran. A run the gate refused before
+          // anything started has no exit to report — and the summary is the line a runs list shows,
+          // so it was the sentence a person read about every denied dashboard run.
+          //
+          // THE PROSE IS THE GATE'S NEUTRAL FORM, NOT ITS CANONICAL ONE. The canonical sentence
+          // names `--trust-session`, a flag declared on one CLI command, and this reader is in a
+          // browser. Where the rejection carries no neutral form — an unrecognised request field, an
+          // input error — its own message is used, which names no surface's affordance either.
+          //
+          // WHAT A PERSON CAN DO ABOUT IT does not live in this sentence at all: it is the typed
+          // `details.remedies`, already projected for this surface by the backend, which the run
+          // record and the live envelope both carry.
+          dbStatus = 'failed'
+          refusalProse = details.neutralReason ?? details.reason
+          failureSummary = refusalProse
+            ? `Refused before the run started: ${refusalProse}`.slice(0, 300)
+            : 'Refused before the run started'
         } else if (status === 'completed') {
           dbStatus = 'failed'
           failureSummary = 'Process exited before test completed'
@@ -174,7 +199,11 @@ export async function startServer(opts: StartServerOptions): Promise<{
             : 'Process exited before test completed'
         }
 
-        if (dbStatus === 'failed' && output.length) {
+        if (refusalProse !== undefined) {
+          // The refused run's ONLY record of why it never happened. The diagnostic lines it
+          // replaces are the rejection's canonical message — the one carrying the CLI flag.
+          errorLog = refusalProse.replace(/\x1b\[[0-9;]*m/g, '').slice(-10000) || undefined
+        } else if (dbStatus === 'failed' && output.length) {
           errorLog = [...output]
             .join('\n')
             .replace(/\x1b\[[0-9;]*m/g, '')
