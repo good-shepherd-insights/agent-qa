@@ -141,7 +141,15 @@ const MARKER_CENSUS: Readonly<Record<string, 'consumer' | 'carrier' | 'producer'
   'packages/agent/src/jobs/kinds.ts': 'carrier',
   'packages/cli/src/curation/post-run-tail.ts': 'carrier',
   'packages/cli/src/commands/run.ts': 'carrier',
-  'packages/cli/src/composition/local-agent-host.ts': 'carrier',
+  // 2026-08-23 (401-10): `packages/cli/src/composition/local-agent-host.ts` LEFT THIS CENSUS WITH
+  // ITS SUBJECT. It was a carrier because `MARKER_FLAGS` translated the two markers into the child
+  // flags `--gate-run` / `--excluded-from-outcomes` — the middle link 393 (WTST-06) had to add
+  // before a gate run could reach a real CLI at all. D-01 deleted the child, so the table went with
+  // it and the file names neither marker in code any more. REMOVED rather than relaxed: this census
+  // is an equality between what the scan finds and what the register classifies, so a member the
+  // tree no longer contains is a permanently red pin, not a stricter one. The chain it linked is
+  // unbroken — `run-invocation-core.ts` below carries the markers onto the run in process, and
+  // `run-invocation-core.test.ts` / `run-invocation-evidence.test.ts` assert the carriage.
   'packages/agent-local/src/composition/run-invocation-core.ts': 'carrier',
 
   // Producers: the sites that put the marker on a request in the first place.
