@@ -10,10 +10,44 @@
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { RunConfirmDialog } from "@/components/run-confirm-dialog"
+import { RunConfirmDialog, RunConfirmHost } from "@/components/run-confirm-dialog"
 import { CONFIRM_ANSWER_VOCABULARY } from "@/lib/api"
+
+// THE CHANNEL, CAPTURED — the seam the SHIPPED host reads (401-14, CR-05).
+//
+// jsdom has no `EventSource`, and `RunConfirmHost` takes an early return without one — which is
+// exactly how the wire came to be source-pinned rather than driven (401-VERIFICATION §
+// behaviour-unverified). So the cell below supplies a stub constructor to get PAST that guard and
+// then drives the host through `openRunConfirmChannel`'s own callbacks: the same three functions
+// the production `EventSource` listeners invoke, with the same frames. It asserts the request
+// arrived and rendered BEFORE it asserts anything about a resolution, so a cell that silently took
+// the early return could not pass by asserting the absence of something.
+const channel = vi.hoisted(() => ({
+  callbacks: undefined as
+    | undefined
+    | {
+        onScope?: (frame: { scopeId: string }) => void
+        onConfirmRequest?: (frame: { confirmId: string; actionClass: string; preview?: string }) => void
+        onConfirmResolved?: (frame: { confirmId: string; answer: string; by: string }) => void
+      },
+}))
+
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>()
+  return {
+    ...actual,
+    // The REAL vocabulary stays real — the three-answers cell above reads it, and a mocked enum
+    // would make that assertion agree with this file instead of with the wire.
+    openRunConfirmChannel: (callbacks: NonNullable<typeof channel.callbacks>) => {
+      channel.callbacks = callbacks
+      return { close: () => {} } as unknown as EventSource
+    },
+    setRunConfirmScope: () => {},
+    answerRunConfirm: async () => ({ ok: true }),
+  }
+})
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -29,11 +63,19 @@ function mount(element: ReactElement): HTMLDivElement {
   return container
 }
 
+beforeEach(() => {
+  channel.callbacks = undefined
+  // A CONSTRUCTOR THAT DOES NOTHING, only so the host's `typeof EventSource === "undefined"` guard
+  // is not the thing under test. The mocked `openRunConfirmChannel` never constructs one.
+  ;(globalThis as { EventSource?: unknown }).EventSource = class {}
+})
+
 afterEach(() => {
   act(() => { root?.unmount() })
   container?.remove()
   container = null
   root = null
+  delete (globalThis as { EventSource?: unknown }).EventSource
 })
 
 describe("the run trigger's confirm dialog", () => {
@@ -112,5 +154,57 @@ describe("the run trigger's confirm dialog", () => {
     expect(dialog?.getAttribute("role")).toBe("dialog")
     expect(dialog?.getAttribute("aria-modal")).toBe("true")
     expect(dialog?.getAttribute("aria-label")).toBeTruthy()
+  })
+})
+
+describe("the run confirm host answers only its own question (401-14, CR-05)", () => {
+  it("a resolution for a DIFFERENT confirm leaves this question pending and answerable", () => {
+    // THE DEFECT: `onConfirmResolved` set the resolution from ANY frame, so a stale or overlapping
+    // `confirm_resolved` rendered THIS question as resolved with another question's answer — and
+    // the linger timer then cleared it, costing the person their chance to answer. The chat sibling
+    // has always keyed its resolution to the matching `confirmId` (`use-chat-turn.ts`); the run
+    // path is the half of that pair that was left standing.
+    //
+    // NOT A SECURITY BYPASS, and the cell does not claim one: `answerRunConfirm` posts the real
+    // confirmId and the SERVER decides, so a spurious "approved" render approves nothing. What is
+    // lost is the answer.
+    const host = mount(<RunConfirmHost />)
+
+    // DELIVERY FIRST. If the host had taken its no-EventSource early return there would be no
+    // callbacks here, and every assertion below would be about a component that never mounted.
+    expect(channel.callbacks, "the host opened no channel — nothing below measures anything")
+      .toBeDefined()
+
+    act(() => {
+      channel.callbacks!.onConfirmRequest!({
+        confirmId: "confirm-A",
+        actionClass: "run:start",
+        preview: "Start a run against target the-one-being-asked-about (environment: shared).",
+      })
+    })
+    expect(host.querySelector("[data-run-confirm-dialog]")?.getAttribute("data-confirm-id"))
+      .toBe("confirm-A")
+
+    // A frame for somebody else's question.
+    act(() => {
+      channel.callbacks!.onConfirmResolved!({ confirmId: "confirm-B", answer: "accept", by: "answer" })
+    })
+
+    const dialog = host.querySelector("[data-run-confirm-dialog]")
+    expect(dialog?.getAttribute("data-confirm-id"), "the pending question changed identity")
+      .toBe("confirm-A")
+    expect(dialog?.getAttribute("data-confirm-resolution"), "another question's answer resolved this one")
+      .toBeNull()
+    // AND IT IS STILL ANSWERABLE — the three live buttons, which is the thing actually lost when a
+    // stale frame resolves a pending question and the linger timer then clears it.
+    expect(host.querySelectorAll("[data-confirm-answer]")).toHaveLength(3)
+
+    // THE CONTROL, one thing different: the SAME confirmId, and it resolves.
+    act(() => {
+      channel.callbacks!.onConfirmResolved!({ confirmId: "confirm-A", answer: "accept", by: "answer" })
+    })
+    expect(host.querySelector("[data-run-confirm-dialog]")?.getAttribute("data-confirm-resolution"))
+      .toBe("accept")
+    expect(host.querySelectorAll("[data-confirm-answer]")).toHaveLength(0)
   })
 })
