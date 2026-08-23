@@ -757,31 +757,47 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
         deniedSettle!.details['remedies'],
         'the refused run carried no way forward',
       ).toEqual([{ kind: 'answer-confirm' }])
-      // WHAT THE REFUSED RUN'S RECORD SAYS. Pinned VERBATIM because two of these strings are
-      // findings in their own right, and a cell that only asserted "it failed" would hide both:
+      // ARRIVAL BEFORE CLAIM, this file's rule applied to the REFUSED run's own audit row. A
+      // `run:start` decision really was taken for run B and really was classified — which is what
+      // separates "the gate refused it" from "nothing ever reached the gate". Without this the
+      // assertions below would read the same for a run that never got there, because an absent
+      // field and a refused one are both `undefined`.
+      const deniedDecision = runStartRows(fixture).find((row) => row.runId === runB)
+      expect(deniedDecision, 'no run:start decision was ever recorded for the refused run').toBeDefined()
+      expect(deniedDecision!.riskTier, 'the refused run was never classified').toBeTruthy()
+      expect(deniedDecision!.outcome).toBe('prompted-denied')
+
+      // WHAT THE REFUSED RUN'S RECORD SAYS. These two assertions were carried as RECORDED, NOT
+      // ENDORSED across 401-16's rewrite of this cell (found afterwards at lines 771 and 784) and
+      // are the POSITIVE CLAIM now (401-18, G-401-16):
       //
-      //   * `failureSummary` — the line a runs list shows — says a PROCESS EXITED. No process
-      //     exited. The gate refused before anything started, and the true reason is one field
-      //     further away in `errorLog`.
-      //   * the reason offers `--trust-session`, a CLI flag, to somebody who was sitting in a
-      //     browser. 401-09's mutation 4 guarded exactly this leak on the TYPED remedies (which
-      //     are correctly `answer-confirm` above); the prose channel still carries it.
+      //   * `failureSummary` — the line a runs list shows — said a PROCESS EXITED. No process
+      //     exited; the gate refused before anything started. It now names the refusal, because
+      //     the settle carries `refusedBeforeStart` as a fact instead of leaving the host's
+      //     reconciliation to guess from a regex over the diagnostic lines.
+      //   * the record's account of WHY offered `--trust-session`, a flag declared on one CLI
+      //     command, to somebody who was sitting in a browser. It is the gate's surface-neutral
+      //     sentence now — the one `buildDecisionNeutralReason` has composed since 400's gap round
+      //     and the chat door has rendered ever since, which this door was not reading.
       //
-      // RECORDED, NOT ENDORSED. If either is repaired this assertion reds, which is the point.
+      // THE TYPED REMEDY ASSERTION ABOVE IS UNCHANGED, and it is now this pair's control: it was
+      // already correct, so a repair that swept the whole channel instead of the prose half would
+      // have had to disturb it.
       const deniedRun = scene.db.getRun(runB)
       expect(deniedRun?.status).toBe('failed')
       expect(
         deniedRun?.failureSummary,
-        'the refused run is summarised as a process that exited',
-      ).toBe('Process exited before test completed')
+        'the refused run is still summarised as a process that exited',
+      ).toContain('Refused before the run started')
+      expect(deniedRun?.failureSummary).not.toContain('Process exited')
       expect(
         deniedRun?.errorLog,
-        'the only record of WHY the run never happened',
+        'the record of WHY the run never happened',
       ).toContain('prompted-denied')
       expect(
-        deniedRun?.errorLog,
-        'a CLI flag is offered as the way forward to somebody in a browser',
-      ).toContain('--trust-session')
+        `${deniedRun?.failureSummary ?? ''}\n${deniedRun?.errorLog ?? ''}`,
+        'a CLI flag is still offered as the way forward to somebody in a browser',
+      ).not.toContain('--trust-session')
 
       // AND THE APPROVED RUN REALLY STARTED — read off the run's own artifacts, never the UI's
       // optimism. `target.hits` is a MEMBERSHIP assertion and never a count: `playwright-core`
