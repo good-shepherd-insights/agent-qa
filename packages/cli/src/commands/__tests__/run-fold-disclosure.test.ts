@@ -71,3 +71,38 @@ describe('no member set with a shared or undeclared member can render the all-lo
     expect(sentence).not.toContain('environment: ')
   })
 })
+
+/**
+ * THE ARM THE ENUMERATION ABOVE CANNOT REACH (401-19, WR-02).
+ *
+ * `MEMBER_SETS` ranges `RunTargetClass`, which is the whole domain the TYPE admits — and the whole
+ * domain the CONFIG can produce, because `environment: production` is refused at config load. This
+ * arm is about the input that arrives anyway.
+ *
+ * IT IS THE LIBRARY-EMBEDDING SCENARIO, AND IT CANNOT BE DRIVEN THROUGH A SHIPPED DOOR. Saying so
+ * is the point: `resolveTarget` reads `(config as any).registry?.targets` and returns
+ * `targets[targetName] as TargetEntry` with no runtime check of its own (targets.ts:35-53), so a
+ * host that BUILDS a config object in memory — rather than loading one off disk through the
+ * validating reader — puts any string it likes on `environment`, and the fold is the next thing to
+ * see it. A cell that claimed a CLI invocation produced this would be false; the arm is constructed
+ * directly against the exported fold for exactly that reason.
+ */
+describe('a declaration the enum forbids takes the fail-closed answer, never `local` (401-19, WR-02)', () => {
+  const STRANGER = 'production' as unknown as RunTargetClass
+
+  it('a stranger beside a local member does not make the invocation local', () => {
+    expect(foldMostRestrictiveTargetClass(['local', STRANGER])).toBeUndefined()
+  })
+
+  it('a stranger alone does not make the invocation local', () => {
+    expect(foldMostRestrictiveTargetClass([STRANGER])).toBeUndefined()
+  })
+
+  it('and the answer it takes renders the undeclared clause, which classifies as shared', () => {
+    // The consequence, not just the value: `buildRunRiskDescriptor` reads anything other than
+    // `local` as `mutating-shared`, and the sentence a person is asked to approve says so.
+    const sentence = buildRunDisclosure(foldMostRestrictiveTargetClass(['local', STRANGER]), ['ok', 'weird'])
+    expect(sentence).toContain('declared: at least one target undeclared, which classifies as shared')
+    expect(sentence).not.toContain(ALL_LOCAL_CLAUSE)
+  })
+})
