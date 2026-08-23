@@ -637,3 +637,120 @@ describe('the descriptor the CLI door hands the gate names every target it will 
     }
   }, 120_000)
 })
+
+describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19, WR-04)', () => {
+  it('two members naming two different web targets: each target is probed, once', async () => {
+    // The direct producer's road. Both targets declare `local`, so the run is allowed with no
+    // confirm and the only axis left is which URLs assembly reaches for.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({
+        origin: target.origin,
+        environment: 'local',
+        secondTarget: true,
+      })
+
+      // REACH, BEFORE ANY CLAIM ABOUT PROBES. Two members, and the URLs they carry are the two
+      // targets' own — read off the producer rather than off the run, so a run that died before
+      // assembly cannot be mistaken for a run that chose not to probe.
+      const inputs = await withExitTrap(() =>
+        resolveRunInvocationInputs({
+          configPath: fixture.configPath,
+          patterns: [fixture.testPattern, fixture.secondTestPattern!],
+        }),
+      )
+      const produced = await produceMembersFromPatterns({ inputs, runId: 'r_per-member-probe' })
+      expect(produced.members).toHaveLength(2)
+      expect(produced.memberProbeUrls).toEqual([
+        `${target.origin}/in-process-thing`,
+        `${target.origin}/the-second-thing`,
+      ])
+
+      try {
+        await runInProcessCliRun(
+          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { patterns: [fixture.testPattern, fixture.secondTestPattern!] },
+        )
+      } catch { /* the members' framework errors; who was knocked on is what this cell reads */ }
+
+      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('proceeded')
+      expect([...target.hits].sort()).toEqual(['/in-process-thing', '/the-second-thing'])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('two members naming the SAME web target cost ONE probe, not one each', async () => {
+    // The dedupe half, and the direction a naive per-member fix breaks: WR-04's complaint was an
+    // unexpected outbound request, so turning one GET into N would be a regression dressed as a fix.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      const patterns = [fixture.testPattern, 'tests/member.yaml']
+
+      const inputs = await withExitTrap(() =>
+        resolveRunInvocationInputs({ configPath: fixture.configPath, patterns }),
+      )
+      const produced = await produceMembersFromPatterns({ inputs, runId: 'r_dedupe-probe' })
+      expect(produced.members).toHaveLength(2)
+      expect(produced.memberProbeUrls).toEqual([
+        `${target.origin}/in-process-thing`,
+        `${target.origin}/in-process-thing`,
+      ])
+
+      try {
+        await runInProcessCliRun(
+          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { patterns },
+        )
+      } catch { /* as above */ }
+
+      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('proceeded')
+      expect(target.hits).toEqual(['/in-process-thing'])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('THE SUITE PRODUCER, the sibling half: two suite members, one target, one probe', async () => {
+    // The same claim on the other producer. A fix applied to the direct loop and not to this one is
+    // this repo's most-repeated defect, so the suite path gets its own cell rather than a reader's
+    // assumption that the two loops agree.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({
+        origin: target.origin,
+        environment: 'local',
+        secondSuiteMember: true,
+      })
+
+      const inputs = await withExitTrap(() =>
+        resolveRunInvocationInputs({
+          configPath: fixture.configPath,
+          patterns: [fixture.suitePattern],
+        }),
+      )
+      const produced = await produceMembersFromPatterns({ inputs, runId: 'r_suite-probe' })
+      expect(produced.members).toHaveLength(2)
+      expect(produced.memberProbeUrls).toEqual([
+        `${target.origin}/in-process-thing`,
+        `${target.origin}/in-process-thing`,
+      ])
+
+      try {
+        await runInProcessCliRun(
+          { ...fixtureOptions(fixture), executionContext: 'local-headless' },
+          { patterns: [fixture.suitePattern] },
+        )
+      } catch { /* as above */ }
+
+      expect(auditRows(fixture as never).map((row) => row.outcome)).toContain('proceeded')
+      expect(target.hits).toEqual(['/in-process-thing'])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+})

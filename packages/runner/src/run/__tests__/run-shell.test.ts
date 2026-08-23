@@ -708,13 +708,19 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
     expect(['timeout', 'environment', 'flake', 'unknown']).toContain(rootCause?.class)
   })
 
-  it('classifies a failed member environment from a 503 baseline probe threaded via RunConfig (D-04)', async () => {
+  it('classifies a failed member environment from a 503 baseline probe carried ON THE MEMBER (D-04)', async () => {
     const store = makeFakeHandoffStore()
     const session = startRun(
       baseConfig({
-        members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }],
+        members: [
+          {
+            testId: 'a',
+            name: 'test a',
+            filePath: 'a.test.ts',
+            baselineProbe: { status: 503, elapsedMs: 230 },
+          },
+        ],
         executor: scriptedExecutor({ a: failResult('a', 'assertion mismatch') }, []),
-        baselineProbe: { status: 503, elapsedMs: 230 },
         ports: { handoffStore: store, eventLog: makeFakeEventLog() },
       }),
     )
@@ -723,6 +729,39 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
     expect(handoff.tests[0].rootCause?.class).toBe('environment')
     expect(handoff.tests[0].rootCause?.evidence.rationale).toBe('health probe: 503 in 230ms')
     expect(store.saved[0].tests[0].rootCause?.evidence.rationale).toBe('health probe: 503 in 230ms')
+  })
+
+  it('each member is classified against its OWN target’s baseline, never a sibling’s (401-19, WR-04)', async () => {
+    // The two members name two different web targets. One target is sick, the other is healthy —
+    // which is a state a run-level baseline cannot represent at all, and is why a run-level value
+    // applied to everyone reports the healthy target's member as an environment failure.
+    const store = makeFakeHandoffStore()
+    const session = startRun(
+      baseConfig({
+        members: [
+          {
+            testId: 'a',
+            name: 'test a',
+            filePath: 'a.test.ts',
+            baselineProbe: { status: 503, elapsedMs: 230 },
+          },
+          { testId: 'b', name: 'test b', filePath: 'b.test.ts' },
+        ],
+        executor: scriptedExecutor(
+          { a: failResult('a', 'assertion mismatch'), b: failResult('b', 'assertion mismatch') },
+          [],
+        ),
+        ports: { handoffStore: store, eventLog: makeFakeEventLog() },
+      }),
+    )
+    const { handoff } = await done(session)
+
+    // BOTH HALVES. The first is that the member's own baseline is read at all; the second — the one
+    // WR-04 is about — is that the sibling with no baseline of its own does not inherit it.
+    expect(handoff.tests[0].rootCause?.class).toBe('environment')
+    expect(handoff.tests[0].rootCause?.evidence.rationale).toBe('health probe: 503 in 230ms')
+    expect(handoff.tests[1].rootCause?.class).not.toBe('environment')
+    expect(JSON.stringify(handoff.tests[1].rootCause)).not.toContain('health probe')
   })
 
   it('leaves an all-passing run rootCause-free everywhere in the serialized handoff (presence rule)', async () => {
