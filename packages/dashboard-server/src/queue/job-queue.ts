@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { cpus } from 'node:os'
 import type { RunAttributes } from '@vostride/agent-qa-core'
 import type { RunArtifactKind } from '@vostride/agent-qa-schema'
+import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { DashboardDatabase, RunRow } from '../db/database.js'
 
 interface EnqueueOptions {
@@ -47,6 +48,19 @@ export class JobQueue extends EventEmitter {
   }
 
   enqueue(opts: EnqueueOptions): string {
+    // THE BELT, AT THE ONE WRITER BOTH DOORS GO THROUGH (401-23, T-401-G24).
+    //
+    // The primary control is the allowlist at `/api/queue/enqueue`, which does not admit
+    // `confirmScope` as a client-writable key at all. This is the assertion that survives the next
+    // writer: a confirm scope names WHICH BROWSER a run's question is delivered to, so a value this
+    // server did not mint is an address into somebody else's dialog. `/api/runs/trigger` validates
+    // its own; anything else reaching the persisted row must too, or the guarantee is one route's
+    // discipline rather than a property of the queue.
+    const confirmScope = opts.metadata?.['confirmScope']
+    if (confirmScope !== undefined
+      && (typeof confirmScope !== 'string' || !isRunTriggerConfirmScope(confirmScope))) {
+      throw new TypeError('confirmScope must be a confirm scope minted by this server')
+    }
     const runId = this.db.insertPendingRun({
       name: opts.name,
       filePath: opts.filePath,

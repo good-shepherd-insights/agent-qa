@@ -205,6 +205,32 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     rationale: 'Retains buffered live events after terminal state; does not terminate execution.',
     allowed: true,
   },
+  {
+    id: 'dashboard-queued-execution-timeout-positive-guard',
+    file: 'packages/dashboard-server/src/server/routes.ts',
+    literal: '0',
+    contextIncludes: 'value <= 0',
+    owner: 'dashboard routes',
+    scope: 'persisted-row execution timeout positive guard',
+    lifecycleAffecting: true,
+    rationale: 'G-401-18-CR01: `in-process-backend.ts` reads `opts.timeout ?? defaultTimeout` and '
+      + 'validates after, so a non-positive value DISARMS the default reclamation timer instead of '
+      + 'falling back to it.',
+    allowed: true,
+  },
+  {
+    id: 'dashboard-queued-execution-timeout-ceiling',
+    file: 'packages/dashboard-server/src/server/routes.ts',
+    literal: '24 * 60 * 60 * 1000',
+    contextIncludes: 'MAX_QUEUED_EXECUTION_TIMEOUT_MS',
+    owner: 'dashboard routes',
+    scope: 'persisted-row execution timeout ceiling',
+    lifecycleAffecting: true,
+    rationale: 'G-401-18-CR01: a persisted `metadata.timeout` beyond a day is a reclamation timer '
+      + 'that will never fire; over the ceiling the seam falls back to the backend default rather '
+      + 'than arming it.',
+    allowed: true,
+  },
   // Phase 401 plan 07 (D-01/D-12) — the four `test-runner.ts` entries that inventoried a CHILD
   // PROCESS are gone with the child: the heartbeat poll cadence, the stale-silence threshold, the
   // one-millisecond buffer that kept the threshold above the cadence, and the SIGTERM-to-SIGKILL

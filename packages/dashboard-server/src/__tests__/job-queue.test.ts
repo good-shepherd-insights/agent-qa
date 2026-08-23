@@ -400,3 +400,41 @@ describe('JobQueue', () => {
     })
   })
 })
+
+// ---- G-401-18-CR01 (401-23, T-401-G24): the belt at the one writer both doors go through -------
+//
+// The PRIMARY control is the `/api/queue/enqueue` allowlist, which does not admit `confirmScope` as
+// a client-writable key at all. This is what survives the NEXT writer. A confirm scope names which
+// browser a run's question is delivered to, so a value this server did not mint is an address into
+// somebody else's dialog — and until 401-23 the queue door planted one with none of the validation
+// `/api/runs/trigger` applies.
+
+describe('JobQueue refuses a confirm scope this server did not mint', () => {
+  it('throws on a foreign-shaped confirmScope, and writes no row', () => {
+    const before = db.getRuns({ limit: 100 }).length
+    expect(() => queue.enqueue({ name: 'planted', metadata: { confirmScope: 'chat-1730000000-abc' } }))
+      .toThrow(/minted by this server/)
+    // NOT MERELY REFUSED — nothing was half-written. `insertPendingRun` runs before
+    // `insertRunArtifact`, so a check placed after either one would leave an orphan.
+    expect(db.getRuns({ limit: 100 })).toHaveLength(before)
+  })
+
+  it('throws on a non-string confirmScope', () => {
+    expect(() => queue.enqueue({ name: 'planted', metadata: { confirmScope: { toString: () => 'run-trigger:x' } } }))
+      .toThrow(/minted by this server/)
+  })
+
+  it('ADMITS a scope of the shape this server mints — the feature is validated, not deleted', () => {
+    const runId = queue.enqueue({
+      name: 'trigger',
+      metadata: { confirmScope: 'run-trigger:2f1d0f2a-6f1e-4a2b-9c3d-5e6f70819200' },
+    })
+    expect(db.getRun(runId)?.metadata?.confirmScope)
+      .toBe('run-trigger:2f1d0f2a-6f1e-4a2b-9c3d-5e6f70819200')
+  })
+
+  it('a run with no confirmScope at all is unaffected — the no-op control', () => {
+    const runId = queue.enqueue({ name: 'plain', metadata: { args: ['/w/tests/plain.yaml'] } })
+    expect(db.getRun(runId)?.metadata).toEqual({ args: ['/w/tests/plain.yaml'] })
+  })
+})

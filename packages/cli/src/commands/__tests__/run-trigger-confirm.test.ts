@@ -134,7 +134,7 @@ async function openScene(input: {
 
   const executed: Record<string, unknown>[] = []
   const backendExecute = runDoor.backend.execute.bind(runDoor.backend)
-  ;(runDoor.backend as { execute: (opts: Record<string, unknown>) => unknown }).execute = (
+  ;(runDoor.backend as unknown as { execute: (opts: Record<string, unknown>) => unknown }).execute = (
     opts: Record<string, unknown>,
   ) => {
     executed.push(opts)

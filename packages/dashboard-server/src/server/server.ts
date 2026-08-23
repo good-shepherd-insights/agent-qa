@@ -3,7 +3,7 @@ import { readFile, stat } from 'node:fs/promises'
 import { join, extname, resolve } from 'node:path'
 import { cpus } from 'node:os'
 import type { DashboardDatabase } from '../db/database.js'
-import { createRouter } from './routes.js'
+import { createRouter, sanitizeQueuedExecutionTimeout } from './routes.js'
 import { backstopServerError, refuseUnparseableRequest, tryParseRequestUrl } from './request-url.js'
 import type { ExecutionBackend, RunSettledDetails, RunSettledStatus } from '../execution/execution-backend.js'
 import { JobQueue } from '../queue/job-queue.js'
@@ -433,7 +433,12 @@ export async function startServer(opts: StartServerOptions): Promise<{
       // queue is what decides WHEN a run starts, so the trigger's fact has to survive the wait.
       ...(typeof meta.confirmScope === 'string' ? { confirmScope: meta.confirmScope } : {}),
       attributes: run.attributes,
-      timeout: meta.timeout as number | undefined,
+      // T-401-G26 (401-23): a persisted row's timeout is VALIDATED at the seam that consumes it.
+      // `in-process-backend.ts:211` reads `opts.timeout ?? defaultTimeout` and validates AFTER, so
+      // any non-nullish nonsense here skips the default and leaves the run with no reclamation
+      // timer at all. An unusable value falls back to the backend's default rather than a number
+      // this call invented.
+      timeout: sanitizeQueuedExecutionTimeout(meta.timeout),
       // THE LEASE ABOVE IS UNCHANGED; ONLY ITS DELIVERY IS. `acquireLease` still runs where it ran,
       // still keys on this run id and still owns the bundled Appium's lifecycle (design-of-record).
       // What used to ride `AGENT_QA_APPIUM_URL` in a child's environment now travels as an

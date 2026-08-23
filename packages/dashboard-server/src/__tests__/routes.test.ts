@@ -1469,7 +1469,15 @@ describe('API Routes', () => {
       expect(enqueue).not.toHaveBeenCalled()
     })
 
-    it('strips client-controlled execution targets from queued metadata', async () => {
+    // ---- G-401-18-CR01 (write half): `metadata` is server-derived -----------------------------
+    //
+    // THE REJECT/ADMIT PAIR. A control that only shows the door refusing cannot tell an allowlist
+    // apart from a route that 400s on every request, and a control that only shows it admitting
+    // cannot tell one apart from a route with no validation at all. Both are here, and the ADMIT
+    // side is the one that proves the tightening validated the door rather than closing it: a
+    // caller's own labels still round-trip, through `attributes`, which is their actual door.
+
+    it('REJECT — a client-supplied metadata key is refused by name, not silently dropped', async () => {
       const enqueue = vi.fn().mockReturnValue('run-queue-metadata')
       const queueDb = {
         ...(db as any),
@@ -1491,16 +1499,52 @@ describe('API Routes', () => {
             target: '/tmp/outside.yaml',
             args: ['/tmp/outside.yaml'],
             keep: 'trusted label',
+            confirmScope: 'run-trigger:planted-by-a-client',
+            timeout: 9_007_199_254_740_991,
           },
         }),
       })
 
+      expect(res.status).toBe(400)
+      const error = String((JSON.parse(res.body) as { error: string }).error)
+      // NAMED, ALL OF THEM. A message that mentioned only the first offending key would let a
+      // caller peel the request one key at a time and never learn the rule.
+      for (const key of ['args', 'confirmScope', 'keep', 'target', 'timeout']) {
+        expect(error, `the refusal did not name ${key}`).toContain(key)
+      }
+      expect(error).toContain('attributes')
+      // AND NOTHING WAS ENQUEUED — a 400 that still queued the run would be a worse defect than
+      // the one this closes.
+      expect(enqueue).not.toHaveBeenCalled()
+    })
+
+    it('ADMIT — a request with no client metadata queues, and the caller\'s own labels round-trip', async () => {
+      const enqueue = vi.fn().mockReturnValue('run-queue-admitted')
+      const queueDb = {
+        ...(db as any),
+        getPendingRuns: vi.fn(() => [{ id: 'run-queue-admitted' }]),
+      }
+      router = createRouter({
+        db: queueDb as any,
+        jobQueue: { enqueue } as any,
+      })
+
+      const res = await invokeRoute('/api/queue/enqueue', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Queued admitted',
+          metadata: {},
+          attributes: { 'git.branch': 'gap-401-23' },
+        }),
+      })
+
       expect(res.status).toBe(202)
+      // THE SERVER'S OWN METADATA STILL REACHES THE QUEUE. The allowlist refuses what a CLIENT
+      // writes; it must not have deleted what this route writes.
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
-        metadata: {
-          keep: 'trusted label',
-          args: [],
-        },
+        metadata: { args: [] },
+        attributes: expect.objectContaining({ 'git.branch': 'gap-401-23' }),
       }))
     })
 

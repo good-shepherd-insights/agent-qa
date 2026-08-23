@@ -6,7 +6,15 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it, expect, beforeEach } from 'vitest'
 
-import { createRouter, RESPONSE_SAFE_RUN_READ_METHODS } from '../server/routes.js'
+import {
+  CLIENT_WRITABLE_QUEUED_RUN_METADATA_KEYS,
+  MAX_QUEUED_EXECUTION_TIMEOUT_MS,
+  RESPONSE_SAFE_RUN_METADATA_KEYS,
+  RESPONSE_SAFE_RUN_READ_METHODS,
+  SERVER_OWNED_RUN_METADATA_KEYS,
+  createRouter,
+  sanitizeQueuedExecutionTimeout,
+} from '../server/routes.js'
 
 interface MockRun {
   id: string
@@ -1141,5 +1149,88 @@ describe('CR-02 — the read-path census cannot rot', () => {
         `${mutator} is excused from the wrapper because this router never calls it — it now does`,
       ).toBe(false)
     }
+  })
+})
+
+// ---- G-401-18-CR01 (write half): the queue door's allowlist and the timeout consumer seam ------
+
+describe('the write door is an allowlist, and the allowlist is derivable', () => {
+  /**
+   * THE INVARIANT A FUTURE WIDENING MUST SATISFY.
+   *
+   * The set is empty today, which makes both clauses vacuous today and is exactly why the cell is
+   * worth its line: the moment somebody adds a key, this is the rule they have to have thought
+   * about. A key a client may write but no response may carry is write-only dead weight nobody can
+   * read back; a key the SERVER writes is one a client must never be able to overwrite — which is
+   * the whole of `confirmScope` and `timeout`, the two the escalation turned on.
+   */
+  it('every client-writable queue-door key is response-safe and not server-owned', () => {
+    for (const key of CLIENT_WRITABLE_QUEUED_RUN_METADATA_KEYS) {
+      expect(
+        RESPONSE_SAFE_RUN_METADATA_KEYS.has(key),
+        `${key} can be written by a client but no response may carry it — write-only dead weight`,
+      ).toBe(true)
+      expect(
+        SERVER_OWNED_RUN_METADATA_KEYS.has(key),
+        `${key} is written by this server; a client-writable copy lets the client overwrite it`,
+      ).toBe(false)
+    }
+    // THE OTHER SET IS NOT PROSE. Both keys the escalation turned on are named in it, so the
+    // clause above is a real refusal rather than a comparison against an empty bag.
+    expect(SERVER_OWNED_RUN_METADATA_KEYS.has('confirmScope')).toBe(true)
+    expect(SERVER_OWNED_RUN_METADATA_KEYS.has('timeout')).toBe(true)
+  })
+})
+
+describe('a persisted row\'s execution timeout is validated where it is consumed (T-401-G26)', () => {
+  it('REJECTS every value that would leave the run with no reclamation timer', () => {
+    // `in-process-backend.ts:211` is `opts.timeout ?? defaultTimeout` — so a non-nullish invalid
+    // value does not fall back, it DISARMS. Each of these is that.
+    const refused: unknown[] = [
+      -1,
+      0,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      MAX_QUEUED_EXECUTION_TIMEOUT_MS + 1,
+      Number.MAX_SAFE_INTEGER,
+      '600000',
+      null,
+      {},
+      [],
+    ]
+    for (const value of refused) {
+      expect(
+        sanitizeQueuedExecutionTimeout(value),
+        `${JSON.stringify(value) ?? String(value)} reached executionBackend.execute`,
+      ).toBeUndefined()
+    }
+  })
+
+  it('ADMITS a server-computed timeout unchanged, up to and including the ceiling', () => {
+    // The shape `toExecutionTimeoutMetadata` writes: a YAML/config timeout plus the dashboard
+    // buffer. The feature is validated, not deleted.
+    expect(sanitizeQueuedExecutionTimeout(660_000)).toBe(660_000)
+    expect(sanitizeQueuedExecutionTimeout(1)).toBe(1)
+    expect(sanitizeQueuedExecutionTimeout(MAX_QUEUED_EXECUTION_TIMEOUT_MS))
+      .toBe(MAX_QUEUED_EXECUTION_TIMEOUT_MS)
+    // Absence round-trips as absence — a row that says nothing about its timeout gets the
+    // backend's default, which is what `undefined` means to `execute`.
+    expect(sanitizeQueuedExecutionTimeout(undefined)).toBeUndefined()
+  })
+
+  /**
+   * The seam pin. `run-trigger-confirm.test.ts` drives this guard through the SHIPPED queue and
+   * reads the argument the backend was called with — that is the primary. This is the cheap
+   * structural backstop against the guard staying correct while its one call site is edited away,
+   * and it is labelled as such rather than dressed up as the measurement.
+   */
+  it('server.ts consumes the row through the guard rather than casting it', () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'server', 'server.ts'),
+      'utf8',
+    )
+    expect(source).toContain('timeout: sanitizeQueuedExecutionTimeout(meta.timeout)')
+    expect(source).not.toContain('meta.timeout as number')
   })
 })

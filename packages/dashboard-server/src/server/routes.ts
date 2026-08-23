@@ -1090,9 +1090,94 @@ async function normalizeDashboardSuitePath(
   return suiteFileManager.resolvePath(filePath)
 }
 
-function sanitizeQueuedRunMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
-  const { args: _args, target: _target, isSuite: _isSuite, ...safeMetadata } = metadata ?? {}
-  return safeMetadata
+/**
+ * The `metadata` keys a CLIENT may write through `POST /api/queue/enqueue` (401-23, G-401-18-CR01).
+ *
+ * IT IS EMPTY, AND THE EMPTINESS IS THE DERIVATION'S ANSWER, not a placeholder. Every key that ever
+ * appears in a run's `metadata` is written by this server: `args`/`isSuite` by the enqueue routes,
+ * `timeout`/`timeoutSource`/`timeoutBaseMs`/`timeoutBufferMs` by `toExecutionTimeoutMetadata`,
+ * `confirmScope` by `/api/runs/trigger` after `isRunTriggerConfirmScope`, and
+ * `suiteIndex`/`farmSessionUrl`/`runDevice` by the CLI runner. A caller's OWN labels have their own
+ * first-class door on this route — `attributes`, validated by `buildRunRequestAttributes` and
+ * persisted in its own column. There is nothing left for a client to legitimately put here.
+ *
+ * WHAT IT REPLACED, AND WHY THE SHAPE MATTERS. It was a three-key DENYLIST (`args`/`target`/
+ * `isSuite`), which is why `POST /api/queue/enqueue { metadata: { confirmScope } }` planted an
+ * arbitrary confirm scope on a persisted run row with none of the validation `/api/runs/trigger`
+ * applies. Paired with the artifact-payload leak this plan also closes, that bought an attacker the
+ * whole escalation: read one browser's scope off `/artifact`, plant it on a run of your choosing,
+ * and the confirm for that run is raised in the victim's own dialog. A read-side strip with an open
+ * write door is half a fix, and this project has measured one-sided hardening minting regressions
+ * three times (388/390/392).
+ *
+ * IF THIS SET EVER GAINS A KEY, `routes.runs.test.ts` holds the invariant it must satisfy: a
+ * client-writable key must also be response-safe (or it is write-only dead weight nobody can read
+ * back) and must not be one the server itself writes (or the client can overwrite the server).
+ */
+export const CLIENT_WRITABLE_QUEUED_RUN_METADATA_KEYS: ReadonlySet<string> = new Set<string>([])
+
+/** The `metadata` keys this SERVER writes onto a run row — never a client. */
+export const SERVER_OWNED_RUN_METADATA_KEYS: ReadonlySet<string> = new Set<string>([
+  'args',
+  'confirmScope',
+  'farmSessionUrl',
+  'isSuite',
+  'runDevice',
+  'suiteIndex',
+  'target',
+  'timeout',
+  'timeoutBaseMs',
+  'timeoutBufferMs',
+  'timeoutSource',
+])
+
+type QueuedRunMetadataResult =
+  | { readonly ok: true; readonly metadata: Record<string, unknown> }
+  | { readonly ok: false; readonly rejected: readonly string[] }
+
+/**
+ * The write door's allowlist, and it REFUSES rather than silently dropping.
+ *
+ * ONE MECHANISM, NOT TWO. A filter that quietly deletes what it will not accept and a validator
+ * that rejects it are the same decision made twice, and the version that keeps both is the version
+ * where one of them stops being reached. This is the validator; the admitted subset it returns is
+ * what reaches `enqueue`. A caller that sends a key the server owns learns so, the way
+ * `/api/runs/trigger` already tells a caller its `confirmScope` was not minted here.
+ */
+function sanitizeQueuedRunMetadata(metadata: unknown): QueuedRunMetadataResult {
+  if (metadata === undefined || metadata === null) return { ok: true, metadata: {} }
+  if (!isRecord(metadata)) return { ok: false, rejected: ['metadata'] }
+  const rejected = Object.keys(metadata)
+    .filter((key) => !CLIENT_WRITABLE_QUEUED_RUN_METADATA_KEYS.has(key))
+    .sort()
+  if (rejected.length > 0) return { ok: false, rejected }
+  return { ok: true, metadata: { ...metadata } }
+}
+
+/**
+ * The largest execution timeout a persisted run row may carry into `executionBackend.execute`.
+ *
+ * THE CEILING IS NOT THE POINT; THE FLOOR IS. `in-process-backend.ts:211` reads
+ * `opts.timeout ?? this.options.defaultTimeout` and then validates — so ANY non-nullish nonsense
+ * (`-1`, `NaN`, `'soon'`) skips the default and leaves the run with no reclamation timer at all. A
+ * client that could write that key could pin a queue slot open forever. The ceiling closes the same
+ * hole from the other side, where a finite but absurd value is a timer that will never fire; a day
+ * is well past any dashboard-queued test (the largest the server itself computes is a YAML timeout
+ * plus `DASHBOARD_EXECUTION_TIMEOUT_BUFFER_MS`), and the point is to keep reclamation reachable,
+ * not to second-guess a long suite.
+ */
+export const MAX_QUEUED_EXECUTION_TIMEOUT_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Validate a persisted row's `metadata.timeout` at the seam that consumes it (401-23, T-401-G26).
+ *
+ * FALLS BACK, NEVER CLAMPS. An unusable value means "this row says nothing about the timeout", and
+ * the honest answer to that is the backend's own default — not a number this function invented.
+ */
+export function sanitizeQueuedExecutionTimeout(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  if (value <= 0 || value > MAX_QUEUED_EXECUTION_TIMEOUT_MS) return undefined
+  return value
 }
 
 // ---- CR-02 (401-18): the confirm scope stops leaving on the READ path ---------------------------
@@ -1121,7 +1206,7 @@ function sanitizeQueuedRunMetadata(metadata: Record<string, unknown> | undefined
  * back is a self-service exfiltration channel; that it never carried anything sensitive in practice
  * is not a property anything checks.
  */
-const RESPONSE_SAFE_RUN_METADATA_KEYS: ReadonlySet<string> = new Set([
+export const RESPONSE_SAFE_RUN_METADATA_KEYS: ReadonlySet<string> = new Set([
   'args',
   'isSuite',
   'target',
@@ -2196,6 +2281,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             json(res, { error: 'name is required' }, 400)
             return
           }
+          // G-401-18-CR01 (write half): `metadata` is SERVER-DERIVED. Refused before any path is
+          // normalized or any attribute built, because the only thing a client can achieve by
+          // sending it is overwriting a decision this server already made.
+          const queuedMetadata = sanitizeQueuedRunMetadata(body.metadata)
+          if (!queuedMetadata.ok) {
+            json(res, {
+              error: 'metadata is server-derived; these keys are not client-writable: '
+                + `${queuedMetadata.rejected.join(', ')}. Use \`attributes\` for caller-supplied labels.`,
+            }, 400)
+            return
+          }
           let normalizedFileTarget: { storagePath: string; executionPath: string } | null = null
           const isSuiteFile = isSuiteFilePath(body.file)
           if (body.file) {
@@ -2228,7 +2324,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             platform: body.platform,
             parallel: body.parallel,
             metadata: {
-              ...sanitizeQueuedRunMetadata(body.metadata),
+              ...queuedMetadata.metadata,
               args: normalizedFileTarget ? [normalizedFileTarget.executionPath] : [],
               ...(isSuiteFile ? { isSuite: true } : {}),
             },
