@@ -29,7 +29,7 @@
 // the preview travels WITH the question, on this component. So the disclosure and the answer are in
 // the same frame, which is the same rule reaching the opposite layout.
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import {
   answerRunConfirm,
@@ -168,6 +168,29 @@ export function RunConfirmHost() {
   // A guard written against `pending` would compare every later frame against `undefined` and
   // therefore ignore every resolution, including the right one.
   const pendingConfirmIdRef = useRef<string | undefined>(undefined)
+  // THE QUESTIONS WAITING THEIR TURN (401-16, G-401-15 / WR-05).
+  //
+  // A REF FOR THE SAME REASON THE TWO ABOVE ARE REFS — the channel's callbacks are captured once at
+  // mount, so a queue in `useState` would be read as `[]` by every arrival after the first and the
+  // third question would vanish while the second still worked.
+  const queuedConfirmsRef = useRef<ChatConfirmRequestFrame[]>([])
+
+  /**
+   * Raise the next question that is still worth asking.
+   *
+   * REACHABLE FROM WHEREVER THE PENDING ID IS CLEARED, not only from the linger timer: a question
+   * can resolve with no dialog left to render it onto, and a drain wired to one clearing site
+   * would leave the queue standing while nothing was on screen.
+   *
+   * Stable (`[]` deps, refs and setters only) so the mount-captured channel callbacks may hold it.
+   */
+  const raiseNextQueued = useCallback(() => {
+    const next = queuedConfirmsRef.current.shift()
+    if (next === undefined) return
+    pendingConfirmIdRef.current = next.confirmId
+    setResolution(undefined)
+    setPending(next)
+  }, [])
 
   useEffect(() => {
     // NO SSE, NO CHANNEL, NO CLAIM — and the page still renders. A document that cannot hold a
@@ -184,6 +207,23 @@ export function RunConfirmHost() {
           setRunConfirmScope(frame.scopeId)
         },
         onConfirmRequest: (frame) => {
+          // AN ARRIVING QUESTION WAITS FOR THE ONE ON SCREEN (401-16, G-401-15; ruled at UAT
+          // test 1). This assignment used to be unconditional, so a second Run click replaced the
+          // first question inside a second — not disabled, not marked superseded, not stacked;
+          // gone from the document. Its denial then arrived thirty seconds later and was correctly
+          // dropped by the keyed guard below, which is what made the loss silent rather than
+          // misattributed. A person asked two questions gets to answer the first one.
+          if (pendingConfirmIdRef.current !== undefined) {
+            // BOUNDED, AND THE NEWEST ARRIVAL IS WHAT GETS DROPPED. Evicting an older waiting
+            // question in favour of a newer one is the clobber this fix removes, one position
+            // further down; and the older ones are nearer their own windows, so they are the ones
+            // a person can still usefully be asked. Past the bound the arrival is dropped here and
+            // its run denies fail-closed at its window, exactly as an unanswered question does.
+            if (queuedConfirmsRef.current.length < MAX_QUEUED_CONFIRMS) {
+              queuedConfirmsRef.current.push(frame)
+            }
+            return
+          }
           pendingConfirmIdRef.current = frame.confirmId
           setResolution(undefined)
           setPending(frame)
@@ -198,7 +238,17 @@ export function RunConfirmHost() {
           // NOT A SECURITY GUARD, and it must not be mistaken for one: `answerRunConfirm` posts
           // the real confirmId and the SERVER decides, so a spurious "approved" render approved
           // nothing. What was lost was the answer, not the decision.
-          if (frame.confirmId !== pendingConfirmIdRef.current) return
+          if (frame.confirmId !== pendingConfirmIdRef.current) {
+            // A QUEUED QUESTION'S WINDOW KEEPS RUNNING WHILE IT WAITS (401-16). If this frame
+            // belongs to one of them, its window has already closed and it must never be raised
+            // afterwards — handing somebody a dialog whose three buttons do nothing would trade a
+            // silent denial for a click that lies, which is worse than what this plan repaired.
+            // Dropping it here is a SEPARATE concern from the guard above and does not touch it:
+            // no resolution is written for anything but the question on screen.
+            queuedConfirmsRef.current = queuedConfirmsRef.current
+              .filter((queued) => queued.confirmId !== frame.confirmId)
+            return
+          }
           setResolution({ answer: frame.answer, by: frame.by })
         },
       })
@@ -208,6 +258,9 @@ export function RunConfirmHost() {
     return () => {
       source.close()
       pendingConfirmIdRef.current = undefined
+      // EMPTIED WITH THE CHANNEL THAT RAISED IT. A queue outliving its socket would raise a
+      // question addressed to a scope that no longer exists — answerable-looking, unanswerable.
+      queuedConfirmsRef.current = []
       // CLEARED ON THE WAY OUT. A stale scope on a closed channel would make every later trigger
       // name a browser that is no longer there — the run would still deny fail-closed, but it would
       // deny after claiming somebody was reachable, which is the dishonest half.
@@ -224,9 +277,13 @@ export function RunConfirmHost() {
       pendingConfirmIdRef.current = undefined
       setPending(undefined)
       setResolution(undefined)
+      // AND THE NEXT QUESTION IS RAISED HERE, where the pending id is cleared — not a moment
+      // earlier. The person reading why their run was refused is not handed the next question
+      // underneath the answer they are still reading.
+      raiseNextQueued()
     }, RESOLVED_DIALOG_LINGER_MS)
     return () => { clearTimeout(timer) }
-  }, [resolution])
+  }, [resolution, raiseNextQueued])
 
   if (pending === undefined) return null
 
