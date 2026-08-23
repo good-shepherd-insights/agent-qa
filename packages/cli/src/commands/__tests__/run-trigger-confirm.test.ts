@@ -20,8 +20,9 @@
 // five, plus the D-15 remedies, and is paired with an allow control that differs in EXACTLY ONE
 // thing — the answer a person gave.
 
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -45,6 +46,9 @@ import {
 import type { AuditRow } from '../../composition/__tests__/in-process-run-fixture.js'
 
 type Fixture = ReturnType<typeof createInProcessFixture>
+
+/** `packages/cli/src/commands/__tests__` → the `agent-qa` repo root, five levels up. */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..')
 
 /** The OP-level gate's rows, which land in the host's own sink rather than the run's. */
 function opAuditRows(fixture: Fixture): AuditRow[] {
@@ -97,6 +101,7 @@ async function openScene(input: {
     runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(door.host)
+  runDoor.bindTriggerScope(door.enterRunTriggerScope)
 
   const settled: { runId: string; status: string; details: Record<string, unknown> }[] = []
   runDoor.backend.on(
@@ -147,11 +152,14 @@ afterEach(async () => {
 })
 
 /** Click the run button — the shipped trigger route, with the fixture's own standalone test. */
-async function triggerRun(scene: Scene): Promise<string> {
+async function triggerRun(scene: Scene, confirmScope?: string): Promise<string> {
   const response = await fetch(`${scene.origin}/api/runs/trigger`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ file: scene.fixture.testPattern }),
+    body: JSON.stringify({
+      file: scene.fixture.testPattern,
+      ...(confirmScope === undefined ? {} : { confirmScope }),
+    }),
   })
   const body = await response.json() as { runId?: string; error?: string }
   expect(body.error, 'the trigger route refused before any run existed').toBeUndefined()
@@ -166,21 +174,28 @@ interface SseFrame {
 
 interface LiveStream {
   readonly frames: readonly SseFrame[]
+  /** The scope this connection was minted, read off its own first frame. */
+  readonly scopeId: string
   waitFor(predicate: (frame: SseFrame) => boolean, budgetMs?: number): Promise<SseFrame>
   close(): Promise<void>
 }
 
 /**
- * Hold the trigger's confirm channel open, the way a browser sitting on the runs page does.
+ * Become askable — the way a browser about to click Run does (401-09).
+ *
+ * BEFORE THE RUN EXISTS, AND THAT ORDER IS THE PRODUCT'S, not the cell's convenience. The queue
+ * dispatches on its own `enqueued` event in the same tick the trigger route enqueues, so a channel
+ * opened after the trigger's response would be racing the run's own gate. The channel is opened
+ * first, the server mints the scope on it, and the trigger names that scope.
  *
  * IT ASSERTS THE STATUS FIRST. A stream that 404s is a channel that was never registered, and a
  * cell that went on to wait for a frame would report "no frame arrived" — true, and two steps away
  * from the fact that matters.
  */
-async function openRunConfirmStream(scene: Scene, runId: string): Promise<LiveStream> {
+async function openRunConfirmStream(scene: Scene): Promise<LiveStream> {
   const controller = new AbortController()
   const response = await fetch(
-    `${scene.origin}/api/run-confirm/runs/${encodeURIComponent(runId)}/events`,
+    `${scene.origin}/api/run-confirm/channel`,
     { signal: controller.signal },
   )
   expect(
@@ -213,8 +228,21 @@ async function openRunConfirmStream(scene: Scene, runId: string): Promise<LiveSt
       // An aborted read is how this stream ends; it is the cell's own doing, never a failure.
     }
   })()
+  const scopeFrame = await (async () => {
+    const deadline = Date.now() + 10_000
+    while (Date.now() < deadline) {
+      const hit = frames.find((frame) => frame.event === 'confirm_scope')
+      if (hit !== undefined) return hit
+      await new Promise<void>((settled) => setTimeout(settled, 5))
+    }
+    throw new Error('the channel announced no scope')
+  })()
+  const scopeId = (JSON.parse(scopeFrame.data) as { scopeId: string }).scopeId
+  expect(scopeId, 'the channel minted no scope, so nothing could name this browser').toBeTruthy()
+
   return {
     frames,
+    scopeId,
     async waitFor(predicate, budgetMs = 60_000) {
       const deadline = Date.now() + budgetMs
       while (Date.now() < deadline) {
@@ -236,7 +264,7 @@ async function openRunConfirmStream(scene: Scene, runId: string): Promise<LiveSt
 
 async function answerRunConfirm(
   scene: Scene,
-  input: { runId: string; confirmId: string; answer: string },
+  input: { scopeId: string; confirmId: string; answer: string },
 ): Promise<{ status: number; body: unknown }> {
   const response = await fetch(`${scene.origin}/api/run-confirm/answer`, {
     method: 'POST',
@@ -281,8 +309,9 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       const fixture = createInProcessFixture({ origin: target.origin })
       // The window is short because this cell pays for it in wall clock.
       const scene = await openScene({ fixture, timeoutMs: 1_500 })
-      const runId = await triggerRun(scene)
-      const stream = await openRunConfirmStream(scene, runId)
+      // THE BROWSER BECOMES ASKABLE FIRST, then clicks Run naming itself.
+      const stream = await openRunConfirmStream(scene)
+      const runId = await triggerRun(scene, stream.scopeId)
 
       // THE QUESTION REACHED THE WIRE. Asserted BEFORE anything about how it resolved, because
       // "denied" is trivially true of a question that was never raised — which is exactly what the
@@ -384,4 +413,139 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       await target.close()
     }
   }, 240_000)
+})
+
+// ---- The honest-claim rule, both ways (401-09, Pitfall 3 / D-07) -------------------------------
+//
+// THE CELLS ABOVE MEASURE IT THROUGH A REAL RUN's AUDIT ROW, which is the surface a person reads.
+// These measure PRODUCTION'S OWN PREDICATE, named per scope, so the rule can be driven across the
+// transition — no channel, channel, channel gone — inside one execution and without paying for a
+// run at each step. Both are the same `postureFor`; there is no second copy of the rule to disagree.
+
+describe('the trigger claims interactivity only while a browser is holding its channel', () => {
+  it('THE TRIGGER RULE — no channel is headless, a live channel is interactive, and back again', async () => {
+    const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1' })
+    const confirms = createConfirmRegistry()
+    const door = composeDashboardDoor({
+      agentQaRoot: fixture.agentQaRoot,
+      configPath: fixture.configPath,
+      boundOrigin: () => undefined,
+      confirms,
+    })
+    try {
+      const scope = 'run-trigger:401-09-posture'
+
+      // NO CHANNEL, NO CLAIM. A queued run nobody is watching is exactly as headless as a piped
+      // CLI, and saying otherwise is the dishonesty this seam exists to prevent.
+      expect(door.resolveExecutionContext(scope, { reachableByChannelAlone: true }))
+        .toBe('local-headless')
+
+      const close = confirms.openChannel(scope)
+      // A CHANNEL IS THE WHOLE QUESTION FOR A TRIGGER, and this line is what a rule copied from the
+      // conversation's would red on: there is no turn in flight and there never will be, so a
+      // trigger under `watchedAndInFlight` could never be interactive at all.
+      expect(door.resolveExecutionContext(scope, { reachableByChannelAlone: true }))
+        .toBe('local-interactive')
+
+      close()
+      expect(door.resolveExecutionContext(scope, { reachableByChannelAlone: true }))
+        .toBe('local-headless')
+    } finally {
+      await door.host.close()
+    }
+  })
+
+  it('THE CONVERSATION RULE IS UNTOUCHED — a watched, idle conversation is still headless', async () => {
+    // THE CONTROL FOR THE WIDENING. The trigger's rule is weaker than the conversation's by one
+    // conjunct, and the whole risk of generalizing the axis is that the weaker rule leaks onto the
+    // stronger one. Same registry, same door, same open channel — and a conversation with no turn
+    // in flight must still be `local-headless`, which is 400-13's own measured tightening.
+    const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1' })
+    const confirms = createConfirmRegistry()
+    const door = composeDashboardDoor({
+      agentQaRoot: fixture.agentQaRoot,
+      configPath: fixture.configPath,
+      boundOrigin: () => undefined,
+      confirms,
+    })
+    try {
+      const conversation = 'chat-20260823-000000-0000'
+      const close = confirms.openChannel(conversation)
+      expect(door.resolveExecutionContext(conversation)).toBe('local-headless')
+      close()
+    } finally {
+      await door.host.close()
+    }
+  })
+})
+
+// ---- ONE PARKING LOT (401-09, D-11's prohibition) ---------------------------------------------
+//
+// THE PRIMARY PROOF IS BEHAVIOURAL AND IT IS IN THE CELL ABOVE: the deny-on-silence scene watches
+// `confirms.pendingCount()` go 0 → 1 → 0 on the registry the CHAT door parks in, which is a fact a
+// source scan cannot give and a second lot could not fake.
+//
+// WHAT THIS ADDS IS THE COMPLETE-SET HALF, and it is TWO INDEPENDENTLY-SHAPED predicates reconciled
+// against each other, because 401-08 measured that a single self-checked predicate silently drops
+// the members its own known set does not name. One ranges the FACTORY (who builds a registry); the
+// other ranges the SUBSTRATE (which module can turn silence into a denial) and shares no vocabulary
+// with the first — a hand-rolled lot with no `createConfirmRegistry` in it is invisible to the
+// first predicate and cannot hide from the second.
+
+describe('there is one parking lot, and the run trigger uses it', () => {
+  const FIRST_PARTY = ['packages/cli/src', 'packages/dashboard-server/src']
+
+  function sourceFiles(): string[] {
+    const roots = FIRST_PARTY.map((dir) => resolve(REPO_ROOT, dir))
+    const found: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__' || entry.name === 'node_modules' || entry.name === 'dist') continue
+          walk(full)
+          continue
+        }
+        if (entry.name.endsWith('.ts')) found.push(full)
+      }
+    }
+    for (const root of roots) walk(root)
+    return found
+  }
+
+  it('PREDICATE 1 (the factory) — exactly one call site builds a confirm registry', () => {
+    const files = sourceFiles()
+    // THE DISCOVERY PREDICATE'S OWN FLOOR. A walker that found nothing would make every claim below
+    // vacuously true, which is the shape a wrong path constant produces (401's own scar).
+    // 118 at the time of writing; the floor is a floor, not a pin — a pin would red on every new
+    // module, and what this line is defending against is a walker that found nothing.
+    expect(files.length).toBeGreaterThan(100)
+    expect(files.some((file) => file.endsWith('commands/dashboard.ts'))).toBe(true)
+
+    const callers = files.filter((file) => {
+      const text = readFileSync(file, 'utf8')
+      // The declaration site is not a call site — it is where the one lot is DEFINED.
+      if (text.includes('export function createConfirmRegistry')) return false
+      return text.includes('createConfirmRegistry(')
+    })
+    expect(
+      callers.map((file) => file.slice(REPO_ROOT.length + 1)),
+      'a second composition builds its own registry — a question parked in one lot cannot be '
+      + 'answered on the route that serves the other',
+    ).toEqual(['packages/cli/src/commands/dashboard.ts'])
+  })
+
+  it('PREDICATE 2 (the substrate) — exactly one module can turn silence into a denial', () => {
+    // SHARES NO VOCABULARY WITH PREDICATE 1. It asks which modules hold a timer AND can answer
+    // `deny` — the mechanical shape of a reaper — so a parking lot written by hand, with no factory
+    // to name, is found here even though predicate 1 cannot see it.
+    const reapers = sourceFiles().filter((file) => {
+      const text = readFileSync(file, 'utf8')
+      return text.includes('setTimeout') && text.includes("'deny'")
+    })
+    expect(
+      reapers.map((file) => file.slice(REPO_ROOT.length + 1)),
+      'a second module reaps a question into a denial — "silence is consent" now has two readings',
+    ).toEqual(['packages/dashboard-server/src/chat/confirm-registry.ts'])
+  })
 })

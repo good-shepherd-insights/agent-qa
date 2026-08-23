@@ -371,10 +371,13 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
     // cell is about is the ROUTE: a question is genuinely parked and genuinely answerable, and the
     // only variable is where the answer came from.
     const frames: ChatConfirmChannelFrame[] = []
-    door.confirms.subscribe((_sessionId, frame) => { frames.push(frame) })
+    door.confirms.subscribe((_scopeId, frame) => { frames.push(frame) })
     const closeChannel = door.confirms.openChannel('chat-400-14-confirm')
     const parked = door.confirms.request({
-      sessionId: 'chat-400-14-confirm',
+      // 401-09: the registry's axis is a confirm SCOPE now — a conversation id is one kind of scope
+      // and the chat route's wire word is unchanged, which is why the body below still says
+      // `sessionId`.
+      scopeId: 'chat-400-14-confirm',
       actionClass: 'fn:control.400.14.confirm-arm',
     })
     const request = frames.find((frame) => frame.kind === 'confirm_request')

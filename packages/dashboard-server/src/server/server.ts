@@ -399,6 +399,10 @@ export async function startServer(opts: StartServerOptions): Promise<{
       runId: run.id,
       args,
       source: meta.isSuite ? 'suite' : 'dashboard',
+      // 401-09 (D-11): the browser that triggered this run, if it said so and is still there. Read
+      // off the queued row's own metadata for the reason `args` is — the row is persisted, and the
+      // queue is what decides WHEN a run starts, so the trigger's fact has to survive the wait.
+      ...(typeof meta.confirmScope === 'string' ? { confirmScope: meta.confirmScope } : {}),
       attributes: run.attributes,
       timeout: meta.timeout as number | undefined,
       // THE LEASE ABOVE IS UNCHANGED; ONLY ITS DELIVERY IS. `acquireLease` still runs where it ran,

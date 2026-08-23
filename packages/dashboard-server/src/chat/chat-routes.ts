@@ -41,7 +41,13 @@ import type { AgentAskResult, ChatSessionEvent } from '@vostride/agent-qa-schema
 import { z } from 'zod'
 
 import { readJsonBody } from '../server/body-parser.js'
-import { CHAT_CONFIRM_ANSWERS, type ChatConfirmChannelFrame } from './confirm-registry.js'
+import {
+  CHAT_CONFIRM_ANSWERS,
+  isRunTriggerConfirmScope,
+  mintRunTriggerConfirmScope,
+  type ChatConfirmChannelFrame,
+  type ConfirmScopeId,
+} from './confirm-registry.js'
 import type { AgentHost, ChatTurnFold, ChatTurnResponse } from './host.js'
 
 /** Every path this door owns, so the router can hand it a prefix and nothing else. */
@@ -74,6 +80,43 @@ export const CHAT_CATALOG_ROUTE = '/api/chat/catalog'
  */
 export const CHAT_CONFIRM_ROUTE = '/api/chat/confirm'
 
+/**
+ * The RUN TRIGGER's confirm surface (401-09, D-11) — a second prefix on the SAME router.
+ *
+ * NOT A SECOND ROUTER, AND THAT IS THE WHOLE POINT. The two guards below — the cross-site refusal
+ * and the media-type refusal — are applied to the METHOD, above the route table, so every mutating
+ * route this file serves inherits them by construction. A run-confirm answer route mounted anywhere
+ * else in this server would sit behind `routes.ts`'s shared `cors()` arm, which grants
+ * `Access-Control-Allow-Origin: *` to every preflight — handing any page a person has open the
+ * permission it needs to approve an ask-tier run on their machine. That is strictly worse than the
+ * hole 400-01 found on the turn route, so the run trigger's confirm rides this door's posture
+ * instead, and `routes.ts` mounts this prefix ahead of `cors()` exactly as it mounts the chat one.
+ *
+ * THE CHANNEL IS OPENED BEFORE THE RUN EXISTS, and that order is the whole design. The dashboard's
+ * queue dispatches on its own `enqueued` event, in the same tick the trigger route enqueues, so a
+ * browser that learned the scope from the trigger's response would be racing the run's own gate. So
+ * the channel route MINTS the scope and hands it back on the stream as its first frame; the trigger
+ * then names the scope it wants asked. A scope with nobody holding its stream does not exist, which
+ * is what makes "no live channel" and "no such scope" the same fail-closed answer.
+ */
+export const RUN_CONFIRM_ROUTE_PREFIX = '/api/run-confirm/'
+
+/** Where a person's yes / always / no comes back for a RUN trigger. */
+export const RUN_CONFIRM_ANSWER_ROUTE = '/api/run-confirm/answer'
+
+/**
+ * The trigger's confirm channel — one connection, one freshly minted scope.
+ *
+ * NO `:id` IN THE PATH, deliberately. The chat stream takes a conversation id because the
+ * conversation already exists and the person is asking to watch a particular one; this route is the
+ * act of BECOMING askable, so there is nothing to name yet. That also removes the guard the chat
+ * stream needs: an unminted id cannot be opened here because no id is accepted at all.
+ */
+export const RUN_CONFIRM_CHANNEL_ROUTE = '/api/run-confirm/channel'
+
+/** The first frame every trigger channel carries: the scope this connection was minted. */
+export const RUN_CONFIRM_SCOPE_FRAME_KIND = 'confirm_scope'
+
 /** `/api/chat/sessions/<id>/events` — the one streaming path, matched rather than parsed. */
 const CHAT_SESSION_EVENTS_PATTERN = /^\/api\/chat\/sessions\/([^/]+)\/events$/
 
@@ -81,14 +124,21 @@ const CHAT_SESSION_EVENTS_PATTERN = /^\/api\/chat\/sessions\/([^/]+)\/events$/
 export const CHAT_SESSION_EVENTS_TEMPLATE = '/api/chat/sessions/:id/events'
 
 /** Which handler a table row reaches. A closed union, so a row with no arm is a type error. */
-export type ChatRouteHandlerName = 'turn' | 'confirm' | 'capabilities' | 'catalog' | 'sessionEvents'
+export type ChatRouteHandlerName =
+  | 'turn'
+  | 'confirm'
+  | 'capabilities'
+  | 'catalog'
+  | 'sessionEvents'
+  | 'runConfirm'
+  | 'runConfirmChannel'
 
 export interface ChatRouteRow {
   readonly method: 'GET' | 'POST'
-  /** The literal path, or — for the one templated route — its `:id` shape. */
+  /** The literal path, or — for a templated route — its `:id` shape. */
   readonly path: string
   readonly handler: ChatRouteHandlerName
-  /** Present only on the templated route; the matcher uses it instead of `path`. */
+  /** Present only on a templated route; the matcher uses it instead of `path`. */
   readonly pattern?: RegExp
 }
 
@@ -118,6 +168,11 @@ export const CHAT_ROUTE_TABLE: readonly ChatRouteRow[] = Object.freeze([
     handler: 'sessionEvents',
     pattern: CHAT_SESSION_EVENTS_PATTERN,
   },
+  // 401-09: the run trigger's two, in the same table for the same reason every other row is here —
+  // dispatch reads it, so a route that is not in it is unreachable, and the completeness cell that
+  // drives every mutating row cross-origin ranges these the day they land.
+  { method: 'POST', path: RUN_CONFIRM_ANSWER_ROUTE, handler: 'runConfirm' },
+  { method: 'GET', path: RUN_CONFIRM_CHANNEL_ROUTE, handler: 'runConfirmChannel' },
 ] as const)
 
 /** What a matched row carries: the row itself and whatever its pattern captured. */
@@ -348,6 +403,25 @@ const ChatConfirmRequestSchema = z.object({
 }).strict()
 
 /**
+ * The RUN trigger's answer, validated at the door (401-09 — T-401-25).
+ *
+ * `scopeId` RATHER THAN `sessionId`, and it is not a cosmetic difference: a run trigger has no
+ * conversation, and calling its scope a session would be the fabricated-chat-session design this
+ * plan's own decision refuses. It plays exactly the role `sessionId` plays on the chat route — the
+ * registry compares it against the scope the question was parked for, so an id that leaked
+ * somewhere it should not have cannot be spent on another browser's confirm. It is REFUSED unless
+ * it is a trigger scope, so this route can never spend a conversation's outstanding question.
+ *
+ * `.strict()` and the SAME closed answer enum: three answers, no fourth, and no new approval
+ * semantics anywhere on this surface.
+ */
+const RunConfirmAnswerSchema = z.object({
+  scopeId: z.string().min(1),
+  confirmId: z.string().min(1),
+  answer: z.enum(CHAT_CONFIRM_ANSWERS),
+}).strict()
+
+/**
  * JSON, WITHOUT the cross-origin wildcard `routes.ts`'s helper writes.
  *
  * Deliberately a second responder rather than a parameter on the shared one. A flag would make the
@@ -515,11 +589,71 @@ async function handleConfirm(
     return
   }
 
-  const outcome = confirms.answer(parsed.data)
+  // The wire says `sessionId` and the registry's axis is a SCOPE (401-09). The chat door's wire
+  // contract is unchanged deliberately — a conversation id IS a valid scope id, and renaming a
+  // shipped request field to say so would break every browser for a word.
+  const outcome = confirms.answer({
+    scopeId: parsed.data.sessionId,
+    confirmId: parsed.data.confirmId,
+    answer: parsed.data.answer,
+  })
   if (outcome.kind === 'unknown-confirm') {
     // ONE ANSWER FOR THREE STATES — no such id, an id already spent, an id belonging to another
     // session. Distinguishing them here would tell a caller which confirms are outstanding and
     // whose they are, which is the probe the single-use id exists to close.
+    refuseWith(respond, res, 'Unknown or already-answered confirm', 404)
+    return
+  }
+  respond(res, { resolved: true, answer: outcome.answer })
+}
+
+/**
+ * Spend a RUN trigger's confirm id (401-09, D-11).
+ *
+ * THE CHAT ANSWER ROUTE'S MECHANICS, VERBATIM, and deliberately not a variant of them: the same
+ * single-use id, the same scope comparison, the same ONE 404 for "no such id" / "already spent" /
+ * "belongs to another scope". A distinguishable answer on any of those three would be an oracle for
+ * probing which runs have questions outstanding, which is exactly what the shared idiom exists to
+ * refuse. What differs is the wire's word for the scope, and nothing else.
+ */
+async function handleRunConfirm(
+  host: AgentHost,
+  respond: Respond,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const confirms = host.confirms
+  if (confirms === undefined) {
+    refuseWith(respond, res, 'Run confirms are not available: this server was started without a confirm channel', 501)
+    return
+  }
+
+  let body: unknown
+  try {
+    body = await readJsonBody<unknown>(req)
+  } catch {
+    refuseWith(respond, res, 'Invalid request body', 400)
+    return
+  }
+  const parsed = RunConfirmAnswerSchema.safeParse(body)
+  if (!parsed.success) {
+    refuseWith(respond, res, 'Invalid request body', 400)
+    return
+  }
+
+  // A CONVERSATION IS NOT ANSWERABLE HERE. Reported as the same 404 every other refusal on this
+  // route uses, so "that is not a trigger scope" and "no such confirm" are one answer from outside.
+  if (!isRunTriggerConfirmScope(parsed.data.scopeId)) {
+    refuseWith(respond, res, 'Unknown or already-answered confirm', 404)
+    return
+  }
+
+  const outcome = confirms.answer({
+    scopeId: parsed.data.scopeId,
+    confirmId: parsed.data.confirmId,
+    answer: parsed.data.answer,
+  })
+  if (outcome.kind === 'unknown-confirm') {
     refuseWith(respond, res, 'Unknown or already-answered confirm', 404)
     return
   }
@@ -697,17 +831,9 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
     // teardown as everything else — is what keeps "a human is reachable" a fact about a socket
     // rather than a claim in a comment. The registry denies this session's outstanding confirms
     // when the last of these goes away.
-    const writeConfirm = (frameSessionId: string, channelFrame: ChatConfirmChannelFrame): void => {
-      if (frameSessionId !== sessionId) return
-      // NO `id:` LINE. See `confirmStreams` above: these frames are not in the replay numbering.
-      res.write(
-        `event: ${channelFrame.kind}\n`
-        + `data: ${unmask(JSON.stringify(
-          channelFrame.kind === 'confirm_request'
-            ? channelFrame.request
-            : channelFrame,
-        ))}\n\n`,
-      )
+    const writeConfirm = (frameScopeId: ConfirmScopeId, channelFrame: ChatConfirmChannelFrame): void => {
+      if (frameScopeId !== sessionId) return
+      res.write(confirmFrameBytes(channelFrame))
     }
     confirmStreams.add(writeConfirm)
     const closeChannel = confirms?.openChannel(sessionId)
@@ -729,6 +855,76 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
       // LAST, and never before the writer is removed: releasing the channel can resolve pending
       // confirms, which emits `confirm_resolved` frames — and writing one into a socket this
       // handler has just been told is closed is a write nobody reads.
+      closeChannel?.()
+    })
+  }
+
+  /**
+   * One confirm frame, on the wire — the ONE serialisation, read by both channels (401-09).
+   *
+   * NO `id:` LINE. See `confirmStreams` above: these frames are not in the replay numbering, and
+   * giving them a number would put a value in that sequence no replay could ever produce.
+   *
+   * ONLY THE `data:` LINE IS UNMASKED. The kind is this transport's own word and never passed a
+   * masker; running one over the whole frame would put the display boundary somewhere a reader of
+   * this file could not see it.
+   */
+  function confirmFrameBytes(frame: ChatConfirmChannelFrame): string {
+    return `event: ${frame.kind}\n`
+      + `data: ${unmask(JSON.stringify(frame.kind === 'confirm_request' ? frame.request : frame))}\n\n`
+  }
+
+  /**
+   * The RUN trigger's confirm channel (401-09, D-11).
+   *
+   * CONFIRM FRAMES AND NOTHING ELSE. The chat stream carries two kinds on one connection — a
+   * projection of a durable session log, and transient confirm frames — because a person watching a
+   * conversation wants both. A run trigger has no transcript to project: its durable record is the
+   * run's own event log, which the execution SSE route already serves. Putting a second projection
+   * of that here would be a second answer to what a run's history is, which is the whole class this
+   * phase exists to remove.
+   *
+   * THE SCOPE IS MINTED HERE AND ANNOUNCED AS THE FIRST FRAME. Opening this stream is the act of
+   * becoming askable: the scope exists because this connection does, and it stops existing when the
+   * connection does — at which point the registry denies every question outstanding on it, which is
+   * the tab-closed reaper. Handing the scope back on the stream rather than in a JSON response is
+   * what keeps it known ONLY to whoever is holding the stream, and this door writes no
+   * cross-origin grant, so a page on another origin can hold the socket open and never read a byte
+   * of it.
+   */
+  function handleRunConfirmChannel(req: IncomingMessage, res: ServerResponse): void {
+    const scopeId: ConfirmScopeId = mintRunTriggerConfirmScope()
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    })
+    res.write(':ok\n\n')
+    // FIRST, AND BEFORE THE CHANNEL IS REGISTERED, so a caller reading frames in order always has
+    // the scope before any question could arrive on it.
+    res.write(
+      `event: ${RUN_CONFIRM_SCOPE_FRAME_KIND}\n`
+      + `data: ${JSON.stringify({ scopeId })}\n\n`,
+    )
+
+    const writeConfirm = (frameScopeId: ConfirmScopeId, frame: ChatConfirmChannelFrame): void => {
+      if (frameScopeId !== scopeId) return
+      res.write(confirmFrameBytes(frame))
+    }
+    confirmStreams.add(writeConfirm)
+    const closeChannel = confirms?.openChannel(scopeId)
+
+    const heartbeat = setInterval(() => {
+      res.write(':\n\n')
+    }, CHAT_STREAM_HEARTBEAT_MS)
+    heartbeat.unref?.()
+
+    req.on('close', () => {
+      clearInterval(heartbeat)
+      confirmStreams.delete(writeConfirm)
+      // LAST, and never before the writer is removed: releasing the channel resolves this scope's
+      // pending confirms, which emits `confirm_resolved` frames — and writing one into a socket
+      // this handler has just been told is closed is a write nobody reads.
       closeChannel?.()
     })
   }
@@ -826,6 +1022,14 @@ export function createChatRouter(host: AgentHost | undefined): ChatRouter {
         return
       case 'catalog':
         handleCatalog(host, respond, res)
+        return
+      case 'runConfirm':
+        handleRunConfirm(host, respond, req, res).catch((error: unknown) => {
+          backstopRefusal(res, error)
+        })
+        return
+      case 'runConfirmChannel':
+        handleRunConfirmChannel(req, res)
         return
       case 'sessionEvents': {
         // AN UNPARSEABLE ID IS A REFUSAL, NOT AN EXCEPTION (400-14, gap 7). `decodeURIComponent`

@@ -1,5 +1,21 @@
-// The pending-confirm registry — the fourth door's half of an inline confirm (Phase 400 plan 03,
-// D-05 / D-06 / D-07, RESEARCH Pattern 5).
+// The pending-confirm registry — the browser's half of an inline confirm (Phase 400 plan 03,
+// D-05 / D-06 / D-07, RESEARCH Pattern 5; generalized to run triggers in 401-09, D-11).
+//
+// THE AXIS IS A CONFIRM SCOPE, AND A CHAT CONVERSATION IS ONE KIND OF SCOPE (401-09, D-11). Until
+// this plan every question parked here belonged to a conversation, so the axis was spelled
+// `sessionId` and the two words meant the same thing. They no longer do: an ask-tier run started
+// from the dashboard's RUN BUTTON has to be able to ask the browser that clicked it, and a run
+// trigger is not a turn and has no transcript. What generalizes is only the ADDRESS — the parking
+// lot, the single-use ids, the session/scope comparison and the two DENY reapers are the same
+// mechanism serving both, because "one confirm vocabulary across the dashboard" is what D-11 asks
+// for and a second parking lot is what it forbids.
+//
+// THE ALTERNATIVE WAS TO FABRICATE A CHAT CONVERSATION for the run button and route its confirm
+// through the chat door. That would write run confirms into chat transcripts — a second spelling of
+// run history, which is the class this phase exists to remove (RESEARCH Open Q5, resolved in the
+// 401-09 plan). Scope ids are PREFIX-NAMESPACED instead ({@link RUN_TRIGGER_CONFIRM_SCOPE_PREFIX}),
+// so a trigger scope can never collide with a conversation id and neither can be answered as the
+// other.
 //
 // WHAT THIS IS, AND WHAT IT DELIBERATELY IS NOT. A `ConfirmPort` is `(action) => boolean |
 // Promise<boolean>`: the gate asks a question and waits for an answer. On a terminal the answer
@@ -11,12 +27,12 @@
 // vanishing. Both resolve DENY.
 //
 // IT IS A TRANSPORT AND HOLDS NO POLICY. It does not know what an action class means, cannot mint a
-// grant, cannot write a session event and does not decide which session a confirm belongs to — the
-// caller names the session, because "which conversation is a person watching right now" is a fact
+// grant, cannot write a session event and does not decide which scope a confirm belongs to — the
+// caller names the scope, because "which conversation is a person watching right now" is a fact
 // about the composed host and the open sockets, not about a map of promises. What lives here is the
 // parking lot and its two reapers, which is the part that must not be written twice.
 //
-// FAIL-CLOSED IN EVERY DIRECTION (D-06). A confirm for a session with no live channel is denied
+// FAIL-CLOSED IN EVERY DIRECTION (D-06). A confirm for a scope with no live channel is denied
 // without parking — there is nobody to ask, and a promise waiting for an answer that cannot arrive
 // is a turn that hangs. A confirm whose channel closes is denied at once rather than at its
 // timeout, because a closed tab is a person who has left, not a person who is thinking. And a
@@ -27,9 +43,63 @@
 // anything that can reach the server; an id a caller could GUESS would be a way to approve somebody
 // else's capability call, and an id that could be answered TWICE would be a way to replay one
 // person's yes onto a later question. So ids come from `randomUUID`, an answer consumes the entry,
-// and the session that parked the confirm is compared against the session the answer names.
+// and the scope that parked the confirm is compared against the scope the answer names.
 
 import { randomUUID } from 'node:crypto'
+
+/**
+ * A confirm scope id — the address a question is parked under and answered on.
+ *
+ * A TYPE ALIAS RATHER THAN A BRAND, deliberately: a chat conversation id minted by the engine is a
+ * valid scope id exactly as it stands, which is what makes this widening rename-tolerant. What
+ * distinguishes the two kinds is the PREFIX below, and only the two functions beside it are allowed
+ * to know about it.
+ */
+export type ConfirmScopeId = string
+
+/**
+ * The namespace a run trigger's confirm scope lives in (401-09, D-11).
+ *
+ * SPELLED ONCE, HERE. The server's run-confirm routes need it to recognise a trigger scope, and the
+ * CLI's run door needs it to mint one; a second copy in either place would be two answers to what a
+ * trigger scope is called, and the two would be free to drift the first time somebody renamed one.
+ * The colon is not decorative: chat session ids are `chat-<timestamp>-<nonce>` and carry no colon,
+ * so no conversation can ever be addressed as a trigger or a trigger as a conversation.
+ */
+export const RUN_TRIGGER_CONFIRM_SCOPE_PREFIX = 'run-trigger:'
+
+/**
+ * Mint one run trigger's confirm scope (401-09, D-11).
+ *
+ * MINTED BY THE SERVER WHEN THE BROWSER OPENS ITS CHANNEL, and NOT derived from the run id — which
+ * is the shape the first draft of this plan had, and it cannot work. The dashboard's queue
+ * dispatches on the `enqueued` event, in the same tick the trigger route enqueues, so a browser
+ * that only learns the run id from the trigger's RESPONSE cannot possibly have a channel open
+ * before the run's gate evaluates. A posture that depended on winning that race would be
+ * `local-interactive` or `local-headless` depending on how busy the machine was, which is not a
+ * policy — so the order is inverted: the channel is opened first, the scope is what the server
+ * hands back on it, and the trigger names the scope it wants asked.
+ *
+ * `randomUUID` FOR THE SAME REASON THE CONFIRM IDS USE IT (T-400-09). The scope is the address a
+ * question is delivered to; a guessable one would let a caller name somebody else's browser as the
+ * one to ask. It is only ever known to whoever is holding the stream it was minted on.
+ */
+export function mintRunTriggerConfirmScope(): ConfirmScopeId {
+  return `${RUN_TRIGGER_CONFIRM_SCOPE_PREFIX}${randomUUID()}`
+}
+
+/**
+ * Whether this is a run trigger's confirm scope at all.
+ *
+ * THE READ SIDE OF THE MINT, and it exists because a scope id travels on the wire: the trigger
+ * route is handed one by a caller and must refuse anything that is not a trigger scope, or a caller
+ * could name a live CONVERSATION as the browser to ask — which would put a run's question in
+ * somebody's chat transcript and let a conversation's watcher approve a run they never triggered.
+ */
+export function isRunTriggerConfirmScope(scopeId: ConfirmScopeId): boolean {
+  return scopeId.startsWith(RUN_TRIGGER_CONFIRM_SCOPE_PREFIX)
+    && scopeId.length > RUN_TRIGGER_CONFIRM_SCOPE_PREFIX.length
+}
 
 /** The three answers a browser confirm offers — the TTY's `[y/a/N]`, in a medium with buttons. */
 export const CHAT_CONFIRM_ANSWERS = ['accept', 'accept-always', 'deny'] as const
@@ -90,7 +160,7 @@ export type ChatConfirmChannelFrame =
  * What answering did.
  *
  * `unknown-confirm` covers three states ON PURPOSE — no such id, an id already spent, and an id
- * belonging to another session. They are different facts internally and the route must not let a
+ * belonging to another scope. They are different facts internally and the route must not let a
  * caller tell them apart: a distinguishable "that id exists but is not yours" is an oracle for
  * probing which confirms are outstanding.
  */
@@ -99,8 +169,13 @@ export type ChatConfirmAnswerOutcome =
   | { readonly kind: 'unknown-confirm' }
 
 export interface ChatConfirmRequestInput {
-  /** The conversation whose watcher is being asked. Named by the caller; see the module head. */
-  readonly sessionId: string
+  /**
+   * The scope whose watcher is being asked. Named by the caller; see the module head.
+   *
+   * A conversation id, or a run trigger's own scope (401-09). The registry treats both the same
+   * way and that is the point — one parking lot, one comparison, one pair of reapers.
+   */
+  readonly scopeId: ConfirmScopeId
   readonly actionClass: string
   readonly preview?: string
 }
@@ -113,9 +188,14 @@ export interface ConfirmRegistry {
    * confirms of that session are only reaped when the LAST of them goes away. A boolean would make
    * one tab closing look like the person leaving.
    */
-  openChannel(sessionId: string): () => void
+  openChannel(scopeId: ConfirmScopeId): () => void
   /**
-   * Whether THIS conversation has a live channel (400-13, gap 3).
+   * Whether THIS scope has a live channel (400-13, gap 3; 401-09 for a run trigger).
+   *
+   * IT IS THE WHOLE OF THE RUN TRIGGER'S HONEST CLAIM (401-09, Pitfall 3). A conversation is
+   * reachable when it is watched AND has a turn in flight; a run trigger has no turn, so the
+   * question a trigger's posture rule asks is exactly this one — is the browser that clicked run
+   * still holding the channel this run's question would go out on.
    *
    * THE ONLY LIVENESS QUESTION THIS REGISTRY ANSWERS. `liveSessionIds()` is deleted (401-01,
    * D-14 / WR-05): it sat right here enumerating every watched conversation in the process, still
@@ -133,16 +213,16 @@ export interface ConfirmRegistry {
    * conversation, and the only questions this registry may answer are per-conversation; removing
    * the global form is what stops a later caller from re-acquiring the one that is not.
    */
-  hasLiveChannel(sessionId: string): boolean
+  hasLiveChannel(scopeId: ConfirmScopeId): boolean
   /** Watch the frames above. Returns its own unsubscribe. */
-  subscribe(listener: (sessionId: string, frame: ChatConfirmChannelFrame) => void): () => void
-  /** Ask, and wait. Resolves `deny` for a session no channel is watching (D-06). */
+  subscribe(listener: (scopeId: ConfirmScopeId, frame: ChatConfirmChannelFrame) => void): () => void
+  /** Ask, and wait. Resolves `deny` for a scope no channel is watching (D-06). */
   request(input: ChatConfirmRequestInput): Promise<ChatConfirmAnswer>
   /** Push a mid-turn artifact into a conversation's transcript (`chatPresent`, Pattern 5). */
-  present(sessionId: string, text: string): void
-  /** Spend a confirm id. Single use, session-bound. */
+  present(scopeId: ConfirmScopeId, text: string): void
+  /** Spend a confirm id. Single use, scope-bound. */
   answer(input: {
-    readonly sessionId: string
+    readonly scopeId: ConfirmScopeId
     readonly confirmId: string
     readonly answer: ChatConfirmAnswer
   }): ChatConfirmAnswerOutcome
@@ -158,7 +238,7 @@ export interface CreateConfirmRegistryOptions {
 }
 
 interface PendingConfirm {
-  readonly sessionId: string
+  readonly scopeId: ConfirmScopeId
   readonly settle: (answer: ChatConfirmAnswer, by: 'answer' | 'timeout' | 'channel-closed') => void
   readonly timer: ReturnType<typeof setTimeout>
 }
@@ -169,15 +249,15 @@ export function createConfirmRegistry(
   const timeoutMs = options.timeoutMs ?? CHAT_CONFIRM_TIMEOUT_MS
   const mintConfirmId = options.mintConfirmId ?? ((): string => `confirm-${randomUUID()}`)
 
-  /** Session id → the tokens of its live channels. One token per connection. */
+  /** Confirm scope id → the tokens of its live channels. One token per connection. */
   const channels = new Map<string, Set<symbol>>()
-  const listeners = new Set<(sessionId: string, frame: ChatConfirmChannelFrame) => void>()
+  const listeners = new Set<(scopeId: ConfirmScopeId, frame: ChatConfirmChannelFrame) => void>()
   const pending = new Map<string, PendingConfirm>()
 
-  function emit(sessionId: string, frame: ChatConfirmChannelFrame): void {
+  function emit(scopeId: ConfirmScopeId, frame: ChatConfirmChannelFrame): void {
     for (const listener of [...listeners]) {
       try {
-        listener(sessionId, frame)
+        listener(scopeId, frame)
       } catch {
         // One broken watcher is not another's, and never the turn's — the fan-out's own law.
       }
@@ -201,11 +281,11 @@ export function createConfirmRegistry(
   }
 
   return {
-    openChannel(sessionId) {
-      const token = Symbol('chat-confirm-channel')
-      const live = channels.get(sessionId) ?? new Set<symbol>()
+    openChannel(scopeId) {
+      const token = Symbol('confirm-channel')
+      const live = channels.get(scopeId) ?? new Set<symbol>()
       live.add(token)
-      channels.set(sessionId, live)
+      channels.set(scopeId, live)
       let released = false
       return () => {
         // IDEMPOTENT, so a caller's `finally` and its socket's `close` may both fire.
@@ -213,20 +293,20 @@ export function createConfirmRegistry(
         released = true
         live.delete(token)
         if (live.size > 0) return
-        channels.delete(sessionId)
-        // THE LAST WATCHER LEFT. Every question this conversation had outstanding is denied NOW
+        channels.delete(scopeId)
+        // THE LAST WATCHER LEFT. Every question this scope had outstanding is denied NOW
         // rather than at its window — the answer cannot arrive on a connection that no longer
         // exists, and a turn waiting out a two-minute timer for an answer that is already
         // impossible is the hang this reaper exists to prevent (D-06).
         for (const [confirmId, entry] of [...pending]) {
-          if (entry.sessionId !== sessionId) continue
+          if (entry.scopeId !== scopeId) continue
           resolve(confirmId, 'deny', 'channel-closed')
         }
       }
     },
 
-    hasLiveChannel(sessionId) {
-      return channels.has(sessionId)
+    hasLiveChannel(scopeId) {
+      return channels.has(scopeId)
     },
 
     subscribe(listener) {
@@ -240,7 +320,7 @@ export function createConfirmRegistry(
       // NOBODY IS WATCHING, SO NOBODY IS ASKED. Denied without parking: a promise waiting on a
       // channel that does not exist is a turn that never returns, and the honest answer for a
       // question that cannot be delivered is the fail-closed one.
-      if (!channels.has(input.sessionId)) return Promise.resolve<ChatConfirmAnswer>('deny')
+      if (!channels.has(input.scopeId)) return Promise.resolve<ChatConfirmAnswer>('deny')
 
       const confirmId = mintConfirmId()
       return new Promise<ChatConfirmAnswer>((settled) => {
@@ -248,7 +328,7 @@ export function createConfirmRegistry(
           answer: ChatConfirmAnswer,
           by: 'answer' | 'timeout' | 'channel-closed',
         ): void => {
-          emit(input.sessionId, { kind: 'confirm_resolved', confirmId, answer, by })
+          emit(input.scopeId, { kind: 'confirm_resolved', confirmId, answer, by })
           settled(answer)
         }
         const timer = setTimeout(() => {
@@ -257,8 +337,8 @@ export function createConfirmRegistry(
         // `unref` so an outstanding question cannot hold a process alive past its work — the same
         // reasoning the stream heartbeat states.
         timer.unref?.()
-        pending.set(confirmId, { sessionId: input.sessionId, settle, timer })
-        emit(input.sessionId, {
+        pending.set(confirmId, { scopeId: input.scopeId, settle, timer })
+        emit(input.scopeId, {
           kind: 'confirm_request',
           request: {
             confirmId,
@@ -269,21 +349,21 @@ export function createConfirmRegistry(
       })
     },
 
-    present(sessionId, text) {
+    present(scopeId, text) {
       // Dropped for a session nobody is watching, deliberately: a mid-turn artifact is something a
       // person reads BEFORE deciding, and there is no queue to hold it in that would not be a
       // second transcript.
-      if (!channels.has(sessionId)) return
-      emit(sessionId, { kind: 'chat_present', text })
+      if (!channels.has(scopeId)) return
+      emit(scopeId, { kind: 'chat_present', text })
     },
 
     answer(input) {
       const entry = pending.get(input.confirmId)
-      // THE SESSION BINDING (ASVS V3 / T-400-09). An id is not a bearer token for any conversation
-      // that holds it: the answer must name the session the question was parked for, or it answers
+      // THE SCOPE BINDING (ASVS V3 / T-400-09). An id is not a bearer token for any caller that
+      // holds it: the answer must name the scope the question was parked for, or it answers
       // nothing. Reported as `unknown-confirm` so this arm and a genuinely absent id are
       // indistinguishable from outside.
-      if (entry === undefined || entry.sessionId !== input.sessionId) {
+      if (entry === undefined || entry.scopeId !== input.scopeId) {
         return { kind: 'unknown-confirm' }
       }
       resolve(input.confirmId, input.answer, 'answer')

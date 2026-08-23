@@ -53,14 +53,26 @@ vi.mock('../config.js', () => ({
   resolveConfig: mockResolveConfig,
 }))
 
-vi.mock('@vostride/agent-qa-dashboard', () => ({
-  DashboardDatabase: mockDashboardDatabase,
-  createConfirmRegistry: mockCreateConfirmRegistry,
-  createDashboardRunIngest: mockCreateDashboardRunIngest,
-  createInProcessExecutionBackend: mockCreateInProcessExecutionBackend,
-  resolveDashboardDbPath: mockResolveDashboardDbPath,
-  startServer: mockStartServer,
-}))
+vi.mock('@vostride/agent-qa-dashboard', async () => {
+  // 401-09: `createDashboardRunDoor` destructures `isRunTriggerConfirmScope` from this same lazily
+  // imported package, so a mock without it throws at the destructure and every cell below dies
+  // before it asserts — the identical failure 400-03 and 401-07 both left a note about here.
+  //
+  // THE REAL PREDICATE, TAKEN FROM THE MODULE THAT OWNS THE NAMESPACE. A hand-written
+  // `startsWith('run-trigger:')` here would be a second spelling of the prefix, living in a test —
+  // which is the one place a drift would not be noticed. What this file mocks is a web server, and
+  // that is all it should mock.
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-dashboard')>('@vostride/agent-qa-dashboard')
+  return {
+    DashboardDatabase: mockDashboardDatabase,
+    createConfirmRegistry: mockCreateConfirmRegistry,
+    createDashboardRunIngest: mockCreateDashboardRunIngest,
+    createInProcessExecutionBackend: mockCreateInProcessExecutionBackend,
+    isRunTriggerConfirmScope: actual.isRunTriggerConfirmScope,
+    resolveDashboardDbPath: mockResolveDashboardDbPath,
+    startServer: mockStartServer,
+  }
+})
 
 vi.mock('@vostride/agent-qa-core', async importOriginal => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-core')>()

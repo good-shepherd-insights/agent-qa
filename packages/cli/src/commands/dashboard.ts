@@ -320,6 +320,21 @@ function hasVerbatim(masked: MaskedResolvedConfig, key: string): boolean {
  */
 interface AskingSessionScope {
   readonly askingSession: string | undefined
+  /**
+   * Whether a live confirm channel ALONE makes this scope reachable (401-09, D-11 / Pitfall 3).
+   *
+   * A CONVERSATION NEEDS TWO THINGS AND A RUN TRIGGER NEEDS ONE, and the difference is not a
+   * loosening. A watched conversation with no turn in flight is a person reading their transcript —
+   * there is no question outstanding for them to be handed, so `watchedAndInFlight` requires the
+   * turn as well. A queued run has no turn and never will: being INSIDE this frame is the run's own
+   * gate asking, so the channel is the whole question. Claiming otherwise in either direction is
+   * the dishonesty this seam exists to prevent — a trigger that required a turn could never be
+   * interactive, and a conversation that did not would claim a person who is not being asked.
+   *
+   * SET BY THE MINTER, never inferred at the read. The run door mints the trigger scope and enters
+   * this frame; nothing else can set it, so no chat turn can acquire the trigger's rule.
+   */
+  readonly reachableByChannelAlone: boolean
 }
 
 /**
@@ -387,7 +402,16 @@ export function postureFor(
  */
 export function createDashboardConfirmFactory(input: {
   readonly confirms: ConfirmRegistry
-  readonly resolveTargetSession: () => string | undefined
+  /**
+   * The confirm scope this call is inside — a conversation, or a run trigger (401-09, D-11).
+   *
+   * ONE PORT FOR BOTH, which is what "one confirm vocabulary across the dashboard" means in code.
+   * Everything below is scope-agnostic already: the registry parks by scope, the mint is 391's and
+   * knows nothing about doors, and the transcript append fail-safes for a scope no conversation
+   * claims. A second factory for the run button would have been a second set of three answers and a
+   * second place for them to drift.
+   */
+  readonly resolveConfirmScope: () => string | undefined
 }): NonNullable<ComposeLocalAgentInput['chatConfirm']> {
   return (bindings) => {
     /**
@@ -404,6 +428,12 @@ export function createDashboardConfirmFactory(input: {
       sessionId: string,
     ): Promise<void> => {
       try {
+        // A RUN TRIGGER'S SCOPE NAMES NO CONVERSATION, and the composition's own writer is what
+        // decides that: `chatScopes.get(...)` answers nothing for a trigger scope, so no row is
+        // appended and none is guessed into somebody else's transcript (401-01, D-13). That is the
+        // designed outcome rather than an omission — writing a run's approval into a chat log would
+        // be the second spelling of run history this plan's design decision refuses, and the gate's
+        // `execution_audit` row remains the record of a trigger's decision.
         await bindings.onDecision({ actionClass, decision, sessionId })
       } catch {
         // Swallowed here and nowhere else, on the TTY wrapper's stated reasoning: letting a logging
@@ -440,7 +470,7 @@ export function createDashboardConfirmFactory(input: {
     }
 
     return async (action) => {
-      const sessionId = input.resolveTargetSession()
+      const sessionId = input.resolveConfirmScope()
       if (sessionId === undefined) {
         // NOBODY TO ASK. The same answer the TTY wrapper gives a process with no terminal, reached
         // one layer later because liveness here is a per-turn fact rather than a per-process one.
@@ -454,7 +484,7 @@ export function createDashboardConfirmFactory(input: {
       }
 
       const answer = await input.confirms.request({
-        sessionId,
+        scopeId: sessionId,
         actionClass: action.name,
         // The action's OWN disclosure — what this invocation is about to cost, composed by the op
         // and carried as inert data. Absent on almost every action, exactly as at the terminal.
@@ -551,7 +581,25 @@ export interface DashboardDoor {
    * a measurement API that agrees with the gate about nothing. Both surfaces resolve through the
    * same {@link postureFor}; this one names the conversation instead of inheriting it.
    */
-  readonly resolveExecutionContext: (sessionId: string) => ExecutionContext
+  readonly resolveExecutionContext: (
+    scopeId: string,
+    options?: { readonly reachableByChannelAlone?: boolean },
+  ) => ExecutionContext
+  /**
+   * Run a call inside a RUN TRIGGER's confirm scope (401-09, D-11 / D-07).
+   *
+   * THE RUN DOOR'S HALF OF THE SAME NARROWING `invokeFunction` DOES FOR A TURN. The gate's context
+   * resolver and the confirm port are both zero-argument by contract (392-12), so the only way a
+   * caller can tell them who is asking is to be inside the scope when they run. A queued run is not
+   * a turn and never enters the turn wrapper, which is precisely why the interim posture was
+   * `local-headless`; this is the entry that makes a trigger nameable without widening either
+   * contract.
+   *
+   * PUBLISHED BECAUSE THE RUN DOOR IS COMPOSED SEPARATELY. `createDashboardRunDoor` is built BEFORE
+   * this composition (it supplies the bridge that is an input to it), so the two are joined by
+   * mutable boxes in both directions — `bindHost` one way, this the other.
+   */
+  readonly enterRunTriggerScope: <T>(scopeId: string, run: () => T) => T
 }
 
 /**
@@ -606,6 +654,24 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
   let composed: LocalAgentHost | undefined
 
   /**
+   * The composed browser confirm port, in a box (401-09, D-11).
+   *
+   * THE SAME OBJECT AT BOTH GATES, WHICH IS 401-05's `doorConfirm` RULE APPLIED HERE. This host
+   * answers for two gates — the op-level one and the run one — and `composeCliLocalAgent` resolves
+   * "is there somebody at this door" ONCE for both, because two resolutions would be free to
+   * disagree. Until this plan the dashboard supplied none, so the run gate inherited
+   * `createTtyConfirmPort()`: a terminal prompt, at a web server, that the headless interim posture
+   * meant nobody ever reached. A trigger that CAN be interactive would reach it.
+   *
+   * A BOX BECAUSE THE ORDER CANNOT BE INVERTED, exactly as `composed` above. The port cannot be
+   * built out here: it needs `recordStandingApproval` and `onDecision`, which are the composition's
+   * OWN mint and session writer, handed to the factory while the composition runs. So the factory
+   * captures what it built and the run gate's forwarder reads it at call time — one port, one mint,
+   * one set of three answers. A second port built here would be the second mint D-11 forbids.
+   */
+  let browserConfirm: NonNullable<ComposeLocalAgentInput['confirm']> | undefined
+
+  /**
    * This door's ambient asking-session scope (400-15).
    *
    * COMPOSITION-LOCAL. It is created here, entered by this door's own `invokeFunction` wrapper and
@@ -634,14 +700,35 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
    * predicate answers false for every asker on a door with no confirm channel, so the translated
    * no-TTY posture falls out of the one rule.
    */
-  const postureOf = (sessionId: string | undefined): ExecutionContext =>
+  /**
+   * IS A LIVE CONFIRM CHANNEL ENOUGH for this scope? (401-09, Pitfall 3.)
+   *
+   * ONE PRODUCER, TWO RULES, AND THE SCOPE ITSELF SAYS WHICH — the frame the caller entered carries
+   * the answer, so nothing here inspects an id's spelling and no caller can acquire the other
+   * rule by naming itself differently. A run trigger's claim is `hasLiveChannel(triggerScope)` at
+   * EVALUATE time and nothing else: the browser that clicked run is still there, or it is not.
+   */
+  const reachableFor = (scopeId: string, channelAlone: boolean): boolean =>
+    channelAlone
+      ? confirms !== undefined && confirms.hasLiveChannel(scopeId)
+      : watchedAndInFlight(scopeId)
+
+  const postureOf = (
+    scopeId: string | undefined,
+    channelAlone = false,
+  ): ExecutionContext =>
     input.resolveExecutionContext === undefined
-      ? postureFor(sessionId, watchedAndInFlight)
+      ? postureFor(scopeId, (id) => reachableFor(id, channelAlone))
       : input.resolveExecutionContext()
 
   // WHAT THE GATE READS. Zero-arg because `invoke.ts` calls it with nothing — the narrowing happens
-  // here, at the composition boundary, by reading the asker this door scoped around the turn.
-  const resolveExecutionContext = (): ExecutionContext => postureOf(askingSession())
+  // here, at the composition boundary, by reading the scope this door entered around the call. Both
+  // halves of the frame are read: WHICH scope is asking, and which reachability rule that scope's
+  // kind is honest under.
+  const resolveExecutionContext = (): ExecutionContext => {
+    const frame = askingSessions.getStore()
+    return postureOf(frame?.askingSession, frame?.reachableByChannelAlone === true)
+  }
 
   const host = composeCliLocalAgent({
     agentQaRoot: input.agentQaRoot,
@@ -689,10 +776,23 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
       // name its caller has nobody to ask, and `request()` denies a session with no channel without
       // parking anything. Substituting whoever happens to be watching is the wrong-transcript
       // defect itself, and after this it is not expressible here.
-      chatConfirm: createDashboardConfirmFactory({
-        confirms,
-        resolveTargetSession: askingSession,
-      }),
+      chatConfirm: (bindings) => {
+        const port = createDashboardConfirmFactory({
+          confirms,
+          resolveConfirmScope: askingSession,
+        })(bindings)
+        browserConfirm = port
+        return port
+      },
+      // THE RUN GATE'S HALF OF THE SAME PORT (401-09, D-11). A forwarder rather than a second
+      // construction: `chatConfirmPort ?? input.confirm` is what the op registry reads, and this is
+      // what `createComposedRunExecution` reads, and both resolve to the one object above. A run
+      // triggered from the button and a `runs.start` typed into the dashboard's own conversation
+      // therefore ask the same way, through the same mint, with the same three answers.
+      //
+      // `false` BEFORE THE COMPOSITION FINISHES is unreachable in practice — nothing can start a
+      // run before the host exists — and is the fail-closed direction if it ever were.
+      confirm: async (action) => browserConfirm !== undefined && await browserConfirm(action),
       // Pattern 5: cost previews and diffs land in the transcript BEFORE the confirm bubble, on
       // the same channel and routed to the same conversation. Dropped where no conversation can be
       // identified, for the reason the confirm is denied there.
@@ -709,9 +809,17 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
       host,
       sessionEvents,
       confirms,
-      (sessionId, run) => askingSessions.run({ askingSession: sessionId }, run),
+      (sessionId, run) => askingSessions.run(
+        { askingSession: sessionId, reachableByChannelAlone: false },
+        run,
+      ),
     ),
-    resolveExecutionContext: postureOf,
+    resolveExecutionContext: (scopeId, options) =>
+      postureOf(scopeId, options?.reachableByChannelAlone === true),
+    enterRunTriggerScope: (scopeId, run) => askingSessions.run(
+      { askingSession: scopeId, reachableByChannelAlone: true },
+      run,
+    ),
   }
 }
 
@@ -731,14 +839,15 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
  * identically to a browser click and to a sentence typed at `agent-qa chat`. There is no dashboard
  * carve-out and no second spelling of "start a run".
  *
- * THE INTERIM POSTURE IS `local-headless`, AND IT IS STRUCTURAL RATHER THAN CONFIGURED. This door's
- * gate context is `postureFor(askingSession(), …)`, and `askingSession()` reads an AsyncLocalStorage
- * that only `composeDashboardAgentHost`'s turn wrapper ever enters. A queued run is not a turn and
- * never enters it, so the asker is `undefined` and the posture is `local-headless` — every time,
- * without anyone remembering to pass it. Environment-local targets therefore run credential-free
- * and shared targets deny FAIL-CLOSED with the gate's own typed remedies reaching the run's failure
- * record. 401-09 adds D-11's confirm dialog and, with it, the interactive claim; until then this is
- * honest fail-closed rather than a gap.
+ * THE POSTURE IS THE TRIGGER'S OWN, AND IT IS HONEST BY CONSTRUCTION (401-09, D-11 / Pitfall 3).
+ * 401-07 shipped this door `local-headless` for every run, because a queued run is not a turn and
+ * so never entered the asking-session scope. That was honest and it was also a floor: an ask-tier
+ * run against a shared target could only ever fail closed, even with the person who clicked it
+ * sitting in front of the page. This door now mints a CONFIRM SCOPE per queued run and runs the
+ * whole `runs.start` invocation inside it, so the gate's context resolver and the confirm port both
+ * name that scope — and the posture is `local-interactive` exactly when the triggering browser is
+ * still holding a channel on it, `local-headless` otherwise. The claim is never made because "the
+ * dashboard is a browser"; it is made because a socket is open, which is the class Pitfall 3 names.
  */
 export interface DashboardRunDoor {
   /** Handed to `composeDashboardDoor` BEFORE the host exists — see `bindHost`. */
@@ -753,6 +862,15 @@ export interface DashboardRunDoor {
    * registry. Reading it at call time is what makes both true at once.
    */
   bindHost(host: LocalAgentHost): void
+  /**
+   * Bind the door's run-trigger scope entry (401-09, D-11).
+   *
+   * THE SAME BOX FOR THE SAME REASON, and it is separate from `bindHost` deliberately: a caller
+   * that composes this door WITHOUT one — no confirm registry, no browser — gets the 401-07 posture
+   * unchanged, because an unentered scope is `undefined` and `postureFor` answers `local-headless`.
+   * Absent is the fail-closed direction, so nothing has to remember to pass it for safety's sake.
+   */
+  bindTriggerScope(enter: <T>(scopeId: string, run: () => T) => T): void
 }
 
 /** Structural, so this module names the dashboard package's own type without importing its value. */
@@ -824,7 +942,16 @@ export async function createDashboardRunDoor(input: {
   /** The dashboard database THIS SERVER holds. One connection, one writer, one process. */
   readonly db: unknown
 }): Promise<DashboardRunDoor> {
-  const { createDashboardRunIngest, createInProcessExecutionBackend } = await import('@vostride/agent-qa-dashboard')
+  const {
+    createDashboardRunIngest,
+    createInProcessExecutionBackend,
+    // 401-09: the scope-namespace question, asked of the module that owns the namespace rather
+    // than answered with a prefix spelled here. This module's relationship with the dashboard
+    // package is type-only at module scope on purpose (so `agent-qa --help` does not pay for a web
+    // server), so a static import of this value would be a startup regression — this lazy import is
+    // already paid for.
+    isRunTriggerConfirmScope,
+  } = await import('@vostride/agent-qa-dashboard')
   // DEFERRED, and load-bearing: `in-process-run-execution.ts` imports `commands/run.ts`'s producers
   // statically and `commands/run.ts` imports this command's neighbours, so a static edge back can
   // close an ESM cycle at module-evaluation time. Every other door acquires this port the same way.
@@ -832,6 +959,8 @@ export async function createDashboardRunDoor(input: {
 
   const entries = new Map<string, DashboardRunEntry>()
   let boundHost: LocalAgentHost | undefined
+  /** Absent runs the invocation unscoped, which is `local-headless` — the fail-closed default. */
+  let enterTriggerScope: (<T>(scopeId: string, run: () => T) => T) | undefined
 
   const runBridge: NonNullable<ComposeCliLocalAgentInput['runBridge']> = {
     // THE BRIDGE HOOK (D-09). Routed by the session's OWN id rather than by "the run in flight",
@@ -905,11 +1034,30 @@ export async function createDashboardRunDoor(input: {
         // THE SHIPPED DISPATCHER, NOT THE PORT UNDERNEATH IT. Going straight to the run execution
         // would skip the op-level gate, the receipt classification and the ack law — which is the
         // dashboard carve-out D-10 exists to refuse.
-        await invokeFunction(
+        //
+        // INSIDE THE TRIGGER'S CONFIRM SCOPE (401-09, D-11). The whole invocation, not a part of it:
+        // the op-level gate, the run gate and the confirm port are all further down this one call,
+        // and an `AsyncLocalStorage` entered here reaches every one of them across every await
+        // between — which is the same mechanism, and the same reason, as the turn wrapper's.
+        const dispatch = (): Promise<unknown> => invokeFunction(
           host.registry as FunctionRegistry,
           'runs.start',
           request,
           DASHBOARD_FUNCTION_CALLER,
+        )
+        // A TRIGGER SCOPE OR NOTHING. `isRunTriggerConfirmScope` is checked here as well as at the
+        // route that accepted it, and the redundancy is deliberate: this scope is entered under the
+        // CHANNEL-ALONE reachability rule, so a live CHAT conversation named here would have this
+        // run's question written into somebody's transcript and let that conversation's watcher
+        // approve a run they never triggered. Two doors, one refusal, and the one nearest the
+        // decision is this one.
+        const scope = opts.confirmScope
+        await (
+          enterTriggerScope === undefined
+          || scope === undefined
+          || !isRunTriggerConfirmScope(scope)
+            ? dispatch()
+            : enterTriggerScope(scope, dispatch)
         )
       } finally {
         entries.delete(opts.runId)
@@ -921,6 +1069,7 @@ export async function createDashboardRunDoor(input: {
     runBridge,
     backend,
     bindHost: (host: LocalAgentHost): void => { boundHost = host },
+    bindTriggerScope: (enter): void => { enterTriggerScope = enter },
   }
 }
 
@@ -1046,7 +1195,7 @@ async function startDashboardBackedServices(
     // starter needs the composition's registry, so one of the two has to be read at call time.
     const runDoor = await createDashboardRunDoor({ db })
 
-    const { agentHost, host: runHost } = composeDashboardDoor({
+    const { agentHost, host: runHost, enterRunTriggerScope } = composeDashboardDoor({
       agentQaRoot: resolve(configDir, '.agent-qa'),
       configPath: configFilePath,
       boundOrigin: () => boundOrigin,
@@ -1062,6 +1211,10 @@ async function startDashboardBackedServices(
       runBridge: runDoor.runBridge,
     })
     runDoor.bindHost(runHost)
+    // 401-09 (D-11): the other half of the box pair. With it bound, an ask-tier queued run asks the
+    // browser that triggered it; without it — a door composed with no confirm registry at all —
+    // every trigger stays `local-headless`, which is the posture 401-07 shipped.
+    runDoor.bindTriggerScope(enterRunTriggerScope)
 
     const { close, port: listeningPort } = await startServer({
       db,

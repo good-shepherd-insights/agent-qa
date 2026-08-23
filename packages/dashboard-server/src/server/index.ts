@@ -30,6 +30,10 @@ export {
   isMutatingChatRequest,
   matchChatRoute,
   recordStreamedEvent,
+  RUN_CONFIRM_ANSWER_ROUTE,
+  RUN_CONFIRM_CHANNEL_ROUTE,
+  RUN_CONFIRM_ROUTE_PREFIX,
+  RUN_CONFIRM_SCOPE_FRAME_KIND,
 } from '../chat/chat-routes.js'
 // The confirm bridge (400-03). The registry is created by the command that composes the door — the
 // composition parks questions in it and the routes serve them — so both its factory and its
@@ -38,6 +42,9 @@ export {
   CHAT_CONFIRM_ANSWERS,
   CHAT_CONFIRM_TIMEOUT_MS,
   createConfirmRegistry,
+  isRunTriggerConfirmScope,
+  mintRunTriggerConfirmScope,
+  RUN_TRIGGER_CONFIRM_SCOPE_PREFIX,
 } from '../chat/confirm-registry.js'
 export type {
   ChatConfirmAnswer,
@@ -45,6 +52,7 @@ export type {
   ChatConfirmChannelFrame,
   ChatConfirmRequest,
   ConfirmRegistry,
+  ConfirmScopeId,
   CreateConfirmRegistryOptions,
 } from '../chat/confirm-registry.js'
 export type {

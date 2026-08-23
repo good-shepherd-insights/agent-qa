@@ -29,6 +29,19 @@ export interface ExecuteOptions {
    * argument and is handed to the run through an injected resolver.
    */
   appiumUrl?: string
+  /**
+   * The browser this run's ask-tier questions go to (401-09, D-11).
+   *
+   * A CONFIRM SCOPE MINTED BY THE PERSON'S OWN CHANNEL, carried from the trigger request through
+   * the queued row to here — the successor to nothing, because the retiring wire could not ask a
+   * question at all: it spawned a child whose stdin was a pipe, so an ask-tier dashboard run had
+   * no reachable human by construction and denied fail-closed every time.
+   *
+   * ABSENT IS THE HONEST DEFAULT. A trigger with no channel — the person navigated away, or a
+   * caller that is not a browser — leaves the run `local-headless`, which is what a run nobody can
+   * be asked about IS. It is never defaulted to "somebody is probably there".
+   */
+  confirmScope?: string
 }
 
 /**

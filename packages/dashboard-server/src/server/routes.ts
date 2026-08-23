@@ -13,7 +13,8 @@ import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
 import { tryParseRequestUrl } from './request-url.js'
-import { CHAT_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
+import { CHAT_ROUTE_PREFIX, RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
+import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -1381,7 +1382,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
     // person has open the preflight it needs to POST a turn at their local agent, which is exactly
     // the header the turn route refuses to write on its own response. The door answers its own
     // preflight, same-origin.
-    if (path.startsWith(CHAT_ROUTE_PREFIX)) {
+    if (path.startsWith(CHAT_ROUTE_PREFIX) || path.startsWith(RUN_CONFIRM_ROUTE_PREFIX)) {
+      // 401-09: the run trigger's confirm surface is a SECOND PREFIX ON THE SAME ROUTER, mounted
+      // here for the identical reason — ahead of the shared `cors()` arm, so no page a person has
+      // open can preflight a route whose whole power is to approve an ask-tier run on their machine.
       chatRouter(req, res)
       return
     }
@@ -1978,10 +1982,24 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         json(res, { error: 'Queue not available' }, 503)
         return
       }
-      readJsonBody<{ file?: string; patterns?: string[]; tags?: unknown; noCache?: boolean; local?: boolean; triggerSource?: unknown }>(req)
+      readJsonBody<{ file?: string; patterns?: string[]; tags?: unknown; noCache?: boolean; local?: boolean; triggerSource?: unknown; confirmScope?: unknown }>(req)
         .then(async (body) => {
           if (body.tags !== undefined) {
             json(res, { error: 'tags are not supported for dashboard-triggered runs' }, 400)
+            return
+          }
+          // 401-09 (D-11): WHICH BROWSER TO ASK, if this run turns out to be ask-tier. Refused by
+          // name unless it is a confirm scope minted on `/api/run-confirm/channel` — a caller that
+          // could name a live CHAT conversation here would have a run's question delivered into
+          // somebody's transcript and answered by whoever is watching it.
+          //
+          // THIS IS NOT A CLAIM ABOUT CONTEXT (Pitfall 7). It names an ADDRESS; whether anyone is
+          // there is decided by the gate's own read of `hasLiveChannel` at evaluate time, and a
+          // scope nobody is holding open makes the run `local-headless` exactly as if the field had
+          // been absent. There is no value a caller can put here that claims interactivity.
+          if (body.confirmScope !== undefined
+            && (typeof body.confirmScope !== 'string' || !isRunTriggerConfirmScope(body.confirmScope))) {
+            json(res, { error: 'confirmScope must be a confirm scope minted by this server' }, 400)
             return
           }
           const triggerSource = parseDashboardRunTriggerSource(body.triggerSource)
@@ -2084,6 +2102,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             metadata: {
               args,
               isSuite: isSuite || undefined,
+              ...(typeof body.confirmScope === 'string' ? { confirmScope: body.confirmScope } : {}),
               ...toExecutionTimeoutMetadata(executionTimeout),
             },
           })
