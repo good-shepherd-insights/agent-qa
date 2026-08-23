@@ -41,9 +41,8 @@
 // therefore the smallest fixture in which the cancelled run's log is missing work the surviving
 // run's log has.
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -51,6 +50,7 @@ import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import type { ExecuteOptions, RunSettledDetails } from '@vostride/agent-qa-dashboard'
 
 import { composeDashboardDoor, createDashboardRunDoor } from '../dashboard.js'
+import { plantHoldableBrowser, waitFor } from './holdable-browser.js'
 import {
   CountingTarget,
   createInProcessFixture,
@@ -74,127 +74,12 @@ interface Envelope {
   reason?: string
 }
 
-/** The parked stand-in browsers, and the only lever that lets one of them go. */
-interface HoldableBrowser {
-  /** The path playwright itself named, where the stand-in was planted. */
-  readonly execPath: string
-  /** One record per launch, in arrival order: the argv playwright spawned it with. */
-  arrivals(): string[]
-  /** How many releases THIS CELL has issued. Zero until it says otherwise. */
-  releasesIssued(): number
-  /** Let the n-th arrival go. It exits non-zero, which is what playwright sees. */
-  release(ordinal: number): void
-  releaseAll(): void
-}
-
-/**
- * Plant a stand-in browser executable at the path playwright resolves, and park every launch.
- *
- * THE PATH IS PLAYWRIGHT'S OWN ANSWER, not a hand-spelled one. `chromium.executablePath()` folds
- * the browser revision and the host platform into a path this cell must not try to reproduce — a
- * literal would rot silently on the next playwright bump and leave the plant unused, which is the
- * shape of a cell that goes green having measured nothing. `PLAYWRIGHT_BROWSERS_PATH` is set FIRST
- * so the answer is inside this fixture's own temp tree, and the caller asserts that containment.
- *
- * playwright-core is reached through `@vostride/agent-qa-web`'s own resolution rather than declared
- * here: the web adapter is the module that launches browsers, so its playwright is the one whose
- * answer matters, and a second copy could disagree about the revision.
- */
-function plantHoldableBrowser(fixture: Fixture): HoldableBrowser {
-  const browsersRoot = join(fixture.project, 'planted-browsers')
-  mkdirSync(browsersRoot, { recursive: true })
-  process.env.PLAYWRIGHT_BROWSERS_PATH = browsersRoot
-
-  const requireFromWeb = createRequire(createRequire(import.meta.url).resolve('@vostride/agent-qa-web'))
-  const playwright = requireFromWeb('playwright-core') as { chromium: { executablePath(): string } }
-  const execPath = playwright.chromium.executablePath()
-  if (!execPath.startsWith(`${browsersRoot}/`)) {
-    throw new Error(
-      `The planted browsers root was not honoured: playwright resolves ${execPath}, outside ${browsersRoot}. `
-      + 'Planting elsewhere would leave this cell measuring a machine-installed browser.',
-    )
-  }
-
-  const control = join(fixture.project, 'hold-control')
-  mkdirSync(control, { recursive: true })
-
-  // The stand-in itself, in two pieces so neither the interpreter path nor the argv needs quoting:
-  // a `/bin/sh` trampoline (the file playwright spawns) and the node script that does the parking.
-  const holdScript = join(control, 'hold.cjs')
-  writeFileSync(
-    holdScript,
-    [
-      "const fs = require('node:fs')",
-      `const control = ${JSON.stringify(control)}`,
-      '// An ATOMIC ordinal: mkdir either creates the slot or fails, so two concurrent launches can',
-      '// never claim the same one. The cell starts its runs one at a time and waits for each',
-      '// arrival, so ordinal N belongs to the N-th run it started.',
-      'let ordinal = 0',
-      'for (; ordinal < 32; ordinal += 1) {',
-      "  try { fs.mkdirSync(`${control}/slot-${ordinal}`); break } catch { /* taken */ }",
-      '}',
-      '// The argv is recorded so the cell can prove PLAYWRIGHT launched this, not something else.',
-      'fs.writeFileSync(`${control}/arrived-${ordinal}`, process.argv.slice(2).join(" "))',
-      'const parked = () => {',
-      '  if (fs.existsSync(`${control}/release-${ordinal}`)) process.exit(1)',
-      '  setTimeout(parked, 25)',
-      '}',
-      'parked()',
-      '',
-    ].join('\n'),
-  )
-  mkdirSync(dirname(execPath), { recursive: true })
-  // `"$@"` is load-bearing: the cell proves the launch was PLAYWRIGHT's by reading the argv back,
-  // so the trampoline has to forward what it was spawned with.
-  writeFileSync(
-    execPath,
-    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(holdScript)} "$@"\n`,
-  )
-  chmodSync(execPath, 0o755)
-
-  let issued = 0
-  return {
-    execPath,
-    arrivals: () =>
-      readdirSync(control)
-        .filter((entry) => entry.startsWith('arrived-'))
-        .sort()
-        .map((entry) => readFileSync(join(control, entry), 'utf8')),
-    releasesIssued: () => issued,
-    release: (ordinal) => {
-      if (existsSync(join(control, `release-${String(ordinal)}`))) return
-      issued += 1
-      writeFileSync(join(control, `release-${String(ordinal)}`), '')
-    },
-    releaseAll: () => {
-      for (let ordinal = 0; ordinal < 32; ordinal += 1) {
-        if (!existsSync(join(control, `slot-${String(ordinal)}`))) continue
-        if (existsSync(join(control, `release-${String(ordinal)}`))) continue
-        issued += 1
-        writeFileSync(join(control, `release-${String(ordinal)}`), '')
-      }
-    },
-    // The arrival file for an ordinal only exists once that launch is parked, which is what the
-    // caller waits on.
-  }
-}
-
-/** Wait for `assertion`, and FAIL with its own error rather than a bare timeout. */
-async function waitFor(assertion: () => void, timeoutMs = 60_000): Promise<void> {
-  const startedAt = Date.now()
-  let lastError: unknown
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      assertion()
-      return
-    } catch (error) {
-      lastError = error
-      await new Promise((resolve) => setTimeout(resolve, 25))
-    }
-  }
-  if (lastError instanceof Error) throw lastError
-  throw new Error('Timed out waiting for assertion')
-}
+// THE HOLDABLE MEMBER LIVES IN `holdable-browser.ts` (401-22), imported above. It has a second
+// consumer now — `composition/__tests__/interrupted-gate-run-exclusion.e2e.test.ts` — and a fixture
+// whose whole value is that liveness is ASSERTED cannot afford two spellings: the weaker copy
+// would go green having measured nothing. That module's header names every load-bearing property,
+// including the `PLAYWRIGHT_BROWSERS_PATH`-before-anything-touches-playwright ordering hazard that
+// this cell's plant depends on.
 
 /** The event types a run wrote to ITS OWN durable log, in order. */
 function loggedTypes(fixture: Fixture, runId: string): string[] {
@@ -211,16 +96,15 @@ function loggedEnvelopes(fixture: Fixture, runId: string): Envelope[] {
     .map((line) => JSON.parse(line) as Envelope)
 }
 
-const priorBrowsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH
-let releaseEverything: (() => void) | undefined
+let plantedBrowsers: ReturnType<typeof plantHoldableBrowser> | undefined
 
-beforeEach(() => { releaseEverything = undefined })
+beforeEach(() => { plantedBrowsers = undefined })
 afterEach(() => {
-  // Never leave a parked stand-in behind: it would outlive the run that spawned it.
-  releaseEverything?.()
-  releaseEverything = undefined
-  if (priorBrowsersPath === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH
-  else process.env.PLAYWRIGHT_BROWSERS_PATH = priorBrowsersPath
+  // Never leave a parked stand-in behind: it would outlive the run that spawned it. The plant owns
+  // the `PLAYWRIGHT_BROWSERS_PATH` it pinned, so it also owns putting it back.
+  plantedBrowsers?.releaseAll()
+  plantedBrowsers?.restoreBrowsersPath()
+  plantedBrowsers = undefined
 })
 
 describe('cancelling one of two concurrently executing dashboard runs (401 UAT 14 / truth 5, D-12)', () => {
@@ -235,7 +119,7 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
         secondSuiteMember: true,
       })
       const browsers = plantHoldableBrowser(fixture)
-      releaseEverything = browsers.releaseAll
+      plantedBrowsers = browsers
 
       const db = new DashboardDatabase({ dbPath: ':memory:' })
       const runDoor = await createDashboardRunDoor({ db })
