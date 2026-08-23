@@ -626,8 +626,12 @@ describe('the descriptor the CLI door hands the gate names every target it will 
       // BOTH names, read off the fixture's own definitions.
       expect(disclosure).toContain(fixture.targetName)
       expect(disclosure).toContain(fixture.secondTargetName!)
-      // And the class the fold decided, which the second target's `local` did not lower.
-      expect(disclosure).toContain('shared')
+      // And the DECLARATION the fold attributed, which the second target's `local` did not
+      // lower (401-15, WR-06). Pinned as the whole clause rather than the bare word `shared`: an
+      // asserting clause ("environment: shared") contains that word too, so the substring alone
+      // could not tell the honest sentence from the one UAT test 4 refused.
+      expect(disclosure).toContain('declared: at least one target shared')
+      expect(disclosure).not.toContain('environment: ')
     } finally {
       await target.close()
     }

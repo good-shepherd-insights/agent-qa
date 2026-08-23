@@ -93,22 +93,57 @@ export function buildRunRiskDescriptor(
  * AN EMPTY NAME LIST STILL YIELDS A SENTENCE. A run whose members declare no target at all is
  * exactly the case a person most needs told; an empty string here would render as no preview at
  * all and put this back where W-1 found it.
+ *
+ * IT ATTRIBUTES THE DECLARATION, IT DOES NOT ASSERT AN ENVIRONMENT (401-15, WR-06 · UAT test 4).
+ *
+ * The clause used to name ONE environment for the WHOLE member set, which is a claim the input
+ * cannot support: the class arriving here is a FOLD over the members (most-restrictive-wins), and
+ * a fold answer is a property of the set, not of any member. For `[shared, undefined]` the fold
+ * answers `undefined`, and the sentence read
+ *
+ *     targets staging, weird (environment: undeclared, which classifies as shared)
+ *
+ * — telling a person that `staging` is undeclared when the config declares it `shared`. The tier
+ * was right and the FACT was wrong, at the one moment somebody is deciding. So the clause now says
+ * what the CONFIG DECLARES, scoped the way the fold actually scopes it: `every target` for the one
+ * answer that really is universal, `at least one target` for the two that are existential. No
+ * member is described as anything, so no member can be described as the wrong thing.
+ *
+ * IT STILL NEVER UNDERSTATES. `every target local` is reachable from exactly one fold answer, and
+ * that answer is only produced when every member declared `local` — so a set carrying a shared or
+ * undeclared member can never render the sentence that would invite a person to approve it as a
+ * local run. That is the property this function is most dangerous without, and it is asserted.
+ *
+ * THE CLASSIFICATION CONSEQUENCE STAYS VISIBLE. `which classifies as shared` rides both undeclared
+ * arms, because D-06 is the whole reason the tier is what it is, and a preview that dropped it
+ * would leave a person reading `undeclared` with no idea why they were being asked at all.
  */
 export function buildRunDisclosure(
   targetClass: RunTargetClass,
   targetNames: readonly string[],
 ): string {
-  const environment =
+  const declaration =
     targetClass === 'local'
-      ? 'local'
+      ? 'declared: every target local'
       : targetClass === 'shared'
-        ? 'shared'
-        : 'undeclared, which classifies as shared'
-  const targets =
-    targetNames.length === 0
-      ? 'no declared target'
-      : targetNames.length === 1
-        ? `target ${targetNames[0]!}`
-        : `targets ${targetNames.join(', ')}`
-  return `Start a run against ${targets} (environment: ${environment}).`
+        ? 'declared: at least one target shared'
+        : targetNames.length === 0
+          ? 'declared: nothing at all, which classifies as shared'
+          : 'declared: at least one target undeclared, which classifies as shared'
+  const targets = renderTargetNames(targetNames)
+  return `Start a run against ${targets} (${declaration}).`
+}
+
+/**
+ * The member names, as one noun phrase — the only place this function interpolates its input.
+ *
+ * Separate from the sentence above so the DECLARATION clause and the NAME list are two independent
+ * things to get right: WR-06 is about what the clause claims, WR-01 is about what the names can do
+ * to the line they sit on, and folding them into one expression is how a later edit to either one
+ * quietly changes the other.
+ */
+function renderTargetNames(targetNames: readonly string[]): string {
+  if (targetNames.length === 0) return 'no declared target'
+  if (targetNames.length === 1) return `target ${targetNames[0]!}`
+  return `targets ${targetNames.join(', ')}`
 }

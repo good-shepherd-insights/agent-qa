@@ -179,7 +179,8 @@ describe("the run confirm host answers only its own question (401-14, CR-05)", (
       channel.callbacks!.onConfirmRequest!({
         confirmId: "confirm-A",
         actionClass: "run:start",
-        preview: "Start a run against target the-one-being-asked-about (environment: shared).",
+        preview:
+          'Start a run against target the-one-being-asked-about (declared: at least one target shared).',
       })
     })
     expect(host.querySelector("[data-run-confirm-dialog]")?.getAttribute("data-confirm-id"))

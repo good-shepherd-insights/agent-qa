@@ -348,9 +348,15 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       // The target's own name, read off the FIXTURE's definition rather than retyped here, so a
       // rename cannot leave this cell agreeing with a string nothing produces.
       expect(raised.preview).toContain(fixture.targetName)
-      // AND THE CLASS THE GATE DECIDED UNDER, honestly: this fixture declares no `environment:`,
-      // which D-06 classifies SHARED — the tier that is why anybody is being asked at all.
-      expect(raised.preview!.toLowerCase()).toContain('shared')
+      // AND THE DECLARATION THE GATE DECIDED UNDER, honestly: this fixture declares no
+      // `environment:`, which D-06 classifies SHARED — the tier that is why anybody is being asked
+      // at all. 401-15 (WR-06): the clause ATTRIBUTES that ("at least one target undeclared")
+      // rather than asserting an environment for the whole member set, so pin the clause and not
+      // the bare word, which an asserting sentence would satisfy too.
+      expect(raised.preview).toContain(
+        'declared: at least one target undeclared, which classifies as shared',
+      )
+      expect(raised.preview).not.toContain('environment: ')
       // AND IT IS PARKED IN THE SHIPPED REGISTRY'S OWN LOT — not in a second one this door built.
       expect(scene.confirms.pendingCount()).toBe(1)
 
