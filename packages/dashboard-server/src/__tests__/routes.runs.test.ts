@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { IncomingMessage, type IncomingHttpHeaders, type ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect, beforeEach } from 'vitest'
 
-import { createRouter } from '../server/routes.js'
+import { createRouter, RESPONSE_SAFE_RUN_READ_METHODS } from '../server/routes.js'
 
 interface MockRun {
   id: string
@@ -152,6 +155,30 @@ function createMockDatabase() {
     },
     getPendingRuns() {
       return runs.filter((run) => run.status === 'pending')
+    },
+    getNextPendingRun() {
+      return runs.find((run) => run.status === 'pending')
+    },
+    getSteps() {
+      return []
+    },
+    getRunsByTestName(name: string) {
+      return runs.filter((run) => run.name === name)
+    },
+    getRunsByTestNameCount(name: string) {
+      return runs.filter((run) => run.name === name).length
+    },
+    getTestTrends() {
+      return []
+    },
+    getRunsBySuiteId(suiteId: string) {
+      return runs.filter((run) => run.suiteId === suiteId)
+    },
+    getRunsBySuiteIdCount(suiteId: string) {
+      return runs.filter((run) => run.suiteId === suiteId).length
+    },
+    getSuiteTrends() {
+      return []
     },
     listRunAttributeKeys(opts: { limit?: number; q?: string } = {}) {
       const counts = new Map<string, number>()
@@ -788,5 +815,226 @@ describe('GET /api/runs route contract', () => {
     const res = await invokeRoute(router, '/api/runs/missing/artifact')
     expect(res.status).toBe(404)
     expect(JSON.parse(res.body)).toEqual({ error: 'Run not found' })
+  })
+})
+
+// ---- CR-02: the confirm scope stops leaving on the read path (401-18) ---------------------------
+//
+// `POST /api/runs/trigger` persists the triggering browser's confirm scope into `runs.metadata` so
+// the QUEUE can address that browser when the run finally starts. Every run-reading endpoint then
+// served the whole row through `json()`, which writes `Access-Control-Allow-Origin: *` — so any page
+// a person had open could read the scope out of a run they never triggered.
+//
+// THE STRIP IS ON THE RESPONSE PATH, NEVER IN `mapRunRow`. The queue consumer reads `confirmScope`
+// off the persisted row; a strip at the DB→row choke point would delete the feature rather than
+// close the leak. `run-trigger-confirm.test.ts` holds the cell proving the feature survived.
+
+const LEAKED_SCOPE = 'run-trigger:cr02-leaked-scope-3f19b2'
+/** A metadata key nobody has invented yet — the allowlist's fail-closed proof. */
+const FUTURE_FIELD_VALUE = 'cr02-a-field-added-next-phase-8ac41d'
+
+function seedScopedRun(
+  db: ReturnType<typeof createMockDatabase>,
+  overrides: Partial<Parameters<ReturnType<typeof createMockDatabase>['insertRun']>[0]> = {},
+): string {
+  return db.insertRun({
+    name: 'Scoped Run',
+    metadata: {
+      args: ['/w/tests/scoped.yaml'],
+      confirmScope: LEAKED_SCOPE,
+      laterField: FUTURE_FIELD_VALUE,
+    },
+    ...overrides,
+  })
+}
+
+describe('CR-02 — no run-reading response hands out the confirm scope', () => {
+  let db: ReturnType<typeof createMockDatabase>
+  let router: ReturnType<typeof createRouter>
+
+  beforeEach(() => {
+    db = createMockDatabase()
+    router = createRouter(db as never)
+  })
+
+  it('DOOR 1 — GET /api/runs (the list) carries no confirm scope', async () => {
+    seedScopedRun(db, { id: 'run-list' })
+    const res = await invokeRoute(router, '/api/runs')
+    expect(res.status).toBe(200)
+    expect(res.body).not.toContain(LEAKED_SCOPE)
+    expect(res.body).not.toContain(FUTURE_FIELD_VALUE)
+    // The row really was served — an empty list would satisfy the assertion above.
+    expect((JSON.parse(res.body) as { runs: unknown[] }).runs).toHaveLength(1)
+  })
+
+  it('DOOR 1 (nested) — the list’s suite `tests` array carries none EITHER', async () => {
+    seedScopedRun(db, { id: 'run-suite-parent', suiteId: 'suite-a' })
+    seedScopedRun(db, { id: 'run-suite-child', suiteId: 'suite-a', parentRunId: 'run-suite-parent' })
+    const res = await invokeRoute(router, '/api/runs')
+    expect(res.status).toBe(200)
+    const data = JSON.parse(res.body) as {
+      runs: Array<{ id: string; metadata: Record<string, unknown> | null; tests?: Array<{ id: string; metadata: Record<string, unknown> | null }> }>
+    }
+    // ASSERTED ON THE CHILD ITSELF, not on the parent's serialization: one assertion covering both
+    // would let a strip that only reached the top level pass.
+    const parent = data.runs.find((run) => run.id === 'run-suite-parent')
+    expect(parent?.tests?.map((test) => test.id)).toEqual(['run-suite-child'])
+    expect(parent?.tests?.[0]?.metadata).not.toHaveProperty('confirmScope')
+    expect(res.body).not.toContain(LEAKED_SCOPE)
+  })
+
+  it('DOOR 2 — GET /api/runs/:id (the detail) carries none, in `run`, `attempts` and `tests`', async () => {
+    seedScopedRun(db, { id: 'run-detail', suiteId: 'suite-b' })
+    seedScopedRun(db, { id: 'run-detail-child', suiteId: 'suite-b', parentRunId: 'run-detail' })
+    const res = await invokeRoute(router, '/api/runs/run-detail')
+    expect(res.status).toBe(200)
+    const data = JSON.parse(res.body) as {
+      run: { metadata: Record<string, unknown> | null }
+      attempts: Array<{ id: string; metadata: Record<string, unknown> | null }>
+      tests: Array<{ id: string; metadata: Record<string, unknown> | null }>
+    }
+    expect(data.run.metadata).not.toHaveProperty('confirmScope')
+    expect(data.attempts).toHaveLength(1)
+    expect(data.attempts[0]!.metadata).not.toHaveProperty('confirmScope')
+    expect(data.tests[0]!.metadata).not.toHaveProperty('confirmScope')
+    expect(res.body).not.toContain(LEAKED_SCOPE)
+  })
+
+  it('DOOR 3 — GET /api/runs/:id/artifact carries none, in `run` and in `children[].run`', async () => {
+    seedScopedRun(db, { id: 'run-artifact-scope' })
+    seedScopedRun(db, { id: 'run-artifact-child', parentRunId: 'run-artifact-scope' })
+    db.insertRunArtifact({ runId: 'run-artifact-scope', kind: 'test' })
+    const res = await invokeRoute(router, '/api/runs/run-artifact-scope/artifact')
+    expect(res.status).toBe(200)
+    const data = JSON.parse(res.body) as {
+      run: { metadata: Record<string, unknown> | null }
+      children: Array<{ run: { id: string; metadata: Record<string, unknown> | null } }>
+    }
+    expect(data.run.metadata).not.toHaveProperty('confirmScope')
+    expect(data.children).toHaveLength(1)
+    expect(data.children[0]!.run.metadata).not.toHaveProperty('confirmScope')
+    expect(res.body).not.toContain(LEAKED_SCOPE)
+  })
+
+  it('DOOR 4 — GET /api/queue/status carries none, in `pending`, `running` and `recent`', async () => {
+    seedScopedRun(db, { id: 'run-pending', status: 'pending' })
+    seedScopedRun(db, { id: 'run-running', status: 'running' })
+    seedScopedRun(db, { id: 'run-done', status: 'passed' })
+    const { router: queueRouter } = createQueueRouter(db)
+    const res = await invokeRoute(queueRouter, '/api/queue/status?completed=true')
+    expect(res.status).toBe(200)
+    const data = JSON.parse(res.body) as {
+      pending: { jobs: Array<{ metadata: Record<string, unknown> | null }> }
+      running: { jobs: Array<{ metadata: Record<string, unknown> | null }> }
+      recent: Array<{ metadata: Record<string, unknown> | null }>
+    }
+    expect(data.pending.jobs).toHaveLength(1)
+    expect(data.running.jobs).toHaveLength(1)
+    expect(data.recent).toHaveLength(1)
+    expect(data.pending.jobs[0]!.metadata).not.toHaveProperty('confirmScope')
+    expect(data.running.jobs[0]!.metadata).not.toHaveProperty('confirmScope')
+    expect(data.recent[0]!.metadata).not.toHaveProperty('confirmScope')
+    expect(res.body).not.toContain(LEAKED_SCOPE)
+  })
+
+  it('DOOR 5 — GET /api/analytics/tests/:name carries none', async () => {
+    seedScopedRun(db, { id: 'run-analytics-test', name: 'Checkout' })
+    const res = await invokeRoute(router, '/api/analytics/tests/Checkout')
+    expect(res.status).toBe(200)
+    const data = JSON.parse(res.body) as { runs: Array<{ metadata: Record<string, unknown> | null }> }
+    expect(data.runs).toHaveLength(1)
+    expect(data.runs[0]!.metadata).not.toHaveProperty('confirmScope')
+    expect(res.body).not.toContain(LEAKED_SCOPE)
+  })
+
+  it('DOOR 6 — GET /api/analytics/suites/:suiteId carries none', async () => {
+    seedScopedRun(db, { id: 'run-analytics-suite', suiteId: 'suite-checkout' })
+    const suiteRouter = createRouter({
+      db: db as never,
+      suiteFileManager: {
+        findBySuiteId: async (suiteId: string) => ({ suiteId, name: 'Checkout Suite' }),
+      } as never,
+    })
+    const res = await invokeRoute(suiteRouter, '/api/analytics/suites/suite-checkout')
+    expect(res.status).toBe(200)
+    const data = JSON.parse(res.body) as { runs: Array<{ metadata: Record<string, unknown> | null }> }
+    expect(data.runs).toHaveLength(1)
+    expect(data.runs[0]!.metadata).not.toHaveProperty('confirmScope')
+    expect(res.body).not.toContain(LEAKED_SCOPE)
+  })
+
+  it('THE ALLOWLIST FAILS CLOSED — a metadata field invented later does not leave either', async () => {
+    // The shape decision, measured. A keyed removal of `confirmScope` would pass every cell above
+    // and still be one `metadata.x = <secret>` away from the same defect; this is the cell that
+    // tells the two shapes apart.
+    seedScopedRun(db, { id: 'run-future-field' })
+    const res = await invokeRoute(router, '/api/runs/run-future-field')
+    expect(res.status).toBe(200)
+    expect(res.body).not.toContain(FUTURE_FIELD_VALUE)
+    expect(JSON.parse(res.body).run.metadata).not.toHaveProperty('laterField')
+  })
+
+  it('A RUN WITH ONLY PUBLISHABLE METADATA IS SERIALIZED UNCHANGED — the no-op control', async () => {
+    const publishable = {
+      args: ['/w/tests/plain.yaml'],
+      isSuite: true,
+      timeout: 60_000,
+      timeoutSource: 'config',
+      timeoutBaseMs: 50_000,
+      timeoutBufferMs: 10_000,
+      suiteIndex: 2,
+      farmSessionUrl: 'https://farm.example/session/9',
+      runDevice: 'chromium (remote)',
+    }
+    db.insertRun({ id: 'run-plain', name: 'Plain Run', metadata: publishable })
+    const res = await invokeRoute(router, '/api/runs/run-plain')
+    expect(res.status).toBe(200)
+    expect((JSON.parse(res.body) as { run: { metadata: unknown } }).run.metadata).toEqual(publishable)
+  })
+
+  it('A RUN WITH NO METADATA AT ALL IS SERIALIZED UNCHANGED — `null` stays `null`', async () => {
+    db.insertRun({ id: 'run-null-meta', name: 'No Metadata' })
+    const res = await invokeRoute(router, '/api/runs/run-null-meta')
+    expect(res.status).toBe(200)
+    expect((JSON.parse(res.body) as { run: { metadata: unknown } }).run.metadata).toBeNull()
+  })
+})
+
+describe('CR-02 — the read-path census cannot rot', () => {
+  /**
+   * EVERY PUBLIC `DashboardDatabase` METHOD THAT HANDS OUT A RUN ROW must be wrapped by the
+   * router's response-safe projection, or a door reading through it leaks again.
+   *
+   * THE PREDICATE, STATED: parse `database.ts` into method signature blocks — a line at class-member
+   * indentation opening a parameter list, joined forwards until the line that opens the body — and
+   * keep the PUBLIC ones whose return annotation names `RunRow` or `RunArtifactBundle` (whose
+   * `children` each carry a run row). That is a scan of the producer, not a transcription of the
+   * doors this plan happened to find.
+   *
+   * SET EQUALITY, NOT CONTAINMENT, so a method DROPPED from the wrapper reds here as loudly as one
+   * added to the db — a census that only checks one direction is blind to its own narrowing.
+   */
+  it('the wrapper covers exactly the run-row-returning reads the database declares', () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'db', 'database.ts'),
+      'utf8',
+    )
+    const lines = source.split('\n')
+    const declared = new Set<string>()
+    for (let index = 0; index < lines.length; index++) {
+      const opening = /^ {2}(private |protected |static )?([a-zA-Z_$][\w$]*)\s*\(/.exec(lines[index]!)
+      if (!opening) continue
+      let signature = lines[index]!
+      let cursor = index
+      while (!signature.trimEnd().endsWith('{') && cursor + 1 < lines.length && cursor - index < 12) {
+        cursor++
+        signature += ` ${lines[cursor]!.trim()}`
+      }
+      if (!/\)\s*:\s*[^{]*\b(RunRow|RunArtifactBundle)\b/.test(signature)) continue
+      if (opening[1] !== undefined) continue
+      declared.add(opening[2]!)
+    }
+    expect(declared.size, 'the signature scan found nothing — the predicate has rotted').toBeGreaterThan(3)
+    expect([...declared].sort()).toEqual([...RESPONSE_SAFE_RUN_READ_METHODS].sort())
   })
 })
