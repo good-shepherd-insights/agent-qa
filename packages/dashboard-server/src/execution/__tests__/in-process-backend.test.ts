@@ -115,6 +115,30 @@ interface Drive {
   session?: FakeRunSession
 }
 
+/**
+ * The neutral sentence the gate composes for a browser reader (`buildDecisionNeutralReason`).
+ *
+ * Written out here rather than imported: `packages/dashboard-server` may not import `safety`, so a
+ * cell that reached for the producer would be measuring a dependency `validate:arch` forbids. What
+ * is load-bearing is the SHAPE — a decision said without naming any surface's affordance — and the
+ * absence of `--trust-session`, which is asserted directly.
+ */
+const NEUTRAL_DENIAL_PROSE =
+  'fail-closed (local-headless): declared tier: mutating-shared: this action needs an approval this context has not established'
+
+/**
+ * A gate denial as it ARRIVES here: an object carrying `reason`, `remedies` and `neutralReason`.
+ *
+ * Deliberately not an instance of anything this package can name — see the structural-read cell.
+ */
+const buildDenial = (): unknown => Object.assign(
+  new Error(
+    'Run denied: fail-closed: ask in local-headless without trust (declared tier: mutating-shared): '
+    + 're-run locally to confirm interactively or opt in with --trust-session',
+  ),
+  { remedies: [{ kind: 'answer-confirm' }], neutralReason: NEUTRAL_DENIAL_PROSE },
+)
+
 const baseOpts = (runId: string): ExecuteOptions => ({
   runId,
   args: ['tests/parity.yaml'],
@@ -132,7 +156,7 @@ async function driveOneRun(input: {
   envelopes?: readonly RunEventEnvelope[]
   preAttach?: number
   opts?: Partial<ExecuteOptions>
-  rejectWith?: Error
+  rejectWith?: unknown
   startSession?: boolean
 }): Promise<Drive> {
   const runId = input.runId ?? PARITY_RUN_ID
@@ -332,6 +356,61 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
     })
     expect(drive.settled[0]!.details.reason).toContain('Run failed after start')
     expect(drive.buffered.map((event) => event.type)).toContain('runStarted')
+  })
+
+  // ---- 401-18 (G-401-16): A REFUSAL TRAVELS AS A FACT, NOT AS PROSE THE READER RE-DERIVES ------
+  //
+  // `settle` already KNOWS the difference — `handle.session === undefined` is the run that never
+  // began — and threw the knowledge away, leaving the host's reconciliation to guess from a regex
+  // over the message. These cells pin the two facts that now ride the settle instead.
+
+  it('A REFUSAL IS MARKED AS ONE — the host is not left to infer it from the message', async () => {
+    const drive = await driveOneRun({
+      runId: 'marked-refusal',
+      startSession: false,
+      rejectWith: buildDenial(),
+    })
+    expect(drive.settled[0]!.details.refusedBeforeStart).toBe(true)
+  })
+
+  it('THE NEUTRAL FORM IS READ STRUCTURALLY OFF THE REJECTION — no class check, no regex', async () => {
+    // The carrier is a PLAIN object with the field on it, never a `RunDeniedError`: this package may
+    // not import the package that mints one, so a cell that needed the class would be measuring a
+    // dependency the architecture forbids. That is exactly `dashboardRemediesOf`'s precedent.
+    const drive = await driveOneRun({
+      runId: 'neutral-refusal',
+      startSession: false,
+      rejectWith: buildDenial(),
+    })
+    expect(drive.settled[0]!.details.neutralReason).toBe(NEUTRAL_DENIAL_PROSE)
+    expect(drive.settled[0]!.details.neutralReason).not.toContain('--trust-session')
+    // The typed half is untouched — it was already right, and it is the control proving this
+    // repair went to the prose channel and nowhere else.
+    expect(drive.settled[0]!.details.remedies).toEqual([{ kind: 'answer-confirm' }])
+  })
+
+  it('A REFUSAL WITH NO NEUTRAL FORM IS STILL A REFUSAL — the marker does not depend on the prose', async () => {
+    // The other members of the refusal family: an unrecognised request field, an input error, the
+    // host asked to start a run before it was composed. None of them is a gate decision, so none
+    // carries a neutral form — and every one of them still never started a run.
+    const drive = await driveOneRun({
+      runId: 'field-refusal',
+      startSession: false,
+      rejectWith: new Error('The dashboard run door does not honour --headed.'),
+    })
+    expect(drive.settled[0]!.details.refusedBeforeStart).toBe(true)
+    expect(drive.settled[0]!.details.neutralReason).toBeUndefined()
+    expect(drive.settled[0]!.details.reason).toContain('does not honour --headed')
+    expect(drive.settled[0]!.details.remedies).toBeUndefined()
+  })
+
+  it('A POST-START FAILURE IS NOT MARKED A REFUSAL — the scope control', async () => {
+    const drive = await driveOneRun({
+      runId: 'post-start-failure',
+      rejectWith: new Error('agent-qa browser support is not installed for Chromium'),
+    })
+    expect(drive.settled[0]!.details.refusedBeforeStart).toBeUndefined()
+    expect(drive.settled[0]!.details.neutralReason).toBeUndefined()
   })
 
   it('A RUN THAT ENDS WITH NO TERMINAL ENVELOPE IS `failed`, NOT `completed`', async () => {

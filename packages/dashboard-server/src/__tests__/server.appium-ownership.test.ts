@@ -29,6 +29,16 @@ interface RunnerInstance {
   closeRun: (runId: string, status: CloseStatus, output?: string[]) => void
 }
 
+/**
+ * The neutral sentence the gate composes for a reader whose surface is not a terminal (401-18).
+ *
+ * Spelled out rather than imported — `packages/dashboard-server` may not import `safety`. What the
+ * cells below assert is the SHAPE (a decision said without naming any surface's affordance) and the
+ * absence of `--trust-session`, both of which are asserted directly.
+ */
+const NEUTRAL_REFUSAL_PROSE =
+  'prompted-denied: declared tier: mutating-shared: the interactive prompt was declined'
+
 const mockState = vi.hoisted(() => ({
   appiumInstances: [] as AppiumInstance[],
   runnerInstances: [] as RunnerInstance[],
@@ -57,6 +67,27 @@ class FakeExecutionBackend extends EventEmitter {
   /** Drive the terminal state the host reconciles on — the successor to the child's `close`. */
   closeRun = (runId: string, status: CloseStatus, output: string[] = []): void => {
     this.emit('run-settled', runId, status, { output })
+  }
+
+  /**
+   * Drive a run the gate or the host REFUSED before it began (401-18, G-401-16).
+   *
+   * A separate driver, not a flag on `closeRun`, because the two are different EVENTS: `closeRun`
+   * is a run that happened and stopped, this is a run that never started. Every existing cell keeps
+   * calling `closeRun` and therefore keeps measuring the unchanged arms.
+   */
+  refuseRun = (runId: string, details: {
+    reason: string
+    neutralReason?: string
+    remedies?: readonly { kind: string }[]
+  }): void => {
+    this.emit('run-settled', runId, 'failed', {
+      output: details.reason.split('\n'),
+      reason: details.reason,
+      refusedBeforeStart: true,
+      ...(details.neutralReason === undefined ? {} : { neutralReason: details.neutralReason }),
+      ...(details.remedies === undefined ? {} : { remedies: details.remedies }),
+    })
   }
 
   constructor() {
@@ -404,6 +435,87 @@ describe('dashboard Appium ownership', () => {
       processStatus: 'completed',
       finalStatus: 'failed',
     })
+  })
+
+  // ---- 401-18 (G-401-16): A REFUSED RUN IS DESCRIBED AS A REFUSAL --------------------------------
+  //
+  // The measured defect (UAT item 15): a run the gate refused before anything started was written
+  // to the runs list as `Process exited before test completed`, and the only record of WHY offered
+  // `--trust-session` — a flag declared on one CLI command — to somebody sitting in a browser.
+
+  it('does not summarise a refused run as a process that exited', async () => {
+    const port = await startDashboard()
+    const run = await postJson<QueueResponse>(port, '/api/queue/enqueue', {
+      name: 'Refused before start',
+      platform: 'web',
+    })
+
+    const runner = currentRunner()
+    await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
+
+    runner.refuseRun(run.runId, {
+      reason: 'Run denied: prompted-denied: declared tier: mutating-shared: the interactive prompt'
+        + ' was declined; re-run and approve, or opt in with --trust-session',
+      neutralReason: NEUTRAL_REFUSAL_PROSE,
+      remedies: [{ kind: 'answer-confirm' }],
+    })
+
+    const stored = currentDb!.getRun(run.runId)
+    expect(stored?.status).toBe('failed')
+    expect(
+      stored?.failureSummary,
+      'a run that never started is still summarised as a process that exited',
+    ).not.toBe('Process exited before test completed')
+    expect(stored?.failureSummary).toContain('Refused before the run started')
+    expect(stored?.failureSummary).toContain('prompted-denied')
+  })
+
+  it('hands the refused run the surface-neutral prose, never the canonical CLI sentence', async () => {
+    const port = await startDashboard()
+    const run = await postJson<QueueResponse>(port, '/api/queue/enqueue', {
+      name: 'Refused prose channel',
+      platform: 'web',
+    })
+
+    const runner = currentRunner()
+    await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
+
+    runner.refuseRun(run.runId, {
+      reason: 'Run denied: prompted-denied: declared tier: mutating-shared: the interactive prompt'
+        + ' was declined; re-run and approve, or opt in with --trust-session',
+      neutralReason: NEUTRAL_REFUSAL_PROSE,
+      remedies: [{ kind: 'answer-confirm' }],
+    })
+
+    const stored = currentDb!.getRun(run.runId)
+    expect(stored?.errorLog).toBe(NEUTRAL_REFUSAL_PROSE)
+    expect(
+      `${stored?.failureSummary ?? ''}\n${stored?.errorLog ?? ''}`,
+      'a CLI flag is offered as the way forward to somebody in a browser',
+    ).not.toContain('--trust-session')
+  })
+
+  it('describes a refusal that is not a gate denial as a refusal, and invents no way forward', async () => {
+    const port = await startDashboard()
+    const run = await postJson<QueueResponse>(port, '/api/queue/enqueue', {
+      name: 'Refused request field',
+      platform: 'web',
+    })
+
+    const runner = currentRunner()
+    await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
+
+    // No neutral form, no remedies — an unrecognised request field is not a gate decision. It is
+    // still a run that never started, and the record has to say so.
+    runner.refuseRun(run.runId, {
+      reason: 'The dashboard run door does not honour --headed.',
+    })
+
+    const stored = currentDb!.getRun(run.runId)
+    expect(stored?.status).toBe('failed')
+    expect(stored?.failureSummary).toContain('Refused before the run started')
+    expect(stored?.failureSummary).toContain('does not honour --headed')
+    expect(stored?.errorLog).toContain('does not honour --headed')
   })
 
   it('persists the failure’s own diagnostic lines as a failed run close', async () => {
