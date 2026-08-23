@@ -511,14 +511,24 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
       const rows = runStartRows(fixture)
       expect(rows).toHaveLength(1)
+      // ARRIVAL BEFORE CLAIM, this file's rule applied to the ROW: a `run:start` decision really
+      // was taken and classified, which is what separates "the gate answered" from "nothing ever
+      // reached the gate". Without it, a never-got-there would read like a denial to every
+      // assertion below, because an absent field and a refused one are both `undefined`.
+      expect(rows[0]!.riskTier).toBeTruthy()
       expect(rows[0]!.outcome).toBe('prompted-approved')
       // The honest interactive claim: this row says a browser really was holding the channel the
       // trigger named, which is only true because `setRunConfirmScope` ran in the page.
       expect(rows[0]!.executionContext).toBe('local-interactive')
-      // RECORDED, NOT ENDORSED: the trust the row attributes the approval to is `tty-prompt`, and
-      // there was no TTY anywhere near this decision — a person clicked a button in Chromium. The
-      // decision is right and its provenance is mislabelled on the record a person audits.
-      expect(rows[0]!.trustSource).toBe('tty-prompt')
+      // AND THE ROW NAMES WHO ACTUALLY ANSWERED (G-401-17). This assertion was carried here as
+      // RECORDED, NOT ENDORSED for two plans: the row said `tty-prompt` for a person clicking a
+      // button in Chromium, because rung (e) of the gate's ladder hardcoded the mechanism it
+      // expected rather than recording the surface the composition declared. It is now the positive
+      // claim, read off the run's own audit row after a real click in a real browser — and its
+      // controls are the two TERMINAL scenes in `run-risk.test.ts` and
+      // `sovereignty-differentials.test.ts`, which still assert `tty-prompt` and would red together
+      // with this one if a blanket rename had swept every site instead of a fix landing.
+      expect(rows[0]!.trustSource).toBe('browser-click')
       expect(eventTypes(fixture)).toContain('runStarted')
       expect(buildOrdinalsExist(fixture)).toBe(true)
       expect(target.hits, 'the approved run never touched the target').toContain('/in-process-thing')
