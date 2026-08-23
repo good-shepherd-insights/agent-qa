@@ -21,14 +21,21 @@
 // the target, and the reason read BACK off the row. Every denial cell below asserts all five and
 // is paired with an allow control differing in EXACTLY ONE field.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, relative, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Readable, Writable } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import { RunDeniedError } from '@vostride/agent-qa-agent-local'
+import { generateRunId } from '@vostride/agent-qa-ids'
+import {
+  RunDeniedError,
+  RunIdAlreadyInUseError,
+  RunIdNotMintedError,
+} from '@vostride/agent-qa-agent-local'
 import type { RunInvocationCoreOptions } from '@vostride/agent-qa-agent-local'
 import {
   getActiveExecutionContext,
@@ -630,4 +637,345 @@ describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)
       await target.close()
     }
   }, 120_000)
+})
+
+// ---------------------------------------------------------------------------------------------
+// THE TYPED DOOR'S IDENTITY REFUSALS, AND THE DOOR CENSUS (2026-08-23, plan 20 · CR-04).
+//
+// D-16's rule applied to a new refusal: reaching through the same seam is MEASURED per door, never
+// assumed. The environment door is measured on the process a person starts
+// (`commands/__tests__/run-gate.e2e.test.ts`); this file measures the typed door, where a caller
+// gets a typed refusal instead of a stderr line and where a PATH-SHAPED id is answered by a
+// different mechanism entirely — the codec, at parse, before the op is invoked at all.
+
+/** The digest of every file in a run's directory. "Untouched" has to be a claim about bytes. */
+function digestsUnder(dir: string): Record<string, string> {
+  if (!existsSync(dir)) return {}
+  const digests: Record<string, string> = {}
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name)
+    if (!statSync(path).isFile()) continue
+    digests[name] = createHash('sha256').update(readFileSync(path)).digest('hex')
+  }
+  return digests
+}
+
+describe('the typed door refuses a malformed or colliding run id (CR-04)', () => {
+  it('a PATH-SHAPED id is refused by the CODEC, before the op runs at all', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      pinAmbient('local-headless', false)
+
+      const { ack, error } = await invokeRunsStartOutcome(
+        fixture,
+        { patterns: [fixture.testPattern], runId: '../../escape' as never },
+        { resolveExecutionContext: () => 'local-headless' },
+      )
+
+      expect(ack).toBeUndefined()
+      expect(error).toBeDefined()
+      // Pre-fix this exact request was ACKNOWLEDGED, naming `../../escape`, with the run's own
+      // artifacts written into `.agent-qa/runs/escape/`.
+      expect(runDirs(fixture)).toEqual([])
+      expect(existsSync(join(fixture.project, '.agent-qa', 'runs', 'escape'))).toBe(false)
+      expect(target.hits).toEqual([])
+      // THE DISCRIMINATOR between this cell and the next: the codec refuses at PARSE, so the op's
+      // own gate never ran and there is no `fn:runs.start` row. That is what makes "the schema door
+      // and the core door are two different refusals" a measurement rather than a claim.
+      expect(opAuditRows(fixture)).toEqual([])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('an id the system would not have MINTED is refused by the core, by name', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      pinAmbient('local-headless', false)
+
+      const { ack, error } = await invokeRunsStartOutcome(
+        fixture,
+        { patterns: [fixture.testPattern], runId: 'not-a-minted-id' as never },
+        { resolveExecutionContext: () => 'local-headless' },
+      )
+
+      expect(ack).toBeUndefined()
+      expect(error).toBeInstanceOf(RunIdNotMintedError)
+      expect((error as Error).message).toContain('not-a-minted-id')
+      // It passed the CODEC — `not-a-minted-id` is a perfectly good path segment — so the op DID
+      // run and its own gate DID record a row. The run itself never started.
+      expect(opAuditRows(fixture).map((row) => row.action)).toEqual(['fn:runs.start'])
+      expect(runDirs(fixture)).toEqual([])
+      expect(buildOrdinalsExist(fixture)).toBe(false)
+      expect(target.hits).toEqual([])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('a COLLIDING id is refused, and the victim run is byte-identical after', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      pinAmbient('local-headless', false)
+      const victimId = generateRunId()
+
+      const first = await invokeRunsStart(
+        fixture,
+        { patterns: [fixture.testPattern], runId: victimId as never },
+        { resolveExecutionContext: () => 'local-headless' },
+      )
+      expect(first.runId).toBe(victimId)
+      const victimDir = join(fixture.project, '.agent-qa', 'runs', victimId)
+      const before = digestsUnder(victimDir)
+      // Non-vacuity: the victim really holds the artifacts a collision would tamper with.
+      expect(Object.keys(before)).toContain('events.jsonl')
+      expect(Object.keys(before)).toContain('handoff.json')
+      const hitsAfterFirst = [...target.hits]
+
+      const { ack, error } = await invokeRunsStartOutcome(
+        fixture,
+        { patterns: [fixture.testPattern], runId: victimId as never },
+        { resolveExecutionContext: () => 'local-headless' },
+      )
+
+      expect(ack).toBeUndefined()
+      expect(error).toBeInstanceOf(RunIdAlreadyInUseError)
+      expect((error as Error).message).toContain(victimId)
+      // THE WHOLE CLAIM, at bytes. Measured pre-fix through this very door: `events.jsonl` grew
+      // 2111 → 4221 bytes (7 → 14 envelopes) and `handoff.json` was overwritten in place.
+      expect(digestsUnder(victimDir)).toEqual(before)
+      // No SECOND run directory either — the refusal did not divert the run elsewhere.
+      expect(runDirs(fixture).map((dir) => dir.split('/').pop())).toEqual([victimId])
+      // …and it cost the target nothing, so it landed above assembly.
+      expect(target.hits).toEqual(hitsAfterFirst)
+    } finally {
+      await target.close()
+    }
+  }, 240_000)
+
+  it('THE CONTROL — a minted, free id is acknowledged and the run happens under it', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      pinAmbient('local-headless', false)
+      const mintedId = generateRunId()
+
+      const ack = await invokeRunsStart(
+        fixture,
+        { patterns: [fixture.testPattern], runId: mintedId as never },
+        { resolveExecutionContext: () => 'local-headless' },
+      )
+
+      // The run every refusal cell above says did not happen is this one: same door, same request,
+      // one field different.
+      expect(ack.runId).toBe(mintedId)
+      expect(runDirs(fixture).map((dir) => dir.split('/').pop())).toEqual([mintedId])
+      expect(eventTypes(fixture)).toContain('runStarted')
+      expect(buildOrdinalsExist(fixture)).toBe(true)
+      expect(target.hits).toEqual(['/in-process-thing'])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+})
+
+// ---------------------------------------------------------------------------------------------
+// THE DOOR CENSUS — every production site that can name the run id a run executes under.
+//
+// TWO PREDICATES, DIFFERENT IN SHAPE, because one door is not a request field at all:
+//
+//   E1  REQUEST-shaped. Every production site that puts a `runId` onto the object the run seam
+//       reads. Compared against a written role table, never against its own output.
+//   E2  ENVIRONMENT-shaped. Every production read of `AGENT_QA_RUN_ID`. E1 cannot see this door's
+//       ORIGIN — the value becomes an ordinary local long before it reaches a request literal —
+//       and it is the ONE door the typed codec does not range.
+//
+// THE COMMENT STRIPPER IS PART OF THE PREDICATE, and the idiom this repo has been using is blind.
+// `// … could not touch \`daemon/**\` that wave` (daemon/host.ts:642) is a LINE comment containing
+// `/*`; a stripper that removes block comments first and line comments second treats that `/*` as
+// the start of a block and swallows every byte up to the next `*/` — 1,816 characters of
+// `daemon/host.ts`, and 10,575 of `android/src/adapter.ts`. Measured: under the two-pass stripper
+// E1 below returns SIX files and the daemon door is not one of them. Under the one-pass
+// alternation it returns seven. A census cannot be more complete than its stripper.
+describe('the door census — every way a caller can name a run id (CR-04)', () => {
+  const PACKAGES_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
+
+  /**
+   * ONE PASS, so neither comment form can begin inside the other.
+   *
+   * The residual limitation, stated rather than left to be discovered: a `/*` inside a STRING
+   * literal still opens a phantom block. Nothing in the scanned set carries one today, and a
+   * predicate that tokenised TypeScript to find out would be a parser rather than a census.
+   */
+  function stripComments(source: string): string {
+    return source.replace(
+      /\/\*[\s\S]*?\*\/|(^|[^:])\/\/.*$/gm,
+      (_match, kept?: string) => kept ?? '',
+    )
+  }
+
+  function shippedSourceFiles(): string[] {
+    const found: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__' || entry.name === 'node_modules'
+            || entry.name === 'dist' || entry.name === 'coverage') continue
+          walk(path)
+          continue
+        }
+        if (!entry.name.endsWith('.ts') || entry.name.endsWith('.d.ts')) continue
+        found.push(path)
+      }
+    }
+    for (const pkg of readdirSync(PACKAGES_ROOT, { withFileTypes: true })) {
+      if (!pkg.isDirectory()) continue
+      const src = join(PACKAGES_ROOT, pkg.name, 'src')
+      if (existsSync(src)) walk(src)
+    }
+    return found
+  }
+
+  const REQUEST_RUN_ID_RE = /runId:\s*(?:asRunId\(|opts\.runId|request\.runId\b)/
+  const ENV_RUN_ID_RE = /AGENT_QA_RUN_ID/
+
+  /** Files the census MUST range, named rather than read off the scan (the 399/400 scar). */
+  const REQUIRED_MEMBERS = [
+    join('cli', 'src', 'commands', 'run.ts'),
+    join('cli', 'src', 'commands', 'dashboard.ts'),
+    join('cli', 'src', 'daemon', 'host.ts'),
+    join('cli', 'src', 'composition', 'in-process-run-execution.ts'),
+    join('agent', 'src', 'functions', 'ops', 'runs-start.ts'),
+    join('mcp', 'src', 'mapping.ts'),
+  ] as const
+
+  /**
+   * THE ROLE TABLE — every E1 site, and what it is. `reaches` answers the only question that
+   * matters: does an id named here arrive at the invocation core's identity step, and therefore
+   * inherit BOTH refusals? A site that did not would have to be routed through them or recorded,
+   * with evidence, as unable to collide — and recording it here is what makes that visible.
+   */
+  const E1_SITES: Readonly<Record<string, { role: string; reaches: boolean; verdict: string }>> = {
+    'agent-local/src/composition/run-invocation-core.ts': {
+      role: 'the identity step itself',
+      reaches: true,
+      verdict:
+        'not a door — this is where the refusals live. It matches E1 because the collision test '
+        + 'reads `request.runId`, which is exactly the value under judgement.',
+    },
+    'cli/src/commands/run.ts': {
+      role: 'door: `agent-qa run`, both paths',
+      reaches: true,
+      verdict:
+        'THE DOOR THE CODEC DOES NOT RANGE — the request literal is built in-process from '
+        + '`AGENT_QA_RUN_ID ?? generateRunId()`, so no parse happens. It reaches the core, which is '
+        + 'why the shape refusal lives there. Cells: `commands/__tests__/run-gate.e2e.test.ts`.',
+    },
+    'cli/src/commands/dashboard.ts': {
+      role: 'door: the dashboard run button',
+      reaches: true,
+      verdict:
+        "names the enqueued row's id on a `RunsStartInput` and goes through `invokeFunction` — "
+        + 'deliberately, per D-10, so it cannot skip the op gate. Same parse, same core.',
+    },
+    'cli/src/daemon/host.ts': {
+      role: 'door: the daemon RPC',
+      reaches: true,
+      verdict:
+        'a different COMPOSITION of the same op: it binds a `RunExecutionPort` over the drive, so '
+        + 'the request it forwards is already parsed and the drive composes the core. THE SITE THE '
+        + 'TWO-PASS STRIPPER HID — see this describe block\'s header.',
+    },
+    'cli/src/composition/in-process-run-execution.ts': {
+      role: 'the drive',
+      reaches: true,
+      verdict:
+        "not a caller door — it is the core's one composition. It forwards `request.runId` and "
+        + 'mints a fallback, so every id above passes through here on its way to the identity step.',
+    },
+    'dashboard-server/src/execution/in-process-backend.ts': {
+      role: 'door origin: the enqueued row',
+      reaches: true,
+      verdict:
+        'hands `opts.runId` to the `invokeRun` port, which `commands/dashboard.ts` implements by '
+        + 'invoking the op. The id is minted by the queue; the parse and the core are the row above.',
+    },
+    'cli/src/curation/post-run-tail.ts': {
+      role: 'not a run-start site',
+      reaches: false,
+      verdict:
+        'UNABLE TO COLLIDE, with evidence: it names the id of a run that has already FINISHED, to '
+        + 'enqueue and drain that run\'s own post-run chain. It calls nothing that starts a run — '
+        + '`run-door-invocation-census.test.ts` makes the complete-set claim that no file in this '
+        + 'package acquires `startRun`, and the STARTRUN_PIN now build-enforces it repo-wide.',
+    },
+  }
+
+  it('the scanned set ranges the files the claim is about — the discovery self-check', () => {
+    const scanned = shippedSourceFiles().map((path) => relative(PACKAGES_ROOT, path))
+    expect(scanned.length).toBeGreaterThan(500)
+    for (const member of REQUIRED_MEMBERS) {
+      expect(scanned, `the census is not ranging ${member}`).toContain(member)
+    }
+  })
+
+  it('the stripper sees a line comment that contains a block-comment opener', () => {
+    // The exact shape that hid the daemon door. Under the two-pass idiom the `const` below
+    // disappears with everything after it up to the next `*/`.
+    const source = ['// could not touch `daemon/**` that wave', 'const x = 1', '/** doc */'].join('\n')
+    expect(stripComments(source)).toContain('const x = 1')
+    // …and it still removes what it is supposed to remove.
+    expect(stripComments('const y = 2 // startRun used to be here')).not.toContain('used to be here')
+    expect(stripComments('/* runId: asRunId(x) */\nconst z = 3')).not.toContain('asRunId')
+    // The protocol-relative-URL trap.
+    expect(stripComments("const u = 'https://example.com' // t")).toContain('https://example.com')
+  })
+
+  it('E1 — every production site naming a runId on a run request carries a role', () => {
+    // Self-check first: the predicate can see the forms the doors actually use.
+    expect(REQUEST_RUN_ID_RE.test('        runId: asRunId(runId),')).toBe(true)
+    expect(REQUEST_RUN_ID_RE.test("  runId: opts.runId as RunsStartInput['runId'],")).toBe(true)
+    expect(REQUEST_RUN_ID_RE.test('runDirFor({ configDir, runId: request.runId })')).toBe(true)
+    expect(REQUEST_RUN_ID_RE.test('  runId: someOtherThing,')).toBe(false)
+
+    const found = shippedSourceFiles()
+      .filter((path) => REQUEST_RUN_ID_RE.test(stripComments(readFileSync(path, 'utf8'))))
+      .map((path) => relative(PACKAGES_ROOT, path).replaceAll(sep, '/'))
+
+    expect(found.sort()).toEqual(Object.keys(E1_SITES).sort())
+    for (const site of Object.values(E1_SITES)) {
+      expect(site.verdict.trim()).not.toEqual('')
+      expect(site.role.trim()).not.toEqual('')
+    }
+  })
+
+  it('E2 — the environment door has exactly one production origin, and it is a listed site', () => {
+    const found = shippedSourceFiles()
+      .filter((path) => ENV_RUN_ID_RE.test(stripComments(readFileSync(path, 'utf8'))))
+      .map((path) => relative(PACKAGES_ROOT, path).replaceAll(sep, '/'))
+
+    expect(found).toEqual(['cli/src/commands/run.ts'])
+    expect(Object.hasOwn(E1_SITES, found[0]!)).toBe(true)
+    // …and that door does NOT parse, which is the whole reason the core carries the shape refusal.
+    // Stated as a property of the file rather than as prose: the request it builds is a literal,
+    // and `RunsStartInputSchema` is not named on the road from the environment read to the drive.
+    const source = stripComments(readFileSync(join(PACKAGES_ROOT, ...found[0]!.split('/')), 'utf8'))
+    expect(source).toContain('process.env.AGENT_QA_RUN_ID')
+    expect(source).not.toContain('RunsStartInputSchema')
+  })
+
+  it('every E1 site either reaches the identity step or is recorded as unable to collide', () => {
+    const bypassing = Object.entries(E1_SITES).filter(([, site]) => !site.reaches)
+    // Exactly one, and its verdict is what carries the evidence.
+    expect(bypassing.map(([file]) => file)).toEqual(['cli/src/curation/post-run-tail.ts'])
+    expect(bypassing[0]![1].verdict).toContain('already FINISHED')
+  })
 })

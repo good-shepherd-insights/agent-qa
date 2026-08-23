@@ -42,7 +42,7 @@
 // pre-core build exits 2 as well, for a reason that has nothing to do with authorization).
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -50,7 +50,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { generateTestId } from '@vostride/agent-qa-ids'
+import { createHash } from 'node:crypto'
+
+import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 /**
@@ -202,11 +204,28 @@ afterEach(() => {
  * cells passed on a measurement that could not have failed; the allow control is what caught it.
  */
 async function runCli(...args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return await runCliWithEnv({}, ...args)
+}
+
+/**
+ * The same shipped binary, with named environment variables set (401-20).
+ *
+ * `AGENT_QA_RUN_ID` IS A DOOR ONTO A RUN'S IDENTITY, and it is a door the typed contract does not
+ * range: `run.ts` builds its `RunsStartInput` literal in-process, so an id arriving this way never
+ * passes `RunsStartInputSchema` at all. That is precisely why the shape and collision refusals live
+ * in the invocation core and not only in the codec — and why they have to be measured HERE, on the
+ * process a person starts, rather than at the typed door where a different refusal would answer.
+ */
+async function runCliWithEnv(
+  overrides: Record<string, string>,
+  ...args: string[]
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: '1', DO_NOT_TRACK: '1' }
   // A run id inherited from this process would attach the child's run to another run's directory —
   // and an EMPTY string is not the same as absent: `?? generateRunId()` keeps `''`, which slugs to
   // a run directory called `default`. Deleted, not blanked.
   delete env.AGENT_QA_RUN_ID
+  for (const [key, value] of Object.entries(overrides)) env[key] = value
 
   const child = spawn(process.execPath, [CLI_DIST, 'run', ...args], { cwd: project, env })
   let stdout = ''
@@ -251,6 +270,18 @@ function eventTypes(): string[] {
       .filter((line) => line.trim() !== '')
       .map((line) => (JSON.parse(line) as { type: string }).type)
   })
+}
+
+/** A sha of every file in a directory — "untouched" has to be a statement about bytes. */
+function digestsUnder(dir: string): Record<string, string> {
+  if (!existsSync(dir)) return {}
+  const digests: Record<string, string> = {}
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name)
+    if (!statSync(path).isFile()) continue
+    digests[name] = createHash('sha256').update(readFileSync(path)).digest('hex')
+  }
+  return digests
 }
 
 /** Did assembly run? The build-ordinal ledger is its durable trace, written behind the gate. */
@@ -430,5 +461,107 @@ describe('a multi-member direct invocation is classified as a whole (401-12, CR-
     // (This run then dies at the framework error the fixture has no model provider for — exactly as
     // the single-member allow control above does. The gate half is what is asserted.)
     expect(result.stderr).not.toContain('Run denied')
+  }, 180_000)
+})
+
+// ---------------------------------------------------------------------------------------------
+// THE ENVIRONMENT DOOR (2026-08-23, plan 20 · CR-04).
+//
+// WHY THIS DOOR NEEDS ITS OWN CELLS. Hardening `RunsStartInputSchema` covers the fn, chat, MCP,
+// daemon and dashboard doors, all of which parse. It covers this one not at all: `run.ts` reads
+// `process.env.AGENT_QA_RUN_ID`, mints a fallback, and hands the value to the drive as a request
+// literal — no codec is consulted anywhere on that road. A fix measured only at the typed door
+// would be one-sided hardening on exactly the shape this phase has shipped repeatedly.
+//
+// WHY AN ABSENT RUN DIRECTORY IS THE CORRECT EVIDENCE HERE, and not the never-got-there failure
+// mode. Every denial cell above asserts a `run:start` row EXISTS before believing its verdict,
+// because a deny and a run that never reached the gate are otherwise the same empty directory.
+// These refusals land ABOVE the gate by design, so there is no row and the absence IS the claim.
+// What discriminates them from a broken invocation is the paired control: the same binary, the
+// same target, the same piped stdio, one environment variable different — and the run starts,
+// writes `runStarted`, bumps the ordinal and knocks on the target.
+describe('the environment door cannot name a malformed or colliding run id (CR-04)', () => {
+  it('a MALFORMED AGENT_QA_RUN_ID is refused, and no run directory is created at all', async () => {
+    const result = await runCliWithEnv(
+      { AGENT_QA_RUN_ID: 'not-a-minted-id' },
+      'tests/local-thing.yaml',
+    )
+
+    // The person sees a decision about the id, named. Not a framework error, and not a stack:
+    // 401-18 shipped "a refusal is carried as a fact and described as one", and a refusal rendered
+    // as a crash would undo it at a new door.
+    expect(result.stderr).toContain('not-a-minted-id')
+    expect(result.stderr).toContain('run id')
+    expect(result.stderr).not.toContain('Framework error')
+    // Nothing happened: no run directory, so no audit row and no events; no assembly; no knock.
+    expect(runDirs()).toEqual([])
+    expect(auditRows()).toEqual([])
+    expect(buildOrdinalsExist()).toBe(false)
+    expect(probeHits).toEqual([])
+    expect(result.status).not.toBe(0)
+  }, 180_000)
+
+  it('a PATH-SHAPED AGENT_QA_RUN_ID is refused — the traversal never reaches a path join', async () => {
+    const result = await runCliWithEnv(
+      { AGENT_QA_RUN_ID: '../../escape' },
+      'tests/local-thing.yaml',
+    )
+
+    expect(result.stderr).toContain('run id')
+    // Pre-fix this exact invocation ran a whole run and left `.agent-qa/runs/escape/` behind —
+    // `slugBranch` neutered the traversal, and nothing refused the id.
+    expect(runDirs()).toEqual([])
+    expect(existsSync(join(project, '.agent-qa', 'runs', 'escape'))).toBe(false)
+    expect(probeHits).toEqual([])
+    expect(result.status).not.toBe(0)
+  }, 180_000)
+
+  it('an EMPTY AGENT_QA_RUN_ID no longer runs into the shared runs/default/ directory', async () => {
+    const result = await runCliWithEnv({ AGENT_QA_RUN_ID: '' }, 'tests/local-thing.yaml')
+
+    // `?? generateRunId()` keeps `''`, and `slugBranch('')` is `'default'` — so before this plan
+    // every run started with a blank id shared one directory, and each one appended to the last.
+    expect(existsSync(join(project, '.agent-qa', 'runs', 'default'))).toBe(false)
+    expect(runDirs()).toEqual([])
+    expect(result.status).not.toBe(0)
+  }, 180_000)
+
+  it('a COLLIDING AGENT_QA_RUN_ID is refused and the victim run is byte-identical after', async () => {
+    const victimId = generateRunId()
+
+    const first = await runCliWithEnv({ AGENT_QA_RUN_ID: victimId }, 'tests/local-thing.yaml')
+    expect(first.stderr).not.toContain('run id')
+    const victimDir = join(project, '.agent-qa', 'runs', victimId)
+    expect(existsSync(victimDir)).toBe(true)
+    const before = digestsUnder(victimDir)
+    // Non-vacuity: the victim really holds the artifacts a collision would tamper with.
+    expect(Object.keys(before)).toContain('events.jsonl')
+    expect(Object.keys(before)).toContain('execution_audit.jsonl')
+    const hitsAfterFirst = [...probeHits]
+
+    const second = await runCliWithEnv({ AGENT_QA_RUN_ID: victimId }, 'tests/local-thing.yaml')
+
+    expect(second.stderr).toContain(victimId)
+    expect(second.stderr).toContain('already names a run')
+    expect(second.status).not.toBe(0)
+    // THE WHOLE CLAIM, at bytes. Pre-fix this appended seven envelopes to `events.jsonl`
+    // (2111 → 4221 bytes) and overwrote `handoff.json`.
+    expect(digestsUnder(victimDir)).toEqual(before)
+    // …and the refusal cost the target nothing, so it landed above assembly here too.
+    expect(probeHits).toEqual(hitsAfterFirst)
+  }, 240_000)
+
+  it('THE CONTROL — a freshly minted AGENT_QA_RUN_ID runs, under exactly that id', async () => {
+    const mintedId = generateRunId()
+
+    const result = await runCliWithEnv({ AGENT_QA_RUN_ID: mintedId }, 'tests/local-thing.yaml')
+
+    // The run the refusal cells say never happened is this run: same door, same target, same
+    // stdio, one environment value different.
+    expect(runDirs().map((dir) => dir.split('/').pop())).toEqual([mintedId])
+    expect(eventTypes()[0]).toBe('runStarted')
+    expect(buildOrdinalsExist()).toBe(true)
+    expect(probeHits).toEqual(['/local-thing'])
+    expect(result.stderr).not.toContain('already names a run')
   }, 180_000)
 })

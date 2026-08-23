@@ -32,6 +32,8 @@ import { resolveRunQuarantineSnapshot } from '@vostride/agent-qa-agent-local'
 // safety scope, into the ONE in-process drive both of this door's paths now call.
 import {
   RunDeniedError,
+  RunIdAlreadyInUseError,
+  RunIdNotMintedError,
   type RunTargetClass,
 } from '@vostride/agent-qa-agent-local'
 // 401-11: the ONE in-process drive. BOTH of this door's paths are callers of it — the door supplies
@@ -4851,6 +4853,20 @@ export function createRunCommand(): Command {
         // suite: nothing ran. `2` is this command's existing "no verdict was produced" code.
         if (err instanceof RunDeniedError) {
           console.error(pc.red(denialDetailLines(`Run denied: ${err.reason}`, err.remedies).join('\n')))
+          await drainAnalytics()
+          process.exit(2)
+        }
+        // 401-20 (CR-04): THE IDENTITY REFUSALS ARE DECISIONS, AND ARE DESCRIBED AS ONES. Measured
+        // before this branch existed: `AGENT_QA_RUN_ID=not-a-minted-id agent-qa run …` printed
+        // `Framework error: agent-qa cannot start a run under "not-a-minted-id"` — a refusal
+        // rendered as a crash, which is the exact defect 401-18 closed at the dashboard's read
+        // path ("a refusal is carried as a fact and described as one"). Nothing ran, nothing
+        // failed, and the message the core minted is already the whole answer: the caller named an
+        // id it may not name, and no remedy vocabulary is involved because no policy was consulted.
+        //
+        // EXIT 2 on `RunDeniedError`'s reasoning: `1` is "the tests failed", and nothing ran.
+        if (err instanceof RunIdNotMintedError || err instanceof RunIdAlreadyInUseError) {
+          console.error(pc.red(err.message))
           await drainAnalytics()
           process.exit(2)
         }

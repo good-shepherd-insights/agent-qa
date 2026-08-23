@@ -88,8 +88,8 @@ export {
 export type { ConstructKnowledgeReaderInput } from './composition/knowledge-reader.js'
 
 // Phase 401 D-02: the one policy-gated in-process run invocation core, and the typed refusals it
-// can raise (two in D-02; 401-20 added the two identity refusals, so a caller can tell "you may
-// not name that id" apart from "that id is already somebody's" apart from a policy denial without
+// can raise (two in D-02; 401-20 added the two identity refusals, so a caller can tell an id it may
+// not name, an id that already belongs to a run, and a policy denial apart from each other without
 // reading a message). Published for the reason the run composition is: it is the seam every host is
 // supposed to share, and a host that cannot reach it composes a run of its own — which is the
 // dual-mechanism class this phase exists to remove. `buildRunRiskDescriptor` travels with it
