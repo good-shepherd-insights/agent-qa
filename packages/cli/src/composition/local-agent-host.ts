@@ -541,23 +541,48 @@ function createComposedRunExecution(input: {
         warn,
       })
 
-      const outcome = await runInProcessCliRun(
-        {
-          configPath,
-          agentQaRoot: input.agentQaRoot,
-          executionContext:
-            (input.resolveExecutionContext?.() ?? resolveRunExecutionContext()) as RunExecutionContext,
-          trust: { trustMode: inputs.config.safety?.trustMode === true },
-          ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
-          inputs,
-          warn,
-        },
-        request,
-      )
-      // A NON-ZERO EXIT CODE IS A REAL RUN, not an error — the same rule the child's exit code
-      // carried. What decides whether a run happened is the durable evidence
-      // `createLocalRunInvocation` reads back, which no code here can fake.
-      return { runId: outcome.runId as RunId }
+      let startedRunId: string | undefined
+      try {
+        const outcome = await runInProcessCliRun(
+          {
+            configPath,
+            agentQaRoot: input.agentQaRoot,
+            executionContext:
+              (input.resolveExecutionContext?.() ?? resolveRunExecutionContext()) as RunExecutionContext,
+            trust: { trustMode: inputs.config.safety?.trustMode === true },
+            ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
+            inputs,
+            // A LOCAL CAPTURE, not the D-09 bridge. It exists so the `catch` below can tell a run
+            // that STARTED from one that never did; 401-07's dashboard bridge is a separate hook
+            // this host does not yet publish, and chaining onto this one is that plan's to do.
+            onSession: (session) => { startedRunId = session.id as unknown as string },
+            warn,
+          },
+          request,
+        )
+        // A NON-ZERO EXIT CODE IS A REAL RUN, not an error — the same rule the child's exit code
+        // carried. What decides whether a run happened is the durable evidence
+        // `createLocalRunInvocation` reads back, which no code here can fake.
+        return { runId: outcome.runId as RunId }
+      } catch (error) {
+        // ONE NARROW CATCH, AND IT CONVERTS EXACTLY ONE THING (D-03).
+        //
+        // Everything raised before a session exists — a denial, a refused field, an input error, a
+        // crash — re-throws untouched. What is converted is a run that STARTED and then surfaced a
+        // member's framework error: the drive re-raises that to preserve `agent-qa run`'s exit-2
+        // contract, but this door is answering `runs.start`, whose ack is a START and not an
+        // outcome. The retired child said the same thing by ignoring its own exit code —
+        // `createCliRunExecution`'s header: "the child's exit code is deliberately NOT the verdict
+        // on whether a run happened". Letting it propagate would reject the acknowledgment for
+        // exactly the runs that left a full durable record, and the composition's evidence check
+        // (`RunProducedNoEventsError`) is what decides whether one did.
+        //
+        // Measured: without this, a `runs.start` whose member cannot find a browser binary rejects
+        // with the browser error while `events.jsonl` and `handoff.json` sit on disk.
+        if (startedRunId === undefined) throw error
+        warn(`Run ${startedRunId} failed: ${error instanceof Error ? error.message : String(error)}`)
+        return { runId: startedRunId as RunId }
+      }
     },
   }
 }
