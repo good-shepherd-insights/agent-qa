@@ -451,6 +451,17 @@ describe("the run confirm host QUEUES an arriving question behind an unresolved 
 
     const second = mountHost()
     linger()
+    expect(shown(second).id, "a fresh host raised something nobody asked it").toBeNull()
+
+    // A FRESH CHANNEL, A FRESH QUESTION, AND THE OLD ONE MUST NOT COME BACK. The drain runs where
+    // a pending question clears, so a queue that outlived its socket does not surface on the empty
+    // mount above — it surfaces HERE, behind the next question this page is actually asked. The
+    // mutation ledger measured the shorter version of this cell passing under a module-scoped
+    // queue, which is what a control that cannot red looks like.
+    request("confirm-C")
+    expect(shown(second).id).toBe("confirm-C")
+    resolveFrame("confirm-C", "accept", "answer")
+    linger()
     expect(
       shown(second).id,
       "a question queued against a closed channel was raised on a fresh host",
