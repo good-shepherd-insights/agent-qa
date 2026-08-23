@@ -13,6 +13,14 @@
 // One direction is half a proof: an implementation that granted unconditionally passes the first
 // and an implementation that grants nothing passes the second.
 //
+// AND SINCE 401-13, A THIRD AXIS: THE CALLER (verification gap CR-03). The three arms below this
+// file shipped with all varied WHETHER A DISPATCH WAS RUNNING; none of them varied WHO WAS ASKING,
+// and every one of them asked from the test body — which is to say all three were the unrelated
+// caller, and the positive arm's green was the defect. The last cell holds a dispatch provably OPEN
+// and drives `runs.start` from outside its call tree: the dashboard-run-button / MCP-caller shape.
+// It is the two-sided pair with the first cell, in one file: the dispatch's own runs still carry
+// `trustSource: standing-approval`, and the outsider's row carries none at all.
+//
 // THE RED THIS REPLACES. Before this plan the door passed NO reader to the run gate at all, so the
 // positive arm's run denied exactly like the negative one — one human approval at the authoring
 // confirm, then N fail-closed refusals. Mutation 1 in the SUMMARY's ledger IS that pre-change door
@@ -264,6 +272,84 @@ describe('one human ask, N gated runs, every one of them gated (D-08)', () => {
       expect(buildOrdinalsExist(fixture)).toBe(false)
       expect(target.hits).toEqual([])
     } finally {
+      await target.close()
+    }
+  }, 300_000)
+
+  it('AN UNRELATED CALLER DURING AN OPEN DISPATCH — refused, on all five artifacts (CR-03)', async () => {
+    // THE CELL THIS FILE NEVER HAD, and the one the verification gap is about. Its RED is recorded
+    // verbatim in 401-13's SUMMARY: on the pre-fix overlay this exact scene produced
+    //   {"outcome":"proceeded","verdict":"allow","trustSource":"standing-approval",
+    //    "riskTier":"mutating-shared","executionContext":"local-headless"}
+    // — a caller that had approved nothing collecting a row byte-identical to one that had, which
+    // is what made the widening unattributable in the record.
+    //
+    // NOT AN EXPIRY MEASUREMENT. The dispatch is parked on an externally-released promise and
+    // `openScopes` is asserted to be 1 at the moment the outsider is refused, so the denial cannot
+    // be explained by "the dispatch had already ended" — the difference is the CALLER and nothing
+    // else. `THE GRANT DIES WITH THE DISPATCH` above is where expiry is measured.
+    const target = new CountingTarget()
+    await target.listen()
+    let release: (() => void) | undefined
+    let dispatch: Promise<void> | undefined
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
+      pinAmbient('local-interactive', false)
+      const dispatchGrants = createDispatchGrants()
+      const ledgerBefore = grantsLedgerBytes(fixture)
+
+      const held = new Promise<void>((resolve) => { release = resolve })
+      dispatch = dispatchGrants.within(async () => { await held })
+      await Promise.resolve()
+      expect(dispatchGrants.openScopes).toBe(1)
+
+      // The outsider: an async context that never entered the scope above. Nothing about this call
+      // differs from the positive arm's two except where it was made from.
+      const { ack, error } = await invokeRunsStart(
+        fixture,
+        dispatchGrants,
+        { patterns: [fixture.testPattern] },
+      )
+
+      // THE GATE WAS REACHED, asserted BEFORE any verdict claim. "Denied" and "never got there"
+      // produce the same-looking absence on every one of the five artifacts below, and 401-12
+      // shipped a fixture an hour ago that read `auditRows: []` on both legs because it died at
+      // config validation. A `run:start` row carrying a real `riskTier` is the proof that the
+      // decision under test was actually taken.
+      const row = theRunGateRow(fixture)
+      expect(row.riskTier).toBe('mutating-shared')
+      expect(row.executionContext).toBe('local-headless')
+
+      // AND THE DISPATCH IS STILL OPEN as the denial lands.
+      expect(dispatchGrants.openScopes).toBe(1)
+
+      // The five artifacts (401-03 Mutation B), never an exit code or a message substring.
+      expect(ack).toBeUndefined()
+      expect(error).toBeInstanceOf(RunDeniedError)
+      const denial = error as RunDeniedError
+      expect(denial.remedies.length).toBeGreaterThan(0)
+      // (a) the row's OUTCOME field — and NO attribution on it, which is the repudiation half
+      expect(row.outcome).toBe('fail-closed-denied')
+      expect(row.verdict).toBe('deny')
+      expect(row.trustSource).toBeUndefined()
+      // (b) no run events — nothing started
+      expect(eventTypes(fixture)).toEqual([])
+      // (c) the build-ordinal ledger did not advance
+      expect(buildOrdinalsExist(fixture)).toBe(false)
+      // (d) nobody knocked on the target
+      expect(target.hits).toEqual([])
+      // (e) the reason the caller sees is the row's own, read BACK off it rather than typed here
+      expect(denial.reason).toBe(row.reason)
+
+      // The overlay minted nothing durable while refusing, either.
+      expect(grantsLedgerBytes(fixture)).toEqual(ledgerBefore)
+
+      release!()
+      await dispatch
+      expect(dispatchGrants.openScopes).toBe(0)
+    } finally {
+      release?.()
+      await dispatch
       await target.close()
     }
   }, 300_000)
