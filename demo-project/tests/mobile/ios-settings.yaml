@@ -1,3 +1,26 @@
+# LANE demo-project-ios-preferences — THE PRECONDITION, and what you see when it is not met.
+#
+# `ios-preferences` is declared `environment: local`, and that declaration is true: Preferences is a
+# first-party system app on the local simulator, so the policy gate allows this run credential-free
+# in every execution context. Nothing below is a gate refusal. The owner ruled this lane
+# `document-the-refusal` (401-21 Task 3), and what there is to document is the PRECONDITION —
+# because that, not the gate, is what actually stops you.
+#
+# PRECONDITION: a booted iOS simulator (the config expects an iPhone 16-family device on iOS 18.2),
+# AND Appium installed.
+#   xcrun simctl list devices booted             # must list at least one device
+#   npm install -D appium                        # or: npm install -g appium
+#   npx agent-qa install-mobile-drivers --all
+#
+# MEASURED on this checkout (401-21 Task 4) with no booted simulator and appium not on PATH.
+# Verbatim, so a later wording change reds against this text instead of drifting away from it:
+#
+#   [appium] Appium not found. Install Appium locally with `npm install -D appium` (or `pnpm add -D appium` / `yarn add -D appium`). If you prefer a machine-wide setup, use `npm install -g appium`.
+#   skipped iOS Preferences navigation (D-13 mobile loop) (skipped)
+#   Framework error: Could not auto-start Appium: Appium server did not become ready within 30000ms
+#
+# The process exits without ever writing a `run:start` audit row, so there is no gate decision to
+# read: this lane stops BEFORE the gate, not at it.
 test-id: t_bright-hoi-rada-alin-waar-geo-hale-ward-orient-egger
 name: iOS Preferences navigation (D-13 mobile loop)
 target: ios-preferences
