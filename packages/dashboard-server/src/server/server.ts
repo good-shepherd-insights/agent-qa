@@ -5,7 +5,7 @@ import { cpus } from 'node:os'
 import type { DashboardDatabase } from '../db/database.js'
 import { createRouter } from './routes.js'
 import { backstopServerError, refuseUnparseableRequest, tryParseRequestUrl } from './request-url.js'
-import { TestRunner } from '../execution/test-runner.js'
+import type { ExecutionBackend, RunSettledDetails, RunSettledStatus } from '../execution/execution-backend.js'
 import { JobQueue } from '../queue/job-queue.js'
 import { TestFileManager } from '../tests/test-file-manager.js'
 import { SuiteFileManager } from '../tests/suite-file-manager.js'
@@ -70,6 +70,21 @@ interface StartServerOptions {
    * name: the door exists, this process was started without a host. See `chat/host.ts`.
    */
   agentHost?: AgentHost
+  /**
+   * The backend every dashboard run executes through (401-07, D-01/D-09/D-10 — INVK-01).
+   *
+   * INJECTED, ON `agentHost`'s OWN IDIOM AND FOR ITS OWN REASON. The implementation that starts a
+   * run names `runs.start`, `invokeFunction` and the composed local host — all of it
+   * `@vostride/agent-qa-agent*` vocabulary this package may not import (validate:arch). So
+   * `agent-qa dashboard` composes it in the process that runs this server and hands it over, which
+   * is what makes the run button one more caller of the op chat already uses rather than a
+   * dashboard carve-out around the gates.
+   *
+   * ABSENT DEGRADES BY NAME, exactly as it did when the CLI binary could not be resolved: the
+   * execution routes answer 503 and the queue's execute handler does nothing. A dashboard started
+   * without a run door is a dashboard that cannot run tests, and it says so.
+   */
+  executionBackend?: ExecutionBackend
 }
 
 export async function startServer(opts: StartServerOptions): Promise<{
@@ -77,7 +92,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   port: number
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost } = opts
+  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend } = opts
 
   const resolvedConfigPath = configPath ?? resolve('agent-qa.config.yaml')
   const configManager = new ConfigManager(resolvedConfigPath)
@@ -87,8 +102,6 @@ export async function startServer(opts: StartServerOptions): Promise<{
   const concurrency = typeof (config as any).concurrency === 'number'
     ? (config as any).concurrency
     : cpus().length
-
-  let testRunner: TestRunner | undefined
 
   const finalizeRunArtifactBestEffort = (
     runId: string,
@@ -107,228 +120,185 @@ export async function startServer(opts: StartServerOptions): Promise<{
     } catch { /* best-effort cleanup */ }
   }
 
-  // Resolve CLI binary once — used by TestRunner
-  let cliBin: string | undefined
-  try {
-    cliBin = TestRunner.resolveCliBin()
-  } catch {
-    console.warn('Warning: Could not resolve agent-qa CLI binary. Execution will not work.')
-  }
+  // THE RUN'S TERMINAL STATE, RECONCILED WHERE THE CHILD'S EXIT USED TO BE (401-07, D-04/D-09).
+  //
+  // This body is the `onProcessClose` reconciliation, unchanged in what it writes. What changed is
+  // where the facts come from: the status is the bus's own ground truth rather than an exit code
+  // read through a scrape, and the diagnostic lines are the failure's OWN message rather than a
+  // tail of the child's stderr. The three things it does — reconcile a db row still reading
+  // `running`, release the run's Appium lease, free the queue slot — are the three things the
+  // process exit was load-bearing for, and all three still need doing.
+  executionBackend?.on('run-settled', (
+    runId: string,
+    status: RunSettledStatus,
+    details: RunSettledDetails,
+  ) => {
+    // The run settled but the DB row is still 'running' — update it so the dashboard does not
+    // show a stuck run.
+    try {
+      const run = db.getRun(runId)
+      const output = details.output
+      const isBrowserDisconnect = output.some(line =>
+        line.includes('Target page, context or browser has been closed') ||
+        line.includes('Browser closed by user')
+      )
+      if (run && (run.status === 'running' || run.status === 'cancelled')) {
+        const duration = run.startedAt
+          ? Date.now() - new Date(run.startedAt).getTime()
+          : 0
 
-  // TestRunner for live test execution
-  if (cliBin) {
-    testRunner = new TestRunner({
-      cliBin,
-      onProcessClose: (runId, status) => {
-        // If the child process exited but the DB row is still 'running',
-        // update it so the dashboard doesn't show a stuck run.
-        try {
-          const run = db.getRun(runId)
-          const handle = testRunner!.getHandle(runId)
-          const isBrowserDisconnect = handle?.output.some(line =>
-            line.includes('Target page, context or browser has been closed') ||
-            line.includes('Browser closed by user')
+        let dbStatus: string
+        let failureSummary: string | undefined
+        let errorLog: string | undefined
+        const explicitCancellation = run.status === 'cancelled' || status === 'cancelled'
+        if (explicitCancellation) {
+          dbStatus = 'cancelled'
+          failureSummary = undefined
+        } else if (status === 'timeout') {
+          dbStatus = 'failed'
+          failureSummary = 'Test timed out -- process was killed'
+        } else if (status === 'completed') {
+          dbStatus = 'failed'
+          failureSummary = 'Process exited before test completed'
+        } else if (isBrowserDisconnect) {
+          dbStatus = 'cancelled'
+          failureSummary = 'Browser closed by user'
+        } else {
+          dbStatus = 'failed'
+          const outputLines = output.map(l => l.replace(/\x1b\[[0-9;]*m/g, ''))
+          const meaningfulLine = [...outputLines].reverse().find(l =>
+            /error/i.test(l) || l.includes('Parse') || l.includes('not found') || l.includes('rejected')
           )
-          if (run && (run.status === 'running' || run.status === 'cancelled')) {
-            const duration = run.startedAt
-              ? Date.now() - new Date(run.startedAt).getTime()
-              : 0
+          failureSummary = meaningfulLine
+            ? meaningfulLine.slice(0, 300)
+            : 'Process exited before test completed'
+        }
 
-            let dbStatus: string
-            let failureSummary: string | undefined
-            let errorLog: string | undefined
-            const explicitCancellation = run.status === 'cancelled' || status === 'cancelled'
-            if (explicitCancellation) {
-              dbStatus = 'cancelled'
-              failureSummary = undefined
-            } else if (status === 'timeout') {
-              dbStatus = 'failed'
-              failureSummary = 'Test timed out -- process was killed'
-            } else if (status === 'completed') {
-              dbStatus = 'failed'
-              failureSummary = 'Process exited before test completed'
-            } else if (isBrowserDisconnect) {
-              dbStatus = 'cancelled'
-              failureSummary = 'Browser closed by user'
-            } else {
-              dbStatus = 'failed'
-              const outputLines = handle?.output.map(l => l.replace(/\x1b\[[0-9;]*m/g, '')) ?? []
-              const meaningfulLine = [...outputLines].reverse().find(l =>
-                /error/i.test(l) || l.includes('Parse') || l.includes('not found') || l.includes('rejected')
-              )
-              failureSummary = meaningfulLine
-                ? meaningfulLine.slice(0, 300)
-                : 'Process exited before test completed'
-            }
+        if (dbStatus === 'failed' && output.length) {
+          errorLog = [...output]
+            .join('\n')
+            .replace(/\x1b\[[0-9;]*m/g, '')
+            .slice(-10000) || undefined
+        }
 
-            if (dbStatus === 'failed' && handle?.output.length) {
-              errorLog = handle.output
-                .join('\n')
-                .replace(/\x1b\[[0-9;]*m/g, '')
-                .slice(-10000) || undefined
-            }
+        // Suite parent: derive status from child test runs
+        if (run.suiteId && !run.parentRunId) {
+          const children = db.getRunsByParent(runId)
+          const incompleteChildStatus = dbStatus === 'cancelled' ? 'cancelled' : 'failed'
+          const incompleteChildSummary = incompleteChildStatus === 'cancelled'
+            ? 'Suite cancelled'
+            : failureSummary ?? 'Suite process terminated'
 
-            // Suite parent: derive status from child test runs
-            if (run.suiteId && !run.parentRunId) {
-              const children = db.getRunsByParent(runId)
-              const incompleteChildStatus = dbStatus === 'cancelled' ? 'cancelled' : 'failed'
-              const incompleteChildSummary = incompleteChildStatus === 'cancelled'
-                ? 'Suite cancelled'
-                : failureSummary ?? 'Suite process terminated'
-
-              for (const child of children) {
-                if (child.status === 'running' || child.status === 'pending') {
-                  db.updateRun(child.id, {
-                    status: incompleteChildStatus,
-                    endedAt: new Date().toISOString(),
-                    failureSummary: incompleteChildSummary,
-                  })
-                  finalizeRunArtifactBestEffort(
-                    child.id,
-                    'suite-process-close',
-                    'process-close',
-                    incompleteChildSummary,
-                    { status: incompleteChildStatus, finalStatus: incompleteChildStatus, processStatus: status },
-                  )
-                }
-              }
-
-              const updatedChildren = db.getRunsByParent(runId)
-
-              const statusPriority: Record<string, number> = {
-                failed: 4,
-                cancelled: 3,
-                flaky: 2,
-                passed: 1,
-                skipped: 0,
-                pending: 0,
-                running: 0,
-              }
-
-              let worstStatus = 'passed'
-              let worstPriority = 0
-              for (const child of updatedChildren) {
-                const p = statusPriority[child.status] ?? 0
-                if (p > worstPriority) {
-                  worstPriority = p
-                  worstStatus = child.status
-                }
-              }
-
-              if (updatedChildren.length === 0) {
-                if (isBrowserDisconnect) {
-                  worstStatus = 'cancelled'
-                } else {
-                  worstStatus = dbStatus
-                }
-              }
-
-              db.updateRun(runId, {
-                status: worstStatus,
-                duration,
+          for (const child of children) {
+            if (child.status === 'running' || child.status === 'pending') {
+              db.updateRun(child.id, {
+                status: incompleteChildStatus,
                 endedAt: new Date().toISOString(),
-                failureSummary: worstStatus === 'failed' ? 'Suite test(s) failed'
-                  : worstStatus === 'cancelled' ? (isBrowserDisconnect ? 'Browser closed by user' : 'Suite cancelled')
-                  : undefined,
+                failureSummary: incompleteChildSummary,
               })
               finalizeRunArtifactBestEffort(
-                runId,
+                child.id,
                 'suite-process-close',
                 'process-close',
-                worstStatus === 'cancelled' ? (isBrowserDisconnect ? 'Browser closed by user' : 'Suite cancelled') : 'Suite process closed',
-                { status: worstStatus, finalStatus: worstStatus, processStatus: status, duration },
+                incompleteChildSummary,
+                { status: incompleteChildStatus, finalStatus: incompleteChildStatus, processStatus: status },
               )
-
-              releaseMobileAppiumLease(runId, 'suite-process-close')
-              jobQueue.onSlotFreed(runId)
-              return
             }
-
-            // Check for retry child runs and classify accordingly
-            const childRuns = db.getRunsByParent(runId)
-            if (childRuns.length > 0) {
-              const incompleteChildStatus = dbStatus === 'cancelled' ? 'cancelled' : 'failed'
-              const incompleteChildSummary = incompleteChildStatus === 'cancelled'
-                ? 'Retry cancelled'
-                : failureSummary ?? 'Retry process terminated'
-              for (const child of childRuns) {
-                if (child.status === 'running' || child.status === 'pending') {
-                  db.updateRun(child.id, {
-                    status: incompleteChildStatus,
-                    endedAt: new Date().toISOString(),
-                    failureSummary: incompleteChildSummary,
-                  })
-                  finalizeRunArtifactBestEffort(
-                    child.id,
-                    'retry-process-close',
-                    'process-close',
-                    incompleteChildSummary,
-                    { status: incompleteChildStatus, finalStatus: incompleteChildStatus, processStatus: status },
-                  )
-                }
-              }
-
-              const updatedChildRuns = db.getRunsByParent(runId)
-              const anyPassed = updatedChildRuns.some(r => r.status === 'passed')
-              const firstPassed = updatedChildRuns[0]?.status === 'passed'
-              if (anyPassed && !firstPassed) {
-                dbStatus = 'flaky'
-              } else if (anyPassed && firstPassed) {
-                dbStatus = 'passed'
-              } else if (dbStatus === 'cancelled' || updatedChildRuns.some(r => r.status === 'cancelled')) {
-                dbStatus = 'cancelled'
-              } else {
-                dbStatus = 'failed'
-              }
-              const lastChild = updatedChildRuns[updatedChildRuns.length - 1]
-              db.updateRun(runId, {
-                status: dbStatus,
-                duration,
-                endedAt: new Date().toISOString(),
-                failureSummary: dbStatus === 'failed' ? 'All retry attempts failed'
-                  : dbStatus === 'cancelled' ? 'Retry cancelled'
-                  : undefined,
-              })
-              finalizeRunArtifactBestEffort(
-                runId,
-                'retry-process-close',
-                'process-close',
-                dbStatus === 'failed' ? 'All retry attempts failed'
-                  : dbStatus === 'cancelled' ? 'Retry cancelled'
-                  : 'Retry process closed',
-                { status: dbStatus, finalStatus: dbStatus, processStatus: status, duration },
-              )
-              db.updateRunRetryInfo(runId, {
-                retryCount: updatedChildRuns.length,
-                maxRetries: lastChild?.maxRetries ?? run.maxRetries,
-              })
-              releaseMobileAppiumLease(runId, 'retry-process-close')
-              jobQueue.onSlotFreed(runId)
-              return
-            }
-
-            db.updateRun(runId, {
-              status: dbStatus,
-              duration,
-              endedAt: new Date().toISOString(),
-              failureSummary,
-              errorLog,
-            })
-            finalizeRunArtifactBestEffort(
-              runId,
-              isBrowserDisconnect ? 'browser-disconnect' : 'process-close',
-              'process-close',
-              failureSummary ?? 'Process closed',
-              { status: dbStatus, finalStatus: dbStatus, processStatus: status, duration },
-            )
           }
-        } catch { /* best-effort */ }
 
-        releaseMobileAppiumLease(runId, status)
-        jobQueue.onSlotFreed(runId)
-      },
-    })
-  }
+          const updatedChildren = db.getRunsByParent(runId)
+
+          const statusPriority: Record<string, number> = {
+            failed: 4,
+            cancelled: 3,
+            flaky: 2,
+            passed: 1,
+            skipped: 0,
+            pending: 0,
+            running: 0,
+          }
+
+          let worstStatus = 'passed'
+          let worstPriority = 0
+          for (const child of updatedChildren) {
+            const p = statusPriority[child.status] ?? 0
+            if (p > worstPriority) {
+              worstPriority = p
+              worstStatus = child.status
+            }
+          }
+
+          if (updatedChildren.length === 0) {
+            if (isBrowserDisconnect) {
+              worstStatus = 'cancelled'
+            } else {
+              worstStatus = dbStatus
+            }
+          }
+
+          db.updateRun(runId, {
+            status: worstStatus,
+            duration,
+            endedAt: new Date().toISOString(),
+            failureSummary: worstStatus === 'failed' ? 'Suite test(s) failed'
+              : worstStatus === 'cancelled' ? (isBrowserDisconnect ? 'Browser closed by user' : 'Suite cancelled')
+              : undefined,
+          })
+          finalizeRunArtifactBestEffort(
+            runId,
+            'suite-process-close',
+            'process-close',
+            worstStatus === 'cancelled' ? (isBrowserDisconnect ? 'Browser closed by user' : 'Suite cancelled') : 'Suite process closed',
+            { status: worstStatus, finalStatus: worstStatus, processStatus: status, duration },
+          )
+
+          releaseMobileAppiumLease(runId, 'suite-process-close')
+          jobQueue.onSlotFreed(runId)
+          return
+        }
+
+        // 2026-08-23 (Phase 401 plan 07, D-12): THE RETRY-CHILD CLASSIFICATION IS RETIRED WITH
+        // THE MACHINERY THAT CREATED THE CHILDREN.
+        //
+        // Retry children were minted by the RUNNER PROCESS, off `AGENT_QA_PARENT_RUN_ID` /
+        // `AGENT_QA_MAX_RETRIES` — two variables the queue put in a child's environment. There is
+        // no child, so there is no environment to put them in, and nothing mints a retry child any
+        // more. The ~60 lines that stood here folded those children into a `flaky` / `passed` /
+        // `cancelled` verdict on the parent; with no children to fold they could only ever have
+        // been dead code that read as live policy.
+        //
+        // WHERE RETRY-ON-FAILURE LIVES NOW: the runner's own re-run machinery (runner.md §7). It is
+        // the runner's concern and always was — a queue that re-spawns a process is retrying the
+        // WRAPPER, which is why a dashboard retry could report `flaky` for a run whose flakiness
+        // nothing had measured.
+        //
+        // WHAT DEGRADES, HONESTLY (DETL-06-adjacent debris, recorded rather than hidden): the
+        // `runs.retry_count` / `runs.max_retries` COLUMNS and the dashboard UI that reads them
+        // stay, and stop receiving new writes. Historical rows keep their values. A successor retry
+        // UX, if one is wanted, is M5's to design against the runner's machinery — it is filed in
+        // `.planning/phases/401-.../deferred-items.md` rather than left as an empty affordance
+        // somebody re-implements at the queue.
+
+        db.updateRun(runId, {
+          status: dbStatus,
+          duration,
+          endedAt: new Date().toISOString(),
+          failureSummary,
+          errorLog,
+        })
+        finalizeRunArtifactBestEffort(
+          runId,
+          isBrowserDisconnect ? 'browser-disconnect' : 'process-close',
+          'process-close',
+          failureSummary ?? 'Process closed',
+          { status: dbStatus, finalStatus: dbStatus, processStatus: status, duration },
+        )
+      }
+    } catch { /* best-effort */ }
+
+    releaseMobileAppiumLease(runId, status)
+    jobQueue.onSlotFreed(runId)
+  })
 
   // Clean up orphaned runs from previous server sessions — any run still
   // marked 'running' in the DB has no live process and should be failed.
@@ -388,9 +358,13 @@ export async function startServer(opts: StartServerOptions): Promise<{
   console.log(`Run queue started with ${concurrency} concurrency slot(s)`)
   console.log('Appium lifecycle manager initialized (auto-start on first mobile test)')
 
-  // Wire JobQueue 'execute' event to TestRunner
+  // Wire the run queue's 'execute' event to the injected execution backend (401-07, D-09/D-10).
+  //
+  // THE QUEUE ITSELF IS UNTOUCHED — its slots, its polling, its ordering and its cancel signal are
+  // the same object they were, which is D-09's build-order pin in one line: what changed underneath
+  // it is who executes, not who schedules.
   jobQueue.on('execute', async (run) => {
-    if (!testRunner) return
+    if (!executionBackend) return
 
     const platform = run.platform ?? 'web'
     const isMobile = platform === 'ios' || platform === 'android'
@@ -421,20 +395,23 @@ export async function startServer(opts: StartServerOptions): Promise<{
     if (args.length === 0 && run.filePath) {
       args.push(run.filePath)
     }
-    testRunner.execute({
+    executionBackend.execute({
       runId: run.id,
       args,
       source: meta.isSuite ? 'suite' : 'dashboard',
       attributes: run.attributes,
       timeout: meta.timeout as number | undefined,
-      maxRetries: run.maxRetries,
-      env: isMobile ? { AGENT_QA_APPIUM_URL: appiumManager.getUrl() } : undefined,
+      // THE LEASE ABOVE IS UNCHANGED; ONLY ITS DELIVERY IS. `acquireLease` still runs where it ran,
+      // still keys on this run id and still owns the bundled Appium's lifecycle (design-of-record).
+      // What used to ride `AGENT_QA_APPIUM_URL` in a child's environment now travels as an
+      // argument, because there is no child to carry an environment.
+      ...(isMobile ? { appiumUrl: appiumManager.getUrl() } : {}),
     })
   })
 
-  // Wire cancellation — running jobs need process kill via TestRunner
+  // Wire cancellation — a running job is aborted at its session, not signalled at a process.
   jobQueue.on('cancel-running', (runId: string) => {
-    testRunner?.kill(runId)
+    executionBackend?.kill(runId)
   })
 
   // Start the queue polling loop
@@ -455,7 +432,10 @@ export async function startServer(opts: StartServerOptions): Promise<{
     db,
     artifactsDir,
     workspacePaths,
-    testRunner,
+    // 401-07: conditionally spread on the same house rule `agentHost` follows — an absent
+    // dependency is an ABSENT field, never a present `undefined`, so the router's own 503 arm is
+    // what decides, in one place.
+    ...(executionBackend === undefined ? {} : { executionBackend }),
     jobQueue,
     testFileManager,
     suiteFileManager,
@@ -608,9 +588,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   // — see DELETION-INVENTORY.md's dated row for the disposition and its owner.
   const cleanupRuntimeResources = () => {
     jobQueue.stop()
-    if (testRunner) {
-      testRunner.killAll()
-    }
+    executionBackend?.killAll()
     releaseAllMobileAppiumLeases('server-startup-error')
     appiumManager.shutdown()
     sessionManager.cleanupAll()
@@ -631,9 +609,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
         port,
         close: () => {
           jobQueue.stop()
-          if (testRunner) {
-            testRunner.killAll()
-          }
+          executionBackend?.killAll()
           releaseAllMobileAppiumLeases('server-close')
           appiumManager.shutdown()
           sessionManager.cleanupAll()

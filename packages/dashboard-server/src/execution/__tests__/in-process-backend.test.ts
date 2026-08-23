@@ -26,8 +26,13 @@ import { describe, expect, it } from 'vitest'
 
 import type { RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 
-import { createInProcessExecutionBackend, type InProcessRunStatus, type RunSettledDetails } from '../in-process-backend.js'
-import type { ExecuteOptions, LiveExecutionEvent } from '../execution-backend.js'
+import { createInProcessExecutionBackend } from '../in-process-backend.js'
+import type {
+  ExecuteOptions,
+  LiveExecutionEvent,
+  RunSettledDetails,
+  RunSettledStatus,
+} from '../execution-backend.js'
 import {
   PARITY_ENVELOPES,
   PARITY_RUN_ID,
@@ -89,8 +94,18 @@ class FakeRunSession implements RunSession {
 
 interface Settled {
   runId: string
-  status: InProcessRunStatus
+  status: RunSettledStatus
   details: RunSettledDetails
+}
+
+/** Subscribe a settle recorder on the backend's own event, which is the host's only wire to it. */
+function recordSettles(
+  backend: ReturnType<typeof createInProcessExecutionBackend>,
+  sink: Settled[],
+): void {
+  backend.on('run-settled', (runId: string, status: RunSettledStatus, details: RunSettledDetails) => {
+    sink.push({ runId, status, details })
+  })
 }
 
 interface Drive {
@@ -139,10 +154,8 @@ async function driveOneRun(input: {
       await Promise.resolve()
       if (input.rejectWith) throw input.rejectWith
     },
-    onRunSettled: (settledRunId, status, details) => {
-      drive.settled.push({ runId: settledRunId, status, details })
-    },
   })
+  recordSettles(backend, drive.settled)
   backend.on('execution-event', (eventRunId: string, event: LiveExecutionEvent) => {
     drive.emitted.push({ runId: eventRunId, event })
   })
@@ -225,8 +238,8 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
         onSession(session)
         await new Promise<void>((resolve) => { release = resolve })
       },
-      onRunSettled: (runId, status, details) => { drive.settled.push({ runId, status, details }) },
     })
+    recordSettles(backend, drive.settled)
 
     backend.execute(baseOpts('cancel-me'))
     await waitFor(() => { expect(session).toBeDefined() })
@@ -258,8 +271,8 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
         onSession(session)
         await new Promise<void>((resolve) => { release = resolve })
       },
-      onRunSettled: (runId, status, details) => { settled.push({ runId, status, details }) },
     })
+    recordSettles(backend, settled)
 
     backend.execute({ ...baseOpts('slow-run'), timeout: 20 })
     await waitFor(() => { expect(session!.cancels).toBe(1) })
@@ -279,8 +292,8 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
         session = new FakeRunSession(opts.runId as RunSession['id'])
         onSession(session)
       },
-      onRunSettled: (runId, status, details) => { settled.push({ runId, status, details }) },
     })
+    recordSettles(backend, settled)
 
     backend.execute(baseOpts('cancel-during-start'))
     expect(backend.kill('cancel-during-start')).toBe(true)
@@ -346,8 +359,8 @@ describe('two concurrent runs are isolated at the consumer surface (401-07, INVK
         onSession(session)
         await new Promise<void>((resolve) => { releases.set(opts.runId, resolve) })
       },
-      onRunSettled: (runId, status, details) => { settled.push({ runId, status, details }) },
     })
+    recordSettles(backend, settled)
     backend.on('execution-event', (runId: string, event: LiveExecutionEvent) => {
       emitted.push({ runId, event })
     })

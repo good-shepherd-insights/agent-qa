@@ -5,7 +5,7 @@ import { createReadStream } from 'node:fs'
 import { join, isAbsolute, basename, resolve, dirname, relative } from 'node:path'
 
 import type { AttributePredicate, DashboardDatabase, InsightsBreakdownDimension, RunArtifactRow, RunRow, StepRow } from '../db/database.js'
-import type { TestRunner } from '../execution/test-runner.js'
+import type { ExecutionBackend } from '../execution/execution-backend.js'
 import type { JobQueue } from '../queue/job-queue.js'
 import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
@@ -1315,7 +1315,13 @@ interface RouterDeps {
   db: DashboardDatabase
   artifactsDir?: string
   workspacePaths?: ResolvedWorkspacePaths
-  testRunner?: TestRunner
+  /**
+   * The injected run backend (401-07, D-09). Typed against the INTERFACE rather than a concrete
+   * class — which is what it always meant to be, and was not: the SSE route below depended on
+   * `getBufferedEvents`, a method the interface did not declare, so the seam had exactly one
+   * possible implementation.
+   */
+  executionBackend?: ExecutionBackend
   jobQueue?: JobQueue
   testFileManager?: TestFileManager
   suiteFileManager?: SuiteFileManager
@@ -1342,7 +1348,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
   const deps: RouterDeps = 'db' in dbOrDeps && typeof (dbOrDeps as RouterDeps).db === 'object' && 'getRuns' in ((dbOrDeps as RouterDeps).db ?? {})
     ? dbOrDeps as RouterDeps
     : { db: dbOrDeps as DashboardDatabase, artifactsDir }
-  const { db, testRunner, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
+  const { db, executionBackend, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
   // The fourth door (400-01). ONE router for the whole `/api/chat/` prefix, built once, and the
   // same function the conformance adapter and the tracer cell drive — a second mount here would be
   // a second answer to what the door is.
@@ -1879,7 +1885,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
 
     // GET /api/execution/active — list currently running tests
     if (path === '/api/execution/active' && req.method === 'GET') {
-      const active = testRunner ? testRunner.getActiveExecutions() : []
+      const active = executionBackend ? executionBackend.getActiveExecutions() : []
       json(res, { executions: active })
       return
     }
@@ -2091,7 +2097,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
 
     // GET /api/execution/events — SSE stream for live execution events
     if (path === '/api/execution/events' && req.method === 'GET') {
-      if (!testRunner) {
+      if (!executionBackend) {
         json(res, { error: 'Execution not available' }, 503)
         return
       }
@@ -2110,7 +2116,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       // Replay buffered events for reconnection
       if (lastEventId && runId) {
         const lastId = parseInt(lastEventId, 10)
-        const buffered = testRunner.getBufferedEvents(runId)
+        const buffered = executionBackend.getBufferedEvents(runId)
         for (const evt of buffered) {
           if (evt.id > lastId) {
             res.write(`id: ${evt.id}\nevent: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`)
@@ -2118,7 +2124,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         }
       } else if (runId) {
         // New connection — replay all buffered events
-        const buffered = testRunner.getBufferedEvents(runId)
+        const buffered = executionBackend.getBufferedEvents(runId)
         for (const evt of buffered) {
           res.write(`id: ${evt.id}\nevent: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`)
         }
@@ -2129,7 +2135,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         res.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
       }
 
-      testRunner.on('execution-event', onEvent)
+      executionBackend.on('execution-event', onEvent)
 
       const heartbeat = setInterval(() => {
         res.write(':\n\n')
@@ -2137,7 +2143,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
 
       req.on('close', () => {
         clearInterval(heartbeat)
-        testRunner.removeListener('execution-event', onEvent)
+        executionBackend.removeListener('execution-event', onEvent)
       })
       return
     }

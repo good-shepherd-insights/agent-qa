@@ -29,9 +29,26 @@ export interface ExecuteOptions {
    * argument and is handed to the run through an injected resolver.
    */
   appiumUrl?: string
-  maxRetries?: number
-  env?: Record<string, string>
 }
+
+/**
+ * A run has reached a terminal state (401-07, D-04/D-12).
+ *
+ * THE TYPED SUCCESSOR TO THE CHILD'S `close` EVENT. The host reconciles a db row still reading
+ * `running`, releases the run's Appium lease and frees the queue slot off this — exactly what it did
+ * off the process exit — but the status is now the bus's own ground truth and the `details` carry
+ * the failure's REASON rather than a scraped tail of stderr.
+ *
+ * `'run-settled'` and `'execution-event'` are the whole of this emitter's contract.
+ */
+export interface RunSettledDetails {
+  /** A human-readable reason when the run did not simply finish. */
+  readonly reason?: string
+  /** Diagnostic lines — a rejection's own message. The typed successor to scraped stderr. */
+  readonly output: readonly string[]
+}
+
+export type RunSettledStatus = 'completed' | 'failed' | 'cancelled' | 'timeout'
 
 export interface ExecutionBackend extends EventEmitter {
   execute(opts: ExecuteOptions): void

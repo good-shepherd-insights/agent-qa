@@ -47,7 +47,12 @@ import { EventEmitter } from 'node:events'
 
 import type { RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 
-import type { ExecuteOptions, ExecutionBackend, LiveExecutionEvent } from './execution-backend.js'
+import type {
+  ExecuteOptions,
+  ExecutionBackend,
+  LiveExecutionEvent,
+  RunSettledDetails,
+} from './execution-backend.js'
 
 /** How long a finished run's replay buffer stays available to a reconnecting SSE client. */
 const DEFAULT_HANDLE_RETENTION_MS = 5 * 60 * 1000
@@ -113,8 +118,12 @@ export interface InProcessRunStartInput {
   /**
    * Called with the started session, as early as the run door can name it.
    *
-   * A run that is DENIED never calls this, and that asymmetry is load-bearing: it is how the
-   * backend distinguishes "the policy gate refused" from "the run started and then failed".
+   * A run that is DENIED never calls this, and that asymmetry is load-bearing: it is the only way
+   * the backend can tell a policy refusal apart from a run that started and then failed.
+   *
+   * (Phrased without a quoted clause after the word `from`: `validate:arch`'s dependency scanner
+   * reads that shape as an import specifier and reported this comment as an undeclared external
+   * dependency of `packages/dashboard-server`.)
    */
   readonly onSession: (session: RunSession) => void
 }
@@ -129,29 +138,8 @@ export interface InProcessRunStartInput {
  */
 export type InProcessRunStarter = (input: InProcessRunStartInput) => Promise<void>
 
-/** What the settled run tells its host, replacing the child's `close` event (D-04's successor). */
-export interface RunSettledDetails {
-  /** A human-readable reason when the run did not simply finish. */
-  readonly reason?: string
-  /** Diagnostic lines — a rejection's message, split. The typed successor to scraped stderr. */
-  readonly output: readonly string[]
-}
-
 export interface InProcessExecutionBackendOptions {
   readonly startRun: InProcessRunStarter
-  /**
-   * Fired once per run, after `run-complete` is on the wire.
-   *
-   * THE TYPED SUCCESSOR TO `onProcessClose`. The host uses it for exactly what it used the child's
-   * exit for: reconcile a db row still reading `running`, release the run's Appium lease, and free
-   * the queue slot. It is not a second completion vocabulary — the status handed over is the same
-   * bus-derived ground truth the `run-complete` event carries.
-   */
-  readonly onRunSettled?: (
-    runId: string,
-    status: InProcessRunStatus,
-    details: RunSettledDetails,
-  ) => void
   /** Applied when an `ExecuteOptions` carries no `timeout` of its own. */
   readonly defaultTimeout?: number
   /** How long a finished run's replay buffer survives. */
@@ -338,10 +326,14 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
       ...(handle.completionReason ? { reason: handle.completionReason } : {}),
     })
 
-    this.options.onRunSettled?.(handle.runId, handle.status, {
+    // `'run-settled'` rather than a constructor callback, so the HOST that owns the db, the queue
+    // and the Appium leases can subscribe to a backend somebody else composed — which is the whole
+    // shape of the injection (`startServer`'s `agentHost` precedent).
+    const details: RunSettledDetails = {
       ...(handle.completionReason === undefined ? {} : { reason: handle.completionReason }),
       output: [...handle.output],
-    })
+    }
+    this.emit('run-settled', handle.runId, handle.status, details)
 
     const cleanup = setTimeout(() => {
       this.handles.delete(handle.runId)

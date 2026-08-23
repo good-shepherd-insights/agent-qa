@@ -24,46 +24,46 @@ interface RunnerInstance {
   execute: Mock
   kill: Mock
   killAll: Mock
-  getHandle: Mock
+  getBufferedEvents: Mock
   getActiveExecutions: Mock
-  closeRun: (runId: string, status: CloseStatus) => void
+  closeRun: (runId: string, status: CloseStatus, output?: string[]) => void
 }
 
 const mockState = vi.hoisted(() => ({
   appiumInstances: [] as AppiumInstance[],
   runnerInstances: [] as RunnerInstance[],
   events: [] as string[],
-  outputs: new Map<string, string[]>(),
 }))
 
-vi.mock('../execution/test-runner.js', () => {
-  class MockTestRunner {
-    static resolveCliBin = vi.fn(() => '/mock/agent-qa')
-
-    private onProcessClose?: (runId: string, status: CloseStatus) => void
-
-    execute = vi.fn()
-    kill = vi.fn((runId: string) => {
-      mockState.events.push(`kill:${runId}`)
-      return true
-    })
-    killAll = vi.fn(() => {
-      mockState.events.push('killAll')
-    })
-    getHandle = vi.fn((runId: string) => ({ output: mockState.outputs.get(runId) ?? [] }))
-    getActiveExecutions = vi.fn(() => [])
-    closeRun = (runId: string, status: CloseStatus): void => {
-      this.onProcessClose?.(runId, status)
-    }
-
-    constructor(opts: { onProcessClose?: (runId: string, status: CloseStatus) => void }) {
-      this.onProcessClose = opts.onProcessClose
-      mockState.runnerInstances.push(this as unknown as RunnerInstance)
-    }
+/**
+ * The execution backend, INJECTED rather than module-mocked (401-07).
+ *
+ * The class this used to `vi.mock` is gone; `startServer` takes the backend as an option now, so a
+ * cell hands over a fake exactly the way `agent-qa dashboard` hands over the real one. That is a
+ * stronger fixture than the mock it replaces — it drives the SHIPPED injection point instead of
+ * substituting a module underneath it.
+ */
+class FakeExecutionBackend extends EventEmitter {
+  execute = vi.fn()
+  kill = vi.fn((runId: string) => {
+    mockState.events.push(`kill:${runId}`)
+    return true
+  })
+  killAll = vi.fn(() => {
+    mockState.events.push('killAll')
+  })
+  getBufferedEvents = vi.fn(() => [])
+  getActiveExecutions = vi.fn(() => [])
+  /** Drive the terminal state the host reconciles on — the successor to the child's `close`. */
+  closeRun = (runId: string, status: CloseStatus, output: string[] = []): void => {
+    this.emit('run-settled', runId, status, { output })
   }
 
-  return { TestRunner: MockTestRunner }
-})
+  constructor() {
+    super()
+    mockState.runnerInstances.push(this as unknown as RunnerInstance)
+  }
+}
 
 vi.mock('../execution/appium-manager.js', () => {
   class MockAppiumManager {
@@ -129,8 +129,11 @@ vi.mock('@vostride/agent-qa-android', () => ({
   }),
 }))
 
+import { EventEmitter } from 'node:events'
+
 import { DashboardDatabase } from '../db/database.js'
 import { startServer } from '../server/server.js'
+import type { ExecutionBackend } from '../execution/execution-backend.js'
 
 interface QueueResponse {
   runId: string
@@ -160,7 +163,6 @@ afterEach(async () => {
   mockState.appiumInstances.length = 0
   mockState.runnerInstances.length = 0
   mockState.events.length = 0
-  mockState.outputs.clear()
   vi.clearAllMocks()
 })
 
@@ -215,6 +217,7 @@ async function startDashboard(opts: { configContent?: string; llm?: boolean } = 
     port: 0,
     configPath,
     workspacePaths,
+    executionBackend: new FakeExecutionBackend() as unknown as ExecutionBackend,
     llmConfig: opts.llm
       ? {
           provider: 'anthropic-compatible',
@@ -303,11 +306,15 @@ describe('dashboard Appium ownership', () => {
     expect(appium.acquireLease).toHaveBeenCalledWith({ runId: android.runId, platform: 'android' })
     expect(appium.acquireLease).toHaveBeenCalledWith({ runId: ios.runId, platform: 'ios' })
 
-    const executeCalls = runner.execute.mock.calls as Array<[{ env?: Record<string, string> }]>
-    expect(executeCalls.map(([opts]) => opts.env?.AGENT_QA_APPIUM_URL)).toEqual([
+    // THE LEASE URL TRAVELS AS AN ARGUMENT, NOT AS A CHILD'S ENVIRONMENT (401-07, truth 5). The
+    // acquisition above is unchanged — same call, same run id, same manager — and `env` is not
+    // merely unset here, it is no longer a field `ExecuteOptions` has.
+    const executeCalls = runner.execute.mock.calls as Array<[Record<string, unknown>]>
+    expect(executeCalls.map(([opts]) => opts.appiumUrl)).toEqual([
       'http://localhost:4723',
       'http://localhost:4723',
     ])
+    for (const [opts] of executeCalls) expect(opts).not.toHaveProperty('env')
 
     runner.closeRun(android.runId, 'completed')
     expect(appium.releaseLease).toHaveBeenCalledWith(android.runId, 'completed')
@@ -399,7 +406,7 @@ describe('dashboard Appium ownership', () => {
     })
   })
 
-  it('persists framework stderr as a failed process close', async () => {
+  it('persists the failure’s own diagnostic lines as a failed run close', async () => {
     const port = await startDashboard()
     const run = await postJson<QueueResponse>(port, '/api/queue/enqueue', {
       name: 'Framework error',
@@ -408,12 +415,13 @@ describe('dashboard Appium ownership', () => {
 
     const runner = currentRunner()
     await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
-    mockState.outputs.set(run.runId, [
+
+    // The diagnostic lines ride the settle now — the failure's OWN message rather than a tail of a
+    // child's stderr, which is the same fact the run door hands the backend.
+    runner.closeRun(run.runId, 'failed', [
       'debug line',
       'Framework error: provider rejected request',
     ])
-
-    runner.closeRun(run.runId, 'failed')
 
     const stored = currentDb!.getRun(run.runId)
     expect(stored?.status).toBe('failed')
