@@ -101,7 +101,7 @@ const BROWSERS_PATH_AT_LOAD = process.env.PLAYWRIGHT_BROWSERS_PATH
  * that changes with the producer, and mutation 1 in this file's ledger would then red nothing.
  */
 const EXPECTED_PREVIEW =
-  `Start a run against target ${IN_PROCESS_TARGET_NAME} (declared: at least one target shared).`
+  `Start a run against target "${IN_PROCESS_TARGET_NAME}" (declared: at least one target shared).`
 
 // ---- the recorder the page carries -------------------------------------------------------------
 

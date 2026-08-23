@@ -10,6 +10,7 @@
 // never anything else shaped like a CLI type — agent-local must not import the CLI, and the input
 // being a bare union is what keeps that true by construction.
 
+import { scrubDisclosureFragment } from '@vostride/agent-qa-schema'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
 /**
@@ -135,15 +136,35 @@ export function buildRunDisclosure(
 }
 
 /**
+ * How many member names are NAMED before the rest are merely counted (401-15, WR-01 / T-401-G5).
+ *
+ * A CAP ON THE COUNT, NOT ONLY ON EACH NAME. The classification clause is the LAST thing in the
+ * sentence — it is the reason a person is being asked at all — so an unbounded list of names is a
+ * way for a document to push that clause off the top of a terminal without a single control byte.
+ * Per-name scrubbing does not close that; a count cap does, and the overflow is COUNTED rather than
+ * dropped so the sentence stays true about how many targets the run will drive.
+ */
+export const RUN_DISCLOSURE_MAX_NAMES = 4
+
+/**
  * The member names, as one noun phrase — the only place this function interpolates its input.
  *
  * Separate from the sentence above so the DECLARATION clause and the NAME list are two independent
  * things to get right: WR-06 is about what the clause claims, WR-01 is about what the names can do
  * to the line they sit on, and folding them into one expression is how a later edit to either one
  * quietly changes the other.
+ *
+ * EVERY NAME IS SCRUBBED, AT COMPOSITION (WR-01). These names are config-document text recorded
+ * before resolution has any say, and `writeDisclosure` puts the result on the line above `[y/N]`
+ * with no hygiene of its own — deliberately, because the browser channel that renders the same
+ * string never passes through that writer. So the guard is here, where the string is built, and it
+ * is `schema`'s `scrubDisclosureFragment` rather than a spelling of hygiene local to this file.
  */
 function renderTargetNames(targetNames: readonly string[]): string {
   if (targetNames.length === 0) return 'no declared target'
-  if (targetNames.length === 1) return `target ${targetNames[0]!}`
-  return `targets ${targetNames.join(', ')}`
+  const named = targetNames.slice(0, RUN_DISCLOSURE_MAX_NAMES).map(scrubDisclosureFragment)
+  const overflow = targetNames.length - named.length
+  const tail = overflow > 0 ? ` and ${overflow} more` : ''
+  if (targetNames.length === 1) return `target ${named[0]!}`
+  return `targets ${named.join(', ')}${tail}`
 }

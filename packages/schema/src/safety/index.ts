@@ -5,6 +5,16 @@ export type { RiskTier, PolicyVerdict, ExecutionPolicyResult } from './risk-tier
 export { GATE_REMEDY_KINDS, GATE_REMEDY_SURFACES, GATE_REMEDY_SURFACES_BY_KIND, remediesRenderableBy } from './remedies'
 export type { GateRemedy, GateRemedyKind, GateRemedySurface, RemedyKindFor } from './remedies'
 export type { RiskActionDescriptor } from './action-descriptor'
+// 401-15 (WR-01): the `disclosure` field's ENFORCEMENT, published from the module that states its
+// law so a composition filling the field cannot find the rule without finding the scrub.
+export {
+  DISCLOSURE_FRAGMENT_MAX_LENGTH,
+  DISCLOSURE_REPLACEMENT_CHARACTER,
+  DISCLOSURE_TEXT_MAX_LENGTH,
+  DISCLOSURE_TRUNCATION_MARK,
+  scrubDisclosureFragment,
+  scrubDisclosureText,
+} from './action-descriptor'
 // 391-11 (REVIEW WR-05): the scope key set, spelled ONCE and PUBLISHED — same posture as the
 // sibling constant `PROTECTED_ACTION_CLASSES` below, on the identical 388-C13 argument. Keeping it
 // package-private is what stopped any out-of-package differential from ranging the key set.

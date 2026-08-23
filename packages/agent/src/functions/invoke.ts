@@ -29,7 +29,7 @@
 // and the origin check is what keeps the self-grant rule from being written that way.
 
 import { evaluate } from '@vostride/agent-qa-safety'
-import { STANDING_APPROVAL_SCOPE } from '@vostride/agent-qa-schema'
+import { STANDING_APPROVAL_SCOPE, scrubDisclosureText } from '@vostride/agent-qa-schema'
 import type {
   FunctionCaller,
   FunctionCallerOrigin,
@@ -222,9 +222,19 @@ export async function invokeFunction(
   // the classification, the audit row, the standing-grant match and the session deny overlay all
   // see exactly what they saw before. Spread CONDITIONALLY, so an op with nothing to disclose hands
   // the gate the identical object it always did rather than one carrying `disclosure: undefined`.
+  //
+  // AND IT IS SCRUBBED (401-15, WR-01 / T-401-G6). `spec.disclose` composes its string from PARSED
+  // CALLER INPUT, and the field it fills lands on the line directly above a `[y/N]` prompt and in a
+  // browser's confirm preview. A newline in a caller's string is a line that caller wrote on a
+  // security channel; an escape sequence is a line it erased. The scrub is `schema`'s, published
+  // beside the `disclosure` field's own law, and it is applied HERE — at the composition site —
+  // for the reason the run gate's half is: the two channels this string reaches do not share a
+  // writer, so a writer-side guard would cover one of them. Ops are trusted to compose prose; they
+  // are not trusted to have sanitised somebody else's bytes, and the one shipped implementor being
+  // caller-text-free today is a property of today's op set rather than a property of this seam.
   const action = spec.disclose === undefined
     ? spec.risk
-    : { ...spec.risk, disclosure: spec.disclose(parsed.data) }
+    : { ...spec.risk, disclosure: scrubDisclosureText(spec.disclose(parsed.data)) }
   const policy = await evaluate(
     action,
     internals.resolveExecutionContext(),

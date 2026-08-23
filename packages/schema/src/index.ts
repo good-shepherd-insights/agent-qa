@@ -1099,6 +1099,17 @@ export type {
 // must compute it against this value rather than hard-code one that a later key addition could
 // legalise.
 export { TRUST_SCOPE_KEYS } from './safety/index'
+// 401-15 (WR-01 / T-401-G5 / T-401-G6): the disclosure scrub, exported beside the field whose law
+// it enforces. Every composition that fills `RiskActionDescriptor.disclosure` applies it — the two
+// today are the run gate's preview and `invoke.ts`'s per-op `spec.disclose` result.
+export {
+  DISCLOSURE_FRAGMENT_MAX_LENGTH,
+  DISCLOSURE_REPLACEMENT_CHARACTER,
+  DISCLOSURE_TEXT_MAX_LENGTH,
+  DISCLOSURE_TRUNCATION_MARK,
+  scrubDisclosureFragment,
+  scrubDisclosureText,
+} from './safety/index'
 // 391 D-05/D-07: the closed grant-ineligible action-class set and its membership predicate. One
 // export, consulted by BOTH the grant mint and the grant read — a config-sourced protected list
 // would be self-referentially mutable, which is the hole PROP-05 closes.
