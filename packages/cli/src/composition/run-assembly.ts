@@ -75,12 +75,14 @@ export interface CliRunAssemblyInput {
   /** The resolved `--build-tag`/env/config setting, when one is set. */
   readonly buildTag?: string
   /**
-   * The target URL to probe, when this run drives a web target.
+   * ONE ENTRY PER MEMBER, index-aligned with `members`: the URL whose health reading belongs to
+   * that member (401-19, WR-04).
    *
-   * ABSENT MEANS NO PROBE, which is the mobile posture: a device-session-create failure is the
-   * equivalent environment signal there, so there is nothing to fetch (`RunConfig.baselineProbe`).
+   * AN `undefined` ENTRY MEANS NO PROBE FOR THAT MEMBER, which is the mobile posture: a
+   * device-session-create failure is the equivalent environment signal there, so there is nothing
+   * to fetch. An absent array means no member has a URL at all.
    */
-  readonly probeUrl?: string
+  readonly memberProbeUrls?: readonly (string | undefined)[]
   /** Where a quarantine-fold warning goes. The command owns its own rendering. */
   readonly warn: (message: string) => void
 }
@@ -98,8 +100,6 @@ export interface CliRunAssembly {
    * `startRun` was given (390 D-15/D-16, Pitfall 8 — a second fold could disagree with the first).
    */
   readonly quarantined: readonly QuarantineAppliedEntry[]
-  /** The probe result, or `undefined` on a mobile target / a probe that could not be taken. */
-  readonly baselineProbe?: BaselineProbeResult
 }
 
 /**
@@ -113,18 +113,31 @@ export interface CliRunAssembly {
  * error before the member could report it as the test failure it is. That is the shipped posture
  * (`run.ts` wrapped the same call in a swallowing try), preserved verbatim — the catch covers the
  * PROBE and nothing else, so it is not a defensive wrapper around the run (D-03).
+ *
+ * THE PROBE IS PER MEMBER AND DEDUPED BY URL (401-19, WR-04). Each DISTINCT member URL is fetched
+ * once and its result is carried onto the members that named it, so an N-member run over one target
+ * still costs one GET while a run over two targets no longer diagnoses one of them with the other's
+ * health. There is no run-level baseline any more: a run-level value beside a per-member one is two
+ * spellings of the same fact, and this file's own comments argue against exactly that.
  */
 export async function assembleCliRun(
   input: CliRunAssemblyInput,
 ): Promise<CliRunAssembly> {
-  let baselineProbe: BaselineProbeResult | undefined
-  if (input.probeUrl !== undefined) {
+  const memberProbeUrls = input.memberProbeUrls ?? []
+  const probesByUrl = new Map<string, BaselineProbeResult>()
+  for (const url of memberProbeUrls) {
+    if (url === undefined || probesByUrl.has(url)) continue
     try {
-      baselineProbe = await runBaselineProbe(input.probeUrl)
+      probesByUrl.set(url, await runBaselineProbe(url))
     } catch {
       // Best-effort: the member closure surfaces the real target error.
     }
   }
+  const members = input.members.map((member, index) => {
+    const url = memberProbeUrls[index]
+    const baselineProbe = url === undefined ? undefined : probesByUrl.get(url)
+    return baselineProbe === undefined ? member : { ...member, baselineProbe }
+  })
 
   const buildOrdinal = await resolveRunBuildOrdinal({
     configDir: input.configDir,
@@ -145,11 +158,10 @@ export async function assembleCliRun(
     executionContext: input.executionContext,
     configDigests: input.configDigests,
     buildOrdinal,
-    members: input.members,
+    members,
     executor: input.executor,
     masking: input.maskingContext,
     ports: { ...input.ports, confirmPausedMs: input.confirmPausedMs },
-    ...(baselineProbe !== undefined ? { baselineProbe } : {}),
     ...(quarantined.length > 0 ? { quarantined } : {}),
   }
 
@@ -157,6 +169,5 @@ export async function assembleCliRun(
     config,
     buildOrdinal,
     quarantined,
-    ...(baselineProbe === undefined ? {} : { baselineProbe }),
   }
 }

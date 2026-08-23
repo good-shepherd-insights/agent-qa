@@ -371,7 +371,7 @@ export async function runInProcessCliRun(
         configDigests: produced.configDigests,
         product: produced.product,
         ...(produced.buildTag === undefined ? {} : { buildTag: produced.buildTag }),
-        ...(produced.probeUrl === undefined ? {} : { probeUrl: produced.probeUrl }),
+        memberProbeUrls: produced.memberProbeUrls,
         warn: options.warn ?? (() => { /* a door with no renderer drops the fold warning */ }),
       })
       produced.applyAssembly({

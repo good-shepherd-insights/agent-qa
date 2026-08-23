@@ -23,8 +23,7 @@ import type { SecretStore, SecretRedactor, HookDefinition, NonActionToolMap, San
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { TestResult, PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
 import { WorkingMemoryStore, runMemberTest } from '@vostride/agent-qa-runner'
-import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor, BaselineProbeResult } from '@vostride/agent-qa-runner'
-import { runBaselineProbe } from './baseline-probe.js'
+import type { RunMemberDescriptor, ConfigDigests, MemberTestRunContext, MemberTestExecutor } from '@vostride/agent-qa-runner'
 // 390 D-16: the run-start ledger fold lives at the local composition root (the CLI's shipped source
 // does not name the knowledge package — 387 D-20); this host calls the ONE resolved helper.
 import { resolveRunQuarantineSnapshot } from '@vostride/agent-qa-agent-local'
@@ -166,6 +165,73 @@ export function foldMostRestrictiveTargetClass(
   if (declared.includes(undefined)) return undefined
   if (declared.includes('shared')) return 'shared'
   return undefined
+}
+
+/**
+ * WHAT ONE INVOCATION'S MEMBERS SAY ABOUT THEIR TARGETS — resolved once, per member, for both of
+ * this command's doors (401-19, WR-04).
+ *
+ * INDEX-ALIGNED WITH THE MEMBER LIST, which is the whole point. `declaredClasses` folds into the
+ * one tier decision; `probeUrls` decides which health reading belongs to which member. A run-level
+ * probe URL — the FIRST resolvable web member's, applied to everyone — is what let a baseline taken
+ * against member B's target be recorded as member A's environment failure.
+ *
+ * ONE PASS, ONE IMPLEMENTATION, both producers. The suite door and the direct door used to keep
+ * their own loops, and the class fold has already been wrong in exactly one of them once
+ * (401-12/CR-01). A member naming no target contributes `undefined` to both arrays and no name at
+ * all — an invented default here would be a second answer to the question that decides the run.
+ */
+export interface MemberTargetFacts {
+  /** One entry per member, in member order: the target's DECLARED class, or `undefined`. */
+  readonly declaredClasses: readonly RunTargetClass[]
+  /** One entry per member, in member order: the URL to probe, or `undefined` for no probe. */
+  readonly probeUrls: readonly (string | undefined)[]
+  /** The DISTINCT declared names, in first-appearance member order (401-14, W-1). */
+  readonly targetNames: readonly string[]
+  /** The first member whose target resolved — the invocation's product when nothing else names it. */
+  readonly firstResolvedProduct?: string
+}
+
+export function resolveMemberTargetFacts(
+  config: AgentQaConfig,
+  memberTargetNames: readonly (string | undefined)[],
+): MemberTargetFacts {
+  const declaredClasses: RunTargetClass[] = []
+  const probeUrls: (string | undefined)[] = []
+  const targetNames: string[] = []
+  let firstResolvedProduct: string | undefined
+
+  for (const targetName of memberTargetNames) {
+    if (targetName === undefined) {
+      declaredClasses.push(undefined)
+      probeUrls.push(undefined)
+      continue
+    }
+    // The DECLARED name, recorded before resolution has its say: a member that names a target the
+    // config cannot resolve still names it, and a preview that hid it would be describing a smaller
+    // run than the one being approved.
+    if (!targetNames.includes(targetName)) targetNames.push(targetName)
+    try {
+      const resolved = resolveTarget(config, targetName)
+      declaredClasses.push(resolved.environment)
+      // D-04: web targets only. A mobile member contributes no URL and therefore receives no
+      // baseline — the device-session-create failure is the equivalent environment signal there.
+      probeUrls.push(resolved.platform === 'web' && resolved.url ? resolved.url : undefined)
+      firstResolvedProduct ??= resolved.product
+    } catch {
+      // Unresolvable here is undeclared here — best-effort resolution, fail-closed classification.
+      // The member closure still surfaces the real target error as the framework error it is.
+      declaredClasses.push(undefined)
+      probeUrls.push(undefined)
+    }
+  }
+
+  return {
+    declaredClasses,
+    probeUrls,
+    targetNames,
+    ...(firstResolvedProduct === undefined ? {} : { firstResolvedProduct }),
+  }
 }
 
 /**
@@ -1680,7 +1746,6 @@ async function executeSuites(
   const executor = produced.executor
   const runProduct = produced.product
   const suiteTargetClass = produced.targetClass
-  const suiteProbeUrl = produced.probeUrl
   const buildTag = produced.buildTag
   const knowledgeRoot = produced.knowledgeRoot
   const runDigests = { runLevel: produced.configDigests }
@@ -3154,50 +3219,22 @@ export async function produceSuiteRunMembers(
   // The most-restrictive-wins rule and its threat model live on `foldMostRestrictiveTargetClass`,
   // which is the SAME function the direct path calls (401-12). Collecting the members is per-door;
   // deciding what their classes add up to is not.
-  const declaredTargetClasses: RunTargetClass[] = []
-  // 401-14: the NAMES, collected on the same iteration that yields the class — the disclosure the
-  // gate shows a person is built from this pass and no other.
-  const suiteTargetNames: string[] = []
+  //
+  // 401-19 (WR-04): PER MEMBER, in the member array's own order — the same nesting `members` above
+  // was pushed in, so `facts.probeUrls[i]` belongs to `members[i]`. A suite-level `target:` is what
+  // `patchTestForSuite` gives every one of that suite's members, so it is that member's target.
+  const suiteMemberTargetNames: (string | undefined)[] = []
   for (const prepared of preparedSuites) {
-    const memberTargetNames = prepared.suite.target !== undefined
-      ? [prepared.suite.target]
-      : prepared.testEntries.map((entry) => entry.test.target)
-    for (const targetName of memberTargetNames) {
-      if (targetName === undefined) {
-        declaredTargetClasses.push(undefined)
-        continue
-      }
-      // The DECLARED name, recorded before resolution has its say: a member that names a target
-      // the config cannot resolve still names it, and a preview that hid it would be describing a
-      // smaller run than the one being approved.
-      if (!suiteTargetNames.includes(targetName)) suiteTargetNames.push(targetName)
-      try {
-        declaredTargetClasses.push(resolveTarget(config, targetName).environment)
-      } catch {
-        // Unresolvable here is undeclared here. The member path still surfaces the real
-        // target-resolution error as the framework error it is.
-        declaredTargetClasses.push(undefined)
-      }
+    for (const entry of prepared.testEntries) {
+      suiteMemberTargetNames.push(prepared.suite.target ?? entry.test.target)
     }
   }
-  const suiteTargetClass: RunTargetClass = foldMostRestrictiveTargetClass(declaredTargetClasses)
-
-  // D-04: run-start baseline probe — web targets only; ONE GET whose result threads in-memory via
-  // RunConfig into the deterministic root-cause classifier. Only the URL is RESOLVED here (a config
-  // read); the fetch itself happens inside `assembleCliRun`, behind the gate. Mobile targets skip
-  // the probe entirely — the device-session-create failure is the existing equivalent signal.
-  let suiteProbeUrl: string | undefined
-  for (const prepared of preparedSuites) {
-    const probeTargetName = prepared.suite.target ?? prepared.testEntries[0]?.test.target
-    if (!probeTargetName) continue
-    try {
-      const probeTarget = resolveTarget(config, probeTargetName)
-      if (probeTarget.platform === 'web' && probeTarget.url) {
-        suiteProbeUrl = probeTarget.url
-        break
-      }
-    } catch { /* pre-run target-resolution errors surface on the member path, not here */ }
-  }
+  // 401-14: the NAMES come off the SAME pass that yields the classes — the disclosure the gate shows
+  // a person is built from this pass and no other. D-04's probe URLs ride it too (401-19).
+  const suiteTargetFacts = resolveMemberTargetFacts(config, suiteMemberTargetNames)
+  const suiteTargetNames = suiteTargetFacts.targetNames
+  const suiteTargetClass: RunTargetClass =
+    foldMostRestrictiveTargetClass(suiteTargetFacts.declaredClasses)
 
   // Assigned by the assembler, which the core calls only after the gate allows the run. Both are
   // read strictly downstream of that call — the ordinal by the member closures (`asOfBuild`) and by
@@ -3236,7 +3273,7 @@ export async function produceSuiteRunMembers(
     knowledgeRoot,
     targetClass: suiteTargetClass,
     targetNames: suiteTargetNames,
-    ...(suiteProbeUrl === undefined ? {} : { probeUrl: suiteProbeUrl }),
+    memberProbeUrls: suiteTargetFacts.probeUrls,
     ...(buildTag === undefined ? {} : { buildTag }),
     logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
     maskingSeed: {
@@ -3382,7 +3419,14 @@ export interface ProducedCliRunMembers {
    * DISPLAY-ONLY. It reaches the gate through `RiskActionDescriptor.disclosure` and nowhere else.
    */
   readonly targetNames: readonly string[]
-  readonly probeUrl?: string
+  /**
+   * ONE ENTRY PER MEMBER, in `members` order: the URL whose health reading belongs to THAT member,
+   * or `undefined` for a member no probe applies to (401-19, WR-04).
+   *
+   * A config read, like `targetClass` — the fetch itself happens inside `assembleCliRun`, behind
+   * the verdict, which dedupes by URL so members sharing a target cost one GET.
+   */
+  readonly memberProbeUrls: readonly (string | undefined)[]
   readonly buildTag?: string
   /**
    * The run's log manager, when the producer built one. The suite half stamps its loggers per
@@ -4120,42 +4164,19 @@ export async function produceDirectRunMembers(
   // were DENIED — argument order decided authorization. The fold is
   // `foldMostRestrictiveTargetClass`, the same function the suite path calls; its rationale lives
   // there rather than being spelled a second time here.
-  const directDeclaredClasses: RunTargetClass[] = []
-  // 401-14: the NAMES, on the same iteration as the class (see `ProducedCliRunMembers.targetNames`).
-  const directTargetNames: string[] = []
-  let firstResolvedProduct: string | undefined
-  let singleProbeUrl: string | undefined
-  for (const binding of filtered) {
-    const memberTargetName = binding.test.target
-    if (memberTargetName === undefined) {
-      // UNDECLARED STAYS UNDECLARED HERE. `undefined` is carried into the descriptor builder,
-      // which is the one place D-06's undeclared-is-shared rule is applied. A default invented
-      // at this line would be a second answer to the question that decides the run.
-      directDeclaredClasses.push(undefined)
-      continue
-    }
-    // Declared is declared, whether or not it resolves — same rule as the suite loop above.
-    if (!directTargetNames.includes(memberTargetName)) directTargetNames.push(memberTargetName)
-    try {
-      const memberTarget = resolveTarget(config, memberTargetName)
-      directDeclaredClasses.push(memberTarget.environment)
-      firstResolvedProduct ??= memberTarget.product
-      // D-04: run-start baseline probe — web targets only, the FIRST resolvable one across the
-      // members, mirroring the suite path's selection loop. Mobile targets skip the probe
-      // entirely: the device-session-create failure is the equivalent signal.
-      if (singleProbeUrl === undefined && memberTarget.platform === 'web' && memberTarget.url) {
-        singleProbeUrl = memberTarget.url
-      }
-    } catch {
-      // Unresolvable here is undeclared here — best-effort resolution, fail-closed classification.
-      // The member closure still surfaces the real target error as the framework error it is.
-      directDeclaredClasses.push(undefined)
-    }
-  }
-  const singleTargetClass: RunTargetClass = foldMostRestrictiveTargetClass(directDeclaredClasses)
+  //
+  // 401-19 (WR-04): `filtered` is what `buildDirectRunMembers` mapped 1:1 into `members`, so the
+  // facts below are index-aligned with the member array and each member's probe URL is its own.
+  const directTargetFacts = resolveMemberTargetFacts(
+    config,
+    filtered.map((binding) => binding.test.target),
+  )
+  const directTargetNames = directTargetFacts.targetNames
+  const singleTargetClass: RunTargetClass =
+    foldMostRestrictiveTargetClass(directTargetFacts.declaredClasses)
   // `requireSingleInvocationProduct` upstream already guarantees ONE product across the members, so
   // the first resolvable member's product is the invocation's product.
-  singleRunProduct = directRunProduct ?? firstResolvedProduct ?? 'unknown'
+  singleRunProduct = directRunProduct ?? directTargetFacts.firstResolvedProduct ?? 'unknown'
   const singleBuildTag = resolveBuildTagSetting({
     flag: opts.buildTag,
     env: process.env.AGENT_QA_BUILD_TAG,
@@ -4200,7 +4221,7 @@ export async function produceDirectRunMembers(
     knowledgeRoot: resolveKnowledgeRoot(config.knowledge, configDir),
     targetClass: singleTargetClass,
     targetNames: directTargetNames,
-    ...(singleProbeUrl === undefined ? {} : { probeUrl: singleProbeUrl }),
+    memberProbeUrls: directTargetFacts.probeUrls,
     ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
     logger,
     maskingSeed: { secretStore: runtimeSecrets.secretStore },
@@ -4624,7 +4645,6 @@ export function createRunCommand(): Command {
         const logger = produced.logger
         const singleRunProduct = produced.product
         const singleTargetClass = produced.targetClass
-        const singleProbeUrl = produced.probeUrl
         const singleBuildTag = produced.buildTag
         const runDigests = { runLevel: produced.configDigests }
         let singleQuarantined: readonly QuarantineAppliedEntry[] = []

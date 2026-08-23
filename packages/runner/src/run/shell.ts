@@ -307,7 +307,16 @@ export function startRun(config: RunConfig): RunSession {
       // (the TestResult, carrying retryCount), `outcome`, and `testIndex` coexist (RESEARCH
       // Pitfall 3): classify HERE, never against the assembled PerTestOutcome. The shell carries
       // zero verdict logic — this call is the only addition; root-cause.ts owns every branch.
-      const rootCause = classifyRootCause({ result, outcome, testIndex, baselineProbe: config.baselineProbe })
+      // 401-19 (WR-04): THE MEMBER'S OWN BASELINE. `member` is already in scope here, which is
+      // what makes per-member attribution possible without a second lookup; a run-level value read
+      // off `config` was applied to every member, so one target's health reading became another
+      // target's diagnosis.
+      const rootCause = classifyRootCause({
+        result,
+        outcome,
+        testIndex,
+        ...(member.baselineProbe === undefined ? {} : { baselineProbe: member.baselineProbe }),
+      })
 
       const perTest = assemblePerTestOutcome(
         member,

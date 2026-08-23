@@ -176,6 +176,18 @@ export interface RunMemberDescriptor {
   suiteIndex?: number
   suiteTotal?: number
   totalSteps?: number
+  /**
+   * THIS MEMBER'S OWN TARGET's run-start health baseline (D-04, 401-19 WR-04).
+   *
+   * PER MEMBER, NOT PER RUN, because a run's members may name different targets and a reading taken
+   * against one of them says nothing about another. It lived on `RunConfig` and was handed to the
+   * classifier for EVERY member, so a 503 observed against member B's target was recorded as member
+   * A's environment failure. The CLI composition root fills this in behind the verdict, probing each
+   * DISTINCT member URL once; absent means no probe applies to this member — the mobile posture,
+   * where the device-session-create failure is the equivalent environment signal, and equally the
+   * posture of a member whose target could not be resolved.
+   */
+  baselineProbe?: BaselineProbeResult
 }
 
 /**
@@ -302,13 +314,6 @@ export interface RunConfig {
   masking?: MaskingContext
   runBudgetMs?: number
   ports?: RunPorts
-  /**
-   * Run-start health baseline for the deterministic root-cause classifier (D-04); recorded
-   * in-memory only — persistence is the environment verdict's rationale template (never a
-   * handoff field, Pitfall 8). Web targets only; absent on mobile targets, where the
-   * device-session-create failure is the existing equivalent environment signal.
-   */
-  baselineProbe?: BaselineProbeResult
   /**
    * The D-08 config + source artifact snapshot the CLI composition root assembles (the
    * `buildRunArtifactContext` document). Staged verbatim into `artifact.json` after `runStarted`
