@@ -130,6 +130,23 @@ export interface InProcessFixtureInput {
    * member COUNT and nothing else.
    */
   readonly secondSuiteMember?: boolean
+  /**
+   * Declare `use.parallel: true` in the CONFIG (401 UAT item 15).
+   *
+   * WHY IT EXISTS, AND WHY IT IS THE CONFIG'S OWN KNOB. The dashboard's `JobQueue` gives a
+   * NON-parallel web run exclusive access to every slot (`findNextEligible`: "Sequential web:
+   * needs ALL slots free"), so two ask-tier runs triggered from a browser reach their gates one
+   * after the other and their confirms never overlap — measured, before this knob existed. The
+   * overlapping-confirm arm of UAT item 15 therefore has nothing to observe unless the runs are
+   * eligible to be active at once, and `use.parallel` is the shipped, documented way a project
+   * says so (`readConfigUseParallel` → `effectiveParallel` → the queued row).
+   *
+   * IT IS WRITTEN IN THE CONFIG RATHER THAN IN A TEST FILE because the trigger route reads BOTH
+   * (`fileParallel ?? configParallel ?? false`) and the config is the one place that covers every
+   * test the fixture writes, so a cell that triggers two DIFFERENT files gets the same posture as
+   * one that triggers the same file twice.
+   */
+  readonly parallelRuns?: boolean
 }
 
 /** The package name the knob above declares. Not installed, and named so a reader can tell. */
@@ -202,6 +219,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
       ...(input.headedBrowser === true
         ? ['  browser:', '    name: chromium', '    headless: false']
         : []),
+      ...(input.parallelRuns === true ? ['  parallel: true'] : []),
       '  llm: unreachable',
       '  mobile:',
       '    appState: preserve',
