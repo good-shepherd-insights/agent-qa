@@ -2,7 +2,10 @@ import { EventEmitter } from 'node:events'
 import { spawn, execSync, type ChildProcess } from 'node:child_process'
 import treeKill from 'tree-kill'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
-import type { ExecutionBackend, ExecuteOptions } from './execution-backend.js'
+import type { ExecutionBackend, ExecuteOptions, LiveExecutionEvent } from './execution-backend.js'
+
+// 401-07: `LiveExecutionEvent` is declared on the interface now — one shape, both producers.
+export type { LiveExecutionEvent } from './execution-backend.js'
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000
 const DEFAULT_STALE_THRESHOLD_MS = 30_000
@@ -55,12 +58,6 @@ function processStatusFromEnvelope(envelope: RunEventEnvelope): ProcessStatus | 
     default:
       return undefined
   }
-}
-
-export interface LiveExecutionEvent {
-  id: number
-  type: string
-  [key: string]: unknown
 }
 
 export interface TestRunHandle {
