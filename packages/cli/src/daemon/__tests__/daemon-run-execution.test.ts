@@ -50,6 +50,7 @@ import {
   runDirs,
 } from '../../composition/__tests__/in-process-run-fixture.js'
 import type { InProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import { UNINSTALLED_AUTH_PLUGIN_PACKAGE } from '../../composition/__tests__/in-process-run-fixture.js'
 import { invokeViaDaemon } from '../client.js'
 import { DAEMON_EVENTS_FILE } from '../events.js'
 import { runDaemonHost } from '../host.js'
@@ -117,8 +118,16 @@ interface DaemonProject {
 }
 
 /** A run project the daemon will serve from, plus the empty browsers root the member fails on. */
-function daemonProject(input: { origin: string; environment: 'local' | 'shared' }): DaemonProject {
-  const fixture = createInProcessFixture({ origin: input.origin, environment: input.environment })
+function daemonProject(input: {
+  origin: string
+  environment: 'local' | 'shared'
+  declareUninstalledAuthPlugin?: boolean
+}): DaemonProject {
+  const fixture = createInProcessFixture({
+    origin: input.origin,
+    environment: input.environment,
+    ...(input.declareUninstalledAuthPlugin === true ? { declareUninstalledAuthPlugin: true } : {}),
+  })
   temporaryRoots.push(fixture.project)
   const browsersRoot = join(fixture.project, 'no-browsers')
   if (!existsSync(browsersRoot)) mkdirSync(browsersRoot, { recursive: true })
@@ -195,6 +204,8 @@ async function dispatchThroughDaemon(input: {
   readonly project: DaemonProject
   readonly patterns: readonly string[]
   readonly varyAmbient?: 'ci' | 'local-interactive'
+  /** Extra `runs.start` fields, so a cell can send one the seam must refuse. */
+  readonly extraRequestFields?: Readonly<Record<string, unknown>>
 }): Promise<{
   /** The ack, when the dispatch succeeded. */
   acknowledged: unknown
@@ -258,7 +269,7 @@ async function dispatchThroughDaemon(input: {
     acknowledged = await invokeViaDaemon({
       agentQaRoot: fixture.agentQaRoot,
       functionId: 'runs.start',
-      input: { patterns: [...input.patterns] },
+      input: { patterns: [...input.patterns], ...(input.extraRequestFields ?? {}) },
     })
   } catch (error) {
     refusal = error
@@ -465,6 +476,98 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
     },
     180_000,
   )
+})
+
+/** What a caller actually holds: the rehydrated error's class name and its message, as one string. */
+function callerSurface(refusal: unknown): string {
+  const error = refusal as Error | undefined
+  return `${error?.name ?? ''}: ${error?.message ?? String(refusal)}`
+}
+
+describe('the daemon refuses an unhonourable request field BEFORE it reads anything (401-10)', () => {
+  it('THE ORDERING — `scope` is refused with no auth plugin loaded, and nothing is dispatched', async () => {
+    // ASSIGNED TO 401-10 by the orchestrator, from 401-05's finding at the fn door and filed in
+    // `deferred-items.md`. `composeDaemonRunExecution` read its own preflight — which is right, and
+    // is what keeps `config.safety.trustMode` reaching this gate — and THEN called the drive, whose
+    // step (0) is the refusal. So a `runs.start` naming a field the seam was always going to refuse
+    // still resolved the project's config first, and `resolveRunInvocationInputs` LOADS AUTH
+    // PLUGINS: third-party code executed on behalf of a refused request.
+    //
+    // A DOOR THAT READS ITS OWN PREFLIGHT MUST MAKE THE REFUSAL ITSELF; the drive's check is too
+    // late for it. Same shape as `__tests__/fn-command.test.ts`'s "no longer refuses runs.start by
+    // binding", and deliberately so — one contract, one assertion shape, two doors.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      // THE FIXTURE IS THE MEASUREMENT. Its config declares an auth plugin that is not installed,
+      // so a refusal arriving after config resolution reports `PluginNotInstalledError` and a
+      // refusal arriving before it reports `RunRequestFieldRefusedError`. Without the plugin the
+      // two orderings produce identical output and this cell would be green at rest.
+      const project = daemonProject({
+        origin: target.origin,
+        environment: 'local',
+        declareUninstalledAuthPlugin: true,
+      })
+      const { fixture } = project
+
+      const { acknowledged, refusal } = await dispatchThroughDaemon({
+        project,
+        patterns: [fixture.testPattern],
+        extraRequestFields: { scope: { tier: 'product', key: 'shop' } },
+      })
+
+      expect(acknowledged).toBeUndefined()
+      // The NAME and the message together — `invokeViaDaemon` rehydrates both, and the pair is
+      // what a caller sees. Read as one string so a refusal that changed which half carries the
+      // class cannot slip past.
+      const surface = callerSurface(refusal)
+      expect(surface).toContain('RunRequestFieldRefusedError')
+      expect(surface).toContain('scope')
+      // THE HALF THE NAME ALONE CANNOT CARRY: nothing was read on the way to the refusal.
+      expect(surface).not.toContain('PluginNotInstalledError')
+      expect(surface).not.toContain(UNINSTALLED_AUTH_PLUGIN_PACKAGE)
+
+      // …and a refused request left nothing behind, which is the core's own stated property and
+      // the reason the ordering matters at all beyond the plugin load.
+      expect(eventTypes(fixture as never)).toEqual([])
+      expect(buildOrdinalsExist(fixture as never)).toBe(false)
+      expect(target.hits).toEqual([])
+      expect(runDirFiles(fixture)).toEqual([])
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
+
+  it('THE ALLOW CONTROL — the SAME fixture without that one field dispatches a real run', async () => {
+    // One field different. Without this arm the cell above would pass for a daemon that refused
+    // every request — including for a daemon that could not read this fixture's config at all,
+    // which is precisely the failure mode the uninstalled plugin introduces.
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const project = daemonProject({
+        origin: target.origin,
+        environment: 'local',
+        declareUninstalledAuthPlugin: true,
+      })
+      const { fixture } = project
+
+      const { acknowledged, refusal } = await dispatchThroughDaemon({
+        project,
+        patterns: [fixture.testPattern],
+      })
+
+      // The plugin IS loaded on this arm — the request is honourable, so the preflight runs — and
+      // the fixture's declaration is therefore what a real project would hit. The run is refused by
+      // the plugin loader, NOT by the field check, and the two refusals are distinguishable.
+      const surface = callerSurface(refusal)
+      expect(acknowledged, `unexpected ack: ${JSON.stringify(acknowledged)}`).toBeUndefined()
+      expect(surface).toContain('PluginNotInstalledError')
+      expect(surface).not.toContain('RunRequestFieldRefusedError')
+    } finally {
+      await target.close()
+    }
+  }, 120_000)
 })
 
 // ==============================================================================================

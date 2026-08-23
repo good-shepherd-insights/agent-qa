@@ -609,7 +609,8 @@ async function composeDaemonRunExecution(input: {
   readonly logger: DaemonHostLogger
 }): Promise<RunExecutionPort> {
   const { resolveRunInvocationInputs } = await import('../commands/run.js')
-  const { runInProcessCliRun } = await import('../composition/in-process-run-execution.js')
+  const { refuseUnhonourableRequestFields, runInProcessCliRun } =
+    await import('../composition/in-process-run-execution.js')
 
   /**
    * The one place a dispatched run is known to have finished, and both per-run effects live here.
@@ -636,6 +637,14 @@ async function composeDaemonRunExecution(input: {
 
   return {
     async execute(request) {
+      // (0) THE REFUSAL, BEFORE ANYTHING IS READ — and it is made HERE rather than left to the
+      // drive's own step (0) because this door reads its own preflight, which happens first. 401-05
+      // fixed the identical exposure at the fn door and could not touch `daemon/**` that wave; the
+      // measured cost of the ordering is one line below: `resolveRunInvocationInputs` LOADS AUTH
+      // PLUGINS, so a `runs.start` naming `scope` executed third-party code on behalf of a request
+      // the seam was always going to refuse, and reported `PluginNotInstalledError` instead of the
+      // refusal. Measured RED on the shipped daemon in `__tests__/daemon-run-execution.test.ts`.
+      refuseUnhonourableRequestFields(request)
       // The request may name another config; the drive resolves against exactly this expression, so
       // a preflight read here that used a different one would resolve a different project.
       const configPath = request.configPath ?? input.configPath

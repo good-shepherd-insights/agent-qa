@@ -63,7 +63,19 @@ export interface InProcessFixtureInput {
   readonly omitSecretsFile?: boolean
   /** Write a test file that parses to ZERO runnable tests (the RUNX-06 door). */
   readonly emptyTestFile?: boolean
+  /**
+   * Declare an auth plugin package that is NOT installed.
+   *
+   * 401-10: this is what makes an ORDERING measurable. A door that refuses an unhonourable request
+   * field only AFTER resolving the project's config loads third-party plugin code on behalf of a
+   * request it was always going to refuse, and reports `PluginNotInstalledError` instead of the
+   * refusal. With the plugin absent from the config the two orderings are indistinguishable.
+   */
+  readonly declareUninstalledAuthPlugin?: boolean
 }
+
+/** The package name the knob above declares. Not installed, and named so a reader can tell. */
+export const UNINSTALLED_AUTH_PLUGIN_PACKAGE = '@acme/auth-plugin-401-10-NOT-INSTALLED'
 
 /**
  * Write a project with one target, one standalone test and one suite over its own member.
@@ -101,6 +113,9 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
       '      provider: openai-compatible',
       '      model: gpt-4o-mini',
       '      baseURL: http://127.0.0.1:1/v1',
+      ...(input.declareUninstalledAuthPlugin === true
+        ? ['plugins:', '  auth:', `    - package: '${UNINSTALLED_AUTH_PLUGIN_PACKAGE}'`]
+        : []),
       'use:',
       '  llm: unreachable',
       '  mobile:',
