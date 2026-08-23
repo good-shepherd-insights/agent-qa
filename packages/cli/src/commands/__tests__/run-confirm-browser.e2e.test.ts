@@ -489,6 +489,10 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       // The honest interactive claim: this row says a browser really was holding the channel the
       // trigger named, which is only true because `setRunConfirmScope` ran in the page.
       expect(rows[0]!.executionContext).toBe('local-interactive')
+      // RECORDED, NOT ENDORSED: the trust the row attributes the approval to is `tty-prompt`, and
+      // there was no TTY anywhere near this decision — a person clicked a button in Chromium. The
+      // decision is right and its provenance is mislabelled on the record a person audits.
+      expect(rows[0]!.trustSource).toBe('tty-prompt')
       expect(eventTypes(fixture)).toContain('runStarted')
       expect(buildOrdinalsExist(fixture)).toBe(true)
       expect(target.hits, 'the approved run never touched the target').toContain('/in-process-thing')
@@ -652,6 +656,33 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
         deniedSettle!.details['remedies'],
         'the refused run carried no way forward',
       ).toEqual([{ kind: 'answer-confirm' }])
+      // WHAT THE FIRST RUN'S RECORD SAYS — the only place its fate is written down, since the
+      // person watching was told nothing. Pinned VERBATIM because two of these strings are
+      // findings in their own right, and a cell that only asserted "it failed" would hide both:
+      //
+      //   * `failureSummary` — the line a runs list shows — says a PROCESS EXITED. No process
+      //     exited. The gate refused before anything started, and the true reason is one field
+      //     further away in `errorLog`.
+      //   * the reason offers `--trust-session`, a CLI flag, to somebody who was sitting in a
+      //     browser. 401-09's mutation 4 guarded exactly this leak on the TYPED remedies (which
+      //     are correctly `answer-confirm` above); the prose channel still carries it.
+      //
+      // RECORDED, NOT ENDORSED. If either is repaired this assertion reds, which is the point.
+      const deniedRun = scene.db.getRun(runA)
+      expect(deniedRun?.status).toBe('failed')
+      expect(
+        deniedRun?.failureSummary,
+        'the refused run is summarised as a process that exited',
+      ).toBe('Process exited before test completed')
+      expect(
+        deniedRun?.errorLog,
+        'the only record of WHY the run never happened',
+      ).toContain('prompted-denied')
+      expect(
+        deniedRun?.errorLog,
+        'a CLI flag is offered as the way forward to somebody in a browser',
+      ).toContain('--trust-session')
+
       const outcomes = runStartRows(fixture).map((row) => row.outcome).sort()
       expect(outcomes).toEqual(['prompted-approved', 'prompted-denied'])
     } finally {
