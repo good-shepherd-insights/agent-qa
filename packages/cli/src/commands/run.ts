@@ -213,8 +213,38 @@ async function buildStorageStateStore(configDir: string): Promise<import('@vostr
 
 let _appiumManager: InstanceType<typeof import('@vostride/agent-qa-dashboard').AppiumManager> | null = null
 
-async function acquireAppium(logLevel: string): Promise<string | undefined> {
-  if (process.env.AGENT_QA_APPIUM_URL) return process.env.AGENT_QA_APPIUM_URL
+/**
+ * An already-running Appium a HOST leased for this run, or the environment's own override.
+ *
+ * INJECTED SINCE 401-07, and the injection is what removes the last reason a dashboard run needed a
+ * child process. The dashboard owns a bundled Appium and leases it per run (design-of-record — the
+ * spawn stays); it used to hand the URL to `agent-qa run` through `AGENT_QA_APPIUM_URL` in the
+ * child's environment, and a child environment is something only a child has. The resolver is that
+ * same fact with the child removed: the host answers with the URL it leased, and this producer
+ * takes it in place of the env read.
+ *
+ * THE ENV READ STAYS as the fallback, because it is also a USER's knob — `AGENT_QA_APPIUM_URL`
+ * points a local run at an Appium somebody else is running, and that has nothing to do with the
+ * dashboard. Injected first, env second, bundled last: most specific answer wins.
+ */
+export type AppiumUrlResolver = () => string | undefined
+
+/**
+ * THE ONE PRECEDENCE RULE for "which Appium is this run talking to": injected, then the
+ * environment, then the bundled auto-start below. Exported so the order is a cell's subject rather
+ * than three copies of an `??` chain — it is read at four sites, and three of them decide the
+ * `managed` flag, which is what tells a teardown whether it owns the server it is talking to.
+ */
+export function resolveHostAppiumUrl(resolveAppiumUrl?: AppiumUrlResolver): string | undefined {
+  return resolveAppiumUrl?.() ?? process.env.AGENT_QA_APPIUM_URL
+}
+
+async function acquireAppium(
+  logLevel: string,
+  resolveAppiumUrl?: AppiumUrlResolver,
+): Promise<string | undefined> {
+  const provided = resolveHostAppiumUrl(resolveAppiumUrl)
+  if (provided) return provided
   const { AppiumManager } = await import('@vostride/agent-qa-dashboard')
   if (!_appiumManager) {
     _appiumManager = new AppiumManager({
@@ -1788,6 +1818,13 @@ export interface PatternMemberProductionContext {
   readonly reporterSelection?: ReporterSelection
   readonly analytics?: () => Promise<CliAnalyticsHost>
   readonly activeSuiteDbs?: Set<any>
+  /**
+   * An Appium a HOST already leased for this run (401-07, D-01/D-12 — INVK-01 truth 5).
+   *
+   * Absent ⇒ the shipped behaviour: `AGENT_QA_APPIUM_URL`, then the bundled auto-start. Present ⇒
+   * the host's URL wins, and this process manages nothing. See `AppiumUrlResolver`.
+   */
+  readonly resolveAppiumUrl?: AppiumUrlResolver
 }
 
 /**
@@ -1847,6 +1884,7 @@ export async function produceMembersFromPatterns(
       ...(context.opts === undefined ? {} : { opts: context.opts }),
       ...(context.reporterSelection === undefined ? {} : { reporterSelection: context.reporterSelection }),
       ...(context.analytics === undefined ? {} : { analytics: context.analytics }),
+      ...(context.resolveAppiumUrl === undefined ? {} : { resolveAppiumUrl: context.resolveAppiumUrl }),
     })
   }
 
@@ -1887,6 +1925,7 @@ export async function produceMembersFromPatterns(
       },
       ...(context.analytics === undefined ? {} : { analytics: context.analytics }),
       ...(context.activeSuiteDbs === undefined ? {} : { activeSuiteDbs: context.activeSuiteDbs }),
+      ...(context.resolveAppiumUrl === undefined ? {} : { resolveAppiumUrl: context.resolveAppiumUrl }),
     })
   }
 
@@ -2001,6 +2040,13 @@ export interface SuiteRunMemberProductionInput {
   readonly analytics?: () => Promise<CliAnalyticsHost>
   /** The door's live suite-database set, so its signal sweep can still find them. */
   readonly activeSuiteDbs?: Set<any>
+  /**
+   * An Appium a HOST already leased for this run (401-07, D-01/D-12 — INVK-01 truth 5).
+   *
+   * Absent ⇒ the shipped behaviour: `AGENT_QA_APPIUM_URL`, then the bundled auto-start. Present ⇒
+   * the host's URL wins, and this process manages nothing. See `AppiumUrlResolver`.
+   */
+  readonly resolveAppiumUrl?: AppiumUrlResolver
 }
 
 export interface SuiteVariableContext {
@@ -2406,7 +2452,7 @@ export async function produceSuiteRunMembers(
         localBindings: suiteLocalBindings,
         configFilePath: path.resolve(configFilePath),
         localConfigFilePath: suiteLocalBindings?.filePath,
-        appiumUrl: process.env.AGENT_QA_APPIUM_URL,
+        appiumUrl: resolveHostAppiumUrl(input.resolveAppiumUrl),
       })
       const resolved = await resolveDeviceAndFarmSession(
         config, mobileResolved.deviceName, suitePlatform,
@@ -2431,9 +2477,12 @@ export async function produceSuiteRunMembers(
     // Auto-start Appium for mobile platforms
     if ((suitePlatform === 'ios' || suitePlatform === 'android') && !useFarm) {
       try {
-        const appiumUrl = await acquireAppium(effectiveLogLevel)
+        const appiumUrl = await acquireAppium(effectiveLogLevel, input.resolveAppiumUrl)
         if (mobileResolved) {
-          mobileResolved = { ...mobileResolved, appium: { url: appiumUrl, managed: !process.env.AGENT_QA_APPIUM_URL } }
+          // `managed` means THIS process started the Appium it is talking to. A host-leased URL is
+          // no more managed here than an env-supplied one — the dashboard owns that lifecycle.
+          const provided = resolveHostAppiumUrl(input.resolveAppiumUrl)
+          mobileResolved = { ...mobileResolved, appium: { url: appiumUrl, managed: !provided } }
         }
       } catch (err) {
         throw new MobileSetupError({
@@ -3254,6 +3303,13 @@ export interface DirectRunMemberProductionInput {
   readonly analytics?: () => Promise<CliAnalyticsHost>
   /** Reports each member's own run id. The command uses it to keep its crash-finalizer honest. */
   readonly onMemberRunId?: (runId: string) => void
+  /**
+   * An Appium a HOST already leased for this run (401-07, D-01/D-12 — INVK-01 truth 5).
+   *
+   * Absent ⇒ the shipped behaviour: `AGENT_QA_APPIUM_URL`, then the bundled auto-start. Present ⇒
+   * the host's URL wins, and this process manages nothing. See `AppiumUrlResolver`.
+   */
+  readonly resolveAppiumUrl?: AppiumUrlResolver
 }
 
 /** A minimal view of the log manager, so a caller need not name `@vostride/agent-qa-core`'s class. */
@@ -3538,7 +3594,7 @@ export async function produceDirectRunMembers(
         localBindings: testLocalBindings,
         configFilePath: resolvePath(configFilePath),
         localConfigFilePath: testLocalBindings?.filePath,
-        appiumUrl: process.env.AGENT_QA_APPIUM_URL,
+        appiumUrl: resolveHostAppiumUrl(input.resolveAppiumUrl),
       })
       analyticsAppState = testMobileResolved.appState
       const resolved = await resolveDeviceAndFarmSession(
@@ -3580,9 +3636,11 @@ export async function produceDirectRunMembers(
         // Auto-start Appium for mobile platforms (if not already running and not in farm mode)
         if ((testPlatform === 'ios' || testPlatform === 'android') && !useFarm) {
           try {
-            const appiumUrl = await acquireAppium(effectiveLogLevel)
+            const appiumUrl = await acquireAppium(effectiveLogLevel, input.resolveAppiumUrl)
             if (testMobileResolved) {
-              testMobileResolved = { ...testMobileResolved, appium: { url: appiumUrl, managed: !process.env.AGENT_QA_APPIUM_URL } }
+              // See the suite half: a host-leased URL is not this process's to manage.
+              const provided = resolveHostAppiumUrl(input.resolveAppiumUrl)
+              testMobileResolved = { ...testMobileResolved, appium: { url: appiumUrl, managed: !provided } }
             }
           } catch (err) {
             throw new MobileSetupError({

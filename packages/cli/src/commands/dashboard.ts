@@ -30,6 +30,9 @@ import type {
   MaskedConfigEntry,
   MaskedResolvedConfig,
   RiskActionDescriptor,
+  RunEventEnvelope,
+  RunSession,
+  RunsStartInput,
 } from '@vostride/agent-qa-schema'
 import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
 import { resolveConfig } from '../config.js'
@@ -38,6 +41,7 @@ import {
   composeCliLocalAgent,
   createMaskedConfigReader,
 } from '../composition/local-agent-host.js'
+import type { ComposeCliLocalAgentInput } from '../composition/local-agent-host.js'
 import {
   applyResolvedAuthToModelConfig,
   resolveCliChatCapabilities,
@@ -519,6 +523,14 @@ export interface DashboardDoorInput {
    * what the conformance suite composes, deliberately, so no cell can reach a provider.
    */
   readonly chatModel?: CliChatCapabilities
+  /**
+   * What this door needs back from the runs it triggers (401-07, D-09 — INVK-01).
+   *
+   * PASSED STRAIGHT THROUGH to `composeCliLocalAgent`, and this composer decides nothing about it —
+   * the same rule that governs `chatModel` and `confirms` above. Absent (the conformance suite's
+   * posture, and any caller that only wants the chat door) composes exactly what it composed before.
+   */
+  readonly runBridge?: ComposeCliLocalAgentInput['runBridge']
 }
 
 /** The composed door: the local host it owns, and the seam the routes consume. */
@@ -649,6 +661,7 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
     // THE SAME WORD `DASHBOARD_FUNCTION_CALLER.surface` CARRIES, deliberately: the door that
     // dispatched a turn and the door that opened its session are the same fact, and two spellings
     // of it would be free to disagree.
+    ...(input.runBridge === undefined ? {} : { runBridge: input.runBridge }),
     sessionSurface: DASHBOARD_FUNCTION_CALLER.surface,
     // 400-05: the same word again, and again read off the caller rather than typed. A config
     // proposal minted in a browser is accepted from wherever the person happens to be — often the
@@ -699,6 +712,215 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
       (sessionId, run) => askingSessions.run({ askingSession: sessionId }, run),
     ),
     resolveExecutionContext: postureOf,
+  }
+}
+
+
+// ---- The fourth door's RUN trigger (401-07, D-01/D-09/D-10 — INVK-01) ------------------------
+
+/**
+ * The dashboard's queue used to start a run by SPAWNING `agent-qa run` and reading the child's
+ * stdout for `AGENT_QA_EVENT:` lines. `packages/dashboard-server` cannot compose the gated run
+ * itself — it may not name `@vostride/agent-qa-agent*` — so the door is composed HERE, in the
+ * process that runs that server, and injected. That is the same arrangement, and the same reason,
+ * as `agentHost` two hundred lines below.
+ *
+ * D-10 — THE RUN BUTTON IS ONE MORE CALLER OF `runs.start`. The starter below invokes the composed
+ * host's own registry through the shipped `invokeFunction`, so the op-level gate, the run-start
+ * gate, the receipt classification, the ack-read-off-the-durable-record and both audit rows apply
+ * identically to a browser click and to a sentence typed at `agent-qa chat`. There is no dashboard
+ * carve-out and no second spelling of "start a run".
+ *
+ * THE INTERIM POSTURE IS `local-headless`, AND IT IS STRUCTURAL RATHER THAN CONFIGURED. This door's
+ * gate context is `postureFor(askingSession(), …)`, and `askingSession()` reads an AsyncLocalStorage
+ * that only `composeDashboardAgentHost`'s turn wrapper ever enters. A queued run is not a turn and
+ * never enters it, so the asker is `undefined` and the posture is `local-headless` — every time,
+ * without anyone remembering to pass it. Environment-local targets therefore run credential-free
+ * and shared targets deny FAIL-CLOSED with the gate's own typed remedies reaching the run's failure
+ * record. 401-09 adds D-11's confirm dialog and, with it, the interactive claim; until then this is
+ * honest fail-closed rather than a gap.
+ */
+export interface DashboardRunDoor {
+  /** Handed to `composeDashboardDoor` BEFORE the host exists — see `bindHost`. */
+  readonly runBridge: NonNullable<ComposeCliLocalAgentInput['runBridge']>
+  /** Handed to `startServer`. The queue calls `execute` on it and nothing else does. */
+  readonly backend: DashboardExecutionBackend
+  /**
+   * Bind the composed host once it exists.
+   *
+   * A MUTABLE BOX BECAUSE THE ORDER CANNOT BE INVERTED, exactly as `composed` and `boundOrigin`
+   * above: the bridge is an INPUT to the composition, and the starter needs the composition's
+   * registry. Reading it at call time is what makes both true at once.
+   */
+  bindHost(host: LocalAgentHost): void
+}
+
+/** Structural, so this module names the dashboard package's own type without importing its value. */
+type DashboardExecutionBackend = import('@vostride/agent-qa-dashboard').ExecutionBackend
+
+/** What the door holds for a run between `runs.start` going in and the run coming out. */
+interface DashboardRunEntry {
+  readonly onSession: (session: RunSession) => void
+  readonly appiumUrl?: string
+  readonly flags: DashboardRunFlags
+  readonly ingest: {
+    handler: (envelope: RunEventEnvelope) => void
+    finalize: () => Promise<void>
+  }
+}
+
+/** The queue's argv operands that are FLAGS rather than patterns. Exactly one today. */
+export interface DashboardRunFlags {
+  readonly disableCache?: boolean
+}
+
+/**
+ * Split the queue's argv operands into request patterns and this door's own flags.
+ *
+ * THE QUEUE STILL SPEAKS ARGV because that is what its rows contain — `metadata.args` is persisted,
+ * and rows enqueued before this change are still in the database. `RunsStartInput` has `patterns`
+ * and nothing else, so the operands have to be read rather than forwarded.
+ *
+ * AN UNRECOGNISED FLAG IS REFUSED BY NAME, never passed through as a pattern. A `--something` that
+ * silently became a glob would match no files and either disappear or fail as "no test files found"
+ * — a person who asked for a behaviour would get a different run and no indication of it.
+ */
+export function partitionDashboardRunArgs(args: readonly string[]): {
+  readonly patterns: string[]
+  readonly flags: DashboardRunFlags
+  readonly unsupported: string[]
+} {
+  const patterns: string[] = []
+  const unsupported: string[] = []
+  let disableCache: true | undefined
+  for (const arg of args) {
+    if (!arg.startsWith('-')) {
+      patterns.push(arg)
+      continue
+    }
+    if (arg === '--disable-cache') {
+      disableCache = true
+      continue
+    }
+    unsupported.push(arg)
+  }
+  return {
+    patterns,
+    flags: disableCache === undefined ? {} : { disableCache },
+    unsupported,
+  }
+}
+
+/**
+ * Compose the run door — ONE composer, for production and for the cells that measure it.
+ *
+ * PUBLISHED AND SINGULAR for `composeDashboardDoor`'s own reason: a cell that assembled its own
+ * starter beside this one would be measuring a door this product does not ship.
+ *
+ * ASYNC because the dashboard package is imported lazily throughout this command (so `agent-qa
+ * --help` does not pay for a web server), and both of the values below live in it.
+ */
+export async function createDashboardRunDoor(input: {
+  /** The dashboard database THIS SERVER holds. One connection, one writer, one process. */
+  readonly db: unknown
+}): Promise<DashboardRunDoor> {
+  const { createDashboardRunIngest, createInProcessExecutionBackend } = await import('@vostride/agent-qa-dashboard')
+  // DEFERRED, and load-bearing: `in-process-run-execution.ts` imports `commands/run.ts`'s producers
+  // statically and `commands/run.ts` imports this command's neighbours, so a static edge back can
+  // close an ESM cycle at module-evaluation time. Every other door acquires this port the same way.
+  const { cliRunSubscribers } = await import('../composition/in-process-run-execution.js')
+
+  const entries = new Map<string, DashboardRunEntry>()
+  let boundHost: LocalAgentHost | undefined
+
+  const runBridge: NonNullable<ComposeCliLocalAgentInput['runBridge']> = {
+    // THE BRIDGE HOOK (D-09). Routed by the session's OWN id rather than by "the run in flight",
+    // because this door runs as many at once as the queue has slots.
+    onSession: (session: RunSession): void => {
+      entries.get(session.id as unknown as string)?.onSession(session)
+    },
+    // THE DB WRITES, UNCHANGED IN WHAT THEY WRITE (D-09's build-order pin). `createDashboardRunIngest`
+    // is the same subscriber the spawned child composed; what moved is where it runs and how it
+    // learns which row to adopt. That correlation used to be three environment variables the queue
+    // put in a child's environment; it is construction data now, per run, which is also what makes
+    // two concurrent runs adopt two different rows instead of racing one global.
+    subscribers: (attach) => {
+      const entry = entries.get(attach.session.id as unknown as string)
+      if (entry === undefined) return undefined
+      return cliRunSubscribers({
+        // NO CONSOLE REPORTER. This process's stdout is a server's log, not a run's transcript, and
+        // a run's transcript is the typed bus event log (D-04).
+        console: false,
+        extraSubscribers: [{
+          handler: entry.ingest.handler,
+          flush: () => entry.ingest.finalize(),
+        }],
+      })(attach)
+    },
+    resolveAppiumUrl: (runId: string): string | undefined => entries.get(runId)?.appiumUrl,
+    resolveRunFlags: (runId: string): DashboardRunFlags | undefined => entries.get(runId)?.flags,
+  }
+
+  const backend = createInProcessExecutionBackend({
+    invokeRun: async ({ opts, onSession }) => {
+      const host = boundHost
+      if (host === undefined) {
+        throw new Error('The dashboard run door was asked to start a run before its host was composed.')
+      }
+      const { patterns, flags, unsupported } = partitionDashboardRunArgs(opts.args)
+      if (unsupported.length > 0) {
+        throw new Error(
+          `The dashboard run door does not honour ${unsupported.join(', ')}. `
+          + 'Queued run arguments now travel as `runs.start` patterns and a small set of named '
+          + 'flags; an operand nobody reads would change the run without saying so.',
+        )
+      }
+
+      // The correlation the retiring child received as `AGENT_QA_RUN_ID` / `AGENT_QA_SUITE_QUEUE_ID`,
+      // as construction data. `AGENT_QA_PARENT_RUN_ID` and `AGENT_QA_MAX_RETRIES` are absent because
+      // queue retries retired with the machinery that minted their children (D-12).
+      const ingest = createDashboardRunIngest({
+        db: input.db as never,
+        ...(opts.attributes === undefined ? {} : { attributes: opts.attributes }),
+        correlationEnv: opts.source === 'suite'
+          ? { suiteQueueId: opts.runId }
+          : { runId: opts.runId },
+      })
+
+      entries.set(opts.runId, {
+        onSession,
+        ...(opts.appiumUrl === undefined ? {} : { appiumUrl: opts.appiumUrl }),
+        flags,
+        ingest,
+      })
+      try {
+        const request: RunsStartInput = {
+          // THE ENQUEUED ROW'S ID IS THE RUN'S ID. `RunsStartInput.runId` is 401-03's additive
+          // field, and this is the caller it was added for: the retiring port already chose the id
+          // and handed it to a child, so "the door that starts the run chooses its id" is the
+          // shipped trust level rather than a new one.
+          runId: opts.runId as RunsStartInput['runId'],
+          ...(patterns.length === 0 ? {} : { patterns }),
+        }
+        // THE SHIPPED DISPATCHER, NOT THE PORT UNDERNEATH IT. Going straight to the run execution
+        // would skip the op-level gate, the receipt classification and the ack law — which is the
+        // dashboard carve-out D-10 exists to refuse.
+        await invokeFunction(
+          host.registry as FunctionRegistry,
+          'runs.start',
+          request,
+          DASHBOARD_FUNCTION_CALLER,
+        )
+      } finally {
+        entries.delete(opts.runId)
+      }
+    },
+  }) as unknown as DashboardExecutionBackend
+
+  return {
+    runBridge,
+    backend,
+    bindHost: (host: LocalAgentHost): void => { boundHost = host },
   }
 }
 
@@ -817,7 +1039,14 @@ async function startDashboardBackedServices(
     // registries would park a question in the one the answer never reaches.
     const confirms = createConfirmRegistry()
 
-    const { agentHost } = composeDashboardDoor({
+    // ---- The run door (401-07, D-01/D-09/D-10) -------------------------------------------------
+    //
+    // COMPOSED BEFORE THE HOST AND BOUND AFTER IT, for the reason `composed` and `boundOrigin`
+    // inside `composeDashboardDoor` are boxes: the bridge is an INPUT to the composition and the
+    // starter needs the composition's registry, so one of the two has to be read at call time.
+    const runDoor = await createDashboardRunDoor({ db })
+
+    const { agentHost, host: runHost } = composeDashboardDoor({
       agentQaRoot: resolve(configDir, '.agent-qa'),
       configPath: configFilePath,
       boundOrigin: () => boundOrigin,
@@ -830,7 +1059,9 @@ async function startDashboardBackedServices(
       // `setActiveExecutionContextResolver` either: that setter is a process global and would
       // re-answer the question for every composition in this process (Pitfall 5).
       confirms,
+      runBridge: runDoor.runBridge,
     })
+    runDoor.bindHost(runHost)
 
     const { close, port: listeningPort } = await startServer({
       db,
@@ -842,6 +1073,10 @@ async function startDashboardBackedServices(
       llmConfig: dashboardLLMConfig,
       authFetch,
       agentHost,
+      // INVK-01: the queue executes through this, in this process, over `runs.start`. A dashboard
+      // started without it would answer 503 from the execution routes — which is what an
+      // unresolvable `agent-qa` binary used to produce, and the honest shape of the same absence.
+      executionBackend: runDoor.backend,
     })
 
     // D-16: the second supplier, now that there is a port to name. Loopback rather than a hostname,

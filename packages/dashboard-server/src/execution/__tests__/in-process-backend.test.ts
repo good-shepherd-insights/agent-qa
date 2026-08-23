@@ -141,7 +141,7 @@ async function driveOneRun(input: {
   const drive: Drive = { buffered: [], emitted: [], settled: [] }
 
   const backend = createInProcessExecutionBackend({
-    startRun: async ({ opts, onSession }) => {
+    invokeRun: async ({ opts, onSession }) => {
       if (input.startSession === false) {
         if (input.rejectWith) throw input.rejectWith
         return
@@ -233,7 +233,7 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
     let session: FakeRunSession | undefined
     let release: (() => void) | undefined
     const backend = createInProcessExecutionBackend({
-      startRun: async ({ opts, onSession }) => {
+      invokeRun: async ({ opts, onSession }) => {
         session = new FakeRunSession(opts.runId as RunSession['id'])
         onSession(session)
         await new Promise<void>((resolve) => { release = resolve })
@@ -256,7 +256,7 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
 
   it('KILLING A RUN THAT IS NOT RUNNING IS FALSE, AND ABORTS NOTHING', async () => {
     const drive = await driveOneRun({})
-    const backend = createInProcessExecutionBackend({ startRun: async () => { /* never used */ } })
+    const backend = createInProcessExecutionBackend({ invokeRun: async () => { /* never used */ } })
     expect(backend.kill('a-run-nobody-started')).toBe(false)
     expect(drive.session!.cancels).toBe(0)
   })
@@ -266,7 +266,7 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
     let session: FakeRunSession | undefined
     let release: (() => void) | undefined
     const backend = createInProcessExecutionBackend({
-      startRun: async ({ opts, onSession }) => {
+      invokeRun: async ({ opts, onSession }) => {
         session = new FakeRunSession(opts.runId as RunSession['id'])
         onSession(session)
         await new Promise<void>((resolve) => { release = resolve })
@@ -287,7 +287,7 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
     let nameIt: (() => void) | undefined
     const settled: Settled[] = []
     const backend = createInProcessExecutionBackend({
-      startRun: async ({ opts, onSession }) => {
+      invokeRun: async ({ opts, onSession }) => {
         await new Promise<void>((resolve) => { nameIt = resolve })
         session = new FakeRunSession(opts.runId as RunSession['id'])
         onSession(session)
@@ -353,7 +353,7 @@ describe('two concurrent runs are isolated at the consumer surface (401-07, INVK
     const emitted: { runId: string; event: LiveExecutionEvent }[] = []
 
     const backend = createInProcessExecutionBackend({
-      startRun: async ({ opts, onSession }) => {
+      invokeRun: async ({ opts, onSession }) => {
         const session = new FakeRunSession(opts.runId as RunSession['id'])
         sessions.set(opts.runId, session)
         onSession(session)
@@ -416,7 +416,7 @@ describe('two concurrent runs are isolated at the consumer surface (401-07, INVK
     const sessions: FakeRunSession[] = []
     const releases: (() => void)[] = []
     const backend = createInProcessExecutionBackend({
-      startRun: async ({ opts, onSession }) => {
+      invokeRun: async ({ opts, onSession }) => {
         const session = new FakeRunSession(opts.runId as RunSession['id'])
         sessions.push(session)
         onSession(session)

@@ -11,6 +11,8 @@ const {
   mockResolveDashboardDbPath,
   mockStartServer,
   mockCreateConfirmRegistry,
+  mockCreateDashboardRunIngest,
+  mockCreateInProcessExecutionBackend,
 } = vi.hoisted(() => ({
   mockResolveConfig: vi.fn(),
   mockDashboardDatabase: vi.fn(),
@@ -21,6 +23,21 @@ const {
   // 400-03: the confirm registry the command creates through this same import. A mock missing it
   // does not fail as a missing assertion — the command throws on the destructure, exits 2, and
   // every cell below then measures a command that never ran.
+  // 401-07: the run door composes both of these through the SAME lazy import. A mock missing
+  // either does not fail as a missing assertion — `createDashboardRunDoor` throws on the
+  // destructure, the command exits 2, and every cell below then measures a command that never ran.
+  // (Which is exactly how this was found: seven cells went red with `Error: process.exit`.)
+  mockCreateDashboardRunIngest: vi.fn(() => ({ handler: vi.fn(), finalize: vi.fn(async () => {}) })),
+  mockCreateInProcessExecutionBackend: vi.fn((options: unknown) => ({
+    options,
+    execute: vi.fn(),
+    kill: vi.fn(() => false),
+    killAll: vi.fn(),
+    getActiveExecutions: vi.fn(() => []),
+    getBufferedEvents: vi.fn(() => []),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+  })),
   mockCreateConfirmRegistry: vi.fn(() => ({
     openChannel: vi.fn(() => vi.fn()),
     hasLiveChannel: vi.fn(() => false),
@@ -39,6 +56,8 @@ vi.mock('../config.js', () => ({
 vi.mock('@vostride/agent-qa-dashboard', () => ({
   DashboardDatabase: mockDashboardDatabase,
   createConfirmRegistry: mockCreateConfirmRegistry,
+  createDashboardRunIngest: mockCreateDashboardRunIngest,
+  createInProcessExecutionBackend: mockCreateInProcessExecutionBackend,
   resolveDashboardDbPath: mockResolveDashboardDbPath,
   startServer: mockStartServer,
 }))
@@ -170,8 +189,20 @@ describe('createDashboardCommand', () => {
     // ask-tier questions in it, and the server is handed the same instance through the agent host —
     // a server started without it would serve a confirm route with nothing behind it.
     expect(mockCreateConfirmRegistry).toHaveBeenCalledTimes(1)
-    const started = mockStartServer.mock.calls[0]?.[0] as { agentHost?: { confirms?: unknown } }
+    const started = mockStartServer.mock.calls[0]?.[0] as {
+      agentHost?: { confirms?: unknown }
+      executionBackend?: unknown
+    }
     expect(started.agentHost?.confirms).toBe(mockCreateConfirmRegistry.mock.results[0]?.value)
+
+    // 401-07 (INVK-01): the SAME shape, one line down, for the run door. The command composes the
+    // backend here — where the agent packages are nameable — and hands it over; a server started
+    // without it answers 503 from the execution routes and runs nothing.
+    expect(mockCreateInProcessExecutionBackend).toHaveBeenCalledTimes(1)
+    expect(started.executionBackend).toBe(mockCreateInProcessExecutionBackend.mock.results[0]?.value)
+    // And the backend it handed over is composed over a real starter rather than a placeholder.
+    const backendOptions = (started.executionBackend as { options?: { invokeRun?: unknown } }).options
+    expect(typeof backendOptions?.invokeRun).toBe('function')
   })
 
   it('uses dashboard config from resolved config', async () => {

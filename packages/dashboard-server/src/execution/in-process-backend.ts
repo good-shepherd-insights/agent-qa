@@ -139,7 +139,18 @@ export interface InProcessRunStartInput {
 export type InProcessRunStarter = (input: InProcessRunStartInput) => Promise<void>
 
 export interface InProcessExecutionBackendOptions {
-  readonly startRun: InProcessRunStarter
+  /**
+   * How this backend actually starts a run.
+   *
+   * NAMED `invokeRun` AND NOT `startRun`, which is not a stylistic choice. `startRun` is the RUN
+   * SHELL's entry point in `@vostride/agent-qa-runner`, and `run-door-invocation-census.test.ts`
+   * makes a complete-set claim over the whole CLI package that no file acquires it — the one legal
+   * call site is inside the invocation core, one line below the one `evaluate()`. A second thing
+   * called `startRun`, in the CLI file that composes this option, REDS that census; and the census
+   * is right to red, because a second spelling of somebody else's symbol is exactly what it exists
+   * to refuse. `invokeRun` also says what this one does: it invokes the `runs.start` OP (D-10).
+   */
+  readonly invokeRun: InProcessRunStarter
   /** Applied when an `ExecuteOptions` carries no `timeout` of its own. */
   readonly defaultTimeout?: number
   /** How long a finished run's replay buffer survives. */
@@ -210,7 +221,7 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     }
 
     void this.options
-      .startRun({
+      .invokeRun({
         opts,
         onSession: (session) => {
           handle.session = session

@@ -130,6 +130,7 @@ import type {
   GrantRecordOutcome,
   RiskActionDescriptor,
   RunId,
+  RunSession,
   RunsStartInput,
   ScopeKey,
   TestEditPatchSet,
@@ -148,6 +149,12 @@ import { resolveCliAnalysisTokenBudget, resolveCliJobModel } from '../llm-utils.
 import { createCliCapabilityCatalogPort } from '../capability-catalog/explain-port.js'
 import { analyticsEvent } from './analytics-host.js'
 import type { CliAnalyticsHost } from './analytics-host.js'
+// TYPE-ONLY, and that matters here: `in-process-run-execution.ts` imports `commands/run.ts`'s
+// producers statically and `commands/run.ts` imports THIS file, so a VALUE import back would close
+// an ESM cycle at module-evaluation time (401-11, Deviations 1). A `import type` is erased, adds no
+// runtime edge, and is how this host names the option shapes it merely passes through — the port
+// itself is still acquired through the deferred `await import(...)` in `createComposedRunExecution`.
+import type { InProcessCliRunExecutionOptions } from './in-process-run-execution.js'
 import { buildConfigVisibilityOracle } from './config-visibility.js'
 import { buildMaskedResolvedConfig } from './masked-config.js'
 
@@ -493,11 +500,16 @@ export function createCliRunExecution(input: CreateCliRunExecutionInput): RunExe
  *
  * WHAT IS DELIBERATELY ABSENT, each because an option nothing reads is a stub with a type on it:
  * `reader` (the D-08 dispatch-grant overlay is plan 08's, and nothing mints a `run:start` grant
- * today), `onSession` (the D-09 dashboard bridge is 401-07's), `produceMembers` (the default
+ * today), `produceMembers` (the default
  * dispatcher is MODE-AWARE, which is what makes an argument-less request and a suite pattern both
- * work at this door), `subscribers` (D-04: the typed bus event log is the run's record; a reporter
- * here would be the console tee under another name), `afterVerdict` (a `runs.start` ack is a START,
- * not an outcome — there is no door-level fold to apply), and `trust.credential` (402's parameter).
+ * work at this door), `afterVerdict` (a `runs.start` ack is a START, not an outcome — there is no
+ * door-level fold to apply), and `trust.credential` (402's parameter).
+ *
+ * WHAT ARRIVES FROM THE HOST SINCE 401-07: `onSession`, `subscribers`, `resolveAppiumUrl` and
+ * `resolveRunFlags`, all four through `runBridge` and all four absent unless a host asks. A host that watches its runs
+ * needs the first; one that writes its own rows needs the second (D-04 still holds for a host that
+ * asks for neither — the typed bus event log is the run's record, and a reporter bound by default
+ * would be the console tee under another name); one that leases devices needs the third.
  *
  * IT IS ACQUIRED THROUGH A DEFERRED IMPORT, and that is load-bearing rather than stylistic.
  * `composition/in-process-run-execution.ts` imports `commands/run.js`'s producers statically — the
@@ -511,6 +523,7 @@ function createComposedRunExecution(input: {
   readonly agentQaRoot: string
   readonly resolveExecutionContext: ComposeLocalAgentInput['resolveExecutionContext']
   readonly confirm: ComposeLocalAgentInput['confirm']
+  readonly runBridge?: ComposeCliLocalAgentInput['runBridge']
 }): RunExecutionPort {
   return {
     async execute(request: RunsStartInput): Promise<{ runId: RunId }> {
@@ -552,10 +565,24 @@ function createComposedRunExecution(input: {
             trust: { trustMode: inputs.config.safety?.trustMode === true },
             ...(input.confirm === undefined ? {} : { confirm: input.confirm }),
             inputs,
-            // A LOCAL CAPTURE, not the D-09 bridge. It exists so the `catch` below can tell a run
-            // that STARTED from one that never did; 401-07's dashboard bridge is a separate hook
-            // this host does not yet publish, and chaining onto this one is that plan's to do.
-            onSession: (session) => { startedRunId = session.id as unknown as string },
+            // THE LOCAL CAPTURE FIRST, THEN THE HOST'S BRIDGE (401-07). The capture is what the
+            // `catch` below reads to tell a run that STARTED from one that never did, so it can
+            // never be REPLACED by a host's hook — it is chained. A bridge that threw here would
+            // fail the run, which is correct: a host that asked to watch its runs and cannot is a
+            // host whose surface would silently show nothing.
+            onSession: (session) => {
+              startedRunId = session.id as unknown as string
+              input.runBridge?.onSession?.(session)
+            },
+            ...(input.runBridge?.subscribers === undefined
+              ? {}
+              : { subscribers: input.runBridge.subscribers }),
+            ...(input.runBridge?.resolveAppiumUrl === undefined
+              ? {}
+              : { resolveAppiumUrl: input.runBridge.resolveAppiumUrl }),
+            ...(input.runBridge?.resolveRunFlags === undefined
+              ? {}
+              : { resolveRunFlags: input.runBridge.resolveRunFlags }),
             warn,
           },
           request,
@@ -718,6 +745,29 @@ export interface ComposeCliLocalAgentInput {
    * — is exercised without a browser and a provider behind it.
    */
   runExecution?: RunExecutionPort
+  /**
+   * The D-09 RUN BRIDGE: what a host that watches its own runs needs from them (401-07, INVK-01).
+   *
+   * ONE OPTION RATHER THAN THREE FIELDS, because the three are one story — a host that bridges a
+   * run's bus to a surface also needs that run's reporters and, if it leases devices, that run's
+   * device. A door that wants none of it passes nothing and this composition is byte-identical to
+   * what it was; the dashboard is the only door that wants any of it today, and it wants all three.
+   *
+   * IT IS A PASS-THROUGH, NOT A DECISION. Every member is handed to `runInProcessCliRun` as the
+   * option of the same name. This host adds nothing and defaults nothing — `onSession` in
+   * particular is CHAINED onto the door's own local capture rather than replacing it, because that
+   * capture is what the ack-law catch below reads to tell a started run from one that never began.
+   */
+  runBridge?: {
+    /** Fired with each started `RunSession` — the D-09 bridge hook. */
+    readonly onSession?: (session: RunSession) => void
+    /** The host's own bus subscribers, attached inside the core's `onSession`. */
+    readonly subscribers?: InProcessCliRunExecutionOptions['subscribers']
+    /** The Appium this host leased for a named run, if it leases any. */
+    readonly resolveAppiumUrl?: InProcessCliRunExecutionOptions['resolveAppiumUrl']
+    /** Per-run flags this host's own UI offers that the request DTO has no field for. */
+    readonly resolveRunFlags?: InProcessCliRunExecutionOptions['resolveRunFlags']
+  }
   /**
    * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
    *
@@ -3699,6 +3749,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       agentQaRoot: input.agentQaRoot,
       resolveExecutionContext: input.resolveExecutionContext,
       confirm: doorConfirm,
+      ...(input.runBridge === undefined ? {} : { runBridge: input.runBridge }),
     }),
     // 393 D-01: the keep-gate evaluator's host half, bound UNCONDITIONALLY on this host — a CLI
     // always has a config path, therefore a checkout root, therefore both verbs. Together with the

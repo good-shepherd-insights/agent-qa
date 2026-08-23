@@ -79,7 +79,7 @@ import {
   produceMembersFromPatterns,
   resolveRunInvocationInputs,
 } from '../commands/run.js'
-import type { ProducedCliRunMembers, RunInvocationInputs } from '../commands/run.js'
+import type { ProducedCliRunMembers, RunInvocationInputs, RunOptions } from '../commands/run.js'
 
 /**
  * The typed input failure, re-exported so a composing door has ONE import site for this module's
@@ -197,6 +197,38 @@ export interface InProcessCliRunExecutionOptions {
   readonly afterVerdict?: (context: CliRunVerdictContext) => Promise<number> | number
   /** Where a quarantine-fold warning goes. The door owns its rendering. */
   readonly warn?: (message: string) => void
+  /**
+   * An Appium the DOOR has already leased for this run (401-07, D-12 — INVK-01 truth 5).
+   *
+   * IT TAKES THE RUN ID, AND ONLY THIS SEAM CAN BIND IT. A door composes this port ONCE and serves
+   * many runs through it, but a lease belongs to one run — so the door answers per run id and the
+   * drive, which is the one place the id is decided (`request.runId ?? mintCliRunId()`), binds it
+   * before handing the producer a zero-argument resolver. A producer that had to know about run ids
+   * to ask about a device would be a producer that knows about the door's bookkeeping.
+   *
+   * THE OPTION LANDS IN THE SAME CHANGE AS ITS CONSUMER, deliberately (401-03's own reason for not
+   * adding it: an option nothing reads is a stub with a type on it). Absent leaves the shipped
+   * order — `AGENT_QA_APPIUM_URL`, then the bundled auto-start — byte for byte.
+   */
+  readonly resolveAppiumUrl?: (runId: string) => string | undefined
+  /**
+   * Per-run flags a door's own UI offers that `RunsStartInput` has no field for (401-07).
+   *
+   * EXACTLY ONE MEMBER TODAY, AND DELIBERATELY NOT `RunOptions`. The dashboard has shipped a
+   * "no cache" checkbox since v1; it reached a run as the `--disable-cache` OPERAND of a spawned
+   * `agent-qa run`, and there is no operand any more. Dropping it silently would give a person who
+   * ticked that box a cached answer, which is worse than the box not existing.
+   *
+   * The wide type was refused on purpose: handing a door `RunOptions` would let it reach flags this
+   * seam has no business honouring (`--trust-session` above all), and every one of them would be a
+   * policy input arriving through a producer's back door. This grows one named field at a time, and
+   * each addition is a decision somebody makes.
+   *
+   * The RIGHT long-term home is a field on `RunsStartInput` — the request is the contract, and a
+   * per-run fact that travels beside the request is a second channel. That is a schema change with
+   * an ack contract behind it, so it is filed rather than smuggled in here.
+   */
+  readonly resolveRunFlags?: (runId: string) => { readonly disableCache?: boolean } | undefined
 }
 
 /**
@@ -261,6 +293,14 @@ export async function runInProcessCliRun(
           ...(request.patterns === undefined ? {} : { patterns: request.patterns }),
         }),
         runId,
+        // The door's per-run resolver, BOUND to this run's id here — the one place the id is
+        // decided. See `resolveAppiumUrl` on the options.
+        ...(options.resolveAppiumUrl === undefined
+          ? {}
+          : { resolveAppiumUrl: (): string | undefined => options.resolveAppiumUrl!(runId) }),
+        ...(options.resolveRunFlags === undefined
+          ? {}
+          : { opts: { ...options.resolveRunFlags(runId) } as RunOptions }),
       })
     : await options.produceMembers({
         request,
