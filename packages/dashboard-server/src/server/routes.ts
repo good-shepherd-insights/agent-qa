@@ -994,10 +994,14 @@ function sanitizeSecretsFileMetadata(value: unknown): unknown {
 function sanitizeArtifactPayloadForResponse(payload: RunArtifactRow['payload']): RunArtifactRow['payload'] {
   const sanitized = redactAuthStateValue(sanitizeSecretTemplates(payload))
   if (!isRecord(sanitized)) return payload
-  const config = sanitized.config
-  if (!isRecord(config) || !('secretsFile' in config)) return sanitized as unknown as RunArtifactRow['payload']
+  // G-401-18-CR01: the SEVENTH door. `JobQueue.enqueue` writes the caller's `metadata` object into
+  // `run_artifacts.payload.metadata` as well as `runs.metadata`, and this response is what serves
+  // it. The strip is the SAME allowlist the run rows go through — see `sanitizeRunMetadataForResponse`.
+  const withSafeMetadata = sanitizeArtifactPayloadMetadata(sanitized)
+  const config = withSafeMetadata.config
+  if (!isRecord(config) || !('secretsFile' in config)) return withSafeMetadata as unknown as RunArtifactRow['payload']
   return {
-    ...sanitized,
+    ...withSafeMetadata,
     config: {
       ...config,
       secretsFile: sanitizeSecretsFileMetadata(config.secretsFile),
@@ -1149,23 +1153,151 @@ function sanitizeRunMetadataForResponse(
 }
 
 /**
- * Every `DashboardDatabase` read that hands this router a run row.
+ * The artifact payload's own copy of the caller's run metadata (G-401-18-CR01).
+ *
+ * ONE ALLOWLIST, APPLIED AT A SECOND SERIALIZATION SITE — not a second allowlist. `JobQueue.enqueue`
+ * writes the SAME `opts.metadata` object into two places (`job-queue.ts:75-78`): the run row, and
+ * `run_artifacts.payload.metadata`. 401-18 scrubbed the first and missed the second, and two
+ * parallel allowlists is precisely the shape that would let them drift apart again — so this reuses
+ * `sanitizeRunMetadataForResponse` rather than declaring keys of its own.
+ *
+ * `attributes` IS CARRIED THROUGH, and it is the one key that is: the queue MINTS it beside the
+ * caller's keys (`job-queue.ts:77`) rather than accepting it, and the run-detail drawer reads it.
+ * A blanket delete of `payload.metadata` would close the leak by deleting a shipped field.
+ */
+function sanitizeArtifactPayloadMetadata(payload: Record<string, unknown>): Record<string, unknown> {
+  const metadata = payload.metadata
+  if (!isRecord(metadata)) return payload
+  const safe = sanitizeRunMetadataForResponse(metadata) ?? {}
+  return {
+    ...payload,
+    metadata: 'attributes' in metadata ? { ...safe, attributes: metadata.attributes } : safe,
+  }
+}
+
+/**
+ * Every `DashboardDatabase` read that hands this router a run row or a run artifact row.
  *
  * EXPORTED SO THE CENSUS CAN SCORE IT. `routes.runs.test.ts` parses `database.ts` for the public
- * methods whose return annotation names `RunRow` or `RunArtifactBundle` and asserts SET EQUALITY
- * with this list — so a run-row read added to the database, or one dropped from here, reds rather
- * than quietly opening a seventh door.
+ * READS whose return annotation names `RunRow`, `RunArtifactBundle` or `RunArtifactRow` and asserts
+ * SET EQUALITY with this list — so a run-row read added to the database, or one dropped from here,
+ * reds rather than quietly opening another door.
+ *
+ * `getRunArtifact` JOINED IN 401-23, AND WHY THE CENSUS HAD TO WIDEN TO SEE IT. The 401-18
+ * predicate keyed on `RunRow|RunArtifactBundle` alone, and `getRunArtifact(runId): RunArtifactRow |
+ * null` structurally cannot match either name — which is exactly how the artifact payload became
+ * the door nobody wrote the strip into. The predicate's SHAPE was the gap, not its diligence.
  */
 export const RESPONSE_SAFE_RUN_READ_METHODS = [
   'getNextPendingRun',
   'getPendingRuns',
   'getRun',
+  'getRunArtifact',
   'getRunArtifactBundle',
   'getRuns',
   'getRunsByParent',
   'getRunsBySuiteId',
   'getRunsByTestName',
 ] as const
+
+/**
+ * Run-NAMED database members that hand the response layer no run metadata at all (401-23, WR-08).
+ *
+ * THE OTHER HALF OF A TOTAL FUNCTION. `withResponseSafeRunReads` asserts at CONSTRUCTION that every
+ * `/run/i`-named method on the database it is given is accounted for — either wrapped above, or
+ * named here with the reason it needs no wrapping. Anything else throws. Before this the wrapper
+ * was `Object.create(db, {…overrides…})`, transparent by default, so an unlisted or FUTURE
+ * run-reading method reached the response layer through the prototype and returned raw rows.
+ *
+ * Each name and why it carries no run metadata to a reader:
+ *   - `insertRun`, `insertPendingRun`, `insertRunArtifact`, `updateRun`, `updateRunMetadata`,
+ *     `updateRunStatus`, `updateRunRetryInfo`, `deleteRun`, `deleteStepsForRun` — WRITES. They
+ *     return an id, a delete tally, or nothing.
+ *   - `stageRunArtifact`, `finalizeRunArtifact` — writes that ECHO the row they just wrote, to the
+ *     writer that supplied it (`server.ts`, on the raw handle). This router never calls them;
+ *     `routes.runs.test.ts` pins that absence, because the echo would otherwise be a door.
+ *   - `getRunsByTestNameCount`, `getRunsBySuiteIdCount` — a `number`.
+ *   - `listRunAttributeKeys`, `listRunAttributeValues` — attribute-name/value suggestions built by
+ *     the database from the `attributes` column; they never touch `metadata`.
+ */
+const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
+  'deleteRun',
+  'deleteStepsForRun',
+  'finalizeRunArtifact',
+  'getRunsBySuiteIdCount',
+  'getRunsByTestNameCount',
+  'insertPendingRun',
+  'insertRun',
+  'insertRunArtifact',
+  'listRunAttributeKeys',
+  'listRunAttributeValues',
+  'stageRunArtifact',
+  'updateRun',
+  'updateRunMetadata',
+  'updateRunRetryInfo',
+  'updateRunStatus',
+])
+
+/**
+ * Run-named members that are not on `DashboardDatabase`'s TYPE at all (401-23, WR-08).
+ *
+ * WHY THIS SET HAS TO EXIST. TypeScript's `private` is erased at emit, so every private helper is
+ * a live own-property of the prototype and the runtime census below sees all of them. They are not
+ * response-layer doors — nothing typed as a `DashboardDatabase` can name them — but a census that
+ * ranges the live surface has to say so out loud rather than quietly skipping a shape it does not
+ * like. Skipping is how 401-18's predicate came to be blind.
+ *
+ * A NEW PRIVATE HELPER WITH `run` IN ITS NAME WILL RED THE BUILD until it is added here. That is
+ * the intended cost: the alternative is a filter that guesses which names are internal, and a
+ * guess is what this whole class of census keeps getting wrong.
+ */
+const RUN_MEMBERS_NOT_ON_THE_TYPE: ReadonlySet<string> = new Set([
+  'buildTrendsFromRuns',
+  'getHealedRunIds',
+  'getRunAccessibilityEnabled',
+  'isSuccessfulRunStatus',
+  'listRunsForInsights',
+  'mapRunArtifactRow',
+  'mapRunRow',
+  'parseRunAttributes',
+  'queryRunsWithAttributePredicates',
+  'runMigrations',
+  'summarizeAnalyticsRuns',
+])
+
+/**
+ * Refuse to build a response-layer projection over a database with an unaccounted run-named read.
+ *
+ * IT RANGES THE LIVE OBJECT, not a source file — the axis the 401-18 census could not reach. A
+ * return-annotation grep can only see what an annotation spells; this sees what the router will
+ * actually be able to call, including a method inherited from a prototype or attached at runtime.
+ */
+function assertRunReadsAccountedFor(db: DashboardDatabase, wrapped: ReadonlySet<string>): void {
+  const surface = new Set<string>()
+  let layer: object | null = db as unknown as object
+  while (layer !== null && layer !== Object.prototype) {
+    for (const name of Object.getOwnPropertyNames(layer)) {
+      if (name === 'constructor' || !/run/i.test(name)) continue
+      const descriptor = Object.getOwnPropertyDescriptor(layer, name)
+      if (descriptor === undefined || typeof descriptor.value !== 'function') continue
+      surface.add(name)
+    }
+    layer = Object.getPrototypeOf(layer) as object | null
+  }
+  const unaccounted = [...surface]
+    .filter((name) => !wrapped.has(name)
+      && !RUN_READS_WITHOUT_ROWS.has(name)
+      && !RUN_MEMBERS_NOT_ON_THE_TYPE.has(name))
+    .sort()
+  if (unaccounted.length > 0) {
+    throw new Error(
+      'withResponseSafeRunReads: unaccounted run-named database method(s): '
+      + `${unaccounted.join(', ')}. Add each to RESPONSE_SAFE_RUN_READ_METHODS with a scrubbing `
+      + 'override, to RUN_READS_WITHOUT_ROWS with the reason it hands out no run metadata, or to '
+      + 'RUN_MEMBERS_NOT_ON_THE_TYPE if it is a private helper no typed caller can reach.',
+    )
+  }
+}
 
 /**
  * The database as the RESPONSE LAYER may read it (401-18, CR-02).
@@ -1186,6 +1318,13 @@ export const RESPONSE_SAFE_RUN_READ_METHODS = [
  * THE PERSISTED VALUE IS NEVER TOUCHED. This is a read projection; the write at the trigger route
  * still stores the scope, and `run-trigger-confirm.test.ts` holds the cell proving a queued run
  * still starts against the browser that asked for it.
+ *
+ * AND IT FAILS LOUDLY RATHER THAN TRANSPARENTLY (401-23, WR-08). `Object.create(db, {…})` forwards
+ * everything it does not override, so before this an unlisted — or merely NEW — run-reading method
+ * reached the response layer through the prototype and returned raw rows. That is the structural
+ * root of G-401-18-CR01, not a footnote to it: the artifact payload leaked for exactly as long as
+ * nobody remembered to write a strip for a door the wrapper was happy to forward. The construction
+ * assertion below makes forgetting a build error instead of a leak.
  */
 function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
   const scrubRow = <T>(row: T): T => {
@@ -1195,7 +1334,7 @@ function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
     return { ...record, metadata: sanitizeRunMetadataForResponse(record.metadata) } as unknown as T
   }
   const scrubRows = <T>(rows: readonly T[]): T[] => rows.map(scrubRow)
-  return Object.create(db, {
+  const overrides: Record<string, PropertyDescriptor> = {
     getNextPendingRun: { value: () => scrubRow(db.getNextPendingRun()) },
     getPendingRuns: { value: () => scrubRows(db.getPendingRuns()) },
     getRun: { value: (id: string) => scrubRow(db.getRun(id)) },
@@ -1211,13 +1350,32 @@ function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
       value: (...args: Parameters<DashboardDatabase['getRunsByTestName']>) =>
         scrubRows(db.getRunsByTestName(...args)),
     },
+    // THE ROUTER HAS NO SERIALIZER OF ITS OWN FOR THIS ONE. `GET /api/runs/:id/artifact` reaches
+    // the payload through `getRunArtifactBundle` and serializes it with
+    // `sanitizeArtifactForResponse`; a caller reaching for the bare row has no such step, so the
+    // projection is its only choke point. Same allowlist, so the two cannot drift.
+    getRunArtifact: {
+      value: (runId: string) => {
+        const artifact = db.getRunArtifact(runId)
+        if (artifact === null || !isRecord(artifact.payload)) return artifact
+        return { ...artifact, payload: sanitizeArtifactPayloadMetadata(artifact.payload) }
+      },
+    },
     getRunArtifactBundle: {
       value: (runId: string) => {
         const bundle = db.getRunArtifactBundle(runId)
         return { ...bundle, children: bundle.children.map((child) => ({ ...child, run: scrubRow(child.run) })) }
       },
     },
-  }) as DashboardDatabase
+  }
+  // OVERRIDE ONLY WHAT THE GIVEN DATABASE ACTUALLY HAS. Defining a descriptor for an absent method
+  // would MINT one that throws on call — a projection that adds doors is not a projection.
+  const present: Record<string, PropertyDescriptor> = {}
+  for (const [name, descriptor] of Object.entries(overrides)) {
+    if (typeof (db as unknown as Record<string, unknown>)[name] === 'function') present[name] = descriptor
+  }
+  assertRunReadsAccountedFor(db, new Set(RESPONSE_SAFE_RUN_READ_METHODS))
+  return Object.create(db, present) as DashboardDatabase
 }
 
 function resolveArtifactPath(

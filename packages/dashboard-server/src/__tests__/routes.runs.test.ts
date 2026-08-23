@@ -1045,14 +1045,23 @@ describe('CR-02 — the read-path census cannot rot', () => {
    *
    * THE PREDICATE, STATED: parse `database.ts` into method signature blocks — a line at class-member
    * indentation opening a parameter list, joined forwards until the line that opens the body — and
-   * keep the PUBLIC ones whose return annotation names `RunRow` or `RunArtifactBundle` (whose
-   * `children` each carry a run row). That is a scan of the producer, not a transcription of the
-   * doors this plan happened to find.
+   * keep the PUBLIC READS (`get…`) whose return annotation names `RunRow`, `RunArtifactBundle`
+   * (whose `children` each carry a run row) or `RunArtifactRow` (whose `payload.metadata` is the
+   * caller's own object). That is a scan of the producer, not a transcription of the doors this
+   * plan happened to find.
+   *
+   * WIDENED IN 401-23, AND THE WIDENING IS THE FINDING. Its 401-18 form keyed on
+   * `RunRow|RunArtifactBundle` alone, which `getRunArtifact(runId): RunArtifactRow | null`
+   * structurally cannot match — so the census asserted SET EQUALITY, passed, and was blind to the
+   * one door that was leaking. The live-surface predicate below now contradicts the narrow form, so
+   * the scan is widened to the annotation that names an artifact row, and restricted to `get…` so
+   * that `stageRunArtifact`/`finalizeRunArtifact` — writes that echo the row they just wrote — do
+   * not become "reads" by the accident of their return type.
    *
    * SET EQUALITY, NOT CONTAINMENT, so a method DROPPED from the wrapper reds here as loudly as one
    * added to the db — a census that only checks one direction is blind to its own narrowing.
    */
-  it('the wrapper covers exactly the run-row-returning reads the database declares', () => {
+  it('PREDICATE A (the producer) — the wrapper covers exactly the run reads the database declares', () => {
     const source = readFileSync(
       join(dirname(fileURLToPath(import.meta.url)), '..', 'db', 'database.ts'),
       'utf8',
@@ -1068,11 +1077,69 @@ describe('CR-02 — the read-path census cannot rot', () => {
         cursor++
         signature += ` ${lines[cursor]!.trim()}`
       }
-      if (!/\)\s*:\s*[^{]*\b(RunRow|RunArtifactBundle)\b/.test(signature)) continue
+      if (!/\)\s*:\s*[^{]*\b(RunRow|RunArtifactBundle|RunArtifactRow)\b/.test(signature)) continue
       if (opening[1] !== undefined) continue
+      if (!/^get/.test(opening[2]!)) continue
       declared.add(opening[2]!)
     }
     expect(declared.size, 'the signature scan found nothing — the predicate has rotted').toBeGreaterThan(3)
     expect([...declared].sort()).toEqual([...RESPONSE_SAFE_RUN_READ_METHODS].sort())
+  })
+
+  /**
+   * PREDICATE B — THE WRAPPER'S OWN LIVE METHOD SURFACE (401-23, WR-08).
+   *
+   * A DIFFERENT AXIS, NOT A SECOND SPELLING OF PREDICATE A. Predicate A reads a SOURCE FILE and
+   * believes what an annotation says; this one ranges the OBJECT the router will actually be handed
+   * and asks what it can call. That is the axis on which 401-18's census was blind: no annotation
+   * names a `payload` sub-object, and a method attached at runtime or inherited from a prototype
+   * has no annotation at all. Neither predicate can certify itself with the other's evidence.
+   *
+   * DRIVEN BY MUTATION, WHICH IS THE ONLY BAR THAT MEANS ANYTHING HERE: a run-named read is PLANTED
+   * on the database and the cell asserts construction throws NAMING it — then the plant is removed
+   * and the same database constructs cleanly. A cell that only asserted the clean case would pass
+   * against a wrapper with no assertion in it at all.
+   */
+  it('PREDICATE B (the live surface) — an unaccounted run-named read makes the wrapper throw at construction', () => {
+    const clean = createMockDatabase()
+    expect(() => createRouter(clean as never), 'the shipped database surface must construct').not.toThrow()
+
+    const planted = createMockDatabase() as unknown as Record<string, unknown>
+    planted['getRunsByAttribute'] = () => []
+    let thrown: unknown
+    try {
+      createRouter(planted as never)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown, 'a run-reading method absent from both sets passed through the prototype').toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain('getRunsByAttribute')
+    expect((thrown as Error).message).toContain('RESPONSE_SAFE_RUN_READ_METHODS')
+
+    // AND IT FINDS ONE REACHED THROUGH THE PROTOTYPE, not merely one hung on the instance — the
+    // exact shape `Object.create(db, {…})` used to forward silently.
+    const inherited = Object.create({ getRunSecretsRaw: () => null }) as Record<string, unknown>
+    Object.assign(inherited, createMockDatabase())
+    expect(() => createRouter(inherited as never)).toThrow(/getRunSecretsRaw/)
+  })
+
+  /**
+   * The `RUN_READS_WITHOUT_ROWS` justification that is a CLAIM ABOUT THIS ROUTER, pinned.
+   *
+   * `stageRunArtifact` and `finalizeRunArtifact` are excused because they echo a row to the WRITER
+   * that supplied it and this router never calls them. That is a fact about `routes.ts`, and facts
+   * about a file rot — so it is asserted rather than asserted-in-a-comment.
+   */
+  it('the excused artifact mutators are not reachable from the router at all', () => {
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'server', 'routes.ts'),
+      'utf8',
+    )
+    for (const mutator of ['stageRunArtifact', 'finalizeRunArtifact']) {
+      expect(
+        source.includes(`db.${mutator}(`),
+        `${mutator} is excused from the wrapper because this router never calls it — it now does`,
+      ).toBe(false)
+    }
   })
 })
