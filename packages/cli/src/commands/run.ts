@@ -127,6 +127,31 @@ export function requireSingleInvocationProduct(
 }
 
 /**
+ * THE DECLARED CLASS OF A WHOLE INVOCATION — one fold, both of this command's doors (401-12, CR-01).
+ *
+ * MOST RESTRICTIVE WINS. A run is ONE run and therefore ONE gate decision, so the class it is
+ * decided under has to cover every target it will drive. One `shared` member makes the invocation
+ * shared; one UNDECLARED member makes it undeclared, which `buildRunRiskDescriptor` reads as shared
+ * (D-06). Only an invocation whose every target is declared `local` is decided as local — otherwise
+ * an invocation could smuggle a production target in behind a loopback sibling.
+ *
+ * AN EMPTY OR UNRESOLVABLE SET IS `undefined`, NOT `'local'`. A target we could not resolve is a
+ * target we know nothing about, and nothing-known is the undeclared case, which fails closed.
+ *
+ * ONE IMPLEMENTATION, DELIBERATELY. The suite path had this fold and the direct path did not: it
+ * classified the whole invocation from `filtered[0]` alone, so the same two members allowed or
+ * denied a run depending on which filename came first on the command line. Two spellings of a
+ * security fold is how one of them stays wrong, so there is one, and both callers call it.
+ */
+export function foldMostRestrictiveTargetClass(
+  declared: readonly RunTargetClass[],
+): RunTargetClass {
+  if (declared.length === 0 || declared.includes(undefined)) return undefined
+  if (declared.includes('shared')) return 'shared'
+  return 'local'
+}
+
+/**
  * Every post-run line's CHANNEL, in one place — and exported because the channel is a promise.
  *
  * JOBQ-06 says post-processing never gates the verdict or the navigation, and the operational
@@ -3109,15 +3134,9 @@ export async function produceSuiteRunMembers(
   // Resolution is a config read only — the probe that fetches the URL moved into `assembleCliRun`,
   // i.e. behind the verdict, exactly as it did for the single-test path in 401-03.
   //
-  // MOST RESTRICTIVE WINS ACROSS THE WHOLE INVOCATION. A suite run is ONE run and therefore ONE
-  // gate decision, so the class it is decided under has to cover every target it will drive. One
-  // shared member makes the invocation shared; one UNDECLARED member makes it undeclared, which
-  // `buildRunRiskDescriptor` reads as shared (D-06). Only an invocation whose every target is
-  // declared `local` is decided as local — otherwise a suite could smuggle a production target in
-  // behind a loopback sibling.
-  //
-  // AN EMPTY OR UNRESOLVABLE SET IS `undefined`, NOT `'local'`. A target we could not resolve is a
-  // target we know nothing about, and nothing-known is the undeclared case, which fails closed.
+  // The most-restrictive-wins rule and its threat model live on `foldMostRestrictiveTargetClass`,
+  // which is the SAME function the direct path calls (401-12). Collecting the members is per-door;
+  // deciding what their classes add up to is not.
   const declaredTargetClasses: RunTargetClass[] = []
   for (const prepared of preparedSuites) {
     const memberTargetNames = prepared.suite.target !== undefined
@@ -3137,12 +3156,7 @@ export async function produceSuiteRunMembers(
       }
     }
   }
-  const suiteTargetClass: RunTargetClass =
-    declaredTargetClasses.length === 0 || declaredTargetClasses.includes(undefined)
-      ? undefined
-      : declaredTargetClasses.includes('shared')
-        ? 'shared'
-        : 'local'
+  const suiteTargetClass: RunTargetClass = foldMostRestrictiveTargetClass(declaredTargetClasses)
 
   // D-04: run-start baseline probe — web targets only; ONE GET whose result threads in-memory via
   // RunConfig into the deterministic root-cause classifier. Only the URL is RESOLVED here (a config
@@ -4058,25 +4072,49 @@ export async function produceDirectRunMembers(
     )
   }
 
-  // 401-03 (D-02/D-05/D-06): the target is resolved here because its DECLARED CLASS is what
-  // the run gate classifies, and the gate decides before anything touches the target. The
+  // 401-03 (D-02/D-05/D-06): the targets are resolved here because their DECLARED CLASS is what
+  // the run gate classifies, and the gate decides before anything touches a target. The
   // resolution itself is a config read — the probe that fetches the URL moved into
   // `assembleCliRun`, i.e. behind the verdict.
-  let singleTargetClass: RunTargetClass
+  //
+  // 401-12 (CR-01): EVERY member, not `filtered[0]`. This block used to classify the whole
+  // invocation from its first argument while the suite path folded over all of its members, so
+  // `run tests/local.yaml tests/shared.yaml` was ALLOWED and the same two files in the other order
+  // were DENIED — argument order decided authorization. The fold is
+  // `foldMostRestrictiveTargetClass`, the same function the suite path calls; its rationale lives
+  // there rather than being spelled a second time here.
+  const directDeclaredClasses: RunTargetClass[] = []
+  let firstResolvedProduct: string | undefined
   let singleProbeUrl: string | undefined
-  try {
-    const singleResolvedTarget = resolveTarget(config, filtered[0].test.target!)
-    singleRunProduct = directRunProduct ?? singleResolvedTarget.product ?? 'unknown'
-    // UNDECLARED STAYS UNDECLARED HERE. `undefined` is carried into the descriptor builder,
-    // which is the one place D-06's undeclared-is-shared rule is applied. A default invented
-    // at this line would be a second answer to the question that decides the run.
-    singleTargetClass = singleResolvedTarget.environment
-    // D-04: run-start baseline probe — web targets only (mobile: device-session-create
-    // failure is the equivalent signal, no probe).
-    if (singleResolvedTarget.platform === 'web' && singleResolvedTarget.url) {
-      singleProbeUrl = singleResolvedTarget.url
+  for (const binding of filtered) {
+    const memberTargetName = binding.test.target
+    if (memberTargetName === undefined) {
+      // UNDECLARED STAYS UNDECLARED HERE. `undefined` is carried into the descriptor builder,
+      // which is the one place D-06's undeclared-is-shared rule is applied. A default invented
+      // at this line would be a second answer to the question that decides the run.
+      directDeclaredClasses.push(undefined)
+      continue
     }
-  } catch { /* best-effort; the member closure surfaces the real target error as a framework error */ }
+    try {
+      const memberTarget = resolveTarget(config, memberTargetName)
+      directDeclaredClasses.push(memberTarget.environment)
+      firstResolvedProduct ??= memberTarget.product
+      // D-04: run-start baseline probe — web targets only, the FIRST resolvable one across the
+      // members, mirroring the suite path's selection loop. Mobile targets skip the probe
+      // entirely: the device-session-create failure is the equivalent signal.
+      if (singleProbeUrl === undefined && memberTarget.platform === 'web' && memberTarget.url) {
+        singleProbeUrl = memberTarget.url
+      }
+    } catch {
+      // Unresolvable here is undeclared here — best-effort resolution, fail-closed classification.
+      // The member closure still surfaces the real target error as the framework error it is.
+      directDeclaredClasses.push(undefined)
+    }
+  }
+  const singleTargetClass: RunTargetClass = foldMostRestrictiveTargetClass(directDeclaredClasses)
+  // `requireSingleInvocationProduct` upstream already guarantees ONE product across the members, so
+  // the first resolvable member's product is the invocation's product.
+  singleRunProduct = directRunProduct ?? firstResolvedProduct ?? 'unknown'
   const singleBuildTag = resolveBuildTagSetting({
     flag: opts.buildTag,
     env: process.env.AGENT_QA_BUILD_TAG,

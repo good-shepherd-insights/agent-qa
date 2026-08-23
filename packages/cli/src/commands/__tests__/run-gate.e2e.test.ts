@@ -407,12 +407,7 @@ async function expectMultiMemberDenial(...args: string[]): Promise<void> {
 describe('a multi-member direct invocation is classified as a whole (401-12, CR-01, D-05/D-06)', () => {
   // Both orders of the SAME two files. If the fold is real, order cannot matter; if the class comes
   // from `filtered[0]`, exactly one of these two passes — which is the shape of the defect.
-  // `it.fails` FOR THIS ONE COMMIT ONLY, and it is the RED itself rather than a suppression: on the
-  // build this commit sits on, the assertions above MUST throw, and `it.fails` turns that into a
-  // pass — so a tree where the defect were somehow already absent would go red HERE. Plan 401-12
-  // Task 2 flips this to `it` in the same breath as the fix. If you are reading this on a build
-  // where the fold exists, this line is a bug.
-  it.fails('a no-tty two-member run is refused when the shared member is LAST', async () => {
+  it('a no-tty two-member run is refused when the shared member is LAST', async () => {
     await expectMultiMemberDenial('tests/multi-local-a.yaml', 'tests/multi-shared.yaml')
   }, 180_000)
 
