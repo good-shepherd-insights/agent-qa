@@ -357,7 +357,12 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
       if (heartbeat !== undefined) clearInterval(heartbeat)
       unsubscribe?.()
       openStreams.delete(teardown)
-      if (!res.writableEnded) res.end()
+      // ONLY ONCE THE HEAD IS OUT. `subscribe` delivers the replay SYNCHRONOUSLY, so a run that
+      // was already over reaches `runFinished` — and therefore this teardown — before `writeHead`
+      // has run. Ending here would let Node send its own default 200 with no `Content-Type` and no
+      // body, so a client asking for a finished run's whole log would get an empty, untyped 200.
+      // The flush below the head handles that case, and this guard is what leaves it to it.
+      if (open && !res.writableEnded) res.end()
     }
 
     try {
