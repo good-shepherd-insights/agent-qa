@@ -46,12 +46,23 @@ export const GATE_REMEDY_KINDS = [
 export type GateRemedyKind = (typeof GATE_REMEDY_KINDS)[number]
 
 /**
- * The doors a remedy can be offered on — the four surfaces this product ships.
+ * The doors a remedy can be offered on — the surfaces this product ships.
  *
  * `cli` is the one-shot and REPL terminal doors, `chat` the interactive conversation, `mcp` a
- * protocol client with no human at a prompt, `dashboard` the browser.
+ * protocol client with no human at a prompt, `dashboard` the browser, and `run-service` (402-06)
+ * the authed remote run door — an HTTP client on another machine.
+ *
+ * `run-service` APPEARS IN NO MEMBERSHIP LIST BELOW, and that absence is a declaration rather than
+ * an omission. Of the three kinds: `answer-confirm` needs a port that can ask somebody, and that
+ * door composes none (its gate runs under `DENY_CONFIRM`); `trust-session-flag` is `agent-qa run`'s
+ * flag, which an HTTP caller has no way to pass; `session-pin-final` needs a session, and a bearer
+ * request is not one. So the honest projection for that surface is empty, which
+ * {@link remediesRenderableBy}'s own doc calls a complete answer. Naming the surface — rather than
+ * borrowing `mcp`, whose projection happens to be empty today — is what keeps that fact true when
+ * a fourth kind is minted: a kind that lists `mcp` would otherwise silently start reaching a door
+ * nobody decided it for.
  */
-export const GATE_REMEDY_SURFACES = ['cli', 'chat', 'mcp', 'dashboard'] as const
+export const GATE_REMEDY_SURFACES = ['cli', 'chat', 'mcp', 'dashboard', 'run-service'] as const
 
 export type GateRemedySurface = (typeof GATE_REMEDY_SURFACES)[number]
 

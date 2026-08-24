@@ -32,6 +32,8 @@ export {
   createRunServiceRoutes,
   matchRunServiceRoute,
   ownsRunServicePath,
+  // 402-06 (T-402-22): the structural denial read the 403 body is built from.
+  runDenialOf,
 } from './run-service/run-service-routes.js'
 export type {
   RunServicePorts,

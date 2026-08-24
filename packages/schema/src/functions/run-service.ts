@@ -14,6 +14,7 @@
 
 import { z } from 'zod'
 
+import { GATE_REMEDY_KINDS } from '../safety/remedies'
 import type { TrustScope } from '../safety/trust-credential'
 
 /**
@@ -73,6 +74,11 @@ export const RUN_SERVICE_ERROR_CODES = [
   // run answers to it. Both are answered before any stream header, and neither echoes the value.
   'invalid_handle',
   'unknown_handle',
+  // 402-06 (D-01 discretion, T-402-22): the policy gate refused this run. A member of the SAME
+  // closed set so the code vocabulary stays one vocabulary, but the only code this door answers
+  // with a body wider than one key — see `RunServiceDenialBodySchema` for why that widening is
+  // sound exactly here and nowhere else.
+  'run_denied',
 ] as const
 
 export type RunServiceErrorCode = (typeof RUN_SERVICE_ERROR_CODES)[number]
@@ -95,6 +101,48 @@ export const RunServiceErrorBodySchema = z.object({
 }).strict()
 
 export type RunServiceErrorBody = z.infer<typeof RunServiceErrorBodySchema>
+
+/**
+ * What a POLICY DENIAL answers with — the one body on this door wider than a single key (402-06).
+ *
+ * WHY THE ONE-KEY LAW DOES NOT GOVERN HERE, and this is the whole of the argument. That law exists
+ * because a refusal shown to an UNAUTHENTICATED caller must not fingerprint the route map, a run
+ * id's existence, or how many credentials are declared — every fact it could carry is a fact the
+ * caller has not earned. A 403 is answered only AFTER a declared credential matched. The reader is
+ * a party this process has already decided to talk to, and telling them nothing but a word turns a
+ * decidable situation ("this project's policy refuses runs of this class from this context") into
+ * an unexplained failure they will retry forever.
+ *
+ * WHAT IS ON IT, AND WHAT IS DELIBERATELY NOT.
+ *
+ *   `neutralReason` — the gate's OWN second phrasing of the same decision (400 D-15), minted from
+ *   the same resolved outcome as the canonical sentence and naming no surface's affordance.
+ *
+ *   `remedies` — the typed data, projected through `remediesRenderableBy('run-service', …)`. For
+ *   this door that projection is EMPTY today and the field is still present: an empty list is the
+ *   honest answer "there is nothing you, from there, can do", and a caller can tell it apart from
+ *   a door that forgot to say.
+ *
+ *   The gate's CANONICAL `reason` is NOT here, and its absence is the point. On the fail-closed
+ *   arm that sentence reads "…re-run locally to confirm interactively or opt in with
+ *   --trust-session", and `--trust-session` is declared on exactly one CLI command. Serving it to
+ *   an HTTP client on another machine is Phase 399's defect verbatim — one surface's instructions
+ *   shown to a reader on another. The neutral phrasing exists precisely so a door in this position
+ *   has something true to say.
+ *
+ *   No `runId`. A denied run never started; publishing the id the core happened to mint would name
+ *   a run that does not exist and cannot be streamed.
+ */
+export const RunServiceDenialBodySchema = z.object({
+  error: z.literal('run_denied'),
+  neutralReason: z.string().min(1),
+  remedies: z.array(z.object({
+    kind: z.enum(GATE_REMEDY_KINDS),
+    params: z.record(z.string(), z.string()).optional(),
+  }).strict()),
+}).strict()
+
+export type RunServiceDenialBody = z.infer<typeof RunServiceDenialBodySchema>
 
 /**
  * The request fields this door REFUSES outright (D-07 / D-12, 401's law carried to the wire).
