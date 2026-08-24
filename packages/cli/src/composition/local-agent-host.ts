@@ -358,6 +358,9 @@ function createComposedRunExecution(input: {
             ...(input.runBridge?.resolveRunFlags === undefined
               ? {}
               : { resolveRunFlags: input.runBridge.resolveRunFlags }),
+            ...(input.runBridge?.maskingSecrets === undefined
+              ? {}
+              : { maskingSecrets: input.runBridge.maskingSecrets }),
             warn,
           },
           request,
@@ -551,6 +554,15 @@ export interface ComposeCliLocalAgentInput {
     readonly resolveAppiumUrl?: InProcessCliRunExecutionOptions['resolveAppiumUrl']
     /** Per-run flags this host's own UI offers that the request DTO has no field for. */
     readonly resolveRunFlags?: InProcessCliRunExecutionOptions['resolveRunFlags']
+    /**
+     * Secrets this host holds that every run through it must mask (402-06, T-402-04).
+     *
+     * A PASS-THROUGH LIKE ITS FOUR SIBLINGS. The authed run door's credentials are the case: they
+     * live only in the environment, under names `sensitiveEnvSlice` does not recognise, and the
+     * runs they authorise execute in the same process. See the option's own doc on
+     * `InProcessCliRunExecutionOptions` for why it is a resolver rather than a store.
+     */
+    readonly maskingSecrets?: InProcessCliRunExecutionOptions['maskingSecrets']
   }
   /**
    * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).

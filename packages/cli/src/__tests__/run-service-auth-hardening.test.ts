@@ -40,6 +40,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   RunServiceTokenEnvVarUnsetError,
+  runServiceTokenSecretStore,
 } from '../composition/run-service-token-resolution.js'
 import {
   composeDashboardDoor,
@@ -68,6 +69,15 @@ interface WorkspaceInput {
   /** `undefined` writes NO declaration, which classifies the run's target as shared. */
   readonly environment?: 'local'
   readonly trustScope?: TrustScope
+  /**
+   * Mask this text through each started run's OWN masking context (402-06, #224).
+   *
+   * The observer is CHAINED onto the door's real bridge rather than replacing it: the spread keeps
+   * the door's `onSession` routing, its ingest subscribers and — the point of the cell — its
+   * `maskingSecrets` resolver, which is the same closure over the same box `composeRunServicePorts`
+   * binds into. What is added is one reader, so the value a reporter would print is observable.
+   */
+  readonly observeMasking?: { readonly text: string; readonly seen: string[] }
 }
 
 /** The 402-01 fixture project, with the target's environment and the token's scope as knobs. */
@@ -145,11 +155,20 @@ async function openRunService(input: WorkspaceInput = {}): Promise<ServiceFixtur
   const db = new DashboardDatabase({ dbPath: join(configDir, 'dashboard.db') })
   const runDoor = await createDashboardRunDoor({ db })
   let boundOrigin: string | undefined
+  const observe = input.observeMasking
   const { agentHost, host, enterRunTriggerScope } = composeDashboardDoor({
     agentQaRoot: join(configDir, '.agent-qa'),
     configPath,
     boundOrigin: () => boundOrigin,
-    runBridge: runDoor.runBridge,
+    runBridge: observe === undefined
+      ? runDoor.runBridge
+      : {
+          ...runDoor.runBridge,
+          subscribers: (attach) => {
+            observe.seen.push(attach.maskingContext.mask(observe.text))
+            return runDoor.runBridge.subscribers?.(attach)
+          },
+        },
   })
   runDoor.bindHost(host)
   runDoor.bindTriggerScope(enterRunTriggerScope)
@@ -537,11 +556,34 @@ describe('the compare discipline is source-pinned, on stripped CODE (T-402-20)',
 
 // ---- (4) THE MASKING SWEEP --------------------------------------------------------------------
 
-/** A door stub carrying only what `composeRunServicePorts` reads from one. */
-const inertDoor = {
-  resolveHost: () => undefined,
-  observeSessions: () => () => { /* nothing observes this composition */ },
+/**
+ * A door stub carrying only what `composeRunServicePorts` reads from one, plus a recorder.
+ *
+ * `bindMaskingSecrets` is REQUIRED by the composer's own parameter type, which is the point: a
+ * composition that forgot to seed the run masker would not compile. This stub records what it was
+ * handed so a cell can read it back.
+ */
+function stubDoor(): {
+  door: {
+    resolveHost: () => undefined
+    observeSessions: () => () => void
+    bindMaskingSecrets: (store: { forEachSecret(cb: (n: string, v: string) => void): void }) => void
+  }
+  bound: () => { forEachSecret(cb: (n: string, v: string) => void): void } | undefined
+} {
+  let bound: { forEachSecret(cb: (n: string, v: string) => void): void } | undefined
+  return {
+    door: {
+      resolveHost: () => undefined,
+      observeSessions: () => () => { /* nothing observes this composition */ },
+      bindMaskingSecrets: (store) => { bound = store },
+    },
+    bound: () => bound,
+  }
 }
+
+/** The stub for the cells that only need the composer to accept a door. */
+const inertDoor = stubDoor().door
 
 /** Every channel a thrown value can reach a person through, as strings. */
 function channelsOf(error: unknown): readonly string[] {
@@ -669,4 +711,164 @@ describe('the token value reaches no channel (T-402-21)', () => {
     expect(bodies.filter((body) => body.includes('"error"')).length)
       .toBe(FAILURE_CLASSES.length + 1)
   }, 60_000)
+})
+
+// ---- (5) THE SECRET STORE IS CONSUMED (WINDOWS #224, T-402-04) --------------------------------
+//
+// 402-01 shipped `runServiceTokenSecretStore` and published it from `composeRunServicePorts`, and
+// nothing read it. That half-wiring is what these cells close, and the claim has TWO sides, so it
+// is pinned on both: the composer BINDS the store into the door's bridge, and the run seam WALKS
+// what the bridge hands it. Either half alone is a mechanism that reports success while the value
+// still reaches a person in the clear.
+
+describe('the door’s credentials reach every run’s masker (#224)', () => {
+  it('BIND HALF — composing the ports seeds the door with the resolved values', () => {
+    const recorder = stubDoor()
+    const composition = composeRunServicePorts({
+      entries: [
+        { name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: PROJECT_SCOPE },
+        { name: 'teammate', tokenEnvVar: `${TOKEN_VAR}_2`, trustScope: PROJECT_SCOPE },
+      ],
+      env: { [TOKEN_VAR]: TOKEN, [`${TOKEN_VAR}_2`]: `${TOKEN}-second` },
+      door: recorder.door,
+    })
+    try {
+      const seeded: [string, string][] = []
+      recorder.bound()?.forEachSecret((name, value) => { seeded.push([name, value]) })
+      // EVERY declared entry, keyed by the variable NAME the operator chose — which is the whole
+      // reason the store exists rather than the masker's own name-suffix selector being enough.
+      expect(seeded).toEqual([
+        [TOKEN_VAR, TOKEN],
+        [`${TOKEN_VAR}_2`, `${TOKEN}-second`],
+      ])
+      // The published store and the bound one are the SAME object, not two builds of it.
+      expect(recorder.bound()).toBe(composition.secretStore)
+    } finally {
+      composition.dispose()
+    }
+  })
+
+  it('BIND HALF — the real door has nothing bound until the composer runs', async () => {
+    const configPath = fixtureWorkspace({ environment: 'local' })
+    const configDir = dirname(resolve(configPath))
+    const { DashboardDatabase } = await import('@vostride/agent-qa-dashboard')
+    const db = new DashboardDatabase({ dbPath: join(configDir, 'bind.db') })
+    const runDoor = await createDashboardRunDoor({ db })
+    try {
+      // A dashboard with no run service declared holds no credential, so there is nothing extra to
+      // mask and the resolver honestly answers nothing.
+      expect(runDoor.runBridge.maskingSecrets?.()).toBeUndefined()
+
+      const composition = composeRunServicePorts({
+        entries: [{ name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: PROJECT_SCOPE }],
+        env: { [TOKEN_VAR]: TOKEN },
+        door: runDoor,
+      })
+      const seeded: string[] = []
+      // READ THROUGH THE BRIDGE the host actually runs runs through — not through the composition's
+      // own field. The bridge is the only channel that reaches `runInProcessCliRun`.
+      runDoor.runBridge.maskingSecrets?.()?.forEachSecret((_name, value) => { seeded.push(value) })
+      expect(seeded).toEqual([TOKEN])
+      composition.dispose()
+    } finally {
+      db.close()
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  })
+
+  it('CONSUME HALF — a real run masks the credential, and does NOT without the wiring', async () => {
+    const configPath = fixtureWorkspace({ environment: 'local' })
+    const configDir = dirname(resolve(configPath))
+    const { runInProcessCliRun } = await import('../composition/in-process-run-execution.js')
+
+    // THE VALUE IS GENUINELY IN THIS PROCESS'S ENVIRONMENT for the duration, because that is the
+    // production situation: the runs execute in the same process that holds the credential, so a
+    // hook or a shell step that echoes the variable prints it. The control below is what shows
+    // `sensitiveEnvSlice` does not save us — it selects by NAME SUFFIX, and `…_CRED` matches none.
+    const previous = process.env[TOKEN_VAR]
+    process.env[TOKEN_VAR] = TOKEN
+    try {
+      const line = `the run printed ${TOKEN} on its way past`
+      const capture = async (
+        maskingSecrets?: () => { forEachSecret(cb: (n: string, v: string) => void): void },
+      ): Promise<string> => {
+        // MASKED INSIDE THE SUBSCRIBER, not afterwards. The drive disposes the context in its
+        // `finally`, which clears every registration — so a closure called after the run returns
+        // measures an EMPTY masker and reports a leak on both arms. This is the surface a reporter
+        // actually masks through: inside the run, holding the run's own context.
+        let mask: string | undefined
+        // THE RUN FAILS, AND THAT IS FINE — this fixture declares no model, so the member surfaces
+        // a framework error the drive re-raises to preserve `agent-qa run`'s exit-2 contract (the
+        // remote door converts it; a direct call does not). The masking context is built and bound
+        // BEFORE the members execute, and the subscriber that captures it is attached inside the
+        // core's `onSession`, so it is in hand either way. What this cell measures is the SEED, not
+        // a passing run.
+        await runInProcessCliRun(
+          {
+            configPath,
+            agentQaRoot: join(configDir, '.agent-qa'),
+            executionContext: 'local-headless',
+            subscribers: ({ maskingContext }) => {
+              mask = maskingContext.mask(line)
+              return undefined
+            },
+            ...(maskingSecrets === undefined ? {} : { maskingSecrets }),
+          },
+          { patterns: ['tests/probe.test.yaml'] },
+        ).catch(() => undefined)
+        if (mask === undefined) throw new Error('the run never reached its subscribers')
+        return mask
+      }
+
+      const withoutWiring = await capture()
+      const withWiring = await capture(
+        () => runServiceTokenSecretStore([
+          { name: 'ci', tokenEnvVar: TOKEN_VAR, value: TOKEN, trustScope: PROJECT_SCOPE },
+        ]),
+      )
+
+      // THE GAP, MEASURED rather than asserted: the shipped seed pipeline does not know this value.
+      expect(withoutWiring).toContain(TOKEN)
+      // And the wiring closes it — the value is replaced by a placeholder, not merely absent.
+      expect(withWiring).not.toContain(TOKEN)
+      expect(withWiring).toContain('SECRET')
+      // The rest of the line survives, so the mask is a substitution and not a redaction of
+      // everything the run said.
+      expect(withWiring).toContain('the run printed')
+    } finally {
+      if (previous === undefined) delete process.env[TOKEN_VAR]
+      else process.env[TOKEN_VAR] = previous
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  }, 180_000)
+})
+
+describe('END TO END — a run started over the wire masks the door’s credential (#224)', () => {
+  it('the value the token holder presented is masked in that run’s own context', async () => {
+    // THE MIDDLE LINK, DRIVEN. The bind half and the consume half above each pin one end; this
+    // cell is the whole chain on the shipped composition — `composeRunServicePorts` binds the
+    // store into the door, `composeCliLocalAgent` passes the bridge's resolver through to
+    // `runInProcessCliRun`, and the run's masker walks it. Nothing here is assembled beside the
+    // product: the observer is chained onto the real bridge and the run is started by a real
+    // `POST /run` over TCP.
+    const seen: string[] = []
+    const text = `a reporter printed ${TOKEN} while the run was in flight`
+    const service = await openRunService({
+      environment: 'local',
+      observeMasking: { text, seen },
+    })
+    const response = await fetch(`${service.origin}/run`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
+    })
+    expect(response.status).toBe(202)
+
+    expect(seen.length).toBeGreaterThan(0)
+    for (const masked of seen) {
+      expect(masked).not.toContain(TOKEN)
+      expect(masked).toContain('SECRET')
+      expect(masked).toContain('a reporter printed')
+    }
+  }, 180_000)
 })

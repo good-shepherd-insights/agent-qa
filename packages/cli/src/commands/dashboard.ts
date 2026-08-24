@@ -951,6 +951,22 @@ export interface DashboardRunDoor {
    * reach back and affect that run.
    */
   observeSessions(observer: (session: RunSession) => void): () => void
+  /**
+   * Bind the secrets THIS PROCESS holds that every run through this door must mask (402-06, #224).
+   *
+   * THE SAME MUTABLE-BOX SHAPE AS `bindHost`, AND FOR THE SAME ORDERING REASON. The door's bridge
+   * is an INPUT to `composeDashboardDoor`, and the run-service credentials are dereferenced by
+   * `composeRunServicePorts` — which needs the door. Neither can be built first, so the value
+   * arrives through a box the bridge reads at run time.
+   *
+   * IT IS NOT OPTIONAL PLUMBING A CALLER MIGHT FORGET: `composeRunServicePorts` calls it itself,
+   * so any composition that goes through the shipped composer is seeded. A cell that assembled its
+   * own verifier and starter beside that composer would be measuring a door this product does not
+   * ship, which is the lookalike assembly the conformance suite refuses by name.
+   */
+  bindMaskingSecrets(store: {
+    forEachSecret(cb: (name: string, value: string) => void): void
+  }): void
 }
 
 /** Structural, so this module names the dashboard package's own type without importing its value. */
@@ -1043,8 +1059,17 @@ export async function createDashboardRunDoor(input: {
   let boundHost: LocalAgentHost | undefined
   /** Absent runs the invocation unscoped, which is `local-headless` — the fail-closed default. */
   let enterTriggerScope: (<T>(scopeId: string, run: () => T) => T) | undefined
+  /**
+   * 402-06 (#224): the secrets a second door in this process holds, read at RUN time.
+   *
+   * `undefined` until something binds one, which is the honest state of a dashboard with no run
+   * service declared — there is no credential, so there is nothing extra to mask.
+   */
+  let maskingSecrets: { forEachSecret(cb: (name: string, value: string) => void): void } | undefined
 
   const runBridge: NonNullable<ComposeCliLocalAgentInput['runBridge']> = {
+    // 402-06 (T-402-04): READ PER RUN, never captured. See `bindMaskingSecrets`.
+    maskingSecrets: () => maskingSecrets,
     // THE BRIDGE HOOK (D-09). Routed by the session's OWN id rather than by "the run in flight",
     // because this door runs as many at once as the queue has slots.
     onSession: (session: RunSession): void => {
@@ -1163,6 +1188,7 @@ export async function createDashboardRunDoor(input: {
       sessionObservers.add(observer)
       return () => { sessionObservers.delete(observer) }
     },
+    bindMaskingSecrets: (store): void => { maskingSecrets = store },
   }
 }
 
@@ -1255,7 +1281,10 @@ export interface RunServiceCompositionInput {
   /** The environment the declared variables are dereferenced from, once, now. */
   readonly env?: NodeJS.ProcessEnv
   /** The run door this process composed — the host box and the one session bridge. */
-  readonly door: Pick<DashboardRunDoor, 'resolveHost' | 'observeSessions'>
+  readonly door: Pick<
+    DashboardRunDoor,
+    'resolveHost' | 'observeSessions' | 'bindMaskingSecrets'
+  >
   /** How long a finished run stays attachable. Defaults to the registry's own window. */
   readonly retentionMs?: number
 }
@@ -1348,9 +1377,18 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     readiness,
   }
 
+  // THE STORE IS BOUND HERE, NOT PUBLISHED AND HOPED FOR (402-06, WINDOWS #224). Until this line
+  // `runServiceTokenSecretStore` was built, exported and consumed by nothing: the values a remote
+  // caller presents are in this process's environment under a name `sensitiveEnvSlice` cannot
+  // recognise, so a run started through this door printed them in the clear if anything echoed the
+  // variable. Binding inside the composer rather than at the command means every composition that
+  // uses the shipped composer is seeded, including the suites.
+  const secretStore = runServiceTokenSecretStore(tokens)
+  input.door.bindMaskingSecrets(secretStore)
+
   return {
     ports,
-    secretStore: runServiceTokenSecretStore(tokens),
+    secretStore,
     tokenCount: tokens.length,
     // THE SAME OBJECT `ports.readiness` HOLDS, deliberately — see the field's own doc.
     readiness,

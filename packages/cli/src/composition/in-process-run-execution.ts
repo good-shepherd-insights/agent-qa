@@ -230,6 +230,30 @@ export interface InProcessCliRunExecutionOptions {
    * an ack contract behind it, so it is filed rather than smuggled in here.
    */
   readonly resolveRunFlags?: (runId: string) => { readonly disableCache?: boolean } | undefined
+  /**
+   * Secrets the DOOR holds that every run through it must mask (402-06, T-402-04 / T-402-21).
+   *
+   * WHY A DOOR CAN HOLD A SECRET A RUN'S OWN PRODUCER CANNOT SEE. The masking context is seeded
+   * from three channels: the run's `SecretStore` (its project's `.env.secrets.local`), the
+   * name-based `sensitiveEnvSlice` of the environment, and captured auth state. A run-service
+   * credential is in none of them. It is not in the project's secrets file — it is minted by an
+   * operator and lives only in the environment — and `sensitiveEnvSlice` selects BY NAME SUFFIX,
+   * so an operator who points `tokenEnvVar` at `MY_RUN_CRED` has named the one credential this
+   * process is definitionally holding in a way the masker cannot recognise. The runs still execute
+   * inside that process, so a hook or a shell step that echoes that variable prints it in the
+   * clear. The host knows these values by DECLARATION, which is why it seeds them by declaration.
+   *
+   * A RESOLVER AND NOT A STORE, because the door's credentials are resolved AFTER the host that
+   * runs runs is composed — `composeRunServicePorts` dereferences the environment, and the host it
+   * hands its bridge to already exists by then. Read at run time, it cannot be stale; captured at
+   * compose time, it would always be empty.
+   *
+   * IT IS ADDITIVE TO THE PRODUCER'S OWN SEED, never a replacement: both stores are walked, so a
+   * door that holds credentials does not cost a run its project's secrets.
+   */
+  readonly maskingSecrets?: () => {
+    forEachSecret(cb: (name: string, value: string) => void): void
+  } | undefined
 }
 
 /**
@@ -274,6 +298,20 @@ export function refuseUnhonourableRequestFields(request: RunsStartInput): void {
   if (refused.length > 0) throw new RunRequestFieldRefusedError(refused)
 }
 
+/** One store over several, in declaration order. Absent members contribute nothing. */
+function mergedSecretStore(
+  ...stores: readonly ({ forEachSecret(cb: (name: string, value: string) => void): void } | undefined)[]
+): { forEachSecret(cb: (name: string, value: string) => void): void } | undefined {
+  const present = stores.filter((store) => store !== undefined)
+  if (present.length === 0) return undefined
+  if (present.length === 1) return present[0]
+  return {
+    forEachSecret(cb) {
+      for (const store of present) store.forEachSecret(cb)
+    },
+  }
+}
+
 export async function runInProcessCliRun(
   options: InProcessCliRunExecutionOptions,
   request: RunsStartInput,
@@ -312,7 +350,10 @@ export async function runInProcessCliRun(
       })
 
   const maskingContext = buildRunMaskingContext({
-    secretStore: produced.maskingSeed?.secretStore,
+    // THE PRODUCER'S SECRETS AND THE DOOR'S, walked as one store. `buildRunMaskingContext` takes a
+    // single `secretStore`, and composing the two here rather than widening its signature keeps
+    // the seed pipeline's one-call shape (`agent-local`'s `buildRunMaskingContext` doc) intact.
+    secretStore: mergedSecretStore(produced.maskingSeed?.secretStore, options.maskingSecrets?.()),
     env: process.env,
     ...(produced.maskingSeed?.authStatePayloads === undefined
       ? {}
