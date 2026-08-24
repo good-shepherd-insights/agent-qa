@@ -204,3 +204,31 @@ this plan produced.
 | 22 | `route:GET /api/runs/:id` | reader | **KEEP** | `routes.ts :: getRunsByParent const attempts = db.getRunsByParent(id)`<br>`routes.ts :: getRunsByParent const tests = db.getRunsByParent(id)` | Historical-row read. The one-run model produces no new children, but operator databases hold rows written before 402 and the pre-405 run list / run detail must keep rendering them. |
 | 23 | `route:GET /api/runs/:id/artifact` | reader | **KEEP** | _(reached only in raw SQL / by composition — no debris token)_ | Serves getRunArtifactBundle, whose child section is registered above. |
 | 24 | `route:GET /api/runs/:id/execution-logs` | reader | **KEEP** | `routes.ts :: getRunsByParent const childRuns = db.getRunsByParent(id)` | Historical-row read. The one-run model produces no new children, but operator databases hold rows written before 402 and the pre-405 run list / run detail must keep rendering them. |
+---
+
+### Operational notes for the next reader
+
+**A debris token inside a retirement comment reds the lexical arm.** Predicate A reads source TEXT,
+so the dated notes this plan left where the deleted code used to stand cannot spell
+`getRunsByParent` / `cancelChildRuns` / `suite-parent` / `suite-child`. Three of them did on the
+first pass and the census caught all three. They were REWORDED rather than registered: adding this
+plan's own explanatory prose to the register would inflate the denominator with text the register
+exists to describe. Same class as WINDOWS #241 (prose tripping a source scan), and the same
+resolution — reword the prose, do not widen the guard.
+
+**Where the census does NOT reach, stated so nobody infers otherwise.**
+
+- The legacy `/api/execution/events` projection (`dashboard-ui/src/lib/live-timeline.ts`, ~30
+  `parentRunId` references, plus `ExecutionLiveIdentity.parentRunId` in `lib/api.ts`) is untouched.
+  It is a live-event projection, not a run-record read, no dashboard-server module puts
+  `parentRunId` on those events, and 405 rebuilds it. The 405 build-order pin 402-08 recorded holds.
+- Predicate B's route corpus is declared (see "The honest limit" above).
+- Nothing here measures the dashboard END TO END — a real browser driving a real suite through the
+  changed ingest. The claim proven is at the API and database layer: no producer mints a
+  parent/child record, and an operator-shaped database still renders through the shipped routes.
+
+### Gate at the time of writing (2026-08-24)
+
+`pnpm build` · `pnpm test --force` · `pnpm validate:arch` · the conformance suite on the rebuilt
+dist. Every workspace package green; the ONE red is the pre-existing `tools/embedding-bench`
+`tau-lex` receipt failure, which predates this phase and is untouched by it.
