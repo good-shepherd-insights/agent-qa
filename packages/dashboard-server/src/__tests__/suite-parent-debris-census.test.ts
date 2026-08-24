@@ -761,13 +761,43 @@ const ROUTE_CORPUS: ReadonlyArray<{ id: string; url: string; method?: string; bo
   { id: 'DELETE /api/runs/:id', url: `/api/runs/${PARENT_ID}`, method: 'DELETE' },
 ]
 
+/**
+ * FREEZES `Date.now` ACROSS ONE PROBE PAIR, and the differential is unusable without it.
+ *
+ * This arm calls a route a link reader when its observation differs between a linked and an
+ * unlinked database. Some routes WRITE a clock reading into the row they answer from —
+ * `POST /api/runs/:id/cancel` stores `duration = Date.now() - startedAt`, and `runsSnapshot`
+ * selects `*` — so a millisecond ticking between the two probes manufactures a difference that has
+ * nothing to do with `parent_run_id`. Measured before this guard: 6 false discoveries of
+ * `POST /api/runs/:id/cancel` in 27 isolated runs (~22%), one batch at 5/15.
+ *
+ * A FROZEN CLOCK RATHER THAN A WIDER `normalizeObservation`. Stripping `duration` (or every
+ * numeric-looking key) would blind the arm to a route that genuinely reads the link INTO a field
+ * of that shape — it would trade a false positive for a possible false negative, and this arm's
+ * whole value is that it sees what the lexical arm cannot. Freezing the clock removes the
+ * nondeterminism at its source and narrows nothing: both probes still run the real handler over
+ * the real database, and any difference that survives is a difference the link caused.
+ */
+async function withFrozenClock<T>(fn: () => Promise<T>): Promise<T> {
+  const realNow = Date.now
+  const frozen = realNow.call(Date)
+  Date.now = () => frozen
+  try {
+    return await fn()
+  } finally {
+    Date.now = realNow
+  }
+}
+
 async function walkRouteCorpus(): Promise<string[]> {
   const discovered: string[] = []
   for (const route of ROUTE_CORPUS) {
     const { linked, unlinked } = seedPair()
     try {
-      const l = await probeRoute(buildRouter(linked), route.url, route)
-      const u = await probeRoute(buildRouter(unlinked), route.url, route)
+      const { l, u } = await withFrozenClock(async () => ({
+        l: await probeRoute(buildRouter(linked), route.url, route),
+        u: await probeRoute(buildRouter(unlinked), route.url, route),
+      }))
       const observedL = `${l.status}|${normalizeObservation(safeParse(l.body))}|${runsSnapshot(linked)}`
       const observedU = `${u.status}|${normalizeObservation(safeParse(u.body))}|${runsSnapshot(unlinked)}`
       if (observedL !== observedU) discovered.push(route.id)

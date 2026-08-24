@@ -435,6 +435,40 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
     expect(readiness.hostComposed).toBe(true)
   }, WIRE_BUDGET_MS)
 
+  // THE ZERO-TOKEN ARM — the DEFAULT posture, and the one the mounted-arm anchor cannot see.
+  //
+  // `runServiceReadiness` is composed from TWO arms: `runService?.readiness` when a credential is
+  // declared, and a `createRunServiceReadiness({ …, tokenCount: 0 })` fallback when none is. The
+  // anchor above declares a token, so it pins the first arm only — re-verification measured a
+  // mutation that dropped the fallback leaving 374/374 green while a token-less
+  // `agent-qa dashboard` answered `/api/run-readiness` with 503, which is a member of the UI's
+  // NO_READINESS_DOOR set, so the preflight silently stops gating for most projects.
+  //
+  // Spawns its OWN token-less dashboard rather than reusing the suite's: the arm is selected by
+  // config, so no request against the shared child can reach it.
+  it('serves the LOCAL readiness door with NO credential declared — the default posture', async () => {
+    expect(buildFreshness(RUN_SERVICE_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
+      .toEqual({ missing: [], stale: [] })
+    const fixture = runServiceFixtureProject('anchors-no-token', false)
+    const port = await reserveEphemeralPort()
+    const child = await spawnDashboard(fixture.root, fixture.configPath, port, WIRE_BUDGET_MS)
+    try {
+      expect(child.ready, `the token-less dashboard never listened.\n${child.stdout()}`).toBe(true)
+      const response = await fetch(`${child.origin}/api/run-readiness`)
+      expect(
+        response.status,
+        'a 503 here means the zero-token fallback arm was dropped, which disables the preflight '
+        + 'for every project that declares no run-service credential — i.e. most of them',
+      ).toBe(200)
+      const readiness = RunServiceReadinessSchema.parse(JSON.parse(await response.text()))
+      expect(readiness.hostComposed).toBe(true)
+      // Honest about what it is: composed, and not authed.
+      expect(readiness.authConfigured).toBe(false)
+    } finally {
+      await child.stop()
+    }
+  }, WIRE_BUDGET_MS + 30_000)
+
   it('refuses a caller-supplied runId over the wire — 402-06 vocabulary, current', async () => {
     expect(buildFreshness(RUN_SERVICE_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
       .toEqual({ missing: [], stale: [] })

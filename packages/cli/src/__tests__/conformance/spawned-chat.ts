@@ -630,7 +630,7 @@ export const RUN_SERVICE_ANCHORED_BUILDS: readonly {
  * an ack off the durable record, envelopes in the frozen frame, bytes that are pure JSON — and a
  * cell that needed a passing run would need a browser and would be measuring Playwright.
  */
-export function runServiceFixtureProject(label: string): {
+export function runServiceFixtureProject(label: string, declareToken = true): {
   root: string
   configPath: string
 } {
@@ -658,16 +658,23 @@ export function runServiceFixtureProject(label: string): {
             },
           },
         },
+        // `declareToken: false` is the DEFAULT SHIPPED POSTURE — most projects declare no
+        // run-service credential — and it is a distinct arm of the readiness composition, not a
+        // degenerate case of this one. Phase-402 re-verification measured a mutation that kept
+        // only the mounted arm leaving 374/374 green while a token-less dashboard answered
+        // /api/run-readiness with 503 and the UI preflight silently no-opped.
         services: {
-          dashboard: {
-            runServiceTokens: [
-              {
-                name: RUN_SERVICE_FIXTURE_ENTRY_NAME,
-                tokenEnvVar: RUN_SERVICE_FIXTURE_TOKEN_VAR,
-                trustScope: { project: 'conformance' },
-              },
-            ],
-          },
+          dashboard: declareToken
+            ? {
+                runServiceTokens: [
+                  {
+                    name: RUN_SERVICE_FIXTURE_ENTRY_NAME,
+                    tokenEnvVar: RUN_SERVICE_FIXTURE_TOKEN_VAR,
+                    trustScope: { project: 'conformance' },
+                  },
+                ],
+              }
+            : {},
         },
       },
       null,
