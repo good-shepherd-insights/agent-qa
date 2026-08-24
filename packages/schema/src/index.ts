@@ -46,6 +46,7 @@ export type {
   IosPlatformConfig,
   McpStdioGrant,
   McpTokenEntry,
+  RunServiceTokenEntry,
   PlatformBase,
   PlatformConfig,
   RemoteDeviceConfig,
@@ -64,6 +65,7 @@ export {
   deviceConfigSchema,
   McpStdioGrantSchema,
   McpTokenEntrySchema,
+  RunServiceTokenEntrySchema,
   platformBase,
   platformConfigSchema,
   remoteDeviceSchema,
@@ -825,6 +827,14 @@ export {
   AuthoringFunnelGetInputSchema,
   AuthoringFunnelGetOutputSchema,
   AuthoringFunnelWindowSchema,
+  // 402-01 (D-06/D-13/D-15 · INVK-03): the authed run service's wire vocabulary.
+  RUN_SERVICE_CONTRACT_VERSION,
+  RUN_SERVICE_ERROR_CODES,
+  RUN_SERVICE_REFUSED_REQUEST_FIELDS,
+  RunServiceErrorBodySchema,
+  RunServiceReadinessSchema,
+  RunServiceStartRequestSchema,
+  SERVICE_BEARER_REFUSAL_REASONS,
 } from './functions/index'
 export type {
   FunctionCaller,
@@ -863,6 +873,12 @@ export type {
   AuthoringFunnelGetInput,
   AuthoringFunnelGetOutput,
   AuthoringFunnelWindow,
+  RunServiceErrorBody,
+  RunServiceErrorCode,
+  RunServiceReadiness,
+  RunServiceStartRequest,
+  ServiceBearerRefusalReason,
+  ServiceBearerVerdict,
 } from './functions/index'
 
 // 393 (WTST-02, D-18/D-19): the keep-gate authoring vocabulary. `computeDraftDisposition` is

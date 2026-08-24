@@ -147,3 +147,24 @@ export type {
   ConfigChangeFoldInput,
   KnowledgeChangeFoldInput,
 } from './tool-folds'
+// 402-01 (D-06/D-13/D-15 · INVK-03): the authed run service's wire vocabulary — the two-arm
+// header verdict, the one error body every refusal answers with, the request shape, the readiness
+// DTO, and the door's own contract version. The EVENT vocabulary is deliberately absent: the SSE
+// stream serves `RunEventEnvelopeSchema` verbatim (D-13).
+export {
+  RUN_SERVICE_CONTRACT_VERSION,
+  RUN_SERVICE_ERROR_CODES,
+  RUN_SERVICE_REFUSED_REQUEST_FIELDS,
+  RunServiceErrorBodySchema,
+  RunServiceReadinessSchema,
+  RunServiceStartRequestSchema,
+  SERVICE_BEARER_REFUSAL_REASONS,
+} from './run-service'
+export type {
+  RunServiceErrorBody,
+  RunServiceErrorCode,
+  RunServiceReadiness,
+  RunServiceStartRequest,
+  ServiceBearerRefusalReason,
+  ServiceBearerVerdict,
+} from './run-service'
