@@ -1,4 +1,11 @@
-import type { AgentAskResult, ClauseReceiptStatus, ChatSessionEvent } from '@vostride/agent-qa-schema'
+import { RUN_EVENT_TYPES } from '@vostride/agent-qa-schema'
+import type {
+  AgentAskResult,
+  ClauseReceiptStatus,
+  ChatSessionEvent,
+  RunEventEnvelope,
+  RunServiceReadiness,
+} from '@vostride/agent-qa-schema'
 
 export interface RunRow {
   id: string
@@ -574,11 +581,161 @@ export function setRunConfirmScope(scopeId: string | undefined): void {
   currentRunConfirmScope = scopeId
 }
 
-export function triggerRun(opts: { file?: string; patterns?: string[]; noCache?: boolean; local?: boolean }): Promise<{ runId: string; status: string }> {
+/**
+ * The run could not be STARTED because this process is not in a state to start one (402-08).
+ *
+ * A DISTINCT CLASS FROM {@link ApiError}, deliberately. An `ApiError` says the server answered a
+ * request badly; this says no request was made at all — the preflight refused before anything was
+ * enqueued, so there is no run id, no queue entry and nothing to cancel. Pages render `message`
+ * through the toast they already render trigger failures through, which is why this carries no UI
+ * of its own.
+ */
+export class RunNotReadyError extends Error {
+  constructor(
+    /** The one phrase that says WHY, in the reader's terms. Rendered inside `message`. */
+    readonly reason: string,
+    /** The facts the door reported, when it reported any. Absent when it could not be reached. */
+    readonly readiness?: RunServiceReadiness,
+  ) {
+    super(`The dashboard cannot start a run right now: ${reason}`)
+    this.name = 'RunNotReadyError'
+  }
+}
+
+/**
+ * READINESS AS THE TRIGGER SEES IT — which facts decide, and which one deliberately does not.
+ *
+ * `service` and `hostComposed` are the two the local trigger reads: is this process answering, and
+ * did it compose a host to run anything with. `hostComposed` is measured off the SAME state the
+ * invoke path's guard throws on, so a readiness that says yes and a start that says no cannot
+ * disagree.
+ *
+ * `authConfigured` is NOT read, and that is a decision rather than an omission. It reports whether
+ * any run-service CREDENTIAL resolved, which is a fact about the remote door; the shipped default
+ * for a project that declared none is `false`, and that project's dashboard starts runs through
+ * the local door, which needs no credential (402-05). A gate that read it would refuse every
+ * default install.
+ */
+function notReadyReason(readiness: RunServiceReadiness): string | undefined {
+  if (readiness.service !== 'up') return 'the run service is not up'
+  if (!readiness.hostComposed) return 'this dashboard composed no host to run tests with'
+  return undefined
+}
+
+/** Whether a parsed body is the readiness answer at all — read structurally, never assumed. */
+function isReadiness(value: unknown): value is RunServiceReadiness {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as Record<string, unknown>
+  return typeof candidate.service === 'string'
+    && typeof candidate.hostComposed === 'boolean'
+    && typeof candidate.authConfigured === 'boolean'
+}
+
+/**
+ * THE PREFLIGHT, AND IT FAILS CLOSED ON EVERY ARM.
+ *
+ * A door that cannot be reached, that answers 503 because this server was started without the
+ * predicate, or that answers something this build cannot read, are all answers to "can you run
+ * something" that are not YES. Treating any of them as "probably fine, post anyway" is exactly the
+ * race the preflight exists to remove (T-402-28) — the trigger would be started against a door
+ * whose state nobody established.
+ */
+async function assertRunReadiness(): Promise<void> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/api/run-readiness`)
+  } catch (error) {
+    throw new RunNotReadyError(
+      `the dashboard server did not answer its readiness check (${error instanceof Error ? error.message : String(error)})`,
+    )
+  }
+  if (!response.ok) {
+    const payload = await parseErrorPayload(response)
+    const detail = payload && typeof payload.error === 'string' ? payload.error : `HTTP ${String(response.status)}`
+    throw new RunNotReadyError(`the readiness check was refused (${detail})`)
+  }
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    throw new RunNotReadyError('the readiness answer could not be read')
+  }
+  if (!isReadiness(body)) {
+    throw new RunNotReadyError('the readiness answer was not in a shape this build understands')
+  }
+  const reason = notReadyReason(body)
+  if (reason !== undefined) throw new RunNotReadyError(reason, body)
+}
+
+/**
+ * Start a run — THE ONE CHOKE POINT, and now the one preflight (402-08, criterion 2).
+ *
+ * NINE CALL SITES START A RUN and every one of them arrives here, which is the whole reason the
+ * gate is here and not on a page: per-page gating would be nine places to forget, and forgetting
+ * means a trigger racing a door whose readiness nobody asked about. The readiness route is the
+ * LOCAL half of D-15's one-predicate-two-doors — the same function object the authed `/ok` serves
+ * — so this is the dashboard consuming the service CONTRACT, not reading runner internals.
+ *
+ * THE REFUSAL COMES BEFORE THE POST, not around it. On a not-ready answer nothing is enqueued at
+ * all, so there is no half-started run to reconcile, and the caller's `catch` renders the reason
+ * through the toast it already renders trigger failures through.
+ */
+export async function triggerRun(opts: { file?: string; patterns?: string[]; noCache?: boolean; local?: boolean }): Promise<{ runId: string; status: string }> {
+  await assertRunReadiness()
   return postJson('/api/runs/trigger', {
     ...opts,
     ...(currentRunConfirmScope === undefined ? {} : { confirmScope: currentRunConfirmScope }),
   })
+}
+
+/** What {@link openRunStream} accepts: which member to watch, and what to do with the frames. */
+export interface RunStreamOptions {
+  /**
+   * The member handle to address, or nothing for the whole run.
+   *
+   * A PARALLEL RUN IS ONE RUN ID WITH N ATTACHABLE HANDLES. With a handle the stream carries that
+   * member's events plus every run-scoped one (the verdict, warnings, `runFinished`), so a handle
+   * subscriber still learns that the run ended. Zero is a handle like any other — an
+   * `if (opts.handle)` spelling would silently serve member 0 the firehose.
+   */
+  handle?: number
+  /** Every surviving envelope, verbatim, in seq order. */
+  onEvent?: (event: RunEventEnvelope) => void
+  /** Called after the stream closes itself at `runFinished`. */
+  onFinished?: (event: RunEventEnvelope) => void
+}
+
+/**
+ * Attach to a run's event stream on the LOCAL door, optionally addressing ONE member (402-08).
+ *
+ * THE EVENT NAMES ARE THE BUS'S OWN, ENUMERATED FROM THE SCHEMA. `RUN_EVENT_TYPES` is the total
+ * list, and `EventSource` dispatches by name, so a hand-written list here would be a second
+ * vocabulary that silently stopped delivering the first time an event type was appended. The
+ * envelope reaches `onEvent` exactly as it arrived: `id` is its `seq`, the event name is its
+ * `type`, and `data` is the envelope's own JSON (D-13) — there is no projection layer to drift.
+ *
+ * NO `Authorization` HEADER, AND THERE MUST NEVER BE ONE. `EventSource` cannot set headers, which
+ * is why the AUTHED door's clients are `fetch`/`curl`/CI and this helper's door is the local one.
+ */
+export function openRunStream(runId: string, opts: RunStreamOptions = {}): EventSource {
+  const query = opts.handle === undefined ? '' : `?handle=${encodeURIComponent(String(opts.handle))}`
+  const source = new EventSource(`${API_BASE}/api/run-stream/${encodeURIComponent(runId)}${query}`)
+
+  for (const type of RUN_EVENT_TYPES) {
+    source.addEventListener(type, (e) => {
+      const envelope = JSON.parse((e as MessageEvent).data) as RunEventEnvelope
+      opts.onEvent?.(envelope)
+      if (type === 'runFinished') {
+        // THE STREAM ENDS HERE, on the server's own terms: the run's log is complete and the bus
+        // closed behind it, so an open socket would deliver nothing but heartbeats. What a
+        // reconnect after this means is 403's attach contract to decide.
+        opts.onFinished?.(envelope)
+        source.close()
+      }
+    })
+  }
+
+  return source
 }
 
 export async function cancelRun(runId: string): Promise<{ cancelled: boolean }> {
