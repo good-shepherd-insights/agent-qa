@@ -8,6 +8,7 @@ import {
   createMaskingContext,
   foldFunctionResult,
   invokeFunction,
+  RUNS_START_FUNCTION_ID,
   unmaskForHumanOutput,
   type ConfigReaderPort,
   type FunctionRegistry,
@@ -20,6 +21,8 @@ import type {
   AgentRegistryHandle,
   AgentResultFold,
   ConfirmRegistry,
+  RunServicePorts,
+  RunServiceStartInput,
 } from '@vostride/agent-qa-dashboard'
 import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import type {
@@ -27,13 +30,28 @@ import type {
   ChatSessionEvent,
   ExecutionContext,
   FunctionCaller,
+  FunctionScope,
   MaskedConfigEntry,
   MaskedResolvedConfig,
   RiskActionDescriptor,
   RunEventEnvelope,
+  RunServiceReadiness,
+  RunServiceTokenEntry,
   RunSession,
+  RunStartAcknowledgement,
   RunsStartInput,
+  TrustScope,
 } from '@vostride/agent-qa-schema'
+import {
+  RUN_SERVICE_CONTRACT_VERSION,
+  RunStartAcknowledgementSchema,
+} from '@vostride/agent-qa-schema'
+import {
+  matchServiceBearer,
+  resolveRunServiceTokens,
+  runServiceTokenSecretStore,
+  type ResolvedRunServiceToken,
+} from '../composition/run-service-token-resolution.js'
 import { loadCapabilityCatalog } from '../capability-catalog/loader.js'
 import { resolveConfig } from '../config.js'
 import {
@@ -909,6 +927,29 @@ export interface DashboardRunDoor {
    * Absent is the fail-closed direction, so nothing has to remember to pass it for safety's sake.
    */
   bindTriggerScope(enter: <T>(scopeId: string, run: () => T) => T): void
+  /**
+   * The composed host, or nothing if it has not been bound yet (402-01).
+   *
+   * PUBLISHED SO A SECOND DOOR IN THIS PROCESS CAN READ THE SAME STATE the run starter's own guard
+   * throws on. `/ok`'s `hostComposed` fact and the invoke path's refusal are then two readings of
+   * one box rather than two beliefs that can disagree.
+   */
+  resolveHost(): LocalAgentHost | undefined
+  /**
+   * Watch every `RunSession` this process's host starts, whichever door started it (402-01).
+   *
+   * WHY A FAN-OUT AND NOT A SECOND BRIDGE. `composeCliLocalAgent` takes ONE `runBridge`, so there
+   * is exactly one place a started session becomes visible in this process. The queue's own routing
+   * — by the session's id, into the entry the queue registered — cannot see a run the queue did not
+   * enqueue, which is every run the remote service door starts. Rather than mint a second bridge
+   * that the composition has no slot for, the one bridge notifies observers as well as routing, and
+   * the service door registers one.
+   *
+   * Returns the unregister handle. An observer's throw is SWALLOWED, on the session fan-out's own
+   * reasoning: this channel is downstream of a run that has already started, and nothing on it may
+   * reach back and affect that run.
+   */
+  observeSessions(observer: (session: RunSession) => void): () => void
 }
 
 /** Structural, so this module names the dashboard package's own type without importing its value. */
@@ -996,6 +1037,8 @@ export async function createDashboardRunDoor(input: {
   const { cliRunSubscribers } = await import('../composition/in-process-run-execution.js')
 
   const entries = new Map<string, DashboardRunEntry>()
+  /** 402-01: everyone watching the ONE bridge this process's host publishes sessions through. */
+  const sessionObservers = new Set<(session: RunSession) => void>()
   let boundHost: LocalAgentHost | undefined
   /** Absent runs the invocation unscoped, which is `local-headless` — the fail-closed default. */
   let enterTriggerScope: (<T>(scopeId: string, run: () => T) => T) | undefined
@@ -1005,6 +1048,12 @@ export async function createDashboardRunDoor(input: {
     // because this door runs as many at once as the queue has slots.
     onSession: (session: RunSession): void => {
       entries.get(session.id as unknown as string)?.onSession(session)
+      // 402-01: and every watcher, whichever door started the run. See `observeSessions`.
+      for (const observer of [...sessionObservers]) {
+        try {
+          observer(session)
+        } catch { /* one watcher's failure is not another's, and never the run's */ }
+      }
     },
     // THE DB WRITES, UNCHANGED IN WHAT THEY WRITE (D-09's build-order pin). `createDashboardRunIngest`
     // is the same subscriber the spawned child composed; what moved is where it runs and how it
@@ -1108,6 +1157,187 @@ export async function createDashboardRunDoor(input: {
     backend,
     bindHost: (host: LocalAgentHost): void => { boundHost = host },
     bindTriggerScope: (enter): void => { enterTriggerScope = enter },
+    resolveHost: (): LocalAgentHost | undefined => boundHost,
+    observeSessions: (observer): (() => void) => {
+      sessionObservers.add(observer)
+      return () => { sessionObservers.delete(observer) }
+    },
+  }
+}
+
+
+// ---- The REMOTE door's composition (402-01, D-01/D-02/D-04/D-05/D-06 — INVK-03) ---------------
+
+/**
+ * What the run service's own `FunctionCaller` may do — FIXED at composition, never per token.
+ *
+ * D-06: the door's capability set is decided here, once, for every holder of every credential.
+ * `run` and nothing else, because starting a run is the only op this door dispatches — the event
+ * stream is served off the `RunSession` the start produced and invokes nothing. When 403 routes
+ * the stream through `runs.events`, the diff that needs `read` is the diff that adds it.
+ *
+ * A LIST AND NOT A SPREAD, which is the opposite of {@link DASHBOARD_FUNCTION_CALLER}'s rule and
+ * for the opposite reason. That door's claim is parity with the CLI chat door, so its grant must
+ * track the CLI's automatically. This door's claim is LEAST PRIVILEGE, so a scope minted tomorrow
+ * must NOT reach it by default: the whole point is that a remote token-holder's powers are the
+ * ones somebody wrote down.
+ */
+export const RUN_SERVICE_GRANTED_SCOPES: readonly FunctionScope[] = Object.freeze(['run'])
+
+/** The surface id this door attributes its calls to. Attribution only, never a permission input. */
+export const RUN_SERVICE_SURFACE = 'run-service'
+
+/**
+ * Mint the caller for ONE verified request (D-04, Pitfall 4).
+ *
+ * NEVER `DASHBOARD_FUNCTION_CALLER`. That caller holds the CLI chat door's whole scope set and
+ * mints `origin: 'human'`; reusing it here would hand a remote token every power a person sitting
+ * at this machine has, and would tell the gate a person decided something nobody decided.
+ *
+ * `origin: 'agent'` is the fail-closed reading of the closed two-member axis (391 D-06): the axis
+ * asks "did a person decide this", and on a request that arrived over a socket from another
+ * machine the answer this process can honestly give is no. `human` would be a self-grant minted
+ * from a header.
+ *
+ * `credential` is the matched entry's TrustScope, PASSED THROUGH UNTOUCHED — the function layer
+ * never inspects or rewrites it and `evaluate()` owns ask-tier resolution against it. This is the
+ * whole of "the token is the trust grant": one credential family, no second auth vocabulary, and
+ * the reserved v48 field filled rather than a new machinery built beside it.
+ */
+export function runServiceCallerFor(trustScope: TrustScope): FunctionCaller {
+  return Object.freeze({
+    surface: RUN_SERVICE_SURFACE,
+    grantedScopes: RUN_SERVICE_GRANTED_SCOPES,
+    origin: 'agent',
+    safeMode: false,
+    credential: { scope: trustScope },
+  })
+}
+
+/** How long a finished run's session stays attachable, matching the in-process backend's window. */
+const RUN_SERVICE_SESSION_RETENTION_MS = 5 * 60 * 1000
+
+export interface RunServiceCompositionInput {
+  /** The declared entries, straight off `services.dashboard.runServiceTokens`. */
+  readonly entries: readonly RunServiceTokenEntry[]
+  /** The environment the declared variables are dereferenced from, once, now. */
+  readonly env?: NodeJS.ProcessEnv
+  /** The run door this process composed — the host box and the one session bridge. */
+  readonly door: Pick<DashboardRunDoor, 'resolveHost' | 'observeSessions'>
+  /** How long a finished run stays attachable. Defaults to the in-process backend's window. */
+  readonly retentionMs?: number
+}
+
+export interface RunServiceComposition {
+  /** Handed to `startServer` as `runService`. */
+  readonly ports: RunServicePorts
+  /** The resolved values, shaped as the run masker's secret-store port. Seeded by declared name. */
+  readonly secretStore: { forEachSecret(cb: (name: string, value: string) => void): void }
+  /** How many credentials resolved. A COUNT, never the values — `/ok` reports whether it is > 0. */
+  readonly tokenCount: number
+  /** Unregister the session observer and drop every retained handle. */
+  dispose(): void
+}
+
+/**
+ * Compose the remote door's ports — ONE composer, for production and for the cells that measure it.
+ *
+ * PUBLISHED AND SINGULAR for `composeDashboardDoor`'s own reason: a cell that assembled its own
+ * verifier, caller mint or starter beside this one would be measuring a door this product does not
+ * ship, which is the lookalike-assembly failure the conformance suite refuses by name.
+ *
+ * THE TOKENS ARE DEREFERENCED HERE, ONCE, BEFORE ANYTHING LISTENS. A declared variable that is
+ * unset throws `RunServiceTokenEnvVarUnsetError` out of this call and out of `agent-qa dashboard`
+ * — startup REFUSES, naming the variable and never a value (D-05). A server that started with a
+ * credential nobody can present reads to an operator exactly like a server rejecting their token.
+ *
+ * THE STARTER IS NAMED `invokeRunStart`-STYLE AND NOT `startRun`. `startRun` is the RUN SHELL's
+ * entry point in `@vostride/agent-qa-runner`, and `run-door-invocation-census.test.ts` makes a
+ * complete-set claim over this package that no file acquires it.
+ */
+export function composeRunServicePorts(input: RunServiceCompositionInput): RunServiceComposition {
+  const tokens: readonly ResolvedRunServiceToken[] = resolveRunServiceTokens(
+    input.entries,
+    input.env ?? process.env,
+  )
+  const retentionMs = input.retentionMs ?? RUN_SERVICE_SESSION_RETENTION_MS
+
+  /**
+   * Every session this process has started, by run id.
+   *
+   * BOUNDED, and the bound is why the eviction timer exists: without one this map grows for the
+   * life of a long-running dashboard, one entry per run, each holding a whole event bus. The window
+   * opens when the run settles rather than when it starts, so a live run is never evicted out from
+   * under a subscriber, and it matches the in-process backend's own replay retention so a client
+   * told "attach later" by one part of this process is not refused by another.
+   */
+  const sessions = new Map<string, { readonly session: RunSession; timer?: NodeJS.Timeout }>()
+
+  const unobserve = input.door.observeSessions((session) => {
+    const runId = session.id as unknown as string
+    const entry: { readonly session: RunSession; timer?: NodeJS.Timeout } = { session }
+    sessions.set(runId, entry)
+    const scheduleEviction = (): void => {
+      entry.timer = setTimeout(() => { sessions.delete(runId) }, retentionMs)
+      entry.timer.unref?.()
+    }
+    session.done.then(scheduleEviction, scheduleEviction)
+  })
+
+  const invokeRunStart = async (start: RunServiceStartInput): Promise<RunStartAcknowledgement> => {
+    const host = input.door.resolveHost()
+    if (host === undefined) {
+      throw new Error('The run service was asked to start a run before its host was composed.')
+    }
+    // NO `runId`, NO `scope`, NO `executionContext` ON THE REQUEST. The remote door does not carry
+    // a caller's claim about any of them, and it does not substitute a claim of its own: the core
+    // mints the id, the config resolves the scope, and the context is this composition's own
+    // fail-closed default. The dashboard door legitimately forwards a pre-minted id because its
+    // queue chose one; a remote caller has chosen nothing.
+    const request: RunsStartInput = start.patterns === undefined || start.patterns.length === 0
+      ? {}
+      : { patterns: [...start.patterns] }
+    // THE SHIPPED DISPATCHER, NOT THE PORT UNDERNEATH IT (D-04). Going straight to the run
+    // execution would skip the op-level gate, the receipt classification and the ack law — the
+    // carve-out the no-private-powers law refuses.
+    const result = await invokeFunction(
+      host.registry as FunctionRegistry,
+      RUNS_START_FUNCTION_ID,
+      request,
+      runServiceCallerFor(start.trustScope),
+    )
+    // PARSED, NOT CAST. The ack law says every field comes off the durable record; this is the
+    // read side of it, and it is what makes the router's typed 202 a fact rather than a hope.
+    return RunStartAcknowledgementSchema.parse(result)
+  }
+
+  const readiness = (): RunServiceReadiness => ({
+    service: 'up',
+    // MEASURED OFF THE SAME BOX the starter's guard throws on, so `/ok` and `POST /run` cannot
+    // disagree about whether this process can run anything.
+    hostComposed: input.door.resolveHost() !== undefined,
+    authConfigured: tokens.length > 0,
+    contractVersion: RUN_SERVICE_CONTRACT_VERSION,
+  })
+
+  const ports: RunServicePorts = {
+    verifyBearer: (header) => matchServiceBearer(header, tokens),
+    invokeRunStart,
+    attach: (runId) => sessions.get(runId)?.session,
+    readiness,
+  }
+
+  return {
+    ports,
+    secretStore: runServiceTokenSecretStore(tokens),
+    tokenCount: tokens.length,
+    dispose: () => {
+      unobserve()
+      for (const entry of sessions.values()) {
+        if (entry.timer !== undefined) clearTimeout(entry.timer)
+      }
+      sessions.clear()
+    },
   }
 }
 
@@ -1254,6 +1484,25 @@ async function startDashboardBackedServices(
     // every trigger stays `local-headless`, which is the posture 401-07 shipped.
     runDoor.bindTriggerScope(enterRunTriggerScope)
 
+    // ---- The REMOTE door (402-01, D-02/D-05/D-06 — INVK-03) -----------------------------------
+    //
+    // COMPOSED HERE FOR `agentHost`'s AND `executionBackend`'s OWN REASON: the ports name
+    // `runs.start`, `invokeFunction`, the composed local host and this project's credential
+    // resolution, none of which `packages/dashboard-server` may import. The server mounts the
+    // module; this process supplies everything it reaches through.
+    //
+    // NOT MOUNTED WHEN NOTHING IS DECLARED, and that is the shipped default rather than a
+    // degradation: a project that has declared no run-service credential gets today's dashboard,
+    // byte for byte. The alternative — mounting with an empty token list — would be a door every
+    // request is refused at, which is honest but adds a surface nobody asked for.
+    //
+    // AN UNSET DECLARED VARIABLE REFUSES STARTUP FROM INSIDE THIS CALL, naming the variable and
+    // never a value (D-05). The refusal reaches the `catch` below as an ordinary command error.
+    const runServiceEntries = (servicesConfig.runServiceTokens ?? []) as readonly RunServiceTokenEntry[]
+    const runService = runServiceEntries.length === 0
+      ? undefined
+      : composeRunServicePorts({ entries: runServiceEntries, door: runDoor })
+
     const { close, port: listeningPort } = await startServer({
       db,
       port,
@@ -1268,6 +1517,9 @@ async function startDashboardBackedServices(
       // started without it would answer 503 from the execution routes — which is what an
       // unresolvable `agent-qa` binary used to produce, and the honest shape of the same absence.
       executionBackend: runDoor.backend,
+      // 402-01: absent is an ABSENT field and never a present `undefined`, on the house rule
+      // `agentHost` and `executionBackend` already follow — the server's own mount arm decides.
+      ...(runService === undefined ? {} : { runService: runService.ports }),
     })
 
     // D-16: the second supplier, now that there is a port to name. Loopback rather than a hostname,
@@ -1286,6 +1538,10 @@ async function startDashboardBackedServices(
       shuttingDown = true
       console.log(pc.dim(`\nShutting down ${labels.shutdown}...`))
       close()
+      // 402-01: unregister the session observer and drop every retained handle. Without it the
+      // run door's observer set keeps a closure alive that keeps this map alive that keeps every
+      // finished run's bus alive.
+      runService?.dispose()
       // 2026-08-17 (Phase 398 plan 10, D-18/D-20): THE DASHBOARD EMITS NO ANALYTICS, and the flush
       // that used to stand here is gone with the events it drained.
       //

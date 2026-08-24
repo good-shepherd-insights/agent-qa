@@ -1518,6 +1518,32 @@ const DECLARED_STRING_LEAF_PATHS: readonly string[] = [
   // address and no credential, and it renders verbatim.
   'services.dashboard.baseUrl',
   'services.dashboard.dbPath',
+  // Phase 402 D-05/D-06/D-07 (2026-08-24). All five recorded INERT, and each is a decision:
+  //
+  // `host` is the interface this server binds — `127.0.0.1`, a LAN address, a hostname. It is a
+  // bare host and not a URL, so it carries no userinfo and no query, which is why
+  // `services.mcp.host` two rows down is recorded the same way and why neither is registered in
+  // `CREDENTIAL_BEARING_URL_LEAVES`. An operator reading their own bind address back learns where
+  // their server is listening, which is the fact D-07's refusal is about.
+  //
+  // `runServiceTokens.*.name` and `.tokenEnvVar` are the 396 D-06 row, verbatim in reasoning:
+  // `name` is an operator's label for a credential, carrying no address and matched against
+  // nothing a caller sends; `tokenEnvVar` is the NAME of an environment variable, and registering
+  // a name as credential-bearing would invert the refs-only law it exists to serve — the reference
+  // is in the file precisely SO the secret is not. The VALUE never appears in this schema at all:
+  // `RunServiceTokenEntrySchema` is `.strict()` and refuses a field that could hold one, which is
+  // a stronger guarantee than masking a field that exists.
+  //
+  // `trustScope.project` and `.org` are OPAQUE TENANCY IDENTIFIERS, not credentials. They say
+  // whose work a holder acts for; they satisfy nothing on their own, and the gate reads them only
+  // beside a credential that was verified in constant time. Masking them would hide from an
+  // operator which tenancy their own declared token grants, while hiding nothing from anyone who
+  // already has the config file.
+  'services.dashboard.host',
+  'services.dashboard.runServiceTokens.*.name',
+  'services.dashboard.runServiceTokens.*.tokenEnvVar',
+  'services.dashboard.runServiceTokens.*.trustScope.org',
+  'services.dashboard.runServiceTokens.*.trustScope.project',
   'services.dashboard.workspace',
   'services.mcp.host',
   'services.mcp.path',
