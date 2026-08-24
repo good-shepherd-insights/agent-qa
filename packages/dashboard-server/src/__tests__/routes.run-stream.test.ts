@@ -39,15 +39,34 @@ import {
   type RunSession,
   type RunStartAcknowledgement,
 } from '@vostride/agent-qa-schema'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { DashboardDatabase } from '../db/database.js'
 import {
   createRunServiceRoutes,
+  serveRunEventStream,
   type RunServicePorts,
 } from '../run-service/run-service-routes.js'
 import { createRouter } from '../server/routes.js'
 import { startServer } from '../server/server.js'
+
+/**
+ * THE CORE, WRAPPED IN A SPY THAT DELEGATES TO IT (not replaced by one).
+ *
+ * The differential below proves the two doors AGREE; it cannot prove there is ONE implementation,
+ * because a private copy of the serving body produces byte-identical output — 402-05 measured
+ * exactly that shape for the readiness predicate (its mutation M9), and only a reference-level pin
+ * saw it. This is that pin for a function that is CALLED rather than published: `routes.ts` reads
+ * `serveRunEventStream` off this module's namespace, so a handler that called a copy — in this
+ * file, in a sibling module, anywhere — would leave the spy unfired.
+ *
+ * `createRunServiceRoutes` is unaffected: its own call binds lexically inside the real module, so
+ * the authed side of every differential is the shipped path.
+ */
+vi.mock('../run-service/run-service-routes.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../run-service/run-service-routes.js')>()
+  return { ...actual, serveRunEventStream: vi.fn(actual.serveRunEventStream) }
+})
 
 const TOKEN = 'zz-402-08-local-door-token-1c9be4'
 
@@ -235,6 +254,42 @@ describe('the local run-stream door serves the SAME stream core the authed door 
     expect(new Set(captures.map((capture) => capture.status))).toEqual(new Set([200, 400, 404]))
     expect(captures.every((capture) => capture.body.length > 0)).toBe(true)
     expect(captures.filter((capture) => capture.status === 200).length).toBeGreaterThanOrEqual(5)
+  })
+})
+
+describe('the local door CALLS the exported core — one implementation, not two that agree', () => {
+  it('reaches serveRunEventStream itself, with the raw handle and the injected attach port', async () => {
+    const core = vi.mocked(serveRunEventStream)
+    core.mockClear()
+
+    const origin = await localDoor()
+    const stream = await read(`${origin}/api/run-stream/r_local?handle=7`)
+    expect(stream.status).toBe(200)
+
+    expect(core).toHaveBeenCalledTimes(1)
+    const deps = core.mock.calls[0]![2]
+    expect(deps.runId).toBe('r_local')
+    // The RAW parameter, unparsed — the core owns the parse, and a handler that pre-parsed it
+    // would be the second spelling this cell exists to refuse.
+    expect(deps.handleParam).toBe('7')
+    // ONE SESSION REGISTRY, TWO DOORS — by reference, not by equality.
+    expect(deps.attach).toBe(attachPort)
+  })
+
+  it('hands the PRODUCTION frame\'s local door the very port `runService.attach` carries', async () => {
+    const core = vi.mocked(serveRunEventStream)
+    core.mockClear()
+
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
+    const ports = servicePorts()
+    const started = await startServer({ db, port: 0, runService: ports })
+    closers.push(started.close)
+    const port = (started.server.address() as AddressInfo).port
+
+    await getThroughServer(port, '/api/run-stream/r_local')
+
+    expect(core).toHaveBeenCalledTimes(1)
+    expect(core.mock.calls[0]![2].attach).toBe(ports.attach)
   })
 })
 
