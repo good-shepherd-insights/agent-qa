@@ -406,6 +406,35 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
     expect(rpcShapeOf(raw), 'the refusal body must be pure JSON').toEqual(RPC_SHAPE_CLEAN)
   }, WIRE_BUDGET_MS)
 
+  // THE LOCAL READINESS DOOR, PINNED AT THE COMPOSITION THAT SHIPS IT (WINDOWS #255).
+  //
+  // Criterion 2's preflight rests on ONE line in `commands/dashboard.ts` — the
+  // `runServiceReadiness:` option handed to `startServer`. Phase-402 verification deleted that line
+  // and measured 390/390 cells green across `dashboard.test.ts`, `run-service-door.e2e.test.ts`,
+  // `run-service-auth-hardening.test.ts` and the whole conformance suite, after a forced rebuild.
+  // The gate went live-dead in exactly that state: `/api/run-readiness` answers 503, 503 is a member
+  // of the UI's NO_READINESS_DOOR set, so `assertRunReadiness` RETURNS and the preflight stops
+  // gating with no test signal anywhere.
+  //
+  // Every other cell that touches readiness supplies the option ITSELF — the e2e composes
+  // `runServiceReadiness: runService.readiness` in its own fixture — which is precisely why none of
+  // them can see the composition root forgetting to. This one asks the SPAWNED `agent-qa dashboard`
+  // and reads the answer off its socket, so the only thing that can satisfy it is the shipped
+  // composition still threading the predicate.
+  it('serves the LOCAL readiness door from the shipped composition, not a fixture', async () => {
+    expect(buildFreshness(RUN_SERVICE_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
+      .toEqual({ missing: [], stale: [] })
+    // No credential: the local door is loopback-guarded, not token-guarded (D-15's local half).
+    const response = await fetch(`${origin()}/api/run-readiness`)
+    expect(
+      response.status,
+      'a 503 here means `agent-qa dashboard` stopped threading runServiceReadiness into '
+      + 'startServer, which silently disables the whole of criterion 2\'s preflight',
+    ).toBe(200)
+    const readiness = RunServiceReadinessSchema.parse(JSON.parse(await response.text()))
+    expect(readiness.hostComposed).toBe(true)
+  }, WIRE_BUDGET_MS)
+
   it('refuses a caller-supplied runId over the wire — 402-06 vocabulary, current', async () => {
     expect(buildFreshness(RUN_SERVICE_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
       .toEqual({ missing: [], stale: [] })
