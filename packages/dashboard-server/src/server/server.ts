@@ -19,6 +19,11 @@ import {
 } from '@vostride/agent-qa-core'
 import type { DashboardLLMConfig } from '../llm-model-mapping.js'
 import type { AgentHost } from '../chat/host.js'
+import {
+  createRunServiceRoutes,
+  ownsRunServicePath,
+  type RunServicePorts,
+} from '../run-service/run-service-routes.js'
 // 396-01 D-10: the `@vostride/agent-qa-mcp` import is GONE, together with the MCP endpoint this
 // server used to start beside the dashboard. The v2 server is composed per-caller by the CLI's own
 // host (`agent-qa mcp`) over the function registry, so a dashboard that mounted its own copy would
@@ -85,6 +90,23 @@ interface StartServerOptions {
    * without a run door is a dashboard that cannot run tests, and it says so.
    */
   executionBackend?: ExecutionBackend
+  /**
+   * The authed run service's ports (402-01, D-02/D-06 — INVK-03).
+   *
+   * INJECTED, ON `agentHost`'s AND `executionBackend`'s OWN IDIOM AND FOR THEIR OWN REASON. The
+   * implementations name `runs.start`, `invokeFunction`, the composed local host and this
+   * project's credential resolution — all of it vocabulary this package may not import
+   * (validate:arch). So `agent-qa dashboard` composes them in the process that runs this server
+   * and hands them over, which is what makes the run service a mountable module rather than a
+   * fourth process.
+   *
+   * ABSENT MEANS THE SERVICE IS NOT MOUNTED and this server behaves exactly as it does today —
+   * `/run` and its neighbours reach whatever the static/SPA handling below does with an unknown
+   * path. That is the shipped posture for a project that has declared no run-service credential,
+   * and it is deliberately NOT "mounted but open": a door with no credential is a door nobody can
+   * open, never a door left ajar.
+   */
+  runService?: RunServicePorts
 }
 
 export async function startServer(opts: StartServerOptions): Promise<{
@@ -92,7 +114,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   port: number
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend } = opts
+  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService } = opts
 
   const resolvedConfigPath = configPath ?? resolve('agent-qa.config.yaml')
   const configManager = new ConfigManager(resolvedConfigPath)
@@ -487,6 +509,10 @@ export async function startServer(opts: StartServerOptions): Promise<{
     ...(agentHost === undefined ? {} : { agentHost }),
   })
 
+  // 402-01: composed once, at start, on `apiRouter`'s own idiom. Absent ports mean no router and
+  // therefore no mount — the path check below is skipped entirely and this server behaves as today.
+  const runServiceRouter = runService === undefined ? undefined : createRunServiceRoutes(runService)
+
   // THE PROCESS-LEVEL BACKSTOP AND THE GUARDED PARSE (400-16, gap 7). Every request enters here, so
   // this is the choke point: an unparseable request line is answered 400 before any frame below can
   // see it, and the whole body runs inside a `try` so a synchronous throw out of `apiRouter` — or a
@@ -501,6 +527,18 @@ export async function startServer(opts: StartServerOptions): Promise<{
         return
       }
       const path = url.pathname
+
+      // THE AUTHED RUN SERVICE, CONSULTED FIRST (402-01, D-02/D-06 — INVK-03).
+      //
+      // ABOVE EVERYTHING, INCLUDING THE `OPTIONS` PREFLIGHT ARM AND THE SPA FALLBACK, and the
+      // order is the guard. The preflight arm below writes a wildcard `Access-Control-Allow-Origin`
+      // and the SPA fallback answers 200 with an HTML page for any unknown path; either reaching an
+      // authed surface would be a grant nobody decided. `ownsRunServicePath` is METHOD-BLIND for
+      // exactly that reason — every request to a service path is this door's to refuse.
+      if (runServiceRouter !== undefined && ownsRunServicePath(path)) {
+        runServiceRouter(req, res)
+        return
+      }
 
       // API routes
       if (path.startsWith('/api/')) {
