@@ -68,6 +68,7 @@ import {
   dashboardSurfaceAdapter,
   fnSurfaceAdapter,
   mcpSurfaceAdapter,
+  runServiceSurfaceAdapter,
   type SurfaceAdapter,
 } from './adapters.js'
 
@@ -113,4 +114,28 @@ export const SURFACE_ROSTER: readonly SurfaceRosterEntry[] = Object.freeze([
   // that is not served: what it reaches is what its own route says it reaches, read off the response
   // bytes, so a door that started filtering reds here by name.
   Object.freeze({ id: 'dashboard', adapter: dashboardSurfaceAdapter }),
+  // The authed run service (402, rostered 402-07, D-04). THE THIRD OF THE THREE ARRIVALS the
+  // 2026-08-16 registration note reserved — "any post-v2.0 REST or SDK surface" — and the first door
+  // on this roster that is NARROW BY DESIGN. It dispatches, it consults the gate, and a caller on
+  // another machine reaches it over TCP with a bearer credential, so it is an INVOCATION DOOR by the
+  // 2026-08-17 test and it arrives with a row in the phase that ships it.
+  //
+  // WHAT IS AND IS NOT ON THE ROW, on 397 D-03's unchanged rule. The row is the whole door: the
+  // three paths `RUN_SERVICE_ROUTE_TABLE` publishes and no fourth. There is nothing to leave off,
+  // which is the one respect in which this row is simpler than the four above — the dashboard's
+  // ninety hand-written v1 routes are OFF the roster and stay off, and this door added none of them.
+  //
+  // THE NARROWNESS IS DECLARED RATHER THAN INFERRED. Every row above reaches the whole registry
+  // census, so a row's reach was never a fact anyone had to state. This one reaches exactly
+  // `runs.start` plus a stream, and its adapter carries a `notApplicable` enumeration saying which
+  // capability classes the door structurally cannot serve and WHY — a property of the door a reader
+  // can check against the route table, not a schedule. A narrow door whose narrowness showed up only
+  // as ops it happened not to enumerate would be indistinguishable from a door that lost half its
+  // reach in a regression, and that is the reading this roster exists to prevent.
+  //
+  // THE ADAPTER DRIVES THE PRODUCTION COMPOSITION over real TCP — `startServer` with the run service
+  // mounted, which is what `agent-qa dashboard` assembles. Driving the door from OUTSIDE the process
+  // entirely is a separate and stronger question, and it has its own file:
+  // `run-service-anchors.test.ts` spawns the built binary and reads the same routes off a socket.
+  Object.freeze({ id: 'run-service', adapter: runServiceSurfaceAdapter }),
 ] as const satisfies readonly SurfaceRosterEntry[])

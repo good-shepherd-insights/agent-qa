@@ -428,11 +428,49 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // committed rather than at the end of the phase that builds it. That is the whole content of
     // "day one, not at its end": every plan after this one builds under a suite that already ranges
     // the door, so a private power added to it is a named RED in the change that adds it.
-    expect(SURFACE_ROSTER.map((entry) => entry.id)).toEqual(['chat', 'mcp', 'fn', 'dashboard'])
+    //
+    // 2026-08-24 (402-07 D-04): the authed run service joins, in the phase that ships it, as the
+    // third and last of the three arrivals `roster.ts`'s 2026-08-16 registration note reserved.
+    expect(SURFACE_ROSTER.map((entry) => entry.id))
+      .toEqual(['chat', 'mcp', 'fn', 'dashboard', 'run-service'])
     for (const entry of SURFACE_ROSTER) {
       expect(entry.adapter.id, `${entry.id}: the roster row and its adapter must name one surface`)
         .toBe(entry.id)
     }
+  })
+
+  it('makes every door state what it cannot do, by shape rather than by omission', () => {
+    // 402-07, D-04. The four wide doors declare an EMPTY list and the run service declares a
+    // populated one; what is asserted here is that BOTH are declarations. A door whose narrowness
+    // showed up only as ops it happened not to enumerate reads exactly like a door that lost half
+    // its reach in a regression, and 397 D-12's refusal to keep a skip list is what makes the
+    // distinction matter: a skip list says which cells not to run, and this says which capabilities
+    // the door does not have.
+    //
+    // THE FIELD IS REQUIRED ON THE INTERFACE, so this cell cannot be satisfied by absence — every
+    // member below has to exist for the file to compile. What it adds is that a populated entry
+    // carries a REASON, because an unexplained "not applicable" is the omission wearing a label.
+    for (const entry of SURFACE_ROSTER) {
+      expect(
+        Array.isArray(entry.adapter.notApplicable),
+        `${entry.id}: a rostered door must DECLARE its not-applicable set, even when it is empty`,
+      ).toBe(true)
+      for (const declared of entry.adapter.notApplicable) {
+        expect(
+          declared.capability.trim().length > 0 && declared.why.trim().length > 0,
+          `${entry.id}: "${declared.capability}" is declared not-applicable with no reason`,
+        ).toBe(true)
+      }
+    }
+    // The narrow door is narrow ON PURPOSE and says so — asserted by NAME rather than over the
+    // whole roster, because "some door declares something" is a claim any future row could satisfy
+    // while this one went quiet.
+    const runService = SURFACE_ROSTER.find((entry) => entry.id === 'run-service')
+    expect(runService, 'the run-service row is what this cell is about').toBeDefined()
+    expect(
+      (runService as { adapter: { notApplicable: readonly unknown[] } }).adapter.notApplicable.length,
+      'the run service reaches one op and a stream; a door that narrow must say what it declines',
+    ).toBeGreaterThan(0)
   })
 
   it('reaches, on every rostered surface, only capabilities the registry declares', async () => {

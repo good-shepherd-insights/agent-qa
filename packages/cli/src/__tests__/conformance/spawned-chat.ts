@@ -50,6 +50,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { generateTestId } from '@vostride/agent-qa-ids'
+
 /** This directory. */
 export const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url))
 /** `packages/cli`. */
@@ -495,13 +497,25 @@ export async function spawnDashboard(
   configPath: string,
   port: number,
   budgetMs = 60_000,
+  /**
+   * Variables added to the CONSTRUCTED environment, never inherited from this process (402-07).
+   *
+   * A PARAMETER RATHER THAN A SECOND SPAWN HELPER, on this module's own law: the run-service
+   * anchors need a declared credential in the child, and a copy of this function that also set an
+   * environment would be a second answer to "what did the child inherit", which is the one
+   * property every cell here depends on. `spawnCollecting` already carries the identical parameter
+   * for the identical reason.
+   *
+   * Empty by default, so every pre-402 caller's child is hermetic byte for byte.
+   */
+  extraEnv: Readonly<Record<string, string>> = {},
 ): Promise<SpawnedDashboard & { readonly ready: boolean }> {
   const child = spawn(
     process.execPath,
     [CLI_ENTRY, '--config', configPath, 'dashboard', '--port', String(port)],
     {
       cwd: root,
-      env: hermeticEnv(root),
+      env: { ...hermeticEnv(root), ...extraEnv },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   )
@@ -540,4 +554,152 @@ export async function spawnDashboard(
     stderr: () => stderr,
     stop,
   }
+}
+
+// ---- The RUN SERVICE fixture and its build list (402-07) ---------------------------------------
+//
+// WHY THIS RECIPE LIVES HERE AND NOT IN EITHER FILE THAT USES IT. Two cells drive the authed run
+// service and they drive it through DIFFERENT frames on purpose: the conformance adapter composes
+// it in this process (`startServer`, real TCP, ephemeral port) and the wire anchors spawn the built
+// `agent-qa dashboard` and reach it over a socket. What both need is the same PROJECT on disk — the
+// same declared credential entry, the same locally-classified target, the same planted test — and
+// this module's own law is that a second recipe would be a second answer to "what did the door
+// open". So the project is written once and the two frames differ only in how they mount it, which
+// is the only axis those cells mean to compare.
+//
+// NO VALUE IS EVER WRITTEN INTO THE PROJECT. `RunServiceTokenEntrySchema` has no member a value
+// could occupy: the config declares a variable NAME, and the value travels only in a constructed
+// child environment or an explicit `env` map. `fixtureProject`'s own argument applies unchanged —
+// what a file does not contain cannot be printed by a diagnostic nobody anticipated.
+
+/**
+ * The environment variable the run-service fixture declares. A NAME, and only ever a name.
+ *
+ * NO SUFFIX A MASKER RECOGNISES, on `run-service-door.e2e.test.ts`'s reasoning: `sensitiveEnvSlice`
+ * selects environment variables by name suffix, so a probe called `..._API_TOKEN` would be masked
+ * by machinery that has nothing to do with this door and a leak would pass for the wrong reason.
+ */
+export const RUN_SERVICE_FIXTURE_TOKEN_VAR = 'AGENT_QA_402_07_RUN_CRED'
+
+/**
+ * The credential the two run-service frames present.
+ *
+ * A THROWAWAY THIS REPOSITORY OWNS, not a secret: it exists only inside a temp project's process
+ * environment and is never written to any file. It is a distinct value from 402-01's e2e token so
+ * that a cell in either file cannot accidentally authenticate against the other's door.
+ */
+export const RUN_SERVICE_FIXTURE_TOKEN = 'zz-402-07-conformance-run-credential-4b7e12'
+
+/** The entry NAME the fixture declares, echoed by nothing on the wire but named once here. */
+export const RUN_SERVICE_FIXTURE_ENTRY_NAME = 'conformance'
+
+/**
+ * The built artifacts a RUN SERVICE cell executes — the dashboard list plus the run path's two.
+ *
+ * WIDENED DELIBERATELY, and the header of {@link DASHBOARD_ANCHORED_BUILDS} asks for exactly this:
+ * "widening it further is a change that should arrive with a cell that needs it." These cells need
+ * it. A run started through this door executes in-process through `@vostride/agent-qa-runner`, and
+ * the run gate, the scope resolution and the config schema it consults live in
+ * `@vostride/agent-qa-core` — both of which the spawned `agent-qa dashboard` resolves through their
+ * BUILT dists, because tsup leaves workspace dependencies external (WINDOWS #240). A wire anchor run
+ * against a stale `runner/dist` would drive the previous revision of the very execution path whose
+ * RPC shape it certifies, and would read as proof of this one.
+ */
+export const RUN_SERVICE_ANCHORED_BUILDS: readonly {
+  readonly pkg: string
+  readonly artifact: string
+}[] = Object.freeze([
+  ...DASHBOARD_ANCHORED_BUILDS,
+  Object.freeze({ pkg: 'core', artifact: join('dist', 'index.js') }),
+  Object.freeze({ pkg: 'runner', artifact: join('dist', 'index.js') }),
+])
+
+/**
+ * A project whose dashboard mounts the authed run service, with one test a run can address.
+ *
+ * `environment: 'local'` ON THE TARGET IS LOAD-BEARING, and 402-01's e2e states why in full: the
+ * run gate folds the most restrictive declared target class, and only an invocation whose every
+ * target is declared local is decided `mutating-local` — the tier ratified as allowed in every
+ * execution context. An undeclared or shared target classifies the run `mutating-shared`, which in
+ * this door's fail-closed `local-headless` context is a DENIAL; a denied run never starts, never
+ * acks and never streams, so a cell about DELIVERY would observe a refusal instead. That denial is
+ * a real and correct behaviour of the product and 402-06 owns its cells.
+ *
+ * THE RUN IS EXPECTED TO FAIL, and that is fine. The planted test names steps no browser will ever
+ * be launched for, so the run fails fast. Every claim these two frames make is about WIRE SHAPE —
+ * an ack off the durable record, envelopes in the frozen frame, bytes that are pure JSON — and a
+ * cell that needed a passing run would need a browser and would be measuring Playwright.
+ */
+export function runServiceFixtureProject(label: string): {
+  root: string
+  configPath: string
+} {
+  const root = trackTempRoot(mkdtempSync(join(tmpdir(), `agent-qa-402-07-${label}-`)))
+  const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        workspace: {
+          testMatch: ['tests/**/*.test.yaml'],
+          testPathIgnore: [],
+          suiteMatch: ['suites/**/*.suite.yaml'],
+          hooksFile: 'hooks.yaml',
+          envFile: '.env',
+          secretsFile: '.env.secrets.local',
+        },
+        use: { mobile: { appState: 'preserve' } },
+        registry: {
+          targets: {
+            conformance: {
+              platform: 'web',
+              url: 'https://conformance.invalid',
+              environment: 'local',
+            },
+          },
+        },
+        services: {
+          dashboard: {
+            runServiceTokens: [
+              {
+                name: RUN_SERVICE_FIXTURE_ENTRY_NAME,
+                tokenEnvVar: RUN_SERVICE_FIXTURE_TOKEN_VAR,
+                trustScope: { project: 'conformance' },
+              },
+            ],
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  )
+  // The three files `requireExistingFiles: true` refuses a project without — `dashboardFixtureProject`
+  // states the reasoning; both frames take that path, the spawned one through the shipped command
+  // and the in-process one through the same workspace resolution.
+  // `hooks: []` AND NOT `hooks: {}`, and the difference is measured rather than copied.
+  // `dashboardFixtureProject` above writes the mapping form and is correct for what it does — its
+  // cells list capabilities and never start a run. A run VALIDATES the hooks document, and the
+  // mapping form fails that validation with `CliRunInputError: Hooks configuration errors:`, which
+  // this door then flattens into a `500 run_start_failed` carrying no diagnosis at all (correctly —
+  // a crash message is composed from the host's own state and the caller is remote). A first draft
+  // of this fixture copied the mapping form and every route probe read as "the door did not answer".
+  writeFileSync(join(root, 'hooks.yaml'), 'hooks: []\n', 'utf8')
+  writeFileSync(join(root, '.env'), '', 'utf8')
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
+  mkdirSync(join(root, '.agent-qa'), { recursive: true })
+  mkdirSync(join(root, 'tests'), { recursive: true })
+  writeFileSync(
+    join(root, 'tests', 'probe.test.yaml'),
+    'name: The run service conformance probe\n'
+    // MINTED rather than hand-written: canonical ids come from the ID helpers by house rule, and a
+    // literal here would be an id this repository does not own.
+    + `test-id: ${generateTestId()}\n`
+    + 'target: conformance\n'
+    + 'steps:\n'
+    + '  - Do nothing this run will ever reach\n',
+    'utf8',
+  )
+  return { root, configPath }
 }

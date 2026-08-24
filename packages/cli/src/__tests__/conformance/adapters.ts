@@ -30,7 +30,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer as createHttpServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { createMcpHandler } from '@modelcontextprotocol/server'
@@ -40,6 +40,7 @@ import {
   fromToolName,
   isChatMetaToolName,
   projectPlannerTools,
+  RUNS_START_FUNCTION_ID,
   type ChatResolverTable,
   type CreateFunctionRegistryOptions,
   type FunctionDeclaration,
@@ -55,22 +56,80 @@ import {
 import {
   CHAT_CAPABILITIES_ROUTE,
   createChatRouter,
+  RUN_SERVICE_EVENTS_TEMPLATE,
+  RUN_SERVICE_OK_ROUTE,
+  RUN_SERVICE_ROUTE_TABLE,
+  RUN_SERVICE_START_ROUTE,
 } from '@vostride/agent-qa-dashboard'
-import { FunctionScopeSchema } from '@vostride/agent-qa-schema'
+import {
+  FunctionScopeSchema,
+  RunServiceReadinessSchema,
+  RunStartAcknowledgementSchema,
+} from '@vostride/agent-qa-schema'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { vi } from 'vitest'
 
-import { composeDashboardDoor } from '../../commands/dashboard.js'
+import {
+  composeDashboardDoor,
+  composeRunServicePorts,
+  createDashboardRunDoor,
+} from '../../commands/dashboard.js'
 import { createFnCommand } from '../../commands/fn.js'
 import { mcpFunctionCaller } from '../../commands/mcp.js'
 import { CONFORMANCE_EXECUTION_CONTEXT } from './policy-fixtures.js'
+import {
+  RUN_SERVICE_FIXTURE_ENTRY_NAME,
+  RUN_SERVICE_FIXTURE_TOKEN,
+  RUN_SERVICE_FIXTURE_TOKEN_VAR,
+  runServiceFixtureProject,
+} from './spawned-chat.js'
 
 /** Which enumeration produced a capability the declared data does not catalogue. */
 export interface SurfaceStray {
-  readonly kind: 'mcp-listed-tool' | 'chat-alias-target' | 'fn-listed-op' | 'dashboard-listed-op'
+  readonly kind:
+    | 'mcp-listed-tool'
+    | 'chat-alias-target'
+    | 'fn-listed-op'
+    | 'dashboard-listed-op'
+    // 402-07's two, and they are two because the run-service door's reach is folded from a ROUTE
+    // TABLE rather than from a listing of names. A route the door answers that the binding below
+    // does not cover is a door widened without this suite seeing it; a bound op id the registry
+    // census does not declare is the uncatalogued-capability shape every other row already reports.
+    | 'run-service-unbound-route'
+    | 'run-service-bound-op'
+    // The reverse direction of the same register: a binding naming a route the shipped table no
+    // longer carries. Without it the binding could keep certifying a door that is gone, which is
+    // the half-a-register shape `probeResolverTable` refuses by name.
+    | 'run-service-stale-binding'
+    // And the third direction, which is the one that keeps the fold from being vacuous: a route the
+    // shipped table PUBLISHES that the running door did not answer. Without it a door that answered
+    // nothing at all would still enumerate whatever the declared binding names, and the roster's
+    // "enumerated nothing" leg — the one guard against a surface going silent — could never fire.
+    | 'run-service-unanswered-route'
   /** The stray itself — a wire tool name, a resolver alias's function-id target, a listed op id. */
   readonly name: string
+}
+
+/**
+ * A capability class a rostered door structurally does not expose — DECLARED, never absent (D-04).
+ *
+ * WHY THIS IS A FIELD AND NOT A SILENCE. Four of the five rostered doors reach the whole registry
+ * census, so "what this door cannot do" was never a question the roster had to answer. The run
+ * service is the first door with a NARROW reach by design — one op and a stream — and a narrow door
+ * whose narrowness is expressed only by the ops it happens not to enumerate is indistinguishable
+ * from a door that lost half its reach in a regression. 397 D-12 refuses to start keeping a skip
+ * list; this is the opposite of one, because every member states a fact about the door's SHAPE that
+ * a reader can check against the door.
+ *
+ * `why` IS A FACT ABOUT THE DOOR, NEVER A SCHEDULE. "403 will add this" is a plan; "this door
+ * publishes no route that dispatches it" is a property somebody can go and disprove.
+ */
+export interface SurfaceNotApplicable {
+  /** The capability class, in the roster's own words. */
+  readonly capability: string
+  /** Why this door cannot reach it — a property of the door, checkable today. */
+  readonly why: string
 }
 
 /** What one surface reaches, plus what it reached that nothing declares. */
@@ -89,6 +148,15 @@ export interface SurfaceEnumeration {
 export interface SurfaceAdapter {
   readonly id: string
   enumerateOpIds(): Promise<SurfaceEnumeration>
+  /**
+   * What this door structurally cannot do — REQUIRED, so a door declares it rather than omits it.
+   *
+   * Required and not optional on purpose: an optional field lets a narrow door say nothing and read
+   * exactly like a wide one, which is the omission {@link SurfaceNotApplicable} exists to make
+   * impossible. The four wide doors declare an EMPTY list, which is a claim ("this door reaches the
+   * census") rather than a silence, and a door that later narrows has to come and edit it.
+   */
+  readonly notApplicable: readonly SurfaceNotApplicable[]
 }
 
 /**
@@ -324,6 +392,9 @@ export async function enumerateMcpOpIds(
 export const mcpSurfaceAdapter: SurfaceAdapter = Object.freeze({
   id: 'mcp',
   enumerateOpIds: () => enumerateMcpOpIds(),
+  // WIDE BY CLAIM, not by silence: this door reaches the whole registry census, so there is no
+  // capability class it declines. See {@link SurfaceNotApplicable} for why an empty list is stated.
+  notApplicable: Object.freeze([]),
 })
 
 // ---- The chat side -----------------------------------------------------------------------------
@@ -505,6 +576,9 @@ export async function enumerateChatOpIds(): Promise<SurfaceEnumeration> {
 export const chatSurfaceAdapter: SurfaceAdapter = Object.freeze({
   id: 'chat',
   enumerateOpIds: () => enumerateChatOpIds(),
+  // WIDE BY CLAIM, not by silence: this door reaches the whole registry census, so there is no
+  // capability class it declines. See {@link SurfaceNotApplicable} for why an empty list is stated.
+  notApplicable: Object.freeze([]),
 })
 
 // ---- The fn side (2026-08-20, Phase 399.1 plan 06, D-07) ----------------------------------------
@@ -611,6 +685,9 @@ export async function enumerateFnOpIds(): Promise<SurfaceEnumeration> {
 export const fnSurfaceAdapter: SurfaceAdapter = Object.freeze({
   id: 'fn',
   enumerateOpIds: () => enumerateFnOpIds(),
+  // WIDE BY CLAIM, not by silence: this door reaches the whole registry census, so there is no
+  // capability class it declines. See {@link SurfaceNotApplicable} for why an empty list is stated.
+  notApplicable: Object.freeze([]),
 })
 
 // ---- The dashboard side (2026-08-21, Phase 400 plan 01, D-09/D-12) ------------------------------
@@ -754,4 +831,341 @@ export async function enumerateDashboardOpIds(): Promise<SurfaceEnumeration> {
 export const dashboardSurfaceAdapter: SurfaceAdapter = Object.freeze({
   id: 'dashboard',
   enumerateOpIds: () => enumerateDashboardOpIds(),
+  // WIDE BY CLAIM, not by silence: this door reaches the whole registry census, so there is no
+  // capability class it declines. See {@link SurfaceNotApplicable} for why an empty list is stated.
+  notApplicable: Object.freeze([]),
+})
+
+// ---- The run-service side (2026-08-24, Phase 402 plan 07, D-04) ---------------------------------
+//
+// THE FIFTH DOOR, AND THE FIRST NARROW ONE. `roster.ts`'s 2026-08-16 registration note reserved a
+// row for "any post-v2.0 REST or SDK surface"; the authed run service is one, shipped by 402-01, and
+// it joins in the phase that ships it. What makes it unlike the four above is its REACH: the chat
+// host, the MCP server, `fn` and the dashboard chat door each stand in front of the whole registry
+// census, and this one stands in front of exactly one op and one stream.
+//
+// WHY THE ENUMERATION IS FOLDED FROM A ROUTE TABLE AND NOT FROM A LISTING. Every adapter above reads
+// a LISTING off its door — `tools/list`, the planner projection, `fn --list`,
+// `GET /api/chat/capabilities` — and folds the names it finds into op ids. This door publishes no
+// listing and must not: `run-service-routes.ts` states the reason at `/ok`, that an unauthenticated
+// caller learning which routes a process serves is itself a disclosure, and even the authed `/ok`
+// answers measured facts rather than a capability catalogue. So the produced side here is not a set
+// of NAMES but a set of ROUTES THE DOOR ANSWERED, driven one by one against a real server, read off
+// response bytes; the fold is a declared binding from route to registry op.
+//
+// WHAT THAT MEASURES, AND WHAT IT HONESTLY DOES NOT. It measures that every route the shipped table
+// publishes is answered by a running door, that every answered route is bound to something, that
+// every binding names a route the shipped table still carries, and that every op id a binding names
+// is one the registry census declares. It does NOT prove by construction that `POST /run` dispatches
+// `runs.start` rather than some other op — no byte on this wire carries a function id. What narrows
+// that gap is the CORROBORATION below: the observed 202 body is parsed under
+// `RunStartAcknowledgementSchema`, which is `runs.start`'s own declared result contract, so a route
+// re-pointed at a different op answers a body this fold refuses. That is a constraint rather than an
+// identity, and saying so is the point — `parity-anchors.test.ts` states the same kind of limit
+// about what its two halves can and cannot see.
+//
+// NOTHING HERE SPELLS AN OP ID. `RUNS_START_FUNCTION_ID` is the product's own exported constant and
+// the route table is the product's own exported data; a string literal on either side would make
+// this file's idea of the door the subject of the comparison.
+
+/**
+ * One published route, bound to the registry capability it stands in front of — or to none.
+ *
+ * `ownsNoCapability` IS AN ARM, NOT AN OMISSION, and it is the same distinction
+ * {@link SurfaceNotApplicable} draws one level up. `/ok` reaches no registry op at all: it answers
+ * four facts this process measures about itself. A route left out of the binding because it happens
+ * to reach nothing would be indistinguishable from a route somebody forgot, and the fold below
+ * reports the second as a stray — so the first has to be able to say so out loud.
+ */
+export type RunServiceRouteBinding =
+  | { readonly key: string; readonly opId: string }
+  | { readonly key: string; readonly ownsNoCapability: string }
+
+/** The table's own key for a row, so both sides of the set-equality are spelled once. */
+export function runServiceRouteKey(row: { method: string; path: string }): string {
+  return `${row.method} ${row.path}`
+}
+
+/**
+ * What each published route of the run-service door stands in front of (402-07).
+ *
+ * DECLARED DATA, ASSERTED SET-EQUAL AGAINST THE SHIPPED TABLE IN BOTH DIRECTIONS by the fold below.
+ * That two-way equality is what keeps this from being a table compared against itself: a route added
+ * to `RUN_SERVICE_ROUTE_TABLE` tomorrow with no entry here is a named RED in the change that adds
+ * it, and an entry here naming a route the door no longer serves is a named RED too.
+ */
+export const RUN_SERVICE_ROUTE_BINDINGS: readonly RunServiceRouteBinding[] = Object.freeze([
+  Object.freeze({
+    key: `POST ${RUN_SERVICE_START_ROUTE}`,
+    // The op the composition dispatches through `invokeFunction` — the product's constant, not a
+    // spelling of it. Corroborated on the wire by the ack contract, see `enumerateRunServiceOpIds`.
+    opId: RUNS_START_FUNCTION_ID,
+  }),
+  Object.freeze({
+    key: `GET ${RUN_SERVICE_EVENTS_TEMPLATE}`,
+    // THE STREAM DISPATCHES NO REGISTRY OP, and that is a fact about the product rather than a gap
+    // in this binding. `composeRunServicePorts` serves this route from `sessions.attach(runId)` —
+    // the in-process bus of a run THIS door already started under a caller the gate already
+    // adjudicated — where `POST /run` goes through `invokeFunction`. The registry does declare a
+    // `runs.events` op; this route is not it, and binding it here would claim a dispatch that does
+    // not happen. What the stream must not do is carry anything the envelope contract does not
+    // admit, which is `run-service-anchors.test.ts`'s claim and not an enumeration's.
+    ownsNoCapability:
+      'the stream attaches to the bus of a run this door already started; it dispatches nothing',
+  }),
+  Object.freeze({
+    key: `GET ${RUN_SERVICE_OK_ROUTE}`,
+    // Readiness reports four facts this process measures about itself. It owns no capability, on the
+    // same reasoning 398 D-02 used to keep the capability catalogue off the roster entirely.
+    ownsNoCapability: 'readiness answers measured facts about this process and invokes nothing',
+  }),
+] as const)
+
+/**
+ * Fold the routes a door ANSWERED into op ids — PURE, TOTAL and SYNCHRONOUS.
+ *
+ * Split out from the drive for the reason every fold in this file is: the stray branches are the
+ * shapes 397-09's mutation plants, and a branch reachable only by mutating a shipped file is a
+ * branch nobody exercises. Every input arrives as an argument — the answered routes, the published
+ * table, the bindings and the census — so this function's own idea of the door is empty.
+ *
+ * THREE NAMED REDS, and each is a different defect. An answered route with no binding is the door
+ * widened without this suite seeing it. A binding whose route the table no longer publishes is this
+ * file certifying a door that is gone. A bound op id absent from the census is the uncatalogued
+ * capability every other row already reports.
+ *
+ * A STRAY IS COUNTED INTO `opIds` AS WELL AS REPORTED, on `dashboardEnumerationOf`'s own reasoning:
+ * the reverse completeness leg is a subset claim, and a stray excluded from the set it belongs to
+ * would leave that leg unable to fire on the very defect it exists for.
+ */
+export function runServiceEnumerationOf(
+  answeredRouteKeys: readonly string[],
+  publishedRouteKeys: readonly string[],
+  bindings: readonly RunServiceRouteBinding[],
+  registryOpIdSet: ReadonlySet<string>,
+): SurfaceEnumeration {
+  const opIds = new Set<string>()
+  const strays: SurfaceStray[] = []
+  const boundKeys = new Set(bindings.map((binding) => binding.key))
+  const published = new Set(publishedRouteKeys)
+  const answered = new Set(answeredRouteKeys)
+
+  for (const key of answered) {
+    if (!boundKeys.has(key)) {
+      strays.push({ kind: 'run-service-unbound-route', name: key })
+    }
+  }
+  for (const key of published) {
+    if (!answered.has(key)) {
+      strays.push({ kind: 'run-service-unanswered-route', name: key })
+    }
+  }
+  for (const binding of bindings) {
+    if (!published.has(binding.key)) {
+      strays.push({ kind: 'run-service-stale-binding', name: binding.key })
+      continue
+    }
+    if (!('opId' in binding)) continue
+    // COUNTED ONLY WHEN THE ROUTE ANSWERED. An `opIds` populated straight from the declared binding
+    // would be the table-against-itself shape this file's header refuses: a door that had stopped
+    // serving every route would enumerate exactly what a working one does, and the roster leg that
+    // reds on a surface enumerating nothing could never fire on this row. The unanswered route is
+    // already reported above; this is what stops it from being reported and then ignored.
+    if (!answered.has(binding.key)) continue
+    opIds.add(binding.opId)
+    if (!registryOpIdSet.has(binding.opId)) {
+      strays.push({ kind: 'run-service-bound-op', name: binding.opId })
+    }
+  }
+  return { opIds, strays }
+}
+
+/** A route driven against the door, as the enumeration reads it. */
+export interface RunServiceRouteProbe {
+  readonly key: string
+  readonly status: number
+  /** The parsed body, when the answer was JSON. SSE answers report `undefined`. */
+  readonly body: unknown
+  readonly contentType: string | null
+}
+
+/**
+ * Stand the shipped run service up on an ephemeral port and hand its origin to one body.
+ *
+ * THE PRODUCTION COMPOSITION, over real TCP — `startServer` with `runService` from
+ * `composeRunServicePorts` over a host from `composeDashboardDoor` and a run door from
+ * `createDashboardRunDoor`, which is exactly what `agent-qa dashboard` assembles. What is replaced
+ * is nothing at all; what this fixture chooses is a port number and a temp project.
+ *
+ * IT IS DELIBERATELY NOT `createRunServiceRoutes` MOUNTED ON A BARE SERVER. 402-01's e2e header
+ * names that shortcut and refuses it: the verdict standing between a socket and a run, the ordering
+ * against the host's wildcard preflight and its SPA fallback are process-level facts, and a router
+ * mounted by hand measures none of them. The dashboard adapter above legitimately does mount a
+ * router, because what IT measures is a listing.
+ *
+ * MODEL-FREE by omission, which is the shipped headless posture rather than a stub: no `chatModel`
+ * is supplied, so nothing here can reach a provider on a machine that has a credential exported.
+ *
+ * The server, the host, the composition and the workspace are all torn down in a `finally`.
+ */
+export async function withRunServiceDoor<Answer>(
+  body: (origin: string) => Promise<Answer>,
+): Promise<Answer> {
+  const fixture = runServiceFixtureProject('adapter')
+  const configDir = dirname(resolve(fixture.configPath))
+  const { DashboardDatabase, startServer } = await import('@vostride/agent-qa-dashboard')
+  const db = new DashboardDatabase({ dbPath: join(configDir, 'dashboard.db') })
+  const runDoor = await createDashboardRunDoor({ db })
+  let boundOrigin: string | undefined
+  const { agentHost, host, enterRunTriggerScope } = composeDashboardDoor({
+    agentQaRoot: join(configDir, '.agent-qa'),
+    configPath: fixture.configPath,
+    boundOrigin: () => boundOrigin,
+    runBridge: runDoor.runBridge,
+  })
+  runDoor.bindHost(host)
+  runDoor.bindTriggerScope(enterRunTriggerScope)
+  const runService = composeRunServicePorts({
+    entries: [{
+      name: RUN_SERVICE_FIXTURE_ENTRY_NAME,
+      tokenEnvVar: RUN_SERVICE_FIXTURE_TOKEN_VAR,
+      trustScope: { project: 'conformance' },
+    }],
+    // THE VALUE TRAVELS IN AN EXPLICIT MAP, never through `process.env`: a cell that exported a
+    // variable would leak it into every sibling in the same worker, and a door authenticated by
+    // ambient state is a door this file cannot say it configured.
+    env: { [RUN_SERVICE_FIXTURE_TOKEN_VAR]: RUN_SERVICE_FIXTURE_TOKEN },
+    door: runDoor,
+  })
+  const started = await startServer({
+    db,
+    port: 0,
+    configPath: fixture.configPath,
+    agentHost,
+    executionBackend: runDoor.backend,
+    runService: runService.ports,
+    runServiceReadiness: runService.readiness,
+  })
+  try {
+    const address = (started.server as { address(): unknown }).address()
+    if (address === null || typeof address !== 'object' || !('port' in address)) {
+      throw new TypeError('the run service bound no port')
+    }
+    boundOrigin = `http://127.0.0.1:${String((address as { port: number }).port)}`
+    return await body(boundOrigin)
+  } finally {
+    started.close()
+    runService.dispose()
+    await host.close()
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+}
+
+/**
+ * What the run-service door reaches, produced by DRIVING every route the shipped table publishes.
+ *
+ * EVERY ROW IS DRIVEN, IN THE TABLE'S OWN ORDER, and the run id the stream row needs comes off the
+ * start row's own answer — so the two are one conversation with the door rather than two probes that
+ * happen to agree. A route that answered `unknown_route` counts as NOT answered, which is the
+ * door's own word for a path it does not serve.
+ *
+ * THE ACK IS PARSED, NOT INSPECTED. `RunStartAcknowledgementSchema.parse` is the corroboration this
+ * module's header promises: the start route is bound to `runs.start` in the declared table, and the
+ * body it answered has to satisfy `runs.start`'s own result contract or the route is not counted as
+ * answered at all.
+ *
+ * A DOOR THAT ANSWERED NOTHING PARSEABLE yields an empty answered set rather than a throw, on
+ * `enumerateDashboardOpIds`'s reasoning: the roster leg already asserts no surface enumerates
+ * nothing, by name, and a throw here would report the same fact in a voice that does not say which
+ * surface it was about.
+ */
+export async function enumerateRunServiceOpIds(): Promise<SurfaceEnumeration> {
+  const publishedKeys = RUN_SERVICE_ROUTE_TABLE.map((row) => runServiceRouteKey(row))
+  const answered = await withRunServiceDoor(async (origin) => {
+    const bearer = { Authorization: `Bearer ${RUN_SERVICE_FIXTURE_TOKEN}` }
+    const keys: string[] = []
+    let runId: string | undefined
+
+    const started = await fetch(`${origin}${RUN_SERVICE_START_ROUTE}`, {
+      method: 'POST',
+      headers: { ...bearer, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patterns: ['tests/probe.test.yaml'] }),
+    })
+    if (started.status === 202) {
+      try {
+        const ack = RunStartAcknowledgementSchema.parse(await started.json())
+        runId = ack.runId
+        keys.push(`POST ${RUN_SERVICE_START_ROUTE}`)
+      } catch {
+        // A 202 whose body the ack contract refuses is a route answering something other than the
+        // capability it is bound to. Left unanswered, so the fold reports the binding as unproduced.
+      }
+    }
+
+    if (runId !== undefined) {
+      const stream = await fetch(
+        `${origin}/run/${encodeURIComponent(runId)}/events`,
+        { headers: bearer },
+      )
+      if ((stream.headers.get('content-type') ?? '').includes('text/event-stream')) {
+        keys.push(`GET ${RUN_SERVICE_EVENTS_TEMPLATE}`)
+      }
+      // Read nothing and release the socket: what this enumeration asks of the stream is that the
+      // door OPENS it. What the frames carry is `run-service-anchors.test.ts`'s question, asked
+      // over the wire against the shipped binary rather than against this composition.
+      await stream.body?.cancel().catch(() => undefined)
+    }
+
+    const ok = await fetch(`${origin}${RUN_SERVICE_OK_ROUTE}`, { headers: bearer })
+    if (ok.status === 200) {
+      try {
+        RunServiceReadinessSchema.parse(await ok.json())
+        keys.push(`GET ${RUN_SERVICE_OK_ROUTE}`)
+      } catch {
+        // Same reasoning as the ack: a readiness answer the contract refuses is not this route.
+      }
+    }
+    return keys
+  })
+  return runServiceEnumerationOf(
+    answered,
+    publishedKeys,
+    RUN_SERVICE_ROUTE_BINDINGS,
+    new Set(registryOpIds()),
+  )
+}
+
+export const runServiceSurfaceAdapter: SurfaceAdapter = Object.freeze({
+  id: 'run-service',
+  enumerateOpIds: () => enumerateRunServiceOpIds(),
+  /**
+   * WHAT THIS DOOR CANNOT DO, DECLARED (D-04) — and every member is a property of the door today.
+   *
+   * The list is derived from nothing: it is written, reviewed, and readable beside
+   * `RUN_SERVICE_ROUTE_TABLE`, which publishes three routes and no fourth. A reader can check every
+   * line of it against that table in one screen, which is the whole reason the door's routes are
+   * exported data.
+   */
+  notApplicable: Object.freeze([
+    Object.freeze({
+      capability: 'conversation — the chat surfaces\' whole vocabulary (agent.ask and its session)',
+      why: 'this door publishes no conversational route and mints no session; its caller holds the '
+        + 'single scope `run`, so an ask would be refused at the caller band even if one existed',
+    }),
+    Object.freeze({
+      capability: 'authoring and configuration writes (config.field.set, authoring.draft.*)',
+      why: '`runServiceCallerFor` grants a LITERAL [\'run\'] rather than a spread of the CLI\'s, so '
+        + 'no scope a later phase mints reaches this door by default and no write op is in reach',
+    }),
+    Object.freeze({
+      capability: 'every read op the registry declares (runs.get, runs.list, analysis.get, …)',
+      why: 'the route table publishes three paths and none of them dispatches a read; a remote '
+        + 'caller addresses one run it started and reads its events, and nothing else',
+    }),
+    Object.freeze({
+      capability: 'run cancellation',
+      why: 'deferred by 402-01 and recorded in the run-service module header — there is no route, '
+        + 'so a cancel is unreachable rather than unimplemented',
+    }),
+  ]),
 })

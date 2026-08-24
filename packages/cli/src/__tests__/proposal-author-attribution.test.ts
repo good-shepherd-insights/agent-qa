@@ -32,11 +32,15 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
-import type { FunctionCaller } from '@vostride/agent-qa-schema'
+import type { FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { CHAT_DOOR_SURFACE } from '../commands/chat.js'
-import { composeDashboardDoor, DASHBOARD_FUNCTION_CALLER } from '../commands/dashboard.js'
+import {
+  composeDashboardDoor,
+  DASHBOARD_FUNCTION_CALLER,
+  RUN_SERVICE_GRANTED_SCOPES,
+} from '../commands/dashboard.js'
 import {
   AGENT_CONFIG_COMMIT_AUTHOR_BY_SURFACE,
   AGENT_CONFIG_COMMIT_AUTHOR_UNRECOGNISED,
@@ -280,8 +284,31 @@ describe('a config-apply commit names the surface that MINTED the proposal', () 
       fn: 'fn.ts',
       dashboard: 'dashboard.ts',
     }
+    // 402-07: A DOOR THAT CANNOT MINT A PROPOSAL AT ALL, and the honest answer for it is not a
+    // module name. The authed run service reaches `runs.start` and nothing else — its caller is
+    // minted with a LITERAL `['run']` grant rather than a spread of the CLI's (402-01's decision),
+    // so `config.field.set` is refused at the caller band before any proposal exists. Pointing this
+    // row at `dashboard.ts` would pass this census on a `mintingSurface:` that belongs to a
+    // different caller in the same file — a green bought by a coincidence of file layout. So the
+    // exemption is DECLARED, and it is checked rather than asserted: the census re-reads the grant
+    // off the shipped constant, so a later widening of that grant turns this row back into one that
+    // must supply a minting surface.
+    const CANNOT_MINT: Readonly<Record<string, readonly FunctionScope[]>> = {
+      'run-service': RUN_SERVICE_GRANTED_SCOPES,
+    }
     expect(SURFACE_ROSTER.length).toBeGreaterThan(0)
     for (const entry of SURFACE_ROSTER) {
+      const exemptGrant = CANNOT_MINT[entry.id]
+      if (exemptGrant !== undefined) {
+        // The exemption's own premise, measured: a door that cannot write configuration cannot
+        // author a proposal. `config-write` appearing in this grant is what makes the row need a
+        // minting surface again, and this is where it would be caught.
+        expect(
+          [...exemptGrant],
+          `${entry.id}: exempt from the minting-surface census only while it cannot write config`,
+        ).not.toContain('config-write')
+        continue
+      }
       const module = MODULE_FOR_DOOR[entry.id]
       if (module === undefined) {
         throw new Error(
