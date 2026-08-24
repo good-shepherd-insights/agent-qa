@@ -872,3 +872,59 @@ describe('END TO END — a run started over the wire masks the door’s credenti
     }
   }, 180_000)
 })
+
+// ---- (6) THE SECOND REFUSAL OF `runId` (WINDOWS #231) -----------------------------------------
+
+describe('the door never forwards a caller’s run id, even with its own check bypassed (#231)', () => {
+  it('the composition builds the request from patterns ALONE — an injected id is not honoured', async () => {
+    // WINDOWS #231 ASKS WHETHER `runId` HAS A SECOND REFUSAL. `RUN_SERVICE_REFUSED_REQUEST_FIELDS`
+    // rejects the key at the HTTP door, and the core's `REFUSED_RUN_REQUEST_FIELDS` covers `scope`
+    // and `executionContext` a layer down but NOT `runId` — deliberately, because the local
+    // dashboard door legitimately supplies one (its queue minted the row). A core-level refusal
+    // would break that door, so defence in depth for this field cannot live there.
+    //
+    // It lives HERE instead, and this cell is what makes that a fact rather than a reading:
+    // `composeRunServicePorts` builds its `RunsStartInput` from `patterns` and nothing else, so a
+    // value reaching past the HTTP check is dropped by construction. Called directly, which is the
+    // only way to bypass that check.
+    const configPath = fixtureWorkspace({ environment: 'local' })
+    const configDir = dirname(resolve(configPath))
+    const { DashboardDatabase } = await import('@vostride/agent-qa-dashboard')
+    const db = new DashboardDatabase({ dbPath: join(configDir, 'refusal.db') })
+    const runDoor = await createDashboardRunDoor({ db })
+    const { host, enterRunTriggerScope } = composeDashboardDoor({
+      agentQaRoot: join(configDir, '.agent-qa'),
+      configPath,
+      boundOrigin: () => 'http://127.0.0.1:1',
+      runBridge: runDoor.runBridge,
+    })
+    runDoor.bindHost(host)
+    runDoor.bindTriggerScope(enterRunTriggerScope)
+    const composition = composeRunServicePorts({
+      entries: [{ name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: PROJECT_SCOPE }],
+      env: { [TOKEN_VAR]: TOKEN },
+      door: runDoor,
+    })
+    try {
+      const smuggled = 'r_the-caller-chose-this-id'
+      const ack = await composition.ports.invokeRunStart({
+        patterns: ['tests/probe.test.yaml'],
+        trustScope: PROJECT_SCOPE,
+        clientId: 'ci',
+        // Past the door's own key check, by construction — this is the input the HTTP layer would
+        // have refused, arriving at the composition anyway.
+        runId: smuggled,
+      } as never)
+      expect(ack.runId).not.toBe(smuggled)
+      expect(ack.runId).toBeTruthy()
+      // The run that actually happened is under the MINTED id, so the smuggled one names nothing.
+      expect(runsThatProducedEvents(configDir)).not.toContain(smuggled)
+      expect(runsThatProducedEvents(configDir).length).toBeGreaterThan(0)
+    } finally {
+      composition.dispose()
+      await host.close()
+      db.close()
+      rmSync(configDir, { recursive: true, force: true })
+    }
+  }, 180_000)
+})
