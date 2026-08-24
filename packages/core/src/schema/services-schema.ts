@@ -40,8 +40,24 @@ export const DashboardConfigSchema = z.object({
   host: z.string().trim().min(1).optional(),
 }).strict()
 
+/**
+ * THE ONE MEMBER SET FOR "this host is loopback" (402-05 D-07 — T-402-18).
+ *
+ * Exported because two mechanisms now decide loopback membership and they must not be two
+ * spellings: `LoopbackHostSchema` below refuses a non-loopback MCP host at PARSE time, and
+ * `startServer`'s pre-listen bind guard refuses a non-loopback DASHBOARD host at RUNTIME unless a
+ * run-service credential is declared. A second literal list would let the two drift, and the
+ * direction it would drift in is a host one mechanism calls loopback and the other does not.
+ */
+export const LOOPBACK_HOSTS: readonly string[] = Object.freeze(['localhost', '127.0.0.1', '::1'])
+
+/** Whether a configured host names a loopback interface. The one predicate over the one set. */
+export function isLoopbackHost(host: string): boolean {
+  return LOOPBACK_HOSTS.includes(host.trim())
+}
+
 const LoopbackHostSchema = z.string().trim().min(1).refine(
-  host => host === 'localhost' || host === '127.0.0.1' || host === '::1',
+  isLoopbackHost,
   { message: 'MCP host must be localhost, 127.0.0.1, or ::1 in local-only mode' },
 )
 

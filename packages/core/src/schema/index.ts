@@ -33,6 +33,8 @@ export {
   RecordingConfigSchema,
   AccessibilityConfigSchema,
   AuthStateConfigSchema,
+  LOOPBACK_HOSTS,
+  isLoopbackHost,
 } from './services-schema.js'
 
 export { TargetSchema, DeviceProfileSchema, ProviderConfigSchema } from './registry-schema.js'
