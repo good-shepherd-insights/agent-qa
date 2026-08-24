@@ -147,6 +147,14 @@ export interface InProcessFixtureInput {
    * one that triggers the same file twice.
    */
   readonly parallelRuns?: boolean
+  /**
+   * Write `use.workers: <n>` beside `use.parallel` (402-03, D-12).
+   *
+   * SEPARATE FROM `parallelRuns` because the two answer different questions and a cell needs to
+   * turn one without the other: `parallel` alone is the DEFAULT-CEILING arm, and this knob is the
+   * explicit-count arm. Written only when set, so every existing fixture's bytes are unchanged.
+   */
+  readonly workerCount?: number
 }
 
 /** The package name the knob above declares. Not installed, and named so a reader can tell. */
@@ -220,6 +228,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
         ? ['  browser:', '    name: chromium', '    headless: false']
         : []),
       ...(input.parallelRuns === true ? ['  parallel: true'] : []),
+      ...(input.workerCount === undefined ? [] : [`  workers: ${input.workerCount}`]),
       '  llm: unreachable',
       '  mobile:',
       '    appState: preserve',
