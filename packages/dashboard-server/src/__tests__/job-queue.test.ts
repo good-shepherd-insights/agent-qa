@@ -157,40 +157,43 @@ describe('JobQueue', () => {
       expect(cancelSpy).toHaveBeenCalledWith(runId)
     })
 
-    it('cancels pending and running children when a running parent is cancelled', () => {
-      const parentId = queue.enqueue({ name: 'Retry Parent' })
+    // 2026-08-24 (402-09, D-11): the cell that stood here asserted the child-cancellation fan-out.
+    // The fan-out is deleted with the model that minted its children; this is the same claim with
+    // the opposite sign, driven against a database seeded as an OPERATOR's would be — historical
+    // linked rows, no live producer. See DELETION-INVENTORY.md.
+    it('leaves historical linked rows alone when the run they were parented to is cancelled', () => {
+      const parentId = queue.enqueue({ name: 'Historical Suite' })
       queue.processNext()
       const startedAt = '2026-05-02T10:00:00.000Z'
       const runningChildId = db.insertRun({
-        name: 'Attempt 1',
+        name: 'Member 1',
         status: 'running',
         duration: 0,
         startedAt,
         endedAt: startedAt,
         parentRunId: parentId,
-        attemptNumber: 1,
-        maxRetries: 2,
       })
       const pendingChildId = db.insertRun({
-        name: 'Attempt 2',
+        name: 'Member 2',
         status: 'pending',
         duration: 0,
         startedAt,
         endedAt: startedAt,
         parentRunId: parentId,
-        attemptNumber: 2,
-        maxRetries: 2,
       })
       db.insertRunArtifact({ runId: runningChildId, kind: 'test', payload: { runtime: { status: 'running' } } })
       db.insertRunArtifact({ runId: pendingChildId, kind: 'test', payload: { runtime: { status: 'pending' } } })
 
       expect(queue.cancel(parentId)).toBe(true)
 
+      // Cancelling a run cancels the run.
       expect(db.getRun(parentId)?.status).toBe('cancelled')
-      expect(db.getRun(runningChildId)?.status).toBe('cancelled')
-      expect(db.getRun(pendingChildId)?.status).toBe('cancelled')
-      expect(db.getRunArtifact(runningChildId)?.finalizedAt).toBeTruthy()
-      expect(db.getRunArtifact(pendingChildId)?.finalizedAt).toBeTruthy()
+      expect(db.getRunArtifact(parentId)?.finalizedAt).toBeTruthy()
+      // ...and reaches nothing else. The rows are still there, unchanged and still readable.
+      expect(db.getRun(runningChildId)?.status).toBe('running')
+      expect(db.getRun(pendingChildId)?.status).toBe('pending')
+      expect(db.getRunsByParent(parentId).map((r) => r.id).sort())
+        .toEqual([pendingChildId, runningChildId].sort())
     })
 
     it('returns false for a completed run', () => {

@@ -40,16 +40,18 @@ type ConfigSnapshot = RunArtifactConfigSnapshot | ArtifactRecord
  * composition root and passed in; the bus never carries these.
  */
 export interface DashboardRunIngestCorrelationEnv {
-  /** `AGENT_QA_RUN_ID` — plain single run: adopt/update this exact row. */
+  /** `AGENT_QA_RUN_ID` — adopt/update this exact row. */
   runId?: string
-  /** `AGENT_QA_PARENT_RUN_ID` — retry mode: each attempt inserts a child under this parent. */
-  parentRunId?: string
-  /** `AGENT_QA_SUITE_QUEUE_ID` — suite mode: the enqueued parent (suite) run row id. */
+  /**
+   * `AGENT_QA_SUITE_QUEUE_ID` — the enqueued run row id for a suite run.
+   *
+   * 2026-08-24 (402-09, D-11): this is now a SECOND SPELLING OF `runId`, not a parent handle. A
+   * suite is ONE run row with member handles (402-04); the id is adopted exactly as a single test's
+   * is. `parentRunId` / `maxRetries` / `attemptNumber` used to sit beside it and are gone with the
+   * retry mode they served — 401-07 (D-12) had already retired the machinery that set
+   * `AGENT_QA_PARENT_RUN_ID`, so that mode was producer-less before this plan touched it.
+   */
   suiteQueueId?: string
-  /** `AGENT_QA_MAX_RETRIES` — retry ceiling stamped on child rows. */
-  maxRetries?: number
-  /** `AGENT_QA_ATTEMPT_NUMBER` — the current attempt ordinal for a retry child. */
-  attemptNumber?: number
 }
 
 export interface DashboardRunIngestDeps {
@@ -80,8 +82,6 @@ export interface DashboardRunIngest {
   handler(envelope: RunEventEnvelope): void
   finalize(extra?: DashboardRunIngestFinalizeExtra): Promise<void>
 }
-
-type IngestMode = 'suite' | 'retry' | 'plain'
 
 interface TestStartedLike {
   testId?: string
@@ -184,7 +184,6 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   const env = deps.correlationEnv ?? {}
   const now = deps.now ?? (() => new Date().toISOString())
 
-  const mode: IngestMode = env.suiteQueueId ? 'suite' : env.parentRunId ? 'retry' : 'plain'
 
   const sourceRecord = isRecord(sourceSnapshot) ? sourceSnapshot : undefined
   const configRecord = isRecord(configSnapshot) ? configSnapshot : undefined
@@ -198,8 +197,6 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
 
   /** The primary DB row id lifecycle status/finalize writes target. */
   let runId: string | undefined
-  /** Child rows created per test in suite mode, keyed by envelope `testIndex`. */
-  const childRunIds = new Map<number, string>()
   /** `stepStarted.stepText` cached per `testIndex:stepIndex` for the step-row name. */
   const stepNames = new Map<string, string>()
   let startedAtMs = 0
@@ -217,10 +214,10 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     db.insertRunArtifact({ runId: id, kind, payload: baseArtifactPayload() })
   }
 
-  function adoptOrInsertPrimary(kind: RunArtifactKind): string {
+  function adoptOrInsertPrimary(): string {
     const startedAt = now()
     startedAtMs = Date.parse(startedAt) || Date.now()
-    const explicitId = mode === 'suite' ? env.suiteQueueId : env.runId
+    const explicitId = env.runId ?? env.suiteQueueId
 
     if (explicitId) {
       if (db.getRun(explicitId)) {
@@ -266,42 +263,18 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     })
   }
 
-  function insertRetryChild(payload: TestStartedLike): string {
-    const startedAt = now()
-    startedAtMs = Date.parse(startedAt) || Date.now()
-    return db.insertRun({
-      id: env.runId,
-      name: readString(payload.name) ?? sourceName ?? 'run',
-      filePath: readString(payload.filePath) ?? sourceFilePath,
-      status: 'running',
-      duration: 0,
-      attributes,
-      startedAt,
-      endedAt: startedAt,
-      parentRunId: env.parentRunId,
-      attemptNumber: env.attemptNumber ?? 1,
-      maxRetries: env.maxRetries ?? 0,
-      platform,
-      testId: readString(payload.testId) ?? sourceTestId,
-    })
-  }
-
-  function insertSuiteChild(payload: TestStartedLike): string {
-    const startedAt = now()
-    return db.insertRun({
-      name: readString(payload.name) ?? 'test',
-      filePath: readString(payload.filePath) ?? sourceFilePath,
-      status: 'running',
-      duration: 0,
-      attributes,
-      startedAt,
-      endedAt: startedAt,
-      parentRunId: env.suiteQueueId,
-      platform,
-      testId: readString(payload.testId),
-      suiteId: readString(payload.suiteId) ?? sourceSuiteId,
-    })
-  }
+  // 2026-08-24 (Phase 402 plan 09, D-11): `insertRetryChild` AND `insertSuiteChild` ARE DELETED.
+  //
+  // ~40 lines stood here minting run rows carrying `parent_run_id` — one per retry attempt, one per
+  // suite member. This module was the LIVE producer of new parent/child run records; the queue's
+  // fan-out and the routes' parent-kind mints were only its accessories. D-11: a parallel suite is
+  // ONE run row with member handles (402-04's per-member handle addressing), no child runs, no
+  // parent kind.
+  //
+  // The retry half was already unreachable: 401-07 (D-12) retired the queue re-spawn that set
+  // `AGENT_QA_PARENT_RUN_ID`, so nothing could put the process in retry mode. The suite half was
+  // live and is the deliberate cost recorded in DELETION-INVENTORY.md — a dashboard suite run's
+  // per-member rows are replaced by handle addressing when 405 rebuilds the run detail.
 
   function stageRuntime(id: string, runtime: ArtifactRecord): void {
     const artifact = db.getRunArtifact(id)
@@ -311,33 +284,15 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
   }
 
   function handleRunStarted(): void {
-    if (mode === 'retry') return // rows are per-attempt; created on testStarted
-    const kind: RunArtifactKind = mode === 'suite' ? 'suite-parent' : 'test'
-    const id = adoptOrInsertPrimary(kind)
+    const id = adoptOrInsertPrimary()
     runId = id
-    insertArtifact(id, kind)
+    insertArtifact(id, 'test')
     onRunCreated?.(id)
   }
 
   function handleTestStarted(payload: TestStartedLike): void {
-    if (mode === 'retry') {
-      const id = insertRetryChild(payload)
-      runId = id
-      insertArtifact(id, 'test')
-      onRunCreated?.(id)
-      return
-    }
-    if (mode === 'suite') {
-      const testIndex = typeof payload.testIndex === 'number' ? payload.testIndex : childRunIds.size
-      if (!childRunIds.has(testIndex)) {
-        const id = insertSuiteChild(payload)
-        childRunIds.set(testIndex, id)
-        insertArtifact(id, 'suite-child')
-        onRunCreated?.(id)
-      }
-      return
-    }
-    // plain: refresh the adopted row with the resolved test identity
+    // Every member refreshes the ONE adopted row with the resolved test identity. Under the
+    // one-run model there is nothing else to write it to.
     if (runId) {
       const name = readString(payload.name)
       db.updateRun(runId, {
@@ -347,11 +302,10 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     }
   }
 
-  function targetForTest(payload: { testIndex?: number }): string | undefined {
-    if (mode === 'suite') {
-      const testIndex = typeof payload.testIndex === 'number' ? payload.testIndex : undefined
-      return testIndex !== undefined ? childRunIds.get(testIndex) : undefined
-    }
+  // 402-09 (D-11): every member's step/hook/status rows land on the ONE run row. The per-member
+  // split they used to get came from the child rows this plan deleted; 405 restores it from
+  // 402-04's handles rather than from a second run row.
+  function targetForTest(_payload: { testIndex?: number }): string | undefined {
     return runId
   }
 
@@ -447,20 +401,12 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     }
   }
 
-  function finalizeChildArtifact(id: string): void {
-    const artifact = db.getRunArtifact(id)
-    if (artifact && !artifact.finalizedAt) db.finalizeRunArtifact(id)
-  }
-
   function handleRunFinished(aggregateVerdict?: string): void {
     // The aggregate verdict is authoritative at the run level. The PRIMARY run_artifact
     // is deliberately left open here — finalize() lands the out-of-band memory/curator
     // section (the bus never carries it) and finalizes last (Pitfall 6 flush idiom).
     const endedAt = now()
     if (runId) db.updateRun(runId, { status: toRunStatus(aggregateVerdict), endedAt })
-    if (mode === 'suite') {
-      for (const id of childRunIds.values()) finalizeChildArtifact(id)
-    }
   }
 
   return {
@@ -489,7 +435,9 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
           break
         case 'verdict':
           // Terminal aggregate; runFinished performs the finalize sweep.
-          if (runId && mode !== 'suite') {
+          // 402-09: the suite carve-out went with the suite mode. There is one run row, and the
+          // aggregate verdict is its status; `runFinished` re-states it and performs the sweep.
+          if (runId) {
             db.updateRun(runId, { status: toRunStatus((envelope.payload as VerdictLike).verdict) })
           }
           break

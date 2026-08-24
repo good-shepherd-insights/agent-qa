@@ -316,81 +316,23 @@ export async function startServer(opts: StartServerOptions): Promise<{
             .slice(-10000) || undefined
         }
 
-        // Suite parent: derive status from child test runs
-        if (run.suiteId && !run.parentRunId) {
-          const children = db.getRunsByParent(runId)
-          const incompleteChildStatus = dbStatus === 'cancelled' ? 'cancelled' : 'failed'
-          const incompleteChildSummary = incompleteChildStatus === 'cancelled'
-            ? 'Suite cancelled'
-            : failureSummary ?? 'Suite process terminated'
-
-          for (const child of children) {
-            if (child.status === 'running' || child.status === 'pending') {
-              db.updateRun(child.id, {
-                status: incompleteChildStatus,
-                endedAt: new Date().toISOString(),
-                failureSummary: incompleteChildSummary,
-              })
-              finalizeRunArtifactBestEffort(
-                child.id,
-                'suite-process-close',
-                'process-close',
-                incompleteChildSummary,
-                { status: incompleteChildStatus, finalStatus: incompleteChildStatus, processStatus: status },
-              )
-            }
-          }
-
-          const updatedChildren = db.getRunsByParent(runId)
-
-          const statusPriority: Record<string, number> = {
-            failed: 4,
-            cancelled: 3,
-            flaky: 2,
-            passed: 1,
-            skipped: 0,
-            pending: 0,
-            running: 0,
-          }
-
-          let worstStatus = 'passed'
-          let worstPriority = 0
-          for (const child of updatedChildren) {
-            const p = statusPriority[child.status] ?? 0
-            if (p > worstPriority) {
-              worstPriority = p
-              worstStatus = child.status
-            }
-          }
-
-          if (updatedChildren.length === 0) {
-            if (isBrowserDisconnect) {
-              worstStatus = 'cancelled'
-            } else {
-              worstStatus = dbStatus
-            }
-          }
-
-          db.updateRun(runId, {
-            status: worstStatus,
-            duration,
-            endedAt: new Date().toISOString(),
-            failureSummary: worstStatus === 'failed' ? 'Suite test(s) failed'
-              : worstStatus === 'cancelled' ? (isBrowserDisconnect ? 'Browser closed by user' : 'Suite cancelled')
-              : undefined,
-          })
-          finalizeRunArtifactBestEffort(
-            runId,
-            'suite-process-close',
-            'process-close',
-            worstStatus === 'cancelled' ? (isBrowserDisconnect ? 'Browser closed by user' : 'Suite cancelled') : 'Suite process closed',
-            { status: worstStatus, finalStatus: worstStatus, processStatus: status, duration },
-          )
-
-          releaseMobileAppiumLease(runId, 'suite-process-close')
-          jobQueue.onSlotFreed(runId)
-          return
-        }
+        // 2026-08-24 (Phase 402 plan 09, D-11): THE SUITE-PARENT STATUS FOLD IS RETIRED WITH THE
+        // CHILDREN IT FOLDED — the same retirement, at the same site, as the retry-child block
+        // below, for the same reason.
+        //
+        // ~75 lines stood here: force every `running`/`pending` child terminal, re-read them, and
+        // derive the parent's status as the worst child status. A suite is now ONE run row with
+        // member handles (D-11, 402-04); nothing writes `runs.parent_run_id`, so the fold's own
+        // `updatedChildren.length === 0` branch — `worstStatus = isBrowserDisconnect ? 'cancelled'
+        // : dbStatus` — was the only branch it could still take, and that is exactly what the
+        // common path below already does (`dbStatus` is already `'cancelled'` on a browser
+        // disconnect). What a suite run GAINS by falling through is the diagnostic
+        // `failureSummary` and the captured `errorLog` the fold discarded in favour of the
+        // constant sentence "Suite test(s) failed".
+        //
+        // HISTORICAL ROWS ARE UNAFFECTED: this fold only ever ran when a live process closed, and
+        // no live process owns pre-402 children. The read side that renders them is untouched (see
+        // DELETION-INVENTORY.md).
 
         // 2026-08-23 (Phase 401 plan 07, D-12): THE RETRY-CHILD CLASSIFICATION IS RETIRED WITH
         // THE MACHINERY THAT CREATED THE CHILDREN.
@@ -437,16 +379,14 @@ export async function startServer(opts: StartServerOptions): Promise<{
 
   // Clean up orphaned runs from previous server sessions — any run still
   // marked 'running' in the DB has no live process and should be failed.
-  // Suite parents with active children are skipped (CLI process may still be running).
   const orphaned = db.getRuns({ status: 'running' })
   let cleaned = 0
   for (const run of orphaned) {
-    if (run.suiteId && !run.parentRunId) {
-      const children = db.getRunsByParent(run.id)
-      if (children.some(c => c.status === 'running')) {
-        continue
-      }
-    }
+    // 2026-08-24 (402-09, D-11): the suite-run skip that stood here is deleted. It left a parent
+    // in `running` whenever a child also read `running`, on the premise that a CLI process might
+    // still own them. Nothing mints children any more, and after a server restart nothing owns a
+    // pre-402 child either — the skip could only strand historical rows in a state no process would
+    // ever finish, which is the opposite of cleanup.
     const duration = run.startedAt
       ? Date.now() - new Date(run.startedAt).getTime()
       : 0

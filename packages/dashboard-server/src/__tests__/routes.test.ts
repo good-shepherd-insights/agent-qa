@@ -1631,7 +1631,8 @@ describe('API Routes', () => {
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Queued suite',
         filePath: 'suites/sample-basic.suite.yaml',
-        kind: 'suite-parent',
+        // 402-09 (D-11): no parent kind is minted; `metadata.isSuite` still carries the identity.
+        kind: 'test',
         metadata: expect.objectContaining({
           args: [join(workspaceDir, 'suites', 'sample-basic.suite.yaml')],
           isSuite: true,
@@ -2094,7 +2095,8 @@ describe('API Routes', () => {
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Workspace suite',
         filePath: 'suites/slow.suite.yaml',
-        kind: 'suite-parent',
+        // 402-09 (D-11): no parent kind is minted; `metadata.isSuite` still carries the identity.
+        kind: 'test',
         metadata: expect.objectContaining({
           args: [join(workspaceDir, 'suites', 'slow.suite.yaml')],
           isSuite: true,
@@ -2107,7 +2109,7 @@ describe('API Routes', () => {
       expect(enqueue.mock.calls[0][0].metadata.args[0]).not.toContain(`${sep}tests${sep}suites${sep}`)
     })
 
-    it('uses suite YAML use.parallel for dashboard-triggered suite parent jobs', async () => {
+    it('uses suite YAML use.parallel for dashboard-triggered suite jobs', async () => {
       const workspaceDir = await mkdtemp(join(tmpdir(), 'agent-qa-trigger-suite-parallel-'))
       const testsDir = join(workspaceDir, 'tests')
       const suitesDir = join(workspaceDir, 'suites')
@@ -2164,8 +2166,10 @@ describe('API Routes', () => {
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Parallel suite',
         filePath: 'suites/parallel.suite.yaml',
-        kind: 'suite-parent',
+        // 402-09 (D-11): no parent kind is minted; `metadata.isSuite` still carries the identity.
+        kind: 'test',
         parallel: true,
+        metadata: expect.objectContaining({ isSuite: true }),
       }))
     })
 

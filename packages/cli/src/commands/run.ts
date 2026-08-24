@@ -791,24 +791,16 @@ function resolveReporterSelection(opts: RunOptions, dashboardConfigured: boolean
 
 // 363-09: the spawn correlation env the dashboard ingest reads from `process.env` (the bus never
 // carries it). Read once at the composition root and passed into `createDashboardRunIngest`.
+// 2026-08-24 (402-09, D-11): `parentRunId` / `maxRetries` / `attemptNumber` are gone with the
+// ingest's retry mode. 401-07 (D-12) had already retired the queue re-spawn that set
+// `AGENT_QA_PARENT_RUN_ID`, so the mode was producer-less; D-11 removes what it left behind.
 function readDashboardCorrelationEnv(env: NodeJS.ProcessEnv = process.env): {
   runId?: string
-  parentRunId?: string
   suiteQueueId?: string
-  maxRetries?: number
-  attemptNumber?: number
 } {
-  const num = (value: string | undefined): number | undefined => {
-    if (value === undefined) return undefined
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : undefined
-  }
   return {
     runId: env.AGENT_QA_RUN_ID,
-    parentRunId: env.AGENT_QA_PARENT_RUN_ID,
     suiteQueueId: env.AGENT_QA_SUITE_QUEUE_ID,
-    maxRetries: num(env.AGENT_QA_MAX_RETRIES),
-    attemptNumber: num(env.AGENT_QA_ATTEMPT_NUMBER),
   }
 }
 
@@ -1366,8 +1358,12 @@ export async function resolveRunInvocationInputs(
   }
 }
 
+// 2026-08-24 (402-09, D-11): `kind` is narrowed from the full `RunArtifactKind` breadth to the one
+// value this process can still produce. The parent/child kinds are RETAINED on the schema union
+// (existing artifact documents carry them) but nothing mints them any more, so a parameter that
+// still admitted them would be an affordance with no caller — see DELETION-INVENTORY.md.
 function buildRunArtifactContext(input: {
-  kind: 'test' | 'suite-parent' | 'suite-child'
+  kind: 'test'
   configContent: string
   parsedConfig: unknown
   effectiveConfig: unknown
@@ -1387,7 +1383,7 @@ function buildRunArtifactContext(input: {
   timeouts: Record<string, unknown>
   cache: Record<string, unknown>
   source: Record<string, unknown>
-}): { artifact: Record<string, unknown> & { kind: 'test' | 'suite-parent' | 'suite-child' } } {
+}): { artifact: Record<string, unknown> & { kind: 'test' } } {
   return redactAuthStateValue({
     artifact: {
       kind: input.kind,
@@ -1421,7 +1417,7 @@ function buildRunArtifactContext(input: {
         attributes: input.attributes,
       },
     },
-  }) as { artifact: Record<string, unknown> & { kind: 'test' | 'suite-parent' | 'suite-child' } }
+  }) as { artifact: Record<string, unknown> & { kind: 'test' } }
 }
 
 export async function resolveDeviceAndFarmSession(
@@ -1748,13 +1744,10 @@ async function executeSuites(
         const runningRuns = activeSuiteDb.getRuns({ status: 'running' })
           .filter((run: any) => run.suiteId && !run.parentRunId)
         for (const run of runningRuns) {
+          // 2026-08-24 (402-09, D-11): the child fan-out that stood here is deleted with the model
+          // that minted the children. A suite is ONE run row with member handles (402-04), and
+          // cancelling the run cancels the run.
           activeSuiteDb.updateRun(run.id, { status: 'cancelled', endedAt: now })
-          const children = activeSuiteDb.getRunsByParent(run.id)
-          for (const child of children) {
-            if (child.status === 'running') {
-              activeSuiteDb.updateRun(child.id, { status: 'cancelled', endedAt: now })
-            }
-          }
         }
       } catch { /* best-effort cleanup */ }
     }
@@ -2807,7 +2800,9 @@ export async function produceSuiteRunMembers(
     const captureScreenshots = reporterSelection.dashboard || opts.screenshotMode === 'every-step' || Boolean(opts.screenshotDir)
 
     const suiteArtifactContext = buildRunArtifactContext({
-      kind: 'suite-parent',
+      // 402-09 (D-11): an ordinary run artifact. The suite identity survives in the run row's
+      // `suite_id` and in this document's own `source.kind: 'suite'` snapshot.
+      kind: 'test',
       configContent,
       parsedConfig: config,
       effectiveConfig: { ...config, use: mergedUse },

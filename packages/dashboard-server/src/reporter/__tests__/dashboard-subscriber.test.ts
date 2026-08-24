@@ -123,42 +123,13 @@ describe('createDashboardRunIngest', () => {
     expect(db.getRun(runId)?.name).toBe('Adopted Test')
   })
 
-  it('correlation env — retry mode inserts a child under the parent with attempt + maxRetries', () => {
-    const parentRunId = 'r_parent-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    const childRunId = 'r_child-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    db.insertRun({
-      id: parentRunId,
-      name: 'Parent',
-      status: 'running',
-      duration: 0,
-      startedAt: '2026-07-08T00:00:00.000Z',
-      endedAt: '2026-07-08T00:00:00.000Z',
-      attributes,
-    })
-    const ingest = createDashboardRunIngest({
-      db,
-      sourceSnapshot: testSource(),
-      attributes,
-      correlationEnv: { runId: childRunId, parentRunId, maxRetries: 3, attemptNumber: 2 },
-      now: () => '2026-07-08T00:00:00.000Z',
-    })
-    ingest.handler(ev('run-bus', 'runStarted', {})) // no-op in retry mode
-    ingest.handler(ev('run-bus', 'testStarted', { testIndex: 0, name: 'Retry Test' }))
+  // 2026-08-24 (402-09, D-11): the two cells that stood here asserted the parent/child model —
+  // "retry mode inserts a child under the parent with attempt + maxRetries" and "suite mode adopts
+  // the queued parent and inserts children keyed by testIndex". Both producers are deleted; the
+  // cells below assert the ONE-RUN model that replaced them, which is the same claim with the
+  // opposite sign. See DELETION-INVENTORY.md.
 
-    const children = db.getRunsByParent(parentRunId)
-    expect(children).toHaveLength(1)
-    expect(children[0].id).toBe(childRunId)
-    expect(children[0].attemptNumber).toBe(2)
-    expect(children[0].maxRetries).toBe(3)
-    expect(children[0].parentRunId).toBe(parentRunId)
-    expect(db.getRunArtifact(childRunId)?.payload.metadata?.attributes).toEqual(attributes)
-
-    ingest.handler(ev('run-bus', 'testFinished', { testIndex: 0, outcome: 'failed', durationMs: 800, failureSummary: 'boom' }))
-    expect(db.getRun(childRunId)?.status).toBe('failed')
-    expect(db.getRun(childRunId)?.failureSummary).toBe('boom')
-  })
-
-  it('correlation env — suite mode adopts the queued parent and inserts children keyed by testIndex', async () => {
+  it('correlation env — a suite run adopts the queued row and mints NO children', async () => {
     const suiteRunId = 'r_suite-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
     const ingest = createDashboardRunIngest({
       db,
@@ -172,7 +143,8 @@ describe('createDashboardRunIngest', () => {
     ingest.handler(ev('run-bus', 'runStarted', { memberTestCount: 2 }))
     const parent = db.getRun(suiteRunId)
     expect(parent?.status).toBe('running')
-    expect(db.getRunArtifact(suiteRunId)?.kind).toBe('suite-parent')
+    // The queued row is ADOPTED, not parented: the artifact kind is an ordinary run's.
+    expect(db.getRunArtifact(suiteRunId)?.kind).toBe('test')
 
     ingest.handler(ev('run-bus', 'testStarted', { testIndex: 0, name: 'Test A', filePath: 'tests/a.yaml' }))
     ingest.handler(ev('run-bus', 'testFinished', { testIndex: 0, outcome: 'passed', durationMs: 100 }))
@@ -181,13 +153,25 @@ describe('createDashboardRunIngest', () => {
     ingest.handler(ev('run-bus', 'runFinished', { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: seq }))
     await ingest.finalize()
 
-    const children = db.getRunsByParent(suiteRunId)
-    expect(children).toHaveLength(2)
-    expect(children.map((c) => c.parentRunId)).toEqual([suiteRunId, suiteRunId])
+    // ONE row for the whole suite — no children, and none orphaned somewhere else either.
+    expect(db.getRunsByParent(suiteRunId)).toEqual([])
+    expect(db.getRuns().map((r) => r.id)).toEqual([suiteRunId])
     expect(db.getRun(suiteRunId)?.status).toBe('failed')
-    for (const child of children) {
-      expect(db.getRunArtifact(child.id)?.finalizedAt).toBeTruthy()
-    }
+  })
+
+  it('correlation env — a suiteQueueId is just another spelling of runId', () => {
+    const runIdA = 'r_viasuite-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    const ingestA = createDashboardRunIngest({
+      db,
+      sourceSnapshot: testSource(),
+      attributes,
+      correlationEnv: { suiteQueueId: runIdA },
+      now: () => '2026-07-08T00:00:00.000Z',
+    })
+    ingestA.handler(ev('run-bus', 'runStarted', {}))
+    expect(db.getRun(runIdA)?.status).toBe('running')
+    expect(db.getRunArtifact(runIdA)?.kind).toBe('test')
+    expect(db.getRuns()).toHaveLength(1)
   })
 
   it('step rows carry the stepStarted instruction text, not a generic "Step N" label', () => {

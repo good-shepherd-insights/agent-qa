@@ -149,7 +149,6 @@ export class JobQueue extends EventEmitter {
     const now = new Date().toISOString()
     if (run.status === 'pending') {
       this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
-      this.cancelChildRuns(runId, now)
       this.db.finalizeRunArtifact(runId, {
         errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancelled before execution' }],
         runtime: { status: 'cancelled' },
@@ -158,7 +157,6 @@ export class JobQueue extends EventEmitter {
     }
     if (run.status === 'running') {
       this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
-      this.cancelChildRuns(runId, now)
       try {
         const artifact = this.db.getRunArtifact(runId)
         if (artifact && !artifact.finalizedAt) {
@@ -174,25 +172,21 @@ export class JobQueue extends EventEmitter {
     return false
   }
 
-  private cancelChildRuns(parentRunId: string, endedAt: string): void {
-    for (const child of this.db.getRunsByParent(parentRunId)) {
-      if (child.status !== 'running' && child.status !== 'pending') continue
-      this.db.updateRun(child.id, {
-        status: 'cancelled',
-        endedAt,
-        failureSummary: 'Run cancelled by user',
-      })
-      try {
-        const artifact = this.db.getRunArtifact(child.id)
-        if (artifact && !artifact.finalizedAt) {
-          this.db.finalizeRunArtifact(child.id, {
-            errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancelled by user' }],
-            runtime: { status: 'cancelled' },
-          })
-        }
-      } catch { /* best-effort child cancellation */ }
-    }
-  }
+  // 2026-08-24 (Phase 402 plan 09, D-11): THE CHILD-RUN CANCELLATION FAN-OUT IS DELETED WITH THE
+  // MODEL THAT MINTED ITS CHILDREN.
+  //
+  // ~19 lines stood here walking the run's child rows and cancelling each member row. Under
+  // the one-run model a parallel suite is ONE run row with member handles (402-04) — nothing writes
+  // `runs.parent_run_id` any more, so the walk could only ever have read an empty list while
+  // reading as live cancellation policy. Cancelling the run cancels the run.
+  //
+  // WHAT THIS DOES NOT TOUCH: `parallel` below. D-11 keeps the queue's parallel flag as CROSS-RUN
+  // concurrency of INDEPENDENT jobs, which is what `findNextEligible` has always used it for. What
+  // was deleted is parallel-SUITE semantics, not the queue's ability to run two unrelated jobs.
+  //
+  // HISTORICAL ROWS: a pre-402 suite run still lists its members on the read side (see
+  // DELETION-INVENTORY.md); cancelling such a run now leaves those member
+  // rows in whatever state their own process left them.
 
   private findNextEligible(): RunRow | undefined {
     if (this.activeCount >= this.concurrency) return undefined

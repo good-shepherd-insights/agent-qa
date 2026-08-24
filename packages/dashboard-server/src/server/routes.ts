@@ -2459,7 +2459,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           const runId = jobQueue.enqueue({
             name: body.name,
             filePath: normalizedFileTarget?.storagePath,
-            kind: isSuiteFile ? 'suite-parent' : 'test',
+            // 2026-08-24 (402-09, D-11): NO PARENT KIND IS MINTED. A suite run is ONE run row
+            // with member handles, so a parent artifact kind would claim parenthood over rows
+            // nothing creates. `isSuiteFile` still travels in `metadata.isSuite` below, and the run's
+            // own `suite_id` plus the artifact's `source.kind` snapshot still say it is a suite.
+            kind: 'test',
             attributes,
             priority: body.priority,
             platform: body.platform,
@@ -2619,7 +2623,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           const runId = jobQueue.enqueue({
             name: testName,
             filePath: normalizedFileTarget?.storagePath ?? body.file,
-            kind: isSuite ? 'suite-parent' : 'test',
+            // 2026-08-24 (402-09, D-11): no parent kind minted — see the enqueue route above.
+            kind: 'test',
             attributes: buildRunRequestAttributes({
               trigger: triggerSource.trigger,
               runner: body.local === false ? 'browserstack' : 'local',

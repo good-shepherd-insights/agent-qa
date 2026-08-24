@@ -1310,10 +1310,10 @@ describe('historical rows still render (T-402-29)', () => {
 // ---------------------------------------------------------------------------------------------
 
 /** `before` = the tree as 402-08 left it. `after` = the tree the D-11 deletion produces. */
-const CENSUS_PHASE: 'before' | 'after' = 'before'
+const CENSUS_PHASE: 'before' | 'after' = 'after'
 
 /** JobQueue members whose behaviour depends on the parent link. */
-const QUEUE_LINK_READERS: readonly string[] = ['cancel', 'cancelChildRuns']
+const QUEUE_LINK_READERS: readonly string[] = []
 
 /** Run routes whose response or database effect depends on the parent link. */
 const ROUTE_LINK_READERS: readonly string[] = [
@@ -1322,16 +1322,10 @@ const ROUTE_LINK_READERS: readonly string[] = [
   'GET /api/runs/:id',
   'GET /api/runs/:id/artifact',
   'GET /api/runs/:id/execution-logs',
-  'POST /api/runs/:id/cancel',
 ]
 
 /** Channels that still mint parent/child run records. */
-const PARENT_CHILD_PRODUCERS: readonly string[] = [
-  'ingest:createDashboardRunIngest retry correlation',
-  'ingest:createDashboardRunIngest suite correlation',
-  'route:POST /api/queue/enqueue (suite file)',
-  'route:POST /api/runs/trigger (suite file)',
-]
+const PARENT_CHILD_PRODUCERS: readonly string[] = []
 
 /** Delete-dispositioned sites no behavioural surface can reach, each with its reason recorded. */
 const UNOBSERVABLE_DELETES: readonly string[] = [
