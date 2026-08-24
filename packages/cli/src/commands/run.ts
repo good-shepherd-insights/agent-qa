@@ -606,6 +606,7 @@ export function runMarkers(opts: RunOptions): { gateRun?: true; excludedFromOutc
 export function resolveRunConcurrencyConfig(
   configUse: Record<string, unknown> | undefined,
   opts: RunOptions,
+  memberUses: readonly (Record<string, unknown> | undefined)[] = [],
 ): { parallel?: boolean; workers?: number } {
   const flagOverrides: Record<string, unknown> = {}
   if (opts.parallel !== undefined) flagOverrides['parallel'] = opts.parallel
@@ -621,8 +622,21 @@ export function resolveRunConcurrencyConfig(
   }
 
   const merged = mergeUseBlocks(configUse, undefined, undefined, flagOverrides)
+  // A MEMBER'S OWN OPT-OUT MAKES THE WHOLE RUN SEQUENTIAL, and most-restrictive-wins is why it
+  // beats both the config and the flags.
+  //
+  // COARSE, AND DELIBERATELY SO. `use.parallel: false` in a test's own YAML is a claim that THAT
+  // test must not run beside another, and the only mechanism that could honour it precisely — a
+  // barrier in the member scheduler — lives in `shell.ts`, which this plan does not own (402-04
+  // does, this wave). The choice was therefore between honouring the opt-out for the whole run and
+  // silently repealing it the moment a project turned `use.parallel` on; a shipped cell in
+  // `run.test.ts` asserts the barrier, and an opt-out that quietly stopped opting out is the worse
+  // of the two. The finer per-member form is filed rather than approximated.
+  const memberOptOut = memberUses.some((use) => use?.['parallel'] === false)
   return {
-    ...(typeof merged['parallel'] === 'boolean' ? { parallel: merged['parallel'] } : {}),
+    ...(memberOptOut
+      ? { parallel: false }
+      : typeof merged['parallel'] === 'boolean' ? { parallel: merged['parallel'] } : {}),
     ...(typeof merged['workers'] === 'number' ? { workers: merged['workers'] } : {}),
   }
 }
@@ -3075,6 +3089,8 @@ export async function produceSuiteRunMembers(
   // by posture anyway — D-01's accepted cost, paid once, while zero ledgers exist in the wild.
   const members: RunMemberDescriptor[] = []
   const bindings: SuiteMemberBinding[] = []
+  /** Each suite member's OWN `use`, for the per-member concurrency opt-out. */
+  const suiteMemberUses: (Record<string, unknown> | undefined)[] = []
   const digestMembers: Array<{ testFileContent: string; suiteFileContent?: string }> = []
   let perMemberDigests: ConfigDigests[] = []
 
@@ -3084,6 +3100,7 @@ export async function produceSuiteRunMembers(
       // Both legs are in scope below under their own names (see `SuiteTestEntry`): the descriptor
       // carries `identityPath`, every byte read carries `absolutePath`.
       const { test, absolutePath, identityPath } = prepared.testEntries[i]
+      suiteMemberUses.push(test.use as Record<string, unknown> | undefined)
       const globalIndex = members.length
       const memberSuiteIndex = i
       members.push({
@@ -3342,7 +3359,11 @@ export async function produceSuiteRunMembers(
     targetClass: suiteTargetClass,
     targetNames: suiteTargetNames,
     memberProbeUrls: suiteTargetFacts.probeUrls,
-    concurrency: resolveRunConcurrencyConfig(config.use as Record<string, unknown> | undefined, opts),
+    concurrency: resolveRunConcurrencyConfig(
+      config.use as Record<string, unknown> | undefined,
+      opts,
+      suiteMemberUses,
+    ),
     ...(buildTag === undefined ? {} : { buildTag }),
     logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
     maskingSeed: {
@@ -4306,7 +4327,11 @@ export async function produceDirectRunMembers(
     targetClass: singleTargetClass,
     targetNames: directTargetNames,
     memberProbeUrls: directTargetFacts.probeUrls,
-    concurrency: resolveRunConcurrencyConfig(config.use as Record<string, unknown> | undefined, opts),
+    concurrency: resolveRunConcurrencyConfig(
+      config.use as Record<string, unknown> | undefined,
+      opts,
+      filtered.map(({ test }) => test.use as Record<string, unknown> | undefined),
+    ),
     ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
     logger,
     maskingSeed: { secretStore: runtimeSecrets.secretStore },

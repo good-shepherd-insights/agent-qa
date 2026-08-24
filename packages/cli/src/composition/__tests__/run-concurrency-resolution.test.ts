@@ -95,6 +95,25 @@ describe('resolveRunConcurrencyConfig — the flags are ORDINARY use-bucket over
       .toEqual({ parallel: true, workers: 5 })
   })
 
+  it('lets a MEMBER\'s own use.parallel: false make the whole run sequential', () => {
+    // Most-restrictive-wins, over the config AND over the flag: a test that says it must not run
+    // beside another is making a claim about itself that no project-level setting can answer for.
+    expect(resolveRunConcurrencyConfig({ parallel: true, workers: 4 }, noFlags, [
+      undefined,
+      { parallel: false },
+      {},
+    ])).toEqual({ parallel: false, workers: 4 })
+    expect(resolveRunConcurrencyConfig({}, { parallel: true } as RunOptions, [{ parallel: false }]))
+      .toEqual({ parallel: false })
+  })
+
+  it('leaves a parallel run alone when no member opted out', () => {
+    // The control for the arm above: members that say nothing (and members that say `true`) must
+    // not be read as an opt-out, or the whole feature would be off for every ordinary project.
+    expect(resolveRunConcurrencyConfig({ parallel: true }, noFlags, [undefined, {}, { parallel: true }]))
+      .toEqual({ parallel: true })
+  })
+
   it('refuses a --workers value that is not a positive integer, rather than coercing it', () => {
     for (const value of ['abc', '0', '-3', '2.5', '', ' ']) {
       let refusal: unknown
