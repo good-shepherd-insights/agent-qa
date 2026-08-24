@@ -48,36 +48,55 @@ function configPathFor(): string {
   return configPath
 }
 
-/** A run-service port set that is never called — only its PRESENCE and the count are read here. */
-function stubRunServicePorts(): NonNullable<Parameters<typeof startServer>[0]['runService']> {
+type ServicePorts = NonNullable<Parameters<typeof startServer>[0]['runService']>
+type Readiness = NonNullable<Parameters<typeof startServer>[0]['runServiceReadiness']>
+
+const ACCEPTED_TOKEN = 'bind-guard-fixture-token'
+
+/**
+ * A run-service port set whose readiness is INJECTED by the caller.
+ *
+ * The bind cells never call any of these; the readiness cells below hand in one function object
+ * and then drive both doors, which is what lets an equality cell measure "the same predicate" and
+ * not merely "two functions that agree today".
+ */
+function stubRunServicePorts(readiness: Readiness): ServicePorts {
   return {
-    verifyBearer: () => ({ kind: 'refused', reason: 'missing_authorization' }),
+    verifyBearer: (header: string | null | undefined) =>
+      header === `Bearer ${ACCEPTED_TOKEN}`
+        ? { kind: 'token', clientId: 'fixture', trustScope: {} }
+        : { kind: 'refused', reason: 'invalid_token' },
     invokeRunStart: () => { throw new Error('the bind cells never start a run') },
     attach: () => undefined,
-    readiness: () => ({
-      service: 'up',
-      hostComposed: false,
-      authConfigured: true,
-      contractVersion: 1,
-    }),
-  } as NonNullable<Parameters<typeof startServer>[0]['runService']>
+    readiness,
+  } as unknown as ServicePorts
 }
+
+const INERT_READINESS: Readiness = () => ({
+  service: 'up',
+  hostComposed: false,
+  authConfigured: true,
+  contractVersion: 1,
+})
 
 async function start(opts: {
   host?: string
   port?: number
   tokenCount?: number
   mountService?: boolean
+  readiness?: Readiness
 }): Promise<{ server: Server; close: () => void }> {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   dbs.push(db)
+  const readiness = opts.readiness ?? INERT_READINESS
   const handle = await startServer({
     db,
     port: opts.port ?? 0,
     configPath: configPathFor(),
     ...(opts.host === undefined ? {} : { host: opts.host }),
     ...(opts.tokenCount === undefined ? {} : { runServiceTokenCount: opts.tokenCount }),
-    ...(opts.mountService === true ? { runService: stubRunServicePorts() } : {}),
+    ...(opts.mountService === true ? { runService: stubRunServicePorts(readiness) } : {}),
+    ...(opts.readiness === undefined ? {} : { runServiceReadiness: readiness }),
   })
   started.push(handle)
   return handle
@@ -156,5 +175,105 @@ describe('the dashboard bind contract (D-07)', () => {
   it('refuses a non-loopback host that MOUNTED a service with a zero count — the count is the authority', async () => {
     await expect(start({ host: NON_LOOPBACK_HOST, tokenCount: 0, mountService: true }))
       .rejects.toBeInstanceOf(DashboardRemoteBindRefusedError)
+  })
+})
+
+/**
+ * THE LOCAL READINESS DOOR — ONE PREDICATE, TWO DOORS (402-05, D-15).
+ *
+ * The cells hand ONE function object to both `runService.readiness` (which the authed `/ok`
+ * serves) and `runServiceReadiness` (which the local `/api/run-readiness` serves), then drive both
+ * over a real socket. That is what makes the equality claim a claim about the PREDICATE: a fixture
+ * that built two equal-looking objects would pass against two implementations that agree today and
+ * drift tomorrow, which is the failure D-15 exists to prevent.
+ */
+describe('the local readiness door (D-15)', () => {
+  /** A readiness whose facts MOVE, so a door that snapshotted rather than called is visible. */
+  function movingReadiness(): { fn: Readiness; flip: () => void } {
+    let hostComposed = false
+    return {
+      fn: () => ({
+        service: 'up' as const,
+        hostComposed,
+        authConfigured: true,
+        contractVersion: 7,
+      }),
+      flip: () => { hostComposed = true },
+    }
+  }
+
+  async function get(port: number, path: string, token?: string): Promise<{
+    status: number
+    body: unknown
+  }> {
+    const response = await fetch(`http://127.0.0.1:${String(port)}${path}`, {
+      headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+    })
+    return { status: response.status, body: await response.json().catch(() => undefined) }
+  }
+
+  it('serves the SAME body the authed /ok serves, for one composed state, under both doors', async () => {
+    const { fn, flip } = movingReadiness()
+    const { server } = await start({ mountService: true, tokenCount: 1, readiness: fn })
+    const port = (server.address() as AddressInfo).port
+
+    const before = await Promise.all([
+      get(port, '/api/run-readiness'),
+      get(port, '/ok', ACCEPTED_TOKEN),
+    ])
+    expect(before[0].status).toBe(200)
+    expect(before[1].status).toBe(200)
+    expect(before[0].body).toEqual(before[1].body)
+    expect(before[0].body).toEqual({
+      service: 'up',
+      hostComposed: false,
+      authConfigured: true,
+      contractVersion: 7,
+    })
+
+    // THE STATE MOVES. Both doors must move with it — a door that answered from a value captured
+    // at mount time would now disagree, and the equality above alone could not see that.
+    flip()
+    const after = await Promise.all([
+      get(port, '/api/run-readiness'),
+      get(port, '/ok', ACCEPTED_TOKEN),
+    ])
+    expect(after[0].body).toEqual(after[1].body)
+    expect(after[0].body).toMatchObject({ hostComposed: true })
+  })
+
+  it('answers the LOCAL door with no token at all — the bind guard is what keeps it local', async () => {
+    const { fn } = movingReadiness()
+    const { server } = await start({ mountService: true, tokenCount: 1, readiness: fn })
+    const port = (server.address() as AddressInfo).port
+
+    // No Authorization header anywhere. The authed door refuses the identical question.
+    await expect(get(port, '/api/run-readiness')).resolves.toMatchObject({ status: 200 })
+    await expect(get(port, '/ok')).resolves.toMatchObject({ status: 401 })
+  })
+
+  it('answers honestly with NO run service mounted — never a 404', async () => {
+    // The shipped no-credential arm: the service is not mounted, and the composition still hands
+    // over the SAME producer with a zero count. The browser preflight gets a readable answer.
+    const { server } = await start({
+      readiness: () => ({
+        service: 'up',
+        hostComposed: true,
+        authConfigured: false,
+        contractVersion: 7,
+      }),
+    })
+    const port = (server.address() as AddressInfo).port
+    const local = await get(port, '/api/run-readiness')
+    expect(local.status).toBe(200)
+    expect(local.body).toMatchObject({ authConfigured: false })
+    // …and the authed door genuinely is not mounted on this arm.
+    await expect(get(port, '/ok', ACCEPTED_TOKEN)).resolves.toMatchObject({ status: 404 })
+  })
+
+  it('answers 503 BY NAME on a mount that was given no predicate — not a fabricated answer', async () => {
+    const { server } = await start({})
+    const port = (server.address() as AddressInfo).port
+    await expect(get(port, '/api/run-readiness')).resolves.toMatchObject({ status: 503 })
   })
 })

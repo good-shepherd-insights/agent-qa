@@ -156,6 +156,11 @@ async function openRunService(options: {
     agentHost,
     executionBackend: runDoor.backend,
     runService: runService.ports,
+    // 402-05 (D-15): the LOCAL readiness door, wired exactly as `agent-qa dashboard` wires it —
+    // the composition's own predicate, which is the identical object `runService.ports.readiness`
+    // holds. Assembling a second one here would be the lookalike assembly this fixture exists to
+    // avoid, and would make the equality cell below measure the fixture instead of the product.
+    runServiceReadiness: runService.readiness,
   })
   const server = started.server as Server
   const address = server.address()
@@ -455,5 +460,58 @@ describe('GET /ok on the mounted door', () => {
       authConfigured: false,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     })
+  })
+})
+
+describe('one readiness predicate, two doors (402-05, D-15)', () => {
+  it('is ONE function object — `ports.readiness` and the published `readiness` are the same reference', async () => {
+    const configPath = fixtureWorkspace()
+    const { DashboardDatabase } = await import('@vostride/agent-qa-dashboard')
+    const db = new DashboardDatabase({ dbPath: join(dirname(resolve(configPath)), 'identity.db') })
+    const runDoor = await createDashboardRunDoor({ db })
+    const composition = composeRunServicePorts({
+      entries: [{ name: 'ci', tokenEnvVar: TOKEN_VAR, trustScope: { project: 'acme' } }],
+      env: { [TOKEN_VAR]: TOKEN },
+      door: runDoor,
+    })
+    try {
+      // REFERENCE IDENTITY AND NOT DEEP EQUALITY. "The two doors agree today" is what a deep
+      // compare proves; "there is one predicate" is what survives somebody adding a fifth fact to
+      // one of them, and only identity measures it.
+      expect(composition.ports.readiness).toBe(composition.readiness)
+    } finally {
+      composition.dispose()
+      db.close()
+      rmSync(dirname(resolve(configPath)), { recursive: true, force: true })
+    }
+  })
+
+  it('serves the same readiness body on the local door with NO token and on /ok with one', async () => {
+    const fixture = await openRunService()
+    const [local, authed] = await Promise.all([
+      fetch(`${fixture.origin}/api/run-readiness`),
+      fetch(`${fixture.origin}/ok`, { headers: { authorization: `Bearer ${TOKEN}` } }),
+    ])
+    expect(local.status).toBe(200)
+    expect(authed.status).toBe(200)
+    const localBody: unknown = await local.json()
+    const authedBody: unknown = await authed.json()
+    expect(localBody).toEqual(authedBody)
+    // Both are the MEASURED facts, on the shipped composition — `hostComposed` is true here
+    // because this fixture bound a host, which is the same box `POST /run`'s guard throws on.
+    expect(localBody).toMatchObject({ service: 'up', hostComposed: true, authConfigured: true })
+  })
+
+  it('refuses the LOCAL door no differently for a bad token — it never reads one', async () => {
+    const fixture = await openRunService()
+    const withGarbage = await fetch(`${fixture.origin}/api/run-readiness`, {
+      headers: { authorization: 'Bearer not-the-token' },
+    })
+    expect(withGarbage.status).toBe(200)
+    // The authed door is the one that cares, and it still does.
+    const authed = await fetch(`${fixture.origin}/ok`, {
+      headers: { authorization: 'Bearer not-the-token' },
+    })
+    expect(authed.status).toBe(401)
   })
 })

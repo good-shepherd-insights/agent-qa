@@ -16,6 +16,7 @@ import { tryParseRequestUrl } from './request-url.js'
 import { CHAT_ROUTE_PREFIX, RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
 import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
+import type { RunServiceReadiness } from '@vostride/agent-qa-schema'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
@@ -1784,6 +1785,21 @@ interface RouterDeps {
    * composition happens in the CLI command that starts this server rather than here.
    */
   agentHost?: AgentHost
+  /**
+   * The run service's readiness predicate, served on the LOCAL door (402-05, D-15).
+   *
+   * THE SAME FUNCTION THE AUTHED `/ok` SERVES — one readiness spelling behind two doors, which is
+   * the whole of D-15. It is passed in rather than computed here for the reason `agentHost` is:
+   * every fact in it (is a host composed, did any credential resolve) is known only to the process
+   * that composed them, and a copy made here is how the remote door and the dashboard start
+   * disagreeing about whether this process can run anything.
+   *
+   * ABSENT IS THE LEGACY MOUNT, NOT AN UNCONFIGURED SERVICE. `agent-qa dashboard` ALWAYS supplies
+   * this — with `authConfigured: false` when no credential is declared, because the browser
+   * preflight needs an honest answer either way and a 404 is not one. A router built the legacy
+   * two-argument way has none, and that arm answers 503 by name on `agentHost`'s idiom.
+   */
+  runServiceReadiness?: () => RunServiceReadiness
 }
 
 export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: ServerResponse) => void
@@ -2313,6 +2329,23 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         }
       })
       tryServe(videoPath).catch(() => notFound(res, 'Video not found'))
+      return
+    }
+
+    // GET /api/run-readiness — the LOCAL half of D-15's one-predicate-two-doors.
+    //
+    // NO TOKEN, DELIBERATELY, and that is not a hole in D-06's no-anonymous law: that law governs
+    // the SERVICE routes, whose whole premise is a caller from another machine. This is the local
+    // dashboard API, and what keeps it local is the 402-05 bind guard — an unauthenticated surface
+    // structurally cannot be remote, so the browser preflight does not need a credential to ask
+    // whether the run service is configured. The answer carries readiness FACTS and no secret: no
+    // token, no count, no entry name.
+    if (path === '/api/run-readiness' && req.method === 'GET') {
+      if (!deps.runServiceReadiness) {
+        json(res, { error: 'This server was started without a run-service readiness predicate' }, 503)
+        return
+      }
+      json(res, deps.runServiceReadiness())
       return
     }
 

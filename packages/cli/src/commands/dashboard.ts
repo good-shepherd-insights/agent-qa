@@ -1267,6 +1267,15 @@ export interface RunServiceComposition {
   readonly secretStore: { forEachSecret(cb: (name: string, value: string) => void): void }
   /** How many credentials resolved. A COUNT, never the values — `/ok` reports whether it is > 0. */
   readonly tokenCount: number
+  /**
+   * THE READINESS PREDICATE THIS COMPOSITION BUILT (402-05, D-15).
+   *
+   * PUBLISHED SO THE LOCAL DOOR CAN SERVE THE SAME FUNCTION OBJECT — not an equal one. `ports`
+   * above carries it too, and they are the identical reference by construction; a cell pins that
+   * identity, because "two doors agree today" and "there is one predicate" are different claims
+   * and only the second one survives a later edit.
+   */
+  readonly readiness: () => RunServiceReadiness
   /** Unregister the session observer and drop every retained handle. */
   dispose(): void
 }
@@ -1343,6 +1352,8 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     ports,
     secretStore: runServiceTokenSecretStore(tokens),
     tokenCount: tokens.length,
+    // THE SAME OBJECT `ports.readiness` HOLDS, deliberately — see the field's own doc.
+    readiness,
     dispose: () => { sessions.dispose() },
   }
 }
@@ -1523,6 +1534,13 @@ async function startDashboardBackedServices(
       // default, on the house rule that an absent option is an ABSENT field, never `undefined`.
       ...(configuredHost === undefined ? {} : { host: configuredHost }),
       runServiceTokenCount: runService?.tokenCount ?? 0,
+      // 402-05 (D-15): the LOCAL readiness door, supplied on BOTH arms. With the service mounted
+      // this is the identical function object the authed `/ok` serves; without it, the SAME
+      // producer is called with a zero count, so a project that declared no credential gets an
+      // honest `authConfigured: false` rather than a 404 the browser preflight cannot read. What
+      // is deliberately NOT here is a second copy of these four facts.
+      runServiceReadiness: runService?.readiness
+        ?? createRunServiceReadiness({ resolveHost: runDoor.resolveHost, tokenCount: 0 }),
       uiDir,
       artifactsDir: resolve(configDir, artifactsDir),
       workspacePaths,

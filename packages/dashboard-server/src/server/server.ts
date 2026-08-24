@@ -25,6 +25,7 @@ import {
   ownsRunServicePath,
   type RunServicePorts,
 } from '../run-service/run-service-routes.js'
+import type { RunServiceReadiness } from '@vostride/agent-qa-schema'
 // 396-01 D-10: the `@vostride/agent-qa-mcp` import is GONE, together with the MCP endpoint this
 // server used to start beside the dashboard. The v2 server is composed per-caller by the CLI's own
 // host (`agent-qa mcp`) over the function registry, so a dashboard that mounted its own copy would
@@ -162,6 +163,17 @@ interface StartServerOptions {
    * open, never a door left ajar.
    */
   runService?: RunServicePorts
+  /**
+   * The run service's readiness predicate, served WITHOUT a token on the local dashboard API
+   * (402-05, D-15 — `GET /api/run-readiness`).
+   *
+   * SEPARATE FROM `runService` ABOVE AND NOT DERIVED FROM IT, because the two absences are
+   * different facts. `runService` is absent when no credential is declared — and that project
+   * still has a browser that needs an honest `authConfigured: false` rather than a 404. So
+   * `agent-qa dashboard` supplies this on BOTH arms, and when the service IS mounted it supplies
+   * the very same function object it put on `runService.readiness`: one predicate, two doors.
+   */
+  runServiceReadiness?: () => RunServiceReadiness
 }
 
 export async function startServer(opts: StartServerOptions): Promise<{
@@ -169,7 +181,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   port: number
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService } = opts
+  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness } = opts
   const host = opts.host?.trim() || DEFAULT_DASHBOARD_HOST
 
   // ---- THE BIND GUARD (402-05, D-07 — T-402-16) ---------------------------------------------
@@ -579,6 +591,9 @@ export async function startServer(opts: StartServerOptions): Promise<{
     // 400-01: conditionally spread on the house rule an absent dependency is an ABSENT field and
     // never a present `undefined` — the router's own 501 arm is what decides, in one place.
     ...(agentHost === undefined ? {} : { agentHost }),
+    // 402-05 (D-15): the same conditional-spread house rule. Absent means a legacy mount rather
+    // than an unconfigured service, and the router's own 503 arm is what decides, in one place.
+    ...(runServiceReadiness === undefined ? {} : { runServiceReadiness }),
   })
 
   // 402-01: composed once, at start, on `apiRouter`'s own idiom. Absent ports mean no router and
