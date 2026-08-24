@@ -13,7 +13,7 @@
 // Where a claim genuinely cannot be discriminated that way (the terminal sequence's uniqueness,
 // the parity control itself) the assertion site says so in prose.
 //
-// NO SLEEPS. Overlap is observed through microtask budgets (`drainMicrotasks`), not timers: under
+// NO SLEEPS. Overlap is observed through a bounded microtask drain (`drainUntil`), not timers: under
 // the pool a second member reaches its executor within the SAME synchronous region as the first
 // (both worker loops run to their first await before either resumes), so a bounded drain either
 // observes the overlap immediately or proves it never happened.
@@ -81,17 +81,6 @@ function drain(session: RunSession): RunEventEnvelope[] {
 
 function done(session: RunSession): Promise<{ verdict: string; handoff: CompletedRunHandoff }> {
   return session.done as Promise<{ verdict: string; handoff: CompletedRunHandoff }>
-}
-
-/**
- * Yield the microtask queue `turns` times. The pool's dispatch is entirely synchronous +
- * microtask-driven (no timers anywhere in the shell's member loop), so a bounded drain is a
- * SUFFICIENT and TERMINATING observation: under concurrency the second member has started well
- * inside the budget; under a sequential loop it never starts and the budget expires, which is a
- * clean assertion failure rather than a hang.
- */
-async function drainMicrotasks(turns = 100): Promise<void> {
-  for (let i = 0; i < turns; i += 1) await Promise.resolve()
 }
 
 // ---- The pre-refactor parity control ---------------------------------------------------------
@@ -241,6 +230,19 @@ describe('workers=1 parity — the pre-refactor differential control', () => {
  * overlap FAILS on a sequential executor rather than hanging on one, and a cell that expects
  * serialization proves it without waiting on a clock.
  */
+interface Deferred<T> {
+  promise: Promise<T>
+  resolve(value: T): void
+}
+
+function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
 async function drainUntil(predicate: () => boolean, turns = 100): Promise<boolean> {
   for (let i = 0; i < turns; i += 1) {
     if (predicate()) return true
@@ -409,5 +411,199 @@ describe('the pool at the edges — empty and single-member runs', () => {
 
     expect(normalize(pooledEvents)).toEqual(normalize(sequentialEvents))
     expect(pooledCompletion.verdict).toBe(sequentialCompletion.verdict)
+  })
+})
+
+// ---- The invariant cells (402-02 Task 3) ------------------------------------------------------
+//
+// Three properties the sequential `for` loop guaranteed for free and the pool has to hold on
+// purpose. Each is driven by an input a sequential loop CANNOT produce, so none of them can pass
+// by accident on a run that never actually interleaved.
+
+function scriptedControlledExecutor(
+  script: Record<string, () => Promise<TestResult>>,
+  calls: string[],
+): MemberTestExecutor {
+  return async (member: RunMemberDescriptor) => {
+    calls.push(member.testId)
+    const leg = script[member.testId]
+    return leg ? await leg() : passResult(member.testId)
+  }
+}
+
+describe('ordering edge — outcome slots are index-addressed, not completion-ordered', () => {
+  it('attributes every outcome to its OWN member under fully inverted completion', async () => {
+    const calls: string[] = []
+    const finished: string[] = []
+    // m2 finishes first, then m1, then m0 — the exact inverse of declaration order, which is the
+    // one thing the `for` loop this replaced could never produce.
+    const releaseM1 = deferred()
+    const releaseM0 = deferred()
+    const m2Done = deferred()
+    const executor = scriptedControlledExecutor(
+      {
+        m0: async () => {
+          await releaseM0.promise
+          finished.push('m0')
+          return passResult('m0')
+        },
+        m1: async () => {
+          await releaseM1.promise
+          finished.push('m1')
+          releaseM0.resolve()
+          return failResult('m1')
+        },
+        m2: async () => {
+          await m2Done.promise
+          finished.push('m2')
+          releaseM1.resolve()
+          return passResult('m2')
+        },
+      },
+      calls,
+    )
+
+    const session = startRun(
+      poolConfig({ members: plainMembers(['m0', 'm1', 'm2']), workers: 3, executor }),
+    )
+    const events = drain(session)
+    await drainUntil(() => calls.length === 3)
+    m2Done.resolve()
+    const completion = await done(session)
+
+    expect(calls).toEqual(['m0', 'm1', 'm2'])
+    expect(finished).toEqual(['m2', 'm1', 'm0'])
+
+    // THE ASSERTION. `handoff.tests` is the durable per-member record; a reader takes member i as
+    // `tests[i]`. Appending in completion order would put m2's outcome in m0's slot — the T-402-07
+    // tampering surface, and one that no verdict-level assertion would notice because the multiset
+    // of outcomes is identical either way.
+    expect(completion.handoff.tests.map((t) => t.testIndex)).toEqual([0, 1, 2])
+    expect(completion.handoff.tests.map((t) => t.testId)).toEqual(['m0', 'm1', 'm2'])
+    expect(completion.handoff.tests.map((t) => t.outcome)).toEqual(['passed', 'failed', 'passed'])
+
+    // And the aggregate is the same verdict the natural-order run reaches.
+    const natural = startRun(
+      poolConfig({
+        members: plainMembers(['m0', 'm1', 'm2']),
+        executor: scriptedControlledExecutor(
+          { m1: async () => failResult('m1') },
+          [],
+        ),
+      }),
+    )
+    const naturalCompletion = await done(natural)
+    expect(completion.verdict).toBe(naturalCompletion.verdict)
+    expect(completion.handoff.tests.map((t) => t.outcome)).toEqual(
+      naturalCompletion.handoff.tests.map((t) => t.outcome),
+    )
+    expect(events.filter((e) => e.type === 'verdict')).toHaveLength(1)
+  })
+})
+
+describe('concurrency edge — cancelling the run while N members are in flight', () => {
+  it('aborts every in-flight member and still runs the terminal sequence exactly once', async () => {
+    const calls: string[] = []
+    const observedAbort: string[] = []
+    const executor: MemberTestExecutor = (member: RunMemberDescriptor, ctx: MemberTestRunContext) =>
+      new Promise<TestResult>((resolve) => {
+        calls.push(member.testId)
+        const cancelled: TestResult = {
+          name: member.testId,
+          filePath: `${member.testId}.test.ts`,
+          status: 'cancelled',
+          steps: [],
+          duration: 0,
+        }
+        const onAbort = (): void => {
+          observedAbort.push(member.testId)
+          resolve(cancelled)
+        }
+        if (ctx.abortSignal.aborted) onAbort()
+        else ctx.abortSignal.addEventListener('abort', onAbort, { once: true })
+      })
+
+    const session = startRun(poolConfig({ members: plainMembers(['m0', 'm1']), workers: 2, executor }))
+    const events = drain(session)
+    // Both members are genuinely in flight — the premise. A cancel that arrived with only one
+    // member started would be testing the sequential path with extra steps.
+    await drainUntil(() => calls.length === 2)
+    expect(calls).toEqual(['m0', 'm1'])
+
+    session.cancel()
+    const completion = await done(session)
+
+    expect(observedAbort.sort()).toEqual(['m0', 'm1'])
+    expect(completion.verdict).toBe('cancelled')
+    expect(session.status).toBe('cancelled')
+    expect(events.filter((e) => e.type === 'verdict')).toHaveLength(1)
+    expect(events.filter((e) => e.type === 'runFinished')).toHaveLength(1)
+    const last = events[events.length - 1]
+    expect(last.type).toBe('runFinished')
+    expect((last.payload as { finalSeq: number }).finalSeq).toBe(last.seq)
+    // The bus is closed: nothing arrives after runFinished, and the run's own record agrees.
+    expect(events.filter((e) => e.seq > last.seq)).toEqual([])
+    expect(completion.handoff.tests.map((t) => t.testIndex)).toEqual([0, 1])
+    // Every member reached the aggregate: no slot was read before its member had written it.
+    //
+    // MEASURED LIMIT OF THIS CELL (2026-08-24). It cannot discriminate "the terminal sequence waits
+    // for the pool to settle" from "it runs when the first worker drains". Cancel finalizes an
+    // in-flight member through the executor-vs-abort race, NOT through the executor, so every
+    // member finalizes within microtasks of the abort whatever the pool does — delaying one
+    // member's executor changes nothing, because the abort branch has already won its race. The
+    // claim is real and it IS pinned, by the fail-fast cell below and by the all-lane parity cell
+    // above: both red when `Promise.all` over the workers is weakened to `Promise.race`. Recorded
+    // here rather than papered over, because a cell that cannot fail for the reason its name gives
+    // is worth less than one that says so.
+    expect(
+      events.filter(
+        (e) =>
+          e.type === 'runWarning' &&
+          (e.payload as { code?: string }).code === 'member-outcome-missing',
+      ),
+    ).toEqual([])
+  })
+})
+
+describe('fail-fast under the pool — poisoning stops STARTS, not work in flight', () => {
+  it('skips the queued member while the in-flight sibling runs to completion', async () => {
+    // The named plan decision (RESEARCH open Q1) in its only observable form. Members [0,1,2] in
+    // one failFastGroup at workers=2: m0 and m1 start together, m0 fails, m2 is then claimed and
+    // must never start, and m1 — already in flight when the poison landed — finishes normally.
+    //
+    // The sequential loop produces [m0 failed, m1 SKIPPED, m2 skipped] for this input. The pool
+    // produces [m0 failed, m1 PASSED, m2 skipped], in the finish order m0, m2, m1. Neither the
+    // outcome triple nor the finish order is reachable sequentially, so this cell cannot pass on a
+    // run that did not actually overlap.
+    const calls: string[] = []
+    const events: RunEventEnvelope[] = []
+    const finishedIds = (): string[] =>
+      events
+        .filter((e) => e.type === 'testFinished')
+        .map((e) => (e.payload as { testId: string }).testId)
+
+    const members = plainMembers(['m0', 'm1', 'm2']).map((m) => ({ ...m, failFastGroup: 'g1' }))
+    const executor = scriptedControlledExecutor(
+      {
+        m0: async () => failResult('m0'),
+        // m1 stays in flight until the run has decided what to do with m2.
+        m1: async () => {
+          await drainUntil(() => finishedIds().includes('m2'))
+          return passResult('m1')
+        },
+      },
+      calls,
+    )
+
+    const session = startRun(poolConfig({ members, workers: 2, executor }))
+    session.subscribe(1, (event) => events.push(event))
+    const completion = await done(session)
+
+    // m2's executor is never invoked — poisoning refuses a START, it does not kill a run.
+    expect(calls).toEqual(['m0', 'm1'])
+    expect(finishedIds()).toEqual(['m0', 'm2', 'm1'])
+    expect(completion.handoff.tests.map((t) => t.testId)).toEqual(['m0', 'm1', 'm2'])
+    expect(completion.handoff.tests.map((t) => t.outcome)).toEqual(['failed', 'passed', 'skipped'])
+    expect(completion.verdict).toBe('failed')
   })
 })
