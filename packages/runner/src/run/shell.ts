@@ -1,6 +1,8 @@
 // The run shell — `startRun` and the RunSession it returns (D-01, SESSION-01/02/04/05). This is
-// the run lifecycle every later surface attaches to: it owns the bus, seq, ordered member
-// iteration, group-scoped fail-fast skip production (absorbed from suite/runner.ts:530-554),
+// the run lifecycle every later surface attaches to: it owns the bus, seq, the bounded member
+// pool (402-02 D-09 — N members concurrent in the run's process, `workers` default 1, exclusive
+// lanes for members that share a mutable execution resource), group-scoped fail-fast skip
+// production (absorbed from suite/runner.ts:530-554),
 // run-level cancel + wall-clock budget (D-03), the aggregate-verdict emission, and the one-per-run
 // handoff assembly + persistence (D-17). It carries ZERO verdict logic (deriveMemberOutcome/
 // deriveAggregateVerdict/classifyRootCause own it) and ZERO fs/provider access (validate:arch
@@ -76,8 +78,13 @@ function isMemberQuarantined(
 
 /**
  * Start a run (D-01). Constructs the session SYNCHRONOUSLY — the bus, `runStarted` at seq 1, the
- * run-budget arm, the run-level AbortController — then kicks the async member-iteration loop whose
- * settled result feeds `done`. Returns the addressable {@link RunSession} immediately.
+ * run-budget arm, the run-level AbortController — then kicks the async member pool whose settled
+ * result feeds `done`. Returns the addressable {@link RunSession} immediately.
+ *
+ * 402-02 (D-09): members execute through a BOUNDED CONCURRENT POOL rather than a `for` loop, but
+ * everything after it is unchanged — the terminal sequence is still ONE code path, run once, after
+ * the pool settles. Concurrency changes which member is in flight when; it does not change who
+ * publishes the verdict, or when `runFinished` is last.
  */
 export function startRun(config: RunConfig): RunSession {
   const masking = config.masking ?? IDENTITY_MASKING
@@ -146,15 +153,39 @@ export function startRun(config: RunConfig): RunSession {
   }
 
   const done: Promise<RunCompletion> = (async (): Promise<RunCompletion> => {
-    const outcomes: PerTestOutcome[] = []
-    const memberOutcomes: MemberTestOutcome[] = []
-    // 390 D-14: per-member quarantine flags, pushed in lockstep with `memberOutcomes` at EVERY
-    // push site so the two arrays stay positionally aligned — the aggregate rule reads them by
-    // index, and a missed push would silently shift every later member's disposition.
-    const memberQuarantined: boolean[] = []
+    const memberCount = config.members.length
+    // 402-02 (D-09): INDEX-ADDRESSED outcome slots, pre-sized, assigned by member index — the
+    // replacement for the pre-402 lockstep `push` trio. The aggregate rule reads these three
+    // arrays POSITIONALLY, so under a concurrent pool "append in completion order" silently
+    // re-attributes every member's outcome to whoever finished in its position. Appending is
+    // therefore not a style choice here; it is the tampering surface (T-402-07). A slot is written
+    // exactly once, by exactly one `runMember(i)`, and the compaction below refuses to guess about
+    // a hole.
+    const outcomeSlots: (PerTestOutcome | undefined)[] = new Array<PerTestOutcome | undefined>(
+      memberCount,
+    )
+    const memberOutcomeSlots: (MemberTestOutcome | undefined)[] = new Array<
+      MemberTestOutcome | undefined
+    >(memberCount)
+    const memberQuarantinedSlots: (boolean | undefined)[] = new Array<boolean | undefined>(
+      memberCount,
+    )
     const poisonedGroups = new Set<string>()
 
-    for (let i = 0; i < config.members.length; i += 1) {
+    /**
+     * ONE member's execution — the pre-402 loop body, extracted intact. Every seam is preserved in
+     * place: abort-skip, group fail-fast skip, the `testStarted` publish, the member
+     * AbortController chained to the run controller, the executor-vs-abort race, outcome
+     * derivation, group poisoning, root-cause classification, handoff assembly, `testFinished`.
+     * The ONLY changes are `continue` → `return` and `push` → indexed assignment.
+     *
+     * The fail-fast decision (RESEARCH open Q1, legislated by 402-02): poisoning prevents a NEW
+     * member from STARTING; members already in flight run to completion. That falls out of where
+     * the check sits — it is evaluated when this function is entered, i.e. exactly at the moment a
+     * member starts — and it is the reading that matches the shipped abort-skip idiom, which also
+     * only ever refuses to start work rather than killing work already begun.
+     */
+    const runMember = async (i: number): Promise<void> => {
       const member = config.members[i]
       const testIndex = member.testIndex ?? i
       const name = member.name
@@ -163,22 +194,21 @@ export function startRun(config: RunConfig): RunSession {
 
       // Run aborted (cancel or budget) — skip the rest without invoking the executor (D-03).
       if (runController.signal.aborted) {
-        const skip = skippedPerTestOutcome(member, testIndex, quarantineMarker)
-        outcomes.push(skip)
-        memberOutcomes.push('skipped')
-        memberQuarantined.push(quarantined)
-        continue
+        outcomeSlots[i] = skippedPerTestOutcome(member, testIndex, quarantineMarker)
+        memberOutcomeSlots[i] = 'skipped'
+        memberQuarantinedSlots[i] = quarantined
+        return
       }
 
       // Group fail-fast (D-15): a poisoned same-group predecessor skips this member — shell-owned
       // skip production absorbed from suite/runner.ts:530-554; the executor is never invoked.
       if (member.failFastGroup !== undefined && poisonedGroups.has(member.failFastGroup)) {
         const skip = skippedPerTestOutcome(member, testIndex, quarantineMarker)
-        outcomes.push(skip)
-        memberOutcomes.push('skipped')
-        memberQuarantined.push(quarantined)
+        outcomeSlots[i] = skip
+        memberOutcomeSlots[i] = 'skipped'
+        memberQuarantinedSlots[i] = quarantined
         bus.publish('testFinished', projectTestFinished(skip, mask))
-        continue
+        return
       }
 
       // 363 D-01: enrich testStarted with the member descriptor's parity fields (filePath, suite
@@ -332,9 +362,9 @@ export function startRun(config: RunConfig): RunSession {
         },
         rootCause,
       )
-      outcomes.push(perTest)
-      memberOutcomes.push(outcome)
-      memberQuarantined.push(quarantined)
+      outcomeSlots[i] = perTest
+      memberOutcomeSlots[i] = outcome
+      memberQuarantinedSlots[i] = quarantined
       // 363 D-01: enrich testFinished with the TestResult the shell already holds at assembly —
       // durationMs, retryCount, and the masked failureSummary (masked by projectTestFinished's
       // terminal walk, T-363-05). Absent optionals are omitted (Pitfall 2 — sourced from the runner
@@ -349,6 +379,93 @@ export function startRun(config: RunConfig): RunSession {
       )
     }
 
+    // ---- The bounded member pool (402-02, D-09) ----------------------------------------------
+    //
+    // `workers` defaults to 1, and at 1 this is a plain sequential loop over `runMember(0..n-1)` —
+    // the generalization is meant to be a superset of the shipped behavior, not a rewrite of it,
+    // and the workers=1 parity control in `run-shell.concurrency.test.ts` compares the whole event
+    // stream against a fixture captured BEFORE this code existed.
+    //
+    // Effective concurrency is min(members, workers) and the request cannot raise it (D-12): the
+    // value arrives on the resolved RunConfig from config, never from a caller's payload, so an
+    // unbounded-concurrency denial-of-service (T-402-08) has no reachable input.
+    //
+    // EXCLUSIVE LANES are the part that is NOT a scheduling nicety. Members that declare the same
+    // `exclusiveLane` share a mutable execution resource and are run strictly one at a time, in
+    // index order. Today's suite path is exactly such a set: every member of every suite drives the
+    // ONE `suiteConfig.adapter` its suite set up (verified 2026-08-24, the RESEARCH A2 read), and
+    // `createSuiteLifecycle` additionally admits one active suite at a time. Pooling over that
+    // would interleave two tests on one browser page. The direct path is the opposite — each direct
+    // test constructs its OWN adapter inside its own closure — and declares no lane, so it pools.
+    // D-09's "each member its own browser/CDP handle" is therefore a PRECONDITION the descriptor
+    // states, not an assumption the pool makes.
+    const requestedWorkers = Math.floor(config.workers ?? 1)
+    const workerCount = Math.max(
+      1,
+      Math.min(memberCount, Number.isFinite(requestedWorkers) ? requestedWorkers : 1),
+    )
+
+    // One FIFO tail per lane. A lane member chains onto its lane's tail, so lane members execute in
+    // the order they were claimed — which is index order, because indices are claimed in order.
+    const laneTails = new Map<string, Promise<void>>()
+    const runInLane = async (lane: string, i: number): Promise<void> => {
+      const previous = laneTails.get(lane) ?? Promise.resolve()
+      const settled: Promise<void> = previous.then(
+        () => runMember(i),
+        () => runMember(i),
+      )
+      // The stored tail swallows rejection so one member's throw cannot wedge its lane; the
+      // returned promise does NOT, so a throw still propagates exactly as it did from the loop.
+      laneTails.set(
+        lane,
+        settled.then(
+          () => undefined,
+          () => undefined,
+        ),
+      )
+      await settled
+    }
+
+    let nextIndex = 0
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const i = nextIndex
+        nextIndex += 1
+        if (i >= memberCount) return
+        const lane = config.members[i].exclusiveLane
+        if (lane === undefined) await runMember(i)
+        else await runInLane(lane, i)
+      }
+    }
+
+    if (memberCount > 0) {
+      await Promise.all(Array.from({ length: workerCount }, () => worker()))
+    }
+
+    // ---- Compact the index-addressed slots for the aggregate rule ----------------------------
+    //
+    // Every path through `runMember` writes all three slots, so a hole is a programming error
+    // rather than a run condition. It is still handled rather than asserted, because `done` never
+    // rejects (D-13/D-17): a hole degrades with a runWarning and the index is dropped from all
+    // THREE arrays together, which keeps the positional alignment the aggregate rule depends on.
+    const outcomes: PerTestOutcome[] = []
+    const memberOutcomes: MemberTestOutcome[] = []
+    const memberQuarantined: boolean[] = []
+    for (let i = 0; i < memberCount; i += 1) {
+      const perTest = outcomeSlots[i]
+      const outcome = memberOutcomeSlots[i]
+      const quarantined = memberQuarantinedSlots[i]
+      if (perTest === undefined || outcome === undefined || quarantined === undefined) {
+        bus.publish('runWarning', {
+          code: 'member-outcome-missing',
+          message: `Member ${i} produced no outcome slot; it is omitted from the aggregate.`,
+        })
+        continue
+      }
+      outcomes.push(perTest)
+      memberOutcomes.push(outcome)
+      memberQuarantined.push(quarantined)
+    }
     // ---- Terminal sequence — ONE owner (Pitfall 7) -------------------------------------------
     const verdict = deriveAggregateVerdict({
       runCancelled,

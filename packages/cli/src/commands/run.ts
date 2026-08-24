@@ -57,6 +57,7 @@ import {
   buildSuiteMemberExecutor,
   computeRunConfigDigests,
   createSuiteLifecycle,
+  SUITE_LIFECYCLE_LANE,
   extractAuthStateSensitiveStrings,
   memoryToolGate,
   openRunKnowledgeComposition,
@@ -3045,6 +3046,11 @@ export async function produceSuiteRunMembers(
         testIndex: globalIndex,
         name: test.name,
         failFastGroup: prepared.suiteKey,
+        // 402-02 (D-09): every suite member shares its suite's ONE adapter, and the suite
+        // lifecycle admits one active suite at a time — so suite members declare the exclusive
+        // lane and the bounded member pool never runs two of them at once, whatever `workers`
+        // says. The direct path declares no lane because each direct test builds its own adapter.
+        exclusiveLane: SUITE_LIFECYCLE_LANE,
         // 363 D-01: parity descriptor fields the shell rides onto testStarted. Suite grouping is
         // per-suite (id/name/index/total); filePath + totalSteps are per-member.
         filePath: identityPath,

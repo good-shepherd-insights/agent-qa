@@ -188,6 +188,19 @@ export interface RunMemberDescriptor {
    * posture of a member whose target could not be resolved.
    */
   baselineProbe?: BaselineProbeResult
+  /**
+   * 402-02 (D-09): members declaring the SAME lane share a mutable execution resource and MUST NOT
+   * run concurrently — the bounded member pool runs them strictly one at a time, in index order.
+   * Absent means "this member owns everything it touches" and the pool may schedule it freely.
+   *
+   * This is a PRECONDITION the producer states, never something the shell infers. D-09 requires
+   * each concurrent member its own browser/CDP handle; today's suite path does not satisfy that
+   * (every member of a suite drives the ONE adapter its suite set up, and `createSuiteLifecycle`
+   * admits one active suite at a time), while the direct path does (each direct test constructs
+   * its own adapter). A producer that starts handing each member its own session drops the lane
+   * and gets concurrency; nothing in the shell has to be re-argued for that to be safe.
+   */
+  exclusiveLane?: string
 }
 
 /**
@@ -335,4 +348,17 @@ export interface RunConfig {
    * byte-identical pre-390 behavior.
    */
   quarantined?: readonly QuarantineAppliedEntry[]
+  /**
+   * 402-02 (D-09/D-12): how many members may execute CONCURRENTLY in this run's process. Defaults
+   * to 1 — one worker is a plain sequential loop, byte-identical to the pre-402 shell, so nothing
+   * changes until a config resolves a higher value. Effective concurrency is
+   * `min(members.length, workers)`; values below 1 and non-finite values resolve to 1.
+   *
+   * CONFIG-RESOLVED, NEVER REQUEST-SUPPLIED (D-12). It arrives on the already-resolved RunConfig
+   * the composition root builds, exactly like `runBudgetMs` — `RunsStartInput` carries no
+   * concurrency field, so a remote token-holder cannot raise the concurrency of a target whose
+   * owner tuned it down (the refused-request-fields posture), and unbounded concurrency
+   * (T-402-08) has no reachable input.
+   */
+  workers?: number
 }

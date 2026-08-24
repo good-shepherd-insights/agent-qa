@@ -368,6 +368,25 @@ export async function resolveRunBuildOrdinal(input: {
 
 // ---- (4) createSuiteLifecycle — lazy per-suite setup/teardown --------------------------------
 
+/**
+ * The ONE exclusive lane every suite member declares (402-02, D-09). The runner's bounded member
+ * pool never runs two members of the same lane concurrently, and the suite path needs that for two
+ * independent reasons, either of which alone would be sufficient:
+ *
+ *  1. Every member of a suite drives the ONE `PlatformAdapter` its suite set up — one browser, one
+ *     page. Two members on it at once would interleave navigations and clicks on a shared surface.
+ *     D-09 requires each concurrent member its own browser/CDP handle; the suite path does not
+ *     supply that today, so it does not get concurrency today.
+ *  2. `createSuiteLifecycle` admits ONE ACTIVE SUITE at a time. Two suites live at once is a
+ *     lifecycle violation, not a scheduling preference.
+ *
+ * A single lane string (rather than one lane per suite) is what encodes BOTH: it serializes within
+ * a suite and across suites. When a producer starts handing each member its own session AND the
+ * lifecycle admits concurrent suites, this becomes a per-suite key — or disappears — and the shell
+ * needs no argument re-litigated for that to be safe.
+ */
+export const SUITE_LIFECYCLE_LANE = 'suite-lifecycle'
+
 /** The setup/teardown pair a suite runs when it first becomes active / when it is torn down. */
 export interface SuiteLifecycleHooks {
   /** Suite-level setup: setup hooks + adapter.setup + suite-URL navigation. */

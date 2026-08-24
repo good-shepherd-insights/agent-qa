@@ -31,6 +31,7 @@ export {
   buildSuiteMemberExecutor,
   computeRunConfigDigests,
   createSuiteLifecycle,
+  SUITE_LIFECYCLE_LANE,
   extractAuthStateSensitiveStrings,
   openRunKnowledgeComposition,
   resolveBuildTagSetting,

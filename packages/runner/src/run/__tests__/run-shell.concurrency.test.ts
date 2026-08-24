@@ -232,3 +232,182 @@ describe('workers=1 parity — the pre-refactor differential control', () => {
     },
   )
 })
+
+// ---- Deferred-executor instruments ------------------------------------------------------------
+
+/**
+ * Drain microtasks until `predicate` holds or the budget expires; report which happened. This is
+ * the whole timing apparatus of this file. It terminates unconditionally, so a cell that expects
+ * overlap FAILS on a sequential executor rather than hanging on one, and a cell that expects
+ * serialization proves it without waiting on a clock.
+ */
+async function drainUntil(predicate: () => boolean, turns = 100): Promise<boolean> {
+  for (let i = 0; i < turns; i += 1) {
+    if (predicate()) return true
+    await Promise.resolve()
+  }
+  return predicate()
+}
+
+function plainMembers(ids: readonly string[]): RunMemberDescriptor[] {
+  return ids.map((id) => ({ testId: id, name: `${id} test`, filePath: `${id}.test.ts` }))
+}
+
+function poolConfig(overrides: Partial<RunConfig>): RunConfig {
+  return {
+    runId: 'run-pool' as RunConfig['runId'],
+    scope: { tier: 'suite', key: 'checkout' },
+    executionContext: 'local-headless',
+    buildOrdinal: 7,
+    configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+    members: plainMembers(['m0', 'm1']),
+    executor: async (member: RunMemberDescriptor) => passResult(member.testId),
+    ports: { handoffStore: makeFakeHandoffStore(), eventLog: makeFakeEventLog() },
+    ...overrides,
+  }
+}
+
+/**
+ * An executor where m0 blocks until m1 has STARTED. Under a concurrent pool that resolves and the
+ * two members finish in INVERTED order; under any sequential execution m1 cannot start while m0 is
+ * blocked, the drain budget expires, and the recorded orders come out identical instead of
+ * inverted. That difference — not a duration, not a timer — is what these cells assert on.
+ */
+function interleavingExecutor(started: string[], finished: string[]): MemberTestExecutor {
+  return async (member: RunMemberDescriptor, _ctx: MemberTestRunContext) => {
+    started.push(member.testId)
+    if (member.testId === 'm0') await drainUntil(() => started.includes('m1'))
+    finished.push(member.testId)
+    return passResult(member.testId)
+  }
+}
+
+describe('the bounded member pool — 2 members concurrent, one bus, one terminal sequence', () => {
+  it('runs two members in flight together and lets the second finish FIRST', async () => {
+    const started: string[] = []
+    const finished: string[] = []
+    const session = startRun(
+      poolConfig({ workers: 2, executor: interleavingExecutor(started, finished) }),
+    )
+    const events = drain(session)
+    await done(session)
+
+    // Overlap: m1 entered its executor while m0 was still inside its own.
+    expect(started).toEqual(['m0', 'm1'])
+    // The discriminating half. A `for` loop CANNOT produce this ordering: it is the one
+    // observation that separates a pool from the loop it replaces on identical input.
+    expect(finished).toEqual(['m1', 'm0'])
+
+    const startedIds = events
+      .filter((e) => e.type === 'testStarted')
+      .map((e) => (e.payload as { testId: string }).testId)
+    const finishedIds = events
+      .filter((e) => e.type === 'testFinished')
+      .map((e) => (e.payload as { testId: string }).testId)
+    expect(startedIds).toEqual(['m0', 'm1'])
+    expect(finishedIds).toEqual(['m1', 'm0'])
+  })
+
+  it('stamps every envelope with the run\'s ONE runId at a strictly increasing seq', async () => {
+    const started: string[] = []
+    const finished: string[] = []
+    const session = startRun(
+      poolConfig({ workers: 2, executor: interleavingExecutor(started, finished) }),
+    )
+    const events = drain(session)
+    await done(session)
+
+    expect(finished).toEqual(['m1', 'm0'])
+    expect(new Set(events.map((e) => e.runId))).toEqual(new Set(['run-pool']))
+    expect(events.map((e) => e.seq)).toEqual(events.map((_e, i) => i + 1))
+  })
+
+  it('runs the terminal sequence exactly once no matter how the members interleave', async () => {
+    const started: string[] = []
+    const finished: string[] = []
+    const session = startRun(
+      poolConfig({ workers: 2, executor: interleavingExecutor(started, finished) }),
+    )
+    const events = drain(session)
+    await done(session)
+
+    // Assert the PREMISE first. Without this line the cell passes on a sequential executor too,
+    // and would be claiming "no matter how the members interleave" about a run in which they did
+    // not interleave at all — the 402-01 vacuous-assertion trap in its purest form.
+    expect(finished).toEqual(['m1', 'm0'])
+    expect(events.filter((e) => e.type === 'verdict')).toHaveLength(1)
+    expect(events.filter((e) => e.type === 'runFinished')).toHaveLength(1)
+    const last = events[events.length - 1]
+    expect(last.type).toBe('runFinished')
+    expect((last.payload as { finalSeq: number }).finalSeq).toBe(last.seq)
+  })
+
+  it('serializes members that declare the SAME exclusive lane, even at workers=8', async () => {
+    // The A2 protection (D-09's "each member its own browser/CDP handle"). Suite members share the
+    // one adapter their suite set up, so they declare a lane and the pool must NOT interleave them
+    // — the same input that produced an inverted finish above must produce declaration order here.
+    const started: string[] = []
+    const finished: string[] = []
+    const members = plainMembers(['m0', 'm1']).map((m) => ({
+      ...m,
+      exclusiveLane: 'suite-lifecycle',
+    }))
+    const session = startRun(
+      poolConfig({ workers: 8, members, executor: interleavingExecutor(started, finished) }),
+    )
+    const events = drain(session)
+    await done(session)
+
+    expect(started).toEqual(['m0', 'm1'])
+    expect(finished).toEqual(['m0', 'm1'])
+    const finishedIds = events
+      .filter((e) => e.type === 'testFinished')
+      .map((e) => (e.payload as { testId: string }).testId)
+    expect(finishedIds).toEqual(['m0', 'm1'])
+  })
+
+  it('an all-lane run at workers=8 reproduces the workers=1 baseline stream verbatim', async () => {
+    // The claim that makes the pool safe to ship for the suite path before per-member browser
+    // sessions exist: give every member the lane a suite producer gives it and the ENTIRE event
+    // stream — order, seqs, payloads — is the pre-refactor one, at any worker count.
+    //
+    // Every member gets the lane here, including the ungrouped `delta`. That is deliberate: a run
+    // where SOME members declare the lane and some do not is a mixed run, and mixing changes the
+    // stream (the lane-free member overtakes the queue). No shipped producer builds one — a run is
+    // either the suite path (every member lane-bound) or the direct path (no member lane-bound) —
+    // so this cell pins the shape that exists rather than the shape that does not.
+    const laneMembers = BASELINE_MEMBERS.map((m) => ({ ...m, exclusiveLane: 'suite-lifecycle' }))
+    const session = startRun(baselineConfig({ members: laneMembers, workers: 8 }))
+    const events = drain(session)
+    await done(session)
+
+    expect(normalize(events)).toEqual(SEQUENTIAL_BASELINE)
+  })
+})
+
+describe('the pool at the edges — empty and single-member runs', () => {
+  it('a zero-member run settles immediately with the terminal sequence exactly once', async () => {
+    const session = startRun(poolConfig({ members: [], workers: 4 }))
+    const events = drain(session)
+    const completion = await done(session)
+
+    expect(events.map((e) => e.type)).toEqual(['runStarted', 'verdict', 'runFinished'])
+    expect(events.filter((e) => e.type === 'verdict')).toHaveLength(1)
+    expect(completion.handoff.tests).toEqual([])
+    expect((events[0].payload as { memberTestCount: number }).memberTestCount).toBe(0)
+  })
+
+  it('a single-member run under the pool matches the same run at workers=1', async () => {
+    const single = plainMembers(['m0'])
+    const pooled = startRun(poolConfig({ members: single, workers: 4, runId: 'run-x' as RunConfig['runId'] }))
+    const pooledEvents = drain(pooled)
+    const pooledCompletion = await done(pooled)
+
+    const sequential = startRun(poolConfig({ members: single, runId: 'run-x' as RunConfig['runId'] }))
+    const sequentialEvents = drain(sequential)
+    const sequentialCompletion = await done(sequential)
+
+    expect(normalize(pooledEvents)).toEqual(normalize(sequentialEvents))
+    expect(pooledCompletion.verdict).toBe(sequentialCompletion.verdict)
+  })
+})
