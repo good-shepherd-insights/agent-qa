@@ -245,11 +245,16 @@ const FAILURE_CLASSES = [
 /** A row's template turned into a concrete request target. */
 function probeTargetsFor(row: (typeof RUN_SERVICE_ROUTE_TABLE)[number]): readonly string[] {
   if (row.pattern === undefined) return [row.path]
-  // The templated row is driven BOTH bare and with 402-04's `?handle=` parameter, because the
-  // query string is a second input the verdict must stand above: a handle refusal answered before
-  // the verdict would tell an unauthenticated caller that this run exists.
   const concrete = row.path.replace(/:([A-Za-z0-9_]+)/g, 'r_census-probe')
-  return [concrete, `${concrete}?handle=1`]
+  // THE TEMPLATED ROW IS DRIVEN THREE WAYS, and the third one is load-bearing. 402-04 added a
+  // `?handle=` parameter with two refusals of its own, both answered before any stream header —
+  // which puts them in the same region of the dispatch as the verdict. A WELL-FORMED handle does
+  // not discriminate the ordering at all (a mutation that validated the handle above the verdict
+  // survived a census that drove only `?handle=1`, measured). The MALFORMED one does: it is the
+  // input the early check would refuse 400 on, so a census that drives it proves the verdict still
+  // stands first — and therefore that a handle refusal cannot be used as a run-existence oracle by
+  // a caller with no credential.
+  return [concrete, `${concrete}?handle=1`, `${concrete}?handle=not-a-number`]
 }
 
 describe('the refusal census: every route on the table, every failure class (D-06)', () => {
