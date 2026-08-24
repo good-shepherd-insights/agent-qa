@@ -384,6 +384,15 @@ export async function resolveRunBuildOrdinal(input: {
  * a suite and across suites. When a producer starts handing each member its own session AND the
  * lifecycle admits concurrent suites, this becomes a per-suite key — or disappears — and the shell
  * needs no argument re-litigated for that to be safe.
+ *
+ * STATUS 2026-08-24 (402-02): reason (2) is CLOSED — `createSuiteLifecycle` below is now a
+ * once-latch with member reference counting, so two members of one suite merge into one setup and
+ * a boundary crossed while members are live is a named error rather than a mid-flight teardown.
+ * Reason (1) is OPEN and is what still holds the lane: `suiteConfig.adapter` is per-SUITE, so
+ * within-suite concurrency would still put two tests on one browser page. Giving each suite member
+ * its own session is a change to what a suite MEANS (suite setup navigates once and members
+ * inherit that page state, per-test hooks run against it, auth state is captured from it) and is
+ * not this plan's to make. Do not drop this lane until that is decided.
  */
 export const SUITE_LIFECYCLE_LANE = 'suite-lifecycle'
 
@@ -395,40 +404,139 @@ export interface SuiteLifecycleHooks {
   teardown(): Promise<void>
 }
 
+/**
+ * One member's hold on the active suite (402-02). Held from the moment `ensureReady` admits the
+ * member until the member settles; the suite cannot be torn down while any hold is outstanding.
+ */
+export interface SuiteMemberLease {
+  /** Drop this member's hold. Idempotent — a double release never double-decrements. */
+  release(): void
+}
+
+/**
+ * Thrown when `ensureReady` is asked for a suite while a DIFFERENT suite still has live members
+ * (402-02). This is the one-active-suite invariant made loud. The alternative — tearing the live
+ * suite down to make room — closes the browser out from under a test that is still running in it,
+ * and does so silently. The shell's exclusive lane (`SUITE_LIFECYCLE_LANE`) means no shipped
+ * composition can reach this, so it reads as an assertion rather than a runtime condition; that is
+ * exactly the point of naming it instead of assuming it.
+ */
+export class SuiteBoundaryWhileLiveError extends Error {
+  constructor(
+    readonly activeSuiteKey: string,
+    readonly requestedSuiteKey: string,
+    readonly liveMembers: number,
+  ) {
+    super(
+      `Cannot enter suite "${requestedSuiteKey}": suite "${activeSuiteKey}" still has ` +
+        `${liveMembers} live member(s). Suite boundaries are serialized.`,
+    )
+    this.name = 'SuiteBoundaryWhileLiveError'
+  }
+}
+
 export interface SuiteLifecycle {
   /**
-   * Ensure `suiteKey` is the active suite before running a member. On the FIRST member of a suite
-   * this runs the suite's setup; crossing a suite boundary first tears down the previous suite.
-   * Idempotent within a suite (repeat calls for the active key are no-ops).
+   * Admit a member to `suiteKey` and resolve once the suite is ready. The FIRST member to arrive
+   * starts the suite's setup; every other member of that suite awaits the SAME setup promise
+   * rather than starting a second one. Crossing a suite boundary tears down the previous suite —
+   * but only once its last member has released; a boundary crossed while members are live is a
+   * {@link SuiteBoundaryWhileLiveError}, never a silent teardown.
+   *
+   * The returned {@link SuiteMemberLease} MUST be released when the member settles (pass or fail);
+   * `buildSuiteMemberExecutor` does it in a `finally`.
    */
-  ensureReady(suiteKey: string, hooks: SuiteLifecycleHooks): Promise<void>
+  ensureReady(suiteKey: string, hooks: SuiteLifecycleHooks): Promise<SuiteMemberLease>
   /** Tear down the last active suite (if any). Called once at run end after `session.done`. */
   finalize(): Promise<void>
 }
 
 /**
- * A lazy suite-lifecycle manager (the Q1.2 "pre/post-run composition" rows). It tracks the active
- * suite: `ensureReady` sets up a suite on its first member and tears down the previous suite when a
- * member crosses a boundary; `finalize` tears down the last active suite. A wholly SKIPPED suite
- * never sets up — the shell only invokes the executor (hence `ensureReady`) for non-skipped
- * members, so a suite whose members are all fail-fast/cancel skips is never touched.
+ * A lazy, CONCURRENCY-SAFE suite-lifecycle manager (the Q1.2 "pre/post-run composition" rows,
+ * redesigned for the 402-02 member pool). A wholly SKIPPED suite never sets up — the shell only
+ * invokes the executor (hence `ensureReady`) for non-skipped members, so a suite whose members are
+ * all fail-fast/cancel skips is never touched.
+ *
+ * WHAT CHANGED AND WHY. The pre-402 version read the active key, awaited `hooks.setup()`, and THEN
+ * assigned the key — three steps with awaits between them. Under a `for` loop that is fine because
+ * only one member is ever inside it. Under a pool, two members of one suite both observe "no active
+ * suite" and both run setup: two browsers for one suite, and the second teardown handle silently
+ * overwriting the first, so the first suite's browser is never closed. The fix is not a lock; it is
+ * to make the state transition SYNCHRONOUS and let the promise be the shared thing:
+ *
+ *  - the once-latch: `activeKey`, `activeTeardown` and `activeSetup` are all assigned in the same
+ *    synchronous region, BEFORE any await, so there is no window in which a second member can
+ *    observe the pre-setup state. Every later member of the suite awaits `activeSetup` itself.
+ *  - member reference counting: the count is incremented before awaiting setup, so a concurrent
+ *    boundary crossing sees the hold. Teardown fires at a BOUNDARY (or at `finalize`) and only
+ *    when the count is zero — never merely because it hit zero, which would tear the suite down
+ *    and set it back up between every pair of members.
+ *  - a failed setup poisons the suite: the rejected latch is kept and re-thrown to every later
+ *    member, so setup is attempted exactly once and no member half-starts against a suite that
+ *    never came up. Such a suite is never torn down — nothing came up to take down.
  */
 export function createSuiteLifecycle(): SuiteLifecycle {
   let activeKey: string | undefined
+  let activeSetup: Promise<void> | undefined
   let activeTeardown: (() => Promise<void>) | undefined
+  let liveMembers = 0
+
+  const tearDownActive = async (): Promise<void> => {
+    const teardown = activeTeardown
+    activeKey = undefined
+    activeSetup = undefined
+    activeTeardown = undefined
+    liveMembers = 0
+    if (teardown) await teardown()
+  }
 
   return {
     async ensureReady(suiteKey, hooks) {
-      if (activeKey === suiteKey) return
-      if (activeTeardown) await activeTeardown()
-      await hooks.setup()
-      activeKey = suiteKey
-      activeTeardown = hooks.teardown
+      if (activeKey !== undefined && activeKey !== suiteKey) {
+        if (liveMembers > 0) {
+          throw new SuiteBoundaryWhileLiveError(activeKey, suiteKey, liveMembers)
+        }
+        await tearDownActive()
+      }
+
+      if (activeKey !== suiteKey) {
+        // THE ONCE-LATCH. All three assignments are synchronous and happen before the setup body
+        // can suspend, so the check above and the state below can never be split by an await.
+        activeKey = suiteKey
+        activeTeardown = hooks.teardown
+        activeSetup = (async () => {
+          try {
+            await hooks.setup()
+          } catch (error) {
+            // A suite that never came up has nothing to take down, and the latch stays rejected so
+            // every later member of this suite inherits the same failure instead of retrying.
+            activeTeardown = undefined
+            throw error
+          }
+        })()
+      }
+
+      const setup = activeSetup
+      // Counted BEFORE the await: a boundary crossing that races this member must see the hold.
+      liveMembers += 1
+      let released = false
+      const lease: SuiteMemberLease = {
+        release() {
+          if (released) return
+          released = true
+          liveMembers -= 1
+        },
+      }
+      try {
+        await setup
+      } catch (error) {
+        lease.release()
+        throw error
+      }
+      return lease
     },
     async finalize() {
-      if (activeTeardown) await activeTeardown()
-      activeKey = undefined
-      activeTeardown = undefined
+      await tearDownActive()
     },
   }
 }
@@ -463,8 +571,14 @@ export function buildSuiteMemberExecutor(input: {
     if (!binding) {
       throw new Error(`No suite-member binding for testIndex ${ctx.testIndex} (testId ${member.testId})`)
     }
-    await input.lifecycle.ensureReady(binding.suiteKey, binding.hooks)
-    return binding.run(ctx)
+    const lease = await input.lifecycle.ensureReady(binding.suiteKey, binding.hooks)
+    try {
+      return await binding.run(ctx)
+    } finally {
+      // The hold is dropped on EVERY exit, throw included — a leaked hold would block the next
+      // suite's boundary forever with a SuiteBoundaryWhileLiveError.
+      lease.release()
+    }
   }
 }
 

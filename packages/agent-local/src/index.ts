@@ -32,6 +32,7 @@ export {
   computeRunConfigDigests,
   createSuiteLifecycle,
   SUITE_LIFECYCLE_LANE,
+  SuiteBoundaryWhileLiveError,
   extractAuthStateSensitiveStrings,
   openRunKnowledgeComposition,
   resolveBuildTagSetting,
@@ -53,6 +54,7 @@ export type {
   RunPersistencePorts,
   SuiteLifecycle,
   SuiteLifecycleHooks,
+  SuiteMemberLease,
   SuiteMemberBinding,
 } from './composition/run-composition.js'
 

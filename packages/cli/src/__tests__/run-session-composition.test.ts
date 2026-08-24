@@ -198,9 +198,12 @@ describe('createSuiteLifecycle (lazy per-suite setup/teardown)', () => {
     })
     const lc = createSuiteLifecycle()
 
-    await lc.ensureReady('A', hooksFor('A'))
-    await lc.ensureReady('A', hooksFor('A')) // same suite => no re-setup
-    await lc.ensureReady('B', hooksFor('B')) // cross-suite => tears down A, sets up B
+    // 402-02: `ensureReady` now returns a per-member LEASE and a suite is not torn down while any
+    // member of it is live. The sequence below is the same one this cell always pinned, with each
+    // member's settle made explicit — which is what the boundary teardown now waits for.
+    ;(await lc.ensureReady('A', hooksFor('A'))).release()
+    ;(await lc.ensureReady('A', hooksFor('A'))).release() // same suite => no re-setup
+    ;(await lc.ensureReady('B', hooksFor('B'))).release() // cross-suite => tears down A, sets up B
     await lc.finalize() // tears down the last active suite (B)
 
     // Suite C is never ensured => it never appears (a wholly-skipped suite never sets up).
