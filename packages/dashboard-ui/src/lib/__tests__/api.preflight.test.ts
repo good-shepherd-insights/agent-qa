@@ -156,8 +156,22 @@ describe('triggerRun preflights readiness at the ONE choke point', () => {
     expect(triggerCalls()).toHaveLength(1)
   })
 
-  it('refuses on a 503 from the readiness door — a server with no predicate is not a ready one', async () => {
-    stubFetch({ status: 503, body: { error: 'This server was started without a run-service readiness predicate' } })
+  it.each([503, 404] as const)('PROCEEDS on %i — a door that answers no readiness never said "not ready"', async (status) => {
+    // 503 is the router's "this server was started without a readiness predicate" (a legacy
+    // two-argument mount); 404 is a server that predates the route. Neither is a measurement of
+    // whether this process can run tests, and dashboards composed that way demonstrably do —
+    // `run-confirm-browser.e2e.test.ts` builds one and drives a real run through it. Refusing here
+    // would brick a working dashboard for a fact nobody established.
+    stubFetch({ status, body: { error: 'This server was started without a run-service readiness predicate' } })
+
+    await expect(triggerRun({ file: 'tests/a.yaml' })).resolves.toMatchObject({ runId: 'run_1' })
+    expect(triggerCalls()).toHaveLength(1)
+  })
+
+  it('REFUSES on a 500 — a readiness door that broke is not a door that said nothing', async () => {
+    // The carve-out above is exactly two statuses wide. A predicate that threw is an answer this
+    // build can neither read nor dismiss, and the fail-closed arm is what covers it.
+    stubFetch({ status: 500, body: { error: 'readiness exploded' } })
 
     await expect(triggerRun({ file: 'tests/a.yaml' })).rejects.toBeInstanceOf(RunNotReadyError)
     expect(triggerCalls()).toEqual([])

@@ -632,13 +632,31 @@ function isReadiness(value: unknown): value is RunServiceReadiness {
 }
 
 /**
- * THE PREFLIGHT, AND IT FAILS CLOSED ON EVERY ARM.
+ * `404` and `503` from the readiness route are the SAME fact, and it is not a verdict.
  *
- * A door that cannot be reached, that answers 503 because this server was started without the
- * predicate, or that answers something this build cannot read, are all answers to "can you run
- * something" that are not YES. Treating any of them as "probably fine, post anyway" is exactly the
- * race the preflight exists to remove (T-402-28) — the trigger would be started against a door
- * whose state nobody established.
+ * `503` is the router's "this server was started without a readiness predicate" — a legacy
+ * two-argument mount, the arm 402-05 named explicitly. `404` is a server old enough not to have
+ * the route at all. NEITHER says the process cannot run tests, and both are demonstrably served by
+ * dashboards that run tests perfectly well (`run-confirm-browser.e2e.test.ts` composes one and
+ * drives a real run through it). Refusing on them would brick a working dashboard for a fact
+ * nobody measured, which is a worse failure than the race the preflight removes.
+ *
+ * THE COST OF THIS CARVE-OUT IS NAMED RATHER THAN HIDDEN: against such a door the gate is a no-op.
+ * `agent-qa dashboard` ALWAYS supplies the predicate — with `authConfigured: false` when nothing is
+ * declared, precisely so the browser gets an honest answer either way — so in the shipped product
+ * the gate is always live. What no cell in this plan pins is that the shipped command still
+ * supplies it; if that threading were ever removed the gate would silently become a no-op.
+ */
+const NO_READINESS_DOOR = new Set([404, 503])
+
+/**
+ * THE PREFLIGHT. It fails CLOSED on every answer it can read, and only on those.
+ *
+ * A door that cannot be reached, that refuses for a reason other than not having the route, or
+ * that answers something this build cannot read, are all answers to "can you run something" that
+ * are not YES. Treating any of them as "probably fine, post anyway" is exactly the race the
+ * preflight exists to remove (T-402-28) — the trigger would be started against a door whose state
+ * nobody established.
  */
 async function assertRunReadiness(): Promise<void> {
   let response: Response
@@ -649,6 +667,7 @@ async function assertRunReadiness(): Promise<void> {
       `the dashboard server did not answer its readiness check (${error instanceof Error ? error.message : String(error)})`,
     )
   }
+  if (NO_READINESS_DOOR.has(response.status)) return
   if (!response.ok) {
     const payload = await parseErrorPayload(response)
     const detail = payload && typeof payload.error === 'string' ? payload.error : `HTTP ${String(response.status)}`
