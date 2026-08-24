@@ -18,12 +18,13 @@ import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_PARALLEL_WORKERS, resolveEffectiveWorkers } from '@vostride/agent-qa-schema'
 
 import { CliRunInputError } from '../cli-run-input-error.js'
 import { assembleCliRun } from '../run-assembly.js'
+import { runInProcessCliRun } from '../in-process-run-execution.js'
 import {
   produceMembersFromPatterns,
   resolveRunConcurrencyConfig,
@@ -31,6 +32,33 @@ import {
 } from '../../commands/run.js'
 import type { RunOptions } from '../../commands/run.js'
 import { CountingTarget, createInProcessFixture } from './in-process-run-fixture.js'
+
+/**
+ * WHAT THE DRIVE HANDED THE ASSEMBLER, captured at the seam itself.
+ *
+ * A SPY RATHER THAN A SOURCE GREP, and the difference is not stylistic: a grep for
+ * `resolveEffectiveWorkers` in the drive passes on the IMPORT LINE alone, so replacing the drive's
+ * whole expression with a literal `workers: 1` survives it. That mutation was run (M7) and it
+ * survived exactly that way — this capture is what reds on it, because it reads the number the
+ * drive computed for a project whose config asked for two.
+ *
+ * The real assembler still runs: the wrapper records and delegates, so every other artifact of the
+ * run below is the shipped one.
+ */
+const assemblerSeam = vi.hoisted(() => ({
+  calls: [] as { readonly workers: number | undefined; readonly memberCount: number }[],
+}))
+
+vi.mock('../run-assembly.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../run-assembly.js')>()
+  return {
+    ...actual,
+    assembleCliRun: async (input: Parameters<typeof actual.assembleCliRun>[0]) => {
+      assemblerSeam.calls.push({ workers: input.workers, memberCount: input.members.length })
+      return await actual.assembleCliRun(input)
+    },
+  }
+})
 
 const noFlags = {} as RunOptions
 
@@ -163,6 +191,71 @@ describe('the chain: the resolved count → the RunConfig the shell reads', () =
     // the produced member count. A drive that folded its own default would disagree with this.
     expect(resolveEffectiveWorkers({ parallel: true, memberCount: 9 })).toBe(DEFAULT_PARALLEL_WORKERS)
   })
+})
+
+describe('the drive: the ONE seam that applies the formula, for every door', () => {
+  /**
+   * Drive a REAL two-member run of a project configured exactly as the arm says, and answer with
+   * what the drive handed the assembler.
+   *
+   * TWO MEMBERS ON PURPOSE, AND THREE ARMS ON PURPOSE. `min(memberCount, workers)` over ONE member
+   * is 1, which is also what a drive that resolved nothing would hand over — so a one-member cell
+   * passes for the wrong reason. Two members separate 2 from 1; and the third arm below
+   * (`workers: 1` with `parallel: true`) is what separates the formula from `parallel ? memberCount
+   * : 1`, a mutation that survives both of the other two arms (M9).
+   */
+  async function workersHandedToAssembler(
+    fixtureInput: { parallelRuns?: boolean; workerCount?: number },
+  ): Promise<{ workers: number | undefined; memberCount: number }> {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({
+        origin: target.origin,
+        environment: 'local',
+        secondTarget: true,
+        ...fixtureInput,
+      })
+      assemblerSeam.calls.length = 0
+      try {
+        await runInProcessCliRun(
+          {
+            configPath: fixture.configPath,
+            agentQaRoot: fixture.agentQaRoot,
+            executionContext: 'local-headless',
+          },
+          { patterns: [fixture.testPattern, fixture.secondTestPattern!] },
+        )
+      } catch {
+        // The members fail downstream of `startRun` (no browser binaries on this machine) and the
+        // drive re-surfaces the first framework error. The run still reached assembly, which is
+        // the only thing these cells read.
+      }
+      expect(assemblerSeam.calls, 'assembly never happened — nothing below measures a count')
+        .toHaveLength(1)
+      return assemblerSeam.calls[0]!
+    } finally {
+      await target.close()
+    }
+  }
+
+  it('hands over the count the CONFIG asked for', async () => {
+    expect(await workersHandedToAssembler({ parallelRuns: true, workerCount: 2 }))
+      .toEqual({ workers: 2, memberCount: 2 })
+  }, 180_000)
+
+  it('hands over 1 for the same project with no concurrency configured', async () => {
+    // The control, two config lines different: the SAME two members, and the drive's answer is the
+    // shipped sequential count.
+    expect(await workersHandedToAssembler({})).toEqual({ workers: 1, memberCount: 2 })
+  }, 180_000)
+
+  it('honours a configured ceiling BELOW the member count', async () => {
+    // `parallel: true, workers: 1` — a config owner who wants the pool's shape without its
+    // concurrency. A drive that took the member count whenever `parallel` was set would answer 2.
+    expect(await workersHandedToAssembler({ parallelRuns: true, workerCount: 1 }))
+      .toEqual({ workers: 1, memberCount: 2 })
+  }, 180_000)
 })
 
 describe('the source pin: the drive is the formula\'s CALLER, not a second speller', () => {
