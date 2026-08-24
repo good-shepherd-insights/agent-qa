@@ -26,6 +26,7 @@ export type { TestFileInfo, TestValidationResult, TestValidationError } from './
 // enumerate every path this door answers.
 export {
   RUN_SERVICE_EVENTS_TEMPLATE,
+  RUN_SERVICE_OK_ROUTE,
   RUN_SERVICE_ROUTE_TABLE,
   RUN_SERVICE_START_ROUTE,
   createRunServiceRoutes,

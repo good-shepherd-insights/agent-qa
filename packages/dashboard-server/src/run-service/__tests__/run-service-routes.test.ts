@@ -15,6 +15,7 @@
 // whole reason for the fake here: not to avoid the cost of a real run, but to reach a claim a real
 // run cannot state.
 
+import { readFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 
 import {
@@ -325,5 +326,24 @@ describe('the refusal-shape census walks the module\'s OWN route table', () => {
       expect(Object.keys(body), `${row.method} ${row.path}`).toEqual(['error'])
       expect(body).toEqual({ error: 'invalid_token' })
     }
+  })
+})
+
+describe('the readiness predicate has ONE declaration site, and it is not here', () => {
+  it('this module computes no readiness fact of its own — it calls the port', async () => {
+    const source = await readFile(
+      new URL('../run-service-routes.ts', import.meta.url),
+      'utf8',
+    )
+    // A SOURCE ASSERTION, because the claim is about where a rule LIVES rather than about what a
+    // response contains: a second copy of these four facts would agree with the first on the day
+    // it was written and drift on some later one, and a response-shape cell cannot see the
+    // difference. The composition owns `createRunServiceReadiness`; this module owns the route.
+    expect(source).toContain('ports.readiness()')
+    for (const spelling of ['hostComposed:', 'authConfigured:', "service: 'up'"]) {
+      expect(source, spelling).not.toContain(spelling)
+    }
+    // And it never spells the version either — the constant is schema's, read by the composition.
+    expect(source).not.toContain('contractVersion:')
   })
 })

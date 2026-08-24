@@ -26,8 +26,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import {
+  RUN_SERVICE_CONTRACT_VERSION,
   RunEventEnvelopeSchema,
   RunServiceErrorBodySchema,
+  RunServiceReadinessSchema,
   RunStartAcknowledgementSchema,
 } from '@vostride/agent-qa-schema'
 import { generateTestId } from '@vostride/agent-qa-ids'
@@ -37,6 +39,7 @@ import {
   composeDashboardDoor,
   composeRunServicePorts,
   createDashboardRunDoor,
+  createRunServiceReadiness,
 } from '../commands/dashboard.js'
 
 /**
@@ -414,5 +417,43 @@ describe('a door with no declared credential is a door nobody can open', () => {
     })
     expect(response.status).toBe(401)
     expect(await response.json()).toEqual({ error: 'invalid_token' })
+  })
+})
+
+// ---- Task 2: `/ok` driven through the production composition --------------------------------
+
+describe('GET /ok on the mounted door', () => {
+  it('is refused without a token and answers measured facts with one', async () => {
+    const service = await openRunService()
+
+    const refused = await fetch(`${service.origin}/ok`)
+    expect(refused.status).toBe(401)
+    expect(await refused.json()).toEqual({ error: 'missing_authorization' })
+
+    const ok = await fetch(`${service.origin}/ok`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    expect(ok.status).toBe(200)
+    const body = RunServiceReadinessSchema.parse(await ok.json())
+    expect(body).toEqual({
+      service: 'up',
+      // MEASURED, not asserted from this cell's own knowledge: the composition bound a host above,
+      // and this is the same box the run starter's guard reads.
+      hostComposed: true,
+      authConfigured: true,
+      contractVersion: RUN_SERVICE_CONTRACT_VERSION,
+    })
+  })
+
+  it('reports authConfigured FALSE when no credential resolved', async () => {
+    // The falsifiability of the field, driven: a door with an empty entry list refuses every
+    // request, so this is measured through the ONE predicate rather than through the wire.
+    const readiness = createRunServiceReadiness({ resolveHost: () => undefined, tokenCount: 0 })
+    expect(readiness()).toEqual({
+      service: 'up',
+      hostComposed: false,
+      authConfigured: false,
+      contractVersion: RUN_SERVICE_CONTRACT_VERSION,
+    })
   })
 })

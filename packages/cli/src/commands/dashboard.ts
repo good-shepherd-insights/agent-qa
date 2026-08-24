@@ -1217,6 +1217,40 @@ export function runServiceCallerFor(trustScope: TrustScope): FunctionCaller {
 /** How long a finished run's session stays attachable, matching the in-process backend's window. */
 const RUN_SERVICE_SESSION_RETENTION_MS = 5 * 60 * 1000
 
+/**
+ * THE READINESS PREDICATE — ONE DECLARATION SITE, TWO DOORS (D-15).
+ *
+ * Exported rather than inlined into `composeRunServicePorts` because `/ok` is not the only place
+ * this question is asked: the local door's preflight (402-05) serves the SAME answer, and D-15's
+ * whole content is that there is one readiness spelling rather than two that agree today. A second
+ * copy of these four facts is how the remote door and the dashboard start disagreeing about
+ * whether this process can run anything.
+ *
+ * EVERY FIELD IS MEASURED, AND NOTHING IS PREDICTED. `hostComposed` reads the SAME box the run
+ * starter's guard throws on — not a parallel flag — so `/ok` cannot say yes where `POST /run` says
+ * no. `authConfigured` is a COUNT reduced to a boolean: whether this process resolved any
+ * credential, never how many and never which. `contractVersion` is a constant, which is the point
+ * of it: a caller learns which route set it is talking to without this process guessing anything.
+ *
+ * WHAT IS DELIBERATELY ABSENT is a `ready` verdict. Whether a run will succeed depends on a
+ * browser, a model, a network and a target, none of which this predicate touched — and a field
+ * that claimed otherwise would be the most useful-looking lie on the whole door. Deep diagnostics
+ * are 407's `doctor`.
+ */
+export function createRunServiceReadiness(input: {
+  /** The composed-host box. Read at CALL time, because a host binds after this is built. */
+  readonly resolveHost: () => LocalAgentHost | undefined
+  /** How many credentials resolved. Reduced to a boolean here and never published as a count. */
+  readonly tokenCount: number
+}): () => RunServiceReadiness {
+  return () => ({
+    service: 'up',
+    hostComposed: input.resolveHost() !== undefined,
+    authConfigured: input.tokenCount > 0,
+    contractVersion: RUN_SERVICE_CONTRACT_VERSION,
+  })
+}
+
 export interface RunServiceCompositionInput {
   /** The declared entries, straight off `services.dashboard.runServiceTokens`. */
   readonly entries: readonly RunServiceTokenEntry[]
@@ -1311,13 +1345,10 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     return RunStartAcknowledgementSchema.parse(result)
   }
 
-  const readiness = (): RunServiceReadiness => ({
-    service: 'up',
-    // MEASURED OFF THE SAME BOX the starter's guard throws on, so `/ok` and `POST /run` cannot
-    // disagree about whether this process can run anything.
-    hostComposed: input.door.resolveHost() !== undefined,
-    authConfigured: tokens.length > 0,
-    contractVersion: RUN_SERVICE_CONTRACT_VERSION,
+  // THE ONE PREDICATE, CALLED — not a second copy of it. See `createRunServiceReadiness`.
+  const readiness = createRunServiceReadiness({
+    resolveHost: input.door.resolveHost,
+    tokenCount: tokens.length,
   })
 
   const ports: RunServicePorts = {

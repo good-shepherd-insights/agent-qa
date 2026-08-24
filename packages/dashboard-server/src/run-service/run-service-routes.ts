@@ -139,6 +139,16 @@ export interface RunServiceRouteRow {
 export const RUN_SERVICE_START_ROUTE = '/run'
 export const RUN_SERVICE_EVENTS_TEMPLATE = '/run/:runId/events'
 const RUN_SERVICE_EVENTS_PATTERN = /^\/run\/([^/]+)\/events$/
+/**
+ * Readiness (D-15) — AUTHED, like every other route on this door.
+ *
+ * There is no unauthenticated liveness probe here and there must not be one. An `/ok` that
+ * answered before the verdict would tell an unauthenticated caller that this process is an
+ * agent-qa run service, that it is up, and — by the shape of what it refused elsewhere — which
+ * other routes it serves. The dashboard's preflight is liveness AND early token validation in one
+ * round-trip precisely because they are the same question at this door.
+ */
+export const RUN_SERVICE_OK_ROUTE = '/ok'
 
 /**
  * EVERY PATH THIS DOOR ANSWERS, as data the dispatch reads (the chat door's own idiom).
@@ -157,6 +167,7 @@ export const RUN_SERVICE_ROUTE_TABLE: readonly RunServiceRouteRow[] = Object.fre
     handler: 'events',
     pattern: RUN_SERVICE_EVENTS_PATTERN,
   },
+  { method: 'GET', path: RUN_SERVICE_OK_ROUTE, handler: 'ok' },
 ] as const)
 
 /** What a matched row carries: the row itself and whatever its pattern captured. */
