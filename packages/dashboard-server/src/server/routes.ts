@@ -1484,6 +1484,77 @@ function resolveArtifactPath(
   return getPathInsideDir(resolvedPath, resolvedRootDir) ? resolvedPath : null
 }
 
+/**
+ * Why a REQUESTED artifact path was not served (402-05, D-16 — T-402-17).
+ *
+ * A REASON AND NOT A BARE `null`, because the refusal cells have to be able to say WHICH door
+ * refused. A payload like `../../etc/passwd` is turned away by path normalization, by a segment
+ * check and by a 404 on a missing file all at once; a guard that answered `null` to all three
+ * would leave the suite unable to tell a guard that fired from a file that happened not to exist,
+ * which is how a traversal suite passes against a guard that was deleted.
+ *
+ * None of these reasons discloses whether a file exists. They name the shape of the request.
+ */
+type ArtifactPathRefusal = 'malformed_escape' | 'outside_root' | 'not_a_plain_segment'
+
+type ArtifactPathVerdict =
+  | { readonly kind: 'resolved'; readonly path: string }
+  | { readonly kind: 'refused'; readonly reason: ArtifactPathRefusal }
+
+/**
+ * THE ONE PREDICATE THE ARTIFACT SERVING ROUTES RESOLVE THROUGH (402-05, D-16).
+ *
+ * Before this existed the two serving routes each carried their own inline containment check and
+ * neither was `resolveArtifactPath` — the predicate the CLEANUP path uses. The screenshots route's
+ * was `resolved.startsWith(resolve(root))`, a STRING prefix compare that accepts
+ * `<artifacts>/screenshots-evil/...` for a root of `<artifacts>/screenshots`. Serving and cleanup
+ * now share one containment spelling, so a fix to either is a fix to both.
+ *
+ * ---- THE ORDER OF THE THREE DOORS, AND WHY IT IS THIS ORDER ----------------------------------
+ *
+ * DECODE EXACTLY ONCE, FIRST. The classic hole is resolve-then-decode: a check that runs before
+ * the decode is a check on bytes the filesystem will never see. A malformed escape is a REFUSAL
+ * here rather than a pass-through of the raw bytes — the alternative is serving a path the caller
+ * did not ask for.
+ *
+ * CONTAINMENT SECOND, through `resolveArtifactPath`. This is the door that owns escapes: anything
+ * whose decoded, resolved form lands outside the root is refused here, including the sibling
+ * directory whose NAME is a string prefix of the root.
+ *
+ * THE ROUTE'S OWN SHAPE CONTRACT THIRD. These routes address exactly `:runId/:filename` — two
+ * plain segments. A decoded segment carrying a separator, a NUL, a dot-dot or an absolute path is
+ * not a filename this route can be asked for, whatever containment made of it. It is defence in
+ * depth and it is ordered last deliberately: with containment first, each door is the ONLY refuser
+ * of at least one shipped payload class, so deleting either one reddens a cell. A shape check
+ * placed first would swallow every escape and leave containment unmeasurable.
+ */
+function resolveServedArtifactPath(
+  rawRunId: string,
+  rawFilename: string,
+  rootDir: string,
+  apiPrefix: '/api/screenshots/' | '/api/videos/',
+): ArtifactPathVerdict {
+  let runId: string
+  let filename: string
+  try {
+    runId = decodeURIComponent(rawRunId)
+    filename = decodeURIComponent(rawFilename)
+  } catch {
+    return { kind: 'refused', reason: 'malformed_escape' }
+  }
+  const resolved = resolveArtifactPath(`${runId}/${filename}`, rootDir, apiPrefix)
+  if (resolved === null) return { kind: 'refused', reason: 'outside_root' }
+  if (!isPlainFileName(runId) || !isPlainFileName(filename)) {
+    return { kind: 'refused', reason: 'not_a_plain_segment' }
+  }
+  return { kind: 'resolved', path: resolved }
+}
+
+/** The refusal an artifact serving route answers with. Fixed shape, request bytes never echoed. */
+function refuseArtifactPath(res: ServerResponse, reason: ArtifactPathRefusal): void {
+  json(res, { error: 'Invalid artifact path', reason }, 400)
+}
+
 async function cleanupDeletedRunArtifacts(
   deletedRunIds: string[],
   screenshotPaths: string[],
@@ -2171,20 +2242,12 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         notFound(res)
         return
       }
-      const runId = segments[3]
-      const filename = segments[4]
-
-      if (runId.includes('..') || filename.includes('..') || runId.includes('/') || filename.includes('/')) {
-        notFound(res, 'Invalid path')
+      const verdict = resolveServedArtifactPath(segments[3], segments[4], ssDir, '/api/screenshots/')
+      if (verdict.kind === 'refused') {
+        refuseArtifactPath(res, verdict.reason)
         return
       }
-
-      const filePath = join(ssDir, runId, filename)
-      const resolvedPath = resolve(filePath)
-      if (!resolvedPath.startsWith(resolve(ssDir))) {
-        notFound(res, 'Invalid path')
-        return
-      }
+      const filePath = verdict.path
 
       stat(filePath).then(s => {
         if (!s.isFile()) {
@@ -2210,21 +2273,12 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         notFound(res)
         return
       }
-      const runId = segments[3]
-      const filename = segments[4]
-
-      if (runId.includes('..') || filename.includes('..') || runId.includes('/') || filename.includes('/')) {
-        notFound(res, 'Invalid path')
+      const verdict = resolveServedArtifactPath(segments[3], segments[4], vidDir, '/api/videos/')
+      if (verdict.kind === 'refused') {
+        refuseArtifactPath(res, verdict.reason)
         return
       }
-
-      const videoPath = join(vidDir, runId, filename)
-      const resolvedVideo = resolve(videoPath)
-      const resolvedVidDir = resolve(vidDir)
-      if (!getPathInsideDir(resolvedVideo, resolvedVidDir)) {
-        notFound(res, 'Invalid path')
-        return
-      }
+      const videoPath = verdict.path
 
       const tryServe = (filePath: string) => stat(filePath).then(s => {
         if (!s.isFile()) {
