@@ -216,3 +216,130 @@ describe('LogManager', () => {
     expect(stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')).not.toContain('auth-cookie-secret')
   })
 })
+
+// ONE LOG MANAGER, N CONCURRENT MEMBERS (WINDOWS #233).
+//
+// 402-02 made the DIRECT run path poolable and 402-03 made `workers > 1` reachable from config, so
+// `commands/run.ts` now calls `logger.setRunId(memberRunId)` from several members interleaved on
+// ONE `LogManager` — the instance is built once at run.ts:3656, outside the per-member closure.
+// Two distinct corruptions follow from a single mutable `runId` field, and they are pinned
+// separately because they fail for different reasons and a fix for one does not imply the other:
+//
+//   FORWARD  — after member B stamps, member A's SUBSEQUENT lines carry B's run id.
+//   BACKWARD — `setRunId` restamps every buffered entry, so B's stamp REWRITES lines A already
+//              wrote and had correctly attributed.
+//
+// The interleaving below is not a stress test and has no timing assertion: it is the exact
+// deterministic order the pool produces (each member mints its id inside its own closure), replayed
+// synchronously so the cells are reproducible.
+describe('LogManager — concurrent members share one instance (WINDOWS #233)', () => {
+  let stderrSpy: any
+
+  beforeEach(() => {
+    stderrSpy = vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+  })
+
+  afterEach(() => {
+    stderrSpy.mockRestore()
+  })
+
+  const runIdsOf = (lm: LogManager, message: string): string[] =>
+    lm.getBuffer().filter((e) => e.message === message).map((e) => e.runId)
+
+  it('keeps each member scope on its OWN run id after a sibling stamps (forward)', async () => {
+    const lm = new LogManager({ displayLevel: 'silent' })
+
+    // Member A opens its scope and stamps; member B opens its scope and stamps; THEN A logs again.
+    // A's later line belongs to A. With one shared mutable field it carries B's id.
+    await lm.runInMemberScope(async () => {
+      lm.setRunId('run-A')
+      lm.log('info', 'agent', 'A-before-sibling')
+      await lm.runInMemberScope(async () => {
+        lm.setRunId('run-B')
+        lm.log('info', 'agent', 'B-line')
+      })
+      lm.log('info', 'agent', 'A-after-sibling')
+    })
+
+    expect(runIdsOf(lm, 'A-before-sibling')).toEqual(['run-A'])
+    expect(runIdsOf(lm, 'B-line')).toEqual(['run-B'])
+    expect(runIdsOf(lm, 'A-after-sibling')).toEqual(['run-A'])
+  })
+
+  it('never restamps a line another member already attributed (backward)', async () => {
+    const lm = new LogManager({ displayLevel: 'silent' })
+
+    await lm.runInMemberScope(async () => {
+      lm.setRunId('run-A')
+      lm.log('info', 'agent', 'A-line')
+    })
+    await lm.runInMemberScope(async () => {
+      lm.setRunId('run-B')
+      lm.log('info', 'agent', 'B-line')
+    })
+
+    // A's line was correct when written. B's stamp must not reach back and rewrite it.
+    expect(runIdsOf(lm, 'A-line')).toEqual(['run-A'])
+    expect(runIdsOf(lm, 'B-line')).toEqual(['run-B'])
+  })
+
+  it('still backfills a member\'s OWN lines written before its id was minted', async () => {
+    const lm = new LogManager({ displayLevel: 'silent' })
+
+    // The startup affordance `setRunId`'s backfill exists for: a member logs while resolving its
+    // target, mints its id, and those earlier lines must join the run. Scoping must not lose it.
+    await lm.runInMemberScope(async () => {
+      lm.log('info', 'agent', 'A-pre-mint')
+      lm.setRunId('run-A')
+    })
+
+    expect(runIdsOf(lm, 'A-pre-mint')).toEqual(['run-A'])
+  })
+
+  it('does not let one member\'s stamp adopt a sibling\'s not-yet-attributed lines', async () => {
+    const lm = new LogManager({ displayLevel: 'silent' })
+
+    // Both members log BEFORE either mints. Each backfill must claim only its own scope's lines —
+    // an unattributed-only backfill that ignored scope would hand A's line to whoever stamps first.
+    const a = lm.runInMemberScope(async () => {
+      lm.log('info', 'agent', 'A-pre-mint')
+      await Promise.resolve()
+      lm.setRunId('run-A')
+    })
+    const b = lm.runInMemberScope(async () => {
+      lm.log('info', 'agent', 'B-pre-mint')
+      lm.setRunId('run-B')
+    })
+    await Promise.all([a, b])
+
+    expect(runIdsOf(lm, 'A-pre-mint')).toEqual(['run-A'])
+    expect(runIdsOf(lm, 'B-pre-mint')).toEqual(['run-B'])
+  })
+
+  it('leaves the SEQUENTIAL path byte-identical — no scope, one run id, backfill intact', () => {
+    const lm = new LogManager({ displayLevel: 'silent' })
+
+    lm.log('info', 'agent', 'pre-mint')
+    lm.setRunId('run-only')
+    lm.log('info', 'agent', 'post-mint')
+
+    expect(runIdsOf(lm, 'pre-mint')).toEqual(['run-only'])
+    expect(runIdsOf(lm, 'post-mint')).toEqual(['run-only'])
+  })
+
+  it('flushes a scoped run to storage — a scoped stamp still satisfies the runIdSet gate', async () => {
+    const inserted: LogEntry[][] = []
+    const storage: LogStorage = { insertLogs: (entries: LogEntry[]) => { inserted.push(entries) } }
+    const lm = new LogManager({ displayLevel: 'silent', storage })
+
+    await lm.runInMemberScope(async () => {
+      lm.setRunId('run-A')
+      lm.log('info', 'agent', 'A-line')
+    })
+    lm.flush()
+
+    // Without this, a fully-attributed concurrent run would be DISCARDED at flush.
+    expect(inserted).toHaveLength(1)
+    expect(inserted[0]?.map((e) => e.runId)).toEqual(['run-A'])
+  })
+})
