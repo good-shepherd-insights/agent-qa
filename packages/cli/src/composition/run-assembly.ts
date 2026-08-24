@@ -85,6 +85,17 @@ export interface CliRunAssemblyInput {
   readonly memberProbeUrls?: readonly (string | undefined)[]
   /** Where a quarantine-fold warning goes. The command owns its own rendering. */
   readonly warn: (message: string) => void
+  /**
+   * 402-03 (D-12): how many members may execute concurrently, ALREADY RESOLVED by
+   * `resolveEffectiveWorkers` at the drive. Absent or 1 leaves the `RunConfig` byte-identical to
+   * the pre-402 shape, which is why it is spread conditionally rather than always written: a run
+   * that nobody configured for concurrency must not become distinguishable from one that ran
+   * before this field existed.
+   *
+   * IT IS A COUNT, NOT A CONFIG READ. This assembler resolves nothing about it — a second read
+   * here could disagree with the drive's, and the formula has exactly one site.
+   */
+  readonly workers?: number
 }
 
 export interface CliRunAssembly {
@@ -163,6 +174,7 @@ export async function assembleCliRun(
     masking: input.maskingContext,
     ports: { ...input.ports, confirmPausedMs: input.confirmPausedMs },
     ...(quarantined.length > 0 ? { quarantined } : {}),
+    ...(input.workers !== undefined && input.workers > 1 ? { workers: input.workers } : {}),
   }
 
   return {

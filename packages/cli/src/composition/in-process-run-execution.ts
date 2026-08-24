@@ -40,7 +40,7 @@
 // A NON-ZERO EXIT CODE IS NOT AN ERROR. A failing suite exits non-zero and is a perfectly real run.
 // This module throws only `RunDeniedError`, `RunRequestFieldRefusedError` and `CliRunInputError`.
 
-import { asRunId } from '@vostride/agent-qa-schema'
+import { asRunId, resolveEffectiveWorkers } from '@vostride/agent-qa-schema'
 import type {
   QuarantineAppliedEntry,
   RunSession,
@@ -365,6 +365,20 @@ export async function runInProcessCliRun(
     assembleRun: async (assemblyContext) => {
       const assembly = await assembleCliRun({
         runId: assemblyContext.runId,
+        // 402-03 (D-12): THE ONE PLACE THE WORKER COUNT IS APPLIED, for every door.
+        //
+        // The formula is `@vostride/agent-qa-schema`'s and is called exactly here, on the pair the
+        // PRODUCER read out of the resolved config and the member count the producer assembled.
+        // A caller cannot reach it: `RunsStartInput` names neither field (strict, pinned in
+        // `runs-start-input-posture.test.ts`) and nothing on this drive's options carries one, so
+        // the only input to concurrency is a config the target's owner wrote.
+        //
+        // A producer that reported no pair — a door that brought its own members and read no
+        // config — resolves to 1, which is the shipped sequential behaviour rather than a guess.
+        workers: resolveEffectiveWorkers({
+          ...(produced.concurrency ?? {}),
+          memberCount: produced.members.length,
+        }),
         executionContext: assemblyContext.executionContext,
         configDir: assemblyContext.configDir,
         knowledgeRoot: produced.knowledgeRoot,

@@ -555,6 +555,10 @@ export interface RunOptions {
   detach?: boolean
   gateRun?: boolean
   excludedFromOutcomes?: boolean
+  /** 402-03 (D-12): `--parallel` / `--no-parallel`, an ordinary override of `use.parallel`. */
+  parallel?: boolean
+  /** 402-03 (D-12): `--workers <count>`, an ordinary override of `use.workers`. Argv is a string. */
+  workers?: string
 }
 
 /**
@@ -579,6 +583,47 @@ export function runMarkers(opts: RunOptions): { gateRun?: true; excludedFromOutc
   return {
     ...(opts.gateRun === true ? { gateRun: true as const } : {}),
     ...(opts.excludedFromOutcomes === true ? { excludedFromOutcomes: true as const } : {}),
+  }
+}
+
+/**
+ * THE RUN'S CONCURRENCY CONFIG — read at the producer, never from a request (402-03, D-12).
+ *
+ * IT IS AN ORDINARY `use`-BUCKET OVERRIDE AND NOTHING ELSE. The two flags ride `mergeUseBlocks`,
+ * the same helper and the same precedence (`config.use` < flags) every other `use` override in
+ * this command follows, so there is no second merge to disagree with the first. What comes back is
+ * the RAW pair; the COUNT is decided later and in exactly one place, by `resolveEffectiveWorkers`.
+ *
+ * IT READS THE PROJECT CONFIG'S `use`, NOT A SUITE'S OR A TEST'S. Concurrency is a property of the
+ * whole run — one pool serves every member — so a per-member tier would be N answers to a
+ * run-level question. A suite or test YAML that sets `use.parallel` is therefore not honoured here;
+ * that is a deliberate scope line, recorded in this plan's SUMMARY rather than silently implied.
+ *
+ * A `--workers` FLAG THAT IS NOT A POSITIVE INTEGER IS A USAGE ERROR, refused with the config
+ * contract's exit code rather than coerced — `Number.parseInt('abc')` is `NaN`, and a NaN that
+ * quietly became the default would be a person's typo answered with a guess.
+ */
+export function resolveRunConcurrencyConfig(
+  configUse: Record<string, unknown> | undefined,
+  opts: RunOptions,
+): { parallel?: boolean; workers?: number } {
+  const flagOverrides: Record<string, unknown> = {}
+  if (opts.parallel !== undefined) flagOverrides['parallel'] = opts.parallel
+  if (opts.workers !== undefined) {
+    const parsed = Number.parseInt(opts.workers, 10)
+    if (!Number.isInteger(parsed) || parsed < 1 || String(parsed) !== opts.workers.trim()) {
+      throw new CliRunInputError(
+        [pc.red(`Error: --workers must be a positive integer (got "${opts.workers}").`)],
+        2,
+      )
+    }
+    flagOverrides['workers'] = parsed
+  }
+
+  const merged = mergeUseBlocks(configUse, undefined, undefined, flagOverrides)
+  return {
+    ...(typeof merged['parallel'] === 'boolean' ? { parallel: merged['parallel'] } : {}),
+    ...(typeof merged['workers'] === 'number' ? { workers: merged['workers'] } : {}),
   }
 }
 
@@ -3297,6 +3342,7 @@ export async function produceSuiteRunMembers(
     targetClass: suiteTargetClass,
     targetNames: suiteTargetNames,
     memberProbeUrls: suiteTargetFacts.probeUrls,
+    concurrency: resolveRunConcurrencyConfig(config.use as Record<string, unknown> | undefined, opts),
     ...(buildTag === undefined ? {} : { buildTag }),
     logger: { setRunId: () => { /* the suite path stamps its loggers per prepared suite */ } },
     maskingSeed: {
@@ -3450,6 +3496,21 @@ export interface ProducedCliRunMembers {
    * the verdict, which dedupes by URL so members sharing a target cost one GET.
    */
   readonly memberProbeUrls: readonly (string | undefined)[]
+  /**
+   * The run's CONFIG-RESOLVED concurrency pair (402-03, D-12) — `use.parallel` and `use.workers`
+   * as the producer read them, with this command's two flags already folded in by the ordinary
+   * `use`-bucket precedence.
+   *
+   * RAW, NOT A COUNT. The count is `resolveEffectiveWorkers`'s to decide and the drive's to apply,
+   * because the formula needs the member count and the member count is what THIS object carries.
+   * A producer that resolved the count itself would be a second site for the default.
+   *
+   * IT TRAVELS ON THE PRODUCED OBJECT rather than on the drive's options because that is the ONE
+   * channel both doors traverse: `agent-qa run` hands the drive members it produced itself, and a
+   * bare `runs.start` reaches the same producers through `produceMembersFromPatterns`. A drive-side
+   * config read would have been absent for the first door and present for the second.
+   */
+  readonly concurrency?: { readonly parallel?: boolean; readonly workers?: number }
   readonly buildTag?: string
   /**
    * The run's log manager, when the producer built one. The suite half stamps its loggers per
@@ -4245,6 +4306,7 @@ export async function produceDirectRunMembers(
     targetClass: singleTargetClass,
     targetNames: directTargetNames,
     memberProbeUrls: directTargetFacts.probeUrls,
+    concurrency: resolveRunConcurrencyConfig(config.use as Record<string, unknown> | undefined, opts),
     ...(singleBuildTag === undefined ? {} : { buildTag: singleBuildTag }),
     logger,
     maskingSeed: { secretStore: runtimeSecrets.secretStore },
@@ -4293,6 +4355,12 @@ export function createRunCommand(): Command {
     .option('--run-attr <kv...>', 'attach run attribute KEY=VALUE; repeatable')
     .option('--trust-session', 'treat every ask-tier policy decision in this session as trusted (execution-safety §2.3 session.trustMode; explicit opt-in, session-scoped)')
     .option('--detach', 'skip the post-verdict knowledge curation tail')
+    // 402-03 (D-12): the config knob's flag half. ORDINARY OVERRIDES — they ride the same
+    // `use`-bucket precedence every other flag here does, and there is no request field to match
+    // them: a remote caller cannot raise the concurrency of a target its config owner tuned.
+    .option('--parallel', 'run this run\'s members concurrently (config: use.parallel)')
+    .option('--no-parallel', 'run this run\'s members one at a time')
+    .option('--workers <count>', 'ceiling on concurrent members when parallel (config: use.workers; default 3)')
     // 393 WTST-06: the two durable run markers, as flags, because a run started through
     // `runs.start` is executed by re-entering THIS command as a child process — so a marker with no
     // flag has no way to reach the handoff, and `authoring.draft.verify` cannot take a gate-run at

@@ -67,7 +67,24 @@ export const UseSchema = z.object({
    * Precedence: CLI --build-tag > AGENT_QA_BUILD_TAG > this config key.
    */
   buildTag: z.string().trim().min(1).optional(),
+  /**
+   * 402-03 (D-12): run the members of one run CONCURRENTLY. Absent or false is one member at a
+   * time — today's behaviour, byte for byte.
+   */
   parallel: z.boolean().optional(),
+  /**
+   * 402-03 (D-12): the ceiling on concurrent members when `parallel` is true. Absent resolves to
+   * `DEFAULT_PARALLEL_WORKERS` (3). Effective concurrency is `min(memberCount, workers)`, decided
+   * in exactly one place — `resolveEffectiveWorkers` in `@vostride/agent-qa-schema`.
+   *
+   * A POSITIVE INTEGER, refused otherwise: an unbounded or nonsensical count here is the only
+   * reachable input to a concurrency denial-of-service (T-402-12), and it is a config typo rather
+   * than a caller's field — `RunsStartInput` names neither of these two.
+   *
+   * NOT `.default(...)`: a defaulted key changes the PARSED config type and every hand-built
+   * config fixture would then need it. The default is the resolver's, not the schema's.
+   */
+  workers: z.number().int().positive().optional(),
 }).strict()
 
 export const UseOverrideSchema = z.object({
@@ -97,5 +114,7 @@ export const UseOverrideSchema = z.object({
   mobile: MobileUseOverrideSchema.optional(),
   llm: z.string().optional(),
   parallel: z.boolean().optional(),
+  /** 402-03 (D-12): the override half of `use.workers`. Same shape as `UseSchema`'s. */
+  workers: z.number().int().positive().optional(),
   device: z.string().optional(),
 }).strict()

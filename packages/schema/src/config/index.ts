@@ -21,5 +21,13 @@ export type {
   WebPlatformConfig,
 } from './platform-config'
 export { platformConfigSchema } from './platform-config'
-export type { Use, UseAndroid, UseIos, UseWeb, UseWebAuthState } from './use'
-export { useSchema } from './use'
+export type {
+  EffectiveWorkersInput,
+  Use,
+  UseAndroid,
+  UseConcurrency,
+  UseIos,
+  UseWeb,
+  UseWebAuthState,
+} from './use'
+export { DEFAULT_PARALLEL_WORKERS, resolveEffectiveWorkers, useSchema } from './use'
