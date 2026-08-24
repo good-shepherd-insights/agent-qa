@@ -1571,7 +1571,6 @@ async function startDashboardBackedServices(
       // the one configuration D-07 exists to permit). Absent host means the server's own loopback
       // default, on the house rule that an absent option is an ABSENT field, never `undefined`.
       ...(configuredHost === undefined ? {} : { host: configuredHost }),
-      runServiceTokenCount: runService?.tokenCount ?? 0,
       // 402-05 (D-15): the LOCAL readiness door, supplied on BOTH arms. With the service mounted
       // this is the identical function object the authed `/ok` serves; without it, the SAME
       // producer is called with a zero count, so a project that declared no credential gets an

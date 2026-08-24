@@ -74,18 +74,29 @@ function isAnalyticsPrivacyEnabled(config: unknown): boolean {
  * WHY A REFUSAL AND NOT A WARNING. Everything this server mounts outside the run-service module is
  * unauthenticated: the run trigger, the queue enqueue, the artifact serving, the config reads. A
  * constant-time compare on `POST /run` is theatre while the same process answers an anonymous run
- * trigger on every interface. The operator who genuinely wants remote access declares a credential
- * — which is the same act that makes the remote surface an authed one.
+ * trigger on every interface.
+ *
+ * AND WHY THE REFUSAL IS UNCONDITIONAL. This guard originally exempted a process that had declared
+ * a run-service credential, on the premise that "the operator who genuinely wants remote access
+ * declares a credential — which is the same act that makes the remote surface an authed one".
+ * Phase-402 verification measured that premise FALSE off a real interface: a credential
+ * authenticates exactly `ownsRunServicePath` — `POST /run`, `GET /run/:runId/events`, `GET /ok` —
+ * and declaring one was precisely what unlocked the bind. With `host: 0.0.0.0` and one token,
+ * `POST /api/runs/trigger` carrying no Authorization header answered `202` and started a run, and
+ * `GET /api/runs` answered `200` with the run list. The token count was never evidence about the
+ * surface this guard protects, so it is no longer consulted. Publishing this server to a network
+ * needs the non-service API to be authenticated first; until it is, the honest answer is no.
  */
 export class DashboardRemoteBindRefusedError extends Error {
   constructor(readonly host: string) {
     super(
-      `The dashboard was asked to bind ${host}, which is not a loopback interface, with no `
-      + 'run-service credential declared. Everything this server serves outside the authed run '
-      + 'service is unauthenticated, so a non-loopback bind would publish an anonymous run '
-      + 'trigger to the network. Declare at least one entry under '
-      + 'services.dashboard.runServiceTokens, or leave services.dashboard.host unset (it defaults '
-      + `to ${DEFAULT_DASHBOARD_HOST}).`,
+      `The dashboard was asked to bind ${host}, which is not a loopback interface. Everything this `
+      + 'server serves outside the authed run service — the run trigger, the queue enqueue, the '
+      + 'artifact serving, the config reads — is unauthenticated, so a non-loopback bind would '
+      + 'publish an anonymous run trigger to the network. A run-service credential does not change '
+      + 'that: it authenticates the three run-service paths and nothing else. Leave '
+      + `services.dashboard.host unset (it defaults to ${DEFAULT_DASHBOARD_HOST}), and reach a `
+      + 'remote dashboard through an authenticating proxy or a tunnel you control.',
     )
     this.name = 'DashboardRemoteBindRefusedError'
   }
@@ -100,20 +111,13 @@ interface StartServerOptions {
   /**
    * The interface this server binds (402-05, D-07 — INVK-03).
    *
-   * DEFAULTS TO LOOPBACK, and a non-loopback value is REFUSED before anything listens unless
-   * `runServiceTokenCount` is positive. This is BREAKING for anyone who relied on the previous
-   * `server.listen(port)` — which bound every interface — and the migration is to declare a
-   * credential, not to set a flag: the v2 ethos ships no back-compat shim for a hole.
+   * DEFAULTS TO LOOPBACK, and a non-loopback value is REFUSED before anything listens — with no
+   * exemption. This is BREAKING for anyone who relied on the previous `server.listen(port)`, which
+   * bound every interface, and there is no migration flag: the v2 ethos ships no back-compat shim
+   * for a hole. Remote access goes through an authenticating proxy until the non-service API is
+   * itself authed.
    */
   host?: string
-  /**
-   * How many run-service credentials this process resolved (402-05, D-07).
-   *
-   * A COUNT AND NOT THE VALUES, and the AUTHORITY for the bind decision rather than the presence
-   * of `runService` below. Fail-closed by construction: a caller that mounts the service and
-   * forgets the count gets the refusal, never the bind.
-   */
-  runServiceTokenCount?: number
   uiDir?: string
   artifactsDir?: string
   workspacePaths?: ResolvedWorkspacePaths
@@ -194,9 +198,12 @@ export async function startServer(opts: StartServerOptions): Promise<{
   //
   // MEMBERSHIP IS `isLoopbackHost`, IMPORTED — the same predicate `LoopbackHostSchema` refines on,
   // never a second literal list (T-402-18). `services.dashboard.host` is deliberately a plain
-  // string in the config schema so this decision is reachable at all: parse-time refusal of a
-  // non-loopback value would also refuse the one configuration D-07 exists to permit.
-  if (!isLoopbackHost(host) && (opts.runServiceTokenCount ?? 0) <= 0) {
+  // string in the config schema so this decision is reachable at all, and so a loopback SPELLING
+  // other than the default (`localhost`, `::1`) stays configurable.
+  //
+  // NO CREDENTIAL EXEMPTION — see `DashboardRemoteBindRefusedError`. The count of declared
+  // run-service tokens says nothing about whether `/api/runs/trigger` is authed, and it is not.
+  if (!isLoopbackHost(host)) {
     throw new DashboardRemoteBindRefusedError(host)
   }
 
