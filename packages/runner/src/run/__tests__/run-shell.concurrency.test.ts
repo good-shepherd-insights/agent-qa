@@ -19,6 +19,8 @@
 // observes the overlap immediately or proves it never happened.
 import { describe, expect, it } from 'vitest'
 
+import { handleRosterOf, memberIndexOf } from '@vostride/agent-qa-schema'
+
 import { startRun } from '../shell.js'
 import type {
   MemberTestExecutor,
@@ -605,5 +607,77 @@ describe('fail-fast under the pool — poisoning stops STARTS, not work in fligh
     expect(completion.handoff.tests.map((t) => t.testId)).toEqual(['m0', 'm1', 'm2'])
     expect(completion.handoff.tests.map((t) => t.outcome)).toEqual(['failed', 'passed', 'skipped'])
     expect(completion.verdict).toBe('failed')
+  })
+})
+
+// ---- The handle roster on runStarted (402-04, D-10) -------------------------------------------
+
+describe('the runStarted handle roster — the run announcing which streams are attachable', () => {
+  it('announces each member\'s DERIVED testIndex, in member order, on a 3-member run', async () => {
+    const session = startRun(poolConfig({ members: plainMembers(['m0', 'm1', 'm2']), workers: 2 }))
+    const events = drain(session)
+    await done(session)
+
+    const runStarted = events.find((e) => e.type === 'runStarted')
+    expect(runStarted).toBeDefined()
+    expect(handleRosterOf(runStarted as RunEventEnvelope)).toEqual([0, 1, 2])
+  })
+
+  it('announces PLANTED testIndex values, not array positions', async () => {
+    // The whole discriminating point. With 0,1,2 a roster built from array positions and a roster
+    // built from the members' stamped identity are the same three numbers, so such a fixture
+    // cannot tell a correct roster from a positional one. These are non-contiguous and not
+    // 0-based, so the two answers differ.
+    const members = plainMembers(['m0', 'm1', 'm2']).map((member, i) => ({
+      ...member,
+      testIndex: [3, 7, 11][i] as number,
+    }))
+    const session = startRun(poolConfig({ members, workers: 3 }))
+    const events = drain(session)
+    await done(session)
+
+    const runStarted = events.find((e) => e.type === 'runStarted')
+    expect(handleRosterOf(runStarted as RunEventEnvelope)).toEqual([3, 7, 11])
+  })
+
+  it('announces exactly the identities the sinks then STAMP — roster and stamps cannot drift', async () => {
+    const members = plainMembers(['m0', 'm1', 'm2']).map((member, i) => ({
+      ...member,
+      testIndex: [3, 7, 11][i] as number,
+    }))
+    const session = startRun(poolConfig({ members, workers: 3 }))
+    const events = drain(session)
+    await done(session)
+
+    const roster = handleRosterOf(events[0] as RunEventEnvelope)
+    const stamped = new Set<number>()
+    for (const event of events) {
+      const index = memberIndexOf(event)
+      if (index !== undefined) stamped.add(index)
+    }
+    expect(roster).toBeDefined()
+    expect([...stamped].sort((a, b) => a - b)).toEqual([...(roster ?? [])].sort((a, b) => a - b))
+  })
+
+  it('leaves the rest of the runStarted payload byte-identical (the field is ADDITIVE)', async () => {
+    const session = startRun(poolConfig({ members: plainMembers(['m0', 'm1']) }))
+    const events = drain(session)
+    await done(session)
+
+    const payload = events[0]?.payload as Record<string, unknown>
+    expect(events[0]?.type).toBe('runStarted')
+    expect(Object.keys(payload).filter((key) => key !== 'handles').sort()).toEqual([
+      'buildOrdinal',
+      'busSchemaVersion',
+      'configDigests',
+      'executionContext',
+      'memberTestCount',
+      'scope',
+    ])
+    expect(payload['memberTestCount']).toBe(2)
+    // The envelope shape itself is untouched — five keys, exactly as frozen.
+    expect(Object.keys(events[0] as object).sort()).toEqual([
+      'payload', 'runId', 'seq', 'ts', 'type',
+    ])
   })
 })
