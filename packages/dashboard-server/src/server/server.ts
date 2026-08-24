@@ -15,6 +15,7 @@ import { WebSocketServer } from 'ws'
 import { SessionManager } from '../live-editor/session-manager.js'
 import { createSessionHandler } from '../live-editor/ws-handler.js'
 import {
+  isLoopbackHost,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
 import type { DashboardLLMConfig } from '../llm-model-mapping.js'
@@ -29,6 +30,12 @@ import {
 // host (`agent-qa mcp`) over the function registry, so a dashboard that mounted its own copy would
 // be a second composition root for the same surface — the private power the milestone abolishes.
 // M5's dashboard rebuild decides whether it wants a mount back, via `/hono` and its own decision.
+//
+// 2026-08-24 — THE HONO RESERVATION IS RETIRED (Phase 402 D-03). The question this file reserved
+// ("would a framework earn its place here?") is answered: no. The authed run service mounted below
+// is hand-rolled `node:http`, like the daemon server and the MCP token idiom before it — zero new
+// dependencies at an auth boundary, one routing idiom per process. A framework added later would
+// have to argue against that, not inherit an open reservation.
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -55,9 +62,57 @@ function isAnalyticsPrivacyEnabled(config: unknown): boolean {
     && (analytics as { privacy?: unknown }).privacy === true)
 }
 
+/**
+ * The refusal that keeps the UNAUTHENTICATED dashboard surface off the network (402-05, D-07).
+ *
+ * NAMES THE HOST AND THE TWO CONFIG KEYS, AND NOTHING ELSE — never a token, never a count, on
+ * `McpTokenEnvVarUnsetError`'s own rule and for its own reason (395-16 measured Node's default
+ * uncaught printer walking a `cause` chain with `util.inspect`, which is how a config file's
+ * contents once reached a person's terminal). There is deliberately no `cause` attached.
+ *
+ * WHY A REFUSAL AND NOT A WARNING. Everything this server mounts outside the run-service module is
+ * unauthenticated: the run trigger, the queue enqueue, the artifact serving, the config reads. A
+ * constant-time compare on `POST /run` is theatre while the same process answers an anonymous run
+ * trigger on every interface. The operator who genuinely wants remote access declares a credential
+ * — which is the same act that makes the remote surface an authed one.
+ */
+export class DashboardRemoteBindRefusedError extends Error {
+  constructor(readonly host: string) {
+    super(
+      `The dashboard was asked to bind ${host}, which is not a loopback interface, with no `
+      + 'run-service credential declared. Everything this server serves outside the authed run '
+      + 'service is unauthenticated, so a non-loopback bind would publish an anonymous run '
+      + 'trigger to the network. Declare at least one entry under '
+      + 'services.dashboard.runServiceTokens, or leave services.dashboard.host unset (it defaults '
+      + `to ${DEFAULT_DASHBOARD_HOST}).`,
+    )
+    this.name = 'DashboardRemoteBindRefusedError'
+  }
+}
+
+/** Where this server binds when nothing says otherwise (402-05, D-07). BREAKING since v2. */
+export const DEFAULT_DASHBOARD_HOST = '127.0.0.1'
+
 interface StartServerOptions {
   db: DashboardDatabase
   port?: number
+  /**
+   * The interface this server binds (402-05, D-07 — INVK-03).
+   *
+   * DEFAULTS TO LOOPBACK, and a non-loopback value is REFUSED before anything listens unless
+   * `runServiceTokenCount` is positive. This is BREAKING for anyone who relied on the previous
+   * `server.listen(port)` — which bound every interface — and the migration is to declare a
+   * credential, not to set a flag: the v2 ethos ships no back-compat shim for a hole.
+   */
+  host?: string
+  /**
+   * How many run-service credentials this process resolved (402-05, D-07).
+   *
+   * A COUNT AND NOT THE VALUES, and the AUTHORITY for the bind decision rather than the presence
+   * of `runService` below. Fail-closed by construction: a caller that mounts the service and
+   * forgets the count gets the refusal, never the bind.
+   */
+  runServiceTokenCount?: number
   uiDir?: string
   artifactsDir?: string
   workspacePaths?: ResolvedWorkspacePaths
@@ -115,6 +170,23 @@ export async function startServer(opts: StartServerOptions): Promise<{
   close: () => void
 }> {
   const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService } = opts
+  const host = opts.host?.trim() || DEFAULT_DASHBOARD_HOST
+
+  // ---- THE BIND GUARD (402-05, D-07 — T-402-16) ---------------------------------------------
+  //
+  // FIRST STATEMENT WITH ANY EFFECT, and that placement is the whole mechanism. Below this line the
+  // function opens a database, starts a queue, acquires Appium leases and constructs a WebSocket
+  // server; a guard placed after any of them would be a guard that has to tear down what it just
+  // built, and the tear-down path is where a refusal turns into a half-started process. Refusing
+  // here means the refused configuration allocates nothing and listens on nothing.
+  //
+  // MEMBERSHIP IS `isLoopbackHost`, IMPORTED — the same predicate `LoopbackHostSchema` refines on,
+  // never a second literal list (T-402-18). `services.dashboard.host` is deliberately a plain
+  // string in the config schema so this decision is reachable at all: parse-time refusal of a
+  // non-loopback value would also refuse the one configuration D-07 exists to permit.
+  if (!isLoopbackHost(host) && (opts.runServiceTokenCount ?? 0) <= 0) {
+    throw new DashboardRemoteBindRefusedError(host)
+  }
 
   const resolvedConfigPath = configPath ?? resolve('agent-qa.config.yaml')
   const configManager = new ConfigManager(resolvedConfigPath)
@@ -677,9 +749,19 @@ export async function startServer(opts: StartServerOptions): Promise<{
       reject(err)
     }
     server.once('error', onError)
-    server.listen(port, () => {
+    server.listen(port, host, () => {
       server.off('error', onError)
-      console.log(`Dashboard running at http://localhost:${port}`)
+      // A LOOPBACK BIND PRINTS THE LINE IT ALWAYS PRINTED, BYTE FOR BYTE. That is not cosmetic
+      // conservatism: this line is the readiness signal three shipped conformance harnesses parse
+      // a port out of, and the phase's own posture is that a project which declared no credential
+      // gets today's dashboard unchanged. A NON-loopback bind is the new configuration, and it
+      // prints the interface it actually got — an operator who declared a credential and bound
+      // 0.0.0.0 should not read back a `localhost` that is not where their server is.
+      console.log(
+        isLoopbackHost(host)
+          ? `Dashboard running at http://localhost:${port}`
+          : `Dashboard running at http://${host.includes(':') ? `[${host}]` : host}:${port}`,
+      )
       resolve({
         server,
         port,

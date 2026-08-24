@@ -1504,6 +1504,9 @@ async function startDashboardBackedServices(
     //
     // AN UNSET DECLARED VARIABLE REFUSES STARTUP FROM INSIDE THIS CALL, naming the variable and
     // never a value (D-05). The refusal reaches the `catch` below as an ordinary command error.
+    const configuredHost = typeof servicesConfig.host === 'string' && servicesConfig.host.trim() !== ''
+      ? (servicesConfig.host as string).trim()
+      : undefined
     const runServiceEntries = (servicesConfig.runServiceTokens ?? []) as readonly RunServiceTokenEntry[]
     const runService = runServiceEntries.length === 0
       ? undefined
@@ -1512,6 +1515,14 @@ async function startDashboardBackedServices(
     const { close, port: listeningPort } = await startServer({
       db,
       port,
+      // 402-05 (D-07 — INVK-03): the interface, and the credential COUNT that decides whether a
+      // non-loopback one is permitted. Both are read here because this is the only place both
+      // facts exist — `packages/dashboard-server` cannot resolve a credential, and the config
+      // schema deliberately does not refuse a non-loopback host at parse time (that would refuse
+      // the one configuration D-07 exists to permit). Absent host means the server's own loopback
+      // default, on the house rule that an absent option is an ABSENT field, never `undefined`.
+      ...(configuredHost === undefined ? {} : { host: configuredHost }),
+      runServiceTokenCount: runService?.tokenCount ?? 0,
       uiDir,
       artifactsDir: resolve(configDir, artifactsDir),
       workspacePaths,
