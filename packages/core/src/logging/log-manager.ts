@@ -1,9 +1,21 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { LOG_LEVEL_PRIORITY } from './types.js'
 import type { LogLevel, LogSource, LogEntry, LogStorage, ScopedLogger } from './types.js'
 import { formatLogEntry } from './cli-formatter.js'
 import { type SecretRedactor } from '@vostride/agent-qa-runner'
 import { redactAuthStateValue } from '../auth-state/redaction.js'
+
+/**
+ * One member's run-id binding, held in async context rather than on the manager (WINDOWS #233).
+ *
+ * `pending` is that member's own not-yet-attributed entries — the lines it wrote before it minted
+ * its run id. Only these are backfilled by its `setRunId`, so a sibling can never adopt them.
+ */
+interface MemberLogScope {
+  runId: string
+  readonly pending: LogEntry[]
+}
 
 export class LogManager {
   private buffer: LogEntry[] = []
@@ -14,6 +26,7 @@ export class LogManager {
   private readonly storage?: LogStorage
   private readonly ndjson: boolean
   private redactor?: SecretRedactor
+  private readonly memberScope = new AsyncLocalStorage<MemberLogScope>()
 
   constructor(opts: {
     runId?: string
@@ -34,16 +47,32 @@ export class LogManager {
     this.redactor = redactor
   }
 
+  /**
+   * Run `fn` with its own run-id binding, so concurrent members cannot overwrite each other.
+   *
+   * ONE `LogManager` SERVES EVERY MEMBER of a run — `commands/run.ts` builds it once, outside the
+   * per-member closure — and since 402-02/402-03 the direct path runs members concurrently. Without
+   * a scope, `setRunId` is a single mutable field plus a whole-buffer backfill, so the LAST member
+   * to mint an id claims every line in the buffer, its siblings' included (measured, not inferred).
+   *
+   * Outside a scope nothing changes: `setRunId` keeps its original whole-buffer behaviour, which is
+   * what the sequential path and the run-level `onRunCreated` stamp rely on.
+   */
+  runInMemberScope<T>(fn: () => T): T {
+    return this.memberScope.run({ runId: this.runId, pending: [] }, fn)
+  }
+
   log(
     level: Exclude<LogLevel, 'silent'>,
     source: LogSource,
     message: string,
     data?: Record<string, unknown>,
   ): void {
+    const scope = this.memberScope.getStore()
     const entry: LogEntry = {
       id: randomUUID(),
       stepId: this.currentStepId,
-      runId: this.runId,
+      runId: scope ? scope.runId : this.runId,
       level,
       source,
       message: redactAuthStateValue(message, { secretRedactor: this.redactor }),
@@ -51,6 +80,7 @@ export class LogManager {
       timestamp: new Date().toISOString(),
     }
     this.buffer.push(entry)
+    if (scope && !entry.runId) scope.pending.push(entry)
 
     if (this.shouldDisplay(level)) {
       process.stderr.write(formatLogEntry(entry) + '\n')
@@ -90,6 +120,17 @@ export class LogManager {
   }
 
   setRunId(runId: string): void {
+    const scope = this.memberScope.getStore()
+    if (scope) {
+      scope.runId = runId
+      // This member's OWN pre-mint lines only. A sibling's unattributed lines live in ITS scope.
+      for (const entry of scope.pending) entry.runId = runId
+      scope.pending.length = 0
+      // The flush gate is a manager-level fact: a scoped stamp is still a real run id, and without
+      // this a fully-attributed concurrent run would be silently discarded at flush().
+      this.runIdSet = true
+      return
+    }
     this.runId = runId
     this.runIdSet = true
     for (const entry of this.buffer) {
