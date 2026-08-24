@@ -329,7 +329,10 @@ describe('LogManager — concurrent members share one instance (WINDOWS #233)', 
 
   it('flushes a scoped run to storage — a scoped stamp still satisfies the runIdSet gate', async () => {
     const inserted: LogEntry[][] = []
-    const storage: LogStorage = { insertLogs: (entries: LogEntry[]) => { inserted.push(entries) } }
+    const storage: LogStorage = {
+      insertLogs: (entries: LogEntry[]) => { inserted.push(entries) },
+      getLogs: vi.fn().mockReturnValue([]),
+    }
     const lm = new LogManager({ displayLevel: 'silent', storage })
 
     await lm.runInMemberScope(async () => {

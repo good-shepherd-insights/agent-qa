@@ -4238,9 +4238,18 @@ export async function produceDirectRunMembers(
   // keep their absolute paths for every read below.
   const { members, digestMembers } = buildDirectRunMembers(filtered, configDir)
   let perMemberDigests: ConfigDigests[] = []
+  //
+  // WINDOWS #233: `logger` is ONE manager for the whole run (built above, outside this closure) and
+  // each member stamps it with its own run id. Since 402-02/402-03 these members run CONCURRENTLY
+  // whenever `use.parallel` is set, and an unscoped stamp is a single mutable field — the last
+  // member to mint an id claimed every buffered line, its siblings' included. Each member therefore
+  // executes inside its own log scope. The suite path needs none: it stamps a logger per prepared
+  // suite and reports no run-level one.
   const memberBindings: Array<(ctx: MemberTestRunContext) => Promise<TestResult>> =
     filtered.map((binding, testIndex) =>
-      (ctx) => runOneDirectTest(binding, ctx, perMemberDigests[testIndex]),
+      (ctx) => logger.runInMemberScope(
+        () => runOneDirectTest(binding, ctx, perMemberDigests[testIndex]),
+      ),
     )
 
   // D-20: the ONE digest mint — per-member cache pairs (suiteFileContent absent ⇒ a
