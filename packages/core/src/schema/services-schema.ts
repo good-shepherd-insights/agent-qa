@@ -30,13 +30,15 @@ export const DashboardConfigSchema = z.object({
   // be a host with a branch nobody tests. Absent means today's behavior exactly — no service
   // routes are mounted, and the dashboard runs as it does now.
   runServiceTokens: z.array(RunServiceTokenEntrySchema).default([]),
-  // Phase 402 D-07: the interface this server binds. Consumed by 402-05, which makes an explicit
-  // non-loopback bind REFUSE startup unless token auth is configured.
+  // Phase 402 D-07: the interface this server binds. Consumed by 402-05's pre-listen bind guard,
+  // which REFUSES any non-loopback value — unconditionally since the phase-402 verification round
+  // (a declared run-service credential authenticates the three run-service paths and nothing else,
+  // so it was never evidence that the rest of this server's surface was authed).
   //
-  // DELIBERATELY NOT `LoopbackHostSchema`. That schema refuses a non-loopback value at PARSE time,
-  // which would make D-07's refusal unreachable and would also refuse the one configuration D-07
-  // exists to permit: a non-loopback bind WITH declared tokens. The loopback default and the
-  // structural refusal both live at the bind, where the token list is in scope.
+  // DELIBERATELY NOT `LoopbackHostSchema` even so. That schema refuses at PARSE time, which would
+  // make the runtime refusal unreachable and would report the problem as a config-shape error
+  // rather than as the security refusal it is — and it would also refuse a loopback SPELLING this
+  // field exists to allow (`localhost`, `::1`, `127.0.0.2` is refused on purpose).
   host: z.string().trim().min(1).optional(),
 }).strict()
 
@@ -45,9 +47,9 @@ export const DashboardConfigSchema = z.object({
  *
  * Exported because two mechanisms now decide loopback membership and they must not be two
  * spellings: `LoopbackHostSchema` below refuses a non-loopback MCP host at PARSE time, and
- * `startServer`'s pre-listen bind guard refuses a non-loopback DASHBOARD host at RUNTIME unless a
- * run-service credential is declared. A second literal list would let the two drift, and the
- * direction it would drift in is a host one mechanism calls loopback and the other does not.
+ * `startServer`'s pre-listen bind guard refuses a non-loopback DASHBOARD host at RUNTIME, with no
+ * exemption. A second literal list would let the two drift, and the direction it would drift in is
+ * a host one mechanism calls loopback and the other does not.
  */
 export const LOOPBACK_HOSTS: readonly string[] = Object.freeze(['localhost', '127.0.0.1', '::1'])
 

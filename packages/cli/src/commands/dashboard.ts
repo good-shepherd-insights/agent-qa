@@ -1564,12 +1564,12 @@ async function startDashboardBackedServices(
     const { close, port: listeningPort } = await startServer({
       db,
       port,
-      // 402-05 (D-07 — INVK-03): the interface, and the credential COUNT that decides whether a
-      // non-loopback one is permitted. Both are read here because this is the only place both
-      // facts exist — `packages/dashboard-server` cannot resolve a credential, and the config
-      // schema deliberately does not refuse a non-loopback host at parse time (that would refuse
-      // the one configuration D-07 exists to permit). Absent host means the server's own loopback
-      // default, on the house rule that an absent option is an ABSENT field, never `undefined`.
+      // 402-05 (D-07 — INVK-03): the interface this server binds. A non-loopback value is REFUSED
+      // pre-listen, unconditionally — the credential count that once exempted it was deleted in
+      // the phase-402 verification round, because a run-service token authenticates the three
+      // run-service paths and leaves `/api/runs/trigger` anonymous. The config schema still does
+      // not refuse a non-loopback host at parse time, so the refusal reads as a security decision
+      // rather than a config-shape error.
       ...(configuredHost === undefined ? {} : { host: configuredHost }),
       // 402-05 (D-15): the LOCAL readiness door, supplied on BOTH arms. With the service mounted
       // this is the identical function object the authed `/ok` serves; without it, the SAME

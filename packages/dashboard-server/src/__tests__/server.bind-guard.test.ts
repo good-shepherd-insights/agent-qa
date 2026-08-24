@@ -83,7 +83,6 @@ const INERT_READINESS: Readiness = () => ({
 async function start(opts: {
   host?: string
   port?: number
-  tokenCount?: number
   mountService?: boolean
   readiness?: Readiness
 }): Promise<{ server: Server; close: () => void }> {
@@ -147,7 +146,7 @@ describe('the dashboard bind contract (D-07)', () => {
 
   it('REFUSES an explicit non-loopback host when zero run-service credentials are declared', async () => {
     const port = await reserveFreePort()
-    await expect(start({ host: NON_LOOPBACK_HOST, port, tokenCount: 0 }))
+    await expect(start({ host: NON_LOOPBACK_HOST, port }))
       .rejects.toBeInstanceOf(DashboardRemoteBindRefusedError)
     // NOTHING LISTENED. The refusal is pre-listen, so the port it was handed is still free — the
     // assertion that distinguishes "threw after binding and then tore down" from "never bound".
@@ -155,7 +154,7 @@ describe('the dashboard bind contract (D-07)', () => {
   })
 
   it('names the host and the config key that governs it, and never a token value', async () => {
-    const error = await start({ host: NON_LOOPBACK_HOST, tokenCount: 0 }).catch((e: unknown) => e)
+    const error = await start({ host: NON_LOOPBACK_HOST }).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(DashboardRemoteBindRefusedError)
     const message = (error as Error).message
     expect(message).toContain(NON_LOOPBACK_HOST)
@@ -172,30 +171,30 @@ describe('the dashboard bind contract (D-07)', () => {
   // with the run list. A credential authenticates exactly `ownsRunServicePath` — POST /run,
   // GET /run/:runId/events, GET /ok — and nothing else, so the token count was never evidence
   // about the surface the guard is protecting.
-  it('REFUSES a non-loopback host EVEN WITH credentials declared and the service mounted', async () => {
+  it('REFUSES a non-loopback host EVEN WITH the authed run service mounted', async () => {
     const port = await reserveFreePort()
-    await expect(start({ host: NON_LOOPBACK_HOST, port, tokenCount: 3, mountService: true }))
+    await expect(start({ host: NON_LOOPBACK_HOST, port, mountService: true }))
       .rejects.toBeInstanceOf(DashboardRemoteBindRefusedError)
     await expect(portIsFree(port)).resolves.toBe(true)
   })
 
   it('refuses a non-loopback host that MOUNTED a service with a zero count', async () => {
-    await expect(start({ host: NON_LOOPBACK_HOST, tokenCount: 0, mountService: true }))
+    await expect(start({ host: NON_LOOPBACK_HOST, mountService: true }))
       .rejects.toBeInstanceOf(DashboardRemoteBindRefusedError)
   })
 
   it('offers no remedy that would publish the anonymous surface', async () => {
     // The old message told the operator to declare a credential. Following that instruction is
     // exactly what opened the hole, so the remedy must not appear in the refusal any more.
-    const error = await start({ host: NON_LOOPBACK_HOST, tokenCount: 1 }).catch((e: unknown) => e)
+    const error = await start({ host: NON_LOOPBACK_HOST }).catch((e: unknown) => e)
     const message = (error as Error).message
     expect(message).not.toContain('runServiceTokens')
     expect(message).toContain('services.dashboard.host')
   })
 
   it('still binds every LOOPBACK spelling, with and without credentials', async () => {
-    for (const [host, tokenCount] of [['127.0.0.1', 0], ['localhost', 2]] as const) {
-      const { server } = await start({ host, tokenCount, mountService: tokenCount > 0 })
+    for (const [host, mountService] of [['127.0.0.1', false], ['localhost', true]] as const) {
+      const { server } = await start({ host, mountService })
       expect(isLoopbackHost(boundAddress(server) ?? '')).toBe(true)
     }
   })
@@ -237,7 +236,7 @@ describe('the local readiness door (D-15)', () => {
 
   it('serves the SAME body the authed /ok serves, for one composed state, under both doors', async () => {
     const { fn, flip } = movingReadiness()
-    const { server } = await start({ mountService: true, tokenCount: 1, readiness: fn })
+    const { server } = await start({ mountService: true, readiness: fn })
     const port = (server.address() as AddressInfo).port
 
     const before = await Promise.all([
@@ -267,7 +266,7 @@ describe('the local readiness door (D-15)', () => {
 
   it('answers the LOCAL door with no token at all — the bind guard is what keeps it local', async () => {
     const { fn } = movingReadiness()
-    const { server } = await start({ mountService: true, tokenCount: 1, readiness: fn })
+    const { server } = await start({ mountService: true, readiness: fn })
     const port = (server.address() as AddressInfo).port
 
     // No Authorization header anywhere. The authed door refuses the identical question.
