@@ -307,9 +307,22 @@ describe('an invalid or unknown handle is refused BEFORE any stream header', () 
     expect(idsOf(stream.body)).toEqual([1, 2, 3])
   })
 
-  it('refuses an unknown RUN before it ever looks at the handle', async () => {
+  it('refuses a MALFORMED handle before it looks the run up at all', async () => {
+    // The order is deliberate and it is the disclosure-minimal one: a malformed parameter is a
+    // fact about the caller's own input, so answering it first means the refusal cannot be used
+    // as a run-existence oracle. A well-formed handle on a nonexistent run still gets `unknown_run`
+    // (the cell below), because that answer needs the run looked up.
     const origin = await mount()
-    const response = await fetch(`${origin}/run/r_absent/events?handle=notanumber`, {
+    const malformed = await fetch(`${origin}/run/r_absent/events?handle=notanumber`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    expect(malformed.status).toBe(400)
+    expect(await malformed.json()).toEqual({ error: 'invalid_handle' })
+  })
+
+  it('refuses an unknown RUN when the handle itself parses', async () => {
+    const origin = await mount()
+    const response = await fetch(`${origin}/run/r_absent/events?handle=7`, {
       headers: { Authorization: `Bearer ${TOKEN}` },
     })
     expect(response.status).toBe(404)

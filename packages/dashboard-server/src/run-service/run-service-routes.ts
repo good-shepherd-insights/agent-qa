@@ -36,6 +36,31 @@
 // a header a page sets makes the request non-simple, so a browser must preflight — and this door
 // grants no preflight. A cross-origin page therefore cannot drive it at all.
 //
+// THE `?handle=` FILTER IS SERVER-SIDE, AND ITS PREDICATE LIVES IN THE SCHEMA (402-04, D-14).
+// A parallel run is ONE run id with N attachable per-member handles. The optional `handle` query
+// parameter selects one member's slice; run-scoped envelopes (verdict, `runFinished`, `heartbeat`,
+// the diagnostics, and `runStarted` carrying the roster) ALWAYS pass it, so a handle subscriber
+// still learns that the run ended. This file re-derives none of that: `passesHandleFilter` is
+// imported from `@vostride/agent-qa-schema`, which is the only place an event type's scope is
+// declared. A second spelling here would be a classification that drifts silently (T-402-15),
+// because the two would agree on the day it was written and disagree the first time an event type
+// is appended.
+//
+// THE HANDLE IS VALIDATED BEFORE ANY STREAM HEADER, on the same rule as the run id and for the
+// same reason: a `200 text/event-stream` cannot be told it failed. Validation is in two parts, and
+// the two answers are kept apart — a malformed parameter is `invalid_handle`, a well-formed one
+// naming no member of this run is `unknown_handle`. Neither echoes the value.
+//
+// THE ROSTER IS READ OFF THE SESSION'S OWN REPLAYED `runStarted`, deliberately, rather than from
+// bookkeeping the attach port could keep. The run's own header IS the roster announcement, so
+// reading it here means the door validates against exactly what the stream is about to serve
+// rather than against a second copy that could disagree. `runStarted` is seq 1 and `subscribe`
+// replays synchronously from `REPLAY_FROM_START`, so the roster is in hand before `writeHead`.
+// A run whose `runStarted` announces no roster cannot answer a per-handle question at all, and the
+// honest answer to one is a refusal — not an unfiltered stream (which would serve every member's
+// data to a caller who asked for one) and not an empty one (which would look like a member that
+// did nothing).
+//
 // BEARER CARRIAGE IS HEADER-ONLY, AND THERE MUST NEVER BE A QUERY-PARAMETER FALLBACK: a URL is
 // written to access logs, proxy logs and browser history, so a token carried there is published.
 // Browser `EventSource` cannot set an `Authorization` header (RESEARCH A1), which is why this
@@ -59,6 +84,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   RUN_SERVICE_REFUSED_REQUEST_FIELDS,
   RunServiceStartRequestSchema,
+  handleRosterOf,
+  parseHandleParam,
+  passesHandleFilter,
   type RunEventEnvelope,
   type RunServiceErrorCode,
   type RunServiceReadiness,
@@ -256,6 +284,27 @@ function authorizationHeaderOf(req: IncomingMessage): string | undefined {
 }
 
 /**
+ * The `handle` query parameter, exactly as it arrived, or `null` when absent.
+ *
+ * Read off the query substring with `URLSearchParams` rather than `new URL(...)`: this is
+ * untrusted input on a path that has already matched, and a constructor that can throw does not
+ * belong between a matched route and its handler.
+ *
+ * A REPEATED parameter is not resolved to one of its values — the values are joined, which cannot
+ * parse, so `?handle=1&handle=2` is refused rather than silently answered as handle 1. Same
+ * posture as the repeated `Authorization` header above, and for the same reason: a request that
+ * says two different things is not a request that said the first one.
+ */
+function handleParamOf(req: IncomingMessage): string | null {
+  const query = (req.url ?? '').split('?').slice(1).join('?')
+  if (query === '') return null
+  const values = new URLSearchParams(query).getAll('handle')
+  if (values.length === 0) return null
+  if (values.length === 1) return values[0] ?? null
+  return values.join(',')
+}
+
+/**
  * Which REFUSED request fields a body carries (D-07 / D-12).
  *
  * Checked as a KEY test rather than by parsing, so `{"runId": null}` is refused too: the offense is
@@ -274,6 +323,143 @@ function refusedFieldsIn(body: Record<string, unknown>): readonly string[] {
  * matches, because the fall-through it would otherwise land in is the host's SPA fallback — which
  * answers 200 with an HTML page, on an authed surface, to a caller with no credential.
  */
+/** What the exported stream core reaches the world through. */
+export interface RunEventStreamDeps {
+  /** The DECODED run id. Decoding can throw, and that throw is the caller's 404 to answer. */
+  readonly runId: string
+  /** The raw `handle` query parameter, exactly as it arrived; `null` means the firehose. */
+  readonly handleParam: string | null
+  /** The started run's session, or nothing if this process never started that run. */
+  attach(runId: string): RunSession | undefined
+  /** Live teardowns, so a host can count open streams and a close removes exactly one. */
+  readonly openStreams?: {
+    add(teardown: () => void): void
+    delete(teardown: () => void): void
+  }
+}
+
+/**
+ * THE RUN STREAM, AS ONE UNIT: attach, validate the handle, filter, frame, heartbeat, close.
+ *
+ * Exported because there is going to be a SECOND door onto the same stream — 402-08 mounts the
+ * local door, which differs from this one only in what it does about credentials. Two doors
+ * calling one function is the only shape in which the filter has exactly one implementation; two
+ * copies of the serving body would be two places `?handle=` could drift, and the drift would be
+ * invisible until somebody diffed them.
+ *
+ * The ORDER below is the contract, not an implementation detail. Every refusal — unknown run,
+ * malformed handle, unknown handle, unavailable replay — happens before `writeHead`, because a
+ * response that has already written `200 text/event-stream` cannot be told it failed.
+ */
+export function serveRunEventStream(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: RunEventStreamDeps,
+): void {
+  const parsedHandle = parseHandleParam(deps.handleParam)
+  if (parsedHandle.kind === 'invalid') {
+    // Refused before the run is even looked up: a malformed parameter is a fact about the
+    // caller's own input, so answering it early leaks nothing about which runs exist.
+    refuse(res, 400, 'invalid_handle')
+    return
+  }
+
+  const session = deps.attach(deps.runId)
+  if (session === undefined) {
+    refuse(res, 404, 'unknown_run')
+    return
+  }
+
+  // The frame writer BUFFERS until the head is out, because `subscribe` delivers the replay
+  // synchronously and can also THROW (`ReplayIncompleteError`). Subscribing first and writing the
+  // head after is what keeps a failed attach answerable as a typed JSON error instead of a
+  // half-open stream nobody can be told about. It is ALSO what puts the roster in hand before the
+  // head: `runStarted` is seq 1, so the replay has already delivered it by the time the handle is
+  // checked against the roster below.
+  const pending: string[] = []
+  let open = false
+  const write = (frame: string): void => {
+    if (open) res.write(frame)
+    else pending.push(frame)
+  }
+  const frameOf = (event: RunEventEnvelope): string =>
+    // D-13, all three parts: the id IS the seq, the event name IS the envelope type, and the
+    // data IS the envelope's own JSON. No projection, no rename, no second vocabulary. The filter
+    // DROPS envelopes; it never edits one, so a filtered stream's frames are byte-identical to the
+    // firehose's — with gaps in the ids, which is what seq-as-id means once a filter exists.
+    `id: ${String(event.seq)}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+
+  let roster: readonly number[] | undefined
+
+  let closed = false
+  let unsubscribe: (() => void) | undefined
+  let heartbeat: ReturnType<typeof setInterval> | undefined
+  const teardown = (): void => {
+    if (closed) return
+    closed = true
+    if (heartbeat !== undefined) clearInterval(heartbeat)
+    unsubscribe?.()
+    deps.openStreams?.delete(teardown)
+    // ONLY ONCE THE HEAD IS OUT. `subscribe` delivers the replay SYNCHRONOUSLY, so a run that
+    // was already over reaches `runFinished` — and therefore this teardown — before `writeHead`
+    // has run. Ending here would let Node send its own default 200 with no `Content-Type` and no
+    // body, so a client asking for a finished run's whole log would get an empty, untyped 200.
+    // The flush below the head handles that case, and this guard is what leaves it to it.
+    if (open && !res.writableEnded) res.end()
+  }
+
+  try {
+    unsubscribe = session.subscribe(REPLAY_FROM_START, (event) => {
+      if (closed) return
+      roster = roster ?? handleRosterOf(event)
+      // THE FILTER, and the ONE call to it. `passesHandleFilter` is the schema's predicate over
+      // the schema's total scope classification — this module states no opinion about which event
+      // types belong to a member.
+      if (parsedHandle.kind === 'handle' && !passesHandleFilter(event, parsedHandle.index)) return
+      write(frameOf(event))
+      // THE STREAM ENDS AT `runFinished`. The run's event log is complete at that point and the
+      // bus closes behind it, so holding the socket open would deliver nothing but heartbeats.
+      // What a reconnect after this means is 403's attach contract to decide. `runFinished` is
+      // run-scoped, so it reaches every handle and this arm is filter-independent.
+      if (event.type === 'runFinished') teardown()
+    })
+  } catch {
+    refuse(res, 500, 'replay_unavailable')
+    return
+  }
+
+  if (parsedHandle.kind === 'handle' && !(roster ?? []).includes(parsedHandle.index)) {
+    // A well-formed handle no member of this run answers to — including every handle on a run
+    // whose `runStarted` announced no roster at all. Nothing has been written yet, so this is
+    // still a typed JSON refusal rather than a stream that quietly carries only run-scoped events
+    // and looks like a member that did nothing.
+    closed = true
+    unsubscribe?.()
+    refuse(res, 400, 'unknown_handle')
+    return
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  })
+  res.write(':ok\n\n')
+  open = true
+  for (const frame of pending) res.write(frame)
+  pending.length = 0
+  if (closed) {
+    // The whole run was already in the replay: the head and every frame are out, so all that is
+    // left is to close the socket the teardown above could not reach.
+    if (!res.writableEnded) res.end()
+    return
+  }
+
+  heartbeat = setInterval(() => { res.write(':\n\n') }, HEARTBEAT_MS)
+  deps.openStreams?.add(teardown)
+  req.on('close', teardown)
+}
+
 export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter {
   /** Every live stream's teardown, so a host can count them and a close removes exactly one. */
   const openStreams = new Set<() => void>()
@@ -328,7 +514,12 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
     })()
   }
 
-  function handleEvents(runIdParam: string, req: IncomingMessage, res: ServerResponse): void {
+  function handleEvents(
+    runIdParam: string,
+    handleParam: string | null,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): void {
     let runId: string
     try {
       runId = decodeURIComponent(runIdParam)
@@ -336,79 +527,12 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
       refuse(res, 404, 'unknown_run')
       return
     }
-    const session = ports.attach(runId)
-    if (session === undefined) {
-      // BEFORE ANY STREAM HEADER, and that order is the whole point: a response that has already
-      // written `200 text/event-stream` cannot be told it failed.
-      refuse(res, 404, 'unknown_run')
-      return
-    }
-
-    // The frame writer BUFFERS until the head is out, because `subscribe` delivers the replay
-    // synchronously and can also THROW (`ReplayIncompleteError`). Subscribing first and writing the
-    // head after is what keeps a failed attach answerable as a typed JSON error instead of a
-    // half-open stream nobody can be told about.
-    const pending: string[] = []
-    let open = false
-    const write = (frame: string): void => {
-      if (open) res.write(frame)
-      else pending.push(frame)
-    }
-    const frameOf = (event: RunEventEnvelope): string =>
-      // D-13, all three parts: the id IS the seq, the event name IS the envelope type, and the
-      // data IS the envelope's own JSON. No projection, no rename, no second vocabulary.
-      `id: ${String(event.seq)}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
-
-    let closed = false
-    let unsubscribe: (() => void) | undefined
-    let heartbeat: ReturnType<typeof setInterval> | undefined
-    const teardown = (): void => {
-      if (closed) return
-      closed = true
-      if (heartbeat !== undefined) clearInterval(heartbeat)
-      unsubscribe?.()
-      openStreams.delete(teardown)
-      // ONLY ONCE THE HEAD IS OUT. `subscribe` delivers the replay SYNCHRONOUSLY, so a run that
-      // was already over reaches `runFinished` — and therefore this teardown — before `writeHead`
-      // has run. Ending here would let Node send its own default 200 with no `Content-Type` and no
-      // body, so a client asking for a finished run's whole log would get an empty, untyped 200.
-      // The flush below the head handles that case, and this guard is what leaves it to it.
-      if (open && !res.writableEnded) res.end()
-    }
-
-    try {
-      unsubscribe = session.subscribe(REPLAY_FROM_START, (event) => {
-        if (closed) return
-        write(frameOf(event))
-        // THE STREAM ENDS AT `runFinished`. The run's event log is complete at that point and the
-        // bus closes behind it, so holding the socket open would deliver nothing but heartbeats.
-        // What a reconnect after this means is 403's attach contract to decide.
-        if (event.type === 'runFinished') teardown()
-      })
-    } catch {
-      refuse(res, 500, 'replay_unavailable')
-      return
-    }
-
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
+    serveRunEventStream(req, res, {
+      runId,
+      handleParam,
+      attach: ports.attach,
+      openStreams,
     })
-    res.write(':ok\n\n')
-    open = true
-    for (const frame of pending) res.write(frame)
-    pending.length = 0
-    if (closed) {
-      // The whole run was already in the replay: the head and every frame are out, so all that is
-      // left is to close the socket the teardown above could not reach.
-      if (!res.writableEnded) res.end()
-      return
-    }
-
-    heartbeat = setInterval(() => { res.write(':\n\n') }, HEARTBEAT_MS)
-    openStreams.add(teardown)
-    req.on('close', teardown)
   }
 
   const router = ((req: IncomingMessage, res: ServerResponse): void => {
@@ -436,7 +560,7 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
           handleStart(req, res, { trustScope: verdict.trustScope, clientId: verdict.clientId })
           return
         case 'events':
-          handleEvents(matched.params[0] ?? '', req, res)
+          handleEvents(matched.params[0] ?? '', handleParamOf(req), req, res)
           return
         case 'ok':
           respondJson(res, 200, ports.readiness())

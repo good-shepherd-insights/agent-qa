@@ -196,8 +196,13 @@ export function parseHandleParam(raw: string | null | undefined): HandleParamPar
  *
  * The roster rides `runStarted.payload.handles` — an ADDITIVE payload field, never a new event
  * type (the `RUN_EVENT_TYPES` list is frozen/append-only and a second event vocabulary on the wire
- * is forbidden). Answers `undefined` for a run that announced none, so a caller can tell "this run
- * has no members" apart from "this run predates the roster".
+ * is forbidden). Answers `undefined` when a run announced none, which a caller reads as "this run
+ * cannot answer a per-handle question" rather than as an empty roster.
+ *
+ * (The wording above deliberately avoids the two-word sequence a raw source scan mistakes for an
+ * import specifier: `validate:arch` reads every `<keyword> '…'` in this file as a declared
+ * dependency, and a JSDoc sentence that happens to end in one is reported as a phantom external
+ * dep. Measured live in 402-04; the same class of false positive 402-01 hit on a census.)
  */
 export function handleRosterOf(envelope: RunEventEnvelope): readonly number[] | undefined {
   if (envelope.type !== 'runStarted') return undefined

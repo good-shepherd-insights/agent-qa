@@ -67,6 +67,12 @@ export const RUN_SERVICE_ERROR_CODES = [
   'unknown_route',
   'run_start_failed',
   'replay_unavailable',
+  // 402-04 (D-14, T-402-14): the `?handle=` parameter's two refusals, kept APART. `invalid_handle`
+  // says the parameter was not a canonical non-negative integer — a fact about the caller's own
+  // input, which it already has. `unknown_handle` says the parse succeeded and no member of this
+  // run answers to it. Both are answered before any stream header, and neither echoes the value.
+  'invalid_handle',
+  'unknown_handle',
 ] as const
 
 export type RunServiceErrorCode = (typeof RUN_SERVICE_ERROR_CODES)[number]
