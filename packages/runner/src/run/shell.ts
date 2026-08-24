@@ -77,6 +77,19 @@ function isMemberQuarantined(
 }
 
 /**
+ * A member's HANDLE index (402-04, D-10) — the identity every member-scoped payload is stamped
+ * with and the identity the `runStarted` roster announces.
+ *
+ * ONE expression, used at both sites. The roster and the stamps are two readings of the same
+ * question, and a run whose announced handles did not match the handles its events carry would
+ * make every per-handle attach a guess: a client would ask for a handle the roster offered and be
+ * served an empty stream, with nothing anywhere saying which of the two was wrong.
+ */
+function memberHandleIndex(member: RunMemberDescriptor, index: number): number {
+  return member.testIndex ?? index
+}
+
+/**
  * Start a run (D-01). Constructs the session SYNCHRONOUSLY — the bus, `runStarted` at seq 1, the
  * run-budget arm, the run-level AbortController — then kicks the async member pool whose settled
  * result feeds `done`. Returns the addressable {@link RunSession} immediately.
@@ -99,7 +112,12 @@ export function startRun(config: RunConfig): RunSession {
 
   const startedAt = timer?.now() ?? Date.now()
 
-  // runStarted — seq 1, carrying the bus schema version + the D-04 header fields.
+  // runStarted — seq 1, carrying the bus schema version + the D-04 header fields, plus (402-04,
+  // D-10) the HANDLE ROSTER: the identities the per-member sinks are about to stamp. It rides as
+  // an ADDITIVE payload field beside `memberTestCount` — never a new event type, because the
+  // `RUN_EVENT_TYPES` list is frozen/append-only and a second event vocabulary on the wire is
+  // exactly what D-13 exists to prevent. Derived through `memberHandleIndex` so the roster and the
+  // stamps below cannot drift: there is one expression for "which member is this", used twice.
   bus.publish('runStarted', {
     busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
     scope: config.scope,
@@ -107,6 +125,7 @@ export function startRun(config: RunConfig): RunSession {
     buildOrdinal: config.buildOrdinal,
     configDigests: config.configDigests,
     memberTestCount: config.members.length,
+    handles: config.members.map(memberHandleIndex),
   })
 
   // D-08: stage the config + source artifact snapshot into the run dir once, right after
@@ -187,7 +206,7 @@ export function startRun(config: RunConfig): RunSession {
      */
     const runMember = async (i: number): Promise<void> => {
       const member = config.members[i]
-      const testIndex = member.testIndex ?? i
+      const testIndex = memberHandleIndex(member, i)
       const name = member.name
       const quarantined = isMemberQuarantined(member, config.quarantined)
       const quarantineMarker = quarantined ? (true as const) : undefined

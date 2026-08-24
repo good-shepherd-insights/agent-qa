@@ -411,6 +411,20 @@ export {
   projectTestRetryScheduled,
 } from './run/index'
 export type { MaskFn } from './run/index'
+// 402-04 D-10/D-14: handle identity — the TOTAL event-scope classification, the one filter
+// predicate, the composite id spelling and the additive runStarted roster reader.
+export {
+  HANDLE_ID_SEPARATOR,
+  RUN_EVENT_SCOPE,
+  RUN_EVENT_SCOPE_TYPES,
+  handleId,
+  handleRosterOf,
+  memberIndexOf,
+  parseHandleId,
+  parseHandleParam,
+  passesHandleFilter,
+} from './run/index'
+export type { HandleParamParse, RunEventScope } from './run/index'
 export type {
   MemberTestOutcome,
   RunCompletion,

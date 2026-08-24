@@ -74,3 +74,17 @@ export {
   projectTestRetryScheduled,
 } from './bus-projections'
 export type { MaskFn } from './bus-projections'
+// 402-04 D-10/D-14: handle identity — the TOTAL event-scope classification, the one filter
+// predicate, the composite id spelling and the additive runStarted roster reader.
+export {
+  HANDLE_ID_SEPARATOR,
+  RUN_EVENT_SCOPE,
+  RUN_EVENT_SCOPE_TYPES,
+  handleId,
+  handleRosterOf,
+  memberIndexOf,
+  parseHandleId,
+  parseHandleParam,
+  passesHandleFilter,
+} from './handle-scope'
+export type { HandleParamParse, RunEventScope } from './handle-scope'

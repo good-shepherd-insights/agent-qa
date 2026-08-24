@@ -176,13 +176,36 @@ function normalize(events: readonly RunEventEnvelope[]): BaselineEvent[] {
   }))
 }
 
+/**
+ * The ONE intentional divergence from the pre-402 capture, and the whole of it.
+ *
+ * 402-04 adds `handles` to the `runStarted` payload (D-10's roster). That is an ADDITIVE payload
+ * field, so the baseline — captured before it existed — cannot contain it, and the control reds.
+ *
+ * The fixture is NOT regenerated. Its own header says why: regenerating a differential control
+ * against the code under test is how it becomes self-certifying, and after that it can never red
+ * again for anything. Instead the divergence is named HERE, subtracted, and asserted separately —
+ * so the control keeps its full discriminating power over every other byte of the stream, and the
+ * one thing that did change is a line a reviewer reads rather than a diff nobody sees.
+ */
+function withoutHandleRoster(events: readonly BaselineEvent[]): BaselineEvent[] {
+  return events.map((event) => {
+    if (event.type !== 'runStarted') return event
+    const { handles: _handles, ...rest } = event.payload as { handles?: unknown }
+    return { ...event, payload: rest }
+  })
+}
+
 describe('workers=1 parity — the pre-refactor differential control', () => {
-  it('reproduces the captured sequential event stream verbatim', async () => {
+  it('reproduces the captured sequential event stream verbatim, but for the added roster', async () => {
     const session = startRun(baselineConfig())
     const events = drain(session)
     await done(session)
 
-    expect(normalize(events)).toEqual(SEQUENTIAL_BASELINE)
+    expect(withoutHandleRoster(normalize(events))).toEqual(SEQUENTIAL_BASELINE)
+    // …and the subtracted field is exactly the roster, present and correct. Subtracting a field
+    // without asserting it would let the control pass on a runStarted that lost the roster too.
+    expect(handleRosterOf(events[0] as RunEventEnvelope)).toEqual([0, 1, 2, 3])
   })
 
   // Capture mode. Run with AGENT_QA_CAPTURE_BASELINE=1 to (re)generate the fixture. It is
@@ -385,7 +408,8 @@ describe('the bounded member pool — 2 members concurrent, one bus, one termina
     const events = drain(session)
     await done(session)
 
-    expect(normalize(events)).toEqual(SEQUENTIAL_BASELINE)
+    expect(withoutHandleRoster(normalize(events))).toEqual(SEQUENTIAL_BASELINE)
+    expect(handleRosterOf(events[0] as RunEventEnvelope)).toEqual([0, 1, 2, 3])
   })
 })
 

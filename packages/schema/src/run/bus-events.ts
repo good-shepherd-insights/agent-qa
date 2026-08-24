@@ -74,6 +74,18 @@ export interface RunStartedPayload {
     testConfigDigest: string
   }
   memberTestCount: number
+  /**
+   * 402-04 D-10/D-14 additive-optional append (§2.2 payload-additive; the envelope shape and the
+   * event-type list are both untouched): the run's HANDLE ROSTER — each member's derived
+   * `testIndex`, in member order.
+   *
+   * This is the run announcing which per-member streams are attachable, so a client can validate
+   * a `?handle=` request against a roster rather than against a guess, and so the roster is
+   * announced by a PAYLOAD field rather than by a second event vocabulary on the wire. Optional
+   * because the field is additive: a run that announces none simply cannot answer a per-handle
+   * question. The shell always emits it.
+   */
+  handles?: readonly number[]
 }
 
 /**
