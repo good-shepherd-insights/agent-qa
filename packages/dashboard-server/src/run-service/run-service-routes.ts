@@ -308,8 +308,14 @@ function authorizationHeaderOf(req: IncomingMessage): string | undefined {
  * parse, so `?handle=1&handle=2` is refused rather than silently answered as handle 1. Same
  * posture as the repeated `Authorization` header above, and for the same reason: a request that
  * says two different things is not a request that said the first one.
+ *
+ * EXPORTED FOR THE SECOND DOOR (402-08), on {@link serveRunEventStream}'s own reasoning. The local
+ * loopback route reads the parameter through THIS function rather than through the host router's
+ * `url.searchParams.get('handle')`, which would return `1` for `?handle=1&handle=2` — that is, the
+ * one wrong answer this reader exists to refuse. The core takes the RAW parameter, so which reader
+ * produced it is exactly the seam a second spelling would slip into.
  */
-function handleParamOf(req: IncomingMessage): string | null {
+export function handleParamOf(req: IncomingMessage): string | null {
   const query = (req.url ?? '').split('?').slice(1).join('?')
   if (query === '') return null
   const values = new URLSearchParams(query).getAll('handle')

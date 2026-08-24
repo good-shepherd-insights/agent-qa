@@ -22,7 +22,13 @@
 // the failure mode WINDOWS' "green that never ran" names.
 
 import { readFile } from 'node:fs/promises'
-import { createServer, get as httpGet, type Server } from 'node:http'
+import {
+  createServer,
+  get as httpGet,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import {
@@ -35,7 +41,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { DashboardDatabase } from '../db/database.js'
+import { DashboardDatabase } from '../db/database.js'
 import {
   createRunServiceRoutes,
   type RunServicePorts,
@@ -131,7 +137,9 @@ function mockDb(): DashboardDatabase {
 const servers: Server[] = []
 const closers: Array<() => void> = []
 
-async function listen(handler: Parameters<typeof createServer>[0]): Promise<string> {
+type RequestHandler = (req: IncomingMessage, res: ServerResponse) => void
+
+async function listen(handler: RequestHandler): Promise<string> {
   const server = createServer(handler)
   servers.push(server)
   await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
@@ -345,7 +353,9 @@ function getThroughServer(port: number, path: string): Promise<Capture> {
 
 describe('the PRODUCTION frame threads the attach port (server.ts, not the router alone)', () => {
   it('serves the local run-stream through the shipped startServer when the service is mounted', async () => {
-    const db = mockDb()
+    // A REAL database rather than the router cells' stub: this frame is the shipped one, and the
+    // claim is about what `startServer` wires, so nothing in it should be a lookalike.
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
     const started = await startServer({ db, port: 0, runService: servicePorts() })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port
@@ -358,7 +368,7 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
   })
 
   it('answers 503 BY NAME with no run service mounted — never a fabricated stream or a 404', async () => {
-    const db = mockDb()
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
     const started = await startServer({ db, port: 0 })
     closers.push(started.close)
     const port = (started.server.address() as AddressInfo).port

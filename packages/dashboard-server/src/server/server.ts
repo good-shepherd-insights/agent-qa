@@ -594,6 +594,13 @@ export async function startServer(opts: StartServerOptions): Promise<{
     // 402-05 (D-15): the same conditional-spread house rule. Absent means a legacy mount rather
     // than an unconfigured service, and the router's own 503 arm is what decides, in one place.
     ...(runServiceReadiness === undefined ? {} : { runServiceReadiness }),
+    // 402-08 (D-01): the LOCAL run-stream door's attach port, READ OFF `runService` rather than
+    // composed again. That derivation is the "one session registry serves both doors" claim in its
+    // structural form — there is no second wiring a composition root could forget or point
+    // somewhere else, and the two doors cannot end up attached to different registries. Absent
+    // `runService` means no registry exists at all, so the same conditional-spread house rule
+    // applies and the router's own 503 arm decides.
+    ...(runService === undefined ? {} : { runServiceAttach: runService.attach }),
   })
 
   // 402-01: composed once, at start, on `apiRouter`'s own idiom. Absent ports mean no router and

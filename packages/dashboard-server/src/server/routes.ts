@@ -16,7 +16,8 @@ import { tryParseRequestUrl } from './request-url.js'
 import { CHAT_ROUTE_PREFIX, RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
 import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
-import type { RunServiceReadiness } from '@vostride/agent-qa-schema'
+import type { RunServiceReadiness, RunSession } from '@vostride/agent-qa-schema'
+import { handleParamOf, serveRunEventStream } from '../run-service/run-service-routes.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
@@ -1800,6 +1801,21 @@ interface RouterDeps {
    * two-argument way has none, and that arm answers 503 by name on `agentHost`'s idiom.
    */
   runServiceReadiness?: () => RunServiceReadiness
+  /**
+   * The started run's session, or nothing — the LOCAL door's attach port (402-08, D-01).
+   *
+   * THE SAME PORT THE AUTHED DOOR USES, and `server.ts` supplies it by reading
+   * `runService.attach` rather than by composing a second lookup: one session registry serves both
+   * doors, so a run the remote door can attach to is a run this door can attach to, and there is
+   * no second retention window to disagree about.
+   *
+   * ABSENT MEANS NO RUN SERVICE WAS MOUNTED, which is the same fact as "this process composed no
+   * session registry" — unlike `runServiceReadiness` above, whose absence is a legacy mount rather
+   * than an unconfigured service. The route then answers 503 BY NAME on the execution routes' own
+   * degradation idiom, never a 404 (the route exists) and never an empty stream (which would look
+   * like a run that emitted nothing).
+   */
+  runServiceAttach?: (runId: string) => RunSession | undefined
 }
 
 export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: ServerResponse) => void
@@ -2346,6 +2362,44 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         return
       }
       json(res, deps.runServiceReadiness())
+      return
+    }
+
+    // GET /api/run-stream/:runId — the LOCAL door onto the run event stream (402-08, D-01/D-13).
+    //
+    // ONE STREAM CORE BEHIND TWO DOORS. Everything below the 503 arm is `serveRunEventStream`'s:
+    // the attach, the handle validation, the filter, the framing, the heartbeat and the close.
+    // This handler formats no frame and reads no envelope, deliberately — a second spelling here
+    // would agree with the authed door on the day it was written and drift the first time either
+    // moves, and the drift would be invisible until somebody diffed them (T-402-27). The parity is
+    // measured rather than asserted: `routes.run-stream.test.ts` drives one planted session
+    // through BOTH doors over a corpus that includes every refusal class and compares the bytes.
+    //
+    // NO TOKEN, ON `/api/run-readiness`'s EXACT ARGUMENT (402-05). This is the local dashboard API
+    // and what keeps it local is the bind guard, not a credential. The routes that assume a caller
+    // from another machine live behind `ownsRunServicePath`, above this router entirely.
+    //
+    // THE RAW `handle` PARAMETER IS READ BY THE CORE'S OWN READER, not by `url.searchParams`,
+    // which resolves `?handle=1&handle=2` to `1` — the one answer that reader exists to refuse.
+    if (req.method === 'GET' && path.startsWith('/api/run-stream/')) {
+      if (!deps.runServiceAttach) {
+        json(res, { error: 'This server was started without a run service to stream from' }, 503)
+        return
+      }
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/run-stream/'.length))
+      } catch {
+        // An undecodable id names no run, and the honest answer is the one the core gives for a
+        // run this process never started.
+        json(res, { error: 'unknown_run' }, 404)
+        return
+      }
+      serveRunEventStream(req, res, {
+        runId,
+        handleParam: handleParamOf(req),
+        attach: deps.runServiceAttach,
+      })
       return
     }
 
