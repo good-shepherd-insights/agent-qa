@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { DashboardDatabase } from '../db/database.js'
+import { isLoopbackHost } from '@vostride/agent-qa-core'
 import { DashboardRemoteBindRefusedError, startServer } from '../server/server.js'
 
 /**
@@ -94,7 +95,6 @@ async function start(opts: {
     port: opts.port ?? 0,
     configPath: configPathFor(),
     ...(opts.host === undefined ? {} : { host: opts.host }),
-    ...(opts.tokenCount === undefined ? {} : { runServiceTokenCount: opts.tokenCount }),
     ...(opts.mountService === true ? { runService: stubRunServicePorts(readiness) } : {}),
     ...(opts.readiness === undefined ? {} : { runServiceReadiness: readiness }),
   })
@@ -154,27 +154,50 @@ describe('the dashboard bind contract (D-07)', () => {
     await expect(portIsFree(port)).resolves.toBe(true)
   })
 
-  it('names the host and the config key that unlocks it, and never a token value', async () => {
+  it('names the host and the config key that governs it, and never a token value', async () => {
     const error = await start({ host: NON_LOOPBACK_HOST, tokenCount: 0 }).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(DashboardRemoteBindRefusedError)
     const message = (error as Error).message
     expect(message).toContain(NON_LOOPBACK_HOST)
-    expect(message).toContain('services.dashboard.runServiceTokens')
     expect(message).toContain('services.dashboard.host')
   })
 
-  it('BINDS the same non-loopback host once a credential is declared', async () => {
-    const { server } = await start({
-      host: NON_LOOPBACK_HOST,
-      tokenCount: 1,
-      mountService: true,
-    })
-    expect(boundAddress(server)).toBe(NON_LOOPBACK_HOST)
+  // THE CELL THIS REPLACES PINNED THE HOLE. It asserted that declaring a run-service credential
+  // BINDS a non-loopback host, on the premise — written into the guard's own class doc — that
+  // "the operator who genuinely wants remote access declares a credential, which is the same act
+  // that makes the remote surface an authed one". Phase-402 verification measured that premise
+  // false off a real interface: with `host: 0.0.0.0` and one declared token the startup guard
+  // passed, and `POST /api/runs/trigger` with NO Authorization header answered
+  // `202 {"runId":"…","status":"queued"}` and started a run, while `GET /api/runs` answered 200
+  // with the run list. A credential authenticates exactly `ownsRunServicePath` — POST /run,
+  // GET /run/:runId/events, GET /ok — and nothing else, so the token count was never evidence
+  // about the surface the guard is protecting.
+  it('REFUSES a non-loopback host EVEN WITH credentials declared and the service mounted', async () => {
+    const port = await reserveFreePort()
+    await expect(start({ host: NON_LOOPBACK_HOST, port, tokenCount: 3, mountService: true }))
+      .rejects.toBeInstanceOf(DashboardRemoteBindRefusedError)
+    await expect(portIsFree(port)).resolves.toBe(true)
   })
 
-  it('refuses a non-loopback host that MOUNTED a service with a zero count — the count is the authority', async () => {
+  it('refuses a non-loopback host that MOUNTED a service with a zero count', async () => {
     await expect(start({ host: NON_LOOPBACK_HOST, tokenCount: 0, mountService: true }))
       .rejects.toBeInstanceOf(DashboardRemoteBindRefusedError)
+  })
+
+  it('offers no remedy that would publish the anonymous surface', async () => {
+    // The old message told the operator to declare a credential. Following that instruction is
+    // exactly what opened the hole, so the remedy must not appear in the refusal any more.
+    const error = await start({ host: NON_LOOPBACK_HOST, tokenCount: 1 }).catch((e: unknown) => e)
+    const message = (error as Error).message
+    expect(message).not.toContain('runServiceTokens')
+    expect(message).toContain('services.dashboard.host')
+  })
+
+  it('still binds every LOOPBACK spelling, with and without credentials', async () => {
+    for (const [host, tokenCount] of [['127.0.0.1', 0], ['localhost', 2]] as const) {
+      const { server } = await start({ host, tokenCount, mountService: tokenCount > 0 })
+      expect(isLoopbackHost(boundAddress(server) ?? '')).toBe(true)
+    }
   })
 })
 
