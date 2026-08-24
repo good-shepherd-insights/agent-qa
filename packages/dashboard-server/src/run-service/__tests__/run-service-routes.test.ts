@@ -17,10 +17,20 @@
 
 import { createServer, type Server } from 'node:http'
 
-import type { RunEventEnvelope, RunSession, RunStartAcknowledgement } from '@vostride/agent-qa-schema'
+import {
+  RUN_SERVICE_CONTRACT_VERSION,
+  RunServiceReadinessSchema,
+  type RunEventEnvelope,
+  type RunSession,
+  type RunStartAcknowledgement,
+} from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createRunServiceRoutes, type RunServicePorts } from '../run-service-routes.js'
+import {
+  RUN_SERVICE_ROUTE_TABLE,
+  createRunServiceRoutes,
+  type RunServicePorts,
+} from '../run-service-routes.js'
 
 const TOKEN = 'zz-402-01-unit-token-31c9de'
 
@@ -74,7 +84,7 @@ function fakePorts(overrides: Partial<RunServicePorts> = {}): RunServicePorts {
       service: 'up',
       hostComposed: true,
       authConfigured: true,
-      contractVersion: 1,
+      contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
     ...overrides,
   }
@@ -214,5 +224,106 @@ describe('the verdict stands above the route table', () => {
       body: '{}',
     })
     expect(started).toBe(0)
+  })
+})
+
+// ---- Task 2: `/ok` — authed, shallow-but-honest readiness (D-15) -----------------------------
+
+describe('GET /ok is a service route like every other one', () => {
+  it('refuses a request with no token', async () => {
+    const origin = await mount()
+    const response = await fetch(`${origin}/ok`)
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({ error: 'missing_authorization' })
+  })
+
+  it('refuses a wrong token with a body shape-identical to the missing-token refusal', async () => {
+    const origin = await mount()
+    const wrong = await fetch(`${origin}/ok`, { headers: { Authorization: 'Bearer nope' } })
+    expect(wrong.status).toBe(401)
+    const wrongBody = await wrong.json() as Record<string, unknown>
+    const missingBody = await (await fetch(`${origin}/ok`)).json() as Record<string, unknown>
+    // Beyond the reason word, nothing differs — no entry count, no hint of how auth is configured.
+    expect(Object.keys(wrongBody)).toEqual(Object.keys(missingBody))
+    expect(wrongBody).toEqual({ error: 'invalid_token' })
+  })
+
+  it('reports MEASURED facts and the contract version to a valid token', async () => {
+    const origin = await mount()
+    const response = await fetch(`${origin}/ok`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    const body = RunServiceReadinessSchema.parse(await response.json())
+    expect(body).toEqual({
+      service: 'up',
+      hostComposed: true,
+      authConfigured: true,
+      contractVersion: RUN_SERVICE_CONTRACT_VERSION,
+    })
+    // It never claims a run will succeed: there is no `ready`, no verdict prediction, and no
+    // knowledge/embedder rung — those are 407's `doctor`.
+    expect(Object.keys(body).sort()).toEqual(
+      ['authConfigured', 'contractVersion', 'hostComposed', 'service'],
+    )
+  })
+
+  it('reports an UNCOMPOSED host honestly rather than refusing', async () => {
+    const origin = await mount(fakePorts({
+      readiness: () => ({
+        service: 'up',
+        hostComposed: false,
+        authConfigured: true,
+        contractVersion: RUN_SERVICE_CONTRACT_VERSION,
+      }),
+    }))
+    const response = await fetch(`${origin}/ok`, { headers: { Authorization: `Bearer ${TOKEN}` } })
+    expect(response.status).toBe(200)
+    expect((await response.json() as { hostComposed: boolean }).hostComposed).toBe(false)
+  })
+})
+
+describe('the refusal-shape census walks the module\'s OWN route table', () => {
+  /**
+   * Every row, driven — and the ENUMERATION is the point.
+   *
+   * The corpus is read off `RUN_SERVICE_ROUTE_TABLE` rather than written out here, so a route
+   * added tomorrow is covered the day it lands and cannot escape this cell by nobody noticing it.
+   * A hardcoded list of three paths would be a claim about three paths.
+   */
+  const probePathFor = (row: { readonly path: string }): string =>
+    row.path.replace(':runId', 'r_planted')
+
+  it('covers every declared route, and the table is not empty', async () => {
+    // Non-vacuity first: a census over an empty table passes by finding nothing to drive.
+    expect(RUN_SERVICE_ROUTE_TABLE.length).toBeGreaterThanOrEqual(3)
+    const handlers = RUN_SERVICE_ROUTE_TABLE.map((row) => row.handler).sort()
+    expect(handlers).toEqual(['events', 'ok', 'start'])
+  })
+
+  it('refuses a MISSING token on every row with one body shape', async () => {
+    const origin = await mount()
+    const bodies: Record<string, unknown>[] = []
+    for (const row of RUN_SERVICE_ROUTE_TABLE) {
+      const response = await fetch(`${origin}${probePathFor(row)}`, { method: row.method })
+      expect(response.status, `${row.method} ${row.path}`).toBe(401)
+      bodies.push(await response.json() as Record<string, unknown>)
+    }
+    for (const body of bodies) {
+      expect(body).toEqual({ error: 'missing_authorization' })
+    }
+  })
+
+  it('refuses an INVALID token on every row with the same body shape', async () => {
+    const origin = await mount()
+    for (const row of RUN_SERVICE_ROUTE_TABLE) {
+      const response = await fetch(`${origin}${probePathFor(row)}`, {
+        method: row.method,
+        headers: { Authorization: 'Bearer definitely-not-the-token' },
+      })
+      expect(response.status, `${row.method} ${row.path}`).toBe(401)
+      const body = await response.json() as Record<string, unknown>
+      expect(Object.keys(body), `${row.method} ${row.path}`).toEqual(['error'])
+      expect(body).toEqual({ error: 'invalid_token' })
+    }
   })
 })
