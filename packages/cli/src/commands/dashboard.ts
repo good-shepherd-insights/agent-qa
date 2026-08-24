@@ -46,6 +46,7 @@ import {
   RUN_SERVICE_CONTRACT_VERSION,
   RunStartAcknowledgementSchema,
 } from '@vostride/agent-qa-schema'
+import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
 import {
   matchServiceBearer,
   resolveRunServiceTokens,
@@ -1214,9 +1215,6 @@ export function runServiceCallerFor(trustScope: TrustScope): FunctionCaller {
   })
 }
 
-/** How long a finished run's session stays attachable, matching the in-process backend's window. */
-const RUN_SERVICE_SESSION_RETENTION_MS = 5 * 60 * 1000
-
 /**
  * THE READINESS PREDICATE — ONE DECLARATION SITE, TWO DOORS (D-15).
  *
@@ -1258,7 +1256,7 @@ export interface RunServiceCompositionInput {
   readonly env?: NodeJS.ProcessEnv
   /** The run door this process composed — the host box and the one session bridge. */
   readonly door: Pick<DashboardRunDoor, 'resolveHost' | 'observeSessions'>
-  /** How long a finished run stays attachable. Defaults to the in-process backend's window. */
+  /** How long a finished run stays attachable. Defaults to the registry's own window. */
   readonly retentionMs?: number
 }
 
@@ -1294,28 +1292,11 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     input.entries,
     input.env ?? process.env,
   )
-  const retentionMs = input.retentionMs ?? RUN_SERVICE_SESSION_RETENTION_MS
-
-  /**
-   * Every session this process has started, by run id.
-   *
-   * BOUNDED, and the bound is why the eviction timer exists: without one this map grows for the
-   * life of a long-running dashboard, one entry per run, each holding a whole event bus. The window
-   * opens when the run settles rather than when it starts, so a live run is never evicted out from
-   * under a subscriber, and it matches the in-process backend's own replay retention so a client
-   * told "attach later" by one part of this process is not refused by another.
-   */
-  const sessions = new Map<string, { readonly session: RunSession; timer?: NodeJS.Timeout }>()
-
-  const unobserve = input.door.observeSessions((session) => {
-    const runId = session.id as unknown as string
-    const entry: { readonly session: RunSession; timer?: NodeJS.Timeout } = { session }
-    sessions.set(runId, entry)
-    const scheduleEviction = (): void => {
-      entry.timer = setTimeout(() => { sessions.delete(runId) }, retentionMs)
-      entry.timer.unref?.()
-    }
-    session.done.then(scheduleEviction, scheduleEviction)
+  // THE ATTACHABLE-SESSION LOOKUP, in its own module. See that module's header for why the
+  // retention timer may not live in this file.
+  const sessions = createRunServiceSessionRegistry({
+    observeSessions: input.door.observeSessions,
+    ...(input.retentionMs === undefined ? {} : { retentionMs: input.retentionMs }),
   })
 
   const invokeRunStart = async (start: RunServiceStartInput): Promise<RunStartAcknowledgement> => {
@@ -1354,7 +1335,7 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
   const ports: RunServicePorts = {
     verifyBearer: (header) => matchServiceBearer(header, tokens),
     invokeRunStart,
-    attach: (runId) => sessions.get(runId)?.session,
+    attach: (runId) => sessions.attach(runId),
     readiness,
   }
 
@@ -1362,13 +1343,7 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     ports,
     secretStore: runServiceTokenSecretStore(tokens),
     tokenCount: tokens.length,
-    dispose: () => {
-      unobserve()
-      for (const entry of sessions.values()) {
-        if (entry.timer !== undefined) clearTimeout(entry.timer)
-      }
-      sessions.clear()
-    },
+    dispose: () => { sessions.dispose() },
   }
 }
 
