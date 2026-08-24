@@ -19,7 +19,7 @@
 // observes the overlap immediately or proves it never happened.
 import { describe, expect, it } from 'vitest'
 
-import { handleRosterOf, memberIndexOf } from '@vostride/agent-qa-schema'
+import { RUN_EVENT_SCOPE, handleRosterOf, memberIndexOf } from '@vostride/agent-qa-schema'
 
 import { startRun } from '../shell.js'
 import type {
@@ -703,5 +703,183 @@ describe('the runStarted handle roster — the run announcing which streams are 
     expect(Object.keys(events[0] as object).sort()).toEqual([
       'payload', 'runId', 'seq', 'ts', 'type',
     ])
+  })
+})
+
+// ---- Two-sided attribution, WRITE side (402-04, D-10 · INVK-04) --------------------------------
+
+/**
+ * The three members of the attribution scene, at PLANTED non-contiguous indices.
+ *
+ * 0, 1, 2 would make a correct stamp indistinguishable from one derived from the member's array
+ * position, from the order it happened to start in, or from a counter — under a concurrent pool
+ * those three answers coincide for two members and diverge for three at these indices.
+ */
+const ATTRIBUTION_MEMBERS: readonly RunMemberDescriptor[] = [
+  { testId: 'alpha', name: 'alpha test', filePath: 'alpha.test.ts', testIndex: 3 },
+  { testId: 'bravo', name: 'bravo test', filePath: 'bravo.test.ts', testIndex: 7 },
+  { testId: 'charlie', name: 'charlie test', filePath: 'charlie.test.ts', testIndex: 11 },
+]
+
+const EXPECTED_INDEX: Readonly<Record<string, number>> = { alpha: 3, bravo: 7, charlie: 11 }
+
+/**
+ * Which member an envelope's own CONTENT says it belongs to — derived from the payload's testId,
+ * its step text, or its hook execution id, never from `testIndex`.
+ *
+ * This is the whole instrument. Asserting `testIndex === testIndex` proves nothing; asserting that
+ * the index the sink stamped agrees with the member the payload is manifestly ABOUT is what can
+ * catch a cross-attribution defect. A pool that handed member `bravo`'s sink to member `charlie`'s
+ * executor produces envelopes saying `charlie` stamped 7, and this reads it.
+ */
+function ownerOf(event: RunEventEnvelope): string | undefined {
+  const payload = event.payload as {
+    testId?: unknown
+    stepText?: unknown
+    hookExecutionId?: unknown
+  }
+  if (typeof payload.testId === 'string') return payload.testId
+  if (typeof payload.stepText === 'string') return payload.stepText.split(' ')[0]
+  if (typeof payload.hookExecutionId === 'string') return payload.hookExecutionId.split('-')[1]
+  return undefined
+}
+
+/**
+ * Executors that cannot all finish until all three have STARTED.
+ *
+ * That is the discriminating shape (402-02's idiom): under the pool every member reaches its
+ * second emission after every other has reached its first, so the published stream interleaves.
+ * Under any sequential execution the first member's drain budget expires without the others ever
+ * starting, the emissions come out blocked per member, and the interleave assertion reds — this
+ * cell cannot pass on a run that did not actually overlap.
+ */
+function attributionExecutor(started: string[]): MemberTestExecutor {
+  return async (member: RunMemberDescriptor, ctx: MemberTestRunContext) => {
+    started.push(member.testId)
+    ctx.events.stepStarted({ stepIndex: 0, stepText: `${member.testId} first` })
+    ctx.events.hookStarted({
+      hookName: 'before-each',
+      phase: 'setup',
+      hookExecutionId: `h-${member.testId}`,
+      scope: 'test',
+      testIndex: ctx.testIndex,
+    })
+    await drainUntil(() => started.length === 3)
+    ctx.events.stepStarted({ stepIndex: 1, stepText: `${member.testId} second` })
+    return passResult(member.testId)
+  }
+}
+
+describe('the write side of the attribution contract — 3 CONCURRENT members, one bus', () => {
+  it('interleaves: every member emits its first event before any emits its second', async () => {
+    const started: string[] = []
+    const session = startRun(poolConfig({
+      members: [...ATTRIBUTION_MEMBERS],
+      workers: 3,
+      executor: attributionExecutor(started),
+    }))
+    const events = drain(session)
+    await done(session)
+
+    expect(started).toEqual(['alpha', 'bravo', 'charlie'])
+    const steps = events
+      .filter((e) => e.type === 'stepStarted')
+      .map((e) => (e.payload as { stepText: string }).stepText)
+    // The discriminating half. A sequential execution emits
+    // [alpha first, alpha second, bravo first, bravo second, …]; only genuine overlap puts all
+    // three `first`s ahead of every `second`.
+    expect(steps.slice(0, 3)).toEqual(['alpha first', 'bravo first', 'charlie first'])
+    expect(steps.slice(3).every((text) => text.endsWith('second'))).toBe(true)
+  })
+
+  it('stamps EVERY member-scoped envelope with its own member — walked, not sampled', async () => {
+    const started: string[] = []
+    const session = startRun(poolConfig({
+      members: [...ATTRIBUTION_MEMBERS],
+      workers: 3,
+      executor: attributionExecutor(started),
+    }))
+    const events = drain(session)
+    await done(session)
+
+    // TOTALITY FOLD: every envelope is classified and accounted for, and the count is asserted
+    // against the stream length. A loop that `continue`d past an unrecognised envelope would
+    // silently sample; this cannot.
+    let accounted = 0
+    let memberScoped = 0
+    const seenPerMember = new Map<number, number>()
+    for (const event of events) {
+      const scope = RUN_EVENT_SCOPE[event.type]
+      const index = memberIndexOf(event)
+      if (scope === 'run') {
+        // A run-scoped envelope must not carry a member's identity at all.
+        expect(index, `${event.type} at seq ${String(event.seq)} is run-scoped`).toBeUndefined()
+        accounted += 1
+        continue
+      }
+      const owner = ownerOf(event)
+      expect(owner, `no owner derivable for ${event.type} at seq ${String(event.seq)}`)
+        .toBeDefined()
+      // THE CROSS-ATTRIBUTION ASSERTION: the stamped index equals the index of the member the
+      // payload's own content names. Zero cross-attribution is asserted for every envelope, not
+      // for a sampled few.
+      expect(index, `${event.type} seq ${String(event.seq)} owned by ${String(owner)}`)
+        .toBe(EXPECTED_INDEX[owner as string])
+      seenPerMember.set(index as number, (seenPerMember.get(index as number) ?? 0) + 1)
+      memberScoped += 1
+      accounted += 1
+    }
+
+    expect(accounted).toBe(events.length)
+    // Non-vacuity: an empty member-scoped set would satisfy every assertion above.
+    expect(memberScoped).toBeGreaterThan(0)
+    expect([...seenPerMember.keys()].sort((a, b) => a - b)).toEqual([3, 7, 11])
+    // Each member emits the same shape, so the per-member counts must be equal — an imbalance
+    // means envelopes migrated between members.
+    expect([...seenPerMember.values()]).toEqual([
+      seenPerMember.get(3), seenPerMember.get(3), seenPerMember.get(3),
+    ])
+  })
+
+  it('the member-scoped sets of the three members are PAIRWISE DISJOINT by seq', async () => {
+    const started: string[] = []
+    const session = startRun(poolConfig({
+      members: [...ATTRIBUTION_MEMBERS],
+      workers: 3,
+      executor: attributionExecutor(started),
+    }))
+    const events = drain(session)
+    await done(session)
+
+    const sets = [3, 7, 11].map((handle) => new Set(
+      events
+        .filter((e) => RUN_EVENT_SCOPE[e.type] !== 'run' && memberIndexOf(e) === handle)
+        .map((e) => e.seq),
+    ))
+    expect(sets.map((set) => set.size).every((size) => size > 0)).toBe(true)
+    for (let i = 0; i < sets.length; i += 1) {
+      for (let j = i + 1; j < sets.length; j += 1) {
+        expect([...sets[i]!].filter((seq) => sets[j]!.has(seq))).toEqual([])
+      }
+    }
+  })
+
+  it('announces a roster that is exactly the set of identities it went on to stamp', async () => {
+    const started: string[] = []
+    const session = startRun(poolConfig({
+      members: [...ATTRIBUTION_MEMBERS],
+      workers: 3,
+      executor: attributionExecutor(started),
+    }))
+    const events = drain(session)
+    await done(session)
+
+    const stamped = new Set<number>()
+    for (const event of events) {
+      const index = memberIndexOf(event)
+      if (index !== undefined) stamped.add(index)
+    }
+    expect(handleRosterOf(events[0] as RunEventEnvelope)).toEqual([3, 7, 11])
+    expect([...stamped].sort((a, b) => a - b)).toEqual([3, 7, 11])
   })
 })
