@@ -1,5 +1,7 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { LogManager } from '../logging/log-manager.js'
+import { LogManager, MemberLogScopeUnavailableError } from '../logging/log-manager.js'
+import type { MemberLogScope } from '../logging/log-manager.js'
 import type { LogStorage, LogEntry } from '../logging/types.js'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
@@ -247,7 +249,7 @@ describe('LogManager — concurrent members share one instance (WINDOWS #233)', 
     lm.getBuffer().filter((e) => e.message === message).map((e) => e.runId)
 
   it('keeps each member scope on its OWN run id after a sibling stamps (forward)', async () => {
-    const lm = new LogManager({ displayLevel: 'silent' })
+    const lm = new LogManager({ displayLevel: 'silent', memberScope: new AsyncLocalStorage<MemberLogScope>() })
 
     // Member A opens its scope and stamps; member B opens its scope and stamps; THEN A logs again.
     // A's later line belongs to A. With one shared mutable field it carries B's id.
@@ -267,7 +269,7 @@ describe('LogManager — concurrent members share one instance (WINDOWS #233)', 
   })
 
   it('never restamps a line another member already attributed (backward)', async () => {
-    const lm = new LogManager({ displayLevel: 'silent' })
+    const lm = new LogManager({ displayLevel: 'silent', memberScope: new AsyncLocalStorage<MemberLogScope>() })
 
     await lm.runInMemberScope(async () => {
       lm.setRunId('run-A')
@@ -284,7 +286,7 @@ describe('LogManager — concurrent members share one instance (WINDOWS #233)', 
   })
 
   it('still backfills a member\'s OWN lines written before its id was minted', async () => {
-    const lm = new LogManager({ displayLevel: 'silent' })
+    const lm = new LogManager({ displayLevel: 'silent', memberScope: new AsyncLocalStorage<MemberLogScope>() })
 
     // The startup affordance `setRunId`'s backfill exists for: a member logs while resolving its
     // target, mints its id, and those earlier lines must join the run. Scoping must not lose it.
@@ -297,7 +299,7 @@ describe('LogManager — concurrent members share one instance (WINDOWS #233)', 
   })
 
   it('does not let one member\'s stamp adopt a sibling\'s not-yet-attributed lines', async () => {
-    const lm = new LogManager({ displayLevel: 'silent' })
+    const lm = new LogManager({ displayLevel: 'silent', memberScope: new AsyncLocalStorage<MemberLogScope>() })
 
     // Both members log BEFORE either mints. Each backfill must claim only its own scope's lines —
     // an unattributed-only backfill that ignored scope would hand A's line to whoever stamps first.
@@ -316,8 +318,16 @@ describe('LogManager — concurrent members share one instance (WINDOWS #233)', 
     expect(runIdsOf(lm, 'B-pre-mint')).toEqual(['run-B'])
   })
 
-  it('leaves the SEQUENTIAL path byte-identical — no scope, one run id, backfill intact', () => {
+  it('REFUSES member isolation the composition root never wired up', () => {
+    // Fail loud, not degrade quiet: a manager built without the host's async-context primitive
+    // cannot isolate members, and silently running `fn` anyway would restore the corruption on a
+    // caller that believed it was isolated.
     const lm = new LogManager({ displayLevel: 'silent' })
+    expect(() => lm.runInMemberScope(() => undefined)).toThrow(MemberLogScopeUnavailableError)
+  })
+
+  it('leaves the SEQUENTIAL path byte-identical — no scope, one run id, backfill intact', () => {
+    const lm = new LogManager({ displayLevel: 'silent', memberScope: new AsyncLocalStorage<MemberLogScope>() })
 
     lm.log('info', 'agent', 'pre-mint')
     lm.setRunId('run-only')
@@ -333,7 +343,7 @@ describe('LogManager — concurrent members share one instance (WINDOWS #233)', 
       insertLogs: (entries: LogEntry[]) => { inserted.push(entries) },
       getLogs: vi.fn().mockReturnValue([]),
     }
-    const lm = new LogManager({ displayLevel: 'silent', storage })
+    const lm = new LogManager({ displayLevel: 'silent', storage, memberScope: new AsyncLocalStorage<MemberLogScope>() })
 
     await lm.runInMemberScope(async () => {
       lm.setRunId('run-A')

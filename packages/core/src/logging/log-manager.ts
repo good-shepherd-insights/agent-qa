@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { LOG_LEVEL_PRIORITY } from './types.js'
 import type { LogLevel, LogSource, LogEntry, LogStorage, ScopedLogger } from './types.js'
@@ -12,9 +11,36 @@ import { redactAuthStateValue } from '../auth-state/redaction.js'
  * `pending` is that member's own not-yet-attributed entries — the lines it wrote before it minted
  * its run id. Only these are backfilled by its `setRunId`, so a sibling can never adopt them.
  */
-interface MemberLogScope {
+export interface MemberLogScope {
   runId: string
   readonly pending: LogEntry[]
+}
+
+/**
+ * The host's async-context primitive, named STRUCTURALLY so this package never imports
+ * `node:async_hooks`.
+ *
+ * `packages/core`'s host baseline is a regenerable DEBT record with a per-area clearance map — a
+ * list that is meant to shrink — so a new host import here would be new debt, not a permission.
+ * The composition root already owns every other reach into the world, so it owns this one too and
+ * injects it. `node:async_hooks`'s `AsyncLocalStorage<MemberLogScope>` satisfies this exactly, with
+ * no adapter.
+ */
+export interface AsyncScopeStore<T> {
+  getStore(): T | undefined
+  run<R>(store: T, fn: () => R): R
+}
+
+/** Thrown when a caller asks for member isolation the composition root never wired up. */
+export class MemberLogScopeUnavailableError extends Error {
+  constructor() {
+    super(
+      'LogManager.runInMemberScope requires a memberScope store. Construct the manager with ' +
+        '`memberScope: new AsyncLocalStorage()` — without it, concurrent members would silently ' +
+        'share one run id (WINDOWS #233).',
+    )
+    this.name = 'MemberLogScopeUnavailableError'
+  }
 }
 
 export class LogManager {
@@ -26,7 +52,7 @@ export class LogManager {
   private readonly storage?: LogStorage
   private readonly ndjson: boolean
   private redactor?: SecretRedactor
-  private readonly memberScope = new AsyncLocalStorage<MemberLogScope>()
+  private readonly memberScope?: AsyncScopeStore<MemberLogScope>
 
   constructor(opts: {
     runId?: string
@@ -34,6 +60,7 @@ export class LogManager {
     storage?: LogStorage
     ndjson?: boolean
     redactor?: SecretRedactor
+    memberScope?: AsyncScopeStore<MemberLogScope>
   }) {
     this.runId = opts.runId ?? ''
     this.runIdSet = !!opts.runId
@@ -41,6 +68,7 @@ export class LogManager {
     this.storage = opts.storage
     this.ndjson = opts.ndjson ?? false
     this.redactor = opts.redactor
+    this.memberScope = opts.memberScope
   }
 
   setRedactor(redactor: SecretRedactor | undefined): void {
@@ -59,6 +87,7 @@ export class LogManager {
    * what the sequential path and the run-level `onRunCreated` stamp rely on.
    */
   runInMemberScope<T>(fn: () => T): T {
+    if (!this.memberScope) throw new MemberLogScopeUnavailableError()
     return this.memberScope.run({ runId: this.runId, pending: [] }, fn)
   }
 
@@ -68,7 +97,7 @@ export class LogManager {
     message: string,
     data?: Record<string, unknown>,
   ): void {
-    const scope = this.memberScope.getStore()
+    const scope = this.memberScope?.getStore()
     const entry: LogEntry = {
       id: randomUUID(),
       stepId: this.currentStepId,
@@ -120,7 +149,7 @@ export class LogManager {
   }
 
   setRunId(runId: string): void {
-    const scope = this.memberScope.getStore()
+    const scope = this.memberScope?.getStore()
     if (scope) {
       scope.runId = runId
       // This member's OWN pre-mint lines only. A sibling's unattributed lines live in ITS scope.

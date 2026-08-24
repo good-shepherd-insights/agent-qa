@@ -50,6 +50,7 @@ const {
   mockCreateDashboardRunIngest,
   mockShouldPrintAgentQaUpdateNotice,
   mockPrintAgentQaUpdateNoticeIfNeeded,
+  mockLogScope,
 } = vi.hoisted(() => {
   const multiReporter = {
     onRunStart: vi.fn().mockResolvedValue(undefined),
@@ -70,7 +71,13 @@ const {
     handler: vi.fn(),
     finalize: vi.fn().mockResolvedValue(undefined),
   }
+  // WINDOWS #233/#249: records the member-log-scope depth at every setRunId stamp, so a cell can
+  // assert the direct member executor actually runs INSIDE a scope. Depth, not a source grep —
+  // deleting the `logger.runInMemberScope(...)` wrap in run.ts leaves every stamp at depth 0.
+  const logScope = { depth: 0, stampDepths: [] as number[] }
+
   return {
+    mockLogScope: logScope,
     mockAnalyticsRunSubscriberInstance: analyticsRunSubscriber,
     // 398-10: the options argument is TYPED because two cells read it — the port-identity check
     // for `--all` needs `calls[n][0].port`, and an untyped `vi.fn()` records a zero-length tuple
@@ -441,7 +448,15 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
     return {
       log: vi.fn(),
       flush: vi.fn(),
-      setRunId: vi.fn(),
+      runInMemberScope: vi.fn(async (fn: () => unknown) => {
+        mockLogScope.depth++
+        try {
+          return await fn()
+        } finally {
+          mockLogScope.depth--
+        }
+      }),
+      setRunId: vi.fn(() => { mockLogScope.stampDepths.push(mockLogScope.depth) }),
       setCurrentStep: vi.fn(),
       clearCurrentStep: vi.fn(),
       getBuffer: vi.fn(() => []),
@@ -703,6 +718,8 @@ function freshRunId(stem: string): string {
 }
 
 beforeEach(() => {
+  mockLogScope.depth = 0
+  mockLogScope.stampDepths.length = 0
   vi.clearAllMocks()
   mockGenerateRunId.mockImplementation(() => freshRunId('able-baker-charlie-delta-echo'))
   const secretsDir = mkdtempSync(join(tmpdir(), 'agent-qa-run-secrets-'))
@@ -2224,6 +2241,35 @@ describe('run command — run attributes', () => {
 })
 
 describe('run command — exit codes', () => {
+  // WINDOWS #233 — the WIRE, not the mechanism.
+  //
+  // The isolation mechanism (a member's run id bound to its async scope) is pinned in core's
+  // `log-manager.test.ts` and survives a five-mutation sweep. What only THIS harness can measure is
+  // that the direct member executor is actually wired through it: `commands/run.ts` builds ONE
+  // LogManager for the whole run, and since 402-02/402-03 its members run concurrently, so a member
+  // that stamps its run id OUTSIDE a scope silently restores the corruption (measured pre-fix: every
+  // buffered line collapsed to the last stamper's id).
+  //
+  // Depth at the stamp, NOT a source grep — this phase has twice measured a grep pass on the import
+  // line alone (402-01 `timingSafeEqual`, 402-03 `resolveEffectiveWorkers`). Deleting the
+  // `logger.runInMemberScope(...)` wrap leaves every stamp at depth 0 and reds this cell.
+  it('stamps each direct member run id INSIDE a member log scope (WINDOWS #233)', async () => {
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One',
+      filePath: 'tests/a.yaml',
+      status: 'passed',
+      steps: [],
+      duration: 100,
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockLogScope.stampDepths.length).toBeGreaterThan(0)
+    expect(mockLogScope.stampDepths.every((d) => d >= 1)).toBe(true)
+  })
+
   it('exits 0 when all tests pass', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({

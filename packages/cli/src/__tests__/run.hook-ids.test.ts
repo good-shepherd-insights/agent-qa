@@ -240,6 +240,8 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   },
   LogManager: vi.fn(function () {
     return {
+      // WINDOWS #233: faithful pass-through — the real one binds a per-member run id here.
+      runInMemberScope: vi.fn(async (fn: () => unknown) => await fn()),
       setRunId: vi.fn(),
       setCurrentStep: vi.fn(),
       clearCurrentStep: vi.fn(),
