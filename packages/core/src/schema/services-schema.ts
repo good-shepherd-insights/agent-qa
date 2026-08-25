@@ -29,6 +29,20 @@ export const DashboardConfigSchema = z.object({
   // declared" and "the key is absent" are the same fact, and a host that had to spell both would
   // be a host with a branch nobody tests. Absent means today's behavior exactly — no service
   // routes are mounted, and the dashboard runs as it does now.
+  //
+  // 2026-08-25 (Phase 403 D-14, WINDOWS #264): WHAT THIS FIELD GATES, EXACTLY — AND WHAT IT DOES
+  // NOT. These entries authenticate the REMOTE run service and nothing else: `POST /run`,
+  // `GET /run/:id/events`, `GET /run/:id/live-url` and `/ok`. Every LOCAL dashboard door is
+  // credential-free by design and is kept local by the loopback bind guard below rather than by a
+  // token — `GET /api/run-stream/:runId`, `GET /api/run-readiness`,
+  // `GET /api/runs/:runId/live-url` and the `/live/` embed page all answer on a zero-token
+  // dashboard, and 403 measured each of them there on the shipped binary.
+  //
+  // THE FAILURE THAT MAKES THIS WORTH WRITING DOWN: the local doors' session registry used to be
+  // DERIVED off this field, so a default project with no credential declared answered 503 about
+  // runs the very same process was executing (#264). `startServer` now takes `runServiceAttach`
+  // as a first-class option supplied on BOTH arms. A local surface must never need a remote
+  // credential, and a derivation is how one quietly starts to.
   runServiceTokens: z.array(RunServiceTokenEntrySchema).default([]),
   // Phase 402 D-07: the interface this server binds. Consumed by 402-05's pre-listen bind guard,
   // which REFUSES any non-loopback value — unconditionally since the phase-402 verification round

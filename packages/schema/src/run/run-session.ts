@@ -26,6 +26,14 @@ export interface RunCompletion {
  * over a signer the session knows nothing about, so the session never holds token power.
  * Arbiter/control members stay ABSENT (Mode A, post-v2.0).
  *
+ * 2026-08-25 (Phase 403, RESEARCH Pitfall 6 — the limit `subscribeFrames` carries): a Chromium
+ * handle's screencast binds to the page the adapter held when the stream STARTED. A step that
+ * switches tab or opens a popup therefore keeps streaming the first page, and a viewer sees a
+ * still picture of somewhere the run has left. The declaration stays honest — the handle really
+ * can stream — but the frames stop tracking the run, which no state on this type expresses.
+ * Filed as a WINDOWS entry by 403-06 with its owning follow-up (a page-change signal the hub can
+ * stop-and-start on); recorded here because this is the seam a consumer reads.
+ *
  * @remarks Expanded from the provisional three-field DTO. `status` widens `RunStatus` with
  * the non-terminal `'running'` locally (the aggregate-verdict {@link RunStatus} stays
  * terminal-only). The bus stamps `seq`/`ts`; the session only exposes the subscribe seam.
