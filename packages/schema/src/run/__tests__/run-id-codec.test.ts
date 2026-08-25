@@ -102,11 +102,15 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
   Record<string, { hardened: number; plainString: number; verdict: string }>
 > = {
   'functions/runs.ts': {
-    hardened: 7,
+    hardened: 8,
     plainString: 3,
     verdict:
       'hardened here — `RunsStartInput.runId` is the caller-supplied id the run executes under and '
-      + 'becomes `runs/<slugBranch(runId)>/`. The three plain fields are ACKNOWLEDGEMENT/EVENT '
+      + 'becomes `runs/<slugBranch(runId)>/`. 2026-08-25 (403-01 D-03) adds the EIGHTH: '
+      + '`RunsLiveUrlInput.runId` is caller-supplied over HTTP, is looked up in the live-session '
+      + 'registry, and is INTERPOLATED INTO THE MINTED URL and into the signed claims — so an id '
+      + 'that could be rewritten on the way through would be an id a viewer could be pointed at. '
+      + 'The three plain fields are ACKNOWLEDGEMENT/EVENT '
       + 'projections (`RunStartAcknowledgement`, the bus envelope, `PostProcessingStatus`) whose '
       + 'interfaces declare `string`: they echo an id a run already recorded, and none is an input.',
   },

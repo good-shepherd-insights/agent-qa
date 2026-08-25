@@ -1,0 +1,375 @@
+// THE TRACER'S VERIFY (403-01 Task 4) — ONE REAL SCREENCAST FRAME, painted on the served embed
+// page, reached only through a `liveUrl` the function layer minted.
+//
+// WHAT IS PRODUCTION HERE, AND WHAT IS NOT. Production: `startServer` (the embed route, the frame
+// socket's upgrade arm, the mint route), `startRun` (the run shell, its bus and its live-stream
+// hub), `WebPlatformAdapter` (a real headless Chromium and a real `Page.startScreencast`),
+// `composeDashboardDoor` and `composeLiveView` (the signer, the mint port and the validator).
+// Scripted: the member EXECUTOR — which is the runner's own designed injection seam — and the
+// clock the composition already takes as a port, so the cold-expired arm can move time without
+// waiting five minutes. Nothing else is faked; in particular `validateLiveUrlToken` runs by
+// reference, so a cell that gets a frame got it past the real validator.
+//
+// This file is in `packages/cli` because only the CLI may import every package at once.
+
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import type { Server } from 'node:http'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+
+import type { Browser } from 'playwright-core'
+import { chromium } from 'playwright-core'
+
+import { LIVE_EMBED_PATH_PREFIX, LIVE_URL_TTL_MS, RUNS_LIVE_URL_FUNCTION_ID, invokeFunction } from '@vostride/agent-qa-agent'
+import type { FunctionRegistry } from '@vostride/agent-qa-agent'
+import { LIVE_EMBED_EXPIRED_MESSAGE, LIVE_EMBED_PATH_PREFIX as SERVER_EMBED_PATH_PREFIX } from '@vostride/agent-qa-dashboard'
+import { startRun } from '@vostride/agent-qa-runner'
+import type { MemberTestRunContext, RunConfig } from '@vostride/agent-qa-runner'
+import { RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
+import { generateTestId } from '@vostride/agent-qa-ids'
+import { WebPlatformAdapter } from '@vostride/agent-qa-web'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+
+import { DASHBOARD_FUNCTION_CALLER, composeDashboardDoor, createDashboardRunDoor } from '../commands/dashboard.js'
+import { composeLiveView } from '../composition/live-view-composition.js'
+import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
+import { startLiveStreamFixturePage } from './fixtures/live-stream-fixture-page.js'
+import type { LiveStreamFixturePage } from './fixtures/live-stream-fixture-page.js'
+
+/** `packages/dashboard-server/src/server/server.ts`, resolved from this file rather than guessed. */
+const SERVER_SOURCE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../dashboard-server/src/server/server.ts',
+)
+
+const BROWSER_INSTALL_INSTRUCTION =
+  'a real Chromium is required for the tracer: run `pnpm exec playwright install chromium`.'
+
+function fixtureWorkspace(): string {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-403-01-tracer-'))
+  const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      workspace: {
+        testMatch: ['tests/**/*.test.yaml'],
+        suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      use: { mobile: { appState: 'reset' } },
+      registry: {
+        targets: {
+          conformance: { platform: 'web', url: 'https://conformance.invalid', environment: 'local' },
+        },
+      },
+      services: { dashboard: {} },
+    })}\n`,
+    'utf8',
+  )
+  writeFileSync(join(root, 'hooks.yaml'), 'hooks: []\n', 'utf8')
+  writeFileSync(join(root, '.env'), '', 'utf8')
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
+  mkdirSync(join(root, '.agent-qa'), { recursive: true })
+  mkdirSync(join(root, 'tests'), { recursive: true })
+  writeFileSync(
+    join(root, 'tests', 'probe.test.yaml'),
+    'name: The live-view tracer probe\n'
+    + `test-id: ${generateTestId()}\n`
+    + 'target: conformance\n'
+    + 'steps:\n'
+    + '  - Do nothing this run will ever reach\n',
+    'utf8',
+  )
+  return configPath
+}
+
+interface Fixture {
+  readonly origin: string
+  readonly runId: string
+  readonly session: RunSession
+  readonly registry: FunctionRegistry
+  readonly browser: Browser
+  readonly clock: { now: number }
+  /** Resolve the scripted member so the run reaches its terminal sequence. */
+  readonly finishRun: () => void
+  readonly close: () => Promise<void>
+}
+
+let fixture: Fixture | undefined
+let page: LiveStreamFixturePage | undefined
+
+async function mint(handle = 0): Promise<{ liveUrl: string; stream: { kind: string }; expiresAt: number }> {
+  const held = fixture as Fixture
+  const response = await fetch(`${held.origin}/api/runs/${encodeURIComponent(held.runId)}/live-url?handle=${String(handle)}`)
+  const raw = await response.text()
+  expect(response.status, raw).toBe(200)
+  return RunsLiveUrlResultSchema.parse(JSON.parse(raw))
+}
+
+beforeAll(async () => {
+  const configPath = fixtureWorkspace()
+  const configDir = dirname(resolve(configPath))
+  page = await startLiveStreamFixturePage()
+  const fixturePage = page
+
+  const { DashboardDatabase, startServer } = await import('@vostride/agent-qa-dashboard')
+  const db = new DashboardDatabase({ dbPath: join(configDir, 'dashboard.db') })
+  const runDoor = await createDashboardRunDoor({ db })
+  let boundOrigin: string | undefined
+
+  // THE SCRIPTED EXECUTOR — the runner's designed injection seam, and the only scripted thing on
+  // this path. It drives a REAL WebPlatformAdapter at a REAL headless Chromium, registers the
+  // adapter's real screencast capability through the real `ctx.registerLiveStream`, and then waits
+  // on a deferred so the run stays live while the cells watch it.
+  let finishRun: () => void = () => {}
+  const finished = new Promise<void>((resolve_) => { finishRun = resolve_ })
+  // The member's browser is up and its capability registered. `beforeAll` awaits this, so no cell
+  // can race the run's own start-up and read `{ kind: 'none' }` from a handle that is about to
+  // declare a screencast — a flake that would look exactly like the capability being absent.
+  let markRegistered: () => void = () => {}
+  const registered = new Promise<void>((resolve_) => { markRegistered = resolve_ })
+  const adapter = new WebPlatformAdapter()
+  let adapterUp = false
+
+  const runId = `r_403_tracer_${String(Date.now())}`
+  const runConfig: RunConfig = {
+    runId: runId as RunConfig['runId'],
+    scope: { tier: 'suite', key: 'live-view' },
+    executionContext: 'local-headless',
+    buildOrdinal: 1,
+    configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+    members: [{ testId: 'tracer', name: 'the tracer member', filePath: 'tracer.test.ts' }],
+    executor: async (_member, ctx: MemberTestRunContext) => {
+      await adapter.setup({ platform: 'web', browser: { name: 'chromium', headless: true } })
+      adapterUp = true
+      await adapter.execute({ type: 'navigate', to: 'url', url: `${fixturePage.url}?animate=1` })
+      ctx.registerLiveStream?.(adapter.liveStream)
+      markRegistered()
+      await finished
+      await adapter.cleanup()
+      adapterUp = false
+      return { name: 'the tracer member', filePath: 'tracer.test.ts', status: 'passed', steps: [], duration: 1 }
+    },
+    ports: {
+      handoffStore: { save: async (_handoff: CompletedRunHandoff) => {} },
+      eventLog: { append: (_envelope: RunEventEnvelope) => {}, read: () => [] },
+    },
+  }
+
+  const session = startRun(runConfig)
+  // Before anything else is composed: the run's handle must actually declare its stream.
+  await registered
+
+  // The registry the shipped command hoists — handed the ONE session this cell started.
+  const sessions = createRunServiceSessionRegistry({
+    observeSessions: (observer) => { observer(session); return () => undefined },
+  })
+  // A SHIFTABLE CLOCK ON THE COMPOSITION'S OWN `now` PORT (the cold-expired arm, D-02). Not a fake
+  // validator: `composeLiveView` takes `now` because a host owns its clock, and the cell uses that
+  // seam rather than replacing anything.
+  const clock = { now: Date.now() }
+  const liveView = composeLiveView({
+    sessions,
+    origin: () => boundOrigin,
+    door: runDoor,
+    now: () => clock.now,
+  })
+
+  const { agentHost, host } = composeDashboardDoor({
+    agentQaRoot: join(configDir, '.agent-qa'),
+    configPath,
+    boundOrigin: () => boundOrigin,
+    liveView: liveView.liveView,
+    runBridge: runDoor.runBridge,
+  })
+  runDoor.bindHost(host)
+
+  const started = await startServer({
+    db,
+    port: 0,
+    configPath,
+    agentHost,
+    executionBackend: runDoor.backend,
+    runServiceAttach: sessions.attach,
+    liveView: {
+      validate: (token, expectation) => liveView.validate(token, { ...expectation, now: clock.now }),
+      mintLiveUrl: async (id, handle) => RunsLiveUrlResultSchema.parse(
+        await invokeFunction(host.registry as FunctionRegistry, RUNS_LIVE_URL_FUNCTION_ID, { runId: id, handle }, DASHBOARD_FUNCTION_CALLER),
+      ),
+    },
+  })
+  const address = (started.server as Server).address()
+  if (address === null || typeof address === 'string') throw new TypeError('the server bound no port')
+  boundOrigin = `http://127.0.0.1:${String(address.port)}`
+
+  let browser: Browser
+  try {
+    browser = await chromium.launch({ headless: true })
+  } catch (error) {
+    started.close()
+    throw new Error(`${BROWSER_INSTALL_INSTRUCTION} underlying error: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  fixture = {
+    origin: boundOrigin,
+    runId,
+    session,
+    registry: host.registry as FunctionRegistry,
+    browser,
+    clock,
+    finishRun,
+    close: async () => {
+      finishRun()
+      await session.done.catch(() => undefined)
+      if (adapterUp) await adapter.cleanup().catch(() => undefined)
+      await browser.close()
+      started.close()
+      sessions.dispose()
+      await host.close()
+      db.close()
+      rmSync(configDir, { recursive: true, force: true })
+    },
+  }
+}, 180_000)
+
+afterAll(async () => {
+  const held = fixture
+  fixture = undefined
+  if (held !== undefined) await held.close().catch(() => undefined)
+  await page?.close().catch(() => undefined)
+  page = undefined
+})
+
+describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl', () => {
+  it('(i) the mint route answers a parseable result declaring a cdp-screencast liveUrl', async () => {
+    const held = fixture as Fixture
+    const result = await mint(0)
+    expect(result.stream.kind, 'a live Chromium member declares the screencast capability')
+      .toBe('cdp-screencast')
+    expect(result.liveUrl.startsWith(`${held.origin}${LIVE_EMBED_PATH_PREFIX}${held.runId}#v1.`)).toBe(true)
+    // The two packages spell the embed prefix separately (dashboard-server may not import agent).
+    // Pin them EQUAL rather than assume it.
+    expect(SERVER_EMBED_PATH_PREFIX).toBe(LIVE_EMBED_PATH_PREFIX)
+  }, 60_000)
+
+  it('(ii) a REAL screencast frame is painted on the served embed page within 10 s', async () => {
+    const held = fixture as Fixture
+    const result = await mint(0)
+    const embed = await held.browser.newPage()
+    try {
+      await embed.goto(result.liveUrl)
+      await embed.locator('[data-embed-state="live"]').waitFor({ state: 'attached', timeout: 10_000 })
+      const frames = Number(await embed.locator('[data-embed-state]').getAttribute('data-embed-frames'))
+      expect(frames, 'the page counts the frames it PAINTED, not the ones it received')
+        .toBeGreaterThanOrEqual(1)
+      const width = await embed.locator('[data-embed-canvas]').evaluate((node) => (node as HTMLCanvasElement).width)
+      expect(width, 'a painted canvas has the frame\'s own geometry').toBeGreaterThan(0)
+    } finally {
+      await embed.close()
+    }
+  }, 120_000)
+
+  it('(iii) a tampered fragment is refused and never reaches live', async () => {
+    const held = fixture as Fixture
+    const result = await mint(0)
+    const tampered = `${result.liveUrl.slice(0, -4)}${result.liveUrl.endsWith('AAAA') ? 'BBBB' : 'AAAA'}`
+    const embed = await held.browser.newPage()
+    try {
+      await embed.goto(tampered)
+      await embed.locator('[data-embed-state="refused"]').waitFor({ state: 'attached', timeout: 10_000 })
+      expect(await embed.locator('[data-embed-state]').getAttribute('data-embed-state')).toBe('refused')
+    } finally {
+      await embed.close()
+    }
+  }, 120_000)
+
+  it('(iii-b) a COLD EXPIRED link says exactly "link expired" — never blank, never live', async () => {
+    const held = fixture as Fixture
+    const result = await mint(0)
+    const restore = held.clock.now
+    held.clock.now = restore + LIVE_URL_TTL_MS + 1
+    const embed = await held.browser.newPage()
+    try {
+      await embed.goto(result.liveUrl)
+      await embed.locator('[data-embed-state="expired"]').waitFor({ state: 'attached', timeout: 10_000 })
+      expect(await embed.locator('[data-embed-message]').textContent()).toBe(LIVE_EMBED_EXPIRED_MESSAGE)
+      expect(await embed.locator('[data-embed-state]').getAttribute('data-embed-state')).not.toBe('live')
+    } finally {
+      await embed.close()
+      held.clock.now = restore
+    }
+  }, 120_000)
+
+  it('(iv) the embed document carries a nonce CSP and no-referrer, and no token', async () => {
+    const held = fixture as Fixture
+    const response = await fetch(`${held.origin}${LIVE_EMBED_PATH_PREFIX}${encodeURIComponent(held.runId)}`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/html')
+    expect(response.headers.get('content-security-policy')).toContain('nonce-')
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(response.headers.get('x-frame-options'), 'a page whose purpose is to be embedded')
+      .toBeNull()
+    const body = await response.text()
+    // The token lives in a fragment the server never receives — so a document it served cannot
+    // contain one, and this is the cheapest place to notice if that ever stopped being true.
+    expect(body).not.toContain('v1.')
+  }, 60_000)
+
+  it('(iv-b) PITFALL 10: the /live/ arm is registered ABOVE the static/SPA arm, in source', () => {
+    // A BEHAVIOURAL CELL CANNOT SEE THIS ONE. The tracer's fixture composes `startServer` with no
+    // `uiDir`, so the SPA fallback is skipped and a mis-ordered route would answer 404 rather than
+    // an HTML dashboard — the cells above would stay green while every SHIPPED dashboard (which
+    // always has a `uiDir`) rendered the React app inside every embedding iframe.
+    //
+    // So the ORDER is asserted where it exists: in the source, by line number, with both anchors
+    // required present so the cell cannot pass by matching nothing.
+    const source = readFileSync(SERVER_SOURCE, 'utf8')
+    const embedArm = source.indexOf('path.startsWith(LIVE_EMBED_PATH_PREFIX)')
+    const staticArm = source.indexOf('if (uiDir) {')
+    expect(embedArm, 'the embed route must exist in server.ts').toBeGreaterThan(-1)
+    expect(staticArm, 'the static/SPA arm must exist in server.ts').toBeGreaterThan(-1)
+    expect(
+      embedArm,
+      'the /live/ arm must precede the static/SPA arm — the SPA fallback answers index.html for '
+      + 'ANY unknown path, so a later /live/ arm is a contract nobody can reach (Pitfall 10)',
+    ).toBeLessThan(staticArm)
+  })
+
+  it('(v) LIVE-03: frames flowed and the run bus published no bytes for them', async () => {
+    const held = fixture as Fixture
+    const result = await mint(0)
+    const seen: RunEventEnvelope[] = []
+    const unsubscribe = held.session.subscribe(1, (envelope) => { seen.push(envelope) })
+    const embed = await held.browser.newPage()
+    try {
+      await embed.goto(result.liveUrl)
+      await embed.locator('[data-embed-state="live"]').waitFor({ state: 'attached', timeout: 10_000 })
+    } finally {
+      await embed.close()
+      unsubscribe()
+    }
+    expect(seen.length, 'the positive control — the bus was actually observed').toBeGreaterThan(0)
+    const serialized = JSON.stringify(seen)
+    expect(serialized, 'a frame on the bus would carry its bytes').not.toContain('"bytes"')
+    expect(serialized, 'and a base64 JPEG would start with the JFIF marker').not.toContain('/9j/')
+  }, 120_000)
+
+  it('(vi) when the run ends the page says so and the session resolves', async () => {
+    const held = fixture as Fixture
+    const result = await mint(0)
+    const embed = await held.browser.newPage()
+    try {
+      await embed.goto(result.liveUrl)
+      await embed.locator('[data-embed-state="live"]').waitFor({ state: 'attached', timeout: 10_000 })
+      held.finishRun()
+      await embed.locator('[data-embed-state="ended"]').waitFor({ state: 'attached', timeout: 10_000 })
+      await expect(held.session.done).resolves.toBeDefined()
+    } finally {
+      await embed.close()
+    }
+  }, 120_000)
+})

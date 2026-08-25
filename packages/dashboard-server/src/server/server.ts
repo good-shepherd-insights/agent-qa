@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http'
+import { randomBytes } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { join, extname, resolve } from 'node:path'
 import { cpus } from 'node:os'
@@ -14,6 +15,10 @@ import { AppiumManager } from '../execution/appium-manager.js'
 import { WebSocketServer } from 'ws'
 import { SessionManager } from '../live-editor/session-manager.js'
 import { createSessionHandler } from '../live-editor/ws-handler.js'
+import { LIVE_EMBED_PATH_PREFIX, LIVE_VIEW_WS_PATH } from '../live-view/protocol.js'
+import { renderLiveEmbedPage } from '../live-view/embed-page.js'
+import { createFrameProxy } from '../live-view/frame-proxy.js'
+import type { LiveUrlVerdict, RunSession, RunsLiveUrlResult } from '@vostride/agent-qa-schema'
 import {
   isLoopbackHost,
   type ResolvedWorkspacePaths,
@@ -178,6 +183,32 @@ interface StartServerOptions {
    * the very same function object it put on `runService.readiness`: one predicate, two doors.
    */
   runServiceReadiness?: () => RunServiceReadiness
+  /**
+   * The run id → live `RunSession` lookup, as a FIRST-CLASS option (403 D-14 — WINDOWS #264).
+   *
+   * SEPARATE FROM `runService` AND NOT DERIVED FROM IT, on `runServiceReadiness`'s exact argument
+   * one field up. The derivation `runService?.attach` is what made the local run-stream door
+   * answer 503 about runs this very process was executing: `composeRunServicePorts` runs only when
+   * `runServiceTokens` are declared, so the DEFAULT zero-token dashboard composed no registry at
+   * all and the local door had nothing to attach to. `agent-qa dashboard` now supplies this on
+   * BOTH arms from a registry hoisted above them.
+   *
+   * The legacy derivation still applies when this is absent, so an in-process caller that only
+   * passes `runService` keeps working byte-for-byte.
+   */
+  runServiceAttach?: (runId: string) => RunSession | undefined
+  /**
+   * The live-view seam (403 D-03/D-06): the function layer's validator, by reference, and the
+   * mint dispatched through the registry.
+   *
+   * ABSENT MEANS NO LIVE VIEW IS SERVED — the embed route is not registered, the frame socket
+   * refuses the upgrade, and `GET /api/runs/:runId/live-url` answers 503 by name. This server
+   * holds NO signing key and NO token parse of its own; both are the function layer's, handed in.
+   */
+  liveView?: {
+    validate(token: string, expect: { runId: string; now: number }): LiveUrlVerdict
+    mintLiveUrl(runId: string, handle: number): Promise<RunsLiveUrlResult>
+  }
 }
 
 export async function startServer(opts: StartServerOptions): Promise<{
@@ -185,7 +216,9 @@ export async function startServer(opts: StartServerOptions): Promise<{
   port: number
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness } = opts
+  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness, liveView } = opts
+  // 403 D-14: the explicit port wins; the pre-403 derivation is the fallback for legacy callers.
+  const runServiceAttach = opts.runServiceAttach ?? runService?.attach
   const host = opts.host?.trim() || DEFAULT_DASHBOARD_HOST
 
   // ---- THE BIND GUARD (402-05, D-07 — T-402-16) ---------------------------------------------
@@ -547,7 +580,10 @@ export async function startServer(opts: StartServerOptions): Promise<{
     // somewhere else, and the two doors cannot end up attached to different registries. Absent
     // `runService` means no registry exists at all, so the same conditional-spread house rule
     // applies and the router's own 503 arm decides.
-    ...(runService === undefined ? {} : { runServiceAttach: runService.attach }),
+    ...(runServiceAttach === undefined ? {} : { runServiceAttach }),
+    // 403 D-03: the mint route's port, on the same conditional-spread house rule — absent means
+    // this host serves no live view and the route's own 503 arm decides, in one place.
+    ...(liveView === undefined ? {} : { mintLiveUrl: liveView.mintLiveUrl }),
   })
 
   // 402-01: composed once, at start, on `apiRouter`'s own idiom. Absent ports mean no router and
@@ -595,6 +631,52 @@ export async function startServer(opts: StartServerOptions): Promise<{
           'Access-Control-Allow-Headers': 'Content-Type',
         })
         res.end()
+        return
+      }
+
+      // GET /live/:runId — THE SERVED EMBED PAGE (403 D-06).
+      //
+      // REGISTERED ABOVE THE STATIC/SPA ARM, and the ORDER IS THE MECHANISM (RESEARCH Pitfall 10).
+      // The SPA fallback below answers `index.html` for ANY unknown path, so a `/live/` arm placed
+      // after it would render the React dashboard inside every embedding iframe — a failure that
+      // looks like a styling bug and is actually the contract being unreachable. `live-view-anchors`
+      // and the tracer cell both assert this route's answer is a live-view document.
+      //
+      // NO `X-Frame-Options` — the whole point of this page is that a host embeds it. What replaces
+      // it is a CSP that permits exactly one nonce'd inline script and nothing else, plus
+      // `Referrer-Policy: no-referrer` so the fragment-carried token cannot ride a `Referer` out
+      // (T-403-12).
+      if (req.method === 'GET' && path.startsWith(LIVE_EMBED_PATH_PREFIX)) {
+        if (liveView === undefined || runServiceAttach === undefined) {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'live_view_unavailable' }))
+          return
+        }
+        let embedRunId: string
+        try {
+          embedRunId = decodeURIComponent(path.slice(LIVE_EMBED_PATH_PREFIX.length))
+        } catch {
+          res.writeHead(404, { 'Content-Type': 'text/plain' })
+          res.end('Not Found')
+          return
+        }
+        if (embedRunId === '' || embedRunId.includes('/')) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' })
+          res.end('Not Found')
+          return
+        }
+        const nonce = randomBytes(16).toString('base64')
+        const body = renderLiveEmbedPage({ runId: embedRunId, nonce })
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Referrer-Policy': 'no-referrer',
+          'Content-Security-Policy':
+            `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; `
+            + "connect-src 'self' ws: wss:; img-src blob: data:",
+          'Content-Length': Buffer.byteLength(body),
+        })
+        res.end(body)
         return
       }
 
@@ -664,6 +746,18 @@ export async function startServer(opts: StartServerOptions): Promise<{
     const url = tryParseRequestUrl(request)
     if (url === undefined) {
       socket.destroy()
+      return
+    }
+    // 403 D-06: the frame socket. The run id is the ONLY query parameter — the token arrives in
+    // the first text message and nowhere else, so a refused upgrade has never seen a credential.
+    if (url.pathname === LIVE_VIEW_WS_PATH) {
+      const liveRunId = url.searchParams.get('runId')
+      if (liveRunId === null || liveRunId === '' || liveView === undefined || runServiceAttach === undefined) {
+        socket.destroy()
+        return
+      }
+      const proxy = createFrameProxy({ validate: liveView.validate, attach: runServiceAttach })
+      wss.handleUpgrade(request, socket, head, (ws) => { proxy(ws, liveRunId) })
       return
     }
     if (url.pathname === '/api/live-editor/ws') {

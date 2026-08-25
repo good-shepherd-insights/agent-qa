@@ -153,8 +153,14 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // abstains safely and uselessly and reports nothing. Its absence makes exactly one op unavailable,
 // and the op says so BY NAME — which matters more here than anywhere else in this union, because a
 // degraded explain is an explain answering from model memory, the one behaviour XPLN-02 forbids.
+// 403-01 D-03 extends it a TWENTY-THIRD time, by name: `liveView` — the signer, the served origin
+// and the live-run read, as ONE port. One and not three because a host that could sign but had no
+// origin could mint a URL that resolves to nothing, which is a wrong answer wearing a correct one's
+// clothes; its absence is the genuine host fact that a terminal serves no HTTP, and `runs.liveurl`
+// says so BY NAME rather than inventing a link.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
+    | 'liveView'
     | 'runInvocation'
     | 'knowledgeReview'
     | 'postProcessing'

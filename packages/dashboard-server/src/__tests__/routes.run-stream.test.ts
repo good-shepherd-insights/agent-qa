@@ -112,6 +112,10 @@ function sessionOverFeed(id: string): RunSession {
       for (const envelope of FEED) handler(envelope)
       return () => undefined
     },
+    // 403 D-05: this feed carries EVENTS, not frames. The planted session declares no stream and
+    // hands out no frame subscription, which is the honest answer for a fixture with no browser.
+    subscribeFrames() { return undefined },
+    streamCapabilityOf() { return { kind: 'none' } },
     cancel() { /* nothing to cancel on a planted session */ },
     done: Promise.resolve({ verdict: 'failed' } as never),
   }

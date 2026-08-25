@@ -60,6 +60,10 @@ function plantedSession(options: { readonly throwOnSubscribe?: boolean } = {}): 
       for (const envelope of PLANTED_ENVELOPES) handler(envelope)
       return () => undefined
     },
+    // 403 D-05: a planted session with no browser declares no stream and hands out no frame
+    // subscription — the honest absent declaration, not a stub a viewer would wait on forever.
+    subscribeFrames() { return undefined },
+    streamCapabilityOf() { return { kind: 'none' } },
     cancel() { /* nothing to cancel on a planted session */ },
     done: Promise.resolve({ verdict: 'failed' } as never),
   }

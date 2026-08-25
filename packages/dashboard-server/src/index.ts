@@ -35,6 +35,30 @@ export {
   // 402-06 (T-402-22): the structural denial read the 403 body is built from.
   runDenialOf,
 } from './run-service/run-service-routes.js'
+// 403 D-06: the live-view surface — the served page, the frame proxy, and the wire vocabulary
+// both ends type against. Published because the CLI composes the proxy's deps and the conformance
+// cells drive the page.
+export {
+  LIVE_EMBED_EXPIRED_MESSAGE,
+  LIVE_EMBED_STATES,
+  renderLiveEmbedPage,
+} from './live-view/embed-page.js'
+export { createFrameProxy } from './live-view/frame-proxy.js'
+export {
+  LIVE_EMBED_PATH_PREFIX,
+  LIVE_VIEW_HELLO_MAX_BYTES,
+  LIVE_VIEW_PING_MS,
+  LIVE_VIEW_REFUSAL_CLOSE_CODE,
+  LIVE_VIEW_REFUSAL_REASONS,
+  LIVE_VIEW_SLOW_VIEWER_BYTES,
+  LIVE_VIEW_WS_PATH,
+} from './live-view/protocol.js'
+export type {
+  LiveViewClientMessage,
+  LiveViewRefusalReason,
+  LiveViewServerMessage,
+} from './live-view/protocol.js'
+export type { LiveEmbedState } from './live-view/embed-page.js'
 export type {
   RunServicePorts,
   RunServiceRouteHandlerName,

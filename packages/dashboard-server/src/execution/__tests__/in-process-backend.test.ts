@@ -76,6 +76,12 @@ class FakeRunSession implements RunSession {
     for (const handler of [...this.live]) handler(envelope)
   }
 
+  // 403 D-05: no browser behind this fake, so no stream and no frame subscription — the honest
+  // absent declaration rather than a stub that would make a viewer wait for frames forever.
+  subscribeFrames(): undefined { return undefined }
+
+  streamCapabilityOf(): { kind: 'none' } { return { kind: 'none' } }
+
   subscribe(fromSeq: number, handler: (event: RunEventEnvelope) => void): () => void {
     const from = fromSeq ?? 1
     const earliest = this.published.length > 0 ? this.published[0]!.seq : this.published.length + 1

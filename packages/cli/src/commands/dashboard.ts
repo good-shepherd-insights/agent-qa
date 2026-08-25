@@ -8,6 +8,7 @@ import {
   createMaskingContext,
   foldFunctionResult,
   invokeFunction,
+  RUNS_LIVE_URL_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
   unmaskForHumanOutput,
   type ConfigReaderPort,
@@ -45,6 +46,7 @@ import type {
 import {
   RUN_SERVICE_CONTRACT_VERSION,
   RunStartAcknowledgementSchema,
+  RunsLiveUrlResultSchema,
 } from '@vostride/agent-qa-schema'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
 import type { RunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
@@ -1633,6 +1635,27 @@ async function startDashboardBackedServices(
       // is deliberately NOT here is a second copy of these four facts.
       runServiceReadiness: runService?.readiness
         ?? createRunServiceReadiness({ resolveHost: runDoor.resolveHost, tokenCount: 0 }),
+      // 403 D-14 (WINDOWS #264): the session lookup, on BOTH arms — this is the
+      // `runServiceReadiness` line's own argument, not the `runService` conditional's. The
+      // registry is hoisted above both, so the local run-stream door and the frame socket can
+      // attach to a run this process is executing whether or not a credential was declared.
+      runServiceAttach: sessions.attach,
+      // 403 D-03/D-06: the live-view seam, likewise on both arms. `validate` is the function
+      // layer's own validator by reference; `mintLiveUrl` dispatches the op through the SHIPPED
+      // dispatcher, so the mint pays the op-level gate and the receipt classification exactly as
+      // `runs.start` does — a direct call to the port underneath would be the carve-out the
+      // no-private-powers law refuses.
+      liveView: {
+        validate: liveView.validate,
+        mintLiveUrl: async (runId, handle) => RunsLiveUrlResultSchema.parse(
+          await invokeFunction(
+            runHost.registry as FunctionRegistry,
+            RUNS_LIVE_URL_FUNCTION_ID,
+            { runId, handle },
+            DASHBOARD_FUNCTION_CALLER,
+          ),
+        ),
+      },
       uiDir,
       artifactsDir: resolve(configDir, artifactsDir),
       workspacePaths,

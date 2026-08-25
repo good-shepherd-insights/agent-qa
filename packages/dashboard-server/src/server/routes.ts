@@ -16,7 +16,8 @@ import { tryParseRequestUrl } from './request-url.js'
 import { CHAT_ROUTE_PREFIX, RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
 import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
-import type { RunServiceReadiness, RunSession } from '@vostride/agent-qa-schema'
+import { parseHandleParam } from '@vostride/agent-qa-schema'
+import type { RunServiceReadiness, RunSession, RunsLiveUrlResult } from '@vostride/agent-qa-schema'
 import { handleParamOf, serveRunEventStream } from '../run-service/run-service-routes.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -1816,6 +1817,17 @@ interface RouterDeps {
    * like a run that emitted nothing).
    */
   runServiceAttach?: (runId: string) => RunSession | undefined
+  /**
+   * The `runs.liveurl` mint, DISPATCHED THROUGH THE REGISTRY by the composition root (403 D-03).
+   *
+   * A FUNCTION, not a signer: this router holds no key and mints nothing. What it does is turn one
+   * HTTP shape into one op call and the op's refusals into status codes — which is the whole of a
+   * thin client over the function layer.
+   *
+   * ABSENT MEANS THIS HOST SERVES NO LIVE VIEW, and the route answers 503 BY NAME on
+   * `runServiceReadiness`'s idiom — never a 404 (the route exists) and never a URL to nowhere.
+   */
+  mintLiveUrl?: (runId: string, handle: number) => Promise<RunsLiveUrlResult>
 }
 
 export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: ServerResponse) => void
@@ -2183,6 +2195,51 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       } catch {
         json(res, { error: 'Failed to delete run' }, 500)
       }
+      return
+    }
+
+    // GET /api/runs/:runId/live-url — the LOCAL door onto the mint (403 D-03).
+    //
+    // ABOVE THE `GET /api/runs/:id` ARM BELOW, and the order is the mechanism: that arm claims
+    // every GET under the prefix and answers `Not found` for anything that is not exactly four
+    // segments. A live-url route registered after it is a route that never runs — measured, not
+    // assumed (the tracer cell's first run answered 404 from precisely that arm).
+    //
+    // IT DISPATCHES THE OP AND FORMATS NOTHING. The body is the op's result verbatim: a second
+    // shaping here would be a second contract for what a `liveUrl` is, free to disagree with the
+    // one the function layer published. The refusals are the op's own, mapped by ERROR NAME rather
+    // than by matching a message — a message is prose and prose gets rewritten.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/live-url$/.test(path)) {
+      if (!deps.mintLiveUrl) {
+        json(res, { error: 'live_view_unavailable' }, 503)
+        return
+      }
+      let liveUrlRunId: string
+      try {
+        liveUrlRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/live-url'.length))
+      } catch {
+        json(res, { error: 'unknown_run' }, 404)
+        return
+      }
+      // THE RAW `handle` PARAMETER THROUGH THE SCHEMA'S OWN READER, on the run-stream door's
+      // reasoning one route up: `url.searchParams` resolves `?handle=1&handle=2` to `1`, which is
+      // the one answer that reader exists to refuse.
+      const rawHandle = handleParamOf(req)
+      const parsedHandle = parseHandleParam(rawHandle)
+      if (parsedHandle.kind === 'invalid') {
+        json(res, { error: 'invalid_handle' }, 400)
+        return
+      }
+      const handle = parsedHandle.kind === 'absent' ? 0 : parsedHandle.index
+      void deps.mintLiveUrl(liveUrlRunId, handle).then(
+        (result) => { json(res, result) },
+        (error: unknown) => {
+          const name = error instanceof Error ? error.name : ''
+          if (name === 'UnknownRunError') { json(res, { error: 'unknown_run' }, 404); return }
+          if (name === 'LiveViewUnavailableError') { json(res, { error: 'live_view_unavailable' }, 503); return }
+          json(res, { error: 'live_url_mint_failed' }, 500)
+        },
+      )
       return
     }
 

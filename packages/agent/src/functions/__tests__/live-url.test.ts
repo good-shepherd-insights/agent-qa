@@ -168,7 +168,9 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
   })
 
   it('refuses a non-view scope as scope_mismatch', () => {
-    const token = mintLiveUrlToken(fakeSigner, claims({ scope: 'control' } as Partial<LiveUrlClaims>))
+    // A scope the union does not admit — minted through the `unknown` door on purpose, because
+    // what is under test is the VALIDATOR's refusal of a token some other minter could produce.
+    const token = mintLiveUrlToken(fakeSigner, { ...claims(), scope: 'control' } as unknown as LiveUrlClaims)
     expect(validateLiveUrlToken(fakeSigner, token, { runId: 'run-alpha', now: NOW }))
       .toEqual({ kind: 'refused', reason: 'scope_mismatch' })
   })
