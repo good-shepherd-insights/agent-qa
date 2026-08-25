@@ -119,6 +119,14 @@ export function startRun(config: RunConfig): RunSession {
     onWarning: (code, message) => {
       bus.publish('runWarning', { code, message })
     },
+    // WR-06 (403): a SUBSCRIBER's fault is a fact about the subscriber, not about the run, and this
+    // handler deliberately does not touch the bus. `runWarning` is durable, replayed to every later
+    // reader and rendered on the live page; a viewer closing a tab at the wrong instant must not
+    // write a row into the run's permanent transcript (LIVE-03). The hub still DETACHES the faulty
+    // subscriber — only the reporting channel changed, and this run chooses to report nowhere.
+    onSubscriberFault: () => {
+      /* off the bus by construction: no publish, no envelope, no durable trace of who was watching */
+    },
   })
 
   const startedAt = timer?.now() ?? Date.now()

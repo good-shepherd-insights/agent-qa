@@ -289,6 +289,67 @@ async function openViewer(frame: Frame, query: string): Promise<Viewer> {
   }
 }
 
+// ---- THE ONE DIRECT-PROXY FIXTURE --------------------------------------------------------------
+//
+// Two claims in this file are about a socket whose STATE a real socket cannot be made to have on
+// cue: `bufferedAmount` above the drop threshold (cell 18) and a `readyState` that flips BETWEEN
+// two statements of one callback (cell 24). Both need a scripted socket, and both go through this
+// ONE construction — so the census cell below still finds a single direct-proxy call site and a
+// third cell cannot quietly opt out of the shipped frame by writing its own.
+
+interface DirectProxyViewer {
+  /** Everything written to the socket, in order. Text and binary alike. */
+  readonly sent: unknown[]
+  /** Speak the hello, as the message handler the proxy registered would receive it. */
+  greet(token: string): void
+  setBuffered(bytes: number): void
+  /** Kill the socket the way a real one dies: `readyState` 3, and `send` throws. */
+  die(): void
+  /** Called after every successful write, so a cell can die mid-frame. */
+  onSent?: (data: unknown) => void
+}
+
+function directProxyViewer(planted: PlantedSession, runId: string): DirectProxyViewer {
+  const sent: unknown[] = []
+  const handlers = new Map<string, ((...args: unknown[]) => void)[]>()
+  let buffered = 0
+  let alive = true
+  const api: DirectProxyViewer = {
+    sent,
+    greet: (token) => {
+      for (const handler of handlers.get('message') ?? []) {
+        handler(JSON.stringify({ type: 'hello', token }), false)
+      }
+    },
+    setBuffered: (bytes) => { buffered = bytes },
+    die: () => { alive = false },
+  }
+  const fakeSocket = {
+    OPEN: 1,
+    get readyState() { return alive ? 1 : 3 },
+    get bufferedAmount() { return buffered },
+    send: (data: unknown) => {
+      // A REAL `ws` THROWS on a closed socket. Reproducing that is the whole of cell (24).
+      if (!alive) throw new Error('WebSocket is not open: readyState 3 (CLOSED)')
+      sent.push(data)
+      api.onSent?.(data)
+    },
+    close: () => {},
+    ping: () => {},
+    on(event: string, handler: (...args: unknown[]) => void) {
+      handlers.set(event, [...(handlers.get(event) ?? []), handler])
+      return this
+    },
+    once(event: string, handler: (...args: unknown[]) => void) { return this.on(event, handler) },
+  }
+  const proxy = createFrameProxy({
+    validate: (token, expectation) => validateLiveUrlToken(signer, token, expectation),
+    attach: () => planted.session,
+  })
+  proxy(fakeSocket as unknown as WebSocket, runId)
+  return api
+}
+
 const jpeg = (id: number): LiveFrame => ({
   id,
   bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0, id, 0x00, 0xff, 0xd9]),
@@ -663,30 +724,9 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
     // a real `ws` socket that no amount of production framing lets a test set. The gauge is what is
     // under test here; every OTHER proxy claim in this file is measured through the shipped frame.
     const planted = plantSession({ runId: 'r1' })
-    const sent: unknown[] = []
-    const handlers = new Map<string, ((...args: unknown[]) => void)[]>()
-    let buffered = 0
-    const fakeSocket = {
-      OPEN: 1,
-      get readyState() { return 1 },
-      get bufferedAmount() { return buffered },
-      send: (data: unknown) => { sent.push(data) },
-      close: () => {},
-      ping: () => {},
-      on(event: string, handler: (...args: unknown[]) => void) {
-        handlers.set(event, [...(handlers.get(event) ?? []), handler])
-        return this
-      },
-      once(event: string, handler: (...args: unknown[]) => void) { return this.on(event, handler) },
-    }
-    const proxy = createFrameProxy({
-      validate: (token, expectation) => validateLiveUrlToken(signer, token, expectation),
-      attach: () => planted.session,
-    })
-    proxy(fakeSocket as unknown as WebSocket, 'r1')
-    for (const handler of handlers.get('message') ?? []) {
-      handler(JSON.stringify({ type: 'hello', token: tokenFor({ runId: 'r1' }) }), false)
-    }
+    const viewer = directProxyViewer(planted, 'r1')
+    const sent = viewer.sent
+    viewer.greet(tokenFor({ runId: 'r1' }))
     expect(sent.length, 'the fake socket received `ready`').toBe(1)
 
     // Healthy: the frame is sent as a header + bytes and NOT acked on the viewer's behalf.
@@ -696,7 +736,7 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
 
     // Backed up beyond the threshold: the pixels are dropped and the frame is acked anyway, so the
     // CDP producer keeps flowing for everybody else.
-    buffered = LIVE_VIEW_SLOW_VIEWER_BYTES + 1
+    viewer.setBuffered(LIVE_VIEW_SLOW_VIEWER_BYTES + 1)
     planted.emit(jpeg(2))
     expect(sent.length, 'nothing is written to a socket that is already too far behind').toBe(3)
     expect(
@@ -710,6 +750,41 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
     planted.session.subscribeFrames(0, (received) => { healthy.push(received) })
     planted.emit(jpeg(3))
     expect(healthy.map((received) => received.id)).toEqual([3])
+  })
+
+  it('(24) A SOCKET THAT DIES BETWEEN THE HEADER AND THE BYTES costs itself the frame, not the run (WR-06)', async () => {
+    // THE SECOND CELL THAT DOES NOT USE `startServer`, and for the same reason as (18): the claim
+    // is about a socket whose `readyState` changes BETWEEN two statements of one callback, and a
+    // real socket cannot be made to do that on cue. What is under test is the guard.
+    //
+    // WHY IT MATTERS. `ws.send` throws on a closed socket, and that throw travels up into the hub's
+    // delivery walk, which detaches the viewer and REPORTS the fault. Before WR-06 that report was
+    // wired to the run's durable event log, so a person closing a tab in the wrong millisecond wrote
+    // a row into the run's permanent transcript. The routing fix is measured in the runner's
+    // bus-silence cell; this cell measures the other half — that the proxy stops producing the
+    // throw at all, and acks so the producer is not left waiting on a viewer that is gone.
+    const planted = plantSession({ runId: 'r1' })
+    const viewer = directProxyViewer(planted, 'r1')
+    viewer.greet(tokenFor({ runId: 'r1' }))
+    // THE WITNESS: the viewer really was greeted and really was subscribed, so what follows is a
+    // delivery that happened rather than a delivery that never started.
+    expect(viewer.sent.length, 'the fake socket received `ready`').toBe(1)
+    expect(planted.subscribeCalls, 'and it is genuinely subscribed to the frames').toBe(1)
+
+    // THE INTERLEAVING. The socket dies the instant the TEXT header goes out — between the two
+    // statements the bare binary send sat across.
+    viewer.onSent = (data) => { if (typeof data === 'string') viewer.die() }
+
+    // The hub's `deliver` is what calls this; a throw here is what detaches the viewer and gets
+    // reported. `plantSession.emit` stands in for that walk, so an escaping throw fails the cell.
+    expect(() => { planted.emit(jpeg(9)) }, 'a dead socket must not throw back into the frame walk')
+      .not.toThrow()
+    expect(viewer.sent.length, 'the header went out before the socket died — the delivery was real').toBe(2)
+    expect(
+      planted.acked,
+      'and the lost frame is acked on the dead viewer behalf: CDP will not produce frame N+1 until '
+      + 'N is acked, so a viewer that vanished must not stall the stream for everyone else',
+    ).toEqual([9])
   })
 
   it('(19) the embed page: 200, the four headers, the nonce equality, and a fresh nonce per response', async () => {

@@ -84,7 +84,24 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
         width: frame.metadata.width,
         height: frame.metadata.height,
       })
-      ws.send(frame.bytes)
+      // THE BINARY HALF IS GUARDED TOO (403 WR-06). The check at the top of this callback is not
+      // enough: a socket can close between it and here, and `ws.send` then THROWS — straight up
+      // into the hub's delivery walk, which detaches the viewer and reports the fault. The header
+      // above already goes through the guarded writer; this one used to be bare.
+      if (ws.readyState !== ws.OPEN) {
+        // The viewer is gone. It owes an ack it can never give, and CDP will not produce the next
+        // frame until somebody does — so ack on its behalf rather than stalling the producer.
+        subscription?.ack(frame.id)
+        return
+      }
+      try {
+        ws.send(frame.bytes, (error?: Error) => {
+          // An async write failure costs this viewer the frame and nothing else.
+          if (error !== undefined) subscription?.ack(frame.id)
+        })
+      } catch {
+        subscription?.ack(frame.id)
+      }
     }
 
     /**

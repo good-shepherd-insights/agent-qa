@@ -36,7 +36,19 @@ export interface CreateLiveStreamHubOptions {
   timer?: RunTimerPort
   graceMs?: number
   ackBoundMs?: number
+  /**
+   * Facts about the RUN's producer. The shell wires this to the run's durable event log, so what
+   * lands here is replayed to every later reader of the run.
+   */
   onWarning?: (code: string, message: string) => void
+  /**
+   * Where a SUBSCRIBER's fault is reported (403 WR-06). Deliberately a DIFFERENT sink than
+   * `onWarning`, and the difference is the whole fix: a viewer that throws — or whose socket died
+   * between a `readyState` check and the write — is a fact about THAT VIEWER, and the run's
+   * permanent record must not depend on who happened to be watching (LIVE-03). Absent by default,
+   * so a host that does not care reports nothing anywhere.
+   */
+  onSubscriberFault?: (code: string, message: string) => void
 }
 
 /**
@@ -109,6 +121,7 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
   const graceMs = opts.graceMs ?? LIVE_STREAM_STOP_GRACE_MS
   const ackBoundMs = opts.ackBoundMs ?? LIVE_STREAM_ACK_BOUND_MS
   const onWarning = opts.onWarning
+  const onSubscriberFault = opts.onSubscriberFault
   const streams = new Map<number, StreamState>()
   let closed = false
 
@@ -117,6 +130,15 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
       onWarning?.(code, message)
     } catch {
       /* a warning sink that throws must never take the stream down */
+    }
+  }
+
+  /** THE SUBSCRIBER-FAULT SINK. Never `warn` — see `onSubscriberFault`'s note above (WR-06). */
+  const reportSubscriberFault = (code: string, message: string): void => {
+    try {
+      onSubscriberFault?.(code, message)
+    } catch {
+      /* a fault sink that throws must never take the stream down either */
     }
   }
 
@@ -249,7 +271,13 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
       } catch {
         state.subscribers.delete(subscriber)
         detached = true
-        warn('live-stream-subscriber-detached', 'live-frame subscriber threw during delivery and was detached')
+        // WR-06: reported on the SUBSCRIBER sink, never on `warn`. The detach itself is unchanged
+        // — only where it is REPORTED. `warn` is wired to the run's durable event log, and a viewer
+        // closing its tab at the wrong instant must not write a row into the run's transcript.
+        reportSubscriberFault(
+          'live-stream-subscriber-detached',
+          'live-frame subscriber threw during delivery and was detached',
+        )
       }
       // A subscriber that threw — or that unsubscribed from its own callback — cannot ack, so it
       // must not be counted as owing one. Otherwise the producer waits out the bound every frame.

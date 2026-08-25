@@ -265,11 +265,19 @@ describe('createLiveStreamHub (403 D-05/D-07)', () => {
     expect(hub.subscribe(9, () => {})).toBeUndefined()
   })
 
-  it('detaches a subscriber that throws and warns by code, leaving the others attached', async () => {
+  it('detaches a subscriber that throws, reports it on the SUBSCRIBER sink, leaves the others attached', async () => {
+    // WR-06. The detach is unchanged; where it is REPORTED is the fix. `onWarning` carries facts
+    // about the run's producer and the shell wires it to the run's durable event log — a channel a
+    // viewer must not be able to write to by closing its tab at the wrong instant.
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
     const warnings: string[] = []
-    const hub = createLiveStreamHub({ timer, onWarning: (code) => warnings.push(code) })
+    const faults: string[] = []
+    const hub = createLiveStreamHub({
+      timer,
+      onWarning: (code) => warnings.push(code),
+      onSubscriberFault: (code) => faults.push(code),
+    })
     hub.register(0, capability)
     const good: number[] = []
     hub.subscribe(0, () => {
@@ -278,10 +286,11 @@ describe('createLiveStreamHub (403 D-05/D-07)', () => {
     hub.subscribe(0, (f) => good.push(f.id))
     await settle()
     capability.emit(frame(2))
-    expect(warnings).toContain('live-stream-subscriber-detached')
+    expect(faults, 'the fault is reported, by name, on its own sink').toContain('live-stream-subscriber-detached')
+    expect(warnings, 'and NOT on the channel the shell wires to the run bus').toEqual([])
     expect(good).toEqual([2])
     capability.emit(frame(3))
-    expect(good).toEqual([2, 3])
+    expect(good, 'the throwing viewer is gone and the others carry on').toEqual([2, 3])
   })
 })
 
@@ -588,12 +597,18 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
     const warnings: string[] = []
-    const hub = createLiveStreamHub({ timer, onWarning: (code) => warnings.push(code) })
+    const faults: string[] = []
+    const hub = createLiveStreamHub({
+      timer,
+      onWarning: (code) => warnings.push(code),
+      onSubscriberFault: (code) => faults.push(code),
+    })
     hub.register(0, capability)
     hub.subscribe(0, () => { throw new Error('the only viewer exploded') })
     await flush()
     capability.emit(frame(1))
-    expect(warnings).toContain('live-stream-subscriber-detached')
+    expect(faults, 'the witness: the throw path really was taken').toContain('live-stream-subscriber-detached')
+    expect(warnings, 'off the run channel (WR-06)').toEqual([])
     expect(
       timer.pending(LIVE_STREAM_STOP_GRACE_MS),
       'the throw path emptied the subscriber set, so the stop must be scheduled like any other '

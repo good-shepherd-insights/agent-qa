@@ -134,6 +134,24 @@ function pixelResidueIn(envelopes: readonly RunEventEnvelope[]): string[] {
 
 const typesOf = (envelopes: readonly RunEventEnvelope[]): string[] => envelopes.map((e) => e.type)
 
+/**
+ * Every `runWarning` code on the bus, in order (WR-06's scanner).
+ *
+ * WHY A SEPARATE PREDICATE and not a grep on the word `runWarning` in the source: that word
+ * legitimately survives in `shell.ts` for eight unrelated codes (handoff-store degrades, executor
+ * throws, index holes) and in the hub for its two PRODUCER codes, which this phase preserves. A
+ * count on the word cannot tell fixed from unfixed in either direction. What CAN is the run's own
+ * durable record: whether a viewer's fault left a row in it.
+ */
+function runWarningCodesIn(envelopes: readonly RunEventEnvelope[]): string[] {
+  return envelopes
+    .filter((envelope) => envelope.type === 'runWarning')
+    .map((envelope) => {
+      const payload = envelope.payload as { code?: unknown } | undefined
+      return typeof payload?.code === 'string' ? payload.code : '<no code>'
+    })
+}
+
 describe('LIVE-03: frames cross the session while the run bus publishes nothing about them', () => {
   it('the bus is BYTE-IDENTICAL whether or not 50 frames flowed through subscribeFrames', async () => {
     // (1) THE CONTROL: the same run, nobody watching. Its envelope stream is the baseline.
@@ -199,6 +217,85 @@ describe('LIVE-03: frames cross the session while the run bus publishes nothing 
       pixelResidueIn(watched.envelopes),
       'no envelope may carry image bytes, a base64 JPEG, or a pixel-shaped key at any depth',
     ).toEqual([])
+  })
+
+  it('WR-06: a viewer whose onFrame THROWS leaves the run bus byte-identical to a clean run', async () => {
+    // THE RUN'S DURABLE TRANSCRIPT MUST NOT DEPEND ON WHO WATCHED IT. A `ws.send` can throw when a
+    // socket closes between the proxy's `readyState` check and the send, so before this cell a
+    // person closing a tab at the wrong instant wrote a row into the run's permanent record — a row
+    // that is appended to the event log, replayed to every later subscriber, served over SSE to
+    // anyone with a run-service credential, and rendered as a `[data-run-notice]` on the live page.
+    //
+    // THE DIFFERENTIAL VARIES ONE THING. Both runs have a viewer and both start the producer; the
+    // only difference is that one viewer throws. A control with NO viewer would make "the bus is
+    // quiet" true for free.
+    const clean = startInstrumentedRun(5)
+    await clean.registered
+    const cleanSeen: number[] = []
+    const cleanSubscription = clean.session.subscribeFrames(0, (frame) => {
+      cleanSeen.push(frame.id)
+      cleanSubscription?.ack(frame.id)
+    })
+    expect(cleanSubscription, 'the control must genuinely be watching').toBeDefined()
+    clean.finish()
+    await clean.session.done
+    expect(cleanSeen.length, 'the control really consumed frames').toBe(5)
+
+    const faulty = startInstrumentedRun(5)
+    await faulty.registered
+    let delivered = 0
+    const faultySubscription = faulty.session.subscribeFrames(0, () => {
+      delivered += 1
+      throw new Error('the viewer socket died mid-frame')
+    })
+    expect(faultySubscription, 'and so must the faulty one').toBeDefined()
+    faulty.finish()
+    await faulty.session.done
+
+    // THE WITNESS, BEFORE THE ABSENCE. A run whose subscriber never received a frame never had a
+    // fault to route, and its quiet bus would prove nothing at all.
+    expect(
+      delivered,
+      'the throwing subscriber must actually have RECEIVED a frame and thrown on it — otherwise '
+      + 'this cell measured a run in which nothing went wrong',
+    ).toBe(1)
+    expect(
+      faulty.capability.started,
+      'and the producer really ran for it',
+    ).toBe(1)
+
+    // THE VERDICT.
+    expect(
+      runWarningCodesIn(faulty.envelopes),
+      'a subscriber fault is a fact about the SUBSCRIBER. It is reported on the hub\'s own '
+      + 'subscriber-fault sink, which the shell wires to nothing that touches the bus (LIVE-03)',
+    ).toEqual([])
+    expect(
+      typesOf(faulty.envelopes),
+      'and the whole envelope stream is what a run nobody broke would have published',
+    ).toEqual(typesOf(clean.envelopes))
+    expect(faulty.envelopes.length).toBe(clean.envelopes.length)
+  })
+
+  it('THE runWarning SCANNER CAN SEE — it fires on a planted subscriber-detached row', () => {
+    // The absence above is only worth reading if this predicate can see the exact row the fix
+    // removed. Both branches are driven here.
+    const clean = [{ seq: 1, type: 'runStarted', runId: 'r', payload: { memberTestCount: 1 } }] as unknown as RunEventEnvelope[]
+    expect(runWarningCodesIn(clean), 'a run with no warning reads empty').toEqual([])
+
+    const planted = [
+      { seq: 1, type: 'runStarted', runId: 'r', payload: { memberTestCount: 1 } },
+      {
+        seq: 2,
+        type: 'runWarning',
+        runId: 'r',
+        payload: { code: 'live-stream-subscriber-detached', message: 'live-frame subscriber threw during delivery and was detached' },
+      },
+    ] as unknown as RunEventEnvelope[]
+    expect(
+      runWarningCodesIn(planted),
+      'the scanner sees the very row WR-06 is about — so its absence above is a measurement',
+    ).toEqual(['live-stream-subscriber-detached'])
   })
 
   it('THE SCANNER CAN SEE — the same predicate fires on a planted envelope', () => {
