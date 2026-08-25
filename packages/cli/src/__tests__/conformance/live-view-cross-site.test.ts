@@ -535,7 +535,7 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
     ).toBeNull()
   }, 60_000)
 
-  it('(2) SC-2 ON A REAL BROWSER: a page served from a SECOND origin cannot read a liveUrl', async () => {
+  it('(2) REAL BROWSER CORS LAYER: a capability answer exposes no Access-Control-Allow-Origin grant', async () => {
     const f = held()
 
     if (browser === undefined) {
@@ -551,24 +551,22 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
 
     const attackerPort = await reserveEphemeralPort()
     const dash = `http://127.0.0.1:${String(f.dashboard.port)}`
+    const controlUrl = `${dash}/api/runs`
+    const liveUrl = `${dash}/api/runs/${encodeURIComponent(f.runId)}/live-url`
 
-    // THE PAGE MAKES TWO REQUESTS, and the second one is the whole reason this cell can conclude
-    // anything. `control` reads `GET /api/runs`, a legacy read route that still answers
-    // `Access-Control-Allow-Origin: *` (deliberately out of this plan's scope: without a token the
-    // list is inert). It proves THIS page, in THIS browser, really can reach the dashboard
-    // cross-origin and read a body back. Without it, "the fetch was blocked" would be satisfied by
-    // a dashboard that had stopped listening, a script that never ran, or a browser that refused
-    // loopback — all of which look exactly like a working guard from inside the page.
+    // THIS CELL MEASURES THE SECOND, INDEPENDENT LAYER: a capability answer carries no
+    // `Access-Control-Allow-Origin` grant. Guard discrimination rests on cells (1) and (6), both
+    // mutation-proven; this cell pins the browser behavior that keeps those layers distinct.
     const html = `<!doctype html><meta charset="utf-8"><title>second origin</title><body><script>
       window.__reading = { phase: 'pending' };
       (async () => {
         const reading = { phase: 'done', control: null, controlError: null, target: null, targetError: null };
         try {
-          const response = await fetch(${JSON.stringify(`${dash}/api/runs`)});
+          const response = await fetch(${JSON.stringify(controlUrl)});
           reading.control = { status: response.status, bodyHead: (await response.text()).slice(0, 80) };
         } catch (error) { reading.controlError = String(error); }
         try {
-          const response = await fetch(${JSON.stringify(`${dash}/api/runs/${encodeURIComponent(f.runId)}/live-url`)});
+          const response = await fetch(${JSON.stringify(liveUrl)});
           reading.target = { status: response.status, bodyHead: (await response.text()).slice(0, 300) };
         } catch (error) { reading.targetError = String(error); }
         window.__reading = reading;
@@ -577,11 +575,16 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
 
     attackerServer = await serveAttackerPage(attackerPort, html)
 
-    interface PageReading {
+    interface PageScriptReading {
       control: { status: number; bodyHead: string } | null
       controlError: string | null
       target: { status: number; bodyHead: string } | null
       targetError: string | null
+    }
+
+    interface PageReading extends PageScriptReading {
+      responses: { url: string; status: number }[]
+      failures: { url: string; errorText: string | null }[]
     }
 
     // k=5, this phase's house rule for a real-Chromium cell. A single browser arm cannot tell a
@@ -589,6 +592,14 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
     const arms: (PageReading & { arm: number })[] = []
     for (let k = 0; k < 5; k += 1) {
       const page = await browser.newPage()
+      const responses: PageReading['responses'] = []
+      const failures: PageReading['failures'] = []
+      page.on('response', (response) => {
+        responses.push({ url: response.url(), status: response.status() })
+      })
+      page.on('requestfailed', (request) => {
+        failures.push({ url: request.url(), errorText: request.failure()?.errorText ?? null })
+      })
       try {
         await page.goto(`http://127.0.0.1:${String(attackerPort)}/`, { waitUntil: 'load', timeout: 30_000 })
         await page.waitForFunction(
@@ -598,8 +609,8 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
         )
         const reading = await page.evaluate(
           () => (window as unknown as { __reading: unknown }).__reading,
-        ) as PageReading
-        arms.push({ arm: k + 1, ...reading })
+        ) as PageScriptReading
+        arms.push({ arm: k + 1, ...reading, responses, failures })
       } finally {
         await page.close().catch(() => undefined)
       }
@@ -611,8 +622,16 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
       const context = `arm ${String(reading.arm)} of 5, attacker origin `
         + `http://127.0.0.1:${String(attackerPort)} → dashboard ${dash}: ${JSON.stringify(reading)}. `
         + childContext(f.dashboard)
+      const controlResponses = reading.responses.filter((response) => response.url === controlUrl)
+      const liveUrlFailures = reading.failures.filter((failure) => failure.url === liveUrl)
+      const liveUrlResponses = reading.responses.filter((response) => response.url === liveUrl)
 
-      // THE NON-VACUITY CONTROL, ASSERTED FIRST.
+      // THE LISTENER'S OWN NON-VACUITY, ASSERTED FIRST.
+      expect(
+        controlResponses.map((response) => response.status),
+        `${context} — the response listener must observe the control at 200`,
+      ).toContain(200)
+
       expect(
         reading.control?.status,
         `${context} — THE CONTROL: this page must be able to reach the dashboard cross-origin at `
@@ -622,6 +641,15 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
         reading.controlError,
         `${context} — the control read a body back, so the page, the browser and the door are all live`,
       ).toBeNull()
+
+      expect(
+        liveUrlFailures.map((failure) => failure.errorText),
+        `${context} — Chromium must report the blocked live-url request as net::ERR_FAILED`,
+      ).toContain('net::ERR_FAILED')
+      expect(
+        liveUrlResponses,
+        `${context} — Chromium must not surface a response event for the blocked live-url request`,
+      ).toEqual([])
 
       // THE VERDICT. Either the browser refused to hand the body over (no
       // `Access-Control-Allow-Origin` on the answer) or the page read a refusal — never a token.
