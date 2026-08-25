@@ -19,8 +19,13 @@
 // EVERY CELL DRIVES THE SPAWNED `agent-qa dashboard` BINARY, in the zero-token posture — the
 // default a project gets.
 
+import { randomBytes } from 'node:crypto'
+import { createServer } from 'node:http'
+import type { Server } from 'node:http'
 import { connect } from 'node:net'
 
+import { chromium } from 'playwright-core'
+import type { Browser } from 'playwright-core'
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 
 import {
@@ -41,6 +46,12 @@ const REBUILD_INSTRUCTION =
 
 /** The attacker's origin. A host this process could never resolve, so nothing can answer for it. */
 const HOSTILE_ORIGIN = 'http://evil.test'
+
+const BROWSER_INSTALL_INSTRUCTION =
+  'cell (2) drives a REAL Chromium from a real second origin: run '
+  + '`pnpm exec playwright install chromium` and re-run. IT MUST NOT BE SKIPPED WHEN THE BROWSER '
+  + 'IS ABSENT — it is the only cell that measures SC-2 on the road a person\'s browser actually '
+  + 'takes, and every other cell here states the headers rather than provoking them.'
 
 /** How long the run has to become attachable before this file gives up and says so. */
 const ATTACH_BUDGET_MS = 60_000
@@ -197,6 +208,168 @@ function liveUrlIn(response: RawResponse): string | undefined {
   }
 }
 
+// ---- the raw WebSocket client ----------------------------------------------------------------
+//
+// WHY BY HAND. The upgrade's `Origin` is the whole subject of cell (5), and neither the platform
+// `WebSocket` nor `playwright`'s page can be made to state one: the platform client decides that
+// header for you and a browser page can only ever send its own. So the handshake is written onto a
+// socket, the `hello` is framed by hand, and the server's answer is decoded by hand. Nothing here
+// is a protocol implementation — it speaks exactly the four things this door's cells need.
+
+/** A client text frame: FIN, opcode 1, MASK set (a client frame that is not masked is a protocol error). */
+function maskedTextFrame(text: string): Buffer {
+  const payload = Buffer.from(text, 'utf8')
+  const length = payload.length
+  const header: number[] = [0x81]
+  if (length < 126) header.push(0x80 | length)
+  else if (length < 65_536) header.push(0x80 | 126, (length >> 8) & 0xff, length & 0xff)
+  else throw new Error('this cell never sends a frame that large')
+  const mask = randomBytes(4)
+  const masked = Buffer.alloc(length)
+  for (let index = 0; index < length; index += 1) {
+    masked[index] = (payload[index] ?? 0) ^ (mask[index % 4] ?? 0)
+  }
+  return Buffer.concat([Buffer.from(header), mask, masked])
+}
+
+/** Decode every COMPLETE frame at the head of `buffer`; hand back what is still partial. */
+function drainFrames(buffer: Buffer): { texts: string[]; rest: Buffer } {
+  const texts: string[] = []
+  let offset = 0
+  for (;;) {
+    if (buffer.length - offset < 2) break
+    const opcode = (buffer[offset] ?? 0) & 0x0f
+    const second = buffer[offset + 1] ?? 0
+    const isMasked = (second & 0x80) !== 0
+    let length = second & 0x7f
+    let cursor = offset + 2
+    if (length === 126) {
+      if (buffer.length - cursor < 2) break
+      length = buffer.readUInt16BE(cursor)
+      cursor += 2
+    } else if (length === 127) {
+      if (buffer.length - cursor < 8) break
+      length = Number(buffer.readBigUInt64BE(cursor))
+      cursor += 8
+    }
+    let maskKey: Buffer | undefined
+    if (isMasked) {
+      if (buffer.length - cursor < 4) break
+      maskKey = buffer.subarray(cursor, cursor + 4)
+      cursor += 4
+    }
+    if (buffer.length - cursor < length) break
+    let payload = buffer.subarray(cursor, cursor + length)
+    if (maskKey !== undefined) {
+      const copy = Buffer.from(payload)
+      for (let index = 0; index < copy.length; index += 1) {
+        copy[index] = (copy[index] ?? 0) ^ (maskKey[index % 4] ?? 0)
+      }
+      payload = copy
+    }
+    offset = cursor + length
+    if (opcode === 0x1) texts.push(payload.toString('utf8'))
+  }
+  return { texts, rest: buffer.subarray(offset) }
+}
+
+interface SocketReading {
+  /** The upgrade's HTTP status. `101` is an accepted upgrade; `0` means the door hung up. */
+  readonly upgradeStatus: number
+  readonly messages: { type?: string; reason?: string; stream?: { kind?: string } }[]
+  readonly note?: string
+}
+
+/**
+ * One frame-socket exchange with EXACTLY the headers the cell states.
+ *
+ * `origin: undefined` sends no `Origin` header at all — the non-browser client — which is a
+ * different fact from sending an empty one, and the two must not be spelled the same way.
+ */
+function speakToFrameSocketRaw(input: {
+  readonly port: number
+  readonly runId: string
+  readonly token: string
+  readonly origin?: string
+  readonly until: readonly string[]
+  readonly budgetMs?: number
+}): Promise<SocketReading> {
+  return new Promise<SocketReading>((settle) => {
+    const socket = connect(input.port, '127.0.0.1')
+    const messages: { type?: string; reason?: string; stream?: { kind?: string } }[] = []
+    let head = ''
+    let upgraded = false
+    let upgradeStatus = 0
+    let pending = Buffer.alloc(0)
+    let settled = false
+    const finish = (note?: string): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(budget)
+      socket.destroy()
+      settle({ upgradeStatus, messages, ...(note === undefined ? {} : { note }) })
+    }
+    const budget = setTimeout(() => finish('no answer within the cell budget'), input.budgetMs ?? 20_000)
+    socket.on('error', (error: Error) => finish(error.message))
+    socket.on('close', () => finish('the door hung up'))
+    socket.on('data', (chunk: Buffer) => {
+      if (!upgraded) {
+        head += chunk.toString('latin1')
+        const split = head.indexOf('\r\n\r\n')
+        if (split === -1) return
+        upgradeStatus = Number.parseInt(head.split('\r\n')[0]?.split(' ')[1] ?? '', 10)
+        if (!Number.isInteger(upgradeStatus)) upgradeStatus = 0
+        if (upgradeStatus !== 101) { finish(`the upgrade was answered ${String(upgradeStatus)}`); return }
+        upgraded = true
+        pending = Buffer.from(head.slice(split + 4), 'latin1')
+        socket.write(maskedTextFrame(JSON.stringify({ type: 'hello', token: input.token })))
+      } else {
+        pending = Buffer.concat([pending, chunk])
+      }
+      const drained = drainFrames(pending)
+      // `Buffer.from`, not the subarray itself: a subarray keeps its parent's `ArrayBufferLike`
+      // backing type, which is not the `ArrayBuffer` the accumulator was allocated with.
+      pending = Buffer.from(drained.rest)
+      for (const text of drained.texts) {
+        try {
+          const parsed = JSON.parse(text) as { type?: string }
+          messages.push(parsed)
+          if (typeof parsed.type === 'string' && input.until.includes(parsed.type)) finish()
+        } catch { /* a non-JSON text frame is not a message this protocol defines */ }
+      }
+    })
+    socket.on('connect', () => {
+      const headers: Record<string, string> = {
+        host: `127.0.0.1:${String(input.port)}`,
+        upgrade: 'websocket',
+        connection: 'Upgrade',
+        'sec-websocket-key': randomBytes(16).toString('base64'),
+        'sec-websocket-version': '13',
+      }
+      if (input.origin !== undefined) headers.origin = input.origin
+      socket.write(
+        `GET /api/live-view/ws?runId=${encodeURIComponent(input.runId)} HTTP/1.1\r\n`
+        + Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join('')
+        + '\r\n',
+      )
+    })
+  })
+}
+
+// ---- the second origin -------------------------------------------------------------------------
+
+/** A throwaway server on a SECOND loopback port. A different port is a different ORIGIN. */
+function serveAttackerPage(port: number, html: string): Promise<Server> {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+    response.end(html)
+  })
+  return new Promise<Server>((ready) => { server.listen(port, '127.0.0.1', () => ready(server)) })
+}
+
+let browser: Browser | undefined
+let attackerServer: Server | undefined
+
 beforeAll(async () => {
   // FIRST, AND BEFORE ANYTHING IS SPAWNED: a stale build measures the previous commit.
   expect(buildFreshness(DASHBOARD_ANCHORED_BUILDS), REBUILD_INSTRUCTION)
@@ -244,6 +417,12 @@ beforeAll(async () => {
 afterAll(async () => {
   const open = fixture
   fixture = undefined
+  if (browser !== undefined) { await browser.close().catch(() => undefined); browser = undefined }
+  if (attackerServer !== undefined) {
+    const listening = attackerServer
+    attackerServer = undefined
+    await new Promise<void>((closed) => listening.close(() => closed()))
+  }
   if (open !== undefined) await open.dashboard.stop()
   cleanupTempRoots()
 })
@@ -349,4 +528,175 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
       `${context} — a capability answer stamps no cross-origin read grant, allowed or not`,
     ).toBeNull()
   }, 60_000)
+
+  it('(2) SC-2 ON A REAL BROWSER: a page served from a SECOND origin cannot read a liveUrl', async () => {
+    const f = held()
+
+    if (browser === undefined) {
+      try {
+        browser = await chromium.launch({ headless: true })
+      } catch (error) {
+        throw new Error(
+          `${BROWSER_INSTALL_INSTRUCTION} underlying error: `
+          + `${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
+
+    const attackerPort = await reserveEphemeralPort()
+    const dash = `http://127.0.0.1:${String(f.dashboard.port)}`
+
+    // THE PAGE MAKES TWO REQUESTS, and the second one is the whole reason this cell can conclude
+    // anything. `control` reads `GET /api/runs`, a legacy read route that still answers
+    // `Access-Control-Allow-Origin: *` (deliberately out of this plan's scope: without a token the
+    // list is inert). It proves THIS page, in THIS browser, really can reach the dashboard
+    // cross-origin and read a body back. Without it, "the fetch was blocked" would be satisfied by
+    // a dashboard that had stopped listening, a script that never ran, or a browser that refused
+    // loopback — all of which look exactly like a working guard from inside the page.
+    const html = `<!doctype html><meta charset="utf-8"><title>second origin</title><body><script>
+      window.__reading = { phase: 'pending' };
+      (async () => {
+        const reading = { phase: 'done', control: null, controlError: null, target: null, targetError: null };
+        try {
+          const response = await fetch(${JSON.stringify(`${dash}/api/runs`)});
+          reading.control = { status: response.status, bodyHead: (await response.text()).slice(0, 80) };
+        } catch (error) { reading.controlError = String(error); }
+        try {
+          const response = await fetch(${JSON.stringify(`${dash}/api/runs/${encodeURIComponent(f.runId)}/live-url`)});
+          reading.target = { status: response.status, bodyHead: (await response.text()).slice(0, 300) };
+        } catch (error) { reading.targetError = String(error); }
+        window.__reading = reading;
+      })();
+    </script></body>`
+
+    attackerServer = await serveAttackerPage(attackerPort, html)
+
+    interface PageReading {
+      control: { status: number; bodyHead: string } | null
+      controlError: string | null
+      target: { status: number; bodyHead: string } | null
+      targetError: string | null
+    }
+
+    // k=5, this phase's house rule for a real-Chromium cell. A single browser arm cannot tell a
+    // guard from a race, and the losing side of a coin flip here reads exactly like the fix.
+    const arms: (PageReading & { arm: number })[] = []
+    for (let k = 0; k < 5; k += 1) {
+      const page = await browser.newPage()
+      try {
+        await page.goto(`http://127.0.0.1:${String(attackerPort)}/`, { waitUntil: 'load', timeout: 30_000 })
+        await page.waitForFunction(
+          () => (window as unknown as { __reading: { phase: string } }).__reading.phase === 'done',
+          undefined,
+          { timeout: 30_000 },
+        )
+        const reading = await page.evaluate(
+          () => (window as unknown as { __reading: unknown }).__reading,
+        ) as PageReading
+        arms.push({ arm: k + 1, ...reading })
+      } finally {
+        await page.close().catch(() => undefined)
+      }
+    }
+
+    console.log(`(2) second-origin chain k=5: ${JSON.stringify(arms)}`)
+
+    for (const reading of arms) {
+      const context = `arm ${String(reading.arm)} of 5, attacker origin `
+        + `http://127.0.0.1:${String(attackerPort)} → dashboard ${dash}: ${JSON.stringify(reading)}. `
+        + childContext(f.dashboard)
+
+      // THE NON-VACUITY CONTROL, ASSERTED FIRST.
+      expect(
+        reading.control?.status,
+        `${context} — THE CONTROL: this page must be able to reach the dashboard cross-origin at `
+        + 'all. A blocked target below means nothing if the browser could not reach the door.',
+      ).toBe(200)
+      expect(
+        reading.controlError,
+        `${context} — the control read a body back, so the page, the browser and the door are all live`,
+      ).toBeNull()
+
+      // THE VERDICT. Either the browser refused to hand the body over (no
+      // `Access-Control-Allow-Origin` on the answer) or the page read a refusal — never a token.
+      const targetBody = reading.target?.bodyHead ?? ''
+      expect(
+        targetBody.includes('liveUrl'),
+        `${context} — SC-2: a page on another origin must not be able to obtain a liveUrl. At HEAD `
+        + 'this page read the token out of a 200 and could have opened the frame socket with it.',
+      ).toBe(false)
+      expect(
+        reading.targetError !== null || reading.target?.status === 403,
+        `${context} — the mint must be either unreadable to this document (a CORS failure, because `
+        + 'the answer carries no Access-Control-Allow-Origin) or refused by name with 403',
+      ).toBe(true)
+    }
+  }, 300_000)
+
+  it('(5) the frame socket\'s DEFENSE-IN-DEPTH Origin rung — refusal, and the two shapes it must not break', async () => {
+    const f = held()
+
+    // The token comes from the non-browser caller the guard admits.
+    const raw = await (await fetch(`${f.dashboard.origin}/api/runs/${encodeURIComponent(f.runId)}/live-url`)).text()
+    const token = (JSON.parse(raw) as { liveUrl?: string }).liveUrl?.split('#')[1]
+    expect(typeof token, `the mint answered ${raw.slice(0, 200)}`).toBe('string')
+
+    const arms = {
+      // A NON-BROWSER CLIENT: no `Origin` header at all.
+      absent: await speakToFrameSocketRaw({
+        port: f.dashboard.port, runId: f.runId, token: token as string, until: ['ready', 'ended', 'refused'],
+      }),
+      // THE SANDBOXED EMBED'S SHAPE. `preview-pane.tsx` sandboxes the embed iframe WITHOUT
+      // `allow-same-origin`, so the real embed's upgrade carries the literal `null`.
+      opaque: await speakToFrameSocketRaw({
+        port: f.dashboard.port, runId: f.runId, token: token as string, origin: 'null',
+        until: ['ready', 'ended', 'refused'],
+      }),
+      // THE DASHBOARD'S OWN PAGE.
+      sameHost: await speakToFrameSocketRaw({
+        port: f.dashboard.port, runId: f.runId, token: token as string,
+        origin: `http://127.0.0.1:${String(f.dashboard.port)}`,
+        until: ['ready', 'ended', 'refused'],
+      }),
+      // A NON-SANDBOXED PAGE ON ANOTHER ORIGIN — the one shape this rung can honestly refuse.
+      hostile: await speakToFrameSocketRaw({
+        port: f.dashboard.port, runId: f.runId, token: token as string, origin: HOSTILE_ORIGIN,
+        until: ['ready', 'ended', 'refused'], budgetMs: 10_000,
+      }),
+    }
+
+    const summary = Object.fromEntries(Object.entries(arms).map(([name, reading]) => [name, {
+      upgradeStatus: reading.upgradeStatus,
+      types: reading.messages.map((message) => message.type),
+      note: reading.note ?? null,
+    }]))
+    console.log(`(5) frame-socket Origin rungs: ${JSON.stringify(summary)}`)
+    const context = `${JSON.stringify(summary)}. ${childContext(f.dashboard)}`
+
+    // THE THREE ALLOWED SHAPES FIRST — they are what makes the refusal below a reading about the
+    // rung rather than a reading about a socket that stopped working.
+    for (const name of ['absent', 'opaque', 'sameHost'] as const) {
+      expect(arms[name].upgradeStatus, `${context} — the ${name} arm's upgrade must be accepted`).toBe(101)
+      expect(
+        arms[name].messages.some((message) => message.type === 'ready'),
+        `${context} — the ${name} arm must reach \`ready\`. The \`opaque\` arm is the LEGITIMATE `
+        + 'sandboxed embed: if it breaks, the live preview a person watches breaks with it.',
+      ).toBe(true)
+    }
+
+    expect(
+      arms.hostile.upgradeStatus,
+      `${context} — a present, non-\`null\`, cross-host Origin is refused before \`handleUpgrade\`. `
+      + 'At HEAD this upgrade was ACCEPTED (101) and answered `ready`.',
+    ).not.toBe(101)
+    expect(
+      arms.hostile.messages.map((message) => message.type),
+      `${context} — a refused upgrade has never seen a credential, so it says nothing at all`,
+    ).toEqual([])
+
+    // HONEST STANDING, WRITTEN INTO THE CELL SO IT IS NOT MISREAD LATER: the `opaque` arm above is
+    // the same shape a SANDBOXED ATTACKER iframe sends, so this rung is not a credential and is not
+    // claimed to be one. The credential is the token the `hello` message carries, minted by a door
+    // that cells (1)-(4) prove now refuses a cross-site caller.
+  }, 120_000)
 })

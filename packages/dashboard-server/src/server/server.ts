@@ -751,6 +751,37 @@ export async function startServer(opts: StartServerOptions): Promise<{
     // 403 D-06: the frame socket. The run id is the ONLY query parameter — the token arrives in
     // the first text message and nowhere else, so a refused upgrade has never seen a credential.
     if (url.pathname === LIVE_VIEW_WS_PATH) {
+      // DEFENSE IN DEPTH, AND NOT THE CREDENTIAL — 403 gap round 1, T-403-21.
+      //
+      // A WebSocket upgrade is exempt from CORS entirely, so the mint door's same-site guard is not
+      // inherited here. This rung refuses the ONE shape it can honestly refuse: a present `Origin`
+      // that names another host. It is explicitly NOT a credential, and the reason is worth writing
+      // down rather than rediscovering. The legitimate embed page runs in an iframe sandboxed
+      // WITHOUT `allow-same-origin` (`preview-pane.tsx`), so its upgrade carries the literal
+      // `null` — and a sandboxed ATTACKER iframe sends exactly the same thing. Accepting `null` is
+      // therefore mandatory for the real embed and worthless as a gate, and dropping the sandbox to
+      // make this check "real" would hand the embed same-origin access to the dashboard, which is a
+      // worse trade than the one this rung declines to make.
+      //
+      // THE CREDENTIAL REMAINS THE TOKEN validated in the first `hello` message, minted only by a
+      // door that now refuses a cross-site caller. An absent `Origin` is the non-browser client and
+      // is accepted, on the mint door's own reasoning.
+      const upgradeOrigin = request.headers.origin
+      if (typeof upgradeOrigin === 'string' && upgradeOrigin !== '' && upgradeOrigin !== 'null') {
+        const upgradeHost = typeof request.headers.host === 'string' ? request.headers.host.toLowerCase() : ''
+        let upgradeOriginHost = ''
+        try {
+          upgradeOriginHost = new URL(upgradeOrigin).host.toLowerCase()
+        } catch {
+          upgradeOriginHost = ''
+        }
+        // Hosts, not schemes — the same reasoning the mint door's guard records: the bound door
+        // speaks `http` on loopback and an operator may put an `https` terminator in front of it.
+        if (upgradeOriginHost === '' || upgradeHost === '' || upgradeOriginHost !== upgradeHost) {
+          socket.destroy()
+          return
+        }
+      }
       const liveRunId = url.searchParams.get('runId')
       if (liveRunId === null || liveRunId === '' || liveView === undefined || runServiceAttach === undefined) {
         socket.destroy()
