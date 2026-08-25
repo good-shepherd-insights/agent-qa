@@ -452,6 +452,9 @@ importers:
       '@types/ws':
         specifier: ~8.18.1
         version: 8.18.1
+      '@vostride/agent-qa-agent':
+        specifier: workspace:*
+        version: link:../agent
       '@vostride/agent-qa-arch':
         specifier: workspace:*
         version: link:../arch

@@ -6,8 +6,13 @@
 // bound to the same signer that minted (LIVE-02's third prohibition made structural).
 //
 // D-16: a detach NEVER touches the run. Closing a viewer's socket unsubscribes it from the frame
-// hub and clears this socket's timers, and that is the whole of it — no cancel, no teardown, no
-// effect a person watching would not expect from closing a window.
+// hub and clears this socket's timers, and that is the whole of it — nothing that ends a run,
+// nothing that tears one down, no effect a person would not expect from closing a window.
+//
+// THAT CLAIM IS PINNED BY A SOURCE SCAN, which is why the run-ending verb does not appear anywhere
+// in this file, not even in prose: `live-view.frame-proxy.test.ts` cell (21) asserts the token is
+// absent from these bytes, so an implementation that grew the call — or a comment that talked
+// itself into one — is a named RED rather than a review someone has to notice (T-403-07).
 
 import type WebSocket from 'ws'
 
@@ -129,7 +134,13 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
         return
       }
       const raw = String(data)
-      if (raw.length > LIVE_VIEW_HELLO_MAX_BYTES) {
+      // THE CAP IS A BYTE CAP, AND THE DIFFERENCE IS NOT PEDANTRY. `String#length` counts UTF-16
+      // code units, so a hello padded with multi-byte characters sits under a 4096-CHARACTER cap
+      // while being several kilobytes of actual traffic — and bytes are what the socket buffered,
+      // what the process allocated, and what T-403-11 is about. Measured off the received frame
+      // where there is one, so the number is the wire's own rather than a re-encoding of it.
+      const bytes = Buffer.isBuffer(data) ? data.byteLength : Buffer.byteLength(raw)
+      if (bytes > LIVE_VIEW_HELLO_MAX_BYTES) {
         refuse('malformed')
         return
       }
@@ -177,7 +188,7 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
 
     ws.on('close', () => {
       // D-16, AND NOTHING ELSE. Detach releases this viewer's hold and this socket's timers. The
-      // run is not consulted, not cancelled, and not told.
+      // run is not consulted, not ended, and not told.
       subscription?.unsubscribe()
       subscription = undefined
       clearTimers()
