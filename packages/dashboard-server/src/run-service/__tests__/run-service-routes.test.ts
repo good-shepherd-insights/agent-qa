@@ -18,10 +18,16 @@
 import { readFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 
+import type { IncomingMessage } from 'node:http'
+
+import { createRunEventBus } from '@vostride/agent-qa-runner'
 import {
   RUN_SERVICE_CONTRACT_VERSION,
+  RUN_SERVICE_ERROR_CODES,
   RunServiceReadinessSchema,
+  RunServiceReplayFloorBodySchema,
   type RunEventEnvelope,
+  type RunServiceErrorCode,
   type RunSession,
   type RunStartAcknowledgement,
 } from '@vostride/agent-qa-schema'
@@ -30,6 +36,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   RUN_SERVICE_ROUTE_TABLE,
   createRunServiceRoutes,
+  lastEventIdParamOf,
+  replayFloorOf,
+  resumePointOf,
   type RunServicePorts,
 } from '../run-service-routes.js'
 
@@ -349,5 +358,498 @@ describe('the readiness predicate has ONE declaration site, and it is not here',
     }
     // And it never spells the version either — the constant is schema's, read by the composition.
     expect(source).not.toContain('contractVersion:')
+  })
+})
+
+// ---- 403-03 (D-13 / D-15 · INVK-05): the resume point, the typed floor, the roster on resume ----
+//
+// WHAT A DOOR-LEVEL CELL CAN SAY THAT A PARSER CELL CANNOT. `resumePointOf` is a pure function and
+// its table is below, but the claim INVK-05 makes is about what crosses the socket: that a caller
+// carrying `Last-Event-ID: N` is served `subscribe(N + 1)` and never re-sent an id it already has.
+// A parser that answered `{ kind: 'after', seq: N }` into a serving body that ignored it would pass
+// every unit cell in this file, so these cells drive the door.
+//
+// THE FLOOR SESSION IS A REAL BUS, NEVER A HAND-BUILT `subscribe` THAT THROWS. What the 410 arm
+// reports is the bus's OWN `earliestAvailableSeq`, so a fixture that minted the error itself would
+// be pinning this file's idea of the error shape rather than the producer's.
+
+const RESUMABLE_SEQS = PLANTED_ENVELOPES.map((envelope) => envelope.seq)
+
+/** The planted session, but honouring `fromSeq` — which is what a real bus does. */
+function resumableSession(): RunSession {
+  return {
+    ...plantedSession(),
+    subscribe(fromSeq, handler) {
+      for (const envelope of PLANTED_ENVELOPES) {
+        if (envelope.seq >= fromSeq) handler(envelope)
+      }
+      return () => undefined
+    },
+  }
+}
+
+/**
+ * A REAL `createRunEventBus` with a 3-event window fed 8 envelopes, so seqs 1-5 are evicted.
+ *
+ * `windowMaxEvents: 3` retains 6, 7, 8 — `earliestRetainedSeq()` is therefore 6, and with no event
+ * log behind it `subscribe(n)` for n < 6 raises the bus's own `ReplayIncompleteError`. The
+ * heartbeat is pushed past any test's lifetime so the retained window is exactly what was published.
+ */
+const FLOOR_EARLIEST_SEQ = 6
+const FLOOR_ROSTER = [3, 7, 11] as const
+
+function floorSession(): RunSession {
+  const bus = createRunEventBus({
+    runId: 'r_floor',
+    windowMaxEvents: 3,
+    heartbeatMs: 3_600_000,
+  })
+  bus.publish('runStarted', { busSchemaVersion: 1, memberTestCount: 3, handles: [...FLOOR_ROSTER] })
+  bus.publish('testStarted', { testId: 'a', testIndex: 3, name: 'a' })
+  bus.publish('testStarted', { testId: 'b', testIndex: 7, name: 'b' })
+  bus.publish('testStarted', { testId: 'c', testIndex: 11, name: 'c' })
+  bus.publish('runWarning', { code: 'w', message: 'w' })
+  bus.publish('stepStarted', { testIndex: 3, stepIndex: 0, stepText: 'a0' })
+  bus.publish('stepStarted', { testIndex: 7, stepIndex: 0, stepText: 'b0' })
+  bus.publish('runFinished', { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: 8 })
+  return {
+    id: 'r_floor' as RunSession['id'],
+    status: 'failed',
+    executionContext: 'local-headless' as RunSession['executionContext'],
+    subscribe: (fromSeq, handler) => bus.subscribe(fromSeq, handler),
+    subscribeFrames() { return undefined },
+    streamCapabilityOf() { return { kind: 'none' } },
+    cancel() { /* the bus is already closed for this fixture */ },
+    done: Promise.resolve({ verdict: 'failed' } as never),
+  }
+}
+
+function resumePorts(): RunServicePorts {
+  return fakePorts({
+    attach: (runId) => {
+      if (runId === 'r_planted') return resumableSession()
+      if (runId === 'r_floor') return floorSession()
+      return undefined
+    },
+  })
+}
+
+const idsOfStream = (body: string): number[] =>
+  [...body.matchAll(/^id: (\d+)$/gmu)].map((match) => Number(match[1]))
+
+describe('INVK-05 — the door honours Last-Event-ID and ?lastEventId=', () => {
+  it('replays from subscribe(N + 1): no id at or below the resume point is ever re-sent', async () => {
+    const origin = await mount(resumePorts())
+    const stream = await readStream(`${origin}/run/r_planted/events?lastEventId=7`, {
+      Authorization: `Bearer ${TOKEN}`,
+    })
+    expect(stream.status).toBe(200)
+    expect(idsOfStream(stream.body)).toEqual([11, 12])
+    expect(idsOfStream(stream.body)).not.toEqual(RESUMABLE_SEQS)
+  })
+
+  it('honours the HEADER as well as the query, and the header decides when they disagree', async () => {
+    const origin = await mount(resumePorts())
+    const viaHeader = await readStream(`${origin}/run/r_planted/events`, {
+      'Authorization': `Bearer ${TOKEN}`,
+      'Last-Event-ID': '7',
+    })
+    expect(idsOfStream(viaHeader.body)).toEqual([11, 12])
+
+    // The browser's own automatic reconnect carries the fresher value, so it wins.
+    const disagreeing = await readStream(`${origin}/run/r_planted/events?lastEventId=0`, {
+      'Authorization': `Bearer ${TOKEN}`,
+      'Last-Event-ID': '7',
+    })
+    expect(idsOfStream(disagreeing.body)).toEqual([11, 12])
+  })
+
+  it.each([
+    'abc',
+    '-1',
+    '07',
+    '1.5',
+    '1e3',
+    '',
+  ])('refuses ?lastEventId=%s with a typed 400 invalid_last_event_id BEFORE any head', async (raw) => {
+    const origin = await mount(resumePorts())
+    const response = await fetch(
+      `${origin}/run/r_planted/events?lastEventId=${encodeURIComponent(raw)}`,
+      { headers: { Authorization: `Bearer ${TOKEN}` } },
+    )
+    expect(response.status).toBe(400)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    expect(response.headers.get('content-type')).not.toContain('text/event-stream')
+    expect(await response.json()).toEqual({ error: 'invalid_last_event_id' })
+  })
+
+  it('refuses a REPEATED lastEventId rather than silently answering the first', async () => {
+    const origin = await mount(resumePorts())
+    const response = await fetch(`${origin}/run/r_planted/events?lastEventId=1&lastEventId=7`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'invalid_last_event_id' })
+  })
+})
+
+describe('INVK-05 / D-13 — the replay floor is a TYPED refusal carrying the recovery point', () => {
+  it('answers 410 replay_floor with the bus\'s own earliestAvailableSeq, before any head', async () => {
+    const origin = await mount(resumePorts())
+    const response = await fetch(`${origin}/run/r_floor/events?lastEventId=2`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    expect(response.status).toBe(410)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    expect(response.headers.get('content-type')).not.toContain('text/event-stream')
+    expect(await response.json())
+      .toEqual({ error: 'replay_floor', earliestAvailableSeq: FLOOR_EARLIEST_SEQ })
+  })
+
+  it('THE RECOVERY IS REACHABLE — a client following the refusal re-attaches and is served', async () => {
+    // THE TWO-SIDED HALF. A refusal whose advertised recovery point cannot be reached is worse
+    // than no refusal at all: it tells the caller to do something that fails the same way. So this
+    // cell reads the floor OUT of the refusal body and re-requests with it, exactly as a thin
+    // client would — `lastEventId = earliestAvailableSeq - 1`, because the caller names the last
+    // envelope it has ALREADY observed and the floor names the first one still available.
+    const origin = await mount(resumePorts())
+    const refused = await fetch(`${origin}/run/r_floor/events?lastEventId=2`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    const floor = (await refused.json() as { earliestAvailableSeq: number }).earliestAvailableSeq
+
+    const recovered = await readStream(
+      `${origin}/run/r_floor/events?lastEventId=${String(floor - 1)}`,
+      { Authorization: `Bearer ${TOKEN}` },
+    )
+    expect(recovered.status).toBe(200)
+    expect(idsOfStream(recovered.body)[0]).toBe(floor)
+    expect(idsOfStream(recovered.body)).toEqual([6, 7, 8])
+  })
+
+  it('serves a resume AT the floor rather than refusing it — the boundary is inclusive', async () => {
+    const origin = await mount(resumePorts())
+    const stream = await readStream(`${origin}/run/r_floor/events?lastEventId=5`, {
+      Authorization: `Bearer ${TOKEN}`,
+    })
+    expect(stream.status).toBe(200)
+    expect(idsOfStream(stream.body)).toEqual([6, 7, 8])
+  })
+
+  it('keeps 500 replay_unavailable for a throw that is NOT the floor', async () => {
+    const origin = await mount(fakePorts({
+      attach: () => plantedSession({ throwOnSubscribe: true }),
+    }))
+    const response = await fetch(`${origin}/run/r_planted/events`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: 'replay_unavailable' })
+  })
+})
+
+describe('D-14 — the handle filter survives a DEEP resume', () => {
+  it('serves handle 7 on a resume past the roster announcement instead of refusing it', async () => {
+    // `runStarted` carries the roster and it is seq 1. On `subscribe(6, …)` it is not delivered, so
+    // a door that derives the roster from the first envelope it sees would answer `unknown_handle`
+    // for EVERY deep resume on a member stream — the defect this cell exists for.
+    const origin = await mount(resumePorts())
+    const stream = await readStream(`${origin}/run/r_floor/events?handle=7&lastEventId=5`, {
+      Authorization: `Bearer ${TOKEN}`,
+    })
+    expect(stream.status).toBe(200)
+    // seq 6 is member 3's step and must NOT reach handle 7; 7 is member 7's; 8 is run-scoped.
+    expect(idsOfStream(stream.body)).toEqual([7, 8])
+  })
+
+  it('still refuses a handle no member of the run answers to on a deep resume', async () => {
+    const origin = await mount(resumePorts())
+    const response = await fetch(`${origin}/run/r_planted/events?handle=4&lastEventId=7`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'unknown_handle' })
+  })
+})
+
+describe('D-15 — a resume that lands past the end closes rather than hanging', () => {
+  it('answers 200 with zero data frames and ENDS when the resume point is the final seq', async () => {
+    const origin = await mount(resumePorts())
+    const response = await fetch(`${origin}/run/r_planted/events?lastEventId=12`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+      signal: AbortSignal.timeout(5_000),
+    })
+    expect(response.status).toBe(200)
+    const body = await response.text()
+    expect(idsOfStream(body)).toEqual([])
+    expect(body).toMatch(/^:ok\n\n/u)
+  })
+})
+
+// ---- The two readers, as pure functions ---------------------------------------------------------
+
+/** A request object carrying only what these two readers look at. */
+function requestWith(url: string, headers: Record<string, string | string[]> = {}): IncomingMessage {
+  return { url, headers } as unknown as IncomingMessage
+}
+
+describe('lastEventIdParamOf reads the RAW query, like handleParamOf', () => {
+  it.each([
+    ['no query at all', '/run/r/events', null],
+    ['a query with no lastEventId', '/run/r/events?handle=7', null],
+    ['a plain value', '/run/r/events?lastEventId=8', '8'],
+    ['a value beside other parameters', '/run/r/events?handle=7&lastEventId=8&x=1', '8'],
+    ['an EMPTY value — present, and it did not parse', '/run/r/events?lastEventId=', ''],
+    ['a REPEATED parameter, JOINED so it cannot parse', '/run/r/events?lastEventId=1&lastEventId=7', '1,7'],
+    ['a percent-encoded value, decoded by the parser', '/run/r/events?lastEventId=%38', '8'],
+  ] as const)('%s', (_label, url, expected) => {
+    expect(lastEventIdParamOf(requestWith(url))).toBe(expected)
+  })
+
+  it('never answers a repeated parameter with one of its values — the drift this reader refuses', () => {
+    // `new URL(...).searchParams.get('lastEventId')` answers '1' here, which is a resume point the
+    // caller did not unambiguously ask for. A wrong resume point is a gap or a duplicate.
+    const raw = lastEventIdParamOf(requestWith('/run/r/events?lastEventId=1&lastEventId=7'))
+    expect(raw).not.toBe('1')
+    expect(raw).not.toBe('7')
+    expect(resumePointOf(undefined, raw)).toEqual({ kind: 'invalid' })
+  })
+})
+
+describe('resumePointOf — the whole input table, and the header decides', () => {
+  it.each([
+    ['both absent is the beginning', undefined, null, { kind: 'start' }],
+    ['a null header with no parameter', null, null, { kind: 'start' }],
+    ['zero is a real resume point — the caller observed nothing', undefined, '0', { kind: 'after', seq: 0 }],
+    ['a plain value from the query', undefined, '8', { kind: 'after', seq: 8 }],
+    ['a plain value from the header', '8', null, { kind: 'after', seq: 8 }],
+    ['a large but safe integer', undefined, '9007199254740991', { kind: 'after', seq: 9007199254740991 }],
+    ['past the safe-integer bound', undefined, '9007199254740993', { kind: 'invalid' }],
+    ['an empty parameter', undefined, '', { kind: 'invalid' }],
+    ['an EMPTY HEADER — present, and it did not parse', '', null, { kind: 'invalid' }],
+    ['a non-numeric value', undefined, 'abc', { kind: 'invalid' }],
+    ['a negative value', undefined, '-1', { kind: 'invalid' }],
+    ['a zero-padded value', undefined, '07', { kind: 'invalid' }],
+    ['a fractional value', undefined, '1.5', { kind: 'invalid' }],
+    ['an exponent', undefined, '1e3', { kind: 'invalid' }],
+    ['hex', undefined, '0x8', { kind: 'invalid' }],
+    ['padded whitespace', undefined, ' 8 ', { kind: 'invalid' }],
+    ['negative zero', undefined, '-0', { kind: 'invalid' }],
+    ['a joined repeated parameter', undefined, '1,7', { kind: 'invalid' }],
+    ['a joined repeated header', ['1', '7'], null, { kind: 'invalid' }],
+    ['the header wins over the query', '8', '3', { kind: 'after', seq: 8 }],
+    ['the header wins even when the query is fresher', '3', '8', { kind: 'after', seq: 3 }],
+    ['a MALFORMED header wins over a valid query — it is present, and it did not parse', 'abc', '8', { kind: 'invalid' }],
+  ] as const)('%s', (_label, header, param, expected) => {
+    expect(resumePointOf(header, param)).toEqual(expected)
+  })
+})
+
+describe('replayFloorOf reads the floor STRUCTURALLY, and refuses a lookalike', () => {
+  it('reads a real bus ReplayIncompleteError without naming its class', () => {
+    const bus = createRunEventBus({ runId: 'r_probe', windowMaxEvents: 1, heartbeatMs: 3_600_000 })
+    bus.publish('runStarted', { busSchemaVersion: 1, memberTestCount: 0 })
+    bus.publish('runWarning', { code: 'w', message: 'w' })
+    let caught: unknown
+    try { bus.subscribe(1, () => undefined) } catch (error) { caught = error }
+    expect(replayFloorOf(caught)).toBe(2)
+  })
+
+  it.each([
+    ['a plain Error', new Error('boom')],
+    ['null', null],
+    ['a string', 'ReplayIncompleteError'],
+    ['the right name with no floor', Object.assign(new Error('x'), { name: 'ReplayIncompleteError' })],
+    ['the right name with a non-numeric floor', Object.assign(new Error('x'), { name: 'ReplayIncompleteError', earliestAvailableSeq: '6' })],
+    ['the right name with a fractional floor', Object.assign(new Error('x'), { name: 'ReplayIncompleteError', earliestAvailableSeq: 6.5 })],
+    ['the right name with a negative floor', Object.assign(new Error('x'), { name: 'ReplayIncompleteError', earliestAvailableSeq: -1 })],
+    ['a numeric floor under the WRONG name', Object.assign(new Error('x'), { earliestAvailableSeq: 6 })],
+  ] as const)('answers undefined for %s — a 410 with no reachable recovery point is worse than none', (_label, error) => {
+    expect(replayFloorOf(error)).toBeUndefined()
+  })
+})
+
+// ---- The refusal-code census: a COMPLETE SET, every member DRIVEN ------------------------------
+//
+// THE CLAIM IS THE ENUMERATION. `RUN_SERVICE_ERROR_CODES` is a closed set and this door is the only
+// thing that writes it, so a code added without a request class that produces it is a word nobody
+// can reach and a code deleted while a request still produces it is an answer nothing validates.
+// The census is read OFF the shipped constant, both directions, so a new member is a named RED in
+// the change that adds it rather than in the review that might have caught it.
+//
+// EVERY MEMBER IS DRIVEN. There is no `unreachable` arm and there must not be one: an exemption
+// list is where a code goes to stop being measured, and the two codes 403-03 adds are exactly the
+// kind that would have landed on it.
+
+interface CodeProbe {
+  readonly code: RunServiceErrorCode
+  /** Drive the door and return the observed status and parsed body. */
+  drive: () => Promise<{ readonly status: number; readonly body: Record<string, unknown> }>
+  /** The status this refusal carries, so the census also pins the code-to-status mapping. */
+  readonly status: number
+  /** `true` for the two bodies deliberately wider than one key (`run_denied`, `replay_floor`). */
+  readonly wide?: true
+}
+
+async function refusalAt(
+  path: string,
+  init: RequestInit & { readonly ports?: RunServicePorts } = {},
+): Promise<{ readonly status: number; readonly body: Record<string, unknown> }> {
+  const { ports, ...requestInit } = init
+  const origin = await mount(ports ?? resumePorts())
+  const response = await fetch(`${origin}${path}`, requestInit)
+  return { status: response.status, body: await response.json() as Record<string, unknown> }
+}
+
+const authed = { Authorization: `Bearer ${TOKEN}` }
+
+const CODE_PROBES: readonly CodeProbe[] = Object.freeze([
+  {
+    code: 'missing_authorization',
+    status: 401,
+    drive: () => refusalAt('/ok'),
+  },
+  {
+    code: 'malformed_authorization',
+    status: 401,
+    drive: () => refusalAt('/ok', {
+      headers: { Authorization: 'Basic nope' },
+      ports: fakePorts({
+        verifyBearer: () => ({ kind: 'refused', reason: 'malformed_authorization' }),
+      }),
+    }),
+  },
+  {
+    code: 'invalid_token',
+    status: 401,
+    drive: () => refusalAt('/ok', { headers: { Authorization: 'Bearer wrong' } }),
+  },
+  {
+    code: 'unknown_route',
+    status: 404,
+    drive: () => refusalAt('/run/r_planted/nope', { headers: authed }),
+  },
+  {
+    code: 'refused_request_field',
+    status: 400,
+    drive: () => refusalAt('/run', {
+      method: 'POST',
+      headers: { ...authed, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runId: 'r_mine' }),
+    }),
+  },
+  {
+    code: 'invalid_request_body',
+    status: 400,
+    drive: () => refusalAt('/run', {
+      method: 'POST',
+      headers: { ...authed, 'Content-Type': 'application/json' },
+      body: '{not json',
+    }),
+  },
+  {
+    code: 'run_start_failed',
+    status: 500,
+    drive: () => refusalAt('/run', {
+      method: 'POST',
+      headers: { ...authed, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      ports: fakePorts({ invokeRunStart: () => { throw new Error('the host is gone') } }),
+    }),
+  },
+  {
+    code: 'run_denied',
+    status: 403,
+    wide: true,
+    drive: () => refusalAt('/run', {
+      method: 'POST',
+      headers: { ...authed, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      ports: fakePorts({
+        invokeRunStart: () => {
+          throw Object.assign(new Error('denied'), {
+            neutralReason: 'this project refuses runs of this class from this context',
+            remedies: [],
+          })
+        },
+      }),
+    }),
+  },
+  {
+    code: 'unknown_run',
+    status: 404,
+    drive: () => refusalAt('/run/r_nope/events', { headers: authed }),
+  },
+  {
+    code: 'invalid_handle',
+    status: 400,
+    drive: () => refusalAt('/run/r_planted/events?handle=notanumber', { headers: authed }),
+  },
+  {
+    code: 'unknown_handle',
+    status: 400,
+    drive: () => refusalAt('/run/r_planted/events?handle=4', { headers: authed }),
+  },
+  {
+    code: 'invalid_last_event_id',
+    status: 400,
+    drive: () => refusalAt('/run/r_planted/events?lastEventId=abc', { headers: authed }),
+  },
+  {
+    code: 'replay_floor',
+    status: 410,
+    wide: true,
+    drive: () => refusalAt('/run/r_floor/events?lastEventId=2', { headers: authed }),
+  },
+  {
+    code: 'replay_unavailable',
+    status: 500,
+    drive: () => refusalAt('/run/r_planted/events', {
+      headers: authed,
+      ports: fakePorts({ attach: () => plantedSession({ throwOnSubscribe: true }) }),
+    }),
+  },
+] as const)
+
+describe('the refusal-CODE census is a complete set over RUN_SERVICE_ERROR_CODES', () => {
+  it('names every declared code and no undeclared one — both directions', () => {
+    const probed = [...CODE_PROBES].map((probe) => probe.code).sort()
+    expect(
+      probed,
+      'every code this door can write must have a request class that produces it — a code with no '
+      + 'probe is a word nobody can reach, and a probe for a code the set no longer declares is '
+      + 'this file certifying an answer that is gone',
+    ).toEqual([...RUN_SERVICE_ERROR_CODES].sort())
+    // Non-vacuity: a census over an empty probe list agrees with an empty code set for free.
+    expect(CODE_PROBES.length).toBeGreaterThanOrEqual(14)
+    expect(new Set(probed).size).toBe(CODE_PROBES.length)
+  })
+
+  it.each(CODE_PROBES.map((probe) => [probe.code, probe] as const))(
+    '%s is DRIVEN out of the shipped door, at its declared status',
+    async (code, probe) => {
+      const observed = await probe.drive()
+      expect(observed.status, `${code} must be answered with ${String(probe.status)}`)
+        .toBe(probe.status)
+      expect(observed.body.error).toBe(code)
+      if (probe.wide !== true) {
+        // THE ONE-KEY LAW, re-measured per code rather than asserted once: a refusal that grew a
+        // second key would be a fingerprinting surface, and the two that legitimately carry one
+        // are declared here by name rather than discovered.
+        expect(Object.keys(observed.body), `${code} carries exactly one key`).toEqual(['error'])
+      }
+    },
+  )
+
+  it('the two WIDE bodies are exactly the two this door declares, and they parse', () => {
+    expect(CODE_PROBES.filter((probe) => probe.wide === true).map((probe) => probe.code).sort())
+      .toEqual(['replay_floor', 'run_denied'])
+  })
+
+  it('the replay_floor body satisfies its published schema', async () => {
+    const observed = await refusalAt('/run/r_floor/events?lastEventId=2', { headers: authed })
+    expect(RunServiceReplayFloorBodySchema.safeParse(observed.body).success).toBe(true)
+    expect(RunServiceReplayFloorBodySchema.parse(observed.body).earliestAvailableSeq)
+      .toBe(FLOOR_EARLIEST_SEQ)
   })
 })

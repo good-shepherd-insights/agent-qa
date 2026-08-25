@@ -74,6 +74,15 @@ export const RUN_SERVICE_ERROR_CODES = [
   // run answers to it. Both are answered before any stream header, and neither echoes the value.
   'invalid_handle',
   'unknown_handle',
+  // 403-03 (D-13, T-403-13 · INVK-05): the resume point's two refusals, kept APART on the
+  // `invalid_handle`/`unknown_handle` reasoning one line up. `invalid_last_event_id` says the
+  // `Last-Event-ID` header or the `?lastEventId=` parameter was not a canonical non-negative
+  // integer — a fact about the caller's own input. `replay_floor` says the parse succeeded and the
+  // requested point is BELOW what the bus can still replay; it is the one refusal on this door that
+  // carries a second key, because the recovery point is the whole reason it exists (see
+  // `RunServiceReplayFloorBodySchema`). Both are answered before any stream header.
+  'invalid_last_event_id',
+  'replay_floor',
   // 402-06 (D-01 discretion, T-402-22): the policy gate refused this run. A member of the SAME
   // closed set so the code vocabulary stays one vocabulary, but the only code this door answers
   // with a body wider than one key — see `RunServiceDenialBodySchema` for why that widening is
@@ -143,6 +152,36 @@ export const RunServiceDenialBodySchema = z.object({
 }).strict()
 
 export type RunServiceDenialBody = z.infer<typeof RunServiceDenialBodySchema>
+
+/**
+ * What a REPLAY-FLOOR refusal answers with — the second body on this door wider than one key
+ * (403-03, D-13 · INVK-05).
+ *
+ * WHY THE ONE-KEY LAW DOES NOT GOVERN HERE EITHER, on `RunServiceDenialBodySchema`'s exact
+ * argument and with one addition of its own. A 410 is answered only AFTER a declared credential
+ * matched on the authed door, and only behind the bind guard on the local one — the reader is a
+ * party this process has already decided to talk to. And what the second key carries is not a host
+ * secret: `earliestAvailableSeq` is a fact about the CALLER'S OWN request, namely the point at
+ * which the replay it asked for could have been served.
+ *
+ * THE FIELD IS SPELLED EXACTLY AS `StreamReplayFloorError.earliestAvailableSeq` AND AS THE BUS'S
+ * `ReplayIncompleteError.earliestAvailableSeq`, deliberately: the durable reader (`runs.events`)
+ * and the live door name the SAME fact, so a client that learned the word once has learned it
+ * everywhere.
+ *
+ * WITHOUT THE NUMBER THE REFUSAL WOULD BE WORSE THAN NOTHING. A caller told only "gone" can do one
+ * of two things: give up, or retry the identical request forever. The number is what makes the
+ * refusal actionable — re-attach with `lastEventId = earliestAvailableSeq - 1`, because the caller
+ * names the last envelope it has ALREADY observed and this names the first one still available.
+ * That subtraction is stated here, in `docs/run-service.md`, and pinned by a cell that reads the
+ * floor out of a real refusal and re-attaches with it.
+ */
+export const RunServiceReplayFloorBodySchema = z.object({
+  error: z.literal('replay_floor'),
+  earliestAvailableSeq: z.number().int().nonnegative(),
+}).strict()
+
+export type RunServiceReplayFloorBody = z.infer<typeof RunServiceReplayFloorBodySchema>
 
 /**
  * The request fields this door REFUSES outright (D-07 / D-12, 401's law carried to the wire).

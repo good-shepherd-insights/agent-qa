@@ -18,7 +18,12 @@ import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
 import type { AgentHost } from '../chat/host.js'
 import { parseHandleParam } from '@vostride/agent-qa-schema'
 import type { RunServiceReadiness, RunSession, RunsLiveUrlResult } from '@vostride/agent-qa-schema'
-import { handleParamOf, serveRunEventStream } from '../run-service/run-service-routes.js'
+import {
+  handleParamOf,
+  lastEventIdParamOf,
+  resumePointOf,
+  serveRunEventStream,
+} from '../run-service/run-service-routes.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
@@ -2455,6 +2460,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       serveRunEventStream(req, res, {
         runId,
         handleParam: handleParamOf(req),
+        // 403-03 (D-13 · INVK-05): the resume point, read from the SAME pair the authed door reads
+        // it from. `url.searchParams.get('lastEventId')` would resolve a repeated parameter to its
+        // first value — the one answer `lastEventIdParamOf` exists to refuse — and a second
+        // header/query precedence rule here would be a second contract for where a client resumes.
+        resume: resumePointOf(req.headers['last-event-id'], lastEventIdParamOf(req)),
         attach: deps.runServiceAttach,
       })
       return

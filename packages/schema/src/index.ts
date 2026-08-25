@@ -867,6 +867,7 @@ export {
   RunServiceDenialBodySchema,
   RunServiceErrorBodySchema,
   RunServiceReadinessSchema,
+  RunServiceReplayFloorBodySchema,
   RunServiceStartRequestSchema,
   SERVICE_BEARER_REFUSAL_REASONS,
 } from './functions/index'
@@ -913,6 +914,7 @@ export type {
   RunServiceErrorBody,
   RunServiceErrorCode,
   RunServiceReadiness,
+  RunServiceReplayFloorBody,
   RunServiceStartRequest,
   ServiceBearerRefusalReason,
   ServiceBearerVerdict,
