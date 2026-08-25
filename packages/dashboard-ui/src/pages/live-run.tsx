@@ -77,6 +77,16 @@ export const RUN_ENDED_TEXT = 'run ended'
 /** D-15's word for a run this process can no longer stream. */
 export const RUN_OVER_TEXT = 'this run is over — view run detail'
 
+/**
+ * The not-yet probe for a run the door has never heard of, in attempts and in cadence.
+ *
+ * ~20 s of bounded probing: long enough for a run whose session has not reached the registry to
+ * appear, short enough that a link to a long-gone run settles on `this run is over` while the
+ * person is still looking at it.
+ */
+const NOT_YET_ATTACH_RETRY_MS = 2_500
+const NOT_YET_ATTACH_LIMIT = 8
+
 export default function LiveRunPage() {
   usePageTitle('Live Run')
   const { id } = useParams<{ id: string }>()
@@ -98,6 +108,9 @@ export default function LiveRunPage() {
   const resumeRef = useRef<number | undefined>(undefined)
   const stateRef = useRef(state)
   stateRef.current = state
+  // How many times this page has re-attached to a run the door does not know about YET. Bounded,
+  // so D-15's refusal to hammer a settled door survives the not-yet probe below.
+  const notYetAttemptsRef = useRef(0)
 
   useEffect(() => {
     const timer = setInterval(() => { setNow(Date.now()) }, CLOCK_TICK_MS)
@@ -133,6 +146,9 @@ export default function LiveRunPage() {
     const attachAt = Date.now()
     setAttachedAt(attachAt)
     setSourceReadyState(0)
+    // Every not-yet re-attach timer this attach armed, cleared with the attach that armed it — a
+    // page unmounted mid-probe must not wake up and re-open a socket nobody is watching.
+    const pendingTimers: ReturnType<typeof setTimeout>[] = []
 
     const source = openRunStream(id, {
       // `=== undefined`, never truthiness: seq 0 is a real resume point ("from the very
@@ -178,9 +194,31 @@ export default function LiveRunPage() {
               return
             }
             case 'unknown_run': {
-              // D-15: this process never started that run, or its retention elapsed. Retrying would
-              // hammer a door that has already given its final answer.
-              setRunOver(true)
+              // D-15, AND THE NOT-YET RUN IT USED TO SWALLOW (403-07, gap 1 arm 2).
+              //
+              // `unknown_run` is one word for two situations, and the discriminator is whether
+              // this page has ever heard ANYTHING about the run. A page that has folded envelopes
+              // and is now told the run is unknown has watched its retention elapse — retrying
+              // would hammer a door that has already given its final answer, so D-15 stands and
+              // the durable record is the honest destination. A page that has heard NOTHING yet
+              // (`lastSeq === 0`) may simply have arrived before the session reached the registry,
+              // which is the ordinary flow: every trigger surface navigates here the instant the
+              // run id exists. Latching `this run is over` there is the same lie the preview pane
+              // used to tell, one channel across — and it is worse, because it takes the whole
+              // page down with it.
+              //
+              // THE PROBE IS BOUNDED, which is what keeps D-15's argument intact: a run that never
+              // appears costs a fixed, short handful of attaches and then reads `over` for good.
+              if (lastSeq > 0 || notYetAttemptsRef.current >= NOT_YET_ATTACH_LIMIT) {
+                setRunOver(true)
+                return
+              }
+              notYetAttemptsRef.current += 1
+              const timer = setTimeout(() => {
+                if (disposed) return
+                setAttachToken((token) => token + 1)
+              }, NOT_YET_ATTACH_RETRY_MS)
+              pendingTimers.push(timer)
               return
             }
             case 'lost': {
@@ -207,6 +245,7 @@ export default function LiveRunPage() {
 
     return () => {
       disposed = true
+      for (const timer of pendingTimers) clearTimeout(timer)
       source.close()
     }
   }, [id, attachToken, onEvent])
@@ -337,7 +376,13 @@ export default function LiveRunPage() {
 
         <ResizablePanel defaultSize={60} minSize={30}>
           <section data-live-pane="preview" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-            <PreviewPane runId={id} handles={state.handles} terminal={state.terminal} runOver={runOver} />
+            <PreviewPane
+              runId={id}
+              handles={state.handles}
+              membersByHandle={state.members}
+              terminal={state.terminal}
+              runOver={runOver}
+            />
           </section>
         </ResizablePanel>
       </ResizablePanelGroup>

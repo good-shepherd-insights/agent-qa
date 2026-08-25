@@ -81,6 +81,11 @@ function publishedSentence(relativePath: string, name: string): string {
 }
 
 const NO_STREAM_TEXT = publishedSentence('components/live-run/preview-pane.tsx', 'NO_STREAM_TEXT')
+/**
+ * Long enough to cover more than one not-yet retry period, so "the sentence did not flicker" is a
+ * claim about a window the poll would have fired in twice rather than one lucky sample.
+ */
+const NO_STREAM_SETTLE_MS = 6_000
 const DID_NOT_RUN_NOTE = publishedSentence('lib/run-stream-reducer.ts', 'DID_NOT_RUN_NOTE')
 
 interface DomFixture {
@@ -88,6 +93,8 @@ interface DomFixture {
   readonly browser: Browser
   readonly dom: PlantedLiveRun
   readonly none: PlantedLiveRun
+  /** Real, decodable JPEG bytes, minted once by the browser itself in `beforeAll`. */
+  readonly jpeg: Uint8Array
 }
 
 let fixture: DomFixture | undefined
@@ -184,7 +191,7 @@ beforeAll(async () => {
   publishTo(none, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
   publishTo(none, 'testStarted', { testId: 't0', testIndex: 0, name: 'the browserless member', totalSteps: 1 })
 
-  fixture = { harness, browser, dom, none }
+  fixture = { harness, browser, dom, none, jpeg }
 }, 180_000)
 
 afterAll(async () => {
@@ -198,6 +205,102 @@ afterAll(async () => {
   plantedRuns.length = 0
   cleanupTempRoots()
 })
+
+/**
+ * The pane's current state word, read WITHOUT Playwright's implicit element wait.
+ *
+ * `locator.getAttribute()` waits up to its own timeout for the element to exist, which would turn
+ * "the pane says nothing yet" into a thirty-second stall inside a poll. `evaluate` answers with
+ * whatever the document holds at this instant, which is what a reading is.
+ */
+async function previewWord(page: Page): Promise<string | null> {
+  return page.evaluate(
+    () => document.querySelector('[data-preview-state]')?.getAttribute('data-preview-state') ?? null,
+  )
+}
+
+/** Poll until the pane leaves `minting` (its transient first render), then report what it settled on. */
+async function settledPreviewWord(page: Page, budgetMs = 20_000): Promise<string | null> {
+  const deadline = Date.now() + budgetMs
+  let seen = await previewWord(page)
+  while (Date.now() < deadline) {
+    seen = await previewWord(page)
+    if (seen !== null && seen !== 'minting') return seen
+    await page.waitForTimeout(100)
+  }
+  return seen
+}
+
+/**
+ * Poll until the pane reads `want`, and report the word it ENDED ON either way.
+ *
+ * A bare `waitFor` would throw on the word it did not reach, which loses the reading the RED
+ * baseline is made of — "the pane was at `no-stream` before the latch AND still at `no-stream`
+ * after it" is two facts, and a cell that dies on the first one can only ever report one.
+ */
+async function previewWordUntil(page: Page, want: string, budgetMs: number): Promise<string | null> {
+  const deadline = Date.now() + budgetMs
+  let seen = await previewWord(page)
+  while (Date.now() < deadline) {
+    seen = await previewWord(page)
+    if (seen === want) return seen
+    await page.waitForTimeout(150)
+  }
+  return seen
+}
+
+/**
+ * THE NON-VACUITY CONTROL: what the SHIPPED mint door answers for this run at this instant.
+ *
+ * Without it a red below could be the FIXTURE failing to latch rather than the PANE failing to
+ * re-mint, and the two are byte-identical from the outside (401's `auditRows: []` on both legs).
+ * This asks the same door the pane asks, over HTTP, at the moment the pane's next retry would.
+ */
+async function mintStreamKind(runId: string, handle = 0): Promise<string> {
+  const response = await fetch(
+    `${held().harness.origin}/api/runs/${encodeURIComponent(runId)}/live-url?handle=${String(handle)}`,
+  )
+  const raw = await response.text()
+  if (!response.ok) return `HTTP ${String(response.status)} ${raw.trim()}`
+  const parsed = JSON.parse(raw) as { stream?: { kind?: string } }
+  return parsed.stream?.kind ?? 'absent'
+}
+
+interface EmbedReading {
+  /** The attribute's own value, read out of the embed document. */
+  state: string | null
+  /** How many frames that document says it PAINTED. */
+  frames: number
+  /**
+   * The same `live` fact asked a SECOND, differently-shaped way: how many nodes the document's own
+   * selector engine matches for `[data-embed-state="live"]`. An attribute read and a selector match
+   * fail differently, and a claim carried by one spelling alone is a claim about that spelling.
+   */
+  liveNodes: number
+}
+
+/** The embed document's own state and painted-frame count, or an honest absence when there is none. */
+async function embedReading(page: Page, budgetMs: number): Promise<EmbedReading> {
+  const deadline = Date.now() + budgetMs
+  let reading: EmbedReading = { state: null, frames: 0, liveNodes: 0 }
+  for (;;) {
+    const frame = page.frames().find((one) => one.url().includes('/live/'))
+    if (frame !== undefined) {
+      const attributes = await frame.evaluate(() => {
+        const node = document.querySelector('[data-embed-state]')
+        return {
+          state: node?.getAttribute('data-embed-state') ?? null,
+          frames: Number(node?.getAttribute('data-embed-frames') ?? '0'),
+        }
+      }).catch(() => ({ state: null, frames: 0 }))
+      const liveNodes = await frame.locator('[data-embed-state="live"]').count().catch(() => 0)
+      reading = { ...attributes, liveNodes }
+      if (reading.state === 'live' && reading.frames >= 1 && reading.liveNodes >= 1) return reading
+    }
+    if (Date.now() > deadline) return reading
+    await page.waitForTimeout(150)
+  }
+}
 
 /** The harness's own source — cell (0) asserts the frame these cells run behind, where it exists. */
 const HARNESS_SOURCE = join(
@@ -331,17 +434,51 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
   }, 120_000)
 
   it('(4) LIVE-04: a handle that declares `none` gets a sentence, never a frame that never arrives', async () => {
+    // THE REGRESSION PIN FOR GAP 1, and the property cell (8)'s re-mint could have broken. `none`
+    // is TWO situations wearing one word, and only one of them is the D-08 declared absence:
+    //  - the watched member has not started a step, so its browser is not up yet — a NOT-YET, and
+    //    printing `no live preview for this target` over it is a lie about a run that is about to
+    //    stream (the whole of gap 1);
+    //  - the watched member HAS started and still declares `none` — genuinely nothing to stream,
+    //    and the sentence is the honest answer.
+    // A retry that fired from the second case would poll straight through a declared absence and
+    // turn the sentence into a flicker. Both halves are asserted here so neither can drift.
     await onLivePage('r_none', async (page) => {
+      await page.locator('[data-preview-state="waiting"]').waitFor({ state: 'attached', timeout: 40_000 })
+      expect(
+        await page.locator('[data-live-embed]').count(),
+        'nothing is embedded over a stream that does not exist yet either',
+      ).toBe(0)
+      // The steps pane keeps working, which is the other half of the sentence's promise.
+      expect(await page.locator('[data-live-pane="steps"]').isVisible()).toBe(true)
+    })
+
+    // THE DECLARED HALF, ON ITS OWN RUN. `r_none` cannot be used for it: cell (7) reads that run's
+    // `did not run` note, which the reducer emits only for a member that never saw a `stepStarted`
+    // — publishing one here to move the pane would silently delete the subject of a sibling cell.
+    const started = plantLiveRun({ runId: 'r_none_started', heartbeatMs: 10_000, capability: { kind: 'none' } })
+    plantedRuns.push(started)
+    held().harness.plant(started)
+    publishTo(started, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+    publishTo(started, 'testStarted', { testId: 't0', testIndex: 0, name: 'the browserless member', totalSteps: 1 })
+    publishTo(started, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'open the page' })
+
+    await onLivePage('r_none_started', async (page) => {
       await page.locator('[data-preview-state="no-stream"]').waitFor({ state: 'attached', timeout: 40_000 })
       expect(await page.locator('[data-preview-state="no-stream"]').textContent()).toContain(NO_STREAM_TEXT)
       expect(
         await page.locator('[data-live-embed]').count(),
         'a declared absence embeds nothing — an iframe here would spin forever over no stream',
       ).toBe(0)
-      // The steps pane keeps working, which is the other half of the sentence's promise.
-      expect(await page.locator('[data-live-pane="steps"]').isVisible()).toBe(true)
+      // AND IT STAYS THE SENTENCE. A retry firing from `no-stream` would show as a flicker back
+      // through the motion element, which is exactly what this settle window would catch.
+      await page.waitForTimeout(NO_STREAM_SETTLE_MS)
+      expect(
+        await previewWord(page),
+        'the D-08 sentence is terminal for the rest of the run — never a flicker',
+      ).toBe('no-stream')
     })
-  }, 60_000)
+  }, 120_000)
 
   it('(5a) HNST-03: k=5 — the pill reads `live` across 11 s of heartbeat-only traffic', async () => {
     const f = held()
@@ -501,4 +638,132 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     })
     expect(f.none.cancelCalls()).toBe(0)
   }, 90_000)
+
+  it('(8) GAP 1 / SC-1: the pane re-mints and embeds under production ordering', async () => {
+    // THE GAP THIS CELL EXISTS FOR (403-VERIFICATION gap 1). `startRun` publishes the session
+    // SYNCHRONOUSLY at seq 1; `registerAdapterLiveStream` runs only once the member's browser is
+    // up. Every navigation into this page in the shipped UI happens the instant the run is
+    // triggered — so the pane mounts BETWEEN those two facts, and a pane that minted once got
+    // `{ kind: 'none' }` and latched `no live preview for this target` for the rest of the run.
+    //
+    // WHY NO CELL COULD SEE IT BEFORE: `live-view-fixture.ts` declared `streamCapabilityOf: () =>
+    // input.capability`, a CONSTANT that exists before any viewer does. `latchCapability` makes the
+    // production ordering expressible — as an EVENT this cell fires, never a wall clock, because
+    // in production the two facts are causally ordered (`run-composition.ts:602`, `run.ts:4091`)
+    // and a harness that raced them would be a coin flip whose losing side looks like the defect.
+    const arms: Record<string, unknown>[] = []
+
+    for (let k = 0; k < 5; k += 1) {
+      // ARM 1 — `none` AT ATTACH. A fresh run per arm: the latch is one-way, so a run reused
+      // across arms would only ever be `none` once.
+      const run = plantLiveRun({
+        runId: `r_gap1_none_${String(k)}`,
+        heartbeatMs: 10_000,
+        capability: { kind: 'none' },
+        frameBytes: held().jpeg,
+        frameWidth: 640,
+        frameHeight: 400,
+      })
+      plantedRuns.push(run)
+      held().harness.plant(run)
+      // The roster is real and the member has NOT started a step — which is the whole
+      // discriminator: "the browser is not up yet", not "this target declares no stream".
+      publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+      publishTo(run, 'testStarted', { testId: 't0', testIndex: 0, name: 'the not-yet member', totalSteps: 2 })
+
+      const reading = await onLivePage(run.runId, async (page) => {
+        // (a) THE NOT-YET STATE, and no iframe over a stream that does not exist yet.
+        const atAttach = await settledPreviewWord(page, 25_000)
+        const embedsAtAttach = await page.locator('[data-live-embed]').count()
+
+        // (b) ONLY NOW does the member's browser come up. The CELL decides this instant.
+        run.latchCapability({ kind: 'cdp-screencast' })
+        const control = await mintStreamKind(run.runId)
+
+        // (c) The pane must find its way back on its own.
+        const afterLatch = await previewWordUntil(page, 'embedded', 25_000)
+        const embed = await embedReading(page, 25_000)
+
+        // (d) The watched member starting must not UNDO a live embed. Published only after the
+        // embed was observed, so no `none` answer can ever meet `sawStepStarted === true`.
+        publishTo(run, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'open the page' })
+        await page.waitForTimeout(3_000)
+        const afterStepStarted = await previewWord(page)
+
+        return { atAttach, embedsAtAttach, control, afterLatch, embed, afterStepStarted }
+      })
+      arms.push({ arm: k + 1, ...reading })
+    }
+
+    console.log(`(8) arm 1 (none-at-attach) k=5: ${JSON.stringify(arms)}`)
+    for (const arm of arms) {
+      const context = `arm ${String(arm.arm)} of 5: ${JSON.stringify(arm)}`
+      expect(arm.control, `${context} — the NON-VACUITY CONTROL: the door really did answer `
+        + 'cdp-screencast at the moment the pane\'s next retry would have asked. Without this, a red '
+        + 'below could be the fixture failing to latch rather than the pane failing to re-mint.')
+        .toBe('cdp-screencast')
+      expect(arm.atAttach, `${context} — a member whose browser is not up yet is NOT a declared absence`)
+        .toBe('waiting')
+      expect(arm.embedsAtAttach, `${context} — nothing is embedded over a stream that does not exist yet`).toBe(0)
+      expect(arm.afterLatch, `${context} — SC-1: the pane re-mints while the run is live`).toBe('embedded')
+      const embed = arm.embed as EmbedReading
+      expect(embed.state, `${context} — and the embed PAINTS`).toBe('live')
+      expect(embed.frames, context).toBeGreaterThanOrEqual(1)
+      expect(embed.liveNodes, `${context} — the same fact through the document's own selector`)
+        .toBeGreaterThanOrEqual(1)
+      expect(arm.afterStepStarted, `${context} — the member starting does not undo a live embed`)
+        .toBe('embedded')
+    }
+  }, 600_000)
+
+  it('(8b) GAP 1 / SC-1: the `unknown_run`-at-attach arm, behind the production page', async () => {
+    // ARM 2 — the run this process has not published YET. The pane's mint answers `unknown_run`.
+    //
+    // WHAT THIS ARM MEASURES IS THE WHOLE PAGE, not the pane alone, and that distinction is the
+    // finding: the verifier's adversarial probe drove `PreviewPane` in isolation and watched it
+    // latch `unavailable`. Behind the production frame the page ALSO attaches its run stream, and
+    // `/api/run-stream/:id` reads the SAME session registry the mint reads — so an unplanted run
+    // refuses BOTH doors, `classifyRunStreamClose` answers `unknown_run`, and D-15's `runOver`
+    // fires. Every reading below is recorded so the ordering these two doors resolve in is a
+    // fact on the record rather than a premise.
+    const arms: Record<string, unknown>[] = []
+
+    for (let k = 0; k < 5; k += 1) {
+      const run = plantLiveRun({
+        runId: `r_gap1_unknown_${String(k)}`,
+        heartbeatMs: 10_000,
+        capability: { kind: 'cdp-screencast' },
+        frameBytes: held().jpeg,
+        frameWidth: 640,
+        frameHeight: 400,
+      })
+      plantedRuns.push(run)
+      // DELIBERATELY NOT PLANTED YET — that is arm 2's whole subject.
+
+      const reading = await onLivePage(run.runId, async (page) => {
+        const beforePlant = await settledPreviewWord(page, 20_000)
+        const controlBefore = await mintStreamKind(run.runId)
+        const runOverBefore = await page.locator('[data-run-over]').count()
+
+        held().harness.plant(run)
+        publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+        const controlAfter = await mintStreamKind(run.runId)
+
+        const afterPlant = await previewWordUntil(page, 'embedded', 20_000)
+        const runOverAfter = await page.locator('[data-run-over]').count()
+        return { beforePlant, controlBefore, runOverBefore, controlAfter, afterPlant, runOverAfter }
+      })
+      arms.push({ arm: k + 1, ...reading })
+    }
+
+    console.log(`(8b) arm 2 (unknown_run-at-attach) k=5: ${JSON.stringify(arms)}`)
+    for (const arm of arms) {
+      const context = `arm ${String(arm.arm)} of 5: ${JSON.stringify(arm)}`
+      expect(arm.controlBefore, `${context} — the control: the mint door really did refuse by name`)
+        .toContain('unknown_run')
+      expect(arm.controlAfter, `${context} — and really does answer once the session is published`)
+        .toBe('cdp-screencast')
+      expect(arm.afterPlant, `${context} — ARM 2`).toBe('embedded')
+    }
+  }, 600_000)
 })

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { fetchLiveUrl } from '@/lib/api'
 
+import type { MemberRow } from '@/lib/run-stream-reducer'
+
 import type { RunsLiveUrlResult } from '@vostride/agent-qa-schema'
 
 /**
@@ -31,28 +33,74 @@ import type { RunsLiveUrlResult } from '@vostride/agent-qa-schema'
  * THE PANE HAS ITS OWN STATE, DELIBERATELY SEPARATE FROM THE LIVENESS PILL (D-11). Frames can
  * stall while the bus is perfectly live, and the reverse. One indicator for two channels would be
  * wrong about one of them exactly when it mattered.
+ *
+ * AND IT DISTINGUISHES `NOT YET` FROM `NO` (403-07, gap 1). The mint fires the instant this page
+ * renders, and every navigation into the live page in the shipped UI happens the moment the run is
+ * TRIGGERED — before the member's browser exists. `startRun` publishes the session synchronously
+ * at seq 1; `registerAdapterLiveStream` runs only once that browser is up. So the first mint
+ * answers `{ kind: 'none' }` in the ordinary case, and a pane that read that as the D-08 declared
+ * absence printed `no live preview for this target` over a run that was about to stream — the
+ * exact lie HNST-03 refuses, told about the other channel. The discriminator is the watched
+ * member's own lifecycle: a member that has not started a step has no browser yet, so its `none`
+ * is a NOT-YET and the pane keeps asking; a member that HAS started (or a run that is over) and
+ * still declares `none` has genuinely nothing to stream, and gets the sentence.
  */
 
 /** What a target that declared no live stream renders. The steps pane keeps working regardless. */
 export const NO_STREAM_TEXT = 'no live preview for this target — steps still advance below'
 
-export type PreviewState = 'minting' | 'embedded' | 'no-stream' | 'ended' | 'unavailable'
+/**
+ * How long the pane waits before asking again while it is in the NOT-YET state.
+ *
+ * A POLL, NOT A PUSH, and the reason is structural: the not-yet pane renders no iframe, so it has
+ * no socket for anything to push down. The frame socket only exists once there is a `liveUrl` to
+ * open it with. Re-asking the mint route is therefore the only path from "not yet" to "embedded",
+ * and 2.5 s is short enough that a browser coming up is picked up within a step and long enough
+ * that a run held at the not-yet state costs the door well under one request a second.
+ */
+export const NO_STREAM_RETRY_MS = 2_500
+
+/** The door's word for "this process has no such run" — a NOT-YET, never a final answer (D-15). */
+const UNKNOWN_RUN_WORD = 'unknown_run'
+
+export type PreviewState = 'minting' | 'waiting' | 'embedded' | 'no-stream' | 'ended' | 'unavailable'
 
 export interface PreviewPaneProps {
   runId: string
   /** The run's attachable handle roster, as `runStarted` announced it. Undefined = it announced none. */
   handles: readonly number[] | undefined
+  /**
+   * The reducer's member rows BY HANDLE — the honest "is this member's browser up yet" signal.
+   *
+   * A RECORD, and the prop is named apart from the page's `members` ARRAY on purpose: `live-run.tsx`
+   * already binds `members = Object.values(state.members)` for the step list, and two shapes under
+   * one identifier in one file is a bug waiting for its first careless edit.
+   */
+  membersByHandle: Readonly<Record<number, MemberRow>>
   terminal: boolean
   runOver: boolean
 }
 
-export function PreviewPane({ runId, handles, terminal, runOver }: PreviewPaneProps) {
+export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver }: PreviewPaneProps) {
   const [handle, setHandle] = useState(0)
   const [mint, setMint] = useState<RunsLiveUrlResult | undefined>(undefined)
   const [previewState, setPreviewState] = useState<PreviewState>('minting')
   const [errorWord, setErrorWord] = useState<string | undefined>(undefined)
+  // Each expiry of the not-yet poll, counted only so the retry effect has something to re-run on:
+  // `setPreviewState('waiting')` on a pane already at `waiting` is a no-op React bails out of, and
+  // an effect keyed only on the state word would therefore fire exactly once and stop.
+  const [retryTick, setRetryTick] = useState(0)
 
   const ended = terminal || runOver
+  const watchedMemberStarted = membersByHandle[handle]?.sawStepStarted === true
+
+  // `mintFor` is `useCallback([runId])` and its answer arrives LATER, so the two facts that decide
+  // what a `none` means are read through refs rather than captured: a closure built at mount would
+  // still believe the member had not started an hour into the run.
+  const endedRef = useRef(ended)
+  endedRef.current = ended
+  const startedRef = useRef(watchedMemberStarted)
+  startedRef.current = watchedMemberStarted
 
   // The TTL this mint was issued with, so "less than half of it remains" is answerable. The result
   // carries only the deadline; the half-life is a fact about the interval, which needs both ends.
@@ -74,7 +122,10 @@ export function PreviewPane({ runId, handles, terminal, runOver }: PreviewPanePr
           setErrorWord(undefined)
           if (result.stream.kind === 'none') {
             setMint(undefined)
-            setPreviewState('no-stream')
+            // THE ONE DISTINCTION THIS PANE EXISTS TO MAKE HONESTLY. `none` from a member whose
+            // browser is not up yet is a not-yet; `none` from a member that has started its steps,
+            // or from a run that is over, is the D-08 DECLARED absence and gets the sentence.
+            setPreviewState(endedRef.current || startedRef.current ? 'no-stream' : 'waiting')
             return
           }
           setMint(result)
@@ -87,8 +138,15 @@ export function PreviewPane({ runId, handles, terminal, runOver }: PreviewPanePr
           setMint(undefined)
           // The door's own word (`live_view_unavailable`, `unknown_run`, `invalid_handle`,
           // `live_url_mint_failed`), never prose this pane invented for it.
-          setErrorWord(error instanceof Error ? error.message : 'live_url_mint_failed')
-          setPreviewState('unavailable')
+          const word = error instanceof Error ? error.message : 'live_url_mint_failed'
+          setErrorWord(word)
+          // THE NOT-YET ARM OF A REFUSAL IS EXACTLY ONE WORD WIDE, AND THE NARROWNESS IS THE
+          // HONESTY. `unknown_run` means this process has no such run YET — the session has not
+          // reached the registry. Every other word the door can say (`live_view_unavailable`,
+          // `invalid_handle`, `live_url_mint_failed`) is an ANSWER, and an answer keeps its state
+          // and its `data-preview-error` word. A rule that swallowed all four into a spinner would
+          // hide a misconfigured host behind motion forever.
+          setPreviewState(!endedRef.current && word === UNKNOWN_RUN_WORD ? 'waiting' : 'unavailable')
         })
     },
     [runId],
@@ -108,6 +166,25 @@ export function PreviewPane({ runId, handles, terminal, runOver }: PreviewPanePr
     setPreviewState('minting')
     mintFor(handle)
   }, [ended, handle, mintFor])
+
+  // THE NOT-YET POLL (403-07, gap 1). While the run is live and the pane is in the not-yet state,
+  // ask again. It fires ONLY from `waiting`: widening it to fire from `no-stream` would poll
+  // straight through a genuine declared absence and turn the D-08 sentence into a flicker, which
+  // is the exact lie the sentence exists to refuse.
+  //
+  // THE BOUND THIS ACCEPTS, stated so it is not rediscovered as a defect: `no-stream` is terminal
+  // for the rest of the run. `live-stream-hub.ts:236`'s re-register arm can install a fresh
+  // capability for a handle whose earlier one was withdrawn, and a pane already at `no-stream`
+  // would not observe it. That is unreachable on today's single-registration production path, and
+  // the alternative costs the sentence its meaning.
+  useEffect(() => {
+    if (ended || previewState !== 'waiting') return
+    const timer = setTimeout(() => {
+      setRetryTick((tick) => tick + 1)
+      mintFor(handle)
+    }, NO_STREAM_RETRY_MS)
+    return () => { clearTimeout(timer) }
+  }, [ended, handle, mintFor, previewState, retryTick])
 
   // THE RE-MINT IS SILENT AND IT HAPPENS AT HALF-LIFE, not at expiry. A capability that expires
   // while a person is watching would black the frame out mid-step and read as a crashed run; half
@@ -177,7 +254,13 @@ export function PreviewPane({ runId, handles, terminal, runOver }: PreviewPanePr
           />
         )}
         {previewState === 'no-stream' && <p className="p-6 text-sm text-muted-foreground">{NO_STREAM_TEXT}</p>}
-        {previewState === 'minting' && <p className="p-6 text-sm text-muted-foreground">attaching to the live view...</p>}
+        {(previewState === 'minting' || previewState === 'waiting') && (
+          // THE SAME MOTION FOR BOTH, DELIBERATELY. To the person watching, "asking" and "asking
+          // again because the browser is not up yet" are one situation: the preview is coming. The
+          // two words are kept apart on `data-preview-state`, where a test can tell them apart and
+          // a reader is not asked to.
+          <p className="p-6 text-sm text-muted-foreground">attaching to the live view...</p>
+        )}
         {previewState === 'ended' && <p className="p-6 text-sm text-muted-foreground">run ended</p>}
         {previewState === 'unavailable' && (
           <p data-preview-error={errorWord} className="p-6 text-sm text-muted-foreground">

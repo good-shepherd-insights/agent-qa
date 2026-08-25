@@ -64,6 +64,18 @@ export interface PlantedLiveRun {
   isDone(): boolean
   /** Settle `done`, as the run shell does once the handoff is written. */
   finish(verdict?: RunStatus): void
+  /**
+   * Declare a DIFFERENT stream capability from this instant on — the production ordering, stated
+   * as an EVENT the cell fires rather than a wall clock.
+   *
+   * WHY THIS IS NOT A `capabilityAfterMs` OPTION. In production the two facts are causally
+   * ordered: `registerAdapterLiveStream` runs before the member's first step
+   * (`run-composition.ts:602`, `run.ts:4091`). A harness that latched on a timer would leave them
+   * unordered relative to every other fixture event, which at k=5 is a coin flip whose losing side
+   * is indistinguishable from the defect under test. The cell calls this, so the cell owns the
+   * instant. A run whose cell never calls it behaves byte-identically to before.
+   */
+  latchCapability(next: LiveStreamDeclaration): void
   /** Stop the frame producer and close the bus. Never publishes. */
   close(): void
 }
@@ -101,6 +113,10 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
   let frameId = 0
   let producer: ReturnType<typeof setInterval> | undefined
   let settled = false
+  // THE DECLARED CAPABILITY IS A VARIABLE, NOT A CONSTANT (403-07 gap 1). `input.capability` seeds
+  // it and `latchCapability` moves it; both seams below read THIS, so "absent at attach, present a
+  // beat later" — the production ordering — is expressible without a timer anywhere on the path.
+  let declaredCapability: LiveStreamDeclaration = input.capability
 
   let settle: (completion: RunCompletion) => void = () => {}
   const done = new Promise<RunCompletion>((resolvePromise) => { settle = resolvePromise })
@@ -129,7 +145,7 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
     subscribeFrames: (_handle, onFrame): LiveFrameSubscription | undefined => {
       // AN HONEST ABSENCE, never an error: a handle that declares no stream has no subscription to
       // hand out, and the pane renders a sentence rather than a frame that never arrives.
-      if (input.capability.kind === 'none') return undefined
+      if (declaredCapability.kind === 'none') return undefined
       subscribers.add(onFrame)
       startProducer()
       return {
@@ -137,7 +153,7 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
         unsubscribe: () => { subscribers.delete(onFrame) },
       }
     },
-    streamCapabilityOf: () => input.capability,
+    streamCapabilityOf: () => declaredCapability,
     cancel: () => { cancelCalls += 1 },
     done,
   }
@@ -151,6 +167,7 @@ export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
     cancelCalls: () => cancelCalls,
     openFrameSubscriptions: () => subscribers.size,
     isDone: () => settled,
+    latchCapability: (next: LiveStreamDeclaration) => { declaredCapability = next },
     finish: (verdict: RunStatus = 'passed') => {
       if (settled) return
       settled = true
