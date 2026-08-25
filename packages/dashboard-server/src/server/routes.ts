@@ -12,6 +12,7 @@ import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import type { ConfigManager } from '../config/index.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
+import { refuseCrossSiteRequest } from './cross-site.js'
 import { tryParseRequestUrl } from './request-url.js'
 import { CHAT_ROUTE_PREFIX, RUN_CONFIRM_ROUTE_PREFIX, createChatRouter } from '../chat/chat-routes.js'
 import { isRunTriggerConfirmScope } from '../chat/confirm-registry.js'
@@ -457,6 +458,23 @@ function json(res: ServerResponse, data: unknown, status = 200): void {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   })
+  res.end(body)
+}
+
+/**
+ * An answer that carries NO cross-origin read grant.
+ *
+ * ADDITIVE, and `json()` above is untouched on purpose: its wildcard posture serves the legacy
+ * read routes and re-platforming those is Phase 402's question, not this one's. What this writer
+ * exists for is the narrow class of answers that hand out a CAPABILITY. `Access-Control-Allow-Origin: *`
+ * on such an answer means a document on any origin may READ the token out of the response — the
+ * refusal beside it would be worthless if the body were still readable through a redirect or a
+ * misconfigured proxy. No wildcard, no allow-methods: the dashboard's own page is same-origin and
+ * needs neither, and every non-browser client ignores both.
+ */
+function jsonNoCors(res: ServerResponse, data: unknown, status = 200): void {
+  const body = JSON.stringify(data)
+  res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(body)
 }
 
@@ -2215,15 +2233,30 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
     // one the function layer published. The refusals are the op's own, mapped by ERROR NAME rather
     // than by matching a message — a message is prose and prose gets rewritten.
     if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/live-url$/.test(path)) {
+      // THE SAME-SITE GUARD, FIRST — before the door decides anything else about this request.
+      //
+      // 403 gap round 1 (SC-2, T-403-20). This route hands out the frame socket's ONLY credential,
+      // so it is the choke point: a page that cannot obtain a token cannot open the socket. Before
+      // this check, a page on any origin open in the developer's own browser could `fetch` a view
+      // token and stream the app under test. The loopback bind is not a defence against that — it
+      // stops a remote HOST, and the attacker here is the developer's own browser reaching another
+      // ORIGIN. The predicate is the chat door's, shared rather than re-derived, and it ADMITS the
+      // caller that sends no `Origin` at all (the CLI, `curl`, the conformance harness), which is
+      // the local drive this door exists for.
+      const crossSite = refuseCrossSiteRequest(req)
+      if (crossSite !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
       if (!deps.mintLiveUrl) {
-        json(res, { error: 'live_view_unavailable' }, 503)
+        jsonNoCors(res, { error: 'live_view_unavailable' }, 503)
         return
       }
       let liveUrlRunId: string
       try {
         liveUrlRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/live-url'.length))
       } catch {
-        json(res, { error: 'unknown_run' }, 404)
+        jsonNoCors(res, { error: 'unknown_run' }, 404)
         return
       }
       // THE RAW `handle` PARAMETER THROUGH THE SCHEMA'S OWN READER, on the run-stream door's
@@ -2232,17 +2265,20 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       const rawHandle = handleParamOf(req)
       const parsedHandle = parseHandleParam(rawHandle)
       if (parsedHandle.kind === 'invalid') {
-        json(res, { error: 'invalid_handle' }, 400)
+        jsonNoCors(res, { error: 'invalid_handle' }, 400)
         return
       }
       const handle = parsedHandle.kind === 'absent' ? 0 : parsedHandle.index
+      // EVERY ARM THROUGH `jsonNoCors`, the success one most of all: the success body IS the token.
+      // The refusals go the same way so that the door has one posture rather than a posture per
+      // outcome — an arm left on `json()` would be the one a later reader copies.
       void deps.mintLiveUrl(liveUrlRunId, handle).then(
-        (result) => { json(res, result) },
+        (result) => { jsonNoCors(res, result) },
         (error: unknown) => {
           const name = error instanceof Error ? error.name : ''
-          if (name === 'UnknownRunError') { json(res, { error: 'unknown_run' }, 404); return }
-          if (name === 'LiveViewUnavailableError') { json(res, { error: 'live_view_unavailable' }, 503); return }
-          json(res, { error: 'live_url_mint_failed' }, 500)
+          if (name === 'UnknownRunError') { jsonNoCors(res, { error: 'unknown_run' }, 404); return }
+          if (name === 'LiveViewUnavailableError') { jsonNoCors(res, { error: 'live_view_unavailable' }, 503); return }
+          jsonNoCors(res, { error: 'live_url_mint_failed' }, 500)
         },
       )
       return
