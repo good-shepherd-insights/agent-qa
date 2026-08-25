@@ -1,0 +1,415 @@
+// THE PLANTED LIVE RUN, AND THE PRODUCTION SERVER FRAME AROUND IT (403-06, Tasks 1 and 2).
+//
+// WHY A PLANTED SESSION RATHER THAN A REAL RUN. `live-view-tracer.test.ts` already drives a REAL
+// `startRun` at a REAL Chromium, and that cell is what carries "a real CDP frame reaches the embed
+// page". What the two files here need is different: a run a cell can hold at an arbitrary point —
+// mid-step, silent for twenty-one seconds, terminal on command — and drive DETERMINISTICALLY while
+// a browser watches. A real run cannot be paused between two envelopes on demand, so a cell built
+// on one would have to sleep and hope, which is the shape of flake that reads as a product defect.
+//
+// WHAT IS STILL PRODUCTION HERE, AND IT IS ALMOST EVERYTHING. The bus is the shipped
+// `createRunEventBus` — its seq stamping, its replay window, its retention floor and its real
+// heartbeat timer. The server is the shipped `startServer` with the shipped `uiDir`, the shipped
+// `composeDashboardDoor`, the shipped `composeLiveView` (so the signer, the mint op and the
+// validator are all the real ones) and the shipped session registry. What is planted is exactly
+// the RunSession's own three seams — `subscribeFrames`, `streamCapabilityOf`, `cancel` — plus the
+// deferred `done`, which is the runner's designed injection surface stated as data.
+//
+// THE SPIES ARE THE POINT OF THE PLANT. `cancel` is a spy because INVK-05's claim is that no
+// number of viewers attaching and detaching can end a run, and the only way to measure "nobody
+// called it" is to hold the function that would have been called.
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import type { Server } from 'node:http'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+
+import { generateTestId } from '@vostride/agent-qa-ids'
+import { createRunEventBus } from '@vostride/agent-qa-runner'
+import type { RunEventBus } from '@vostride/agent-qa-runner'
+import type {
+  CompletedRunHandoff,
+  LiveFrame,
+  LiveFrameSubscription,
+  LiveStreamDeclaration,
+  RunCompletion,
+  RunEventEnvelope,
+  RunId,
+  RunSession,
+  RunStatus,
+} from '@vostride/agent-qa-schema'
+
+import { DASHBOARD_FUNCTION_CALLER, composeDashboardDoor, createDashboardRunDoor } from '../../commands/dashboard.js'
+import { composeLiveView, mintLiveUrlThrough } from '../../composition/live-view-composition.js'
+import { createRunServiceSessionRegistry } from '../../composition/run-service-session-registry.js'
+import { trackTempRoot } from './spawned-chat.js'
+
+/** How often a planted screencast hands its subscribers a frame. */
+export const PLANTED_FRAME_INTERVAL_MS = 200
+
+export interface PlantedLiveRun {
+  readonly runId: string
+  readonly session: RunSession
+  /** The REAL bus behind `subscribe` — publish through this and the door serves it verbatim. */
+  readonly bus: RunEventBus
+  /** Every frame id this run's subscribers acked, in ack order. */
+  ackedFrameIds(): readonly number[]
+  /** Every frame id the producer handed out, in mint order. */
+  deliveredFrameIds(): readonly number[]
+  /** How many times `cancel()` was called. INVK-05's whole claim is that this stays 0. */
+  cancelCalls(): number
+  /** How many frame subscriptions are open right now. */
+  openFrameSubscriptions(): number
+  /** Whether `done` has settled yet — a detach must not settle it. */
+  isDone(): boolean
+  /** Settle `done`, as the run shell does once the handoff is written. */
+  finish(verdict?: RunStatus): void
+  /** Stop the frame producer and close the bus. Never publishes. */
+  close(): void
+}
+
+export interface PlantLiveRunInput {
+  readonly runId: string
+  /** The bus's own heartbeat cadence. 10 s is the shipped default; 60 s makes silence measurable. */
+  readonly heartbeatMs?: number
+  readonly capability: LiveStreamDeclaration
+  /** Real, decodable image bytes. A literal would paint nothing and `data-embed-frames` would stay 0. */
+  readonly frameBytes?: Uint8Array
+  readonly frameWidth?: number
+  readonly frameHeight?: number
+  readonly frameIntervalMs?: number
+}
+
+/**
+ * One attachable run, planted over a REAL event bus.
+ *
+ * THE FRAME ID IS THE PRODUCER'S OWN MONOTONIC COUNTER, minted here per run and never derived from
+ * anything the transport carries. 403-02 measured CDP's `sessionId` constant at 1 across 281
+ * frames, so an id taken from there would collide on every frame and the ack protocol would have
+ * nothing to distinguish.
+ */
+export function plantLiveRun(input: PlantLiveRunInput): PlantedLiveRun {
+  const bus = createRunEventBus({
+    runId: input.runId,
+    ...(input.heartbeatMs === undefined ? {} : { heartbeatMs: input.heartbeatMs }),
+  })
+
+  const acked: number[] = []
+  const delivered: number[] = []
+  const subscribers = new Set<(frame: LiveFrame) => void>()
+  let cancelCalls = 0
+  let frameId = 0
+  let producer: ReturnType<typeof setInterval> | undefined
+  let settled = false
+
+  let settle: (completion: RunCompletion) => void = () => {}
+  const done = new Promise<RunCompletion>((resolvePromise) => { settle = resolvePromise })
+
+  const startProducer = (): void => {
+    if (producer !== undefined) return
+    producer = setInterval(() => {
+      if (subscribers.size === 0) return
+      frameId += 1
+      delivered.push(frameId)
+      const frame: LiveFrame = {
+        id: frameId,
+        bytes: input.frameBytes ?? new Uint8Array(0),
+        metadata: { width: input.frameWidth ?? 640, height: input.frameHeight ?? 400 },
+      }
+      for (const onFrame of [...subscribers]) onFrame(frame)
+    }, input.frameIntervalMs ?? PLANTED_FRAME_INTERVAL_MS)
+    producer.unref?.()
+  }
+
+  const session: RunSession = {
+    id: input.runId as RunId,
+    status: 'running',
+    executionContext: 'local-headless',
+    subscribe: (fromSeq, handler) => bus.subscribe(fromSeq, handler),
+    subscribeFrames: (_handle, onFrame): LiveFrameSubscription | undefined => {
+      // AN HONEST ABSENCE, never an error: a handle that declares no stream has no subscription to
+      // hand out, and the pane renders a sentence rather than a frame that never arrives.
+      if (input.capability.kind === 'none') return undefined
+      subscribers.add(onFrame)
+      startProducer()
+      return {
+        ack: (id: number) => { acked.push(id) },
+        unsubscribe: () => { subscribers.delete(onFrame) },
+      }
+    },
+    streamCapabilityOf: () => input.capability,
+    cancel: () => { cancelCalls += 1 },
+    done,
+  }
+
+  return {
+    runId: input.runId,
+    session,
+    bus,
+    ackedFrameIds: () => [...acked],
+    deliveredFrameIds: () => [...delivered],
+    cancelCalls: () => cancelCalls,
+    openFrameSubscriptions: () => subscribers.size,
+    isDone: () => settled,
+    finish: (verdict: RunStatus = 'passed') => {
+      if (settled) return
+      settled = true
+      settle({ verdict, handoff: {} as CompletedRunHandoff })
+    },
+    close: () => {
+      if (producer !== undefined) clearInterval(producer)
+      producer = undefined
+      subscribers.clear()
+      bus.close()
+    },
+  }
+}
+
+/** Publish one envelope through a planted run's real bus. */
+export function publishTo(run: PlantedLiveRun, type: string, payload: Record<string, unknown>): RunEventEnvelope {
+  return run.bus.publish(type as Parameters<RunEventBus['publish']>[0], payload)
+}
+
+// ---- Reading the run stream as a CLIENT, not as a fixture --------------------------------------
+//
+// THE READERS BELOW SPEAK HTTP AND NOTHING ELSE. They open the same door a browser opens, parse
+// the same `id:`/`event:` framing an `EventSource` parses, and can be aborted mid-stream — which is
+// what makes "a viewer detached" a real socket event rather than a method call on a session.
+
+/** Read one SSE stream until `until` is satisfied (or the budget elapses), then hand back its text. */
+export async function readOneStream(
+  url: string,
+  until: (body: string) => boolean,
+  budgetMs = 30_000,
+): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => { controller.abort() }, budgetMs)
+  try {
+    const response = await fetch(url, { signal: controller.signal })
+    if (response.body === null) return await response.text().catch(() => '')
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let body = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      body += decoder.decode(value, { stream: true })
+      if (until(body)) break
+    }
+    await reader.cancel().catch(() => undefined)
+    return body
+  } catch {
+    return ''
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** A live SSE reader a cell can watch, abort mid-stream, and question about what it saw. */
+export interface IdStreamReader {
+  /** Every `id:` the door framed, in delivery order. */
+  ids(): readonly number[]
+  /** Every `event:` name the door framed, in delivery order. */
+  events(): readonly string[]
+  readonly status: () => number | undefined
+  /** Whether the door closed the socket on its own terms. */
+  endedByServer(): boolean
+  waitForIdCount(count: number, budgetMs?: number): Promise<void>
+  waitForEvent(type: string, budgetMs?: number): Promise<void>
+  /** The viewer walks away. NOTHING about the run may change because of this. */
+  abort(): void
+  /** Settles when the reader stops for any reason. */
+  readonly finished: Promise<void>
+}
+
+export function openIdStream(url: string, input: { lastEventId?: number } = {}): IdStreamReader {
+  const controller = new AbortController()
+  const ids: number[] = []
+  const events: string[] = []
+  let status: number | undefined
+  let endedByServer = false
+  let aborted = false
+
+  const finished = (async () => {
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        ...(input.lastEventId === undefined
+          ? {}
+          : { headers: { 'Last-Event-ID': String(input.lastEventId) } }),
+      })
+      status = response.status
+      if (response.body === null) return
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffered = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) { endedByServer = !aborted; break }
+        buffered += decoder.decode(value, { stream: true })
+        const lines = buffered.split('\n')
+        buffered = lines.pop() ?? ''
+        for (const line of lines) {
+          if (line.startsWith('id: ')) ids.push(Number(line.slice(4)))
+          else if (line.startsWith('event: ')) events.push(line.slice(7))
+        }
+      }
+    } catch {
+      /* an aborted reader is a viewer that walked away, which is this reader's whole subject */
+    }
+  })()
+
+  const waitUntil = async (predicate: () => boolean, budgetMs: number, what: string): Promise<void> => {
+    const deadline = Date.now() + budgetMs
+    while (Date.now() < deadline) {
+      if (predicate()) return
+      await new Promise((tick) => setTimeout(tick, 25))
+    }
+    throw new Error(`${what} never happened within ${String(budgetMs)}ms; ids=${JSON.stringify(ids)} events=${JSON.stringify(events)}`)
+  }
+
+  return {
+    ids: () => [...ids],
+    events: () => [...events],
+    status: () => status,
+    endedByServer: () => endedByServer,
+    waitForIdCount: async (count, budgetMs = 30_000) =>
+      waitUntil(() => ids.length >= count, budgetMs, `${String(count)} ids`),
+    waitForEvent: async (type, budgetMs = 30_000) =>
+      waitUntil(() => events.includes(type), budgetMs, `event ${type}`),
+    abort: () => { aborted = true; controller.abort() },
+    finished,
+  }
+}
+
+export interface LiveViewHarness {
+  readonly origin: string
+  readonly server: Server
+  /** Register a planted run with the session registry the whole composition reads through. */
+  plant(run: PlantedLiveRun): void
+  close(): Promise<void>
+}
+
+/**
+ * A hermetic project the dashboard door can open. The three empty files are the ones
+ * `requireExistingFiles: true` refuses a project without.
+ */
+function harnessWorkspace(label: string): string {
+  const root = trackTempRoot(mkdtempSync(join(tmpdir(), `agent-qa-403-06-${label}-`)))
+  const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      workspace: {
+        testMatch: ['tests/**/*.test.yaml'],
+        suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      use: { mobile: { appState: 'reset' } },
+      registry: {
+        targets: {
+          conformance: { platform: 'web', url: 'https://conformance.invalid', environment: 'local' },
+        },
+      },
+      services: { dashboard: {} },
+    })}\n`,
+    'utf8',
+  )
+  writeFileSync(join(root, 'hooks.yaml'), 'hooks: []\n', 'utf8')
+  writeFileSync(join(root, '.env'), '', 'utf8')
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
+  mkdirSync(join(root, '.agent-qa'), { recursive: true })
+  mkdirSync(join(root, 'tests'), { recursive: true })
+  writeFileSync(
+    join(root, 'tests', 'probe.test.yaml'),
+    'name: The live-view surface probe\n'
+    + `test-id: ${generateTestId()}\n`
+    + 'target: conformance\n'
+    + 'steps:\n'
+    + '  - Do nothing this run will ever reach\n',
+    'utf8',
+  )
+  return configPath
+}
+
+/**
+ * The PRODUCTION server frame, composed exactly as `live-view-tracer.test.ts` composes it, plus a
+ * `uiDir`.
+ *
+ * `uiDir` IS WHAT MAKES THIS A SURFACE AND NOT AN API. The tracer composes without one on purpose
+ * — it drives the embed document directly — so every claim about what a PERSON sees needs the
+ * static/SPA arm mounted and the built bundle behind it. That is also why the freshness guard is
+ * the caller's first assertion: a DOM cell against yesterday's bundle passes and certifies the
+ * wrong artifact.
+ */
+export async function startLiveViewHarness(input: {
+  readonly label: string
+  /** Absent serves no UI — the API-only posture the process cells use. */
+  readonly uiDir?: string
+}): Promise<LiveViewHarness> {
+  const configPath = harnessWorkspace(input.label)
+  const configDir = dirname(resolve(configPath))
+
+  const { DashboardDatabase, startServer } = await import('@vostride/agent-qa-dashboard')
+  const db = new DashboardDatabase({ dbPath: join(configDir, 'dashboard.db') })
+  const runDoor = await createDashboardRunDoor({ db })
+  let boundOrigin: string | undefined
+
+  let publishSession: ((session: RunSession) => void) | undefined
+  const sessions = createRunServiceSessionRegistry({
+    observeSessions: (observer) => { publishSession = observer; return () => { publishSession = undefined } },
+  })
+
+  const liveView = composeLiveView({
+    sessions,
+    origin: () => boundOrigin,
+    door: runDoor,
+  })
+
+  const { agentHost, host } = composeDashboardDoor({
+    agentQaRoot: join(configDir, '.agent-qa'),
+    configPath,
+    boundOrigin: () => boundOrigin,
+    liveView: liveView.liveView,
+    runBridge: runDoor.runBridge,
+  })
+  runDoor.bindHost(host)
+
+  const started = await startServer({
+    db,
+    port: 0,
+    configPath,
+    ...(input.uiDir === undefined ? {} : { uiDir: input.uiDir }),
+    agentHost,
+    executionBackend: runDoor.backend,
+    runServiceAttach: sessions.attach,
+    liveView: {
+      validate: liveView.validate,
+      // THE SHIPPED MINT, BY REFERENCE — the same function both doors call, so a cell that got a
+      // liveUrl got it through the op-level gate and not around it.
+      mintLiveUrl: mintLiveUrlThrough(host.registry, DASHBOARD_FUNCTION_CALLER),
+    },
+  })
+
+  const address = (started.server as Server).address()
+  if (address === null || typeof address === 'string') throw new TypeError('the harness server bound no port')
+  boundOrigin = `http://127.0.0.1:${String(address.port)}`
+
+  return {
+    origin: boundOrigin,
+    server: started.server as Server,
+    plant: (run: PlantedLiveRun) => {
+      if (publishSession === undefined) throw new Error('the session registry is not observing')
+      publishSession(run.session)
+    },
+    close: async () => {
+      started.close()
+      sessions.dispose()
+      await host.close()
+      db.close()
+      rmSync(configDir, { recursive: true, force: true })
+    },
+  }
+}

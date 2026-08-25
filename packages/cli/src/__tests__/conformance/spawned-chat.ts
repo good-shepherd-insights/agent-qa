@@ -380,6 +380,18 @@ export const DASHBOARD_ANCHORED_BUILDS: readonly {
 ])
 
 /**
+ * The built dashboard UI a served `uiDir` points at — the bundle a browser is handed (403-06).
+ *
+ * IT LIVES BESIDE THE FRESHNESS LIST, deliberately: the guard one line up anchors
+ * `dashboard-ui/dist/index.html`, and the directory that guard is about is the directory
+ * `startServer({ uiDir })` serves. Two spellings of it would be two answers to "which bundle did
+ * this cell certify", and the whole point of the guard is that there is one.
+ */
+export function dashboardUiDist(): string {
+  return join(PACKAGES_ROOT, 'dashboard-ui', 'dist')
+}
+
+/**
  * A project the SPAWNED dashboard can open, which is a strictly larger recipe than the chat one.
  *
  * THE THREE EMPTY FILES ARE NOT DECORATION. `agent-qa dashboard` resolves its workspace with
