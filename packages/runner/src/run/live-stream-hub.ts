@@ -55,12 +55,29 @@ interface Subscriber {
   onFrame: (frame: LiveFrame) => void
 }
 
-/** One handle's stream state. `started` flips once; `pendingStop` is the live grace handle. */
+/**
+ * One handle's stream state.
+ *
+ * `desired` and `running` ARE SEPARATE ON PURPOSE, and keeping them separate is what makes the
+ * "one start, one stop per watched interval" claim survive real async. `desired` is what the
+ * SUBSCRIBER SET asks for and flips synchronously; `running` is what the PRODUCER is actually
+ * doing and can only change inside the reconciler, which is serialised on `chain`. A single
+ * `started` flag conflates the two, and 403-02's invariant found exactly what that costs: a stop
+ * landing while `capability.start()` was still in flight let the start's own continuation flip the
+ * flag back on AFTER the stop, so the hub believed a stopped screencast was running and never
+ * restarted it for the next viewer — a live view permanently blank with nothing reporting an error.
+ */
 interface StreamState {
   capability: LiveStreamCapability
   subscribers: Set<Subscriber>
-  started: boolean
-  starting?: Promise<void>
+  /** What the subscriber set asks for. True on first attach; false when the grace elapses empty. */
+  desired: boolean
+  /** What the producer is actually doing, as the reconciler last left it. */
+  running: boolean
+  /** A reconcile pass is already queued; it will observe any later `desired` flip by itself. */
+  reconciling: boolean
+  /** Serialises every producer call, so a start and a stop can never be in flight together. */
+  chain: Promise<void>
   pendingStop?: () => void
   /** frameId → the subscribers that have not yet acked it, plus its bound-timer cancel. */
   awaiting: Map<number, { outstanding: Set<Subscriber>; cancel: () => void }>
@@ -84,6 +101,9 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
     }
   }
 
+  const describe = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error)
+
   /** Ack a frame to the producer exactly once, then forget it. */
   function settleFrame(state: StreamState, frameId: number): void {
     const entry = state.awaiting.get(frameId)
@@ -95,11 +115,72 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
     })
   }
 
+  /**
+   * THE ONE PLACE `start` AND `stop` ARE CALLED. Queued on the state's own chain and looping until
+   * `desired === running`, so a flip that arrives mid-await is picked up by the pass already in
+   * flight rather than racing it.
+   */
+  function reconcile(state: StreamState): void {
+    if (state.reconciling) return
+    state.reconciling = true
+    state.chain = state.chain.then(async () => {
+      try {
+        while (state.desired !== state.running) {
+          if (state.desired) {
+            state.running = true
+            try {
+              await state.capability.start((frame) => { deliver(state, frame) })
+            } catch (error: unknown) {
+              state.running = false
+              warn('live-stream-start-failed', `live stream failed to start: ${describe(error)}`)
+              break
+            }
+          } else {
+            state.running = false
+            try {
+              await state.capability.stop()
+            } catch (error: unknown) {
+              warn('live-stream-stop-failed', `live stream failed to stop: ${describe(error)}`)
+            }
+          }
+        }
+      } finally {
+        state.reconciling = false
+      }
+    })
+  }
+
+  /** Cancel a pending grace, if one is armed. Idempotent. */
+  function cancelGrace(state: StreamState): void {
+    const cancel = state.pendingStop
+    state.pendingStop = undefined
+    cancel?.()
+  }
+
+  /** End the watched interval NOW: drop the in-flight acks and ask the producer to stop. */
+  function stopStream(state: StreamState): void {
+    cancelGrace(state)
+    for (const [, entry] of state.awaiting) entry.cancel()
+    state.awaiting.clear()
+    state.desired = false
+    reconcile(state)
+  }
+
+  function scheduleStop(state: StreamState): void {
+    cancelGrace(state)
+    state.pendingStop = timer.schedule(graceMs, () => {
+      state.pendingStop = undefined
+      if (state.subscribers.size > 0) return
+      stopStream(state)
+    })
+  }
+
   function deliver(state: StreamState, frame: LiveFrame): void {
     // Snapshot so a mid-delivery detach (or a subscriber that unsubscribes from its own callback)
     // cannot disturb the walk — the `bus.ts:125-139` shape.
     const receivers = [...state.subscribers]
     const outstanding = new Set<Subscriber>()
+    let detached = false
     for (const subscriber of receivers) {
       if (!state.subscribers.has(subscriber)) continue
       try {
@@ -107,68 +188,24 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
         if (state.subscribers.has(subscriber)) outstanding.add(subscriber)
       } catch {
         state.subscribers.delete(subscriber)
+        detached = true
         warn('live-stream-subscriber-detached', 'live-frame subscriber threw during delivery and was detached')
       }
     }
     if (outstanding.size === 0) {
       // Nobody is left to ack — keep the producer moving rather than stalling on an empty set.
       void state.capability.ack(frame.id).catch(() => {})
-      return
+    } else {
+      const cancel = timer.schedule(ackBoundMs, () => {
+        // THE ACK BOUND: one wedged viewer must not freeze the stream for the others.
+        settleFrame(state, frame.id)
+      })
+      state.awaiting.set(frame.id, { outstanding, cancel })
     }
-    const cancel = timer.schedule(ackBoundMs, () => {
-      // THE ACK BOUND: one wedged viewer must not freeze the stream for the others.
-      settleFrame(state, frame.id)
-    })
-    state.awaiting.set(frame.id, { outstanding, cancel })
-  }
-
-  function startIfNeeded(state: StreamState): void {
-    if (state.pendingStop) {
-      // A re-subscribe inside the grace window CANCELS the stop; the producer never restarted.
-      state.pendingStop()
-      state.pendingStop = undefined
-    }
-    if (state.started || state.starting) return
-    state.starting = state.capability
-      .start((frame) => deliver(state, frame))
-      .then(() => {
-        state.started = true
-        state.starting = undefined
-      })
-      .catch((error: unknown) => {
-        state.starting = undefined
-        warn(
-          'live-stream-start-failed',
-          `live stream failed to start: ${error instanceof Error ? error.message : String(error)}`,
-        )
-      })
-  }
-
-  function stopNow(state: StreamState): Promise<void> {
-    state.pendingStop = undefined
-    for (const [, entry] of state.awaiting) entry.cancel()
-    state.awaiting.clear()
-    if (!state.started && !state.starting) return Promise.resolve()
-    const pending = state.starting ?? Promise.resolve()
-    state.started = false
-    return pending
-      .then(() => state.capability.stop())
-      .catch((error: unknown) => {
-        warn(
-          'live-stream-stop-failed',
-          `live stream failed to stop: ${error instanceof Error ? error.message : String(error)}`,
-        )
-      })
-  }
-
-  function scheduleStop(state: StreamState): void {
-    state.pendingStop?.()
-    const cancel = timer.schedule(graceMs, () => {
-      state.pendingStop = undefined
-      if (state.subscribers.size > 0) return
-      void stopNow(state)
-    })
-    state.pendingStop = cancel
+    // THE THROW PATH IS A DETACH LIKE ANY OTHER. A viewer removed here never calls `unsubscribe`,
+    // so without this the last viewer could leave by throwing and the browser would keep encoding
+    // JPEGs for nobody until the run ended — the exact work D-07 exists to refuse.
+    if (detached && state.subscribers.size === 0) scheduleStop(state)
   }
 
   return {
@@ -177,15 +214,18 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
       if (capability === undefined) {
         // The member finished (or declares nothing): stop whatever was running and declare `none`.
         streams.delete(handle)
-        if (existing) void stopNow(existing)
+        if (existing) stopStream(existing)
         return
       }
       if (existing && existing.capability === capability) return
-      if (existing) void stopNow(existing)
+      if (existing) stopStream(existing)
       streams.set(handle, {
         capability,
         subscribers: new Set<Subscriber>(),
-        started: false,
+        desired: false,
+        running: false,
+        reconciling: false,
+        chain: Promise.resolve(),
         awaiting: new Map(),
       })
     },
@@ -196,7 +236,10 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
       if (!state) return undefined
       const subscriber: Subscriber = { onFrame }
       state.subscribers.add(subscriber)
-      startIfNeeded(state)
+      // A re-subscribe inside the grace window CANCELS the stop; the producer never restarted.
+      cancelGrace(state)
+      state.desired = true
+      reconcile(state)
       let released = false
       const release = (): void => {
         if (released) return
@@ -231,7 +274,8 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
       const pending: Promise<void>[] = []
       for (const [, state] of streams) {
         state.subscribers.clear()
-        pending.push(stopNow(state))
+        stopStream(state)
+        pending.push(state.chain)
       }
       streams.clear()
       await Promise.all(pending)
