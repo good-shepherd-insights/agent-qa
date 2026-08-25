@@ -1,0 +1,634 @@
+// The live page's BRAIN, proven before the page exists (403-04 · HNST-01/HNST-02/HNST-03, D-10/D-11/D-12).
+//
+// WHY A PURE REDUCER AND NOT A HOOK. The jsdom page cells (403-05) and the Playwright DOM cells
+// (403-06) must exercise the SAME state machine the browser runs. A hook can only be tested
+// through a renderer, so a claim about what the page can and cannot know would be a claim about a
+// rendering discipline. Here it is a claim about a data structure.
+//
+// THE SENTINEL CELL IS THE LOAD-BEARING ONE, AND A TYPE DOES NOT SUBSTITUTE FOR IT. `StepRow`
+// having no `plan`/`plannedAction`/`grounding`/`result`/`reasoning` field proves nothing at
+// runtime: `{ ...payload }` spreads all five in and the type never complains at the boundary where
+// the object was built. So the cells FEED payloads carrying every one of those fields with
+// sentinel values and assert on the actual runtime object, at every depth, via `JSON.stringify`.
+// The type is the intent; the cell is the proof.
+//
+// EVERY CLOCK IS INJECTED. `reduceRunStream(state, envelope, now)` takes `now` as a parameter and
+// `livenessOf(state, now, source)` takes it again. A wall clock in a window-boundary cell is a
+// flake that reads as a real defect (403-03 measured exactly that in a byte-comparing fixture),
+// and the 19_999 / 20_000 rows below are precisely the shape that would flake.
+
+import { describe, expect, it } from 'vitest'
+
+import type {
+  RunEventEnvelope,
+  RunEventPayload,
+  RunEventType,
+} from '@vostride/agent-qa-schema'
+
+import {
+  LIVENESS_STALE_MS,
+  STEP_STATUSES,
+  createInitialRunStreamState,
+  livenessOf,
+  markGap,
+  reduceRunStream,
+  stepStatusOf,
+  type RunStreamState,
+} from '@/lib/run-stream-reducer'
+
+/**
+ * The one string every "no reasoning content reaches the state" cell hunts for. It is fed on FIVE
+ * distinct payload fields across four event types and asserted absent from the serialised state —
+ * so a `{ ...payload }` regression anywhere in the reducer reds this, not just one in the arm the
+ * cell happens to name.
+ */
+const SENTINEL = 'SENTINEL-REASONING-7f3a'
+
+const RUN_ID = 'run_live'
+
+/** EventSource's own readyState vocabulary, restated for a source double that has no browser. */
+const CONNECTING = 0
+const OPEN = 1
+const CLOSED = 2
+
+let nextSeq = 1
+
+function envelope(type: RunEventType, payload: unknown, seq?: number, ts?: number): RunEventEnvelope {
+  const resolved = seq ?? nextSeq++
+  if (seq !== undefined && seq >= nextSeq) nextSeq = seq + 1
+  return { seq: resolved, ts: ts ?? resolved * 1000, runId: RUN_ID, type, payload: payload as RunEventPayload }
+}
+
+/** Fold a list of envelopes at one frozen `now`. */
+function fold(envelopes: readonly RunEventEnvelope[], now = 10_000): RunStreamState {
+  nextSeq = 1
+  let state = createInitialRunStreamState()
+  for (const one of envelopes) state = reduceRunStream(state, one, now)
+  return state
+}
+
+const stepStarted = (testIndex: number, stepIndex: number, stepText = 'a step', seq?: number, ts?: number) =>
+  envelope('stepStarted', { testIndex, stepIndex, stepText }, seq, ts)
+
+const stepFinalized = (
+  testIndex: number,
+  stepIndex: number,
+  extra: Record<string, unknown> = {},
+  seq?: number,
+) =>
+  envelope('stepFinalized', {
+    testIndex,
+    stepIndex,
+    cacheStatus: 'miss',
+    verifierVerdict: { pass: true, reasoning: SENTINEL },
+    selfHealOccurred: false,
+    briefDigest: 'd',
+    ...extra,
+  }, seq)
+
+/**
+ * A `subActionRecorded` payload carrying ALL FIVE forbidden fields with sentinel values — the
+ * shape a real producer emits, not a trimmed one. A reducer that spreads the payload keeps every
+ * one of them.
+ */
+const subAction = (testIndex: number, stepIndex: number, subActionIndex = 0, seq?: number) =>
+  envelope('subActionRecorded', {
+    testIndex,
+    stepIndex,
+    subActionIndex,
+    plan: SENTINEL,
+    plannedAction: { kind: 'click', target: { descriptor: SENTINEL } },
+    grounding: { candidates: [{ reasoning: SENTINEL }] },
+    result: { status: 'success', detail: SENTINEL },
+    screenStateHash: 'h1',
+  }, seq)
+
+const rowsOf = (state: RunStreamState, testIndex: number) =>
+  state.steps.filter((row) => row.testIndex === testIndex)
+
+const rowAt = (state: RunStreamState, testIndex: number, stepIndex: number) =>
+  state.steps.find((row) => row.testIndex === testIndex && row.stepIndex === stepIndex)
+
+const runningRows = (state: RunStreamState) => state.steps.filter((row) => row.status === 'running')
+
+// ---------------------------------------------------------------------------
+// The status vocabulary (HNST-02)
+// ---------------------------------------------------------------------------
+
+describe('the step status vocabulary is exactly HNST-02, and stepStatusOf resolves it', () => {
+  it('declares the seven statuses the page can render, and no eighth', () => {
+    expect([...STEP_STATUSES]).toEqual([
+      'pending',
+      'running',
+      'passed',
+      'failed',
+      'healed',
+      'skipped',
+      'cancelled',
+    ])
+  })
+
+  it.each([
+    ['passed'],
+    ['failed'],
+    ['healed'],
+    ['skipped'],
+    ['cancelled'],
+  ] as const)('takes the producer\'s own `status` verbatim when present: %s', (status) => {
+    expect(stepStatusOf({
+      testIndex: 0,
+      stepIndex: 0,
+      cacheStatus: 'miss',
+      verifierVerdict: { pass: false, reasoning: '' },
+      selfHealOccurred: true,
+      briefDigest: 'd',
+      status,
+    })).toBe(status)
+  })
+
+  it('falls back to `healed` when `status` is absent and the step self-healed — BEFORE reading the verdict', () => {
+    // A healed step's verdict passes. If the verdict were read first, `healed` would be
+    // unreachable and every heal would render as a plain pass — the exact erasure HNST-02 names.
+    expect(stepStatusOf({
+      testIndex: 0,
+      stepIndex: 0,
+      cacheStatus: 'miss',
+      verifierVerdict: { pass: true, reasoning: '' },
+      selfHealOccurred: true,
+      briefDigest: 'd',
+    })).toBe('healed')
+  })
+
+  it('falls back to the verifier verdict when `status` is absent and nothing healed', () => {
+    expect(stepStatusOf({
+      testIndex: 0,
+      stepIndex: 0,
+      cacheStatus: 'miss',
+      verifierVerdict: { pass: true, reasoning: '' },
+      selfHealOccurred: false,
+      briefDigest: 'd',
+    })).toBe('passed')
+    expect(stepStatusOf({
+      testIndex: 0,
+      stepIndex: 0,
+      cacheStatus: 'miss',
+      verifierVerdict: { pass: false, reasoning: '' },
+      selfHealOccurred: false,
+      briefDigest: 'd',
+    })).toBe('failed')
+  })
+
+  it('answers `failed` for a payload with neither `status` nor a verdict object — an absent verdict is not a pass', () => {
+    expect(stepStatusOf({
+      testIndex: 0,
+      stepIndex: 0,
+      cacheStatus: 'miss',
+      selfHealOccurred: false,
+      briefDigest: 'd',
+    } as unknown as Parameters<typeof stepStatusOf>[0])).toBe('failed')
+  })
+
+  it('REFUSES a `status` word outside the vocabulary and falls through — the envelope crosses a trust boundary', () => {
+    // The payload arrives as JSON from another process. Its `status` is typed, which says nothing
+    // about what a build one version ahead (or a tampered proxy) actually sends.
+    expect(stepStatusOf({
+      testIndex: 0,
+      stepIndex: 0,
+      cacheStatus: 'miss',
+      verifierVerdict: { pass: false, reasoning: '' },
+      selfHealOccurred: false,
+      briefDigest: 'd',
+      status: 'quarantined',
+    } as unknown as Parameters<typeof stepStatusOf>[0])).toBe('failed')
+  })
+
+  it('maps stepStarted to `running` and stepFinalized to the resolved status, through the reducer', () => {
+    const state = fold([
+      stepStarted(0, 0, 'click login'),
+      stepFinalized(0, 0, { status: 'healed' }),
+      stepStarted(0, 1, 'assert dashboard'),
+    ])
+    expect(rowAt(state, 0, 0)?.status).toBe('healed')
+    expect(rowAt(state, 0, 0)?.text).toBe('click login')
+    expect(rowAt(state, 0, 1)?.status).toBe('running')
+  })
+
+  it('creates a row directly in its final status when stepFinalized arrives with no prior stepStarted', () => {
+    // The flagged HNST-02 edge, and a real one on a resumed stream: `subscribe(N+1)` can land
+    // between a step's start and its finalize.
+    const state = fold([stepFinalized(3, 2, { status: 'failed' })])
+    expect(rowAt(state, 3, 2)).toMatchObject({ status: 'failed', ticks: 0 })
+    expect(rowAt(state, 3, 2)?.startedAt).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// D-10: motion and a plain count, and NOTHING ELSE
+// ---------------------------------------------------------------------------
+
+describe('D-10: each sub-action is one tick, and no reasoning content survives ingest', () => {
+  it('bumps the running row\'s ticks by exactly one per subActionRecorded', () => {
+    const state = fold([
+      stepStarted(0, 0),
+      subAction(0, 0, 0),
+      subAction(0, 0, 1),
+      subAction(0, 0, 2),
+    ])
+    expect(rowAt(state, 0, 0)?.ticks).toBe(3)
+  })
+
+  it('records the tick\'s own timestamp, so the page can restart its motion', () => {
+    // ABSOLUTE, not relative to another field of the same row: a cell phrased as
+    // `lastTickAt === (ticks === 1 ? X : undefined)` passes for a reducer that sets neither.
+    const state = fold([stepStarted(0, 0, 's', 1, 1_000), subAction(0, 0, 0, 2)])
+    expect(rowAt(state, 0, 0)).toMatchObject({ startedAt: 1_000, lastTickAt: 2_000, ticks: 1 })
+  })
+
+  it('ticks the ADDRESSED row only — a sub-action for member 1 never bumps member 0', () => {
+    const state = fold([
+      stepStarted(0, 0),
+      stepStarted(1, 0),
+      subAction(1, 0, 0),
+      subAction(1, 0, 1),
+    ])
+    expect(rowAt(state, 0, 0)?.ticks).toBe(0)
+    expect(rowAt(state, 1, 0)?.ticks).toBe(2)
+  })
+
+  it('keeps the tick count across finalize — the count is the step\'s history, not its animation', () => {
+    const state = fold([stepStarted(0, 0), subAction(0, 0, 0), subAction(0, 0, 1), stepFinalized(0, 0, { status: 'passed' })])
+    expect(rowAt(state, 0, 0)).toMatchObject({ status: 'passed', ticks: 2 })
+  })
+
+  it('THE SENTINEL CELL: five forbidden fields fed on four event types, absent from the state at every depth', () => {
+    // A type-level omission is not a measurement. This feeds `plan`, `plannedAction`, `grounding`,
+    // `result` and `reasoning` (plus `error` and `failureSummary`) with the same sentinel and then
+    // asks the RUNTIME object, serialised whole, whether any of it survived.
+    const state = fold([
+      envelope('runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] }),
+      envelope('testStarted', { testId: 't0', testIndex: 0, name: 'a member', totalSteps: 2 }),
+      stepStarted(0, 0, 'click login'),
+      subAction(0, 0, 0),
+      subAction(0, 0, 1),
+      stepFinalized(0, 0, { status: 'failed', error: SENTINEL, durationMs: 12 }),
+      envelope('hookFinished', {
+        hookName: 'h',
+        phase: 'setup',
+        hookExecutionId: 'he',
+        status: 'passed',
+        durationMs: 1,
+        stdout: SENTINEL,
+        stderr: SENTINEL,
+        variables: { secret: SENTINEL },
+      }),
+      envelope('testFinished', { testId: 't0', testIndex: 0, outcome: 'failed', failureSummary: SENTINEL }),
+    ])
+
+    const serialised = JSON.stringify(state)
+    expect(serialised).not.toContain(SENTINEL)
+    // And the shapes that CARRY those fields are gone as names too, not merely as values.
+    for (const forbidden of ['plannedAction', 'grounding', 'reasoning', 'failureSummary', 'stdout']) {
+      expect(serialised).not.toContain(forbidden)
+    }
+    // Non-vacuity: the fold really did ingest the sentinel-bearing envelopes and build state.
+    expect(rowAt(state, 0, 0)).toMatchObject({ status: 'failed', ticks: 2, text: 'click login' })
+  })
+
+  it('NON-VACUITY CONTROL: the same sentinel IS visible in the serialised envelopes the fold consumed', () => {
+    // Without this, the cell above passes for a reducer that ingested nothing at all — or for a
+    // fixture that never carried the sentinel in the first place.
+    expect(JSON.stringify(subAction(0, 0, 0))).toContain(SENTINEL)
+    expect(JSON.stringify(stepFinalized(0, 0))).toContain(SENTINEL)
+    // And the LITERAL is pinned, because 403-05's jsdom cells and 403-06's DOM cells re-assert the
+    // same absence on the rendered surface. A sentinel that drifts here silently decouples the
+    // three layers of that claim from one another.
+    expect(SENTINEL).toBe('SENTINEL-REASONING-7f3a')
+  })
+
+  it('carries no invented phase — a row exposes status, text, ticks and times, and nothing that names a phase', () => {
+    const state = fold([stepStarted(0, 0), subAction(0, 0, 0)])
+    const keys = Object.keys(rowAt(state, 0, 0) as object).sort()
+    expect(keys).toEqual([
+      'createdSeq',
+      'lastTickAt',
+      'startedAt',
+      'status',
+      'stepIndex',
+      'testIndex',
+      'text',
+      'ticks',
+    ])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ordering and adjacency (HNST-01 edges)
+// ---------------------------------------------------------------------------
+
+describe('order is the bus\'s seq, never arrival and never a timestamp tie', () => {
+  it('orders two equal-`ts` step events by seq even when the LATER seq arrives first', () => {
+    nextSeq = 1
+    let state = createInitialRunStreamState()
+    state = reduceRunStream(state, stepStarted(0, 0, 'five', 5, 4_242), 10_000)
+    state = reduceRunStream(state, stepStarted(1, 0, 'four', 4, 4_242), 10_000)
+    expect(state.steps.map((row) => row.createdSeq)).toEqual([4, 5])
+    expect(state.steps.map((row) => row.text)).toEqual(['four', 'five'])
+  })
+
+  it('keeps lastSeq at the HIGHEST seq observed — a resume point that walks backward re-opens a gap', () => {
+    nextSeq = 1
+    let state = createInitialRunStreamState()
+    state = reduceRunStream(state, stepStarted(0, 0, 'five', 5, 4_242), 10_000)
+    state = reduceRunStream(state, stepStarted(1, 0, 'four', 4, 4_242), 10_000)
+    expect(state.lastSeq).toBe(5)
+  })
+
+  it('ADJACENCY: a finalize for step k and a start for step k+1 leave exactly ONE running row', () => {
+    nextSeq = 1
+    let state = createInitialRunStreamState()
+    state = reduceRunStream(state, stepStarted(0, 0, 'k'), 10_000)
+    expect(runningRows(state)).toHaveLength(1)
+
+    state = reduceRunStream(state, stepFinalized(0, 0, { status: 'passed' }), 10_000)
+    expect(runningRows(state)).toHaveLength(0)
+
+    state = reduceRunStream(state, stepStarted(0, 1, 'k+1'), 10_000)
+    expect(runningRows(state)).toHaveLength(1)
+    expect(runningRows(state)[0]?.stepIndex).toBe(1)
+
+    state = reduceRunStream(state, stepFinalized(0, 1, { status: 'passed' }), 10_000)
+    state = reduceRunStream(state, stepStarted(0, 2, 'k+2'), 10_000)
+    expect(runningRows(state).map((row) => row.stepIndex)).toEqual([2])
+  })
+
+  it('never shows two running rows for one member even across an interleaved second member', () => {
+    const state = fold([
+      stepStarted(0, 0),
+      stepStarted(1, 0),
+      stepFinalized(0, 0, { status: 'passed' }),
+      stepStarted(0, 1),
+    ])
+    expect(runningRows(state).map((row) => [row.testIndex, row.stepIndex])).toEqual([[1, 0], [0, 1]])
+    expect(rowsOf(state, 0).filter((row) => row.status === 'running')).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Members, the thin stream, retries and terminality (D-12)
+// ---------------------------------------------------------------------------
+
+describe('members, the thin handle stream and the terminal freeze', () => {
+  it('pre-populates pending rows with empty text when testStarted declares totalSteps', () => {
+    const state = fold([envelope('testStarted', { testId: 't', testIndex: 0, name: 'm', totalSteps: 3 })])
+    expect(rowsOf(state, 0).map((row) => [row.stepIndex, row.status, row.text]))
+      .toEqual([[0, 'pending', ''], [1, 'pending', ''], [2, 'pending', '']])
+  })
+
+  it('fills a pre-populated row in place rather than appending a duplicate', () => {
+    const state = fold([
+      envelope('testStarted', { testId: 't', testIndex: 0, name: 'm', totalSteps: 2 }),
+      stepStarted(0, 1, 'the second step'),
+    ])
+    expect(rowsOf(state, 0)).toHaveLength(2)
+    expect(rowAt(state, 0, 1)).toMatchObject({ status: 'running', text: 'the second step' })
+  })
+
+  it('records the run\'s handle roster from runStarted', () => {
+    const state = fold([envelope('runStarted', { busSchemaVersion: 1, memberTestCount: 2, handles: [0, 1] })])
+    expect(state.handles).toEqual([0, 1])
+  })
+
+  it('leaves handles undefined for a run that announced none — an absent roster is not an empty one', () => {
+    const state = fold([envelope('runStarted', { busSchemaVersion: 1, memberTestCount: 2 }, 3)], 4_000)
+    expect(state.handles).toBeUndefined()
+    // The absence is only a measurement if the envelope was INGESTED. Without this half the cell
+    // passes for a reducer that does nothing at all.
+    expect(state).toMatchObject({ lastSeq: 3, lastEnvelopeAt: 4_000 })
+  })
+
+  it('THE THIN STREAM: a testFinished with no stepStarted ever seen is noted `did not run`', () => {
+    // 402's `?handle=1` observation: a member stream can BEGIN with a terminal event.
+    const state = fold([
+      envelope('testStarted', { testId: 't1', testIndex: 1, name: 'member one', totalSteps: 2 }),
+      envelope('testFinished', { testId: 't1', testIndex: 1, outcome: 'skipped' }),
+    ])
+    expect(state.members[1]).toMatchObject({ outcome: 'skipped', note: 'did not run' })
+    expect(rowsOf(state, 1).map((row) => row.status)).toEqual(['skipped', 'skipped'])
+  })
+
+  it('creates the member from testFinished alone — a handle stream can start at the end', () => {
+    const state = fold([envelope('testFinished', { testId: 't1', testIndex: 1, outcome: 'passed' })])
+    expect(state.members[1]).toMatchObject({ testIndex: 1, outcome: 'passed', note: 'did not run' })
+  })
+
+  it('does NOT note `did not run` for a member that produced a step', () => {
+    const state = fold([
+      envelope('testStarted', { testId: 't0', testIndex: 0, name: 'm', totalSteps: 1 }),
+      stepStarted(0, 0),
+      stepFinalized(0, 0, { status: 'passed' }),
+      envelope('testFinished', { testId: 't0', testIndex: 0, outcome: 'passed' }),
+    ])
+    expect(state.members[0]?.note).toBeUndefined()
+    expect(rowAt(state, 0, 0)?.status).toBe('passed')
+  })
+
+  it('resets a member\'s rows to pending with zero ticks on testRetryScheduled', () => {
+    const state = fold([
+      envelope('testStarted', { testId: 't0', testIndex: 0, name: 'm', totalSteps: 2 }),
+      stepStarted(0, 0),
+      subAction(0, 0, 0),
+      stepFinalized(0, 0, { status: 'failed' }),
+      envelope('testRetryScheduled', { testId: 't0', testIndex: 0, attempt: 2, maxAttempts: 3 }),
+    ])
+    expect(rowsOf(state, 0).map((row) => [row.status, row.ticks])).toEqual([['pending', 0], ['pending', 0]])
+  })
+
+  it('leaves OTHER members untouched by a retry', () => {
+    const state = fold([
+      stepStarted(0, 0),
+      stepFinalized(0, 0, { status: 'passed' }),
+      stepStarted(1, 0),
+      envelope('testRetryScheduled', { testId: 't1', testIndex: 1, attempt: 2, maxAttempts: 3 }),
+    ])
+    expect(rowAt(state, 0, 0)?.status).toBe('passed')
+    expect(rowAt(state, 1, 0)?.status).toBe('pending')
+  })
+
+  it('re-runs a retried member to `running` on the duplicate stepStarted, with ticks back at zero', () => {
+    const state = fold([
+      stepStarted(0, 0),
+      subAction(0, 0, 0),
+      subAction(0, 0, 1),
+      envelope('testRetryScheduled', { testId: 't0', testIndex: 0, attempt: 2, maxAttempts: 3 }),
+      stepStarted(0, 0, 'second attempt'),
+    ])
+    expect(rowAt(state, 0, 0)).toMatchObject({ status: 'running', ticks: 0, text: 'second attempt' })
+    expect(rowsOf(state, 0)).toHaveLength(1)
+  })
+
+  it('freezes the verdict: the FIRST verdict wins and a second never overwrites it', () => {
+    const state = fold([
+      envelope('verdict', { verdict: 'failed' }),
+      envelope('verdict', { verdict: 'passed' }),
+    ])
+    expect(state.verdict).toBe('failed')
+    expect(state.terminal).toBe(false)
+  })
+
+  it('runFinished marks the state terminal', () => {
+    const state = fold([envelope('runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: 1 })])
+    expect(state.terminal).toBe(true)
+  })
+
+  it('THE FREEZE: no envelope after runFinished reopens a row', () => {
+    const state = fold([
+      stepStarted(0, 0),
+      stepFinalized(0, 0, { status: 'passed' }),
+      envelope('runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: 3 }),
+      stepStarted(0, 0, 'a late start'),
+      stepStarted(0, 1, 'a later step'),
+      subAction(0, 0, 9),
+    ])
+    expect(rowAt(state, 0, 0)).toMatchObject({ status: 'passed', ticks: 0, text: 'a step' })
+    expect(rowAt(state, 0, 1)).toBeUndefined()
+    expect(runningRows(state)).toHaveLength(0)
+  })
+
+  it('still advances lastSeq and lastEnvelopeAt after terminal — a frozen page is not a deaf one', () => {
+    // Post-processing chip envelopes continue the run's seq after `runFinished`; a state that
+    // stopped counting them would report a stale resume point to any client that reattached.
+    const before = fold([
+      envelope('runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: 1 }),
+    ], 5_000)
+    const after = reduceRunStream(before, envelope('analysisStarted', { runId: RUN_ID }, 9), 7_500)
+    expect(after.lastSeq).toBe(9)
+    expect(after.lastEnvelopeAt).toBe(7_500)
+  })
+
+  it('collects runWarning and runError as notices carrying the code and message ONLY', () => {
+    const state = fold([
+      envelope('runWarning', { code: 'w1', message: 'a warning', context: { secret: SENTINEL } }),
+      envelope('runError', { code: 'e1', message: 'an error', context: { secret: SENTINEL } }),
+    ])
+    expect(state.notices).toEqual([
+      { code: 'w1', message: 'a warning' },
+      { code: 'e1', message: 'an error' },
+    ])
+    expect(JSON.stringify(state)).not.toContain(SENTINEL)
+  })
+
+  it('is PURE: the input state object is never mutated', () => {
+    const initial = createInitialRunStreamState()
+    const snapshot = JSON.stringify(initial)
+    const next = reduceRunStream(initial, stepStarted(0, 0), 1_000)
+    expect(JSON.stringify(initial)).toBe(snapshot)
+    expect(next).not.toBe(initial)
+  })
+
+  it('advances lastEnvelopeAt and lastSeq for an event type this build does not model', () => {
+    const state = fold([envelope('curationCompleted', { runId: RUN_ID }, 4)], 6_000)
+    expect(state).toMatchObject({ lastSeq: 4, lastEnvelopeAt: 6_000, terminal: false })
+    expect(state.steps).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// D-11: liveness comes from bus envelopes, never from a socket
+// ---------------------------------------------------------------------------
+
+describe('D-11: liveness is fed by bus envelopes, and an open socket alone is not one', () => {
+  const withEnvelopeAt = (at: number): RunStreamState =>
+    reduceRunStream(createInitialRunStreamState(), envelope('heartbeat', {}, 2), at)
+
+  it('pins the stale window at twice the bus\'s 10 s heartbeat cadence', () => {
+    expect(LIVENESS_STALE_MS).toBe(20_000)
+  })
+
+  it('is `live` at 19_999 ms since the last envelope on an OPEN source', () => {
+    const state = withEnvelopeAt(0)
+    expect(livenessOf(state, 19_999, { readyState: OPEN, erroredWhileConnecting: false }))
+      .toEqual({ kind: 'live', lastActivityAgeMs: 19_999 })
+  })
+
+  it('is `lost` at exactly 20_000 ms — the window is half-open, and the boundary is asserted, not assumed', () => {
+    const state = withEnvelopeAt(0)
+    expect(livenessOf(state, 20_000, { readyState: OPEN, erroredWhileConnecting: false }))
+      .toEqual({ kind: 'lost', lastActivityAgeMs: 20_000 })
+  })
+
+  it('counts a HEARTBEAT as activity — a run thinking for four minutes is alive, not lost', () => {
+    // The whole point of D-11: a multi-minute local-model call produces no step events at all.
+    let state = createInitialRunStreamState()
+    for (const tick of [0, 10_000, 20_000, 30_000, 40_000]) {
+      state = reduceRunStream(state, envelope('heartbeat', {}), tick)
+    }
+    expect(livenessOf(state, 49_000, { readyState: OPEN, erroredWhileConnecting: false }).kind).toBe('live')
+    expect(livenessOf(state, 60_001, { readyState: OPEN, erroredWhileConnecting: false }).kind).toBe('lost')
+  })
+
+  it('is `reconnecting` while the source reports CONNECTING after an error, even inside the fresh window', () => {
+    const state = withEnvelopeAt(0)
+    expect(livenessOf(state, 1_000, { readyState: CONNECTING, erroredWhileConnecting: true }).kind)
+      .toBe('reconnecting')
+  })
+
+  it('returns to `live` once the reconnect reaches OPEN and the window is still fresh', () => {
+    const state = withEnvelopeAt(0)
+    expect(livenessOf(state, 1_000, { readyState: OPEN, erroredWhileConnecting: true }))
+      .toEqual({ kind: 'live', lastActivityAgeMs: 1_000 })
+  })
+
+  it('is `lost` on a CLOSED source no matter how recent the last envelope was', () => {
+    const state = withEnvelopeAt(0)
+    expect(livenessOf(state, 1, { readyState: CLOSED, erroredWhileConnecting: false }).kind).toBe('lost')
+    expect(livenessOf(state, 1, { readyState: CLOSED, erroredWhileConnecting: true }).kind).toBe('lost')
+  })
+
+  it('AN OPEN SOCKET ALONE IS NEVER `live` — zero envelopes is `connecting`, not connected', () => {
+    // The lie HNST-03 names: an open socket to a dead run reads "connected" forever.
+    const state = createInitialRunStreamState()
+    expect(livenessOf(state, 999_999, { readyState: OPEN, erroredWhileConnecting: false }))
+      .toEqual({ kind: 'connecting', lastActivityAgeMs: undefined })
+    expect(livenessOf(state, 999_999, { readyState: CONNECTING, erroredWhileConnecting: false }).kind)
+      .toBe('connecting')
+  })
+
+  it('honours an injected stale window, so the constant is a default and not a hard-coded law', () => {
+    const state = withEnvelopeAt(0)
+    expect(livenessOf(state, 500, { readyState: OPEN, erroredWhileConnecting: false }, 400).kind).toBe('lost')
+    expect(livenessOf(state, 399, { readyState: OPEN, erroredWhileConnecting: false }, 400).kind).toBe('live')
+  })
+
+  it('reports the last-activity age so the page can render "last activity 32s ago"', () => {
+    const state = withEnvelopeAt(1_000)
+    expect(livenessOf(state, 33_000, { readyState: OPEN, erroredWhileConnecting: false }).lastActivityAgeMs)
+      .toBe(32_000)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// D-13's gap marker
+// ---------------------------------------------------------------------------
+
+describe('markGap records what a replay floor cost the viewer', () => {
+  it('spans the envelopes between what was seen and the floor the door advertised', () => {
+    // The door answers `earliestAvailableSeq: 40`; the client re-attaches with lastEventId 39.
+    // Everything from 21 through 39 is gone, and the page says so.
+    const state = markGap(createInitialRunStreamState(), 20, 40)
+    expect(state.gap).toEqual({ from: 21, to: 39 })
+  })
+
+  it('records NO gap when the floor is the very next envelope — nothing was missed', () => {
+    // The negative and its neighbouring positive in ONE cell: a `gap === undefined` assertion
+    // alone passes for a `markGap` that never records anything.
+    expect(markGap(createInitialRunStreamState(), 20, 21).gap).toBeUndefined()
+    expect(markGap(createInitialRunStreamState(), 20, 22).gap).toEqual({ from: 21, to: 21 })
+  })
+
+  it('is pure and leaves an already-recorded gap in place — the gap happened', () => {
+    const first = markGap(createInitialRunStreamState(), 20, 40)
+    const second = markGap(first, 100, 101)
+    expect(second.gap).toEqual({ from: 21, to: 39 })
+    expect(first.gap).toEqual({ from: 21, to: 39 })
+  })
+})
