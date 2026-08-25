@@ -170,10 +170,12 @@ token — it grants viewing and nothing else, and it cannot cancel, restart or m
 Both doors mint through the same function-layer op, `runs.liveurl`, and answer identically. The
 difference is only the credential: the **local dashboard door** at
 `GET /api/runs/<runId>/live-url` needs **no** credential, because asking for a *remote* credential
-to use a *local* surface would be the wrong trade. What keeps it local is two things and not one:
-the loopback bind above keeps a remote *host* out, and a same-site check on the route keeps a page
-served from another *origin* in your own browser from minting. The `liveUrl` token is what gates
-viewing; the same-site check is what keeps a cross-origin page from obtaining that token. This
+to use a *local* surface would be the wrong trade. The local door refuses a request whose claimed
+`Host` is not one of the loopback names this server answers to, a rule requiring no configuration
+because the bind guard refuses every non-loopback bind; refuses a browser request whose `Origin`
+names another origin, including the literal `null` that denotes an origin declining to name itself;
+and admits a caller sending no `Origin` at all — `curl`, a script or the CLI — as the deliberate
+localhost allowance. This
 route, on the remote door, mints under the trust scope of the bearer you presented.
 
 `404 {"error":"unknown_run"}` means this process has no live session for that run.

@@ -1,4 +1,6 @@
-// The same-site guard, shared by every door that must not answer a page on another origin.
+// The same-site predicate is mounted on two of this server's capability doors: the chat door's
+// mutating arm and the `live-url` mint route; CR-01 records the remaining posture in a filed
+// WINDOWS row owned by the phase that takes whole-server CORS posture, not as solved here.
 //
 // WHY THIS FILE EXISTS. The predicate below was written for the chat door in 400-14 and lived
 // private inside `chat/chat-routes.ts`. Phase 403's verification found the live-url MINT door
