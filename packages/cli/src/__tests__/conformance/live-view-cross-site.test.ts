@@ -139,9 +139,10 @@ function rawRequest(
   init: {
     readonly method: string
     readonly path: string
-    readonly headers?: Readonly<Record<string, string>>
+    readonly headers?: Readonly<Record<string, string | undefined>>
     readonly body?: string
     readonly budgetMs?: number
+    readonly httpVersion?: '1.0' | '1.1'
   },
 ): Promise<RawResponse> {
   return new Promise<RawResponse>((settle) => {
@@ -170,13 +171,15 @@ function rawRequest(
         connection: 'close',
       }
       for (const [key, value] of Object.entries(init.headers ?? {})) {
-        headers[key.toLowerCase()] = value
+        const normalizedKey = key.toLowerCase()
+        if (value === undefined) delete headers[normalizedKey]
+        else headers[normalizedKey] = value
       }
       if (init.body !== undefined) {
         headers['content-length'] = String(Buffer.byteLength(init.body))
       }
       socket.write(
-        `${init.method} ${init.path} HTTP/1.1\r\n`
+        `${init.method} ${init.path} HTTP/${init.httpVersion ?? '1.1'}\r\n`
         + Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join('')
         + '\r\n'
         + (init.body ?? ''),
@@ -189,12 +192,14 @@ function rawRequest(
 function mintRaw(
   port: number,
   runId: string,
-  headers: Readonly<Record<string, string>>,
+  headers: Readonly<Record<string, string | undefined>>,
+  httpVersion: '1.0' | '1.1' = '1.1',
 ): Promise<RawResponse> {
   return rawRequest(port, {
     method: 'GET',
     path: `/api/runs/${encodeURIComponent(runId)}/live-url`,
     headers,
+    httpVersion,
   })
 }
 
@@ -814,5 +819,60 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
     expect(reading.rebindUpgradeStatus, `${context} — a valid token does not excuse a hostile claimed Host`)
       .not.toBe(101)
     expect(reading.rebindTypes, `${context} — a refused upgrade says nothing at all`).toEqual([])
+  }, 120_000)
+
+  it('(7) THE ADMIT SIDE: every name this server DID agree to answer to still mints, and the shape it did not still does not', async () => {
+    const f = held()
+    const port = f.dashboard.port
+
+    const localhost = await mintRaw(port, f.runId, {
+      host: `localhost:${String(port)}`,
+      origin: `http://localhost:${String(port)}`,
+    })
+    const ipv4 = await mintRaw(port, f.runId, {
+      host: `127.0.0.1:${String(port)}`,
+      origin: `http://127.0.0.1:${String(port)}`,
+    })
+    const ipv6 = await mintRaw(port, f.runId, {
+      host: `[::1]:${String(port)}`,
+      origin: `http://[::1]:${String(port)}`,
+    })
+    const originAbsent = await mintRaw(port, f.runId, {
+      host: `localhost:${String(port)}`,
+    })
+    // Node's HTTP parser rejects an HTTP/1.1 request without Host before the route runs. HTTP/1.0
+    // is the one protocol shape where omission is valid, so it measures the application rung.
+    const hostAbsent = await mintRaw(port, f.runId, { host: undefined }, '1.0')
+
+    const reading = {
+      localhostStatus: localhost.status,
+      localhostLiveUrl: liveUrlIn(localhost) === undefined ? null : 'PRESENT',
+      ipv4Status: ipv4.status,
+      ipv4LiveUrl: liveUrlIn(ipv4) === undefined ? null : 'PRESENT',
+      ipv6Status: ipv6.status,
+      ipv6LiveUrl: liveUrlIn(ipv6) === undefined ? null : 'PRESENT',
+      originAbsentStatus: originAbsent.status,
+      originAbsentLiveUrl: liveUrlIn(originAbsent) === undefined ? null : 'PRESENT',
+      hostAbsentStatus: hostAbsent.status,
+      hostAbsentLiveUrl: liveUrlIn(hostAbsent) === undefined ? null : 'PRESENT',
+      hostAbsentBody: hostAbsent.body.slice(0, 200),
+    }
+    console.log(`(7) claimed-Host admit side: ${JSON.stringify(reading)}`)
+    const context = `${JSON.stringify(reading)}. ${childContext(f.dashboard)}`
+
+    for (const [name, status, liveUrl] of [
+      ['localhost', reading.localhostStatus, reading.localhostLiveUrl],
+      ['127.0.0.1', reading.ipv4Status, reading.ipv4LiveUrl],
+      ['[::1]', reading.ipv6Status, reading.ipv6LiveUrl],
+      ['the Origin-absent local client', reading.originAbsentStatus, reading.originAbsentLiveUrl],
+    ] as const) {
+      expect(status, `${context} — ${name} remains an admitted claimed Host`).toBe(200)
+      expect(liveUrl, `${context} — ${name} receives a real token`).toBe('PRESENT')
+    }
+
+    expect(reading.hostAbsentStatus, `${context} — an unstated Host cannot be validated`).toBe(403)
+    expect(hostAbsent.body, `${context} — the absent-Host refusal is typed`)
+      .toContain('cross_site_refused')
+    expect(reading.hostAbsentLiveUrl, `${context} — the absent Host leaks no token`).toBeNull()
   }, 120_000)
 })
