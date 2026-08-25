@@ -413,7 +413,13 @@ function floorSession(): RunSession {
   const bus = createRunEventBus({
     runId: 'r_floor',
     windowMaxEvents: 3,
-    heartbeatMs: 3_600_000,
+    // A FROZEN CLOCK AND A DEAD SCHEDULER, deliberately. `ts` is stamped from `timer.now()`, so a
+    // wall clock makes every envelope's bytes a function of WHEN the fixture was built — and the
+    // two-door differential builds one session per door. That is not a difference between the
+    // doors, it is a difference between two milliseconds, and it made this row fail intermittently
+    // before the clock was pinned. The dead scheduler is the same discipline for the heartbeat: a
+    // fixture whose retained window can grow on a timer is a fixture whose floor moves.
+    timer: { now: () => 1_700_000_000_000, schedule: () => () => undefined },
   })
   bus.publish('runStarted', { busSchemaVersion: 1, memberTestCount: 3, handles: [...FLOOR_ROSTER] })
   bus.publish('testStarted', { testId: 'a', testIndex: 3, name: 'a' })

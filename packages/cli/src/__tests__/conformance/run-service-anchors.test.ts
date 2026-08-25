@@ -637,6 +637,56 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
       // whole run rather than about a prefix somebody happened to catch.
       expect(observed).toContain('runStarted')
       expect(observed).toContain('runFinished')
+
+      // (4) D-15, THE RETAINED-RUN REPLAY, on the shipped binary (403-03 · INVK-05).
+      //
+      // The run above is OVER. Its session stays attachable for the registry's retention window,
+      // and what D-15 promises for a reconnect inside that window is: everything after the resume
+      // point, up to `runFinished`, and then a clean close. Resuming one seq short of the end is
+      // the sharpest form of that promise — the answer must be EXACTLY the terminal envelope and
+      // then the socket must end, which is a fact about the whole production chain (the header
+      // reaching the core, the `+ 1`, the bus's own replay of a closed run, and the teardown).
+      //
+      // Driven on the LOCAL door with no credential (D-14), read to completion rather than to the
+      // first `runFinished`, and bounded: a stream that held the socket open would hang this cell
+      // otherwise, and the aborted read is the failure we want to see instead.
+      const finalSeq = Number(stream.frames.at(-1)?.id)
+      expect(finalSeq, 'the terminal frame carried no id to resume from').toBeGreaterThan(0)
+
+      const replayed = await fetch(
+        `${origin()}/api/run-stream/${encodeURIComponent(ack.runId)}?lastEventId=${String(finalSeq - 1)}`,
+        { signal: AbortSignal.timeout(20_000) },
+      )
+      expect(replayed.status).toBe(200)
+      expect(replayed.headers.get('content-type')).toContain('text/event-stream')
+      // `.text()` RESOLVES ONLY WHEN THE SOCKET ENDS, which is the "and closes" half.
+      const replayedBody = await replayed.text()
+      const replayedFrames = replayedBody.split('\n\n').filter((frame) => frame.trim() !== '')
+        .map(parseFrame)
+      const replayedData = replayedFrames
+        .map((frame) => frame.data)
+        .filter((line): line is string => line !== undefined)
+      expect(
+        replayedData.length,
+        `a resume one seq short of the end must replay exactly the terminal envelope: ${replayedBody}`,
+      ).toBe(1)
+      const terminal = RunEventEnvelopeSchema.parse(JSON.parse(replayedData[0] as string))
+      expect(terminal.type).toBe('runFinished')
+      expect(terminal.seq).toBe(finalSeq)
+      expect(terminal.runId).toBe(ack.runId)
+      for (const frame of replayedFrames) {
+        expect(frame.foreignFields, 'a replayed frame carried an undeclared field').toEqual([])
+      }
+      // 403-02's carry-forward: any document this file puts on the wire goes through the sweep and
+      // declares its class, or the complete-set census reds.
+      sweepWireDocument('sseEnvelope', replayedData[0] as string, 'the replayed terminal envelope')
+
+      // And a run this process never started is 404 on the same door, not an empty stream.
+      const unknown = await fetch(`${origin()}/api/run-stream/r_403_03_never_started`)
+      expect(unknown.status).toBe(404)
+      const unknownBytes = await unknown.text()
+      expect(JSON.parse(unknownBytes)).toEqual({ error: 'unknown_run' })
+      sweepWireDocument('errorBody', unknownBytes, 'the unknown-run refusal must be pure JSON')
     }, WIRE_BUDGET_MS)
 
   it('the ring-3 sweep spans EVERY declared wire-document class — the complete-set claim', () => {

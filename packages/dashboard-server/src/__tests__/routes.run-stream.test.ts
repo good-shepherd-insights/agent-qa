@@ -31,10 +31,13 @@ import {
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
+import { createRunEventBus } from '@vostride/agent-qa-runner'
 import {
   RUN_SERVICE_CONTRACT_VERSION,
   RunEventEnvelopeSchema,
+  RunsLiveUrlResultSchema,
   type RunEventEnvelope,
+  type RunsLiveUrlResult,
   type RunServiceReadiness,
   type RunSession,
   type RunStartAcknowledgement,
@@ -108,8 +111,14 @@ function sessionOverFeed(id: string): RunSession {
     id: id as RunSession['id'],
     status: 'running',
     executionContext: 'local-headless' as RunSession['executionContext'],
-    subscribe(_fromSeq, handler) {
-      for (const envelope of FEED) handler(envelope)
+    // 403-03: `fromSeq` is HONOURED, which is what a real bus does and what the resume rows below
+    // are about. A planted session that ignored it would make every `?lastEventId=` row in the
+    // corpus agree on both doors while measuring nothing about the resume point — two doors both
+    // replaying from 1 are byte-identical too.
+    subscribe(fromSeq, handler) {
+      for (const envelope of FEED) {
+        if (envelope.seq >= fromSeq) handler(envelope)
+      }
       return () => undefined
     },
     // 403 D-05: this feed carries EVENTS, not frames. The planted session declares no stream and
@@ -121,9 +130,79 @@ function sessionOverFeed(id: string): RunSession {
   }
 }
 
+/**
+ * A SECOND planted run, backed by a REAL `createRunEventBus` whose window has evicted seqs 1-5.
+ *
+ * `windowMaxEvents: 3` over eight publishes retains 6, 7, 8, so `earliestRetainedSeq()` is 6 and
+ * `subscribe(n)` for n < 6 raises the bus's OWN `ReplayIncompleteError`. A hand-built `subscribe`
+ * that threw a shaped error would pin THIS FILE'S idea of the floor refusal; the whole point of
+ * the 410 row is that the number on the wire is the producer's.
+ */
+const FLOOR_EARLIEST_SEQ = 6
+
+function floorSession(): RunSession {
+  const bus = createRunEventBus({
+    runId: 'r_floor',
+    windowMaxEvents: 3,
+    // A FROZEN CLOCK AND A DEAD SCHEDULER, deliberately. `ts` is stamped from `timer.now()`, so a
+    // wall clock makes every envelope's bytes a function of WHEN the fixture was built — and the
+    // two-door differential builds one session per door. That is not a difference between the
+    // doors, it is a difference between two milliseconds, and it made this row fail intermittently
+    // before the clock was pinned. The dead scheduler is the same discipline for the heartbeat: a
+    // fixture whose retained window can grow on a timer is a fixture whose floor moves.
+    timer: { now: () => 1_700_000_000_000, schedule: () => () => undefined },
+  })
+  bus.publish('runStarted', { busSchemaVersion: 1, memberTestCount: 3, handles: [...ROSTER] })
+  bus.publish('testStarted', { testId: 'a', testIndex: 3, name: 'a' })
+  bus.publish('testStarted', { testId: 'b', testIndex: 7, name: 'b' })
+  bus.publish('testStarted', { testId: 'c', testIndex: 11, name: 'c' })
+  bus.publish('runWarning', { code: 'w', message: 'w' })
+  bus.publish('stepStarted', { testIndex: 3, stepIndex: 0, stepText: 'a0' })
+  bus.publish('stepStarted', { testIndex: 7, stepIndex: 0, stepText: 'b0' })
+  bus.publish('runFinished', { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: 8 })
+  return {
+    id: 'r_floor' as RunSession['id'],
+    status: 'failed',
+    executionContext: 'local-headless' as RunSession['executionContext'],
+    subscribe: (fromSeq, handler) => bus.subscribe(fromSeq, handler),
+    subscribeFrames() { return undefined },
+    streamCapabilityOf() { return { kind: 'none' } },
+    cancel() { /* the bus is already closed for this fixture */ },
+    done: Promise.resolve({ verdict: 'failed' } as never),
+  }
+}
+
 /** THE ONE ATTACH PORT both doors are given — the same function object, by construction. */
 function attachPort(runId: string): RunSession | undefined {
-  return runId === 'r_local' ? sessionOverFeed('r_local') : undefined
+  if (runId === 'r_local') return sessionOverFeed('r_local')
+  if (runId === 'r_floor') return floorSession()
+  return undefined
+}
+
+/**
+ * A MINT WHOSE TOKEN AND EXPIRY ARE FRESH ON EVERY CALL — one instance per door.
+ *
+ * DELIBERATELY NOT ONE SHARED FUNCTION. Two doors calling one planted mint would answer
+ * byte-identical bodies for free, and the `liveUrl` parity row would then be satisfied by the
+ * fixture rather than by the doors. `runs.liveurl` mints a fresh HMAC-signed token and a fresh
+ * expiry per call, so the honest fixture does too — which is exactly why that row's comparison is
+ * relaxed from byte-identity to SHAPE-identity, and why a cell below asserts the two tokens
+ * actually differ. A redaction that redacted nothing would be the vacuous half of this row.
+ */
+function freshMint(seed: string): (runId: string, handle: number) => Promise<RunsLiveUrlResult> {
+  let minted = 0
+  return async (runId, handle) => {
+    minted += 1
+    if (attachPort(runId) === undefined) {
+      throw Object.assign(new Error(`unknown_run: ${runId}`), { name: 'UnknownRunError' })
+    }
+    return {
+      liveUrl: `http://127.0.0.1:0/live/${runId}#v1.${seed}${'x'.repeat(minted)}`,
+      expiresAt: 1_700_000_000_000 + minted,
+      handle,
+      stream: { kind: 'none' as const },
+    }
+  }
 }
 
 const READINESS: RunServiceReadiness = {
@@ -142,7 +221,8 @@ const ACK: RunStartAcknowledgement = {
   testCount: 3,
 }
 
-function servicePorts(): RunServicePorts {
+function servicePorts(options: { readonly mint?: boolean } = {}): RunServicePorts {
+  const mint = options.mint === true ? freshMint('authed-') : undefined
   return {
     verifyBearer: (header) => header === `Bearer ${TOKEN}`
       ? { kind: 'token', clientId: 'ci', trustScope: { project: 'acme' } }
@@ -152,12 +232,15 @@ function servicePorts(): RunServicePorts {
     readiness: () => READINESS,
     // 403-03 (D-03, Q3): a fixture that composed no live view HAS no live view, and the honest
     // answer to a mint request is 503 by name. Never a stub that mints — a fabricated token would
-    // make every cell downstream of it a claim about this file's idea of a credential.
-    mintLiveUrl: () => Promise.reject(
-      Object.assign(new Error('no live-view port is bound on this fixture'), {
-        name: 'LiveViewUnavailableError',
-      }),
-    ),
+    // make every cell downstream of it a claim about this file's idea of a credential. The parity
+    // rows opt IN to a fresh-token mint, which is the shape production has.
+    mintLiveUrl: mint === undefined
+      ? () => Promise.reject(
+        Object.assign(new Error('no live-view port is bound on this fixture'), {
+          name: 'LiveViewUnavailableError',
+        }),
+      )
+      : async ({ runId, handle }) => mint(runId, handle),
   }
 }
 
@@ -210,13 +293,17 @@ const eventsOf = (body: string): string[] =>
   [...body.matchAll(/^event: (.+)$/gmu)].map((match) => match[1] ?? '')
 
 /** Mount the LOCAL door on the exported router, with the attach port threaded in. */
-async function localDoor(): Promise<string> {
-  return listen(createRouter({ db: mockDb(), runServiceAttach: attachPort }))
+async function localDoor(options: { readonly mint?: boolean } = {}): Promise<string> {
+  return listen(createRouter({
+    db: mockDb(),
+    runServiceAttach: attachPort,
+    ...(options.mint === true ? { mintLiveUrl: freshMint('local-') } : {}),
+  }))
 }
 
 /** Mount the AUTHED door on the same planted attach port. */
-async function authedDoor(): Promise<string> {
-  return listen(createRunServiceRoutes(servicePorts()))
+async function authedDoor(options: { readonly mint?: boolean } = {}): Promise<string> {
+  return listen(createRunServiceRoutes(servicePorts(options)))
 }
 
 /**
@@ -225,7 +312,9 @@ async function authedDoor(): Promise<string> {
  * `[label, query]`, applied to run `r_local` unless the label says otherwise. A second spelling of
  * the stream in `routes.ts` would have to reproduce every one of these byte for byte.
  */
-const CORPUS: readonly (readonly [string, string, string])[] = Object.freeze([
+type CorpusRow = readonly [string, string, string, Record<string, string>?]
+
+const CORPUS: readonly CorpusRow[] = Object.freeze([
   ['the firehose', 'r_local', ''],
   ['handle 3', 'r_local', '?handle=3'],
   ['handle 7', 'r_local', '?handle=7'],
@@ -239,33 +328,213 @@ const CORPUS: readonly (readonly [string, string, string])[] = Object.freeze([
   ['a well-formed handle no member answers to', 'r_local', '?handle=4'],
   ['an unknown run', 'r_nope', ''],
   ['an unknown run WITH a handle', 'r_nope', '?handle=3'],
+  // ---- 403-03 (D-13 / D-15 · INVK-05): the resume point, on both doors -----------------------
+  ['resume after 8', 'r_local', '?lastEventId=8'],
+  ['resume after 8 on handle 7', 'r_local', '?handle=7&lastEventId=8'],
+  ['resume via the HEADER', 'r_local', '', { 'Last-Event-ID': '8' }],
+  ['the header WINS over the query', 'r_local', '?lastEventId=3', { 'Last-Event-ID': '8' }],
+  ['resume at the exact last seq', 'r_local', '?lastEventId=31'],
+  ['resume past the last seq', 'r_local', '?lastEventId=99'],
+  ['a malformed lastEventId', 'r_local', '?lastEventId=abc'],
+  ['a negative lastEventId', 'r_local', '?lastEventId=-1'],
+  ['a zero-padded lastEventId', 'r_local', '?lastEventId=07'],
+  ['a fractional lastEventId', 'r_local', '?lastEventId=1.5'],
+  ['an empty lastEventId', 'r_local', '?lastEventId='],
+  ['a REPEATED lastEventId', 'r_local', '?lastEventId=1&lastEventId=7'],
+  ['a MALFORMED header beside a valid query', 'r_local', '?lastEventId=8', { 'Last-Event-ID': 'abc' }],
+  // ---- the floor, off a REAL bus whose window evicted seqs 1-5 --------------------------------
+  ['the floor run, whole', 'r_floor', ''],
+  ['resume BELOW the floor', 'r_floor', '?lastEventId=2'],
+  ['resume AT the floor', 'r_floor', '?lastEventId=5'],
+  ['a handle on a deep resume past seq 1\'s eviction', 'r_floor', '?handle=7&lastEventId=5'],
+  ['a handle on a resume the floor refuses', 'r_floor', '?handle=7&lastEventId=2'],
 ] as const)
 
 describe('the local run-stream door serves the SAME stream core the authed door serves', () => {
-  it.each(CORPUS)('%s answers byte-identically on both doors', async (_label, runId, query) => {
+  // The row rides as ONE argument so `it.each`'s tuple widening cannot turn the optional header
+  // map into `string | Record<…> | undefined`; the label is repeated for the test name only.
+  it.each(CORPUS.map((row) => [row[0], row] as const))(
+    '%s answers byte-identically on both doors',
+    async (_label, [, runId, query, headers]) => {
     const local = await localDoor()
     const authed = await authedDoor()
 
-    const fromLocal = await read(`${local}/api/run-stream/${runId}${query}`)
+    const fromLocal = await read(`${local}/api/run-stream/${runId}${query}`, { ...headers })
     const fromAuthed = await read(`${authed}/run/${runId}/events${query}`, {
       Authorization: `Bearer ${TOKEN}`,
+      ...headers,
     })
 
     expect(fromLocal.status).toBe(fromAuthed.status)
     expect(fromLocal.contentType).toBe(fromAuthed.contentType)
     expect(fromLocal.body).toBe(fromAuthed.body)
-  })
+    },
+  )
 
   it('the corpus is NOT vacuous — it spans streams and refusals, and the bodies are non-empty', async () => {
     // A differential over a corpus that produced one status, or empty bodies on both sides, would
     // be satisfied by two doors that both answered nothing. This cell is what stops that reading.
     const local = await localDoor()
     const captures = await Promise.all(
-      CORPUS.map(async ([, runId, query]) => read(`${local}/api/run-stream/${runId}${query}`)),
+      CORPUS.map(async ([, runId, query, headers]) =>
+        read(`${local}/api/run-stream/${runId}${query}`, { ...headers })),
+    )
+    expect(new Set(captures.map((capture) => capture.status))).toEqual(new Set([200, 400, 404, 410]))
+    // The 200 with an EMPTY body is a legal answer now (a resume past the end writes the preamble
+    // and closes), so the non-emptiness claim is made over the rows that carry something.
+    expect(captures.every((capture) => capture.body.length > 0)).toBe(true)
+    expect(captures.filter((capture) => capture.status === 200).length).toBeGreaterThanOrEqual(8)
+    expect(CORPUS.length).toBeGreaterThanOrEqual(30)
+  })
+
+  it('the resume rows carry the SEQS the resume point implies, not the whole feed', async () => {
+    // THE ANTI-VACUITY HALF OF THE PARITY ROWS. Two doors that both ignored `lastEventId` are
+    // byte-identical, so the differential alone cannot see a resume that never happened. These are
+    // the absolute expectations the corpus rows are compared against.
+    const local = await localDoor()
+    const expectations: readonly (readonly [string, Record<string, string>, number[]])[] = [
+      ['?lastEventId=8', {}, [13, 14, 17, 21, 22, 25, 26, 30, 31]],
+      ['?handle=7&lastEventId=8', {}, [14, 17, 25, 30, 31]],
+      ['', { 'Last-Event-ID': '8' }, [13, 14, 17, 21, 22, 25, 26, 30, 31]],
+      ['?lastEventId=3', { 'Last-Event-ID': '8' }, [13, 14, 17, 21, 22, 25, 26, 30, 31]],
+      ['?lastEventId=30', {}, [31]],
+      ['?lastEventId=31', {}, []],
+      ['?lastEventId=99', {}, []],
+    ]
+    for (const [query, headers, ids] of expectations) {
+      const stream = await read(`${local}/api/run-stream/r_local${query}`, headers)
+      expect(stream.status, `${query} ${JSON.stringify(headers)}`).toBe(200)
+      expect(idsOf(stream.body), `${query} ${JSON.stringify(headers)}`).toEqual(ids)
+    }
+    // And the firehose still carries everything, so the expectations above are narrowings of a
+    // stream that demonstrably had more in it.
+    expect(idsOf((await read(`${local}/api/run-stream/r_local`)).body))
+      .toEqual(FEED.map((envelope) => envelope.seq))
+  })
+
+  it('the floor row answers the PRODUCER\'s number, and the recovery it advertises is reachable', async () => {
+    // THE TWO-SIDED HALF. A refusal whose advertised recovery point cannot be reached is worse
+    // than no refusal: it tells the caller to do something that fails the same way. Both doors are
+    // driven through the WHOLE recovery, not just the refusal.
+    for (const [label, origin, path, headers] of [
+      ['local', await localDoor(), '/api/run-stream/r_floor', {}],
+      ['authed', await authedDoor(), '/run/r_floor/events', { Authorization: `Bearer ${TOKEN}` }],
+    ] as const) {
+      const refused = await read(`${origin}${path}?lastEventId=2`, { ...headers })
+      expect(refused.status, label).toBe(410)
+      expect(refused.contentType, label).toContain('application/json')
+      expect(refused.contentType, label).not.toContain('text/event-stream')
+      expect(JSON.parse(refused.body), label)
+        .toEqual({ error: 'replay_floor', earliestAvailableSeq: FLOOR_EARLIEST_SEQ })
+      const floor = (JSON.parse(refused.body) as { earliestAvailableSeq: number })
+        .earliestAvailableSeq
+      expect(floor, label).toBe(FLOOR_EARLIEST_SEQ)
+
+      const recovered = await read(
+        `${origin}${path}?lastEventId=${String(floor - 1)}`,
+        { ...headers },
+      )
+      expect(recovered.status, `${label}: the advertised recovery point must be reachable`).toBe(200)
+      expect(idsOf(recovered.body), label).toEqual([6, 7, 8])
+      // …and the deep-resume handle filter still filters: seq 6 is member 3's.
+      const filtered = await read(
+        `${origin}${path}?handle=7&lastEventId=${String(floor - 1)}`,
+        { ...headers },
+      )
+      expect(idsOf(filtered.body), `${label}: the filter survives a deep resume`).toEqual([7, 8])
+    }
+  })
+})
+
+/**
+ * THE ONE ROW WHERE BYTE-IDENTITY IS RELAXED TO SHAPE-IDENTITY, and why.
+ *
+ * Every other row compares BYTES because every other answer is a function of the request and the
+ * run. A mint is not: `runs.liveurl` produces a fresh HMAC-signed token and a fresh expiry on every
+ * call, so two doors minting the same credential for the same run answer DIFFERENT bytes and must.
+ * Redacting those two fields to their shapes is what leaves the comparison a claim about the door
+ * rather than about the clock.
+ *
+ * WHAT IS NOT RELAXED: the status, the content type, `handle` and `stream` are compared byte for
+ * byte, and the cell below asserts the two tokens actually DIFFER — a redaction that redacted
+ * nothing would make this row pass for the wrong reason.
+ */
+function liveUrlShapeOf(raw: string): string {
+  const parsed = JSON.parse(raw) as Record<string, unknown>
+  if (typeof parsed.liveUrl !== 'string') return raw
+  const [base = '', fragment = ''] = parsed.liveUrl.split('#')
+  const version = fragment.split('.')[0] ?? ''
+  return JSON.stringify({
+    ...parsed,
+    liveUrl: `<origin>${new URL(base).pathname}#${version}.<token>`,
+    expiresAt: typeof parsed.expiresAt === 'number' ? '<number>' : parsed.expiresAt,
+  })
+}
+
+const tokenOf = (raw: string): string =>
+  ((JSON.parse(raw) as { liveUrl?: string }).liveUrl ?? '').split('#')[1] ?? ''
+
+const LIVE_URL_CORPUS: readonly (readonly [string, string, string])[] = Object.freeze([
+  ['the default handle', 'r_local', ''],
+  ['an explicit handle', 'r_local', '?handle=7'],
+  ['a malformed handle', 'r_local', '?handle=notanumber'],
+  ['a REPEATED handle', 'r_local', '?handle=1&handle=2'],
+  ['an unknown run', 'r_nope', ''],
+] as const)
+
+describe('both doors mint the SAME liveUrl — shape-identically, and refuse identically', () => {
+  it.each(LIVE_URL_CORPUS)('%s answers identically on both doors', async (_label, runId, query) => {
+    const local = await localDoor({ mint: true })
+    const authed = await authedDoor({ mint: true })
+
+    const fromLocal = await read(`${local}/api/runs/${runId}/live-url${query}`)
+    const fromAuthed = await read(`${authed}/run/${runId}/live-url${query}`, {
+      Authorization: `Bearer ${TOKEN}`,
+    })
+
+    expect(fromLocal.status).toBe(fromAuthed.status)
+    expect(fromLocal.contentType).toBe(fromAuthed.contentType)
+    expect(liveUrlShapeOf(fromLocal.body)).toBe(liveUrlShapeOf(fromAuthed.body))
+  })
+
+  it('the relaxation is LOAD-BEARING — the two doors really did mint different tokens', async () => {
+    const local = await localDoor({ mint: true })
+    const authed = await authedDoor({ mint: true })
+    const fromLocal = await read(`${local}/api/runs/r_local/live-url`)
+    const fromAuthed = await read(`${authed}/run/r_local/live-url`, {
+      Authorization: `Bearer ${TOKEN}`,
+    })
+
+    expect(fromLocal.body, 'a byte comparison here would be satisfied by a fixture, not a door')
+      .not.toBe(fromAuthed.body)
+    expect(tokenOf(fromLocal.body).length).toBeGreaterThan(0)
+    expect(tokenOf(fromAuthed.body)).not.toBe(tokenOf(fromLocal.body))
+    // What IS byte-identical: everything a mint does not freshly generate.
+    for (const body of [fromLocal.body, fromAuthed.body]) {
+      const parsed = RunsLiveUrlResultSchema.parse(JSON.parse(body))
+      expect(parsed.handle).toBe(0)
+      expect(parsed.stream).toEqual({ kind: 'none' })
+    }
+  })
+
+  it('the local door needs NO credential and the authed door needs one — the only difference', async () => {
+    const authed = await authedDoor({ mint: true })
+    const refused = await read(`${authed}/run/r_local/live-url`)
+    expect(refused.status).toBe(401)
+    expect(JSON.parse(refused.body)).toEqual({ error: 'missing_authorization' })
+
+    const local = await localDoor({ mint: true })
+    expect((await read(`${local}/api/runs/r_local/live-url`)).status).toBe(200)
+  })
+
+  it('the liveUrl corpus is not vacuous — it spans a mint, two refusals and an unknown run', async () => {
+    const local = await localDoor({ mint: true })
+    const captures = await Promise.all(
+      LIVE_URL_CORPUS.map(async ([, runId, query]) =>
+        read(`${local}/api/runs/${runId}/live-url${query}`)),
     )
     expect(new Set(captures.map((capture) => capture.status))).toEqual(new Set([200, 400, 404]))
     expect(captures.every((capture) => capture.body.length > 0)).toBe(true)
-    expect(captures.filter((capture) => capture.status === 200).length).toBeGreaterThanOrEqual(5)
   })
 })
 
@@ -402,9 +671,13 @@ describe('the local door applies the same handle filter (D-14)', () => {
 })
 
 /** GET through `node:http` so the whole shipped `startServer` frame is in the path. */
-function getThroughServer(port: number, path: string): Promise<Capture> {
+function getThroughServer(
+  port: number,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<Capture> {
   return new Promise((resolve, reject) => {
-    const request = httpGet({ host: '127.0.0.1', port, path }, (response) => {
+    const request = httpGet({ host: '127.0.0.1', port, path, headers }, (response) => {
       let body = ''
       response.setEncoding('utf8')
       response.on('data', (chunk: string) => { body += chunk })
@@ -434,7 +707,87 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
       .toEqual([...RUN_SCOPED_SEQS, ...MEMBER_SEQS[7]!].sort((a, b) => a - b))
   })
 
-  it('answers 503 BY NAME with no run service mounted — never a fabricated stream or a 404', async () => {
+  it('THE #264 ARM: streams with runServiceAttach alone and NO runService mounted', async () => {
+    // WINDOWS #264, at the production frame. The zero-token dashboard declares no run-service
+    // credential, so `runService` is absent — and it still executes runs, so its local door must
+    // still stream them. `runServiceAttach` is a FIRST-CLASS `startServer` option rather than a
+    // derivation off `runService` precisely so this composition exists; that is the whole content
+    // of the fix, and it is only measurable at the frame that threads it.
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
+    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    closers.push(started.close)
+    const port = (started.server.address() as AddressInfo).port
+
+    const stream = await getThroughServer(port, '/api/run-stream/r_local?handle=7')
+    expect(stream.status).toBe(200)
+    expect(stream.contentType).toContain('text/event-stream')
+    expect(idsOf(stream.body))
+      .toEqual([...RUN_SCOPED_SEQS, ...MEMBER_SEQS[7]!].sort((a, b) => a - b))
+  })
+
+  it('honours Last-Event-ID through the SHIPPED frame, not just through the router', async () => {
+    // The header has to survive `node:http`'s own header folding and the server's routing before
+    // it reaches the core. A router-only cell cannot see a frame that dropped it.
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
+    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    closers.push(started.close)
+    const port = (started.server.address() as AddressInfo).port
+
+    const stream = await getThroughServer(port, '/api/run-stream/r_local', {
+      'Last-Event-ID': '22',
+    })
+    expect(stream.status).toBe(200)
+    expect(idsOf(stream.body)).toEqual([25, 26, 30, 31])
+  })
+
+  it('D-15: replays to the end and CLOSES on a run whose feed is already over', async () => {
+    // The socket ending is the claim — `getThroughServer` resolves on `end`, so a frame that held
+    // the connection open would hang this cell rather than fail it, which is why the resume-past-
+    // the-end row below is driven here too.
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
+    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    closers.push(started.close)
+    const port = (started.server.address() as AddressInfo).port
+
+    const tail = await getThroughServer(port, '/api/run-stream/r_local?lastEventId=30')
+    expect(tail.status).toBe(200)
+    expect(idsOf(tail.body)).toEqual([31])
+    expect(eventsOf(tail.body)).toEqual(['runFinished'])
+
+    const past = await getThroughServer(port, '/api/run-stream/r_local?lastEventId=31')
+    expect(past.status).toBe(200)
+    expect(idsOf(past.body)).toEqual([])
+    expect(past.body).toMatch(/^:ok\n\n/u)
+  })
+
+  it('D-13: refuses the floor with 410 through the shipped frame', async () => {
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
+    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    closers.push(started.close)
+    const port = (started.server.address() as AddressInfo).port
+
+    const refused = await getThroughServer(port, '/api/run-stream/r_floor?lastEventId=2')
+    expect(refused.status).toBe(410)
+    expect(refused.contentType).toContain('application/json')
+    expect(JSON.parse(refused.body))
+      .toEqual({ error: 'replay_floor', earliestAvailableSeq: FLOOR_EARLIEST_SEQ })
+  })
+
+  it('D-15: answers 404 unknown_run for a run this process never started', async () => {
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
+    const started = await startServer({ db, port: 0, runServiceAttach: attachPort })
+    closers.push(started.close)
+    const port = (started.server.address() as AddressInfo).port
+
+    const answer = await getThroughServer(port, '/api/run-stream/r_nope')
+    expect(answer.status).toBe(404)
+    expect(JSON.parse(answer.body)).toEqual({ error: 'unknown_run' })
+  })
+
+  it('answers 503 BY NAME with NEITHER port supplied — the frame still refuses honestly', async () => {
+    // A `startServer` with no run service AND no attach port has nothing to stream from, and 503
+    // is the honest word for that. The shipped command never reaches this composition — it threads
+    // `runServiceAttach` on both token arms — but the frame's own answer is still a contract.
     const db = new DashboardDatabase({ dbPath: ':memory:' })
     const started = await startServer({ db, port: 0 })
     closers.push(started.close)
@@ -444,6 +797,17 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
     expect(answer.status).toBe(503)
     expect(answer.contentType).toContain('application/json')
     expect(answer.body).not.toContain('text/event-stream')
+    expect(JSON.parse(answer.body)).toMatchObject({ error: expect.stringContaining('run service') })
+  })
+
+  it('the LEGACY bare-router mount answers the same 503 — the case the option did not remove', async () => {
+    // `createRouter({ db })` with no attach port is the mount a host that has not learned about
+    // the option produces. It keeps its 503, so the #264 fix widened what CAN stream without
+    // changing what an unwired mount says.
+    const origin = await listen(createRouter({ db: mockDb() }))
+    const answer = await read(`${origin}/api/run-stream/r_local`)
+    expect(answer.status).toBe(503)
+    expect(answer.contentType).toContain('application/json')
     expect(JSON.parse(answer.body)).toMatchObject({ error: expect.stringContaining('run service') })
   })
 })
