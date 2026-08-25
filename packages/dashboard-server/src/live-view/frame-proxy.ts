@@ -87,6 +87,20 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
       ws.send(frame.bytes)
     }
 
+    /**
+     * THIS HANDLE'S STREAM ENDED WHILE THE RUN CONTINUES (403 CR-03).
+     *
+     * A multi-member run settles one member at a time, and the member's browser goes down with it.
+     * Without this the viewer kept a frozen last frame under `data-embed-state="live"` until the
+     * whole run ended — a stale picture claiming to be live, which is exactly what the embed page's
+     * own law forbids. The socket is NOT closed: `runFinished` is a different fact, it is still
+     * coming, and a viewer who is told one end is not thereby told the other.
+     */
+    const onStreamEnd = (): void => {
+      subscription = undefined
+      send(ws, { type: 'ended', reason: 'handleFinished' })
+    }
+
     const greet = (token: string): void => {
       const verdict = deps.validate(token, { runId, now: now() })
       if (verdict.kind !== 'ok') {
@@ -110,7 +124,7 @@ export function createFrameProxy(deps: FrameProxyDeps): (ws: WebSocket, runId: s
       // `{ kind: 'none' }` is an HONEST answer, not a failure: the socket stays open so the page
       // can still receive `ended`, and no painter is ever started.
       if (stream.kind !== 'none') {
-        subscription = session.subscribeFrames(handle, onFrame)
+        subscription = session.subscribeFrames(handle, onFrame, onStreamEnd)
       }
 
       session.done.then(

@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import type { LiveFrame } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, LiveFrame, RunEventEnvelope } from '@vostride/agent-qa-schema'
 import type { LiveStreamCapability } from '../../platform.js'
+import { startRun } from '../shell.js'
+import type { MemberTestRunContext, RunConfig } from '../shell.js'
+import type { EventLogPort, HandoffStorePort } from '../ports.js'
+import type { TestResult } from '../../result.js'
 import {
   createLiveStreamHub,
   LIVE_STREAM_ACK_BOUND_MS,
@@ -205,20 +209,35 @@ describe('createLiveStreamHub (403 D-05/D-07)', () => {
     expect(capability.calls).toContain('stop')
   })
 
-  it('(g) withdrawing the capability mid-stream stops it and declares none', async () => {
+  it('(g) withdrawing the capability mid-stream stops it, declares none, and TELLS the viewers', async () => {
+    // CR-03. Stopping the producer without telling the subscriber set is how a live view freezes:
+    // the last frame stays painted and the surface still calls itself live. The end is delivered to
+    // every current subscriber, and the assertion is ordered so an absence can never pass for a
+    // presence — a frame is proved delivered BEFORE the end is asserted.
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
     const hub = createLiveStreamHub({ timer })
     hub.register(0, capability)
-    hub.subscribe(0, () => {})
+    const seen: number[] = []
+    const ends: string[] = []
+    hub.subscribe(0, (f) => seen.push(f.id), () => ends.push('one'))
+    hub.subscribe(0, () => {}, () => ends.push('two'))
     await settle()
     expect(capability.calls).toContain('start')
+    capability.emit(frame(4))
+    expect(seen, 'the witness: this subscriber was genuinely receiving frames').toEqual([4])
+    expect(ends, 'and had not been told anything yet').toEqual([])
+
     hub.register(0, undefined)
     await settle()
     expect(capability.calls, 'a finished member takes its screencast down with it').toContain('stop')
+    expect(ends, 'every viewer of the finished handle is told the stream ended, by name').toEqual(['one', 'two'])
     expect(hub.capabilityOf(0)).toEqual({ kind: 'none' })
     expect(hub.subscribe(0, () => {}), 'a withdrawn handle has nothing to subscribe to')
       .toBeUndefined()
+
+    capability.emit(frame(5))
+    expect(seen, 'and no frame reaches a subscriber the hub already said goodbye to').toEqual([4])
   })
 
   it('(h) close() stops every started stream', async () => {
@@ -654,14 +673,20 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
     const second = makeFakeCapability()
     const hub = createLiveStreamHub({ timer })
     hub.register(0, first)
-    hub.subscribe(0, () => {})
+    const seen: number[] = []
+    const ends: string[] = []
+    hub.subscribe(0, (f) => seen.push(f.id), () => ends.push('end'))
     await flush()
     expect(first.calls).toContain('start')
+    first.emit(frame(1))
+    expect(seen, 'the witness: the first stream really was delivering to this viewer').toEqual([1])
 
     hub.register(0, second)
     await flush()
     expect(first.calls, 'the replaced capability is stopped — a re-registered handle leaves no '
       + 'orphan screencast running in the browser').toContain('stop')
+    expect(ends, 'and the viewers of the REPLACED stream are told it ended (CR-03) — a re-register '
+      + 'drops their subscription just as surely as a withdraw does').toEqual(['end'])
     expect(second.calls, 'and the replacement is not started until somebody watches it').toEqual([])
     expect(hub.capabilityOf(0)).toEqual({ kind: 'cdp-screencast' })
 
@@ -744,5 +769,91 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
     expect(capability.calls.filter((call) => call === 'start')).toHaveLength(1)
     expect(capability.calls, 'an idempotent re-register must not tear a live stream down')
       .not.toContain('stop')
+  })
+})
+
+// ---- THE SEAM, THROUGH THE REAL RUN --------------------------------------------------------
+//
+// The hub cells above drive the hub directly and the frame-proxy cells drive a PLANTED
+// `RunSession`. Between the two sits `shell.ts`, which builds the real session and forwards
+// `subscribeFrames`'s arguments to the hub — and nothing else in either suite reads it. A dropped
+// third argument there would leave both suites green while no viewer of a real run was ever told
+// its member finished: the shape WINDOWS calls "green that never ran". So this cell drives
+// `startRun` end to end.
+
+describe('shell.ts threads the end-of-stream notification onto the real RunSession seam (CR-03)', () => {
+  it('a member settling delivers onEnd to that handle\'s frame subscribers, run still going', async () => {
+    let push: ((frame: LiveFrame) => void) | undefined
+    const capability: LiveStreamCapability = {
+      kind: 'cdp-screencast',
+      async start(onFrame) { push = onFrame },
+      async ack() { /* the ack path is cell (d)'s subject */ },
+      async stop() { push = undefined },
+    }
+    let markRegistered: () => void = () => {}
+    const registered = new Promise<void>((resolve) => { markRegistered = resolve })
+    let settleMemberA: () => void = () => {}
+    const memberAHeld = new Promise<void>((resolve) => { settleMemberA = resolve })
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+
+    const log: RunEventEnvelope[] = []
+    const config: RunConfig = {
+      runId: 'run-cr-03-seam' as RunConfig['runId'],
+      scope: { tier: 'suite', key: 'live-view' },
+      executionContext: 'local-headless',
+      buildOrdinal: 1,
+      configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+      members: [
+        { testId: 'a', name: 'the watched member', filePath: 'a.test.ts' },
+        { testId: 'b', name: 'the member that keeps the run alive', filePath: 'b.test.ts' },
+      ],
+      executor: async (member, ctx: MemberTestRunContext): Promise<TestResult> => {
+        if (ctx.testIndex === 0) {
+          ctx.registerLiveStream?.(capability)
+          markRegistered()
+          // Held so the cell can watch a LIVE member: the withdrawal below must be the thing the
+          // subscriber is told about, not a member that had already settled before it attached.
+          await memberAHeld
+        } else {
+          // The SECOND member keeps the run going, which is what makes this CR-03 and not the
+          // already-covered `runFinished` path: the handle ends while the RUN does not.
+          await held
+        }
+        return { name: member.name, filePath: member.filePath, status: 'passed', steps: [], duration: 1 }
+      },
+      ports: {
+        handoffStore: { async save(_handoff: CompletedRunHandoff) { /* not this cell's subject */ } } as HandoffStorePort,
+        eventLog: { append(envelope) { log.push(envelope) }, read(fromSeq) { return log.filter((e) => e.seq >= fromSeq) } } as EventLogPort,
+      },
+    }
+
+    const session = startRun(config)
+    await registered
+    const seen: number[] = []
+    let ends = 0
+    const subscription = session.subscribeFrames(0, (f) => { seen.push(f.id) }, () => { ends += 1 })
+    expect(subscription, 'the live handle is subscribable').toBeDefined()
+    for (let tick = 0; tick < 20 && push === undefined; tick++) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+
+    // THE WITNESS FIRST. A frame really crossed the seam to this subscriber, and it had been told
+    // nothing — so the absence asserted next is an absence and not a stream that never started.
+    push?.({ id: 1, bytes: new Uint8Array([0xff, 0xd8, 0xff]), metadata: { width: 320, height: 240 } })
+    subscription?.ack(1)
+    expect(seen, 'the witness: a real run delivered a real frame to this subscriber').toEqual([1])
+    expect(ends, 'and nothing had been declared over yet').toBe(0)
+
+    // Member 0 settles. `shell.ts` withdraws its declaration at the one convergence site.
+    settleMemberA()
+    for (let tick = 0; tick < 50 && ends === 0; tick++) {
+      await new Promise((resolve) => setTimeout(resolve, 2))
+    }
+    expect(ends, 'a settled member tells its viewers, through the real session seam').toBe(1)
+    expect(session.streamCapabilityOf(0), 'and reads `none` from then on').toEqual({ kind: 'none' })
+
+    release()
+    await session.done
   })
 })

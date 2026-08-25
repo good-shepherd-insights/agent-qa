@@ -22,6 +22,10 @@ export const LIVE_EMBED_STATES = [
   'no-stream',
   'expired',
   'refused',
+  // THIS MEMBER'S STREAM ENDED WHILE THE RUN CONTINUES (403 CR-03). Separate the whole run's end,
+  // because a person watching one member of a suite needs to know which of the two happened — and
+  // neither may be shown as `live` over whichever frame happened to be last.
+  'stream-ended',
   'ended',
   'lost',
 ] as const
@@ -157,8 +161,12 @@ export function renderLiveEmbedPage(input: { runId: string; nonce: string }): st
       return;
     }
     if (msg.type === 'ended') {
+      // EVERY ABSENCE IS NAMED, AND THESE ARE TWO DIFFERENT ABSENCES. Painting stops either way --
+      // the canvas is hidden outside the live state -- so neither end can leave a frozen frame on
+      // screen labelled as though it were still arriving.
       ended = true;
-      setState('ended', 'run ended');
+      if (msg.reason === 'handleFinished') setState('stream-ended', 'this target finished — the run is still going');
+      else setState('ended', 'run ended');
       return;
     }
   });

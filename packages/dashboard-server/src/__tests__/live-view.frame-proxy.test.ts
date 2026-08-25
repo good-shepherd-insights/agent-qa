@@ -78,6 +78,12 @@ interface PlantedSession {
   emit(frame: LiveFrame): void
   /** Resolve `session.done`, which is what makes the proxy say `ended`. */
   finish(): void
+  /**
+   * The hub's `register(handle, undefined)` shape, exercised through the seam: the handle's stream
+   * ends, its subscriber set is cleared, and every subscriber's `onEnd` is called. The RUN is
+   * untouched — `done` is still pending, which is the whole point of CR-03.
+   */
+  endStream(): void
   readonly acked: number[]
   readonly unsubscribes: number
   readonly cancels: number
@@ -89,6 +95,7 @@ function plantSession(input: {
   stream?: LiveStreamDeclaration
 }): PlantedSession {
   const sinks = new Set<(frame: LiveFrame) => void>()
+  const ends = new Set<() => void>()
   const acked: number[] = []
   let unsubscribes = 0
   let cancels = 0
@@ -103,12 +110,21 @@ function plantSession(input: {
     status: 'running',
     executionContext: 'local-headless',
     subscribe: () => () => undefined,
-    subscribeFrames: (_handle: number, onFrame: (frame: LiveFrame) => void): LiveFrameSubscription | undefined => {
+    subscribeFrames: (
+      _handle: number,
+      onFrame: (frame: LiveFrame) => void,
+      onEnd?: () => void,
+    ): LiveFrameSubscription | undefined => {
       subscribeCalls += 1
       sinks.add(onFrame)
+      if (onEnd !== undefined) ends.add(onEnd)
       return {
         ack: (frameId: number) => { acked.push(frameId) },
-        unsubscribe: () => { unsubscribes += 1; sinks.delete(onFrame) },
+        unsubscribe: () => {
+          unsubscribes += 1
+          sinks.delete(onFrame)
+          if (onEnd !== undefined) ends.delete(onEnd)
+        },
       }
     },
     streamCapabilityOf: (): LiveStreamDeclaration => stream,
@@ -119,6 +135,12 @@ function plantSession(input: {
     session,
     emit: (frame) => { for (const sink of [...sinks]) sink(frame) },
     finish: () => { finish() },
+    endStream: () => {
+      const leaving = [...ends]
+      ends.clear()
+      sinks.clear()
+      for (const onEnd of leaving) onEnd()
+    },
     get acked() { return acked },
     get unsubscribes() { return unsubscribes },
     get cancels() { return cancels },
@@ -473,6 +495,53 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
     const ended = await viewer.waitFor(['ended'])
     expect(ended.reason).toBe('runFinished')
     expect(await viewer.waitForClose()).toBe(1000)
+  })
+
+  it('(23) a member FINISHING sends `ended { handleFinished }` on the still-open socket (CR-03)', async () => {
+    // CR-03. A multi-member run settles one member at a time, and `shell.ts` withdraws that
+    // handle's declaration the instant its race settles. Before this cell the hub dropped the
+    // handle's subscriber set without a word, so this viewer sat on `data-embed-state="live"` over
+    // a frozen last frame until the WHOLE run ended — a stale picture claiming to be live, which is
+    // the one thing the embed page's own law ("every absence is named") forbids.
+    //
+    // EVERY ABSENCE HERE IS PRECEDED BY A PRESENCE. `ready` with a real declared kind, one
+    // subscription, and one painted JPEG are asserted BEFORE the end is triggered — otherwise
+    // "the viewer was told the stream ended" and "the viewer was never streaming" read identically.
+    const planted = plantSession({ runId: 'r1' })
+    const frame = await productionFrame({ r1: planted.session })
+    const viewer = await openViewer(frame, '?runId=r1')
+    viewer.send({ type: 'hello', token: tokenFor({ runId: 'r1', handle: 2 }) })
+
+    const ready = await viewer.waitFor(['ready'])
+    expect(ready.stream?.kind, 'the witness: this viewer really is watching a declared stream')
+      .toBe('cdp-screencast')
+    expect(planted.subscribeCalls, 'and it really did subscribe to the frames').toBe(1)
+
+    planted.emit(jpeg(7))
+    await viewer.waitForBinaries(1)
+    expect(viewer.binaries.length, 'the witness: pixels really flowed before the end was declared')
+      .toBe(1)
+
+    // THE MEMBER FINISHES. The run does NOT — `session.done` is still pending below.
+    planted.endStream()
+
+    const first = await viewer.waitFor(['ended'])
+    expect(first.reason, 'a finished member is named, not left frozen and labelled live')
+      .toBe('handleFinished')
+    expect(
+      viewer.closeCode,
+      'and the socket STAYS OPEN — `runFinished` is a different fact and is still coming',
+    ).toBeUndefined()
+
+    // NOW the run ends. Both facts arrive, in order, on the one socket.
+    planted.finish()
+    expect(await viewer.waitForClose()).toBe(1000)
+    expect(
+      viewer.texts.filter((text) => text.type === 'ended').map((text) => text.reason),
+      'two ends, each by its own name, in the order they happened',
+    ).toEqual(['handleFinished', 'runFinished'])
+    expect(viewer.order.join('|')).toBe('text:ready|text:frame|binary|text:ended|text:ended')
+    expect(planted.cancels, 'and nothing about this touched the run (D-16)').toBe(0)
   })
 
   it('(13) THE EXPIRY DEADLINE: a socket whose token lapses mid-stream is refused BY NAME', async () => {

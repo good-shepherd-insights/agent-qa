@@ -46,13 +46,27 @@ export interface CreateLiveStreamHubOptions {
  */
 export interface LiveStreamHub {
   register(handle: number, capability: LiveStreamCapability | undefined): void
-  subscribe(handle: number, onFrame: (frame: LiveFrame) => void): LiveFrameSubscription | undefined
+  subscribe(
+    handle: number,
+    onFrame: (frame: LiveFrame) => void,
+    onEnd?: () => void,
+  ): LiveFrameSubscription | undefined
   capabilityOf(handle: number): LiveStreamDeclaration
   close(): Promise<void>
 }
 
 interface Subscriber {
   onFrame: (frame: LiveFrame) => void
+  /**
+   * Called ONCE when this handle's stream ends under the subscriber (403 CR-03): the member
+   * finished and withdrew its declaration, or a re-register replaced the capability. Optional, so
+   * a caller that only wants frames is unchanged.
+   *
+   * WHY IT EXISTS. Dropping a subscriber set silently is what leaves a live view frozen: the last
+   * frame stays painted and the surface goes on calling itself live, which is the one state a
+   * person watching cannot tell apart from a run that is still running.
+   */
+  onEnd?: () => void
 }
 
 /**
@@ -81,6 +95,11 @@ interface StreamState {
   pendingStop?: () => void
   /** frameId → the subscribers that have not yet acked it, plus its bound-timer cancel. */
   awaiting: Map<number, { outstanding: Set<Subscriber>; cancel: () => void }>
+  /**
+   * The state has been evicted from `streams` and its subscribers told (IN-04). A release held by
+   * an old subscription must not arm a fresh grace on a state nobody can reach.
+   */
+  dead: boolean
 }
 
 const NONE: LiveStreamDeclaration = { kind: 'none' }
@@ -166,7 +185,29 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
     reconcile(state)
   }
 
+  /**
+   * THE STREAM IS OVER FOR ITS SUBSCRIBERS (403 CR-03). Snapshot the set, clear it, then tell each
+   * one. Clearing FIRST is what makes this a one-shot: a subscriber that re-enters through
+   * `release()` from inside its own `onEnd` finds nothing to remove and arms nothing.
+   *
+   * A subscriber that throws here is already gone, so its throw is swallowed rather than reported:
+   * the run has nowhere to put it and the remaining subscribers must still be told.
+   */
+  function endStream(state: StreamState): void {
+    state.dead = true
+    const leaving = [...state.subscribers]
+    state.subscribers.clear()
+    for (const subscriber of leaving) {
+      try {
+        subscriber.onEnd?.()
+      } catch {
+        /* a viewer that throws on the way out is gone anyway — and it is not the run's business */
+      }
+    }
+  }
+
   function scheduleStop(state: StreamState): void {
+    if (state.dead) return
     cancelGrace(state)
     state.pendingStop = timer.schedule(graceMs, () => {
       state.pendingStop = undefined
@@ -228,13 +269,24 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
     register(handle, capability): void {
       const existing = streams.get(handle)
       if (capability === undefined) {
-        // The member finished (or declares nothing): stop whatever was running and declare `none`.
+        // The member finished (or declares nothing): stop whatever was running, TELL whoever was
+        // watching it, and declare `none`. Telling them is CR-03 — without it a viewer holds a
+        // frozen last frame labelled live until the whole run ends.
         streams.delete(handle)
-        if (existing) stopStream(existing)
+        if (existing) {
+          stopStream(existing)
+          endStream(existing)
+        }
         return
       }
       if (existing && existing.capability === capability) return
-      if (existing) stopStream(existing)
+      if (existing) {
+        // A REPLACEMENT drops the old stream's subscribers just as surely as a withdrawal does:
+        // they hold a subscription to a state that is about to be unreachable, and nothing will
+        // ever deliver to them again. Same end, same name.
+        stopStream(existing)
+        endStream(existing)
+      }
       streams.set(handle, {
         capability,
         subscribers: new Set<Subscriber>(),
@@ -243,14 +295,15 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
         reconciling: false,
         chain: Promise.resolve(),
         awaiting: new Map(),
+        dead: false,
       })
     },
 
-    subscribe(handle, onFrame): LiveFrameSubscription | undefined {
+    subscribe(handle, onFrame, onEnd): LiveFrameSubscription | undefined {
       if (closed) return undefined
       const state = streams.get(handle)
       if (!state) return undefined
-      const subscriber: Subscriber = { onFrame }
+      const subscriber: Subscriber = onEnd === undefined ? { onFrame } : { onFrame, onEnd }
       state.subscribers.add(subscriber)
       // A re-subscribe inside the grace window CANCELS the stop; the producer never restarted.
       cancelGrace(state)

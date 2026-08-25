@@ -64,4 +64,7 @@ export type LiveViewServerMessage =
   | { type: 'refused'; reason: LiveViewRefusalReason }
   | { type: 'frame'; id: number; width: number; height: number }
   | { type: 'renewed'; expiresAt: number }
-  | { type: 'ended'; reason: 'runFinished' }
+  // TWO ENDS, EACH BY ITS OWN NAME (403 CR-03). `handleFinished` says THIS member's stream is over
+  // while the run continues; `runFinished` says the run is over. Additive to the published
+  // contract: a consumer that only knows `runFinished` still reads every message it used to.
+  | { type: 'ended'; reason: 'runFinished' | 'handleFinished' }

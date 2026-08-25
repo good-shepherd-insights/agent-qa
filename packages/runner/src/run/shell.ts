@@ -563,7 +563,7 @@ export function startRun(config: RunConfig): RunSession {
     },
     executionContext: config.executionContext,
     subscribe: (fromSeq, handler) => bus.subscribe(fromSeq, handler),
-    subscribeFrames: (handle, onFrame) => liveStreams.subscribe(handle, onFrame),
+    subscribeFrames: (handle, onFrame, onEnd) => liveStreams.subscribe(handle, onFrame, onEnd),
     streamCapabilityOf: (handle) => liveStreams.capabilityOf(handle),
     cancel(): void {
       // Run-level cancel (D-03): abort the active member, skip the rest, aggregate `cancelled`.
