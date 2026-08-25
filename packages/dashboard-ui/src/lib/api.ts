@@ -5,6 +5,7 @@ import type {
   ChatSessionEvent,
   RunEventEnvelope,
   RunServiceReadiness,
+  RunsLiveUrlResult,
 } from '@vostride/agent-qa-schema'
 
 export interface RunRow {
@@ -718,10 +719,48 @@ export interface RunStreamOptions {
    * `if (opts.handle)` spelling would silently serve member 0 the firehose.
    */
   handle?: number
+  /**
+   * Resume AFTER this seq (403-03 · INVK-05, D-13). The door resolves it to `subscribe(N + 1)`, so
+   * a client that observed seq 8 passes 8 and is served 9 onward.
+   *
+   * ZERO IS A RESUME POINT, not an absent one: it means "replay from the very beginning", which is
+   * a different request from sending no parameter at all on a door that treats the two alike today
+   * and might not tomorrow. Below the bus's replay window the door refuses with a typed
+   * `410 replay_floor` carrying a REACHABLE recovery point — see {@link classifyRunStreamClose},
+   * which is how a browser ever learns that happened.
+   */
+  lastEventId?: number
   /** Every surviving envelope, verbatim, in seq order. */
   onEvent?: (event: RunEventEnvelope) => void
   /** Called after the stream closes itself at `runFinished`. */
   onFinished?: (event: RunEventEnvelope) => void
+  /**
+   * The source's own `error` event, with the source, so a caller can read `readyState`.
+   *
+   * `EventSource` FLATTENS EVERY TYPED REFUSAL INTO THIS. A 410 replay floor, a 404 unknown run and
+   * a dropped socket all arrive here as one wordless event — which is why a page must follow it
+   * with {@link classifyRunStreamClose} rather than guess from `readyState`.
+   */
+  onError?: (event: Event, source: EventSource) => void
+}
+
+/**
+ * The run-stream query, composed the ONE way both the source and the classifier compose it.
+ *
+ * `=== undefined`, NEVER truthiness. `handle: 0` is a real member and `lastEventId: 0` is a real
+ * resume point; a truthiness guard silently serves member 0 the firehose and silently turns
+ * "from the beginning" into "from wherever you like".
+ */
+function runStreamQuery(opts: { handle?: number; lastEventId?: number }): string {
+  const handlePart: Array<[string, string]> = opts.handle === undefined ? [] : [['handle', String(opts.handle)]]
+  const resumePart: Array<[string, string]> = opts.lastEventId === undefined ? [] : [['lastEventId', String(opts.lastEventId)]]
+  const pairs = [...handlePart, ...resumePart]
+  return pairs.length === 0 ? '' : `?${new URLSearchParams(pairs).toString()}`
+}
+
+/** The URL BOTH the stream source and the close classifier address. One spelling, one door. */
+function runStreamUrl(runId: string, opts: { handle?: number; lastEventId?: number }): string {
+  return `${API_BASE}/api/run-stream/${encodeURIComponent(runId)}${runStreamQuery(opts)}`
 }
 
 /**
@@ -737,8 +776,12 @@ export interface RunStreamOptions {
  * is why the AUTHED door's clients are `fetch`/`curl`/CI and this helper's door is the local one.
  */
 export function openRunStream(runId: string, opts: RunStreamOptions = {}): EventSource {
-  const query = opts.handle === undefined ? '' : `?handle=${encodeURIComponent(String(opts.handle))}`
-  const source = new EventSource(`${API_BASE}/api/run-stream/${encodeURIComponent(runId)}${query}`)
+  const source = new EventSource(runStreamUrl(runId, opts))
+
+  if (opts.onError) {
+    const onError = opts.onError
+    source.addEventListener('error', (event) => { onError(event, source) })
+  }
 
   for (const type of RUN_EVENT_TYPES) {
     source.addEventListener(type, (e) => {
@@ -755,6 +798,92 @@ export function openRunStream(runId: string, opts: RunStreamOptions = {}): Event
   }
 
   return source
+}
+
+/**
+ * Mint a live-view URL for one handle (403 D-03/D-08 · `runs.liveurl`).
+ *
+ * THE TOKEN RIDES IN THE RESULT'S FRAGMENT and this is the only place it exists outside the minting
+ * process's memory. Nothing here formats, logs or widens the body: it is the op's own result
+ * verbatim, because a second shaping in the client would be a second contract for what a `liveUrl`
+ * is, free to disagree with the one the function layer published.
+ *
+ * The refusals are the door's own words — `unknown_run`, `live_view_unavailable`,
+ * `live_url_mint_failed`, `invalid_handle` — and they arrive on `ApiError.message` because
+ * `ApiError` already prefers a body's `error` field. A caller routes on the word, never on prose.
+ */
+export async function fetchLiveUrl(runId: string, handle = 0): Promise<RunsLiveUrlResult> {
+  return request(`/api/runs/${encodeURIComponent(runId)}/live-url?handle=${encodeURIComponent(String(handle))}`)
+}
+
+/**
+ * Why a run stream closed, in the door's own vocabulary (403 D-13/D-15 · RESEARCH Pitfall 3).
+ *
+ * `reattach` means the door is still willing to serve this exact request; `replay_floor` means the
+ * resume point fell out of the bus's replay window and `earliestAvailableSeq` is where the stream
+ * can be picked up (re-attach at `earliestAvailableSeq - 1`); `unknown_run` means this process has
+ * no such run and durable truth is the run record; `lost` means the question could not be asked or
+ * could not be understood.
+ */
+export type RunStreamCloseReason =
+  | { kind: 'replay_floor'; earliestAvailableSeq: number }
+  | { kind: 'unknown_run' }
+  | { kind: 'reattach' }
+  | { kind: 'lost' }
+
+/**
+ * Ask the door why the stream closed, because `EventSource` will not say.
+ *
+ * THE PROBLEM THIS SOLVES. A `410 replay_floor` and a `404 unknown_run` are both written as JSON
+ * BEFORE any stream head (403-03), and `EventSource` reports both as one wordless `error` with
+ * `readyState === CLOSED` — indistinguishable from a dropped socket. A page branching on
+ * `readyState` therefore has one word for three situations and shows "lost" for a run that merely
+ * needs re-attaching, which is the silent-gap failure D-13 exists to refuse.
+ *
+ * SO IT ASKS THE SAME QUESTION, over `fetch` this time: the SAME URL with the SAME handle and the
+ * SAME resume point, because a different question gets a different answer. `Accept:
+ * application/json` is honest rather than load-bearing — the refusal arms answer JSON regardless —
+ * and the abort signal keeps a probe that lands on a live stream from leaving its body open.
+ *
+ * IT NEVER THROWS. Its whole caller population is error handlers.
+ */
+export async function classifyRunStreamClose(
+  runId: string,
+  opts: { handle?: number; lastEventId?: number } = {},
+): Promise<RunStreamCloseReason> {
+  const controller = new AbortController()
+  try {
+    const res = await fetch(runStreamUrl(runId, opts), {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (res.status === 410) {
+      const payload = await parseErrorPayload(res)
+      // A floor the door did not SEND is not a floor. Inventing one would hand the page a recovery
+      // point to subtract from, and the subtraction is the likeliest integration error this
+      // contract can produce (403-03).
+      if (payload?.error === 'replay_floor' && typeof payload.earliestAvailableSeq === 'number') {
+        return { kind: 'replay_floor', earliestAvailableSeq: payload.earliestAvailableSeq }
+      }
+      return { kind: 'lost' }
+    }
+    if (res.status === 404) {
+      const payload = await parseErrorPayload(res)
+      // `unknown_run` is the run service's word for "this process never started that". A generic
+      // 404 from some other route is a fact about routing, not about a run.
+      return payload?.error === 'unknown_run' ? { kind: 'unknown_run' } : { kind: 'lost' }
+    }
+    if (res.ok && (res.headers.get('content-type') ?? '').includes('text/event-stream')) {
+      return { kind: 'reattach' }
+    }
+    return { kind: 'lost' }
+  } catch {
+    return { kind: 'lost' }
+  } finally {
+    // Whatever the answer was, this probe never consumes a stream: on the reattach arm the body is
+    // a live feed the real `EventSource` is about to open for itself.
+    controller.abort()
+  }
 }
 
 export async function cancelRun(runId: string): Promise<{ cancelled: boolean }> {
