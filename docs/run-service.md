@@ -169,10 +169,12 @@ token — it grants viewing and nothing else, and it cannot cancel, restart or m
 
 Both doors mint through the same function-layer op, `runs.liveurl`, and answer identically. The
 difference is only the credential: the **local dashboard door** at
-`GET /api/runs/<runId>/live-url` needs **no** credential, because what keeps it local is the
-loopback bind above rather than a token — asking for a *remote* credential to use a *local* surface
-would be the wrong trade. This route, on the remote door, mints under the trust scope of the bearer
-you presented.
+`GET /api/runs/<runId>/live-url` needs **no** credential, because asking for a *remote* credential
+to use a *local* surface would be the wrong trade. What keeps it local is two things and not one:
+the loopback bind above keeps a remote *host* out, and a same-site check on the route keeps a page
+served from another *origin* in your own browser from minting. The `liveUrl` token is what gates
+viewing; the same-site check is what keeps a cross-origin page from obtaining that token. This
+route, on the remote door, mints under the trust scope of the bearer you presented.
 
 `404 {"error":"unknown_run"}` means this process has no live session for that run.
 `503 {"error":"live_view_unavailable"}` is an honest host fact: this host has no live-view
@@ -182,4 +184,5 @@ resolve to anything.
 `GET /ok` reports only measured facts (the service answered, a host is composed, a credential
 resolved, the contract version). It never predicts that a run will succeed. The same facts are
 served without a token at `GET /api/run-readiness` on the local dashboard API — one readiness
-answer behind two doors, and the loopback bind above is what keeps the unauthenticated one local.
+answer behind two doors, and the loopback bind above is what keeps a remote host off the
+unauthenticated one.
