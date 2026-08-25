@@ -11,6 +11,36 @@
 // rung for rung, comment for comment.
 
 import type { IncomingMessage } from 'node:http'
+import { isLoopbackHost } from '@vostride/agent-qa-core'
+
+export const NON_LOOPBACK_HOST_REFUSAL =
+  'Cross-site request refused: Host must name a loopback interface this server agreed to answer to.'
+
+/**
+ * Parse the authority from an HTTP Host header without treating the value as trustworthy.
+ *
+ * Brackets are required around an IPv6 literal because an unbracketed second colon is ambiguous
+ * with the optional port. Anything outside the complete authority shape is deliberately invalid.
+ */
+export function hostnameOfHostHeader(hostHeader: string | undefined): string {
+  if (hostHeader === undefined) return ''
+  const normalized = hostHeader.trim().toLowerCase()
+  const parsed = /^(?:\[([0-9a-f:.]*:[0-9a-f:.]*)\]|([a-z0-9.]+))(?::\d+)?$/u.exec(normalized)
+  return parsed?.[1] ?? parsed?.[2] ?? ''
+}
+
+/**
+ * Refuse a claimed Host this loopback-only server never agreed to answer to.
+ *
+ * An absent Host is refused rather than falling through: a name that was not stated cannot be
+ * validated. The compatibility cost is limited to an HTTP/1.0 client that omits Host; HTTP/1.1
+ * clients and browsers state it.
+ */
+export function refuseNonLoopbackHost(req: IncomingMessage): string | undefined {
+  return isLoopbackHost(hostnameOfHostHeader(req.headers.host))
+    ? undefined
+    : NON_LOOPBACK_HOST_REFUSAL
+}
 
 /**
  * Refuse a request that a page on another origin drove (400-14, gap 6 — T-400-G6-01/02).
@@ -41,6 +71,9 @@ import type { IncomingMessage } from 'node:http'
  * set before it moved here to be shared.
  */
 export function refuseCrossSiteRequest(req: IncomingMessage): string | undefined {
+  const hostRefusal = refuseNonLoopbackHost(req)
+  if (hostRefusal !== undefined) return hostRefusal
+
   const refusal = 'Cross-site request refused: this door is driven from its own origin or from a '
     + 'local client that sends no Origin'
   const origin = req.headers.origin

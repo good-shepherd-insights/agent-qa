@@ -18,6 +18,7 @@ import { createSessionHandler } from '../live-editor/ws-handler.js'
 import { LIVE_EMBED_PATH_PREFIX, LIVE_VIEW_WS_PATH } from '../live-view/protocol.js'
 import { renderLiveEmbedPage } from '../live-view/embed-page.js'
 import { createFrameProxy } from '../live-view/frame-proxy.js'
+import { refuseNonLoopbackHost } from './cross-site.js'
 import type { LiveUrlVerdict, RunSession, RunsLiveUrlResult } from '@vostride/agent-qa-schema'
 import {
   isLoopbackHost,
@@ -751,6 +752,12 @@ export async function startServer(opts: StartServerOptions): Promise<{
     // 403 D-06: the frame socket. The run id is the ONLY query parameter — the token arrives in
     // the first text message and nowhere else, so a refused upgrade has never seen a credential.
     if (url.pathname === LIVE_VIEW_WS_PATH) {
+      const hostRefusal = refuseNonLoopbackHost(request)
+      if (hostRefusal !== undefined) {
+        socket.destroy()
+        return
+      }
+
       // DEFENSE IN DEPTH, AND NOT THE CREDENTIAL — 403 gap round 1, T-403-21.
       //
       // A WebSocket upgrade is exempt from CORS entirely, so the mint door's same-site guard is not

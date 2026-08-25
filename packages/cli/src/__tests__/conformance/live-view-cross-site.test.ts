@@ -290,6 +290,7 @@ function speakToFrameSocketRaw(input: {
   readonly port: number
   readonly runId: string
   readonly token: string
+  readonly host?: string
   readonly origin?: string
   readonly until: readonly string[]
   readonly budgetMs?: number
@@ -340,7 +341,7 @@ function speakToFrameSocketRaw(input: {
     })
     socket.on('connect', () => {
       const headers: Record<string, string> = {
-        host: `127.0.0.1:${String(input.port)}`,
+        host: input.host ?? `127.0.0.1:${String(input.port)}`,
         upgrade: 'websocket',
         connection: 'Upgrade',
         'sec-websocket-key': randomBytes(16).toString('base64'),
@@ -698,5 +699,120 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
     // the same shape a SANDBOXED ATTACKER iframe sends, so this rung is not a credential and is not
     // claimed to be one. The credential is the token the `hello` message carries, minted by a door
     // that cells (1)-(4) prove now refuses a cross-site caller.
+  }, 120_000)
+
+  it('(6) SC-2 THE REBIND ARM: a claimed Host this server never agreed to answer to is refused, and the token it would have handed out never leaves', async () => {
+    const f = held()
+    const port = f.dashboard.port
+    const hostileHost = `evil.example:${String(port)}`
+    const hostileOrigin = `http://${hostileHost}`
+    const allowedHost = `127.0.0.1:${String(port)}`
+    const allowedOrigin = `http://${allowedHost}`
+
+    const rebind = await mintRaw(port, f.runId, {
+      host: hostileHost,
+      origin: hostileOrigin,
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-dest': 'empty',
+    })
+    const rebindNoSfs = await mintRaw(port, f.runId, {
+      host: hostileHost,
+      origin: hostileOrigin,
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-dest': 'empty',
+    })
+
+    // Obtain a real credential through the admitted non-browser path. The hostile socket arm is
+    // stronger than the mint arms: even a caller already holding a valid token must not upgrade
+    // through a name this loopback-only server never agreed to answer to.
+    const admittedRaw = await (await fetch(
+      `${f.dashboard.origin}/api/runs/${encodeURIComponent(f.runId)}/live-url`,
+    )).text()
+    const validToken = (JSON.parse(admittedRaw) as { liveUrl?: string }).liveUrl?.split('#')[1]
+    expect(typeof validToken, `the admitted mint answered ${admittedRaw.slice(0, 200)}`).toBe('string')
+
+    const rebindSocket = await speakToFrameSocketRaw({
+      port,
+      runId: f.runId,
+      token: validToken as string,
+      host: hostileHost,
+      origin: hostileOrigin,
+      until: ['ready', 'ended', 'refused'],
+      budgetMs: 10_000,
+    })
+
+    // ALLOWED TWINS, measured in the same breath. These make every refusal below attributable to
+    // the claimed Host rung rather than to an unregistered route or a dead frame socket.
+    const allowed = await mintRaw(port, f.runId, {
+      host: allowedHost,
+      origin: allowedOrigin,
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-dest': 'empty',
+    })
+    const allowedNoSfs = await mintRaw(port, f.runId, {
+      host: allowedHost,
+      origin: allowedOrigin,
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-dest': 'empty',
+    })
+    const allowedSocket = await speakToFrameSocketRaw({
+      port,
+      runId: f.runId,
+      token: validToken as string,
+      host: allowedHost,
+      origin: allowedOrigin,
+      until: ['ready', 'ended', 'refused'],
+    })
+
+    const reading = {
+      rebindStatus: rebind.status,
+      rebindAcao: rebind.headers['access-control-allow-origin'] ?? null,
+      rebindLiveUrl: liveUrlIn(rebind) === undefined ? null : 'PRESENT',
+      rebindBody: rebind.body.slice(0, 200),
+      rebindNoSfsStatus: rebindNoSfs.status,
+      rebindNoSfsAcao: rebindNoSfs.headers['access-control-allow-origin'] ?? null,
+      rebindNoSfsLiveUrl: liveUrlIn(rebindNoSfs) === undefined ? null : 'PRESENT',
+      rebindNoSfsBody: rebindNoSfs.body.slice(0, 200),
+      rebindUpgradeStatus: rebindSocket.upgradeStatus,
+      rebindTypes: rebindSocket.messages.map((message) => message.type),
+      allowedStatus: allowed.status,
+      allowedLiveUrl: liveUrlIn(allowed) === undefined ? null : 'PRESENT',
+      allowedNoSfsStatus: allowedNoSfs.status,
+      allowedNoSfsLiveUrl: liveUrlIn(allowedNoSfs) === undefined ? null : 'PRESENT',
+      allowedUpgradeStatus: allowedSocket.upgradeStatus,
+      allowedTypes: allowedSocket.messages.map((message) => message.type),
+    }
+    console.log(`(6) claimed-Host rung: ${JSON.stringify(reading)}`)
+    const context = `${JSON.stringify(reading)}. ${childContext(f.dashboard)}`
+
+    expect(reading.allowedStatus, `${context} — the same-origin loopback mint stays admitted`).toBe(200)
+    expect(reading.allowedLiveUrl, `${context} — the admitted twin receives a token`).toBe('PRESENT')
+    expect(reading.allowedNoSfsStatus, `${context} — the loopback twin without Sec-Fetch-Site stays admitted`)
+      .toBe(200)
+    expect(reading.allowedNoSfsLiveUrl, `${context} — its token must be present`).toBe('PRESENT')
+    expect(reading.allowedUpgradeStatus, `${context} — the loopback frame-socket twin upgrades`).toBe(101)
+    expect(reading.allowedTypes, `${context} — the loopback frame-socket twin reaches ready`).toContain('ready')
+
+    expect(
+      reading.rebindStatus,
+      `${context} — SC-2: a claimed Host this server never agreed to answer to is refused. At HEAD this read 200.`,
+    ).toBe(403)
+    expect(rebind.body, `${context} — the refusal is typed`).toContain('cross_site_refused')
+    expect(reading.rebindAcao, `${context} — the refusal carries no cross-origin read grant`).toBeNull()
+    expect(reading.rebindLiveUrl, `${context} — no token leaves through the claimed hostile Host`).toBeNull()
+
+    expect(reading.rebindNoSfsStatus, `${context} — omitting Sec-Fetch-Site must not bypass the Host rung`)
+      .toBe(403)
+    expect(rebindNoSfs.body, `${context} — the no-Sec-Fetch-Site refusal is typed`)
+      .toContain('cross_site_refused')
+    expect(reading.rebindNoSfsAcao, `${context} — the no-Sec-Fetch-Site refusal carries no read grant`)
+      .toBeNull()
+    expect(reading.rebindNoSfsLiveUrl, `${context} — the no-Sec-Fetch-Site arm leaks no token`).toBeNull()
+
+    expect(reading.rebindUpgradeStatus, `${context} — a valid token does not excuse a hostile claimed Host`)
+      .not.toBe(101)
+    expect(reading.rebindTypes, `${context} — a refused upgrade says nothing at all`).toEqual([])
   }, 120_000)
 })
