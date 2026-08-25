@@ -62,6 +62,21 @@ const SOURCE_CLOSED = 2
 /** The page's one clock cadence: the elapsed timer and the staleness window both re-read here. */
 const CLOCK_TICK_MS = 1000
 
+/**
+ * D-13's visible gap, in words. The bus never silently truncates and neither does this page: a
+ * step that flips `pending` → `failed` with no visible reason is the failure the marker exists to
+ * refuse, and the range is inclusive on both ends because both ends are envelopes nobody will see.
+ */
+export function gapMarkerText(from: number, to: number): string {
+  return `${String(to - from + 1)} events missed (seq ${String(from)}–${String(to)}) — see run detail`
+}
+
+/** What the terminal band says beside the verdict. */
+export const RUN_ENDED_TEXT = 'run ended'
+
+/** D-15's word for a run this process can no longer stream. */
+export const RUN_OVER_TEXT = 'this run is over — view run detail'
+
 export default function LiveRunPage() {
   usePageTitle('Live Run')
   const { id } = useParams<{ id: string }>()
@@ -179,6 +194,17 @@ export default function LiveRunPage() {
       },
     })
 
+    // AN OPEN SOCKET IS TRACKED PRECISELY SO IT CANNOT BE MISTAKEN FOR LIVENESS. Recording the
+    // transport's own `open` is what makes "the socket is open and the run has said nothing for
+    // twenty seconds" a state this page can be in, and therefore a lie it can refuse to tell. A
+    // page that never learned the socket was open could not distinguish that from a socket still
+    // dialling — and would have no way to be wrong about it, which is not the same as being right.
+    source.addEventListener('open', () => {
+      if (disposed) return
+      setSourceReadyState(SOURCE_OPEN)
+      setErroredWhileConnecting(false)
+    })
+
     return () => {
       disposed = true
       source.close()
@@ -217,16 +243,29 @@ export default function LiveRunPage() {
   return (
     <div className="flex h-screen min-w-0 flex-col overflow-hidden">
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
-        <div className="flex min-w-0 items-center gap-2">
+        {/*
+          The product tour's live-run anchor. It moved from the deleted progress band to the
+          header status group — the tour step says "live mode shows the active execution", and the
+          pill beside the title is now the thing that says so.
+        */}
+        <div data-tour-id="tour-live-run-status" className="flex min-w-0 items-center gap-2">
           <Radio className={cn('size-4 shrink-0', !isOver && 'animate-pulse text-blue-500')} />
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="truncate text-base font-semibold leading-tight">{title}</h2>
-              <LivenessPill
-                liveness={liveness.kind}
-                lastActivityAgeMs={liveness.lastActivityAgeMs}
-                attachedAgeMs={attachedAt === undefined ? undefined : now - attachedAt}
-              />
+              {/*
+                THE PILL IS A CLAIM ABOUT A CHANNEL, so it goes away with the channel. A run that
+                finished has no liveness to report — `lost` over a clean `runFinished` would read
+                as a failure of the very delivery that just completed successfully, and `live` over
+                a closed socket would be the open-socket lie wearing the other mask.
+              */}
+              {!isOver && (
+                <LivenessPill
+                  liveness={liveness.kind}
+                  lastActivityAgeMs={liveness.lastActivityAgeMs}
+                  attachedAgeMs={attachedAt === undefined ? undefined : now - attachedAt}
+                />
+              )}
             </div>
             {fallbackRun?.filePath !== undefined && fallbackRun.filePath !== null && (
               <div className="min-w-0 truncate text-xs text-muted-foreground">{fallbackRun.filePath}</div>
@@ -258,18 +297,20 @@ export default function LiveRunPage() {
           {state.terminal && (
             <div data-terminal-state={verdictDescriptor.normalized} className="flex items-center gap-2">
               <Badge className={getStatusBadgeClassName(verdictDescriptor.tone)}>{verdictDescriptor.label}</Badge>
-              <span className="text-muted-foreground">run ended</span>
+              <span className="text-muted-foreground">{RUN_ENDED_TEXT}</span>
             </div>
           )}
           {runOver && (
             <p data-run-over className="text-muted-foreground">
-              this run is over — view run detail
+              {RUN_OVER_TEXT}
             </p>
           )}
           {state.gap !== undefined && (
+            // ONE TEMPLATE STRING, not a run of JSX children. A marker split across text nodes is
+            // one reformat away from gaining or losing a space, and this sentence is a published
+            // contract two suites read back verbatim.
             <p data-gap-marker className="text-amber-500">
-              {String(state.gap.to - state.gap.from + 1)} events missed (seq {String(state.gap.from)}–
-              {String(state.gap.to)}) — see run detail
+              {gapMarkerText(state.gap.from, state.gap.to)}
             </p>
           )}
           {runMetaFailed && (
