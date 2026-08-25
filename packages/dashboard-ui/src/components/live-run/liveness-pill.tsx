@@ -62,10 +62,14 @@ export interface LivenessPillProps {
 }
 
 /**
- * `data-last-activity` is the age IN SECONDS the staleness window is measured from: since the last
- * envelope when there has been one, since the attach when there has not. The distinction is in the
- * words, never hidden — "no activity yet" is a different claim from "last activity 3s ago" and a
- * pill that spelled them the same would be inventing an envelope that never arrived.
+ * `data-last-activity` is the age IN SECONDS the staleness window is measured against: since the
+ * last envelope when there has been one, since the attach when there has not. The distinction is
+ * in the words, never hidden — a pill that spelled "no activity yet" and "last activity Ns ago"
+ * the same way would be inventing an envelope that never arrived.
+ *
+ * (The wording above is deliberate: the arch dependency scanner is a line regex over raw source
+ * with no comment stripping, so any prose that puts a quoted phrase immediately after the word
+ * `from` becomes a phantom external dependency and reds `validate:arch`.)
  */
 export function LivenessPill({ liveness, lastActivityAgeMs, attachedAgeMs }: LivenessPillProps) {
   const ageMs = lastActivityAgeMs ?? attachedAgeMs
