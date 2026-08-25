@@ -83,6 +83,13 @@ export const RUN_SERVICE_ERROR_CODES = [
   // `RunServiceReplayFloorBodySchema`). Both are answered before any stream header.
   'invalid_last_event_id',
   'replay_floor',
+  // 403-03 (D-03, Q3): the `liveUrl` mint's two host-fact refusals, so BOTH doors answer the same
+  // words for the same situation. `live_view_unavailable` is a genuine host fact — no live-view
+  // composition, or no origin to build a link against — refused by name rather than answered with
+  // a URL that resolves to nothing. `live_url_mint_failed` is the mint's flattened 500, keeping its
+  // words to itself exactly as `run_start_failed` does and for the same reason.
+  'live_view_unavailable',
+  'live_url_mint_failed',
   // 402-06 (D-01 discretion, T-402-22): the policy gate refused this run. A member of the SAME
   // closed set so the code vocabulary stays one vocabulary, but the only code this door answers
   // with a body wider than one key — see `RunServiceDenialBodySchema` for why that widening is

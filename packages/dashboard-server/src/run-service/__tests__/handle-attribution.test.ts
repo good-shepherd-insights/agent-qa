@@ -171,6 +171,14 @@ function servicePorts(session: RunSession): RunServicePorts {
       authConfigured: true,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
+    // 403-03 (D-03, Q3): a fixture that composed no live view HAS no live view, and the honest
+    // answer to a mint request is 503 by name. Never a stub that mints — a fabricated token would
+    // make every cell downstream of it a claim about this file's idea of a credential.
+    mintLiveUrl: () => Promise.reject(
+      Object.assign(new Error('no live-view port is bound on this fixture'), {
+        name: 'LiveViewUnavailableError',
+      }),
+    ),
   }
 }
 

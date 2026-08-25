@@ -8,7 +8,7 @@ import {
   createMaskingContext,
   foldFunctionResult,
   invokeFunction,
-  RUNS_LIVE_URL_FUNCTION_ID,
+  LiveViewUnavailableError,
   RUNS_START_FUNCTION_ID,
   unmaskForHumanOutput,
   type ConfigReaderPort,
@@ -22,6 +22,7 @@ import type {
   AgentRegistryHandle,
   AgentResultFold,
   ConfirmRegistry,
+  MintLiveUrlInput,
   RunServicePorts,
   RunServiceStartInput,
 } from '@vostride/agent-qa-dashboard'
@@ -40,17 +41,17 @@ import type {
   RunServiceTokenEntry,
   RunSession,
   RunStartAcknowledgement,
+  RunsLiveUrlResult,
   RunsStartInput,
   TrustScope,
 } from '@vostride/agent-qa-schema'
 import {
   RUN_SERVICE_CONTRACT_VERSION,
   RunStartAcknowledgementSchema,
-  RunsLiveUrlResultSchema,
 } from '@vostride/agent-qa-schema'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
 import type { RunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
-import { composeLiveView } from '../composition/live-view-composition.js'
+import { composeLiveView, mintLiveUrlThrough } from '../composition/live-view-composition.js'
 import {
   matchServiceBearer,
   resolveRunServiceTokens,
@@ -1231,17 +1232,32 @@ export async function createDashboardRunDoor(input: {
  * What the run service's own `FunctionCaller` may do — FIXED at composition, never per token.
  *
  * D-06: the door's capability set is decided here, once, for every holder of every credential.
- * `run` and nothing else, because starting a run is the only op this door dispatches — the event
- * stream is served off the `RunSession` the start produced and invokes nothing. When 403 routes
- * the stream through `runs.events`, the diff that needs `read` is the diff that adds it.
  *
  * A LIST AND NOT A SPREAD, which is the opposite of {@link DASHBOARD_FUNCTION_CALLER}'s rule and
  * for the opposite reason. That door's claim is parity with the CLI chat door, so its grant must
  * track the CLI's automatically. This door's claim is LEAST PRIVILEGE, so a scope minted tomorrow
  * must NOT reach it by default: the whole point is that a remote token-holder's powers are the
  * ones somebody wrote down.
+ *
+ * Dated note (2026-08-25, Phase 403 plan 03 / D-03, Q3): `read` joins `run`, and this is the diff
+ * the 402 wording above pre-authorised in its own words — "the diff that needs `read` is the diff
+ * that adds it". `GET /run/:runId/live-url` dispatches `runs.liveurl`, whose declared
+ * `requiredScopes` is `['read']`, and without this member `invokeFunction` raises
+ * `FunctionScopeError` before the op is ever reached. Measured, not assumed: the conformance door
+ * answered 500 `live_url_mint_failed` for a credentialled mint until this line changed.
+ *
+ * WHAT WAS REJECTED, AND WHY. Retagging `runs.liveurl` as a `run` op instead would have kept this
+ * list at one member — and it would have re-axised a capability's declared cost to fit ONE door's
+ * grant, telling every other caller that the price of VIEWING a run is the power to EXECUTE one.
+ * That is the privilege conflation `FunctionScopeSchema`'s own counter-notes refuse three times
+ * over, pointed the other way.
+ *
+ * WHAT THIS DOES AND DOES NOT WIDEN. A scope is not a route. This door publishes four paths and
+ * dispatches exactly two ops; `runs.get`, `runs.list`, `analysis.get` and every other read the
+ * registry declares stay UNREACHABLE from here because no route reaches them, which is a stronger
+ * bound than a scope list and the one `runServiceSurfaceAdapter.notApplicable` now states.
  */
-export const RUN_SERVICE_GRANTED_SCOPES: readonly FunctionScope[] = Object.freeze(['run'])
+export const RUN_SERVICE_GRANTED_SCOPES: readonly FunctionScope[] = Object.freeze(['run', 'read'])
 
 /** The surface id this door attributes its calls to. Attribution only, never a permission input. */
 export const RUN_SERVICE_SURFACE = 'run-service'
@@ -1408,6 +1424,36 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     return RunStartAcknowledgementSchema.parse(result)
   }
 
+  /**
+   * THE MINT, UNDER THE CALLER'S OWN TRUST SCOPE (403 D-03, Q3 · T-403-01).
+   *
+   * THE SAME HELPER THE LOCAL DOOR CALLS, by reference — see `mintLiveUrlThrough`. The two doors
+   * differ in the `FunctionCaller` and in nothing else: `runServiceCallerFor(trustScope)` here,
+   * built from the VERIFIED bearer's scope, against the dashboard's own local caller there. A door
+   * that substituted a caller of its own would let a token-holder mint a viewing credential under
+   * this host's authority rather than under the authorization it actually presented.
+   *
+   * AN UNCOMPOSED HOST IS `live_view_unavailable`, NOT A CRASH. It is the same genuine host fact
+   * `runs.liveurl` itself raises when no live-view port is bound, said in the same word, so a
+   * caller cannot distinguish a host with no live view and a host not composed yet — which is
+   * correct, because from where they stand those are the same situation.
+   *
+   * (The wording above deliberately avoids a quoted string immediately after a bare keyword:
+   * `validate:arch` reads every `<keyword> '…'` in a file as a declared dependency, and a JSDoc
+   * sentence shaped that way is reported as a phantom external dep. Measured live here; the same
+   * false positive `handle-scope.ts` records at its own `handleRosterOf`.)
+   */
+  const mintLiveUrl = async (mint: MintLiveUrlInput): Promise<RunsLiveUrlResult> => {
+    const host = input.door.resolveHost()
+    if (host === undefined) {
+      throw new LiveViewUnavailableError('the run service host is not composed yet')
+    }
+    return mintLiveUrlThrough(
+      host.registry as FunctionRegistry,
+      runServiceCallerFor(mint.trustScope),
+    )(mint.runId, mint.handle)
+  }
+
   // THE ONE PREDICATE, CALLED — not a second copy of it. See `createRunServiceReadiness`.
   const readiness = createRunServiceReadiness({
     resolveHost: input.door.resolveHost,
@@ -1419,6 +1465,7 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     invokeRunStart,
     attach: (runId) => sessions.attach(runId),
     readiness,
+    mintLiveUrl,
   }
 
   // THE STORE IS BOUND HERE, NOT PUBLISHED AND HOPED FOR (402-06, WINDOWS #224). Until this line
@@ -1647,13 +1694,12 @@ async function startDashboardBackedServices(
       // no-private-powers law refuses.
       liveView: {
         validate: liveView.validate,
-        mintLiveUrl: async (runId, handle) => RunsLiveUrlResultSchema.parse(
-          await invokeFunction(
-            runHost.registry as FunctionRegistry,
-            RUNS_LIVE_URL_FUNCTION_ID,
-            { runId, handle },
-            DASHBOARD_FUNCTION_CALLER,
-          ),
+        // 403-03 (D-03, Q3): THE SAME FUNCTION THE AUTHED DOOR CALLS, by reference. Both doors mint
+        // the identical credential through the identical dispatcher and differ only in the caller
+        // identity — which is what makes the two-door parity corpus a claim about one mint.
+        mintLiveUrl: mintLiveUrlThrough(
+          runHost.registry as FunctionRegistry,
+          DASHBOARD_FUNCTION_CALLER,
         ),
       },
       uiDir,

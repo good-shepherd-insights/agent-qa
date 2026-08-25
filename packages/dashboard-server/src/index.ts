@@ -26,6 +26,7 @@ export type { TestFileInfo, TestValidationResult, TestValidationError } from './
 // enumerate every path this door answers.
 export {
   RUN_SERVICE_EVENTS_TEMPLATE,
+  RUN_SERVICE_LIVE_URL_TEMPLATE,
   RUN_SERVICE_OK_ROUTE,
   RUN_SERVICE_ROUTE_TABLE,
   RUN_SERVICE_START_ROUTE,
@@ -60,6 +61,8 @@ export type {
 } from './live-view/protocol.js'
 export type { LiveEmbedState } from './live-view/embed-page.js'
 export type {
+  MintLiveUrlInput,
+  ResumePoint,
   RunServicePorts,
   RunServiceRouteHandlerName,
   RunServiceRouteMatch,

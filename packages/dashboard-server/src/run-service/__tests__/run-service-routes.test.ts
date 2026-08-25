@@ -28,6 +28,7 @@ import {
   RunServiceReplayFloorBodySchema,
   type RunEventEnvelope,
   type RunServiceErrorCode,
+  type RunsLiveUrlResult,
   type RunSession,
   type RunStartAcknowledgement,
 } from '@vostride/agent-qa-schema'
@@ -39,6 +40,9 @@ import {
   lastEventIdParamOf,
   replayFloorOf,
   resumePointOf,
+  ownsRunServicePath,
+  RUN_SERVICE_LIVE_URL_TEMPLATE,
+  type MintLiveUrlInput,
   type RunServicePorts,
 } from '../run-service-routes.js'
 
@@ -100,6 +104,13 @@ function fakePorts(overrides: Partial<RunServicePorts> = {}): RunServicePorts {
       authConfigured: true,
       contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     }),
+    // The DEFAULT is the honest absence, not a stub that mints: a fixture that composed no live
+    // view has no live view, and 503 by name is what such a host owes a caller.
+    mintLiveUrl: () => Promise.reject(
+      Object.assign(new Error('no live-view port is bound on this fixture'), {
+        name: 'LiveViewUnavailableError',
+      }),
+    ),
     ...overrides,
   }
 }
@@ -309,9 +320,9 @@ describe('the refusal-shape census walks the module\'s OWN route table', () => {
 
   it('covers every declared route, and the table is not empty', async () => {
     // Non-vacuity first: a census over an empty table passes by finding nothing to drive.
-    expect(RUN_SERVICE_ROUTE_TABLE.length).toBeGreaterThanOrEqual(3)
+    expect(RUN_SERVICE_ROUTE_TABLE.length).toBeGreaterThanOrEqual(4)
     const handlers = RUN_SERVICE_ROUTE_TABLE.map((row) => row.handler).sort()
-    expect(handlers).toEqual(['events', 'ok', 'start'])
+    expect(handlers).toEqual(['events', 'liveUrl', 'ok', 'start'])
   })
 
   it('refuses a MISSING token on every row with one body shape', async () => {
@@ -809,6 +820,28 @@ const CODE_PROBES: readonly CodeProbe[] = Object.freeze([
       ports: fakePorts({ attach: () => plantedSession({ throwOnSubscribe: true }) }),
     }),
   },
+  {
+    code: 'live_view_unavailable',
+    status: 503,
+    drive: () => refusalAt('/run/r_planted/live-url', {
+      headers: authed,
+      ports: fakePorts({
+        mintLiveUrl: () => Promise.reject(
+          Object.assign(new Error('no live-view port is bound on this host'), {
+            name: 'LiveViewUnavailableError',
+          }),
+        ),
+      }),
+    }),
+  },
+  {
+    code: 'live_url_mint_failed',
+    status: 500,
+    drive: () => refusalAt('/run/r_planted/live-url', {
+      headers: authed,
+      ports: fakePorts({ mintLiveUrl: () => Promise.reject(new Error('the registry is gone')) }),
+    }),
+  },
 ] as const)
 
 describe('the refusal-CODE census is a complete set over RUN_SERVICE_ERROR_CODES', () => {
@@ -821,7 +854,7 @@ describe('the refusal-CODE census is a complete set over RUN_SERVICE_ERROR_CODES
       + 'this file certifying an answer that is gone',
     ).toEqual([...RUN_SERVICE_ERROR_CODES].sort())
     // Non-vacuity: a census over an empty probe list agrees with an empty code set for free.
-    expect(CODE_PROBES.length).toBeGreaterThanOrEqual(14)
+    expect(CODE_PROBES.length).toBeGreaterThanOrEqual(16)
     expect(new Set(probed).size).toBe(CODE_PROBES.length)
   })
 
@@ -851,5 +884,125 @@ describe('the refusal-CODE census is a complete set over RUN_SERVICE_ERROR_CODES
     expect(RunServiceReplayFloorBodySchema.safeParse(observed.body).success).toBe(true)
     expect(RunServiceReplayFloorBodySchema.parse(observed.body).earliestAvailableSeq)
       .toBe(FLOOR_EARLIEST_SEQ)
+  })
+})
+
+// ---- 403-03 Task 2 (D-03, Q3): the authed door MINTS ---------------------------------------------
+//
+// THE REMOTE DOOR MINTS THROUGH THE SAME OP AS THE LOCAL ONE, with the bearer's trust scope. What
+// these cells can say is what the DOOR does with the port: the verdict above it, the raw handle
+// reader, the refusal mapping by error NAME, and that the result crosses verbatim. That the port
+// dispatches `runs.liveurl` rather than shaping a URL itself is the composition's claim, pinned in
+// `adapters.ts` against the shipped route table.
+
+const MINTED: RunsLiveUrlResult = Object.freeze({
+  liveUrl: 'http://localhost:1234/live/r_planted#v1.zz-403-03-planted-token',
+  expiresAt: 1_700_000_000_000,
+  handle: 0,
+  stream: { kind: 'none' as const },
+})
+
+/** Every mint this door asked for, so a cell can read WHAT the arm passed the port. */
+function recordingMintPorts(
+  mint?: (input: MintLiveUrlInput) => Promise<RunsLiveUrlResult>,
+): { readonly ports: RunServicePorts; readonly seen: MintLiveUrlInput[] } {
+  const seen: MintLiveUrlInput[] = []
+  const ports = fakePorts({
+    attach: (runId) => runId === 'r_planted' ? resumableSession() : undefined,
+    mintLiveUrl: async (input) => {
+      seen.push(input)
+      if (mint) return mint(input)
+      return { ...MINTED, handle: input.handle }
+    },
+  })
+  return { ports, seen }
+}
+
+describe('D-03 / Q3 — the authed door mints a liveUrl', () => {
+  it('answers the mint result VERBATIM, with no second shaping of what a liveUrl is', async () => {
+    const { ports } = recordingMintPorts()
+    const origin = await mount(ports)
+    const response = await fetch(`${origin}/run/r_planted/live-url`, { headers: authed })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    expect(await response.json()).toEqual(MINTED)
+  })
+
+  it('carries the BEARER\'S trust scope to the port — never a scope of the door\'s own', async () => {
+    // T-403-01: the mint is a credential mint, so the caller identity it runs under has to be the
+    // one the verdict settled. A door that substituted a local caller would let any token-holder
+    // mint under the host's own authority.
+    const { ports, seen } = recordingMintPorts()
+    const origin = await mount(ports)
+    await fetch(`${origin}/run/r_planted/live-url?handle=7`, { headers: authed })
+    expect(seen).toEqual([{ runId: 'r_planted', handle: 7, trustScope: { project: 'acme' } }])
+  })
+
+  it('defaults the handle to 0 when none is asked for', async () => {
+    const { ports, seen } = recordingMintPorts()
+    const origin = await mount(ports)
+    await fetch(`${origin}/run/r_planted/live-url`, { headers: authed })
+    expect(seen[0]?.handle).toBe(0)
+  })
+
+  it.each(['notanumber', '07', '-1', '1.5', ''] as const)(
+    'refuses ?handle=%s with 400 invalid_handle and never reaches the port',
+    async (raw) => {
+      const { ports, seen } = recordingMintPorts()
+      const origin = await mount(ports)
+      const response = await fetch(
+        `${origin}/run/r_planted/live-url?handle=${encodeURIComponent(raw)}`,
+        { headers: authed },
+      )
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ error: 'invalid_handle' })
+      expect(seen).toEqual([])
+    },
+  )
+
+  it('refuses a REPEATED handle rather than minting for the first', async () => {
+    const { ports, seen } = recordingMintPorts()
+    const origin = await mount(ports)
+    const response = await fetch(`${origin}/run/r_planted/live-url?handle=1&handle=2`, {
+      headers: authed,
+    })
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'invalid_handle' })
+    expect(seen).toEqual([])
+  })
+
+  it.each([
+    ['UnknownRunError', 404, 'unknown_run'],
+    ['LiveViewUnavailableError', 503, 'live_view_unavailable'],
+    ['SomethingElseEntirely', 500, 'live_url_mint_failed'],
+  ] as const)(
+    'maps a %s rejection to %i %s — by error NAME, never by matching a message',
+    async (name, status, code) => {
+      const { ports } = recordingMintPorts(() => Promise.reject(
+        Object.assign(new Error('a message that will be rewritten one day'), { name }),
+      ))
+      const origin = await mount(ports)
+      const response = await fetch(`${origin}/run/r_planted/live-url`, { headers: authed })
+      expect(response.status).toBe(status)
+      expect(await response.json()).toEqual({ error: code })
+    },
+  )
+
+  it('is under the SAME verdict as every other route — no credential, no mint', async () => {
+    const { ports, seen } = recordingMintPorts()
+    const origin = await mount(ports)
+    const response = await fetch(`${origin}/run/r_planted/live-url`)
+    expect(response.status).toBe(401)
+    expect(await response.json()).toEqual({ error: 'missing_authorization' })
+    expect(seen, 'the port must not be reached for a refused request').toEqual([])
+  })
+
+  it('the route is in the shipped table, so the census and the mount both see it', () => {
+    const row = RUN_SERVICE_ROUTE_TABLE.find((entry) => entry.handler === 'liveUrl')
+    expect(row).toBeDefined()
+    expect(row?.method).toBe('GET')
+    expect(row?.path).toBe(RUN_SERVICE_LIVE_URL_TEMPLATE)
+    expect(RUN_SERVICE_LIVE_URL_TEMPLATE).toBe('/run/:runId/live-url')
+    expect(ownsRunServicePath('/run/r_planted/live-url')).toBe(true)
   })
 })

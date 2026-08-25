@@ -104,6 +104,7 @@ import {
   type RunServiceDenialBody,
   type RunServiceErrorCode,
   type RunServiceReadiness,
+  type RunsLiveUrlResult,
   type RunSession,
   type RunStartAcknowledgement,
   type ServiceBearerVerdict,
@@ -164,10 +165,32 @@ export interface RunServicePorts {
   attach(runId: string): RunSession | undefined
   /** The measured readiness facts `/ok` reports (D-15). */
   readiness(): RunServiceReadiness
+  /**
+   * Mint a live-view URL for one handle of a run, under the CALLER'S OWN trust scope (403 D-03).
+   *
+   * REQUIRED, NOT OPTIONAL, and that is a decision rather than an oversight. An optional member is
+   * a member a composition can forget, and the failure mode of forgetting it here is a 404 that
+   * reads exactly like "no such route" — which is what a door with no live view is indistinguishable
+   * from. A composition that cannot mint supplies a function that REJECTS with a
+   * `LiveViewUnavailableError`-named error, which the arm maps to 503 `live_view_unavailable`: an
+   * honest host fact, said out loud, once, in the vocabulary the local door already uses.
+   *
+   * THE TRUST SCOPE IS AN INPUT because this is a credential mint (T-403-01). The composition turns
+   * it into the `FunctionCaller` the op runs under; the door never chooses one.
+   */
+  mintLiveUrl(input: MintLiveUrlInput): Promise<RunsLiveUrlResult>
+}
+
+/** What minting one `liveUrl` needs from a request, as data. */
+export interface MintLiveUrlInput {
+  readonly runId: string
+  readonly handle: number
+  /** The verified bearer's trust, on its way to `FunctionCaller.credential`. */
+  readonly trustScope: TrustScope
 }
 
 /** Which handler a table row reaches. A closed union, so a row with no arm is a type error. */
-export type RunServiceRouteHandlerName = 'start' | 'events' | 'ok'
+export type RunServiceRouteHandlerName = 'start' | 'events' | 'liveUrl' | 'ok'
 
 export interface RunServiceRouteRow {
   readonly method: 'GET' | 'POST'
@@ -181,6 +204,16 @@ export interface RunServiceRouteRow {
 export const RUN_SERVICE_START_ROUTE = '/run'
 export const RUN_SERVICE_EVENTS_TEMPLATE = '/run/:runId/events'
 const RUN_SERVICE_EVENTS_PATTERN = /^\/run\/([^/]+)\/events$/
+/**
+ * The MINT (403 D-03, Q3) — the remote half of the pair whose local half is
+ * `GET /api/runs/:runId/live-url`.
+ *
+ * SAME SHAPE AS THE EVENTS ROUTE ONE LINE UP, deliberately: a remote caller addresses a run it
+ * started by id and asks this door for one thing about it per route. The two doors differ in the
+ * credential and in nothing else — the same op, the same result, the same fragment carriage.
+ */
+export const RUN_SERVICE_LIVE_URL_TEMPLATE = '/run/:runId/live-url'
+const RUN_SERVICE_LIVE_URL_PATTERN = /^\/run\/([^/]+)\/live-url$/
 /**
  * Readiness (D-15) — AUTHED, like every other route on this door.
  *
@@ -208,6 +241,12 @@ export const RUN_SERVICE_ROUTE_TABLE: readonly RunServiceRouteRow[] = Object.fre
     path: RUN_SERVICE_EVENTS_TEMPLATE,
     handler: 'events',
     pattern: RUN_SERVICE_EVENTS_PATTERN,
+  },
+  {
+    method: 'GET',
+    path: RUN_SERVICE_LIVE_URL_TEMPLATE,
+    handler: 'liveUrl',
+    pattern: RUN_SERVICE_LIVE_URL_PATTERN,
   },
   { method: 'GET', path: RUN_SERVICE_OK_ROUTE, handler: 'ok' },
 ] as const)
@@ -839,6 +878,60 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
     })
   }
 
+  /**
+   * The MINT arm (403 D-03, Q3) — the remote twin of `routes.ts`'s `/api/runs/:runId/live-url`.
+   *
+   * IT DISPATCHES THROUGH THE PORT AND FORMATS NOTHING. The body is the port's result verbatim: a
+   * second shaping here would be a second contract for what a `liveUrl` is, free to disagree with
+   * the one the function layer published — and the two doors' parity corpus would then be
+   * comparing two shapings rather than one result.
+   *
+   * THE REFUSALS ARE MAPPED BY ERROR NAME, never by matching a message. A message is prose and
+   * prose gets rewritten; the same reading `routes.ts` does, so both doors answer the same word for
+   * the same situation.
+   *
+   * THE RESULT IS NEVER LOGGED, HERE OR ANYWHERE ON THIS PATH (LIVE-02, T-403-02). The token rides
+   * the URL fragment and this arm's only job is to put it on the wire the caller asked for.
+   */
+  function handleLiveUrl(
+    runIdParam: string,
+    req: IncomingMessage,
+    res: ServerResponse,
+    trustScope: TrustScope,
+  ): void {
+    let runId: string
+    try {
+      runId = decodeURIComponent(runIdParam)
+    } catch {
+      refuse(res, 404, 'unknown_run')
+      return
+    }
+    // THE RAW `handle` PARAMETER THROUGH THE SAME READER THE STREAM USES. `url.searchParams` would
+    // resolve `?handle=1&handle=2` to `1`, which is the one answer that reader exists to refuse —
+    // and minting a viewing credential for a handle the caller did not unambiguously name is worse
+    // than refusing to mint at all.
+    const parsedHandle = parseHandleParam(handleParamOf(req))
+    if (parsedHandle.kind === 'invalid') {
+      refuse(res, 400, 'invalid_handle')
+      return
+    }
+    const handle = parsedHandle.kind === 'absent' ? 0 : parsedHandle.index
+    void ports.mintLiveUrl({ runId, handle, trustScope }).then(
+      (result) => { respondJson(res, 200, result) },
+      (error: unknown) => {
+        const name = typeof error === 'object' && error !== null
+          ? (error as { name?: unknown }).name
+          : undefined
+        if (name === 'UnknownRunError') { refuse(res, 404, 'unknown_run'); return }
+        if (name === 'LiveViewUnavailableError') {
+          refuse(res, 503, 'live_view_unavailable')
+          return
+        }
+        refuse(res, 500, 'live_url_mint_failed')
+      },
+    )
+  }
+
   const router = ((req: IncomingMessage, res: ServerResponse): void => {
     try {
       const path = (req.url ?? '/').split('?')[0] ?? '/'
@@ -865,6 +958,9 @@ export function createRunServiceRoutes(ports: RunServicePorts): RunServiceRouter
           return
         case 'events':
           handleEvents(matched.params[0] ?? '', handleParamOf(req), req, res)
+          return
+        case 'liveUrl':
+          handleLiveUrl(matched.params[0] ?? '', req, res, verdict.trustScope)
           return
         case 'ok':
           respondJson(res, 200, ports.readiness())

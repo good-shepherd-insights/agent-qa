@@ -40,6 +40,7 @@ import {
   fromToolName,
   isChatMetaToolName,
   projectPlannerTools,
+  RUNS_LIVE_URL_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
   type ChatResolverTable,
   type CreateFunctionRegistryOptions,
@@ -57,6 +58,7 @@ import {
   CHAT_CAPABILITIES_ROUTE,
   createChatRouter,
   RUN_SERVICE_EVENTS_TEMPLATE,
+  RUN_SERVICE_LIVE_URL_TEMPLATE,
   RUN_SERVICE_OK_ROUTE,
   RUN_SERVICE_ROUTE_TABLE,
   RUN_SERVICE_START_ROUTE,
@@ -64,6 +66,7 @@ import {
 import {
   FunctionScopeSchema,
   RunServiceReadinessSchema,
+  RunsLiveUrlResultSchema,
   RunStartAcknowledgementSchema,
 } from '@vostride/agent-qa-schema'
 import type { ExecutionContext, FunctionCaller, FunctionScope } from '@vostride/agent-qa-schema'
@@ -75,6 +78,8 @@ import {
   composeRunServicePorts,
   createDashboardRunDoor,
 } from '../../commands/dashboard.js'
+import { composeLiveView } from '../../composition/live-view-composition.js'
+import { createRunServiceSessionRegistry } from '../../composition/run-service-session-registry.js'
 import { createFnCommand } from '../../commands/fn.js'
 import { mcpFunctionCaller } from '../../commands/mcp.js'
 import { CONFORMANCE_EXECUTION_CONTEXT } from './policy-fixtures.js'
@@ -914,6 +919,16 @@ export const RUN_SERVICE_ROUTE_BINDINGS: readonly RunServiceRouteBinding[] = Obj
       'the stream attaches to the bus of a run this door already started; it dispatches nothing',
   }),
   Object.freeze({
+    key: `GET ${RUN_SERVICE_LIVE_URL_TEMPLATE}`,
+    // 403-03 (D-03, Q3): THE MINT, and unlike the stream one line up it genuinely DISPATCHES. The
+    // composition calls `mintLiveUrlThrough` — the same function object the local dashboard door
+    // calls — which goes through `invokeFunction` to `runs.liveurl` under a caller built from the
+    // verified bearer's trust scope. Corroborated on the wire by `RunsLiveUrlResultSchema`, which
+    // is that op's own declared result contract: a route re-pointed at a different op answers a
+    // body this fold refuses.
+    opId: RUNS_LIVE_URL_FUNCTION_ID,
+  }),
+  Object.freeze({
     key: `GET ${RUN_SERVICE_OK_ROUTE}`,
     // Readiness reports four facts this process measures about itself. It owns no capability, on the
     // same reasoning 398 D-02 used to keep the capability catalogue off the roster entirely.
@@ -1017,10 +1032,19 @@ export async function withRunServiceDoor<Answer>(
   const db = new DashboardDatabase({ dbPath: join(configDir, 'dashboard.db') })
   const runDoor = await createDashboardRunDoor({ db })
   let boundOrigin: string | undefined
+  // 403-03 (D-14, Q3): THE REGISTRY IS HOISTED AND THE LIVE VIEW COMPOSED, exactly as
+  // `agent-qa dashboard` does it. `GET /run/:runId/live-url` dispatches `runs.liveurl`, which
+  // reads the run's declared stream capability out of the session registry and needs a served
+  // origin to build a link against — so a fixture that composed neither would answer 503
+  // `live_view_unavailable` and the route-table enumeration would report an unanswered route.
+  // Composing the SHIPPED composers rather than a stand-in is this module's whole rule.
+  const sessions = createRunServiceSessionRegistry({ observeSessions: runDoor.observeSessions })
+  const liveView = composeLiveView({ sessions, origin: () => boundOrigin, door: runDoor })
   const { agentHost, host, enterRunTriggerScope } = composeDashboardDoor({
     agentQaRoot: join(configDir, '.agent-qa'),
     configPath: fixture.configPath,
     boundOrigin: () => boundOrigin,
+    liveView: liveView.liveView,
     runBridge: runDoor.runBridge,
   })
   runDoor.bindHost(host)
@@ -1036,6 +1060,7 @@ export async function withRunServiceDoor<Answer>(
     // ambient state is a door this file cannot say it configured.
     env: { [RUN_SERVICE_FIXTURE_TOKEN_VAR]: RUN_SERVICE_FIXTURE_TOKEN },
     door: runDoor,
+    sessions,
   })
   const started = await startServer({
     db,
@@ -1056,6 +1081,9 @@ export async function withRunServiceDoor<Answer>(
   } finally {
     started.close()
     runService.dispose()
+    // The hoisted registry is this fixture's to dispose — `composeRunServicePorts` leaves a
+    // registry it did not build alone.
+    sessions.dispose()
     await host.close()
     rmSync(fixture.root, { recursive: true, force: true })
   }
@@ -1116,6 +1144,25 @@ export async function enumerateRunServiceOpIds(): Promise<SurfaceEnumeration> {
       await stream.body?.cancel().catch(() => undefined)
     }
 
+    if (runId !== undefined) {
+      // 403-03 (D-03, Q3): THE MINT, DRIVEN. The fixture's planted run may already be over and it
+      // has no browser either way, so `stream.kind` is the honest `none` — the route answering at
+      // all, with a body the op's own result contract accepts, is what this enumeration asks.
+      const minted = await fetch(
+        `${origin}/run/${encodeURIComponent(runId)}/live-url`,
+        { headers: bearer },
+      )
+      if (minted.status === 200) {
+        try {
+          RunsLiveUrlResultSchema.parse(await minted.json())
+          keys.push(`GET ${RUN_SERVICE_LIVE_URL_TEMPLATE}`)
+        } catch {
+          // Same reasoning as the ack: a 200 whose body the result contract refuses is a route
+          // answering something other than the capability it is bound to.
+        }
+      }
+    }
+
     const ok = await fetch(`${origin}${RUN_SERVICE_OK_ROUTE}`, { headers: bearer })
     if (ok.status === 200) {
       try {
@@ -1142,7 +1189,7 @@ export const runServiceSurfaceAdapter: SurfaceAdapter = Object.freeze({
    * WHAT THIS DOOR CANNOT DO, DECLARED (D-04) — and every member is a property of the door today.
    *
    * The list is derived from nothing: it is written, reviewed, and readable beside
-   * `RUN_SERVICE_ROUTE_TABLE`, which publishes three routes and no fourth. A reader can check every
+   * `RUN_SERVICE_ROUTE_TABLE`, which publishes four routes and no fifth. A reader can check every
    * line of it against that table in one screen, which is the whole reason the door's routes are
    * exported data.
    */
@@ -1154,13 +1201,19 @@ export const runServiceSurfaceAdapter: SurfaceAdapter = Object.freeze({
     }),
     Object.freeze({
       capability: 'authoring and configuration writes (config.field.set, authoring.draft.*)',
-      why: '`runServiceCallerFor` grants a LITERAL [\'run\'] rather than a spread of the CLI\'s, so '
-        + 'no scope a later phase mints reaches this door by default and no write op is in reach',
+      why: '`runServiceCallerFor` grants a LITERAL [\'run\', \'read\'] rather than a spread of the '
+        + 'CLI\'s, so no scope a later phase mints reaches this door by default and no write op is '
+        + 'in reach',
     }),
     Object.freeze({
-      capability: 'every read op the registry declares (runs.get, runs.list, analysis.get, …)',
-      why: 'the route table publishes three paths and none of them dispatches a read; a remote '
-        + 'caller addresses one run it started and reads its events, and nothing else',
+      capability: 'every OTHER read op the registry declares (runs.get, runs.list, analysis.get, …)',
+      // 403-03: the grant gained `read` so the mint can dispatch, and the honest statement of what
+      // still bounds this door is the ROUTE TABLE rather than the scope list. A scope is not a
+      // route: four paths are published, two of them dispatch, and no path reaches any other read.
+      why: 'the route table publishes four paths and only two of them dispatch — runs.start and '
+        + 'runs.liveurl; a remote caller addresses one run it started, reads its events and mints '
+        + 'a view link for it, and nothing else. The `read` scope is necessary for the mint and '
+        + 'sufficient for nothing else here, because no route reaches another read',
     }),
     Object.freeze({
       capability: 'run cancellation',

@@ -7,9 +7,20 @@
 // masking half. Both directions are composed together deliberately — a mint whose validator was
 // composed elsewhere is a token system with two opinions about what a valid token is.
 
-import { validateLiveUrlToken } from '@vostride/agent-qa-agent'
-import type { LiveViewPort } from '@vostride/agent-qa-agent'
-import type { LiveStreamDeclaration, LiveUrlSigner, LiveUrlVerdict } from '@vostride/agent-qa-schema'
+import {
+  invokeFunction,
+  RUNS_LIVE_URL_FUNCTION_ID,
+  validateLiveUrlToken,
+} from '@vostride/agent-qa-agent'
+import type { FunctionRegistry, LiveViewPort } from '@vostride/agent-qa-agent'
+import { RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
+import type {
+  FunctionCaller,
+  LiveStreamDeclaration,
+  LiveUrlSigner,
+  LiveUrlVerdict,
+  RunsLiveUrlResult,
+} from '@vostride/agent-qa-schema'
 
 import { createEphemeralLiveUrlSigner } from './live-url-signer.js'
 import type { RunServiceSessionRegistry } from './run-service-session-registry.js'
@@ -84,4 +95,32 @@ export function composeLiveView(input: ComposeLiveViewInput): ComposedLiveView {
     validate: (token, expect) => validateLiveUrlToken(signer, token, expect),
     mintedSecretStore,
   }
+}
+
+/**
+ * Mint one `liveUrl` through the SHIPPED dispatcher, for whichever door asked (403 D-03, Q3).
+ *
+ * ONE FUNCTION, CALLED BY BOTH DOORS BY REFERENCE. The local dashboard door and the remote authed
+ * door mint the same credential and differ in exactly one thing: the caller identity they run
+ * under. Writing that twice would be two dispatch sites free to drift — one of them forgetting the
+ * parse, or reaching the port underneath the dispatcher, or shaping the result — and the drift
+ * would be invisible until somebody diffed them. The parity corpus compares the two doors' BYTES;
+ * this is what makes that comparison a claim about one implementation rather than about two that
+ * happen to agree.
+ *
+ * THE DISPATCHER, NOT THE PORT UNDERNEATH IT (D-04). Going straight to `liveView.signer` would skip
+ * the op-level gate, the receipt classification and the minted-token registration — the carve-out
+ * the no-private-powers law refuses. `runs.liveurl` is the ONLY producer of these tokens and this
+ * is the only way to reach it from a door.
+ *
+ * PARSED, NOT CAST. `RunsLiveUrlResultSchema` is `.strict()`, so a result that grew a field — a
+ * flattened session, a live capability handle — is a throw here rather than a leak on the wire.
+ */
+export function mintLiveUrlThrough(
+  registry: FunctionRegistry,
+  caller: FunctionCaller,
+): (runId: string, handle: number) => Promise<RunsLiveUrlResult> {
+  return async (runId, handle) => RunsLiveUrlResultSchema.parse(
+    await invokeFunction(registry, RUNS_LIVE_URL_FUNCTION_ID, { runId, handle }, caller),
+  )
 }
