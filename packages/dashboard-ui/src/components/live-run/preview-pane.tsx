@@ -49,6 +49,9 @@ import type { RunsLiveUrlResult } from '@vostride/agent-qa-schema'
 /** What a target that declared no live stream renders. The steps pane keeps working regardless. */
 export const NO_STREAM_TEXT = 'no live preview for this target — steps still advance below'
 
+/** What the pane observed when its bounded wait expired, without claiming the target has no preview. */
+export const WAITING_GAVE_UP_TEXT = 'waited for the live view, but nothing arrived — steps still advance below'
+
 /**
  * How long the pane waits before asking again while it is in the NOT-YET state.
  *
@@ -62,6 +65,9 @@ export const NO_STREAM_TEXT = 'no live preview for this target — steps still a
  * that a run held at the not-yet state costs the door well under one request a second.
  */
 export const NO_STREAM_RETRY_MS = 2_500
+
+/** Backstop only: 24 attempts × 2.5 s ≈ 60 s, deliberately longer than the sibling attach bound. */
+export const WAITING_ATTEMPT_LIMIT = 24
 
 /** The door's word for "this process has no such run" — a NOT-YET, never a final answer (D-15). */
 const UNKNOWN_RUN_WORD = 'unknown_run'
@@ -95,15 +101,19 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
   const [retryTick, setRetryTick] = useState(0)
 
   const ended = terminal || runOver
-  const watchedMemberStarted = membersByHandle[handle]?.sawStepStarted === true
+  const watchedMember = membersByHandle[handle]
+  const watchedMemberAnswered =
+    watchedMember?.sawStepStarted === true || watchedMember?.outcome !== undefined
 
   // `mintFor` is `useCallback([runId])` and its answer arrives LATER, so the two facts that decide
   // what a `none` means are read through refs rather than captured: a closure built at mount would
   // still believe the member had not started an hour into the run.
   const endedRef = useRef(ended)
   endedRef.current = ended
-  const startedRef = useRef(watchedMemberStarted)
-  startedRef.current = watchedMemberStarted
+  const answeredRef = useRef(watchedMemberAnswered)
+  answeredRef.current = watchedMemberAnswered
+  const waitingAttemptsRef = useRef(0)
+  const gaveUpWaitingRef = useRef(false)
 
   // The TTL this mint was issued with, so "less than half of it remains" is answerable. The result
   // carries only the deadline; the half-life is a fact about the interval, which needs both ends.
@@ -128,7 +138,8 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
             // THE ONE DISTINCTION THIS PANE EXISTS TO MAKE HONESTLY. `none` from a member whose
             // browser is not up yet is a not-yet; `none` from a member that has started its steps,
             // or from a run that is over, is the D-08 DECLARED absence and gets the sentence.
-            setPreviewState(endedRef.current || startedRef.current ? 'no-stream' : 'waiting')
+            gaveUpWaitingRef.current = false
+            setPreviewState(endedRef.current || answeredRef.current ? 'no-stream' : 'waiting')
             return
           }
           setMint(result)
@@ -156,6 +167,8 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
   )
 
   useEffect(() => {
+    waitingAttemptsRef.current = 0
+    gaveUpWaitingRef.current = false
     if (ended) {
       // Nothing to mint for a run that is over, and a token minted now would outlive the thing it
       // addresses. The frame comes down with it.
@@ -183,6 +196,12 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
   useEffect(() => {
     if (ended || previewState !== 'waiting') return
     const timer = setTimeout(() => {
+      waitingAttemptsRef.current += 1
+      if (waitingAttemptsRef.current >= WAITING_ATTEMPT_LIMIT) {
+        gaveUpWaitingRef.current = true
+        setPreviewState('no-stream')
+        return
+      }
       setRetryTick((tick) => tick + 1)
       mintFor(handle)
     }, NO_STREAM_RETRY_MS)
@@ -256,7 +275,11 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
             className="size-full border-0"
           />
         )}
-        {previewState === 'no-stream' && <p className="p-6 text-sm text-muted-foreground">{NO_STREAM_TEXT}</p>}
+        {previewState === 'no-stream' && (
+          <p className="p-6 text-sm text-muted-foreground">
+            {gaveUpWaitingRef.current ? WAITING_GAVE_UP_TEXT : NO_STREAM_TEXT}
+          </p>
+        )}
         {(previewState === 'minting' || previewState === 'waiting') && (
           // THE SAME MOTION FOR BOTH, DELIBERATELY. To the person watching, "asking" and "asking
           // again because the browser is not up yet" are one situation: the preview is coming. The

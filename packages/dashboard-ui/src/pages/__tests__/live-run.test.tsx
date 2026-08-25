@@ -30,7 +30,12 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import LiveRunPage from '@/pages/live-run'
-import { NO_STREAM_RETRY_MS, NO_STREAM_TEXT } from '@/components/live-run/preview-pane'
+import {
+  NO_STREAM_RETRY_MS,
+  NO_STREAM_TEXT,
+  WAITING_ATTEMPT_LIMIT,
+  WAITING_GAVE_UP_TEXT,
+} from '@/components/live-run/preview-pane'
 import { STEPS_EMPTY_TEXT } from '@/components/live-run/step-list'
 import { DID_NOT_RUN_NOTE } from '@/lib/run-stream-reducer'
 
@@ -582,8 +587,6 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
   })
 
   it('a handle with no member row at all is bounded, and says it gave up rather than that there is nothing', async () => {
-    const waitingAttemptLimit = 24
-    const waitingGaveUpText = 'waited for the live view, but nothing arrived — steps still advance below'
     fetchLiveUrlMock.mockResolvedValue({
       liveUrl: 'http://x/live/r1#v1.a.b',
       expiresAt: BASE_TIME + TTL_MS,
@@ -595,7 +598,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
 
     const at0 = previewState()
-    for (let attempt = 0; attempt < waitingAttemptLimit; attempt += 1) {
+    for (let attempt = 0; attempt < WAITING_ATTEMPT_LIMIT; attempt += 1) {
       await advance(NO_STREAM_RETRY_MS)
     }
     const afterCap = previewState()
@@ -611,7 +614,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
       await Promise.resolve()
     })
 
-    expect(waitingGaveUpText).not.toBe(NO_STREAM_TEXT)
+    expect(WAITING_GAVE_UP_TEXT).not.toBe(NO_STREAM_TEXT)
     expect({
       at0,
       afterCap,
@@ -623,10 +626,10 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     }).toEqual({
       at0: 'waiting',
       afterCap: 'no-stream',
-      textAfterCap: waitingGaveUpText,
-      callsAfterCap: waitingAttemptLimit,
+      textAfterCap: WAITING_GAVE_UP_TEXT,
+      callsAfterCap: WAITING_ATTEMPT_LIMIT,
       afterSwitch: 'waiting',
-      callsAfterSwitch: waitingAttemptLimit + 1,
+      callsAfterSwitch: WAITING_ATTEMPT_LIMIT + 1,
       lastCall: [RUN_ID, 1],
     })
   })
