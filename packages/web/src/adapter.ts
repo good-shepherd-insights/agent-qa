@@ -63,10 +63,18 @@ function readSeamStorageState(action: unknown): Parameters<BrowserContext['setSt
 }
 
 /**
- * The `Page.startScreencast` parameters this adapter ships (403 discretion D-06). Emitting every
- * frame with exactly one in flight is what makes the stream CHANGE-DRIVEN and self-throttling: CDP
- * emits a frame when the compositor produces one and then waits for our ack, so a static page
- * produces nothing at all — precisely the property a screenshot-polling implementation cannot have.
+ * The `Page.startScreencast` parameters this adapter ships (403 discretion D-06).
+ *
+ * WHAT MAKES THE STREAM CHANGE-DRIVEN is the ack, not a parameter: CDP emits a frame when the
+ * compositor produces one and then stalls until `Page.screencastFrameAck` arrives, so a static page
+ * produces (almost) nothing — precisely the property a screenshot-polling implementation cannot
+ * have. `live-stream.screencast.test.ts` measures both halves on a real Chromium: an animating page
+ * yields hundreds of frames in 3 s WITH acks and 3 without, and a static page yields at most one.
+ *
+ * `maxFramesInFlight` IS NOT A CDP PARAMETER and was removed after being measured to do nothing:
+ * with and without it, an unacked stream delivered the same 3 frames per 3 s. Chromium tolerates
+ * the unknown key silently, which is how a comment claiming "exactly one in flight" survived — the
+ * bound is Chromium's own, and the ack is what releases it.
  */
 export const SCREENCAST_PARAMS = {
   format: 'jpeg',
@@ -74,8 +82,17 @@ export const SCREENCAST_PARAMS = {
   maxWidth: 1280,
   maxHeight: 720,
   everyNthFrame: 1,
-  maxFramesInFlight: 1,
 } as const
+
+/**
+ * How many un-acked CDP ack tokens the producer will remember.
+ *
+ * Chromium keeps only a couple of frames in flight, so this is generous by two orders of magnitude;
+ * it exists so a viewer that stops acking cannot grow the map without bound. An evicted token is
+ * ACKED on its way out rather than dropped, because a token nobody acks is a producer that stalls
+ * forever — the failure this whole ack path exists to avoid.
+ */
+const SCREENCAST_ACK_WINDOW = 64
 
 /** Decode a CDP base64 frame payload to bytes without a `Buffer` round-trip in the hot path. */
 function decodeBase64(data: string): Uint8Array {
@@ -106,6 +123,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private browserName: 'chromium' | 'firefox' | 'webkit' = 'chromium'
   private screencast: CDPSession | null = null
   private screencastCapability: LiveStreamCapability | null = null
+  // 403-02: the PRODUCT's frame identity, and the CDP ack token it maps to. See `liveStream`.
+  private screencastFrameSeq = 0
+  private screencastAckTokens = new Map<number, number>()
 
   async setup(config: PlatformConfig): Promise<void> {
     const { chromium, firefox, webkit } = await import('playwright-core')
@@ -189,10 +209,35 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         if (!page || !context) return
         const cdp = await context.newCDPSession(page)
         this.screencast = cdp
+        this.screencastAckTokens.clear()
         cdp.on('Page.screencastFrame', (event) => {
           const metadata = event.metadata
+          // `LiveFrame.id` IS NOT `event.sessionId`, AND CONFLATING THEM WAS A BUG (403-02).
+          //
+          // `sessionId` is CDP's ack TOKEN. Measured on Chromium 1.59.1 it is `1` for every frame
+          // of a stream — 281 frames, one distinct value. `LiveFrame.id` is the PRODUCT's frame
+          // identity: the hub keys its per-frame ack quorum on it, the wire protocol pairs a
+          // `frame` header with an `ack` by it, and the embed page correlates its pending header
+          // with the binary that follows by it. A constant id makes the hub's second
+          // `awaiting.set(id, …)` overwrite the first — orphaning its bound timer and dropping the
+          // outstanding set, so one frame is acked twice and another never at all.
+          //
+          // So the adapter mints a monotonic id and remembers which CDP token it stands for.
+          const id = ++this.screencastFrameSeq
+          this.screencastAckTokens.set(id, event.sessionId)
+          // Bound the map. An evicted token is acked on its way out: an un-acked token is a
+          // producer stalled forever, which is worse than a frame nobody watched.
+          while (this.screencastAckTokens.size > SCREENCAST_ACK_WINDOW) {
+            const oldest = this.screencastAckTokens.keys().next()
+            if (oldest.done === true) break
+            const token = this.screencastAckTokens.get(oldest.value)
+            this.screencastAckTokens.delete(oldest.value)
+            if (token !== undefined) {
+              void cdp.send('Page.screencastFrameAck', { sessionId: token }).catch(() => undefined)
+            }
+          }
           onFrame({
-            id: event.sessionId,
+            id,
             bytes: decodeBase64(event.data),
             metadata: {
               width: metadata.deviceWidth,
@@ -208,8 +253,13 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       ack: async (frameId: number): Promise<void> => {
         const cdp = this.screencast
         if (!cdp) return
+        const sessionId = this.screencastAckTokens.get(frameId)
+        this.screencastAckTokens.delete(frameId)
+        // An ack for a frame this producer never minted (a stale viewer, a re-started stream) is
+        // dropped rather than forwarded: acking an arbitrary token is worse than acking nothing.
+        if (sessionId === undefined) return
         try {
-          await cdp.send('Page.screencastFrameAck', { sessionId: frameId })
+          await cdp.send('Page.screencastFrameAck', { sessionId })
         } catch {
           // Acking after stop (or after the page navigated away) is expected, never an error.
         }
@@ -217,6 +267,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
       stop: async (): Promise<void> => {
         const cdp = this.screencast
         this.screencast = null
+        this.screencastAckTokens.clear()
         if (!cdp) return
         try { await cdp.send('Page.stopScreencast') } catch { /* best-effort */ }
         try { await cdp.detach() } catch { /* best-effort */ }
@@ -253,6 +304,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.disconnected = false
     this.intentionalClose = false
     this.screencast = null
+    this.screencastAckTokens.clear()
   }
 
   get isBrowserDisconnected(): boolean {

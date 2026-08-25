@@ -671,6 +671,67 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
     viewer?.unsubscribe()
   })
 
+  it('(r) a viewer that acks FROM INSIDE its own frame callback acks the producer immediately', async () => {
+    // THE FASTEST POSSIBLE CONSUMER, and the one the hub was silently punishing. Acking from the
+    // delivery callback is the natural in-process pattern — it is what the LIVE-03 bus-silence
+    // cell does and what any consumer that does not need to decode first would do. The hub used to
+    // record a frame's ack ledger AFTER walking its subscribers, so an ack raised during that walk
+    // found no ledger and was dropped: every frame then waited out the FULL ack bound before the
+    // producer was told, capping a live view at 1000/LIVE_STREAM_ACK_BOUND_MS frames per second no
+    // matter how fast the browser or the viewer was. Invisible to every cell whose viewer acks
+    // later, which is why 403-01's eight cells and the tracer's browser page all missed it.
+    const timer = makeFakeTimer()
+    const capability = makeFakeCapability()
+    const hub = createLiveStreamHub({ timer })
+    hub.register(0, capability)
+    const seen: number[] = []
+    const subscription = hub.subscribe(0, (received) => {
+      seen.push(received.id)
+      subscription?.ack(received.id)
+    })
+    await flush()
+    capability.emit(frame(1))
+    capability.emit(frame(2))
+    expect(seen, 'the frames were delivered').toEqual([1, 2])
+    expect(
+      capability.acked,
+      'the producer is acked as the frames are consumed — not `LIVE_STREAM_ACK_BOUND_MS` later by '
+      + 'a timer that exists for WEDGED viewers, which is what a dropped in-callback ack degrades to',
+    ).toEqual([1, 2])
+    expect(
+      timer.pending(LIVE_STREAM_ACK_BOUND_MS),
+      'and no bound timer is left armed for a frame that is already settled',
+    ).toBe(0)
+  })
+
+  it('(s) a burst delivered synchronously inside start() is acked frame for frame', async () => {
+    // The shape a fake producer takes and the shape a real one can take on a fast page: every frame
+    // of the burst arrives before the hub's own `start()` promise has settled.
+    const timer = makeFakeTimer()
+    const acked: number[] = []
+    const burst: LiveStreamCapability = {
+      kind: 'cdp-screencast',
+      start: async (onFrame) => {
+        for (let id = 1; id <= 50; id++) {
+          onFrame({ id, bytes: new Uint8Array([0xff, 0xd8, id]), metadata: { width: 8, height: 8 } })
+        }
+      },
+      ack: async (frameId) => { acked.push(frameId) },
+      stop: async () => {},
+    }
+    const hub = createLiveStreamHub({ timer })
+    hub.register(0, burst)
+    const seen: number[] = []
+    const subscription = hub.subscribe(0, (received) => {
+      seen.push(received.id)
+      subscription?.ack(received.id)
+    })
+    await flush()
+    expect(seen).toHaveLength(50)
+    expect(acked, 'all fifty acked, in order, with no timer involved').toEqual(seen)
+    expect(timer.pending(LIVE_STREAM_ACK_BOUND_MS)).toBe(0)
+  })
+
   it('(q) registering the SAME capability object again is a no-op, not a restart', async () => {
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()

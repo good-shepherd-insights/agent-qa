@@ -777,6 +777,11 @@ describe('agent-qa fn (generic function invoker)', () => {
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.list': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
+      // 403 D-03: UNBOUND from this composition, and that is the honest answer rather than an
+      // oversight. `runs.liveurl` mints a viewing credential for a LIVE run, so it binds only where
+      // a live-view port exists — `agent-qa dashboard`'s `composeLiveView`. A CLI host with no
+      // server to serve the embed page from has nothing to mint a link TO, and says so.
+      'runs.liveurl': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
       // 388 D-14: BOUND on every local host, and NOT gated on whether this one drains the
       // chain — the two are different questions, and a host that only ever reads is exactly
       // the caller that most needs durable chip truth. Read-tier, so it survives safe mode.

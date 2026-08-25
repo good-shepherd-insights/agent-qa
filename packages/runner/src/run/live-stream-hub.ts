@@ -179,29 +179,45 @@ export function createLiveStreamHub(opts: CreateLiveStreamHubOptions = {}): Live
     // Snapshot so a mid-delivery detach (or a subscriber that unsubscribes from its own callback)
     // cannot disturb the walk — the `bus.ts:125-139` shape.
     const receivers = [...state.subscribers]
-    const outstanding = new Set<Subscriber>()
+
+    // THE ACK LEDGER IS OPENED BEFORE THE FIRST DELIVERY, and the order is the mechanism.
+    //
+    // Acking from inside the frame callback is the FASTEST and most natural consumer pattern — an
+    // in-process reader that does not have to decode first has no reason to defer. Opening the
+    // ledger after the walk meant such an ack found no entry and was silently dropped, so the
+    // producer was told only when the ack BOUND fired: a live view capped at
+    // `1000 / ackBoundMs` frames per second for the quickest viewer in the system, by a timer whose
+    // entire purpose is WEDGED viewers. Invisible to any cell whose viewer acks a tick later, which
+    // is why a browser page acking after `createImageBitmap` never showed it.
+    const outstanding = new Set<Subscriber>(receivers)
+    const cancel = timer.schedule(ackBoundMs, () => {
+      // THE ACK BOUND: one wedged viewer must not freeze the stream for the others.
+      settleFrame(state, frame.id)
+    })
+    state.awaiting.set(frame.id, { outstanding, cancel })
+
     let detached = false
     for (const subscriber of receivers) {
-      if (!state.subscribers.has(subscriber)) continue
+      if (!state.subscribers.has(subscriber)) {
+        // Detached between the snapshot and its turn: it owes nothing for this frame.
+        outstanding.delete(subscriber)
+        continue
+      }
       try {
         subscriber.onFrame(frame)
-        if (state.subscribers.has(subscriber)) outstanding.add(subscriber)
       } catch {
         state.subscribers.delete(subscriber)
         detached = true
         warn('live-stream-subscriber-detached', 'live-frame subscriber threw during delivery and was detached')
       }
+      // A subscriber that threw — or that unsubscribed from its own callback — cannot ack, so it
+      // must not be counted as owing one. Otherwise the producer waits out the bound every frame.
+      if (!state.subscribers.has(subscriber)) outstanding.delete(subscriber)
     }
-    if (outstanding.size === 0) {
-      // Nobody is left to ack — keep the producer moving rather than stalling on an empty set.
-      void state.capability.ack(frame.id).catch(() => {})
-    } else {
-      const cancel = timer.schedule(ackBoundMs, () => {
-        // THE ACK BOUND: one wedged viewer must not freeze the stream for the others.
-        settleFrame(state, frame.id)
-      })
-      state.awaiting.set(frame.id, { outstanding, cancel })
-    }
+    // Everyone acked in-callback, or nobody was left to ack: either way, tell the producer now
+    // rather than stalling on an empty set. A no-op when an in-callback ack already settled it.
+    if (outstanding.size === 0) settleFrame(state, frame.id)
+
     // THE THROW PATH IS A DETACH LIKE ANY OTHER. A viewer removed here never calls `unsubscribe`,
     // so without this the last viewer could leave by throwing and the browser would keep encoding
     // JPEGs for nobody until the run ended — the exact work D-07 exists to refuse.

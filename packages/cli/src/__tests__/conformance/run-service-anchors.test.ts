@@ -50,6 +50,7 @@ import {
   RunServiceErrorBodySchema,
   RunServiceReadinessSchema,
   RunStartAcknowledgementSchema,
+  RunsLiveUrlResultSchema,
 } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -204,6 +205,39 @@ const RPC_SHAPE_CLEAN: RpcShapeReading = {
   exotic: [],
   handleKeys: [],
   byteUnstable: false,
+}
+
+// ---- The complete-set census over EVERY observed wire document ---------------------------------
+//
+// THE COMPLETE-SET CLAIM, MADE AUDITABLE. Ring 3 only certifies the documents it was pointed at, so
+// the set of documents it is pointed at is itself part of the claim — and a set that lives only in
+// the reader's head goes quiet the day a route is added. Every document this file sweeps is
+// RECORDED here under a declared class name, and `WIRE_DOCUMENT_CLASSES` is the complete set. The
+// census cell asserts the two agree in BOTH directions: a class nobody sweeps is a hole, and a
+// sweep of a class nobody declared is a document that entered the corpus unnamed.
+//
+// 403-02 adds `liveUrl`. `GET /api/runs/:runId/live-url` is a door the phase opened, its body is
+// minted by `runs.liveurl`, and it is the one document whose producer can see a `RunSession` and a
+// live-stream capability at the same moment — precisely where `subscribeFrames` or
+// `streamCapabilityOf` would leak if a shaping step ever grew one (LIVE-03).
+const WIRE_DOCUMENT_CLASSES = [
+  'ack',
+  'errorBody',
+  'liveUrl',
+  'readiness',
+  'sseEnvelope',
+] as const
+type WireDocumentClass = (typeof WIRE_DOCUMENT_CLASSES)[number]
+
+const observedWireDocuments: { readonly wireClass: WireDocumentClass; readonly raw: string }[] = []
+
+/**
+ * Sweep one document and record that it was swept. Every wire-document assertion in this file goes
+ * through here, so the census below is reading what actually crossed the socket rather than a list.
+ */
+function sweepWireDocument(wireClass: WireDocumentClass, raw: string, why: string): void {
+  observedWireDocuments.push({ wireClass, raw })
+  expect(rpcShapeOf(raw), why).toEqual(RPC_SHAPE_CLEAN)
 }
 
 // ---- The wire ----------------------------------------------------------------------------------
@@ -413,7 +447,7 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
     expect(Object.keys(body)).toEqual(['error'])
     // No cross-origin grant on an authed surface, asserted where a browser would read it.
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
-    expect(rpcShapeOf(raw), 'the refusal body must be pure JSON').toEqual(RPC_SHAPE_CLEAN)
+    sweepWireDocument('errorBody', raw, 'the refusal body must be pure JSON')
   }, WIRE_BUDGET_MS)
 
   // THE LOCAL READINESS DOOR, PINNED AT THE COMPOSITION THAT SHIPS IT (WINDOWS #255).
@@ -517,8 +551,49 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
       const ack = RunStartAcknowledgementSchema.parse(JSON.parse(ackBytes))
       expect(ack.runId).toBeTruthy()
       expect(ack.testCount).toBeGreaterThan(0)
-      expect(rpcShapeOf(ackBytes), 'the ack must be pure JSON with no handle residue')
-        .toEqual(RPC_SHAPE_CLEAN)
+      sweepWireDocument('ack', ackBytes, 'the ack must be pure JSON with no handle residue')
+
+      // (1b) THE MINT BODY (403-02, LIVE-03). `GET /api/runs/:runId/live-url` is the ONE document
+      // whose producer holds a live `RunSession` and a live-stream capability at the same instant:
+      // `runs.liveurl` looks the session up in the registry and reads `streamCapabilityOf(handle)`
+      // to declare the stream kind. If a shaping step ever carried the session or the capability
+      // through instead of the declaration, the residue would land HERE and nowhere else — which is
+      // why this door has to be inside the ring-3 sweep and not merely inside a schema parse.
+      //
+      // No credential: the mint is on the LOCAL door (D-14), which the loopback bind guards. Polled
+      // because the queue starts the run asynchronously, and bounded because every wait here is.
+      const mintDeadline = Date.now() + 30_000
+      let liveUrlBytes: string | undefined
+      while (Date.now() < mintDeadline) {
+        const probe = await fetch(`${origin()}/api/runs/${encodeURIComponent(ack.runId)}/live-url`)
+        const probeBytes = await probe.text()
+        if (probe.status === 200) { liveUrlBytes = probeBytes; break }
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+      expect(
+        liveUrlBytes,
+        'the spawned dashboard never minted a liveUrl for a run it was executing — the session '
+        + 'registry is composed only on the token arm if #264 has regressed',
+      ).toBeDefined()
+      // SWEPT BEFORE PARSED, deliberately. The strict result contract would also refuse a leaked
+      // member, but a schema refusal and a ring-3 refusal are different instruments and the ring is
+      // the one this census is about — running it second would let the parse mask what it measures.
+      sweepWireDocument(
+        'liveUrl',
+        liveUrlBytes as string,
+        'the liveUrl mint body must be pure JSON with no handle residue — a `subscribeFrames` or '
+        + '`streamCapabilityOf` key at ANY depth here is the frame seam leaking onto the wire',
+      )
+      const liveUrl = RunsLiveUrlResultSchema.parse(JSON.parse(liveUrlBytes as string))
+      expect(liveUrl.liveUrl, 'the mint names the run it was minted for, in the URL and nowhere else')
+        .toContain(encodeURIComponent(ack.runId))
+      expect(liveUrl.stream.kind, 'a browserless spawned run declares the HONEST none capability')
+        .toBe('none')
+      // And said plainly, because it is the phase's own prohibition rather than a generic ring:
+      expect(rpcShapeOf(liveUrlBytes as string).handleKeys, 'no RunSession handle member, at any depth')
+        .toEqual([])
+      expect(rpcShapeOf(liveUrlBytes as string).functionTyped).toEqual([])
+      expect(rpcShapeOf(liveUrlBytes as string).byteUnstable).toBe(false)
 
       // (2) READINESS, authed, from the same child — the contract version a 403 may bump.
       const ok = await fetch(`${origin()}/ok`, { headers: bearer })
@@ -527,7 +602,7 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
       const readiness = RunServiceReadinessSchema.parse(JSON.parse(okBytes))
       expect(readiness.hostComposed).toBe(true)
       expect(readiness.authConfigured).toBe(true)
-      expect(rpcShapeOf(okBytes)).toEqual(RPC_SHAPE_CLEAN)
+      sweepWireDocument('readiness', okBytes, 'the readiness body must be pure JSON')
 
       // (3) THE STREAM. `subscribe(1, …)` replays from the first seq, so the frames are the whole
       // log whether or not the run is already over by the time this connects.
@@ -555,8 +630,7 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
         observed.push(envelope.type)
         // EVERY PAYLOAD, SWEPT — the ack is shallow and a payload is not, and a handle that leaked
         // would leak into a payload long before it reached a top-level field.
-        expect(rpcShapeOf(line), `envelope ${envelope.type}: not pure JSON on the wire`)
-          .toEqual(RPC_SHAPE_CLEAN)
+        sweepWireDocument('sseEnvelope', line, `envelope ${envelope.type}: not pure JSON on the wire`)
       }
 
       // The run reached its terminal event, which is what makes every claim above a claim about a
@@ -564,6 +638,27 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
       expect(observed).toContain('runStarted')
       expect(observed).toContain('runFinished')
     }, WIRE_BUDGET_MS)
+
+  it('the ring-3 sweep spans EVERY declared wire-document class — the complete-set claim', () => {
+    // BOTH DIRECTIONS, on the RunSession-member census's own reasoning one cell up. A declared
+    // class with no observed document is a hole the sweep cannot see; an observed document under a
+    // class nobody declared is a door that entered the corpus without anybody saying so.
+    const observedClasses = [...new Set(observedWireDocuments.map((doc) => doc.wireClass))].sort()
+    expect(
+      observedClasses,
+      'every declared wire-document class must actually have been swept in this run (run the whole '
+      + 'file — a --testNamePattern run cannot make this claim)',
+    ).toEqual([...WIRE_DOCUMENT_CLASSES].sort())
+
+    // And the register is re-swept as one corpus, so the complete-set claim is a measurement over
+    // the union rather than a count of the parts.
+    for (const doc of observedWireDocuments) {
+      expect(rpcShapeOf(doc.raw), `${doc.wireClass}: re-swept as part of the whole corpus`)
+        .toEqual(RPC_SHAPE_CLEAN)
+    }
+    expect(observedWireDocuments.length, 'the corpus must be non-empty in every class')
+      .toBeGreaterThanOrEqual(WIRE_DOCUMENT_CLASSES.length)
+  })
 
   it('is a sweep that can fail — both discriminating rings, driven with synthetic bytes', () => {
     // THE CONTROL. A sweep whose failing branches are only reachable by breaking the product is a
