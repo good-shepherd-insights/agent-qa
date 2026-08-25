@@ -30,7 +30,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import LiveRunPage from '@/pages/live-run'
-import { NO_STREAM_TEXT } from '@/components/live-run/preview-pane'
+import { NO_STREAM_RETRY_MS, NO_STREAM_TEXT } from '@/components/live-run/preview-pane'
 import { STEPS_EMPTY_TEXT } from '@/components/live-run/step-list'
 import { DID_NOT_RUN_NOTE } from '@/lib/run-stream-reducer'
 
@@ -544,7 +544,13 @@ describe('the page ends where the run ends, and stays there (D-12)', () => {
 })
 
 describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)', () => {
-  it('a declared `none` stream renders the sentence and no iframe', async () => {
+  // `none` IS TWO SITUATIONS WEARING ONE WORD (403-07, gap 1), and the pane's whole honesty rests
+  // on telling them apart. `startRun` publishes the session synchronously; the member's browser —
+  // and therefore its screencast capability — arrives later, so the FIRST mint of an ordinary run
+  // answers `none` while the run is perfectly healthy. Reading that as the D-08 declared absence
+  // printed `no live preview for this target` over a run that was about to stream. The
+  // discriminator is the watched member's own lifecycle, and both halves are cells.
+  it('a `none` from a member whose browser is not up yet is a NOT-YET, and the pane keeps asking', async () => {
     fetchLiveUrlMock.mockResolvedValue({
       liveUrl: 'http://x/live/r1#v1.a.b',
       expiresAt: BASE_TIME + TTL_MS,
@@ -553,11 +559,49 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     })
     await mount()
     await open()
+    await emit(runStarted([0]), testStarted(0, 'the member', 1))
+
+    expect(previewState()).toBe('waiting')
+    expect(q('[data-live-pane="preview"]')?.textContent).not.toContain(NO_STREAM_TEXT)
+    expect(q('iframe')).toBeNull()
+    expect(fetchLiveUrlMock).toHaveBeenCalledTimes(1)
+
+    // THE POLL IS THE FIX. A pane that asked once would sit here for the whole run; the assertion
+    // that matters is that the SECOND and THIRD questions get asked without anything prompting them.
+    await advance(NO_STREAM_RETRY_MS)
+    expect(fetchLiveUrlMock).toHaveBeenCalledTimes(2)
+    await advance(NO_STREAM_RETRY_MS)
+    expect(fetchLiveUrlMock).toHaveBeenCalledTimes(3)
+    expect(previewState()).toBe('waiting')
+    expect(q('iframe')).toBeNull()
+  })
+
+  it('a declared `none` — the member started and still has no stream — renders the sentence and no iframe', async () => {
+    fetchLiveUrlMock.mockResolvedValue({
+      liveUrl: 'http://x/live/r1#v1.a.b',
+      expiresAt: BASE_TIME + TTL_MS,
+      handle: 0,
+      stream: { kind: 'none' },
+    })
+    await mount()
+    await open()
+    await emit(runStarted([0]), testStarted(0, 'the member', 1), stepStarted())
+
+    // The member's browser IS up now — its steps are advancing — and the handle still declares
+    // nothing to stream. That is the D-08 absence, and it gets the sentence rather than motion.
+    await advance(NO_STREAM_RETRY_MS)
 
     expect(previewState()).toBe('no-stream')
     expect(q('[data-live-pane="preview"]')?.textContent).toContain(NO_STREAM_TEXT)
     expect(NO_STREAM_TEXT).toBe('no live preview for this target — steps still advance below')
     expect(q('iframe')).toBeNull()
+
+    // AND THE SENTENCE IS TERMINAL. A retry that fired from `no-stream` would poll straight
+    // through a declared absence and turn D-08 into a flicker.
+    const settled = fetchLiveUrlMock.mock.calls.length
+    await advance(NO_STREAM_RETRY_MS * 3)
+    expect(fetchLiveUrlMock.mock.calls.length).toBe(settled)
+    expect(previewState()).toBe('no-stream')
   })
 
   it('any non-none kind embeds identically — `mjpeg` is not a special case', async () => {
