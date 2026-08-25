@@ -533,12 +533,16 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // Non-vacuity, and it is the load-bearing half: an extractor that returned nothing would make
     // the loop above pass over an empty set forever. The number is the census's own arithmetic,
     // measured 2026-08-20: 42 registered ops minus the SEVEN that delegate to
-    // `config-propose-verdict.ts` leaves 35 folds written as a spec member. The 36th — that shared
-    // module's `classifyConfigProposeOutput` — is a named exported function rather than a
-    // `classify(` member, so this extractor does not see it and the whole-file scan above does. An
-    // equality rather than a floor, because an op deleting its fold and this scan quietly ranging
-    // one body fewer is the drift a floor cannot see.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(35)
+    // `config-propose-verdict.ts` leaves 35 folds written as a spec member. The shared module's
+    // `classifyConfigProposeOutput` is a named exported function rather than a `classify(` member,
+    // so this extractor does not see it and the whole-file scan above does. An equality rather
+    // than a floor, because an op deleting its fold and this scan quietly ranging one body fewer
+    // is the drift a floor cannot see.
+    //
+    // 2026-08-25 (403-01 D-03): 36. `runs.liveurl` arrives with its own `classify` member, and it
+    // is a fold this scan MUST range — the whole reason it declares one explicitly is that its
+    // result carries a live credential its outcome sentence may never interpolate.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(36)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {

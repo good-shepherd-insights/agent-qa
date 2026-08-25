@@ -59,6 +59,7 @@ import { quarantineAddSpec } from '../functions/ops/quarantine-add.js'
 import { quarantineListSpec } from '../functions/ops/quarantine-list.js'
 import { quarantineReleaseSpec } from '../functions/ops/quarantine-release.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
+import { runsLiveUrlSpec } from '../functions/ops/runs-live-url.js'
 import { runsDigestSpec } from '../functions/ops/runs-digest.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
@@ -180,6 +181,11 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,
   'runs.list': runsListSpec,
+  // 403-01 D-03. Paired here the day it is registered, on the growth seam's own rule. Its output
+  // carries a DISCRIMINATED UNION (`stream`), which is the first in this map — an unchecked
+  // projection is exactly where a published catalogue could lose the `none` arm, leaving a caller
+  // with no declared way to learn that a target has no live preview at all.
+  'runs.liveurl': runsLiveUrlSpec,
   // 388 D-14. Paired here the day it is registered, which is exactly what the growth seam is
   // for: its output contract is the first in this map with a nested optional object, so an
   // unchecked projection would have been the first place a `notification` could quietly stop
