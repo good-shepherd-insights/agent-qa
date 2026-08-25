@@ -418,12 +418,27 @@ describe('the run-service wire anchors (402-07 · criterion 4)', () => {
     expect(block, 'RunSession must be declared in packages/schema/src/run/run-session.ts').not.toBeNull()
     const body = (block as RegExpExecArray)[1] ?? ''
     const declared = new Set<string>()
+    // ONLY LINES AT THE TOP LEVEL OF THE INTERFACE BODY DECLARE A MEMBER. A member whose signature
+    // spans several lines — a method with three parameters, say — puts `handle: number,` on a line
+    // of its own, and a purely line-based read counts each of those as a member of `RunSession`. The
+    // census then fails on a type nobody changed, and worse, it would pass a real leak hidden inside
+    // such a signature. Bracket depth is what tells a declaration apart from a continuation. Comment
+    // lines are skipped before the count so unbalanced prose cannot shift it.
+    let depth = 0
     for (const line of body.split('\n')) {
       const trimmed = line.trim()
       if (trimmed === '' || trimmed.startsWith('*') || trimmed.startsWith('/')) continue
+      const atTopLevel = depth === 0
+      for (const character of line) {
+        if (character === '(' || character === '[' || character === '{') depth += 1
+        else if (character === ')' || character === ']' || character === '}') depth -= 1
+      }
+      if (!atTopLevel) continue
       const member = /^([A-Za-z_$][\w$]*)\s*[?(:]/u.exec(trimmed)
       if (member !== null) declared.add(member[1] as string)
     }
+    expect(depth, 'the interface body must have balanced brackets, or this walk lost its place')
+      .toBe(0)
     expect(
       [...declared].sort(),
       'every RunSession member must be classified as wire data or an in-process handle — '
