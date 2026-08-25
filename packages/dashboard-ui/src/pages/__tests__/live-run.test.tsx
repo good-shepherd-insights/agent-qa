@@ -550,6 +550,87 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
   // answers `none` while the run is perfectly healthy. Reading that as the D-08 declared absence
   // printed `no live preview for this target` over a run that was about to stream. The
   // discriminator is the watched member's own lifecycle, and both halves are cells.
+  it('a member that FINISHES WITHOUT EVER STARTING A STEP gets the D-08 sentence, not motion for the rest of the run', async () => {
+    fetchLiveUrlMock.mockResolvedValue({
+      liveUrl: 'http://x/live/r1#v1.a.b',
+      expiresAt: BASE_TIME + TTL_MS,
+      handle: 0,
+      stream: { kind: 'none' },
+    })
+    await mount()
+    await open()
+    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1), testFinished(0, 'skipped'))
+
+    const at0 = previewState()
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await advance(NO_STREAM_RETRY_MS)
+    }
+
+    expect({
+      at0,
+      after: previewState(),
+      text: q('[data-preview-state] p')?.textContent,
+      memberNote: q('[data-member-note]') !== null,
+      iframes: qa('iframe').length,
+    }).toEqual({
+      at0: 'waiting',
+      after: 'no-stream',
+      text: NO_STREAM_TEXT,
+      memberNote: true,
+      iframes: 0,
+    })
+  })
+
+  it('a handle with no member row at all is bounded, and says it gave up rather than that there is nothing', async () => {
+    const waitingAttemptLimit = 24
+    const waitingGaveUpText = 'waited for the live view, but nothing arrived — steps still advance below'
+    fetchLiveUrlMock.mockResolvedValue({
+      liveUrl: 'http://x/live/r1#v1.a.b',
+      expiresAt: BASE_TIME + TTL_MS,
+      handle: 0,
+      stream: { kind: 'none' },
+    })
+    await mount()
+    await open()
+    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+
+    const at0 = previewState()
+    for (let attempt = 0; attempt < waitingAttemptLimit; attempt += 1) {
+      await advance(NO_STREAM_RETRY_MS)
+    }
+    const afterCap = previewState()
+    const textAfterCap = q('[data-preview-state] p')?.textContent
+    const callsAfterCap = fetchLiveUrlMock.mock.calls.length
+
+    const picker = q('[data-handle-picker]') as HTMLSelectElement | null
+    expect(picker).not.toBeNull()
+    await act(async () => {
+      if (picker === null) throw new Error('the handle picker does not exist')
+      picker.value = '1'
+      picker.dispatchEvent(new Event('change', { bubbles: true }))
+      await Promise.resolve()
+    })
+
+    expect(waitingGaveUpText).not.toBe(NO_STREAM_TEXT)
+    expect({
+      at0,
+      afterCap,
+      textAfterCap,
+      callsAfterCap,
+      afterSwitch: previewState(),
+      callsAfterSwitch: fetchLiveUrlMock.mock.calls.length,
+      lastCall: fetchLiveUrlMock.mock.calls.at(-1),
+    }).toEqual({
+      at0: 'waiting',
+      afterCap: 'no-stream',
+      textAfterCap: waitingGaveUpText,
+      callsAfterCap: waitingAttemptLimit,
+      afterSwitch: 'waiting',
+      callsAfterSwitch: waitingAttemptLimit + 1,
+      lastCall: [RUN_ID, 1],
+    })
+  })
+
   it('a `none` from a member whose browser is not up yet is a NOT-YET, and the pane keeps asking', async () => {
     fetchLiveUrlMock.mockResolvedValue({
       liveUrl: 'http://x/live/r1#v1.a.b',
