@@ -12,9 +12,9 @@
 // is about the BUILT `dashboard-ui` bundle, served by the production `startServer` frame with its
 // real `uiDir`, driven by a real headless Chromium — the artifact a person is actually handed.
 //
-// A BROWSER THAT CANNOT LAUNCH IS A RED, NEVER A SKIP. No `skipIf`, no environment predicate, no
-// try/catch that swallows the launch. A skipped visual suite exits 0 having measured nothing,
-// which is the exact shape of vacuous green this repository has been bitten by before.
+// A BROWSER THAT CANNOT LAUNCH IS A RED, NEVER A SKIP. No conditional skip, no environment
+// predicate, no try/catch that swallows the launch. A skipped visual suite exits 0 having measured
+// nothing, which is the exact shape of vacuous green this repository has been bitten by before.
 //
 // THE RUN IS PLANTED AND THE SERVER IS NOT. See `live-view-fixture.ts` for what that trade buys
 // and what it costs: the bus, the server, the mint, the validator, the registry and the bundle are
