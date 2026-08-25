@@ -5,6 +5,7 @@ import { Radio, XCircle } from 'lucide-react'
 
 import { EmptyState } from '@/components/empty-state'
 import { LivenessPill, livenessForAttach } from '@/components/live-run/liveness-pill'
+import { PreviewPane } from '@/components/live-run/preview-pane'
 import { StepList } from '@/components/live-run/step-list'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -295,9 +296,7 @@ export default function LiveRunPage() {
 
         <ResizablePanel defaultSize={60} minSize={30}>
           <section data-live-pane="preview" className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-            <div data-preview-state="minting" className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              preparing live preview...
-            </div>
+            <PreviewPane runId={id} handles={state.handles} terminal={state.terminal} runOver={runOver} />
           </section>
         </ResizablePanel>
       </ResizablePanelGroup>
