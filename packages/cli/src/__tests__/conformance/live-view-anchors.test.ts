@@ -616,12 +616,24 @@ describe('INVK-05 on real sockets: two surfaces, a mid-run resume, and a detach 
         + childContext(f.dashboard),
       ).toContain(verdictWord)
 
-      // THE PREVIEW IS HONEST EITHER WAY, and which one it is is recorded rather than asserted
-      // into: a run with no browser declares `none`, and a run that has ENDED has nothing left to
-      // embed. Both are true sentences about this run; a cell that demanded one of them would be
-      // asserting about the fixture's timing.
+      // THE PREVIEW STATE IS ASSERTED, NOT RECORDED, and the strictness rests on an OBSERVED FACT
+      // rather than on timing — which is why the two-value form this cell used to carry could go.
+      //
+      // THE PRECONDITION IS THE `waitFor` FOUR LINES ABOVE. `live-run.tsx:297-298` renders
+      // `data-terminal-state` exactly when `state.terminal` is true, and `:340` hands that SAME
+      // `state.terminal` to `<PreviewPane terminal={…}>`, whose `ended = terminal || runOver`
+      // drives the `'ended'` branch. So `[data-terminal-state]` attached means the run is over as
+      // far as the pane is concerned, and `ended` is the one honest word left. The pane sets it
+      // from an effect one tick after that same render, so this waits on a bounded budget rather
+      // than reading the attribute once and racing a tick.
+      //
+      // AND `embedded` IS NOT THIS CELL'S CLAIM. The shipped zero-token binary is browserless: it
+      // has no browser to stream and no LLM to drive one, so it genuinely cannot reach `embedded`.
+      // The `embedded`-under-production-ordering assertion lives in `live-view-dom.test.ts` cell
+      // (8), which drives a planted latching session that really streams.
+      await page.locator('[data-preview-state="ended"]').waitFor({ state: 'attached', timeout: 30_000 })
       const previewState = await page.locator('[data-preview-state]').getAttribute('data-preview-state')
-      expect(['ended', 'no-stream'], `the preview declared ${String(previewState)}`).toContain(previewState)
+      expect(previewState, 'a run this page has watched END has nothing left to embed').toBe('ended')
 
       expect(await page.locator('[data-live-pane]').count(), 'two panes on the shipped binary too').toBe(2)
 

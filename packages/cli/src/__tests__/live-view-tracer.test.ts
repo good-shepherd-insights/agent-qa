@@ -102,12 +102,52 @@ interface Fixture {
 let fixture: Fixture | undefined
 let page: LiveStreamFixturePage | undefined
 
-async function mint(handle = 0): Promise<{ liveUrl: string; stream: { kind: string }; expiresAt: number }> {
+/** How long the tracer will keep asking the mint route for a handle that has not registered yet. */
+const MINT_RETRY_BUDGET_MS = 60_000
+const MINT_RETRY_INTERVAL_MS = 250
+
+/** Every mint answer this file has observed, per call — the record of the race it no longer hides. */
+const mintAnswerLog: string[][] = []
+
+async function mintOnce(handle: number): Promise<{ liveUrl: string; stream: { kind: string }; expiresAt: number }> {
   const held = fixture as Fixture
   const response = await fetch(`${held.origin}/api/runs/${encodeURIComponent(held.runId)}/live-url?handle=${String(handle)}`)
   const raw = await response.text()
   expect(response.status, raw).toBe(200)
   return RunsLiveUrlResultSchema.parse(JSON.parse(raw))
+}
+
+/**
+ * The mint route, POLLED until the member's handle declares a stream.
+ *
+ * WHY THIS REPLACED A `beforeAll` DEFERRED. This file used to hold a `registered` promise that the
+ * scripted executor resolved right after `ctx.registerLiveStream`, and `beforeAll` awaited it — so
+ * no cell could ever observe the window between "the session exists" and "the member's browser has
+ * registered its screencast". Its own comment named the symptom: "a flake that would look exactly
+ * like the capability being absent". That window is the PRODUCT'S start-up ordering, not a harness
+ * artifact, and closing it in the harness is how six plans of careful measurement coexisted with a
+ * dead preview in the normal case (403-VERIFICATION gap 1). The wait is gone; the tracer now
+ * exercises the real ordering and proves the mint EVENTUALLY declares a stream.
+ */
+async function mint(handle = 0): Promise<{ liveUrl: string; stream: { kind: string }; expiresAt: number }> {
+  const deadline = Date.now() + MINT_RETRY_BUDGET_MS
+  const answers: string[] = []
+  for (;;) {
+    const result = await mintOnce(handle)
+    answers.push(result.stream.kind)
+    if (result.stream.kind === 'cdp-screencast') {
+      mintAnswerLog.push(answers)
+      console.log(`mint(${String(handle)}) answers before a declared stream: ${JSON.stringify(answers)}`)
+      return result
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `the mint never declared a stream within ${String(MINT_RETRY_BUDGET_MS)}ms; `
+        + `answers=${JSON.stringify(answers)}`,
+      )
+    }
+    await new Promise((tick) => setTimeout(tick, MINT_RETRY_INTERVAL_MS))
+  }
 }
 
 beforeAll(async () => {
@@ -127,11 +167,10 @@ beforeAll(async () => {
   // on a deferred so the run stays live while the cells watch it.
   let finishRun: () => void = () => {}
   const finished = new Promise<void>((resolve_) => { finishRun = resolve_ })
-  // The member's browser is up and its capability registered. `beforeAll` awaits this, so no cell
-  // can race the run's own start-up and read `{ kind: 'none' }` from a handle that is about to
-  // declare a screencast — a flake that would look exactly like the capability being absent.
-  let markRegistered: () => void = () => {}
-  const registered = new Promise<void>((resolve_) => { markRegistered = resolve_ })
+  // NOTHING WAITS FOR THE CAPABILITY ANY MORE (403-07 Task 2). The deferred that used to live here
+  // was resolved right after `ctx.registerLiveStream` and awaited in `beforeAll`, which engineered
+  // the product's own start-up race out of the harness. `mint()` above polls instead, so the cells
+  // read the ordering production actually has.
   const adapter = new WebPlatformAdapter()
   let adapterUp = false
 
@@ -148,7 +187,6 @@ beforeAll(async () => {
       adapterUp = true
       await adapter.execute({ type: 'navigate', to: 'url', url: `${fixturePage.url}?animate=1` })
       ctx.registerLiveStream?.(adapter.liveStream)
-      markRegistered()
       await finished
       await adapter.cleanup()
       adapterUp = false
@@ -161,8 +199,6 @@ beforeAll(async () => {
   }
 
   const session = startRun(runConfig)
-  // Before anything else is composed: the run's handle must actually declare its stream.
-  await registered
 
   // The registry the shipped command hoists — handed the ONE session this cell started.
   const sessions = createRunServiceSessionRegistry({
