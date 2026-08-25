@@ -32,6 +32,7 @@ import {
   quarantineAppliesToTest,
 } from '@vostride/agent-qa-schema'
 import { createRunEventBus } from './bus.js'
+import { createLiveStreamHub } from './live-stream-hub.js'
 import { deriveAggregateVerdict, deriveMemberOutcome } from './verdict.js'
 import { classifyRootCause } from './root-cause.js'
 import { createMemberEventSink } from './event-sink.js'
@@ -109,6 +110,16 @@ export function startRun(config: RunConfig): RunSession {
   // the run-budget so that firing it in a test is unambiguous (heartbeat re-arm on every publish
   // would otherwise clobber the budget on a single shared fake timer).
   const bus = createRunEventBus({ runId: config.runId, eventLog: ports.eventLog })
+
+  // 403 D-05: ONE frame hub per run. Frames are DATA on a side channel — the hub publishes no bus
+  // event of its own, and its only bus contact is the existing `runWarning` degrade channel, so
+  // the frozen `RUN_EVENT_TYPES` list gains nothing (LIVE-03).
+  const liveStreams = createLiveStreamHub({
+    ...(ports.timer === undefined ? {} : { timer: ports.timer }),
+    onWarning: (code, message) => {
+      bus.publish('runWarning', { code, message })
+    },
+  })
 
   const startedAt = timer?.now() ?? Date.now()
 
@@ -280,6 +291,9 @@ export function startRun(config: RunConfig): RunSession {
             evidenceContext = context
           },
           evidenceArtifacts: ports.evidenceArtifacts,
+          registerLiveStream(capability) {
+            liveStreams.register(testIndex, capability)
+          },
         })
         .then(
           (r): RaceOutcome => ({ kind: 'result', result: r }),
@@ -333,6 +347,11 @@ export function startRun(config: RunConfig): RunSession {
           duration: 0,
         }
       }
+
+      // 403 D-05: the member's race has settled (result, executor error or abort) — its browser is
+      // on its way down, so the handle withdraws its declaration here and reads `{ kind: 'none' }`
+      // from now on. Placed at the ONE site every arm converges on, so no arm can forget it.
+      liveStreams.register(testIndex, undefined)
 
       const outcome = deriveMemberOutcome(result)
       // 390 D-14 (CR-01, measured 2026-08-05): the disposition licenses this member's failure at the
@@ -530,6 +549,8 @@ export function startRun(config: RunConfig): RunSession {
     })
 
     cancelBudget?.()
+    // Every started screencast stops before the bus closes — the hub's warnings still have a bus.
+    await liveStreams.close()
     bus.close()
 
     return { verdict, handoff }
@@ -542,6 +563,8 @@ export function startRun(config: RunConfig): RunSession {
     },
     executionContext: config.executionContext,
     subscribe: (fromSeq, handler) => bus.subscribe(fromSeq, handler),
+    subscribeFrames: (handle, onFrame) => liveStreams.subscribe(handle, onFrame),
+    streamCapabilityOf: (handle) => liveStreams.capabilityOf(handle),
     cancel(): void {
       // Run-level cancel (D-03): abort the active member, skip the rest, aggregate `cancelled`.
       runCancelled = true

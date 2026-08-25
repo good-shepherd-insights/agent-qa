@@ -73,6 +73,7 @@ import type {
   MemberStepSpec,
   MemberTest,
   MemberTestExecutor,
+  LiveStreamCapability,
   MemberTestRunContext,
   NonActionToolMap,
   PlannerConfig,
@@ -552,7 +553,30 @@ export function createSuiteLifecycle(): SuiteLifecycle {
 export interface SuiteMemberBinding {
   suiteKey: string
   hooks: SuiteLifecycleHooks
+  /**
+   * 403 D-05: the suite's ONE adapter, read only for its live-stream declaration. Present so the
+   * executor can register the capability AFTER `ensureReady` has resolved the suite's `setup()`
+   * (which is where `adapter.setup()` runs, so `this.page` exists) and BEFORE the first step.
+   */
+  adapter?: PlatformAdapter
   run(ctx: MemberTestRunContext): Promise<TestResult>
+}
+
+/**
+ * Declare (or withdraw) a member's live stream on the shell-provided context (403 D-05).
+ *
+ * Duck-typed exactly like `captureFailureScreenshotFromAdapter` below: an adapter that predates
+ * live view has no `liveStream` property, so the member registers `undefined` and its handle reads
+ * `{ kind: 'none' }` — an honest absence, never a throw and never a screenshot-polling fallback.
+ * The `ctx.registerLiveStream?.()` call is itself optional so a composition that predates the port
+ * is a no-op rather than a crash.
+ */
+export function registerAdapterLiveStream(
+  ctx: MemberTestRunContext,
+  adapter: PlatformAdapter | undefined,
+): void {
+  const capability = (adapter as { liveStream?: LiveStreamCapability } | undefined)?.liveStream
+  ctx.registerLiveStream?.(capability)
 }
 
 /**
@@ -573,6 +597,9 @@ export function buildSuiteMemberExecutor(input: {
     }
     const lease = await input.lifecycle.ensureReady(binding.suiteKey, binding.hooks)
     try {
+      // 403 D-05: the suite is up (adapter.setup() resolved inside `ensureReady`), so the member's
+      // live stream is declarable now and before its first step.
+      registerAdapterLiveStream(ctx, binding.adapter)
       return await binding.run(ctx)
     } finally {
       // The hold is dropped on EVERY exit, throw included — a leaked hold would block the next

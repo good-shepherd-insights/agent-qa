@@ -4,6 +4,8 @@
 import type {
   Action as SchemaAction,
   ActionsFor as SchemaActionsFor,
+  LiveFrame,
+  LiveStreamKind,
   Platform,
   ScreenState,
 } from '@vostride/agent-qa-schema'
@@ -38,6 +40,20 @@ export type Action = SchemaAction
 // click/tap is now schema-owned (Plan 03), so no runner-side intersection widening is needed.
 export type ActionsFor<P extends Platform = Platform> = SchemaActionsFor<P>
 
+/**
+ * An adapter's LIVE STREAM capability (403 D-05). The adapter owns the producer (a CDP screencast,
+ * an MJPEG broadcaster, a WebRTC track); the runner owns nothing but this object, so no `Page` and
+ * no session handle ever leaves the adapter. Lifecycle is lazy and refcounted by the run's
+ * {@link LiveStreamHub}: `start` on the first viewer, `ack` per consumed frame (the producer's
+ * flow control), `stop` on the last — idempotent, so a double stop is a no-op rather than a throw.
+ */
+export interface LiveStreamCapability {
+  readonly kind: LiveStreamKind
+  start(onFrame: (frame: LiveFrame) => void): Promise<void>
+  ack(frameId: number): Promise<void>
+  stop(): Promise<void>
+}
+
 export interface PlatformAdapter<P extends Platform = Platform> {
   readonly platform: P
 
@@ -46,6 +62,12 @@ export interface PlatformAdapter<P extends Platform = Platform> {
   observe(options?: ObserveOptions): Promise<ScreenState>
   execute(action: ActionsFor<P>): Promise<ActionResult>
   screenshot?(): Promise<Buffer | undefined>
+  /**
+   * 403 D-05: the optional live-stream producer for this adapter's current target. ABSENT is the
+   * honest "no live preview" declaration (non-Chromium, remote farm, mobile pre-M6) — the hub maps
+   * absence to `{ kind: 'none' }` and no surface ever falls back to screenshot polling.
+   */
+  readonly liveStream?: LiveStreamCapability
   drainConsoleLogs?(level?: string): ConsoleLogEntry[]
   drainNetworkLogs?(urlPattern?: string): NetworkLogEntry[]
 }

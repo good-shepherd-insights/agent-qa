@@ -25,7 +25,7 @@ import type {
 import type { TestResult } from '../result.js'
 import type { EvidenceArtifactStorePort, LoopEventEmitPort, SecretRedactorPort } from '../loop/ports.js'
 import type { HookDefinition, HookResult } from '../hooks/types.js'
-import type { RuntimeAuthStateConfig } from '../platform.js'
+import type { LiveStreamCapability, RuntimeAuthStateConfig } from '../platform.js'
 
 /**
  * The two 356 A5 config digests the run actually keyed on, computed once at the CLI
@@ -243,6 +243,14 @@ export interface MemberTestRunContext {
    * memory-only run with no screenshot persistence.
    */
   evidenceArtifacts?: EvidenceArtifactStorePort
+  /**
+   * 403 D-05: declare (or withdraw) this member's live-stream producer. Optional on the SAME
+   * `setEvidenceContext` precedent above — the executor pushes a capability the shell knows
+   * nothing about, and the shell owns the per-run hub that refcounts it. Passing `undefined`
+   * withdraws the declaration (the handle then reads `{ kind: 'none' }`). Absent on the context
+   * ⇒ a composition that predates live view; the executor's optional call is a no-op.
+   */
+  registerLiveStream?(capability: LiveStreamCapability | undefined): void
 }
 
 /**

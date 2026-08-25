@@ -372,6 +372,15 @@ export { workingMemoryEntrySchema } from './memory/index'
 
 // 315 run+agent DTOs
 export type { RunSession } from './run/index'
+// 403 D-05/D-08: live-view frame vocabulary — frames as data, capability declared per handle.
+export { LiveStreamDeclarationSchema } from './run/index'
+export type {
+  LiveFrame,
+  LiveFrameMetadata,
+  LiveFrameSubscription,
+  LiveStreamDeclaration,
+  LiveStreamKind,
+} from './run/index'
 // 363 D-08: run-artifact payload type family (relocated from core/src/artifacts).
 export { RUN_ARTIFACT_SCHEMA_VERSION } from './run/index'
 export type {

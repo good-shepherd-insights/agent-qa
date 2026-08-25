@@ -96,7 +96,17 @@ const WIRE_BUDGET_MS = 90_000
  * of them means anything to a caller on another machine. `id`, `status` and `executionContext` are
  * data, and two of them are on the ack by contract.
  */
-const RUN_SESSION_HANDLE_MEMBERS = ['subscribe', 'cancel', 'done'] as const
+const RUN_SESSION_HANDLE_MEMBERS = [
+  'subscribe',
+  'cancel',
+  'done',
+  // 403 D-05: both are closures over THIS process's per-run live-stream hub. `subscribeFrames`
+  // returns an object holding a `Set` of local callbacks; `streamCapabilityOf` reads a `Map` the
+  // member executors filled with adapter objects. Neither has a serialization, and neither means
+  // anything to a caller on another machine — the token that lets a remote viewer reach the frames
+  // is minted at the function layer, not carried on the session.
+  'subscribeFrames', 'streamCapabilityOf',
+] as const
 const RUN_SESSION_DATA_MEMBERS = ['id', 'status', 'executionContext'] as const
 
 /** Every key that appears anywhere in a parsed JSON document, at any depth. */

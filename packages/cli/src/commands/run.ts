@@ -56,6 +56,7 @@ import {
   buildRunPorts,
   buildScreenshotCompressor,
   buildSuiteMemberExecutor,
+  registerAdapterLiveStream,
   computeRunConfigDigests,
   createSuiteLifecycle,
   SUITE_LIFECYCLE_LANE,
@@ -3128,6 +3129,9 @@ export async function produceSuiteRunMembers(
           setup: () => suiteSetup(prepared),
           teardown: () => suiteTeardown(prepared),
         },
+        // 403 D-05: the suite's one adapter, read by the executor only for its live-stream
+        // declaration once `ensureReady` has resolved the suite setup that calls `adapter.setup()`.
+        adapter: prepared.suiteConfig.adapter,
         run: async (ctx) => {
           if (prepared.bootstrapFailure) {
             const bootstrapResult: TestResult = {
@@ -4082,6 +4086,10 @@ export async function produceDirectRunMembers(
       // runTest/runTestWithRetry wrapper is deleted; retry lives inside runMemberTest, and the
       // adapter-backed handlers (runJS/appium/a11y/failure-shot) + secret resolver are wired by
       // the shared buildMemberRunConfig helper (Pitfall 8 — the suite path uses the same helper).
+      // 403 D-05: the direct path's adapter is set up above; declare its live stream before the
+      // first step so a viewer attaching to this handle sees the member's own browser.
+      registerAdapterLiveStream(ctx, adapter ?? undefined)
+
       const memberRunConfig = Object.assign(buildMemberRunConfig({
         adapter: adapter!,
         planner,

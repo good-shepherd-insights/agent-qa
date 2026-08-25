@@ -1,4 +1,5 @@
 import type { CompletedRunHandoff } from '../handoff/completed-run-handoff'
+import type { LiveFrame, LiveFrameSubscription, LiveStreamDeclaration } from './live-stream'
 import type { RunEventEnvelope } from './bus-events'
 import type { RunId } from './run-id'
 import type { RunStatus, ExecutionContext } from './run-status'
@@ -16,8 +17,14 @@ export interface RunCompletion {
 /**
  * The M1-lite run session (D-13, SESSION-01). A run becomes an addressable in-process
  * handle: identity + status, an optional live `subscribe`/replay seam onto the event bus,
- * run-level `cancel`, and an awaitable `done`. `liveUrl`/arbiter/control members stay
- * ABSENT — they land with Live view (M5).
+ * run-level `cancel`, an awaitable `done`, and (403 D-05) the per-handle live-frame seam.
+ *
+ * 2026-08-25 (Phase 403, D-05): FRAMES ARE DATA. `subscribeFrames` surfaces a handle's live
+ * frames as `bytes` + geometry + an ack, and `streamCapabilityOf` declares what that handle
+ * can produce; both are closures over this process's per-run stream hub. `liveUrl` is
+ * deliberately NOT a session member — it is minted by the function-layer op `runs.liveUrl`
+ * over a signer the session knows nothing about, so the session never holds token power.
+ * Arbiter/control members stay ABSENT (Mode A, post-v2.0).
  *
  * @remarks Expanded from the provisional three-field DTO. `status` widens `RunStatus` with
  * the non-terminal `'running'` locally (the aggregate-verdict {@link RunStatus} stays
@@ -32,6 +39,14 @@ export interface RunSession {
    * unsubscribe handle. Bridges 1:1 onto SSE `Last-Event-ID` in M5 (D-08).
    */
   subscribe(fromSeq: number, handler: (event: RunEventEnvelope) => void): () => void
+  /**
+   * Attach to handle `handle`'s live frames (403 D-05). Returns `undefined` when that handle
+   * declares no stream — an honest absence, never an error. The subscription's `ack` throttles
+   * the producer; `unsubscribe` releases the hold (last release stops the stream after a grace).
+   */
+  subscribeFrames(handle: number, onFrame: (frame: LiveFrame) => void): LiveFrameSubscription | undefined
+  /** What handle `handle` can stream right now (403 D-08). `{ kind: 'none' }` for an absent/finished handle. */
+  streamCapabilityOf(handle: number): LiveStreamDeclaration
   /** Run-level cancel: abort the active member test, skip the rest, verdict `cancelled` (D-03). */
   cancel(): void
   /** Resolves on the `verdict` event with the terminal verdict + durable handoff (D-13). */

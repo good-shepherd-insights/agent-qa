@@ -29,6 +29,7 @@ export {
   buildRunSessionSafetyHooks,
   buildScreenshotCompressor,
   buildSuiteMemberExecutor,
+  registerAdapterLiveStream,
   computeRunConfigDigests,
   createSuiteLifecycle,
   SUITE_LIFECYCLE_LANE,

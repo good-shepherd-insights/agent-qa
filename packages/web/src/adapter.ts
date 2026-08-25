@@ -1,13 +1,15 @@
-import type { Browser, BrowserContext, Dialog, Page } from 'playwright-core'
+import type { Browser, BrowserContext, CDPSession, Dialog, Page } from 'playwright-core'
 import type {
   ActionsFor,
   ActionResult,
   ConsoleLogEntry,
+  LiveStreamCapability,
   NetworkLogEntry,
   ObserveOptions,
   PlatformAdapter,
   PlatformConfig,
 } from '@vostride/agent-qa-runner'
+import type { LiveFrame } from '@vostride/agent-qa-schema'
 import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-runner'
@@ -60,6 +62,29 @@ function readSeamStorageState(action: unknown): Parameters<BrowserContext['setSt
   return (action as { state: Parameters<BrowserContext['setStorageState']>[0] }).state
 }
 
+/**
+ * The `Page.startScreencast` parameters this adapter ships (403 discretion D-06). Emitting every
+ * frame with exactly one in flight is what makes the stream CHANGE-DRIVEN and self-throttling: CDP
+ * emits a frame when the compositor produces one and then waits for our ack, so a static page
+ * produces nothing at all — precisely the property a screenshot-polling implementation cannot have.
+ */
+export const SCREENCAST_PARAMS = {
+  format: 'jpeg',
+  quality: 60,
+  maxWidth: 1280,
+  maxHeight: 720,
+  everyNthFrame: 1,
+  maxFramesInFlight: 1,
+} as const
+
+/** Decode a CDP base64 frame payload to bytes without a `Buffer` round-trip in the hot path. */
+function decodeBase64(data: string): Uint8Array {
+  const binary = atob(data)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
 export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   readonly platform = 'web' as const
 
@@ -77,11 +102,16 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   // test teardown (D-12/D-18); cleanup() drains both so nothing bleeds across tests (Pitfall 7).
   private armedRoutes = new Set<string>()
   private pendingDialogArm: ((dialog: Dialog) => void) | null = null
+  // 403 D-05: the live screencast's CDP session, owned here and never handed out.
+  private browserName: 'chromium' | 'firefox' | 'webkit' = 'chromium'
+  private screencast: CDPSession | null = null
+  private screencastCapability: LiveStreamCapability | null = null
 
   async setup(config: PlatformConfig): Promise<void> {
     const { chromium, firefox, webkit } = await import('playwright-core')
     const launchers = { chromium, firefox, webkit } as const
     const browserName = config.browser?.name ?? 'chromium'
+    this.browserName = browserName
     const launcher = launchers[browserName]
 
     try {
@@ -134,8 +164,73 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.attachLogListeners(this.page)
   }
 
+  /**
+   * 403 D-05/LIVE-01: the Chromium screencast producer, or ABSENT when this adapter cannot stream.
+   *
+   * Absence is the honest declaration (`{ kind: 'none' }` downstream) — there is deliberately no
+   * `page.screenshot()` fallback anywhere on this path, because polling would satisfy a
+   * "frames arrived" test while being a different product (LIVE-01's prohibition).
+   *
+   * SCOPE (Pitfall 6): the screencast binds to `this.page` at `start`. A step that acts on another
+   * tab keeps showing the page the stream started on; multi-tab follow is a follow-up WINDOWS entry,
+   * not silent behaviour — the capability is re-created per `start`, so a future page-switch hook
+   * only needs to stop-and-start it.
+   */
+  get liveStream(): LiveStreamCapability | undefined {
+    if (this.browserName !== 'chromium') return undefined
+    if (!this.page || !this.context) return undefined
+    if (this.screencastCapability) return this.screencastCapability
+    const capability: LiveStreamCapability = {
+      kind: 'cdp-screencast',
+      start: async (onFrame: (frame: LiveFrame) => void): Promise<void> => {
+        if (this.screencast) return
+        const page = this.page
+        const context = this.context
+        if (!page || !context) return
+        const cdp = await context.newCDPSession(page)
+        this.screencast = cdp
+        cdp.on('Page.screencastFrame', (event) => {
+          const metadata = event.metadata
+          onFrame({
+            id: event.sessionId,
+            bytes: decodeBase64(event.data),
+            metadata: {
+              width: metadata.deviceWidth,
+              height: metadata.deviceHeight,
+              ...(metadata.timestamp === undefined ? {} : { timestamp: metadata.timestamp }),
+              scrollOffsetX: metadata.scrollOffsetX,
+              scrollOffsetY: metadata.scrollOffsetY,
+            },
+          })
+        })
+        await cdp.send('Page.startScreencast', { ...SCREENCAST_PARAMS })
+      },
+      ack: async (frameId: number): Promise<void> => {
+        const cdp = this.screencast
+        if (!cdp) return
+        try {
+          await cdp.send('Page.screencastFrameAck', { sessionId: frameId })
+        } catch {
+          // Acking after stop (or after the page navigated away) is expected, never an error.
+        }
+      },
+      stop: async (): Promise<void> => {
+        const cdp = this.screencast
+        this.screencast = null
+        if (!cdp) return
+        try { await cdp.send('Page.stopScreencast') } catch { /* best-effort */ }
+        try { await cdp.detach() } catch { /* best-effort */ }
+      },
+    }
+    this.screencastCapability = capability
+    return capability
+  }
+
   async cleanup(): Promise<void> {
     this.intentionalClose = true
+    // 403: stop the screencast before the browser goes away so the CDP session is detached cleanly.
+    try { await this.screencastCapability?.stop() } catch { /* best-effort */ }
+    this.screencastCapability = null
     // Pitfall 7: clear persistent route interception, network emulation, and any pending
     // dialog arm BEFORE closing the browser so state never bleeds into the next test.
     if (this.context) {
@@ -157,6 +252,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.pageLogBuffers.clear()
     this.disconnected = false
     this.intentionalClose = false
+    this.screencast = null
   }
 
   get isBrowserDisconnected(): boolean {

@@ -9,6 +9,7 @@ export type {
   DeviceConfig,
   TimeoutConfig,
   RuntimeAuthStateConfig,
+  LiveStreamCapability,
 } from './platform.js'
 export type {
   KnowledgeHintReader,
@@ -176,6 +177,13 @@ export type {
 // LoopPorts (loop/ports.js) and is re-exported there.
 export { createRunEventBus, ReplayIncompleteError } from './run/bus.js'
 export type { RunEventBus, CreateRunEventBusOptions } from './run/bus.js'
+// 403 D-05/D-07: the per-run live-frame hub (lazy start, graced stop, bounded ack).
+export {
+  createLiveStreamHub,
+  LIVE_STREAM_ACK_BOUND_MS,
+  LIVE_STREAM_STOP_GRACE_MS,
+} from './run/live-stream-hub.js'
+export type { LiveStreamHub, CreateLiveStreamHubOptions } from './run/live-stream-hub.js'
 export type {
   BaselineProbeResult,
   ConfigDigests,

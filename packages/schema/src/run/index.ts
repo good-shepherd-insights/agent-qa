@@ -29,6 +29,15 @@ export type { RunStatus, ExecutionContext } from './run-status'
 export { EXECUTION_CONTEXT_VALUES } from './run-status'
 export type { MemberTestOutcome } from './member-outcome'
 export type { RunSession, RunCompletion } from './run-session'
+// 403 D-05/D-08: live-view frame vocabulary — frames as data, capability declared per handle.
+export { LiveStreamDeclarationSchema } from './live-stream'
+export type {
+  LiveFrame,
+  LiveFrameMetadata,
+  LiveFrameSubscription,
+  LiveStreamDeclaration,
+  LiveStreamKind,
+} from './live-stream'
 // Bus schema v1 (D-05): envelope, event union + vocabulary, payload projections.
 export { CURRENT_BUS_SCHEMA_VERSION, RUN_EVENT_TYPES } from './bus-events'
 export type {
