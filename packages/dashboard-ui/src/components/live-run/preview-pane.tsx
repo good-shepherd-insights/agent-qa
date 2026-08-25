@@ -54,7 +54,10 @@ export const NO_STREAM_TEXT = 'no live preview for this target — steps still a
  *
  * A POLL, NOT A PUSH, and the reason is structural: the not-yet pane renders no iframe, so it has
  * no socket for anything to push down. The frame socket only exists once there is a `liveUrl` to
- * open it with. Re-asking the mint route is therefore the only path from "not yet" to "embedded",
+ * open it with. Re-asking the mint route is therefore the only path the not-yet state has to
+ * `embedded` (and the wording here avoids `f-r-o-m` before a quote on purpose: `validate:arch`
+ * extracts import specifiers by regex over the whole source, prose included, and a comment shaped
+ * like an import mints a phantom external dependency),
  * and 2.5 s is short enough that a browser coming up is picked up within a step and long enough
  * that a run held at the not-yet state costs the door well under one request a second.
  */
