@@ -8,7 +8,7 @@
     "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
     "test-runner update flag reaches this file."
   ],
-  "opCount": 42,
+  "opCount": 43,
   "rows": [
     {
       "bindingStatusAtRoot": "bound",
@@ -820,6 +820,26 @@
       "resultKind": "unary",
       "risk": {
         "name": "fn:runs.list",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "unbound",
+      "classifies": true,
+      "id": "runs.liveurl",
+      "inputSchemaDigest": "7ddcdc4b2077bfbc93e0692945020570dc6b9edbbcab6764b4fcf540526f0f83",
+      "outputSchemaDigest": "a1647dcc1436bdbf39f59e9c44d37976e4337742a790bd844476b95fdfd838d0",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "credential-mint-deferral"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.liveurl",
         "readOnly": true,
         "recognized": true
       }

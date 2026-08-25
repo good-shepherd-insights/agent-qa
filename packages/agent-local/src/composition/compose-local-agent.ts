@@ -51,6 +51,7 @@ import type {
   ChatStateSnapshot,
   ChatTokenAccounting,
   CompactionHook,
+  LiveViewPort,
   PlannerStagePort,
   ReconcileStrategy,
   AnalysisArtifactReaderPort,
@@ -1575,6 +1576,15 @@ export interface ComposeLocalAgentInput {
    */
   readonly capabilityCatalog?: CapabilityCatalogPort
   /**
+   * 403 D-03: the live-view mint seam `runs.liveurl` binds through, handed straight through from
+   * the host — this composition decides nothing about it.
+   *
+   * OPTIONAL because the absence is a genuine host fact and not a degradation: a host serving no
+   * HTTP origin has no URL it could honestly mint, so the op lists `unbound` BY NAME rather than
+   * returning a link that resolves to nothing.
+   */
+  readonly liveView?: LiveViewPort
+  /**
    * 395-04 D-09 · CFGM-02: where the construction scan's seed values come from.
    *
    * THE SOURCES AND NOT A LIST OF STRINGS, so `seedMaskingContext` — the SAME function the run
@@ -2919,6 +2929,9 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       ...(input.capabilityCatalog === undefined
         ? {}
         : { capabilityCatalog: input.capabilityCatalog }),
+      // 403 D-03: the live-view mint seam, conditionally spread on the same rule — an absent port
+      // must be an ABSENT field, so `runs.liveurl` declares `unbound` where no origin is served.
+      ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
       // 390 D-12/D-13: the three quarantine verbs, bound HERE and therefore on BOTH hosts —
       // the CLI tail and 386's daemon compose the same root, which is the whole point of
       // 385 D-15 (a second binding site is a second answer to "what is quarantined").

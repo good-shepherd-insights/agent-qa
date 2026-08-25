@@ -17,6 +17,11 @@
 // in the same change-set anyway, because a header that goes on stating a partition the code stopped
 // having is the class of untruth the ops' own docstrings were caught in (397 D-18).
 //
+// 2026-08-25 (403-01 D-03): twenty to twenty-one, and the registry from forty-two to forty-three,
+// when `runs.liveurl` was registered. Unprojected DELIBERATELY: minting a live-view capability
+// token is handing out a credential, and whether an MCP caller may mint one is Phase 408's
+// question (the MCP App embed) rather than a side effect of this phase registering the op.
+//
 // Protocol grounding: SEP-2567 removed per-connection list variance, so the tool NAMES a caller can
 // see are a property of the caller's grants and of this table — never of a session. SEP-2549 makes
 // those listings cacheable, which is the other half of the same reason the table is static data.
@@ -495,7 +500,7 @@ export interface UnprojectedOp {
    * one thing a provenance column is for. The vocabulary is a CLOSED set and the bump guard pins
    * which entries carry which adjudicator by name, so it cannot widen again by habit.
    */
-  readonly adjudication: '397' | '398'
+  readonly adjudication: '397' | '398' | '403'
 }
 
 export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
@@ -553,6 +558,15 @@ export const UNPROJECTED_OPS: readonly UnprojectedOp[] = Object.freeze([
     opId: 'runs.postprocessing',
     reason: 'not a mid-flight workflow read per D-02; 397 adjudicates',
     adjudication: '397',
+  }),
+  Object.freeze({
+    opId: 'runs.liveurl',
+    reason:
+      'D-03 (dated 2026-08-25, 403-01): the op MINTS A CREDENTIAL — a short-lived, view-scoped '
+      + 'capability token for a running browser. Whether an agent-origin MCP caller may mint one, '
+      + 'and what it may hand it to, is Phase 408\'s question (the MCP App embed); projecting it '
+      + 'here would answer that question by accident. Deferred as its own seam, not omitted.',
+    adjudication: '403',
   }),
   Object.freeze({
     opId: 'config.get',

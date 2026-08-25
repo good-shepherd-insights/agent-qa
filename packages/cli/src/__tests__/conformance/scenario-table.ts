@@ -73,6 +73,7 @@ import {
   QuarantineReleaseInputSchema,
   RunsDigestInputSchema,
   RunsEventsInputSchema,
+  RunsLiveUrlInputSchema,
   RunsGetInputSchema,
   RunsListInputSchema,
   RunsPostProcessingInputSchema,
@@ -133,6 +134,7 @@ export const OP_INPUT_CONTRACTS = {
   'quarantine.release': QuarantineReleaseInputSchema,
   'runs.digest': RunsDigestInputSchema,
   'runs.events': RunsEventsInputSchema,
+  'runs.liveurl': RunsLiveUrlInputSchema,
   'runs.get': RunsGetInputSchema,
   'runs.list': RunsListInputSchema,
   'runs.postprocessing': RunsPostProcessingInputSchema,
@@ -167,6 +169,13 @@ export type UnprojectedReasonKey =
   // exactly that ground. Filing it under `not-mid-flight-read` would have been the available
   // shortcut and would have recorded a scoping decision where an argued one was made.
   | 'discovery-answered-by-protocol'
+  // 2026-08-25 (403-01 D-03). The FIFTH class, admitted on the fourth's own reasoning rather than
+  // folded. `runs.liveurl` is not scoped out of a workflow — minting a live-view URL is about as
+  // mid-flight as a read gets — and it is not a door that cannot open. The fact is that the op
+  // hands out a CREDENTIAL, and who may mint one over MCP is Phase 408's question. Filing it under
+  // `not-mid-flight-read` was the available shortcut and would have recorded a scoping decision
+  // where a deferred security decision was made.
+  | 'credential-mint-deferral'
   | 'not-mid-flight-write'
   | 'not-mid-flight-read'
 
@@ -188,6 +197,10 @@ export const UNPROJECTED_REASON_SIGNATURES: readonly (readonly [UnprojectedReaso
     // thing from a read that was scoped out of a workflow, and the shipped prose for
     // `agent.explain` deliberately contains neither mid-flight phrase.
     Object.freeze(['discovery-answered-by-protocol', 'answers machine discovery'] as const),
+    // 403-01 D-03. Placed ABOVE the two mid-flight lines on the same precedence rule: a credential
+    // whose issuance is deferred to a later phase is a stronger fact than a scoping line, and the
+    // shipped prose for `runs.liveurl` deliberately contains neither mid-flight phrase.
+    Object.freeze(['credential-mint-deferral', 'MINTS A CREDENTIAL'] as const),
     Object.freeze(['not-mid-flight-write', 'mid-flight workflow write'] as const),
     Object.freeze(['not-mid-flight-read', 'mid-flight workflow read'] as const),
   ])
@@ -1114,6 +1127,19 @@ export const SCENARIO_TABLE = Object.freeze([
     policyPoints: { grant: 'allow', refuse: 'deny' },
   }),
   // 388 D-14: a PARSING input for a capability most compositions cannot run.
+  // 403-01 (D-03): the mint. Unprojected on MCP because handing an agent-origin caller a live-view
+  // CREDENTIAL is Phase 408's question, not a side effect of registering the op.
+  scenario({
+    opId: 'runs.liveurl',
+    input: { runId: FIXTURE_RUN_ID },
+    perSurface: {
+      chat: { reachable: true },
+      mcp: { unprojected: 'credential-mint-deferral' },
+      fn: { reachable: true },
+    },
+    renderExpect: { markers: ['expiresAt', 'handle', 'liveUrl', 'stream'] },
+    policyPoints: { grant: 'allow', refuse: 'deny' },
+  }),
   scenario({
     opId: 'runs.postprocessing',
     input: { runId: FIXTURE_RUN_ID },

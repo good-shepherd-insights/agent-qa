@@ -374,6 +374,9 @@ export { workingMemoryEntrySchema } from './memory/index'
 export type { RunSession } from './run/index'
 // 403 D-05/D-08: live-view frame vocabulary — frames as data, capability declared per handle.
 export { LiveStreamDeclarationSchema } from './run/index'
+// 403 D-01..D-04: the liveUrl capability-token vocabulary (types + refusal names only).
+export { LIVE_URL_REFUSAL_REASONS, LIVE_URL_SCOPE } from './run/index'
+export type { LiveUrlClaims, LiveUrlRefusalReason, LiveUrlSigner, LiveUrlVerdict } from './run/index'
 export type {
   LiveFrame,
   LiveFrameMetadata,
@@ -814,6 +817,9 @@ export {
   RunsGetInputSchema,
   RunsStartInputSchema,
   RunsEventsInputSchema,
+  // 403 D-03: the runs.liveurl mint op's two contracts.
+  RunsLiveUrlInputSchema,
+  RunsLiveUrlResultSchema,
   // 388 D-14: the chip-truth read op's two contracts, and the notification's wire shape.
   RunsPostProcessingInputSchema,
   RunNotificationSchema,
@@ -875,6 +881,8 @@ export type {
   RunsGetInput,
   RunsStartInput,
   RunsEventsInput,
+  RunsLiveUrlInput,
+  RunsLiveUrlResult,
   RunsPostProcessingInput,
   RunStartAcknowledgement,
   AnalysisGetInput,

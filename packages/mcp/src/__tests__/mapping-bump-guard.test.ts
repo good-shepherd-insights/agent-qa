@@ -343,9 +343,9 @@ describe('the partition law (D-03 / D-15)', () => {
   it('measures the registry at the count this suite header records', () => {
     // The denominator, stated where a reader can see it move. Not a rule — a MEASUREMENT, and the
     // sentence in the header is only true while this cell is green.
-    expect(declarations().length).toBe(42)
+    expect(declarations().length).toBe(43)
     expect(projectedOpIds().length).toBe(22)
-    expect(UNPROJECTED_OPS.length).toBe(20)
+    expect(UNPROJECTED_OPS.length).toBe(21)
   })
 
   it('lists no op twice in the scoping note', () => {
@@ -363,11 +363,15 @@ describe('the partition law (D-03 / D-15)', () => {
     // membership is spelled by op id below, so a later entry stamped `'398'` because it was easier
     // reds here rather than joining a set that has quietly become "any phase number".
     const ADJUDICATED_BY_398 = new Set(['agent.explain'])
+    // 2026-08-25 (403-01 D-03). The same widening for the same reason, one phase later:
+    // `runs.liveurl` arrived in 403 and 397 could not have ruled on it. Membership is still
+    // spelled by op id, so an entry stamped `'403'` because it was easier reds here.
+    const ADJUDICATED_BY_403 = new Set(['runs.liveurl'])
+    const expectedAdjudicator = (opId: string): string =>
+      ADJUDICATED_BY_398.has(opId) ? '398' : ADJUDICATED_BY_403.has(opId) ? '403' : '397'
     for (const entry of UNPROJECTED_OPS) {
       expect(entry.reason.length, entry.opId).toBeGreaterThan(20)
-      expect(entry.adjudication, entry.opId).toBe(
-        ADJUDICATED_BY_398.has(entry.opId) ? '398' : '397',
-      )
+      expect(entry.adjudication, entry.opId).toBe(expectedAdjudicator(entry.opId))
     }
     // The set is not vacuous in either direction: an id that left the register would leave this
     // pin naming nothing, which is the hole an allow-list-shaped literal always has.
@@ -375,6 +379,10 @@ describe('the partition law (D-03 / D-15)', () => {
       UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_398.has(entry.opId)).map((e) => e.opId),
       'the 398-adjudicated pin names entries the scoping note does not carry',
     ).toEqual([...ADJUDICATED_BY_398])
+    expect(
+      UNPROJECTED_OPS.filter((entry) => ADJUDICATED_BY_403.has(entry.opId)).map((e) => e.opId),
+      'the 403-adjudicated pin names entries the scoping note does not carry',
+    ).toEqual([...ADJUDICATED_BY_403])
   })
 
   // D-03's own note leads the list, and the ORDER is part of the decision: a reader scanning the

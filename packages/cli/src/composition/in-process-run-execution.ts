@@ -298,8 +298,16 @@ export function refuseUnhonourableRequestFields(request: RunsStartInput): void {
   if (refused.length > 0) throw new RunRequestFieldRefusedError(refused)
 }
 
-/** One store over several, in declaration order. Absent members contribute nothing. */
-function mergedSecretStore(
+/**
+ * One store over several, in declaration order. Absent members contribute nothing.
+ *
+ * EXPORTED since 403-01, and not as a convenience: the dashboard run door now UNIONS every store
+ * bound through `bindMaskingSecrets`, and it must use THIS union rather than a second one written
+ * beside it — because the door's contract is exactly this function's three states (`undefined` for
+ * zero stores, the store ITSELF for one, a walker for many), and the #224 cells pin both of the
+ * first two by identity.
+ */
+export function mergedSecretStore(
   ...stores: readonly ({ forEachSecret(cb: (name: string, value: string) => void): void } | undefined)[]
 ): { forEachSecret(cb: (name: string, value: string) => void): void } | undefined {
   const present = stores.filter((store) => store !== undefined)

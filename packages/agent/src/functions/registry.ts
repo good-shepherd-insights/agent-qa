@@ -54,6 +54,7 @@ import { quarantineAddSpec } from './ops/quarantine-add.js'
 import { quarantineListSpec } from './ops/quarantine-list.js'
 import { quarantineReleaseSpec } from './ops/quarantine-release.js'
 import { runsEventsSpec } from './ops/runs-events.js'
+import { runsLiveUrlSpec } from './ops/runs-live-url.js'
 import { runsDigestSpec } from './ops/runs-digest.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
@@ -97,6 +98,10 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   runsListSpec as FunctionSpec,
   runsGetSpec as FunctionSpec,
   runsEventsSpec as FunctionSpec,
+  // 403 D-03: the ONE producer of live-view capability tokens. Bound through the OPTIONAL
+  // `liveView` dep, so a host with no served origin lists it `unbound` BY NAME rather than
+  // handing back a URL that resolves to nothing.
+  runsLiveUrlSpec as FunctionSpec,
   // Bound exactly in the compositions that supply a `runInvocation` port (D-16); listed
   // either way, so a host that cannot start a run reports a visible `unbound` rather than a
   // hole in the catalog, and `invokeFunction` refuses it by name. `composeLocalAgent()` in

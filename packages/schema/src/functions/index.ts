@@ -14,6 +14,9 @@ export {
   RunsGetInputSchema,
   RunsStartInputSchema,
   RunsEventsInputSchema,
+  // 403 D-03: the runs.liveurl mint op's two contracts.
+  RunsLiveUrlInputSchema,
+  RunsLiveUrlResultSchema,
   // 388 D-14: the chip-truth read op's two contracts, and the notification's wire shape.
   RunsPostProcessingInputSchema,
   RunNotificationSchema,
@@ -31,6 +34,8 @@ export type {
   RunsGetInput,
   RunsStartInput,
   RunsEventsInput,
+  RunsLiveUrlInput,
+  RunsLiveUrlResult,
   RunsPostProcessingInput,
   RunStartAcknowledgement,
 } from './runs'

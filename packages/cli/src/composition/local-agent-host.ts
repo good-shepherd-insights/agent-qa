@@ -565,6 +565,14 @@ export interface ComposeCliLocalAgentInput {
     readonly maskingSecrets?: InProcessCliRunExecutionOptions['maskingSecrets']
   }
   /**
+   * 403 D-03: the live-view mint seam, FORWARDED UNTOUCHED to `composeLocalAgent`.
+   *
+   * A pass-through like `runBridge` above: this host neither creates nor defaults it. The dashboard
+   * command composes it (it is the only door with a served origin); every other caller passes
+   * nothing and `runs.liveurl` lists `unbound` by name.
+   */
+  liveView?: ComposeLocalAgentInput['liveView']
+  /**
    * How an apply reaches the writer-lease holder when one is alive (387-08 D-18).
    *
    * Defaults to the 386 `/invoke` transport, VERBATIM — no new protocol, no new route, and no
@@ -3566,6 +3574,8 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
     // D-08 (401-08): forwarded untouched, conditionally spread on this literal's own house rule.
     // Absent leaves `composeLocalAgent` minting its own dispatch scope.
     ...(input.dispatchGrants === undefined ? {} : { dispatchGrants: input.dispatchGrants }),
+    // 403 D-03: the live-view mint seam, forwarded untouched on the same house rule.
+    ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
     // 393 D-01: the keep-gate evaluator's host half, bound UNCONDITIONALLY on this host — a CLI
     // always has a config path, therefore a checkout root, therefore both verbs. Together with the
     // run executor one line up, this is what makes `authoring.draft.verify` read `bound` in this

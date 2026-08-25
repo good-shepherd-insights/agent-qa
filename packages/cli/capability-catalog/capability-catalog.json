@@ -222,7 +222,7 @@
       "v1Name": "agent_qa_validate_test"
     }
   ],
-  "rowCount": 50,
+  "rowCount": 51,
   "rows": [
     {
       "alias": "digest",
@@ -1971,6 +1971,43 @@
       ]
     },
     {
+      "description": "Mint a short-lived, view-scoped live-view URL for one handle of a running run.",
+      "docAbsentReason": "no shipped page documents this capability yet (dated 2026-08-25, 403-01 D-03). The run-service page gains a \"Minting a liveUrl\" section in 403-03; this row is where that link lands, and a path written ahead of the page would existence-check green against nothing.",
+      "docPath": null,
+      "exampleCall": {
+        "arguments": {
+          "runId": "<RUNID>"
+        }
+      },
+      "id": "runs.liveurl",
+      "kind": "op",
+      "mcpUnprojectedReasonKey": "credential-mint-deferral",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "handle": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "runId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId"
+        ],
+        "type": "object"
+      },
+      "requiredScopes": [
+        "read"
+      ],
+      "surfaces": [
+        "chat"
+      ]
+    },
+    {
       "description": "Read one run's post-processing chip statuses from durable job state.",
       "docAnchor": "agent job queue",
       "docPath": "docs/queues.md",
@@ -2100,5 +2137,5 @@
       "shortDescription": "Triage agent-qa run failures"
     }
   ],
-  "rowsDigest": "f5f3db279ae9146ab5822d53ee1609b11b05aa521c32b46fd6d56a4a7d9e65ec"
+  "rowsDigest": "82a3892b197bc5b04d782a012a587d4eb40ea565044cd0a07b0a313bc61710e3"
 }

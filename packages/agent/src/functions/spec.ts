@@ -30,6 +30,8 @@ import type {
   KnowledgeRecordShowInput,
   KnowledgeRecordShowResult,
   KnowledgeTargetRef,
+  LiveStreamDeclaration,
+  LiveUrlSigner,
   KnowledgeRecordsDiffInput,
   KnowledgeRecordsInspectInput,
   KnowledgeRejectInput,
@@ -118,6 +120,7 @@ export type FunctionBindingStatus = 'bound' | 'unbound'
  * compositions can run this op" is answerable by reading two lines.
  */
 export type OptionalFunctionDepKey =
+  | 'liveView'
   | 'runInvocation'
   | 'knowledgeReview'
   | 'postProcessing'
@@ -886,12 +889,38 @@ export interface StartedRun {
  * statement about that host, and is exactly what widening the reader port with propose/apply
  * would have made unsayable.
  */
+/**
+ * The live-view seam `runs.liveurl` mints through (403 D-03).
+ *
+ * OPTIONAL, and its absence is a GENUINE HOST FACT rather than a degraded mode: a CLI run in a
+ * terminal serves no origin, so there is no URL it could honestly hand back. A host that binds it
+ * supplies the per-process signer, the origin it is actually listening on, and a read of the live
+ * run registry — never a token, and never a parse.
+ *
+ * `capabilityOf` answers `undefined` for a run this host has no live session for (the op turns
+ * that into `unknown_run`) and a `LiveStreamDeclaration` — possibly `{ kind: 'none' }` — otherwise.
+ * `onMinted` is the Q4(b) hook: every minted token value is offered to the host's masking store, so
+ * runs started after the mint mask it if it is ever printed.
+ */
+export interface LiveViewPort {
+  signer: LiveUrlSigner
+  origin(): string | undefined
+  now(): number
+  capabilityOf(runId: string, handle: number): LiveStreamDeclaration | undefined
+  onMinted?(token: string): void
+}
+
 export interface FunctionDeps {
   runs: RunsReaderPort
   knowledge: KnowledgeReaderPort
   config: ConfigReaderPort
   entities: EntityDirectoryPort
   runInvocation?: RunInvocationPort
+  /**
+   * 403 D-03: the live-view mint seam. See {@link LiveViewPort} — absent means this host has no
+   * served origin, and `runs.liveurl` refuses by name rather than minting a link to nowhere.
+   */
+  liveView?: LiveViewPort
   knowledgeReview?: KnowledgeReviewPort
   /**
    * 388 D-14: the durable post-run chain read. The third optional member, and it joins for the

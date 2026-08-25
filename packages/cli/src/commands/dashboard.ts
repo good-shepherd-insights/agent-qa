@@ -47,6 +47,8 @@ import {
   RunStartAcknowledgementSchema,
 } from '@vostride/agent-qa-schema'
 import { createRunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
+import type { RunServiceSessionRegistry } from '../composition/run-service-session-registry.js'
+import { composeLiveView } from '../composition/live-view-composition.js'
 import {
   matchServiceBearer,
   resolveRunServiceTokens,
@@ -611,6 +613,14 @@ export interface DashboardDoorInput {
    * posture, and any caller that only wants the chat door) composes exactly what it composed before.
    */
   readonly runBridge?: ComposeCliLocalAgentInput['runBridge']
+  /**
+   * 403 D-03: the live-view mint seam `runs.liveurl` binds through.
+   *
+   * PASSED STRAIGHT THROUGH to `composeCliLocalAgent`, on the same rule as `runBridge` above — this
+   * composer decides nothing about it. Absent (the conformance suite's posture, and any door with
+   * no served origin) lists `runs.liveurl` `unbound` BY NAME.
+   */
+  readonly liveView?: ComposeCliLocalAgentInput['liveView']
 }
 
 /** The composed door: the local host it owns, and the seam the routes consume. */
@@ -783,6 +793,8 @@ export function composeDashboardDoor(input: DashboardDoorInput): DashboardDoor {
   const host = composeCliLocalAgent({
     agentQaRoot: input.agentQaRoot,
     configPath: input.configPath,
+    // 403 D-03: forwarded untouched, conditionally spread — an absent port is an ABSENT field.
+    ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
     config: overlayDashboardBaseUrl(
       createMaskedConfigReader(input.configPath),
       input.boundOrigin,
@@ -963,6 +975,13 @@ export interface DashboardRunDoor {
    * so any composition that goes through the shipped composer is seeded. A cell that assembled its
    * own verifier and starter beside that composer would be measuring a door this product does not
    * ship, which is the lookalike assembly the conformance suite refuses by name.
+   *
+   * 2026-08-25 (403-01, T-403-16): IT IS ADDITIVE. Two composers now bind the store THEY own —
+   * `composeRunServicePorts` the declared credentials, `composeLiveView` the minted `liveUrl`
+   * tokens — and the door UNIONS them through `mergedSecretStore`. It used to be a single
+   * assignment, which is how one of them would have vanished without a cell noticing: each
+   * composer binds correctly, and only the door could see that the second bind erased the first.
+   * `live-view-masking.test.ts` pins BOTH values masked under BOTH composition orders.
    */
   bindMaskingSecrets(store: {
     forEachSecret(cb: (name: string, value: string) => void): void
@@ -1051,7 +1070,12 @@ export async function createDashboardRunDoor(input: {
   // DEFERRED, and load-bearing: `in-process-run-execution.ts` imports `commands/run.ts`'s producers
   // statically and `commands/run.ts` imports this command's neighbours, so a static edge back can
   // close an ESM cycle at module-evaluation time. Every other door acquires this port the same way.
-  const { cliRunSubscribers } = await import('../composition/in-process-run-execution.js')
+  // 403-01 (T-403-16): `mergedSecretStore` rides the SAME deferred import for the same reason —
+  // a static edge back into `in-process-run-execution.ts` closes an ESM cycle through
+  // `commands/run.ts`. It is imported rather than re-written here because the door's
+  // `maskingSecrets` contract IS that function's three states, and a second union would be free
+  // to disagree about the one-store case the #224 identity cell pins.
+  const { cliRunSubscribers, mergedSecretStore } = await import('../composition/in-process-run-execution.js')
 
   const entries = new Map<string, DashboardRunEntry>()
   /** 402-01: everyone watching the ONE bridge this process's host publishes sessions through. */
@@ -1060,16 +1084,22 @@ export async function createDashboardRunDoor(input: {
   /** Absent runs the invocation unscoped, which is `local-headless` — the fail-closed default. */
   let enterTriggerScope: (<T>(scopeId: string, run: () => T) => T) | undefined
   /**
-   * 402-06 (#224): the secrets a second door in this process holds, read at RUN time.
+   * 402-06 (#224) + 403-01 (T-403-16): the secrets OTHER composers in this process hold, read at
+   * RUN time.
    *
-   * `undefined` until something binds one, which is the honest state of a dashboard with no run
-   * service declared — there is no credential, so there is nothing extra to mask.
+   * A SET, NOT A SLOT, and the difference is the whole of T-403-16. Two composers legitimately bind
+   * here — `composeRunServicePorts` binds the declared run-service credentials, `composeLiveView`
+   * binds the `liveUrl` tokens it mints — and with one slot whichever bound LAST won, silently,
+   * with no cell able to see it: each composer is correct on its own, and the door was the only
+   * place the collision existed. Empty is still the honest state of a dashboard that holds neither.
    */
-  let maskingSecrets: { forEachSecret(cb: (name: string, value: string) => void): void } | undefined
+  const maskingSecretStores = new Set<{
+    forEachSecret(cb: (name: string, value: string) => void): void
+  }>()
 
   const runBridge: NonNullable<ComposeCliLocalAgentInput['runBridge']> = {
     // 402-06 (T-402-04): READ PER RUN, never captured. See `bindMaskingSecrets`.
-    maskingSecrets: () => maskingSecrets,
+    maskingSecrets: () => mergedSecretStore(...maskingSecretStores),
     // THE BRIDGE HOOK (D-09). Routed by the session's OWN id rather than by "the run in flight",
     // because this door runs as many at once as the queue has slots.
     onSession: (session: RunSession): void => {
@@ -1188,7 +1218,7 @@ export async function createDashboardRunDoor(input: {
       sessionObservers.add(observer)
       return () => { sessionObservers.delete(observer) }
     },
-    bindMaskingSecrets: (store): void => { maskingSecrets = store },
+    bindMaskingSecrets: (store): void => { maskingSecretStores.add(store) },
   }
 }
 
@@ -1287,6 +1317,16 @@ export interface RunServiceCompositionInput {
   >
   /** How long a finished run stays attachable. Defaults to the registry's own window. */
   readonly retentionMs?: number
+  /**
+   * 403 D-14 (WINDOWS #264): the process's ALREADY-COMPOSED session registry, when there is one.
+   *
+   * The command now hoists the registry above the door composition so it exists on BOTH token arms
+   * — a zero-token dashboard has live runs to attach to too, and building the lookup only inside
+   * this composer is precisely how the local run-stream door came to answer 503 for a run this
+   * process was executing. Supplied ⇒ used as-is and `dispose` leaves it to its owner; absent ⇒
+   * this composer builds and owns one, exactly as it did.
+   */
+  readonly sessions?: RunServiceSessionRegistry
 }
 
 export interface RunServiceComposition {
@@ -1331,8 +1371,10 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     input.env ?? process.env,
   )
   // THE ATTACHABLE-SESSION LOOKUP, in its own module. See that module's header for why the
-  // retention timer may not live in this file.
-  const sessions = createRunServiceSessionRegistry({
+  // retention timer may not live in this file. 403 D-14: the command hoists one above BOTH token
+  // arms and hands it in; owning one here is now the fallback for a caller that composed none.
+  const ownsSessions = input.sessions === undefined
+  const sessions = input.sessions ?? createRunServiceSessionRegistry({
     observeSessions: input.door.observeSessions,
     ...(input.retentionMs === undefined ? {} : { retentionMs: input.retentionMs }),
   })
@@ -1392,7 +1434,7 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
     tokenCount: tokens.length,
     // THE SAME OBJECT `ports.readiness` HOLDS, deliberately — see the field's own doc.
     readiness,
-    dispose: () => { sessions.dispose() },
+    dispose: () => { if (ownsSessions) sessions.dispose() },
   }
 }
 
@@ -1518,10 +1560,23 @@ async function startDashboardBackedServices(
     // starter needs the composition's registry, so one of the two has to be read at call time.
     const runDoor = await createDashboardRunDoor({ db })
 
+    // ---- The live-view composition (403 D-03/D-14 — closes WINDOWS #264) -----------------------
+    //
+    // HOISTED ABOVE THE DOOR, AND UNCONDITIONAL. The attachable-session registry used to be built
+    // inside `composeRunServicePorts`, which runs ONLY when `runServiceTokens` is declared — so on
+    // the default zero-token dashboard nothing ever registered a session and the local
+    // `/api/run-stream/:runId` door answered 503 about runs this very process was executing. It is
+    // composed here, once, for both arms; the token arm receives it rather than building a second.
+    const sessions = createRunServiceSessionRegistry({ observeSessions: runDoor.observeSessions })
+    // The signer, the mint port and the validator, joined once. `composeLiveView` binds its own
+    // minted-token masking store inside the composer (402-06's law) — the command never does.
+    const liveView = composeLiveView({ sessions, origin: () => boundOrigin, door: runDoor })
+
     const { agentHost, host: runHost, enterRunTriggerScope } = composeDashboardDoor({
       agentQaRoot: resolve(configDir, '.agent-qa'),
       configPath: configFilePath,
       boundOrigin: () => boundOrigin,
+      liveView: liveView.liveView,
       ...(chatModel === undefined ? {} : { chatModel }),
       // NO `resolveExecutionContext` (400-13). D-05 is answered per RESEARCH Pattern 2 — reuse
       // `local-interactive` rather than minting a fifth vocabulary member — but the answer is a
@@ -1559,7 +1614,7 @@ async function startDashboardBackedServices(
     const runServiceEntries = (servicesConfig.runServiceTokens ?? []) as readonly RunServiceTokenEntry[]
     const runService = runServiceEntries.length === 0
       ? undefined
-      : composeRunServicePorts({ entries: runServiceEntries, door: runDoor })
+      : composeRunServicePorts({ entries: runServiceEntries, door: runDoor, sessions })
 
     const { close, port: listeningPort } = await startServer({
       db,
@@ -1614,6 +1669,9 @@ async function startDashboardBackedServices(
       // run door's observer set keeps a closure alive that keeps this map alive that keeps every
       // finished run's bus alive.
       runService?.dispose()
+      // 403 D-14: the hoisted registry is the command's to dispose — `composeRunServicePorts`
+      // leaves a registry it did not build alone.
+      sessions.dispose()
       // 2026-08-17 (Phase 398 plan 10, D-18/D-20): THE DASHBOARD EMITS NO ANALYTICS, and the flush
       // that used to stand here is gone with the events it drained.
       //

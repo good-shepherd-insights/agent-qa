@@ -225,6 +225,20 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     Object.freeze(['runs.digest', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.events', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
+    // 2026-08-25 (403-01, D-03): an EXPLICIT, DATED absence with its OWN reason. The shipped
+    // `docs/run-service.md` gains a "Minting a liveUrl" section in 403-03; pointing this row at it
+    // before it exists would be exactly the guess the honest-absence rule refuses, and the row is
+    // where the link lands the day that section is committed.
+    Object.freeze([
+      'runs.liveurl',
+      Object.freeze({
+        absentReason:
+          'no shipped page documents this capability yet (dated 2026-08-25, 403-01 D-03). The '
+          + 'run-service page gains a "Minting a liveUrl" section in 403-03; this row is where '
+          + 'that link lands, and a path written ahead of the page would existence-check green '
+          + 'against nothing.',
+      }),
+    ] as const),
     Object.freeze(['runs.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
   ])
 

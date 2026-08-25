@@ -22,7 +22,7 @@ export interface RunCompletion {
  * 2026-08-25 (Phase 403, D-05): FRAMES ARE DATA. `subscribeFrames` surfaces a handle's live
  * frames as `bytes` + geometry + an ack, and `streamCapabilityOf` declares what that handle
  * can produce; both are closures over this process's per-run stream hub. `liveUrl` is
- * deliberately NOT a session member — it is minted by the function-layer op `runs.liveUrl`
+ * deliberately NOT a session member — it is minted by the function-layer op `runs.liveurl`
  * over a signer the session knows nothing about, so the session never holds token power.
  * Arbiter/control members stay ABSENT (Mode A, post-v2.0).
  *

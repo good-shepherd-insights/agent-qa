@@ -197,6 +197,15 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // gate run and a field projection all have to quote the same pin — a ceiling re-spelled at a
   // consumer would let two readings of "within tolerance" coexist. It is a frozen pair of
   // integers: it reaches nothing and decides nothing on its own.
+  // 403-01 (D-01..D-04): the liveUrl token pair, its op id and its two caller-facing refusals,
+  // each in its own sorted slot. VALUES rather than types because there is exactly ONE mint and
+  // ONE parse of a live-view capability token in this system, and every surface reaches them BY
+  // REFERENCE through this barrel — a dashboard route or a frame proxy that could only name the
+  // shapes would have to write its own parse, which is the second token authority LIVE-02 forbids.
+  'LIVE_EMBED_PATH_PREFIX',
+  'LIVE_URL_TOKEN_VERSION',
+  'LIVE_URL_TTL_MS',
+  'LiveViewUnavailableError',
   'MARK_UNHANDLED_CEILING',
   'MissingIdempotencyKeyError',
   // 394-18: the accept verb's id, on the same footing as its `list` sibling below and for the same
@@ -228,6 +237,10 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // 392 plan 07: the run listing's id — what the `status` alias resolves to, published so the
   // composed compound e2e names the op by IMPORT rather than by a literal it made up.
   'RUNS_LIST_FUNCTION_ID',
+  // 403-01 (D-03): the mint op's id — the second op id a surface must be able to NAME rather
+  // than infer, on the `RUNS_START_FUNCTION_ID` footing below: the dashboard command dispatches
+  // the mint through the registry, and the alternative is a string literal in the CLI.
+  'RUNS_LIVE_URL_FUNCTION_ID',
   'RUNS_POST_PROCESSING_FUNCTION_ID',
   // 393 plan 07, D-02: the run-start op's id. It is the last of the `runs.` constants to be
   // published and the only one published for a reason INSIDE the composition rather than at a
@@ -252,6 +265,7 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   'UndeclaredJobSuccessorError',
   'UnknownFunctionError',
   'UnknownJobKindError',
+  'UnknownRunError',
   // 388 plan 01: the post-run chain's ONE id derivation. It joins the value list rather than
   // the type list because addressing is a computation, not a shape — the chip projection, the
   // chain-terminal check and every later reader must derive the same three job ids from a
@@ -321,6 +335,9 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // strategy's presence on this list is what lets the D-16 mutation proof compose the real host
   // twice without a production knob existing that could do the same.
   'createTurnEngine',
+  // 403-01 (D-01): the token body's codec, published as the mint/validate pair's own helpers so
+  // no consumer hand-rolls a second base64url over the claims body.
+  'decodeBase64Url',
   'deterministicOverrideStrategy',
   // 392 plan 10, D-16: the model-plan reader's half of the tool-name mapping, in ASCII sort
   // position around `invokeFunction` because this list is compared positionally. Published so the
@@ -336,6 +353,8 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // no storage and dispatches nothing, and the four lexicons plus the two receipt-facing entry
   // points it sits beside stay off this list on purpose, so widening a lexicon remains an edit
   // inside the module that carries its retune comment.
+  // 403-01 (D-01): the token body's codec — see `decodeBase64Url` above.
+  'encodeBase64Url',
   'evaluateAssertionStrength',
   // 399.1 D-01/D-03: the result fold the composition root runs on the invoke return path — it
   // executes a spec's declared classifier and render fold and answers with DATA. It is on this list
@@ -366,10 +385,16 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // committed yaml and then printed it back. The alternative was a surface-firewall waiver for a
   // new cli → safety edge, which that ledger's own first rule forbids.
   'isCredentialEntry',
+  // 403-01 (D-04): the URL composer. Published because it is the one expression of "the token
+  // rides the fragment" — a surface that assembled the URL itself could put it in a query.
+  'liveUrlOf',
   // 392 plan 06: the pure trigger pass (see `createChatCompactionHook` above). A total function of
   // (messages, accounting, turnId, clock) returning a conversation and at most one event — no
   // storage, no dispatch, and no branch that fails to return a conversation.
   'maybeCompact',
+  // 403-01 (D-01): the ONE minter of live-view capability tokens, published so `runs.liveurl`
+  // stays its only caller and every other surface must go through the op.
+  'mintLiveUrlToken',
   // 392 plan 09, CHAT-02: the ONE validator that turns a decoded scenario document into a
   // `ChatScenario`. It takes an already-decoded value rather than a path, which is why it can live
   // in a storageNeutral package at all: no `node:fs` is in its reach, and the eight lines of file
@@ -429,6 +454,9 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // shipped wording rather than re-spelling it.
   'unhandledReason',
   'unmaskForHumanOutput',
+  // 403-01 (D-02): the ONE parse of a live-view token. The dashboard route and the frame proxy
+  // bind THIS by reference; a private parse anywhere else is a second token authority.
+  'validateLiveUrlToken',
 ]
 
 /**
@@ -777,6 +805,10 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'KnowledgeReviewPort',
   // 392 plan 09: the measurement pair, and its two-ness is the claim — a quotient stored beside
   // the counts would be a third number free to disagree with them.
+  // 403-01 (D-03): the live-view mint seam's port shape. A TYPE, because a host BINDS one — the
+  // CLI composition supplies the signer, the origin and the live-run read, and it has to be able
+  // to name what it is supplying. In ASCII SORT position; this list is compared positionally.
+  'LiveViewPort',
   'MarkUnhandledCounts',
   'OptionalFunctionDepKey',
   'PersistencePort',

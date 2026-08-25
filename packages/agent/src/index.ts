@@ -71,11 +71,37 @@ export type {
   StepEvidenceAddress,
   StepEvidenceLookup,
 } from './functions/spec.js'
+// 403-01 (D-03): the live-view mint seam's port shape — a host BINDS one, so it must be able to
+// name what it supplies.
+//
+// ITS OWN STATEMENT, and that is mechanical rather than stylistic: the arch barrel pin's clause
+// scanner gives up after 24 continuation lines (`evaluate-pin.ts` MAX_CLAUSE_LINES), and the
+// clause above is already at that bound — a twenty-fifth name would not annotate the export, it
+// would delete EVERY export in that statement from the pinned set. Split, both are read.
+export type { LiveViewPort } from './functions/spec.js'
 // Caller-facing refusals a surface may legitimately catch and report. Op-level errors live
 // with the op that throws them; only the error CLASS crosses the barrel, never the spec.
 export { RunNotFoundError } from './functions/ops/runs-get.js'
 export { RunNotRecordedError } from './functions/ops/runs-start.js'
 export { StreamReplayFloorError } from './functions/ops/runs-events.js'
+// 403 D-03: the liveUrl mint/validate PAIR, its op id and the two refusals a surface reports.
+// The dashboard route and the frame proxy bind `validateLiveUrlToken` BY REFERENCE — there is
+// exactly one parse of a liveUrl token in the system, and this is where it lives.
+export {
+  LIVE_EMBED_PATH_PREFIX,
+  LIVE_URL_TOKEN_VERSION,
+  LIVE_URL_TTL_MS,
+  decodeBase64Url,
+  encodeBase64Url,
+  liveUrlOf,
+  mintLiveUrlToken,
+  validateLiveUrlToken,
+} from './functions/live-url.js'
+export {
+  LiveViewUnavailableError,
+  RUNS_LIVE_URL_FUNCTION_ID,
+  UnknownRunError,
+} from './functions/ops/runs-live-url.js'
 // 387 ENTY-02: the caller-facing refusal for an address nothing ever minted. A permanently
 // minted address whose entity was tombstoned still resolves (D-04) — this is not that case.
 export { EntityNotFoundError } from './functions/ops/entities-get.js'

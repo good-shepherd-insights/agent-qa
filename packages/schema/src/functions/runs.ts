@@ -5,6 +5,7 @@ import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '../notification/run-not
 import type { RunNotification } from '../notification/run-notification'
 import { POST_PROCESSING_CHIP_STATUSES } from '../notification/post-processing-status'
 import type { PostProcessingChips, PostProcessingStatus } from '../notification/post-processing-status'
+import { LiveStreamDeclarationSchema } from '../run/live-stream'
 import { RUN_EVENT_TYPES } from '../run/bus-events'
 import type { RunEventEnvelope, RunEventPayload } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
@@ -374,6 +375,34 @@ export const RunsEventsInputSchema = z.object({
 }).strict()
 
 export type RunsEventsInput = z.infer<typeof RunsEventsInputSchema>
+
+/**
+ * The `runs.liveurl` input (403 D-03). `handle` selects WHICH member of a parallel run the viewer
+ * attaches to; absent means handle 0, the single-member case every non-suite run is.
+ */
+export const RunsLiveUrlInputSchema = z.object({
+  runId: runIdSchema,
+  handle: z.number().int().nonnegative().optional(),
+}).strict()
+
+export type RunsLiveUrlInput = z.infer<typeof RunsLiveUrlInputSchema>
+
+/**
+ * The `runs.liveurl` result (403 D-03/D-08). `liveUrl` carries the token in its FRAGMENT, so this
+ * value is the one place the token exists outside the minting process's memory — which is why the
+ * op's `classify` never interpolates it and no door logs this result.
+ *
+ * `stream` is the handle's DECLARED capability, echoed here so a caller can render the honest
+ * no-preview state without opening a socket to find out.
+ */
+export const RunsLiveUrlResultSchema = z.object({
+  liveUrl: z.string(),
+  expiresAt: z.number().int(),
+  handle: z.number().int().nonnegative(),
+  stream: LiveStreamDeclarationSchema,
+}).strict()
+
+export type RunsLiveUrlResult = z.infer<typeof RunsLiveUrlResultSchema>
 
 export const RUN_EVENT_ENVELOPE_SCHEMA_VERSION = 1
 
