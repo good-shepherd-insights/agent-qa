@@ -20,7 +20,13 @@ import type {
   RunConfig,
   RunMemberDescriptor,
 } from '../shell.js'
-import type { EventLogPort, HandoffStorePort, RunArtifactStorePort, RunTimerPort } from '../ports.js'
+import type {
+  EventLogPort,
+  HandoffStorePort,
+  PostVerdictPort,
+  RunArtifactStorePort,
+  RunTimerPort,
+} from '../ports.js'
 import { POST_VERDICT_STEP_BUDGET_MS } from '../ports.js'
 import type { EvidenceArtifactStorePort } from '../../loop/ports.js'
 import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
@@ -804,9 +810,13 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
 // itself, so "after finalize, before runFinished" is read off the sequence the shell actually
 // executed rather than inferred from the event list alone.
 
-interface FakePostVerdictPort {
-  run: ReturnType<typeof vi.fn>
-}
+/**
+ * A port that IS a `PostVerdictPort` and also a spy.
+ *
+ * The intersection rather than a bare `{ run: Mock }`: the shell must accept this value through the
+ * real port type, so a cell cannot accidentally pin a shape the production seam would reject.
+ */
+type FakePostVerdictPort = PostVerdictPort & { run: ReturnType<typeof vi.fn> }
 
 function makeOrderingArtifactStore(log: string[]): RunArtifactStorePort {
   return {

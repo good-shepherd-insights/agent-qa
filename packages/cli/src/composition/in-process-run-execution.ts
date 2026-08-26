@@ -545,36 +545,36 @@ export async function runInProcessCliRun(
         if (frameworkError !== undefined) throw frameworkError
 
         const exitCode = mapVerdictToExitCode(verdict as never)
-        const postVerdict = postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT
-        try {
-          const finalExitCode = options.afterVerdict === undefined
-            ? exitCode
-            : await options.afterVerdict({
-                runId,
-                verdict,
-                exitCode,
-                maskingContext,
-                auditSink,
-                configDir: produced.configDir,
-                configFilePath: produced.configFilePath,
-                postVerdict,
-              })
-          return { runId, verdict, exitCode: finalExitCode }
-        } finally {
-          // 404 D-10, the structural no-leak rule: any lease still in the box here is a lease
-          // "released untaken". If the tail took it this is a no-op; if this door has no tail — or
-          // its tail threw before taking it — the lease is released HERE and the fact is named,
-          // rather than left to expire on its TTL while every reader of the wire believes somebody
-          // is draining. Warn-only: the exit code froze above, and a `finally` keeps the rule true
-          // on the throwing path too.
-          releaseUntakenPostVerdictLease({
-            handoff: postVerdict,
-            knowledgeRoot: produced.knowledgeRoot,
-            runId,
-            log: { warn: options.warn ?? (() => { /* a door with no renderer drops the line */ }) },
-          })
-        }
+        const finalExitCode = options.afterVerdict === undefined
+          ? exitCode
+          : await options.afterVerdict({
+              runId,
+              verdict,
+              exitCode,
+              maskingContext,
+              auditSink,
+              configDir: produced.configDir,
+              configFilePath: produced.configFilePath,
+              postVerdict: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,
+            })
+        return { runId, verdict, exitCode: finalExitCode }
       } finally {
+        // 404 D-10, the structural no-leak rule: any lease still in the box here is a lease
+        // "released untaken". If the tail took it this is a no-op; if this door has no tail — or
+        // never reached one — the lease is released HERE and the fact is named, rather than left
+        // to expire on its TTL while every reader of the wire believes somebody is draining.
+        //
+        // IT SITS IN THE OUTERMOST `finally`, NOT AROUND `afterVerdict`, and the difference is a
+        // measured one (404-01): a framework error re-thrown above `mapVerdictToExitCode` skips
+        // `afterVerdict` entirely, and a release scoped to that call left the lease held for its
+        // whole TTL — the very posture this rule exists to prevent, on the ONE path most likely to
+        // produce it. Before `maskingContext.dispose()` so the warning still masks.
+        releaseUntakenPostVerdictLease({
+          handoff: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,
+          knowledgeRoot: produced.knowledgeRoot,
+          runId,
+          log: { warn: options.warn ?? (() => { /* a door with no renderer drops the line */ }) },
+        })
         // Dispose LAST, after `done`, finalize and the flush, so every late masker still replaces.
         maskingContext.dispose()
       }
