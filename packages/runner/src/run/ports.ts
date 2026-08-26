@@ -299,6 +299,13 @@ export interface RunPorts {
    * persisted (memory-only run, byte-identical pre-Plan-11 behavior).
    */
   evidenceArtifacts?: EvidenceArtifactStorePort
+  /**
+   * Where a VIEWER's fault is reported (403 WR-06): a live-frame subscriber that throws during
+   * delivery is detached by the hub and the fact lands here. NEVER the bus — the run's permanent
+   * transcript must not depend on who happened to be watching (LIVE-03). Same signature as the
+   * hub's own option, so the shell forwards rather than adapts; absent ⇒ reported nowhere.
+   */
+  onSubscriberFault?: (code: string, message: string) => void
 }
 
 /**

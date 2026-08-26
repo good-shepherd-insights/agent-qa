@@ -304,6 +304,13 @@ export interface RunPersistencePorts {
    * member so Plan 12's live-decision producer persists into one durable, run-addressable namespace.
    */
   evidenceArtifacts: EvidenceArtifactStorePort
+  /**
+   * 403-13 (WR-06, LIVE-03): where a live-frame VIEWER's fault is reported. Declared here as well
+   * as on the runner's `RunPorts`, because `assembleCliRun` spreads THIS interface into
+   * `RunConfig.ports` — a member declared on only one side is invisible in the type across that
+   * hop. Non-durable and off the bus by construction; the run's transcript never records a viewer.
+   */
+  onSubscriberFault?: (code: string, message: string) => void
 }
 
 /**
@@ -319,6 +326,11 @@ export function buildRunPorts(input: { configDir: string; runId: string }): RunP
     handoffStore: new FsHandoffStore({ root, runId: input.runId }),
     runArtifactStore: new FsRunArtifactStore({ root, runId: input.runId }),
     evidenceArtifacts: new FsEvidenceArtifactStore({ root, runId: input.runId }),
+    // A NAMED, observable, non-durable destination: greppable by code, visible to a test through
+    // `process.once('warning', …)`, and no `console.` call in a package that makes none.
+    onSubscriberFault: (code, message) => {
+      process.emitWarning(message, { code })
+    },
   }
 }
 
