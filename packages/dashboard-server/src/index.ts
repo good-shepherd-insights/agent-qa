@@ -18,6 +18,26 @@ export type {
   RunSettledStatus,
 } from './execution/execution-backend.js'
 export { AppiumManager } from './execution/appium-manager.js'
+// 404-05 (D-16): the post-processing chip relay — the in-process bridge between the CLI's chip
+// emitter and this server's dedicated stream. Published because `agent-qa dashboard` creates the
+// ONE instance and threads both halves: `publish` into the run door's bridge, the relay itself
+// into `startServer`.
+export {
+  createPostProcessingRelay,
+  type PostProcessingListener,
+  type PostProcessingRelay,
+} from './execution/post-processing-relay.js'
+// 404-05 (D-18/D-23): the joined read and its vocabulary, published for the conformance cells and
+// for a client that needs the server's own terminal predicate rather than a second copy of it.
+export {
+  POST_PROCESSING_STREAM_HEARTBEAT_MS,
+  isPostProcessingTerminal,
+  readPostProcessing,
+  servePostProcessingRead,
+  servePostProcessingStream,
+  type PostProcessingReadBody,
+  type PostProcessingStageFailure,
+} from './run-service/post-processing-routes.js'
 export { TestFileManager } from './tests/test-file-manager.js'
 export type { TestFileInfo, TestValidationResult, TestValidationError } from './tests/test-file-manager.js'
 // 402-01 (D-02/D-06/D-13 · INVK-03): the authed run service — a mountable module whose every

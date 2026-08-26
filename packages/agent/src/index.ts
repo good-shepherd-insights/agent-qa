@@ -121,6 +121,13 @@ export { KNOWLEDGE_PROPOSAL_APPLY_FUNCTION_ID } from './functions/ops/knowledge-
 // alternative is a string literal in the CLI — a second declaration of a capability's name,
 // free to drift from the spec that answers to it. An ID is not a dispatch handle.
 export { RUNS_POST_PROCESSING_FUNCTION_ID } from './functions/ops/runs-post-processing.js'
+// 404 D-22: the fourth op id a surface must be able to NAME, on exactly the footing above. The
+// dashboard's post-processing read route joins chip truth with the run's own recorded POSTURE —
+// the `runFinished` disposition and the last per-stage failure line — and reads it by dispatching
+// this op through the injected host. `packages/dashboard-server` may not import this package at
+// all, so the alternative is not a literal there but a literal it cannot type-check; the id is
+// handed to it by the composition, exactly as `agent.ask`'s is.
+export { RUNS_EVENTS_FUNCTION_ID } from './functions/ops/runs-events.js'
 // 389 D-11: the third op id a surface must be able to NAME, on the same footing as the two
 // above. Plan 07's CLI sentence block and the D-12 exit-line fetch hint both dispatch the
 // analysis read through the registry, and the alternative is a string literal in the CLI — a

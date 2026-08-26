@@ -25,6 +25,13 @@ import {
   resumePointOf,
   serveRunEventStream,
 } from '../run-service/run-service-routes.js'
+// 404-05 (D-16/D-18): the post-processing pair — the read a page polls and the dedicated live
+// channel. Two arms below, both above the `/api/runs/:id` catch-all, both formatting nothing.
+import {
+  servePostProcessingRead,
+  servePostProcessingStream,
+} from '../run-service/post-processing-routes.js'
+import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
 import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
@@ -1851,6 +1858,20 @@ interface RouterDeps {
    * `runServiceReadiness`'s idiom — never a 404 (the route exists) and never a URL to nowhere.
    */
   mintLiveUrl?: (runId: string, handle: number) => Promise<RunsLiveUrlResult>
+  /**
+   * The in-process chip sink the post-processing stream relays from (404-05, D-16).
+   *
+   * INJECTED ON `agentHost`'s OWN IDIOM. The publisher is the CLI's post-run chip emitter — a
+   * package this one may not import — so `agent-qa dashboard` creates the relay, hands
+   * `relay.publish` to the run door's bridge and hands the relay itself here. One object, two
+   * halves of the same process; a relay composed here instead would be a registry the emitter
+   * never reaches, and the stream would heartbeat forever at a page whose chips do move.
+   *
+   * ABSENT MEANS THIS SERVER HAS NO PUSH CHANNEL and the stream arm answers 503 BY NAME — never a
+   * 404 (the route exists) and never an empty stream, which would look like a chain that never
+   * ticked. The READ route is unaffected: polling works with no relay at all.
+   */
+  postProcessingRelay?: PostProcessingRelay
 }
 
 export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: ServerResponse) => void
@@ -2281,6 +2302,65 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           jsonNoCors(res, { error: 'live_url_mint_failed' }, 500)
         },
       )
+      return
+    }
+
+    // GET /api/runs/:id/post-processing[/stream] — chip truth and its live channel (404-05).
+    //
+    // ABOVE THE `GET /api/runs/:id` ARM BELOW, on the live-url arm's measured precedent: that arm
+    // claims EVERY GET under the prefix and answers `Not found` for anything that is not exactly
+    // four segments — and `/api/runs/<id>/post-processing` is four segments, so it would be looked
+    // up as a run id and refused. Registered after it, these two routes would never run.
+    //
+    // THE STREAM ARM IS FIRST, because `/post-processing/stream` also ends with nothing the read
+    // arm's own regex would reject if the read arm were written loosely. Both are anchored regexes
+    // over a single segment, so neither can claim the other's path whatever the order.
+    //
+    // THEY DISPATCH AND FORMAT NOTHING. Everything below the 503 arms is
+    // `servePostProcessingRead`/`servePostProcessingStream`'s: the op calls, the join, the framing,
+    // the 204 and the refusal vocabulary. A second spelling here would be a second answer to what a
+    // chip is, which is exactly what D-16/D-17 exist to prevent.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/post-processing\/stream$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      if (!deps.postProcessingRelay) {
+        json(res, { error: 'post_processing_relay_unavailable' }, 503)
+        return
+      }
+      let streamRunId: string
+      try {
+        streamRunId = decodeURIComponent(
+          path.slice('/api/runs/'.length, -'/post-processing/stream'.length),
+        )
+      } catch {
+        // An undecodable segment names no run, and the honest answer is the one the core gives for
+        // an id the op's own input schema refuses.
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      servePostProcessingStream(req, res, {
+        runId: streamRunId,
+        host: deps.agentHost,
+        relay: deps.postProcessingRelay,
+      })
+      return
+    }
+
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/post-processing$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let readRunId: string
+      try {
+        readRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/post-processing'.length))
+      } catch {
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      servePostProcessingRead(req, res, { runId: readRunId, host: deps.agentHost })
       return
     }
 

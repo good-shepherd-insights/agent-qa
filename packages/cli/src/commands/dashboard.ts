@@ -9,6 +9,8 @@ import {
   foldFunctionResult,
   invokeFunction,
   LiveViewUnavailableError,
+  RUNS_EVENTS_FUNCTION_ID,
+  RUNS_POST_PROCESSING_FUNCTION_ID,
   RUNS_START_FUNCTION_ID,
   unmaskForHumanOutput,
   type ConfigReaderPort,
@@ -28,7 +30,6 @@ import type {
 } from '@vostride/agent-qa-dashboard'
 import { resolveVisionConfig } from '@vostride/agent-qa-model'
 import type {
-  AgentAskInput,
   ChatSessionEvent,
   ExecutionContext,
   FunctionCaller,
@@ -154,6 +155,21 @@ export function createSessionEventFanOut(): SessionEventFanOut {
  * command does. An adapter that assembled its own seam would be enumerating a door this product
  * does not ship (397 D-01's produced-enumeration law, applied to the composition itself).
  */
+/**
+ * The asking conversation an invocation belongs to, read STRUCTURALLY off an `unknown` input.
+ *
+ * The seam's `input` widened in 404-05 because the door now dispatches three ops, not one — and
+ * only `agent.ask` has a `sessionId`. Reading it defensively rather than by type is what keeps a
+ * post-processing read from being scoped to a conversation it has nothing to do with, and it is
+ * the same posture the door already takes on a FIRST turn, where the id does not exist yet
+ * (WINDOWS #192): no asker, no claim.
+ */
+function askingSessionOf(input: unknown): string | undefined {
+  if (typeof input !== 'object' || input === null) return undefined
+  const sessionId = (input as { sessionId?: unknown }).sessionId
+  return typeof sessionId === 'string' ? sessionId : undefined
+}
+
 export function composeDashboardAgentHost(
   host: LocalAgentHost,
   sessionEvents: SessionEventFanOut,
@@ -180,6 +196,12 @@ export function composeDashboardAgentHost(
     ...(confirms === undefined ? {} : { confirms }),
     caller: DASHBOARD_FUNCTION_CALLER,
     agentAskFunctionId: AGENT_ASK_FUNCTION_ID,
+    // 404-05 (D-16/D-18/D-22): the two ids the post-processing routes dispatch, PASSED on
+    // `agentAskFunctionId`'s exact footing. `packages/dashboard-server` may not import this
+    // package (validate:arch), so the ids reach it the only way an id can — as data from the
+    // composition that already knows them.
+    runsPostProcessingFunctionId: RUNS_POST_PROCESSING_FUNCTION_ID,
+    runsEventsFunctionId: RUNS_EVENTS_FUNCTION_ID,
     // 400-15: THE ONE PLACE THE ASKING CONVERSATION IS KNOWN AND STILL AHEAD OF EVERYTHING THAT
     // NEEDS IT. `handleTurn` makes exactly one call here per turn, carrying the browser's
     // `sessionId`; the gate's context resolver and the confirm port are both further down this same
@@ -189,14 +211,19 @@ export function composeDashboardAgentHost(
     // `input.sessionId` IS `undefined` ON A FIRST TURN and is passed through as such rather than
     // recovered: the engine mints the id partway down this call, and a browser cannot have opened a
     // stream on an id that does not exist yet (WINDOWS #192). No asker, no claim.
+    //
+    // `input` IS `unknown` SINCE 404-05, and the asking-session scoping still reads `sessionId`
+    // off it — structurally, because that is what it always was. `agent.ask` carries one; the two
+    // post-processing reads carry none, and a read with no asker enters no session, which is the
+    // fail-closed direction and exactly what {@link postureFor} already answers for.
     invokeFunction: (
       registry: AgentRegistryHandle,
       functionId: string,
-      input: AgentAskInput,
+      input: unknown,
       caller: FunctionCaller,
     ): Promise<unknown> =>
       enter(
-        input.sessionId,
+        askingSessionOf(input),
         () => invokeFunction(registry as FunctionRegistry, functionId, input, caller),
       ),
     foldFunctionResult: (

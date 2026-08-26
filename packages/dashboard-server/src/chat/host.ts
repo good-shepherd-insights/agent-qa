@@ -27,7 +27,6 @@
 // A second method here would be a private power with no roster row.
 
 import type {
-  AgentAskInput,
   AgentAskResult,
   ChatSessionEvent,
   ClauseReceiptStatus,
@@ -101,11 +100,40 @@ export interface AgentHost {
   readonly caller: FunctionCaller
   /** The agent package's `agent.ask` id, supplied rather than re-spelled. */
   readonly agentAskFunctionId: string
-  /** `invokeFunction`, bound by the composer. THE one door call. */
+  /**
+   * The agent package's `runs.postprocessing` id, on `agentAskFunctionId`'s exact footing (404
+   * D-16/D-18).
+   *
+   * SUPPLIED BY THE COMPOSITION, NEVER SPELLED HERE. The post-processing read route dispatches
+   * chip truth through this door for the reason the chat route dispatches a turn through it: the
+   * op id is the agent package's constant, and a string literal in this package would be a second
+   * declaration of a capability's name, free to drift from the spec that answers to it. This
+   * package also may not import `@vostride/agent-qa-agent` (validate:arch), so there is nowhere
+   * here the real constant could come from.
+   */
+  readonly runsPostProcessingFunctionId: string
+  /**
+   * The agent package's `runs.events` id, on the line above's footing (404 D-22).
+   *
+   * A SECOND ID BECAUSE THE READ ROUTE JOINS TWO FACTS from two different records: the chain's
+   * chips live in the durable job store, and the run's POSTURE — who was going to drain it — lives
+   * on the `runFinished` line of the run's own event log, beside the last per-stage failure text.
+   * Reading the log any other way would mean this package opening a file the function layer owns.
+   */
+  readonly runsEventsFunctionId: string
+  /**
+   * `invokeFunction`, bound by the composer. THE one door call.
+   *
+   * `input` IS `unknown` (404-05). It was `AgentAskInput` while `agent.ask` was the only op this
+   * door dispatched; since 404 the same seam carries `runs.postprocessing` and `runs.events`, whose
+   * inputs are their own strict schemas. Narrowing here would mean this package describing three
+   * other packages' input contracts — and the real `invokeFunction` has always taken `unknown`,
+   * because the op's own schema is what validates it, once, inside the invocation.
+   */
   invokeFunction(
     registry: AgentRegistryHandle,
     functionId: string,
-    input: AgentAskInput,
+    input: unknown,
     caller: FunctionCaller,
   ): Promise<unknown>
   /** `foldFunctionResult`, bound by the composer. */

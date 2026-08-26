@@ -384,6 +384,10 @@ function dashboardRollCallHost(
     registry: {},
     caller: { origin: 'human', surface: 'dashboard', scopes: ['read'] } as never,
     agentAskFunctionId: 'agent.ask',
+    // 404-05: the seam carries three op ids now. This roll-call fixture dispatches only the ask,
+    // so the other two are named and never reached — the shape is what has to be complete.
+    runsPostProcessingFunctionId: 'runs.postprocessing',
+    runsEventsFunctionId: 'runs.events',
     invokeFunction: () => Promise.resolve({
       sessionId: 'chat-20260821-000000-r0ll',
       turnId: 'turn-1',

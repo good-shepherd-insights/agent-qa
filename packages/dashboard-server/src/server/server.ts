@@ -26,6 +26,7 @@ import {
 } from '@vostride/agent-qa-core'
 import type { DashboardLLMConfig } from '../llm-model-mapping.js'
 import type { AgentHost } from '../chat/host.js'
+import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import {
   createRunServiceRoutes,
   ownsRunServicePath,
@@ -210,6 +211,21 @@ interface StartServerOptions {
     validate(token: string, expect: { runId: string; now: number }): LiveUrlVerdict
     mintLiveUrl(runId: string, handle: number): Promise<RunsLiveUrlResult>
   }
+  /**
+   * The in-process post-processing chip relay (404-05, D-16).
+   *
+   * INJECTED, ON `agentHost`'s OWN IDIOM AND FOR ITS OWN REASON. The PUBLISHER is the CLI's
+   * post-run chip emitter, in this same process, and this package may not import it — so
+   * `agent-qa dashboard` creates one relay, hands `relay.publish` to the run door's bridge as the
+   * emitter's second sink and hands the relay itself here. It has to be the SAME object: a relay
+   * built inside this function would be a registry nothing publishes to, and the stream door would
+   * heartbeat forever at a page whose chips are demonstrably moving.
+   *
+   * ABSENT MEANS NO PUSH CHANNEL, and `GET /api/runs/:id/post-processing/stream` answers 503 by
+   * name. The READ route needs none of this and keeps working: polling is the floor the whole
+   * design rests on, and the stream is the optimisation over it.
+   */
+  postProcessingRelay?: PostProcessingRelay
 }
 
 export async function startServer(opts: StartServerOptions): Promise<{
@@ -217,7 +233,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   port: number
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness, liveView } = opts
+  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness, liveView, postProcessingRelay } = opts
   // 403 D-14: the explicit port wins; the pre-403 derivation is the fallback for legacy callers.
   const runServiceAttach = opts.runServiceAttach ?? runService?.attach
   const host = opts.host?.trim() || DEFAULT_DASHBOARD_HOST
@@ -585,6 +601,9 @@ export async function startServer(opts: StartServerOptions): Promise<{
     // 403 D-03: the mint route's port, on the same conditional-spread house rule — absent means
     // this host serves no live view and the route's own 503 arm decides, in one place.
     ...(liveView === undefined ? {} : { mintLiveUrl: liveView.mintLiveUrl }),
+    // 404-05 (D-16): the same conditional-spread house rule — absent means this host serves no
+    // post-processing push channel and the stream arm's own 503 decides, in one place.
+    ...(postProcessingRelay === undefined ? {} : { postProcessingRelay }),
   })
 
   // 402-01: composed once, at start, on `apiRouter`'s own idiom. Absent ports mean no router and
