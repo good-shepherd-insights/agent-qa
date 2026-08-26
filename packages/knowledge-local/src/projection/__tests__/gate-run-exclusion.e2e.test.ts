@@ -140,15 +140,26 @@ const MARKER_CENSUS: Readonly<Record<string, 'consumer' | 'carrier' | 'producer'
   // the shell awaits between `finalize` and `runFinished` takes both markers on its input, so the
   // shell spreads them out of `RunConfig` onto that call. It decides NOTHING with them — it neither
   // reads a marker to gate a table nor mints one onto a run — it moves them from the run's config
-  // into the step's input, which is what `carrier` names. The consumer stays exactly one
-  // (`run-outcomes.ts`); the skip those markers eventually drive inside the step is 404-04's, and
-  // when it lands the step's own file joins as a second CONSUMER — which this census will demand
-  // be declared, deliberately.
+  // into the step's input, which is what `carrier` names. The skip those markers eventually drive
+  // inside the step is 404-04's, and when it lands the step's own file joins as a second CONSUMER —
+  // which this census will demand be declared, deliberately.
   'packages/runner/src/run/shell.ts': 'carrier',
   'packages/agent/src/functions/ops/runs-start.ts': 'carrier',
   'packages/agent/src/functions/ops/runs-get.ts': 'carrier',
   'packages/agent/src/jobs/kinds.ts': 'carrier',
-  'packages/cli/src/curation/post-run-tail.ts': 'carrier',
+  // 2026-08-26 (404-04, D-05/D-08): IT LANDED, AND IT IS A CONSUMER — declared here, exactly as
+  // the paragraph above said this census would demand.
+  //
+  // The post-verdict step READS both markers to decide something: a run carrying either one
+  // enqueues no `analyze-run` at all. That is a decision, not a representation, so `carrier` would
+  // be a lie about what this file does with the values it holds.
+  //
+  // `packages/cli/src/curation/post-run-tail.ts` LEFT THIS CENSUS WITH ITS SUBJECT. It was a
+  // carrier because its `enqueue()` leg copied the two markers off the loaded handoff onto the
+  // `analyze-run` payload; D-05 moved that leg into the step and the tail names neither marker in
+  // code any more. REMOVED rather than relaxed, for the same reason `local-agent-host.ts` was in
+  // 401-10: a census entry for a file that no longer names a marker is a claim nothing checks.
+  'packages/cli/src/curation/post-verdict-step.ts': 'consumer',
   'packages/cli/src/commands/run.ts': 'carrier',
   // 2026-08-23 (401-10): `packages/cli/src/composition/local-agent-host.ts` LEFT THIS CENSUS WITH
   // ITS SUBJECT. It was a carrier because `MARKER_FLAGS` translated the two markers into the child
@@ -250,13 +261,45 @@ describe('the INVK-06 consumer census is frozen and self-checking (D-15)', () =>
     expect(discovered.length).toBe(Object.keys(MARKER_CENSUS).length)
   })
 
-  it('EXACTLY ONE MARKER CONSUMER, and it is the one gate', () => {
+  it('EXACTLY ONE MARKER CONSUMER PER DECISION, and each names the decision it gates', () => {
     const consumers = Object.entries(MARKER_CENSUS)
       .filter(([, role]) => role === 'consumer')
       .map(([file]) => file)
-    // A SECOND consumer would be the shape in which two readers could eventually disagree about the
-    // same run — Pitfall 8, and the reason `projectRunOutcomes` states it is THE one gate.
-    expect(consumers).toEqual(['packages/knowledge-local/src/projection/run-outcomes.ts'])
+      .sort()
+    // TWO CONSUMERS SINCE 404-04, AND THE COUNT IS NOT WHAT THIS CELL IS ABOUT. The rule the
+    // original one-consumer pin encoded is that no two readers may disagree about the SAME
+    // question, and these two answer different ones over disjoint substrate:
+    //
+    //   `run-outcomes.ts`      — reads `excludedFromOutcomes` to decide what feeds FLAKE COUNTING.
+    //                            One gate, one `excluded ? [] : handoff.tests` line, and the
+    //                            fingerprint table is computed from its output rather than from a
+    //                            second read (which is what the carried-consumer cell below pins).
+    //   `post-verdict-step.ts` — reads EITHER marker to decide whether the run's curation chain is
+    //                            durably ENQUEUED at all (404 D-08). It touches no outcome table,
+    //                            writes no fingerprint and reads no projection.
+    //
+    // A THIRD entry, or either of these growing a read of the other's substrate, is what this cell
+    // exists to refuse — so both are named, in full, rather than counted.
+    expect(consumers).toEqual([
+      'packages/cli/src/curation/post-verdict-step.ts',
+      'packages/knowledge-local/src/projection/run-outcomes.ts',
+    ])
+    // The disjointness, measured rather than asserted in prose: the enqueue gate names no outcome
+    // substrate, and the outcome gate names no queue.
+    const step = readFileSync(join(ROOT, 'packages/cli/src/curation/post-verdict-step.ts'), 'utf8')
+    expect(step, 'the enqueue gate must not reach into run outcomes').not.toContain('projectRunOutcomes')
+    expect(step).not.toContain('run_test_outcomes')
+    const outcomes = readFileSync(
+      join(ROOT, 'packages/knowledge-local/src/projection/run-outcomes.ts'),
+      'utf8',
+    )
+    // `queue.enqueue` rather than the job KIND: `run-outcomes.ts` names `analyze-run` in prose —
+    // it explains where an authored verdict comes from — and a probe that forbade the word would
+    // be forbidding the explanation rather than the reach.
+    expect(
+      outcomes,
+      'the outcome gate must not reach into the durable queue',
+    ).not.toContain('queue.enqueue')
   })
 
   it('A MARKER GREP IS NOT A CENSUS — the carried consumer names neither marker in code', () => {
