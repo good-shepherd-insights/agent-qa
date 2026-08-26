@@ -271,6 +271,19 @@ async function advance(ms: number): Promise<void> {
   await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
 }
 
+/** A backgrounded tab returning to view, as jsdom lets a cell say it. Reverted before returning. */
+async function flipVisible(): Promise<void> {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+  try {
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await Promise.resolve()
+    })
+  } finally {
+    delete (document as { visibilityState?: unknown }).visibilityState
+  }
+}
+
 async function emit(...envelopes: readonly RunEventEnvelope[]): Promise<void> {
   const source = latest()
   await act(async () => {
@@ -631,6 +644,109 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
       afterSwitch: 'waiting',
       callsAfterSwitch: WAITING_ATTEMPT_LIMIT + 1,
       lastCall: [RUN_ID, 1],
+    })
+  })
+
+  // THE BOUND IS A BOUND (403-15, G-403-2). Three roads led back into `waiting` after the cap; each
+  // is one cell, and each reads the same triple so a sentence cannot lag the state by a render.
+  const noneAnswer = () => ({
+    liveUrl: 'http://x/live/r1#v1.a.b',
+    expiresAt: Date.now() + TTL_MS,
+    handle: 0,
+    stream: { kind: 'none' as const },
+  })
+  const settled = () => ({
+    state: previewState(),
+    text: q('[data-preview-state] p')?.textContent,
+    calls: fetchLiveUrlMock.mock.calls.length,
+  })
+  const gaveUp = { state: 'no-stream', text: WAITING_GAVE_UP_TEXT, calls: WAITING_ATTEMPT_LIMIT }
+
+  it('(A) after the cap, a tab returning to view re-mints NOTHING — twice', async () => {
+    fetchLiveUrlMock.mockImplementation(async () => noneAnswer())
+    await mount()
+    await open()
+    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+    for (let attempt = 0; attempt < WAITING_ATTEMPT_LIMIT; attempt += 1) {
+      await advance(NO_STREAM_RETRY_MS)
+    }
+    const afterCap = settled()
+
+    await advance(TTL_MS)
+    await flipVisible()
+    await advance(NO_STREAM_RETRY_MS)
+    const afterFirstFlip = settled()
+
+    await advance(TTL_MS)
+    await flipVisible()
+    await advance(NO_STREAM_RETRY_MS)
+    const afterSecondFlip = settled()
+
+    expect({ afterCap, afterFirstFlip, afterSecondFlip }).toEqual({
+      afterCap: gaveUp,
+      afterFirstFlip: gaveUp,
+      afterSecondFlip: gaveUp,
+    })
+  })
+
+  it('(B) a 24th mint that lands AFTER the cap is discarded, not re-opened', async () => {
+    let release: ((answer: ReturnType<typeof noneAnswer>) => void) | undefined
+    let ordinal = 0
+    fetchLiveUrlMock.mockImplementation(async () => {
+      ordinal += 1
+      if (ordinal === WAITING_ATTEMPT_LIMIT) {
+        return new Promise<ReturnType<typeof noneAnswer>>((resolve) => { release = resolve })
+      }
+      return noneAnswer()
+    })
+    await mount()
+    await open()
+    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+    for (let attempt = 0; attempt < WAITING_ATTEMPT_LIMIT; attempt += 1) {
+      await advance(NO_STREAM_RETRY_MS)
+    }
+    const afterCap = settled()
+    expect(release, 'the 24th mint must still be in flight at the cap').toBeDefined()
+
+    await act(async () => {
+      release?.(noneAnswer())
+      await Promise.resolve()
+    })
+    await flush()
+    const afterRelease = settled()
+    await advance(NO_STREAM_RETRY_MS)
+    const afterRetryWindow = settled()
+
+    expect({ afterCap, afterRelease, afterRetryWindow }).toEqual({
+      afterCap: gaveUp,
+      afterRelease: gaveUp,
+      afterRetryWindow: gaveUp,
+    })
+  })
+
+  it('(C) an outcome arriving after the cap does not swap the sentence behind a re-mint', async () => {
+    fetchLiveUrlMock.mockImplementation(async () => noneAnswer())
+    await mount()
+    await open()
+    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+    for (let attempt = 0; attempt < WAITING_ATTEMPT_LIMIT; attempt += 1) {
+      await advance(NO_STREAM_RETRY_MS)
+    }
+    await emit(testFinished(0, 'skipped'))
+    const afterOutcome = settled()
+
+    await advance(TTL_MS)
+    await flipVisible()
+    await advance(NO_STREAM_RETRY_MS)
+    const afterFlip = settled()
+
+    await emit(heartbeat())
+    const afterUnrelated = settled()
+
+    expect({ afterOutcome, afterFlip, afterUnrelated }).toEqual({
+      afterOutcome: gaveUp,
+      afterFlip: gaveUp,
+      afterUnrelated: gaveUp,
     })
   })
 

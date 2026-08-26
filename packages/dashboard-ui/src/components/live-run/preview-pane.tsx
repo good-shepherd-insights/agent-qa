@@ -113,7 +113,7 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
   const answeredRef = useRef(watchedMemberAnswered)
   answeredRef.current = watchedMemberAnswered
   const waitingAttemptsRef = useRef(0)
-  const gaveUpWaitingRef = useRef(false)
+  const [gaveUpWaiting, setGaveUpWaiting] = useState(false)
 
   // The TTL this mint was issued with, so "less than half of it remains" is answerable. The result
   // carries only the deadline; the half-life is a fact about the interval, which needs both ends.
@@ -134,11 +134,15 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
           ttlRef.current = Math.max(0, result.expiresAt - Date.now())
           setErrorWord(undefined)
           if (result.stream.kind === 'none') {
+            // A `none` carries nothing to renew, so it arms no re-mint: the visibility handler reads
+            // only these two refs, and a capped or declared pane must never ask the door again.
+            mintedAtRef.current = undefined
+            ttlRef.current = undefined
             setMint(undefined)
             // THE ONE DISTINCTION THIS PANE EXISTS TO MAKE HONESTLY. `none` from a member whose
             // browser is not up yet is a not-yet; `none` from a member that has started its steps,
             // or from a run that is over, is the D-08 DECLARED absence and gets the sentence.
-            gaveUpWaitingRef.current = false
+            setGaveUpWaiting(false)
             setPreviewState(endedRef.current || answeredRef.current ? 'no-stream' : 'waiting')
             return
           }
@@ -168,7 +172,7 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
 
   useEffect(() => {
     waitingAttemptsRef.current = 0
-    gaveUpWaitingRef.current = false
+    setGaveUpWaiting(false)
     if (ended) {
       // Nothing to mint for a run that is over, and a token minted now would outlive the thing it
       // addresses. The frame comes down with it.
@@ -198,7 +202,10 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
     const timer = setTimeout(() => {
       waitingAttemptsRef.current += 1
       if (waitingAttemptsRef.current >= WAITING_ATTEMPT_LIMIT) {
-        gaveUpWaitingRef.current = true
+        // The cap is terminal: an answer still in flight — `none` or a late capability alike — is
+        // discarded, the same terminal-`no-stream` acceptance stated above this effect.
+        requestRef.current += 1
+        setGaveUpWaiting(true)
         setPreviewState('no-stream')
         return
       }
@@ -277,7 +284,7 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
         )}
         {previewState === 'no-stream' && (
           <p className="p-6 text-sm text-muted-foreground">
-            {gaveUpWaitingRef.current ? WAITING_GAVE_UP_TEXT : NO_STREAM_TEXT}
+            {gaveUpWaiting ? WAITING_GAVE_UP_TEXT : NO_STREAM_TEXT}
           </p>
         )}
         {(previewState === 'minting' || previewState === 'waiting') && (
