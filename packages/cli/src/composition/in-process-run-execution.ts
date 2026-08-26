@@ -94,6 +94,7 @@ import type { ProducedCliRunMembers, RunInvocationInputs, RunOptions } from '../
 const UNCOMPOSED_POST_VERDICT: PostVerdictHandoff = Object.freeze({
   outcome: undefined,
   takeAcquiredLease: () => undefined,
+  takeUnclaimedLease: () => undefined,
 })
 
 /**
@@ -139,17 +140,19 @@ export interface CliRunVerdictContext {
   readonly configDir: string
   readonly configFilePath: string
   /**
-   * This run's post-verdict handoff box (404 D-10) — the writer lease the shell's step already
-   * acquired, if it acquired one.
+   * This run's post-verdict handoff box (404 D-10) — the writer lease for the chain the shell's
+   * step decided this process would pump.
    *
-   * A DOOR'S TAIL MUST TAKE IT RATHER THAN CONSULT THE LEASE AGAIN. The step ran inside the shell,
-   * before `runFinished`; a tail that called `acquireWriterLease` for itself would be answered
-   * `held` by its OWN process and would hand its work off to nobody (RESEARCH Pitfall 3). Hand it
-   * to the pump — `postRunTail.drain({ lease: postVerdict.takeAcquiredLease() })` — so acquire →
-   * pump → release stays one lease.
+   * A DOOR'S TAIL MUST TAKE IT RATHER THAN CONSULT THE LEASE AGAIN. The step decided the posture
+   * inside the shell, before `runFinished`; a tail that called `acquireWriterLease` for itself
+   * after taking the authority would be answered `held` by its OWN process and would hand its work
+   * off to nobody (RESEARCH Pitfall 3). Hand it to the pump —
+   * `postRunTail.drain({ lease: postVerdict.takeAcquiredLease() })` — so acquire → pump → release
+   * stays one lease.
    *
-   * A door with no tail leaves it untaken, and the drive releases it with a named warning below;
-   * that fallback is the reason the step is allowed to acquire at all.
+   * 2026-08-26: TAKING IT IS WHAT ACQUIRES IT. The step's decision comes from a non-acquiring read,
+   * so a door with no tail — or a run that dies above one — mutates no lease file and has nothing
+   * to release. See `post-verdict-step.ts`'s header for the measurement that moved it.
    */
   readonly postVerdict: PostVerdictHandoff
 }
@@ -560,15 +563,22 @@ export async function runInProcessCliRun(
         return { runId, verdict, exitCode: finalExitCode }
       } finally {
         // 404 D-10, the structural no-leak rule: any lease still in the box here is a lease
-        // "released untaken". If the tail took it this is a no-op; if this door has no tail — or
-        // never reached one — the lease is released HERE and the fact is named, rather than left
-        // to expire on its TTL while every reader of the wire believes somebody is draining.
+        // "released untaken". If the tail took it this is a no-op; if something filled the box
+        // ahead of a pump that never came, the lease is released HERE and the fact is named,
+        // rather than left to expire on its TTL while every reader of the wire believes somebody
+        // is draining.
         //
         // IT SITS IN THE OUTERMOST `finally`, NOT AROUND `afterVerdict`, and the difference is a
         // measured one (404-01): a framework error re-thrown above `mapVerdictToExitCode` skips
         // `afterVerdict` entirely, and a release scoped to that call left the lease held for its
         // whole TTL — the very posture this rule exists to prevent, on the ONE path most likely to
         // produce it. Before `maskingContext.dispose()` so the warning still masks.
+        //
+        // 2026-08-26: it ACQUIRES NOTHING to check. The step's acquisition is lazy, so that same
+        // framework-error path now arrives here with an empty box and this call is silent — the
+        // `released untaken` line stopped being ordinary run output, which is what
+        // `run-parity.e2e.test.ts` measures. The backstop stays because the box can still be
+        // filled by a host that supplies its own authority (404-04's daemon door).
         releaseUntakenPostVerdictLease({
           handoff: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,
           knowledgeRoot: produced.knowledgeRoot,

@@ -315,8 +315,8 @@ describePosix('LIFE-01 (a) leg 1: the shipped binary, with post-processing envel
       || String((beforeTail[0] as unknown as { runId?: string }).runId ?? '')
 
     // THE SECOND HALF OF THE CLAIM NEEDS CHIP LINES TO EXIST. The spawned run left the chain
-    // enqueued and its lease released; driving the SHIPPED tail in-process over the same run
-    // directory is what appends the post-processing envelopes, so "before any post-processing
+    // enqueued and left the writer lease free; driving the SHIPPED tail in-process over the same
+    // run directory is what appends the post-processing envelopes, so "before any post-processing
     // envelope" is measured against envelopes that are really there rather than vacuously true.
     const hosts: LocalAgentHost[] = []
     try {
@@ -328,7 +328,11 @@ describePosix('LIFE-01 (a) leg 1: the shipped binary, with post-processing envel
       })
       expect(
         tail.report.drain,
-        'the spawned run released the lease it took, so the in-process tail can pump and emit chips',
+        // 2026-08-26: the spawned run acquires the lease only if a pump of its own asks for it, and
+        // this fixture dies above its tail — so it exits leaving the lease exactly as it found it.
+        // Either way the claim this cell needs is the same one: no lease of that run's is still
+        // held, so the in-process tail can pump and emit chips.
+        'the spawned run holds no lease of its own afterwards, so the in-process tail can pump and emit chips',
       ).not.toBe('handed-off')
     } finally {
       for (const host of hosts) await host.close()
