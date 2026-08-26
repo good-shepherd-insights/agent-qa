@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { FsEventLog, RUN_EVIDENCE_BLOBS_SUBDIR, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
@@ -24,6 +24,7 @@ import {
 // alone still resolves here: it is the CLI's assembly of the readline default and the human-output
 // decorator over the relocated registrar.
 import { buildRunSafetyHooks } from '../run-session-composition.js'
+import { assembleCliRun } from '../composition/run-assembly.js'
 import type { ConfirmPort } from '@vostride/agent-qa-safety'
 
 // D-20: computeRunConfigDigests is the ONE digest mint. Both the cache path (per-member) and
@@ -533,5 +534,46 @@ describe('runSafetyScope run-body wrap (SEAM-01 / Pitfall 8, 362-06)', () => {
     expect(maskingContext.mask('super-secret-token-value')).toBe('super-secret-token-value')
     // Outside the scope the active resolver returns no run context.
     expect(getActiveMaskingContext()).toBeUndefined()
+  })
+})
+
+// 403-13 (WR-06, LIVE-03): a SUBSCRIBER's fault has a NAMED destination on the shipped composition,
+// and the port is CARRIED across the RunPersistencePorts -> RunPorts hop at run-assembly.ts:175 —
+// read off the RunConfig the ASSEMBLER returns, not off buildRunPorts's own return value.
+describe('buildRunPorts — onSubscriberFault destination (403-13)', () => {
+  it('supplies a callable onSubscriberFault whose invocation is an observable process warning carrying the code', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'run-ports-fault-'))
+    const ports = buildRunPorts({ configDir, runId: 'r_fault-destination' })
+    expect(typeof ports.onSubscriberFault, 'buildRunPorts supplies the port').toBe('function')
+
+    const observed = new Promise<{ code?: string; message: string }>((resolve) => {
+      process.once('warning', (warning: Error & { code?: string }) => {
+        resolve({ code: warning.code, message: warning.message })
+      })
+    })
+    ports.onSubscriberFault?.('live-stream-subscriber-detached', 'live-frame subscriber threw during delivery and was detached')
+    const warning = await observed
+    expect(warning.code).toBe('live-stream-subscriber-detached')
+    expect(warning.message).toBe('live-frame subscriber threw during delivery and was detached')
+  })
+
+  it('THE CROSSING CELL: assembleCliRun carries the port onto the RunConfig the shell reads', async () => {
+    const configDir = realpathSync(mkdtempSync(join(tmpdir(), 'run-assembly-fault-')))
+    const runId = 'r_assembly-fault'
+    const assembly = await assembleCliRun({
+      runId,
+      executionContext: 'local-headless' as never,
+      configDir,
+      knowledgeRoot: join(configDir, 'knowledge'),
+      ports: buildRunPorts({ configDir, runId }),
+      confirmPausedMs: () => 0,
+      maskingContext: {} as never,
+      members: [],
+      executor: (() => { throw new Error('unreachable in this cell') }) as never,
+      configDigests: { config: 'c', source: 's' } as never,
+      product: 'fault-product',
+      warn: () => { /* no fold in this cell */ },
+    })
+    expect(typeof assembly.config.ports?.onSubscriberFault, 'carried across run-assembly.ts:175').toBe('function')
   })
 })

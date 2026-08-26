@@ -872,3 +872,79 @@ describe('shell.ts threads the end-of-stream notification onto the real RunSessi
     await session.done
   })
 })
+
+describe('shell.ts forwards a SUBSCRIBER fault to the host port, off the run bus (403-13 · WR-06)', () => {
+  it('a subscriber that throws is reported on ports.onSubscriberFault, detached, and the runWarning count is unchanged', async () => {
+    let push: ((frame: LiveFrame) => void) | undefined
+    const capability: LiveStreamCapability = {
+      kind: 'cdp-screencast',
+      async start(onFrame) { push = onFrame },
+      async ack() { /* not this cell's subject */ },
+      async stop() { push = undefined },
+    }
+    let markRegistered: () => void = () => {}
+    const registered = new Promise<void>((resolve) => { markRegistered = resolve })
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+
+    const log: RunEventEnvelope[] = []
+    const faults: [string, string][] = []
+    const config: RunConfig = {
+      runId: 'run-403-13-subscriber-fault' as RunConfig['runId'],
+      scope: { tier: 'suite', key: 'live-view' },
+      executionContext: 'local-headless',
+      buildOrdinal: 1,
+      configDigests: { suiteConfigDigest: 'suite-d', testConfigDigest: 'test-d' },
+      members: [{ testId: 'a', name: 'the watched member', filePath: 'a.test.ts' }],
+      executor: async (member, ctx: MemberTestRunContext): Promise<TestResult> => {
+        ctx.registerLiveStream?.(capability)
+        markRegistered()
+        await held
+        return { name: member.name, filePath: member.filePath, status: 'passed', steps: [], duration: 1 }
+      },
+      ports: {
+        handoffStore: { async save(_handoff: CompletedRunHandoff) { /* not this cell's subject */ } } as HandoffStorePort,
+        eventLog: { append(envelope) { log.push(envelope) }, read(fromSeq) { return log.filter((e) => e.seq >= fromSeq) } } as EventLogPort,
+        onSubscriberFault: (code, message) => { faults.push([code, message]) },
+      },
+    }
+
+    const session = startRun(config)
+    await registered
+    let throwerCalls = 0
+    const thrower = session.subscribeFrames(0, () => {
+      throwerCalls += 1
+      throw new Error('viewer exploded inside onFrame')
+    })
+    const good: number[] = []
+    const witness = session.subscribeFrames(0, (f) => { good.push(f.id) })
+    expect(thrower, 'the live handle is subscribable').toBeDefined()
+    expect(witness).toBeDefined()
+    for (let tick = 0; tick < 20 && push === undefined; tick++) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+
+    const runWarningsBefore = log.filter((e) => e.type === 'runWarning').length
+    push?.({ id: 1, bytes: new Uint8Array([0xff, 0xd8, 0xff]), metadata: { width: 320, height: 240 } })
+    witness?.ack(1)
+    expect(good, 'the witness: a real run delivered the faulting frame').toEqual([1])
+    expect(throwerCalls, 'the thrower really was invoked once').toBe(1)
+
+    // (a) the fault reached the HOST port, by name, with the hub's own message.
+    expect(faults, 'the fault reaches ports.onSubscriberFault').toEqual([
+      ['live-stream-subscriber-detached', 'live-frame subscriber threw during delivery and was detached'],
+    ])
+    // (b) two-sided: the durable log gained ZERO runWarning envelopes from the faulting delivery.
+    const runWarningsAfter = log.filter((e) => e.type === 'runWarning').length
+    expect(runWarningsAfter, `runWarning count before=${runWarningsBefore} after=${runWarningsAfter}`).toBe(runWarningsBefore)
+
+    // The detach behaviour 403-09 verified is unchanged: the thrower is gone, the witness carries on.
+    push?.({ id: 2, bytes: new Uint8Array([0xff, 0xd8, 0xff]), metadata: { width: 320, height: 240 } })
+    witness?.ack(2)
+    expect(throwerCalls, 'the throwing subscriber was detached and is not called again').toBe(1)
+    expect(good).toEqual([1, 2])
+
+    release()
+    await session.done
+  })
+})
