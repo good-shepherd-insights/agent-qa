@@ -149,7 +149,7 @@ function chipView(stage: PostProcessingStage, read: ReadBody): PostProcessingChi
  * The read, as two chips — or as the refusal that stopped there being any.
  *
  * A REFUSAL IS ITS OWN STATE (D-23). The 399.1 render contract says `refused` is distinct from
- * `failed`, and both are distinct from "not started yet". Collapsing an unreadable store into
+ * `failed`, and neither of them is "not started yet" either. Collapsing an unreadable store into
  * `pending` would tell a person their chain is queued when in fact this build cannot read the queue
  * — which is the one reading that makes them wait instead of acting.
  */
