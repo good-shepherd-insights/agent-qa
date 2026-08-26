@@ -136,6 +136,15 @@ const MARKER_CENSUS: Readonly<Record<string, 'consumer' | 'carrier' | 'producer'
   'packages/schema/src/authoring/draft-receipt.ts': 'carrier',
   'packages/runner/src/run/ports.ts': 'carrier',
   'packages/runner/src/run/handoff-assembly.ts': 'carrier',
+  // 2026-08-26 (404-01, D-10): the shell JOINED this census with its subject. The post-verdict step
+  // the shell awaits between `finalize` and `runFinished` takes both markers on its input, so the
+  // shell spreads them out of `RunConfig` onto that call. It decides NOTHING with them — it neither
+  // reads a marker to gate a table nor mints one onto a run — it moves them from the run's config
+  // into the step's input, which is what `carrier` names. The consumer stays exactly one
+  // (`run-outcomes.ts`); the skip those markers eventually drive inside the step is 404-04's, and
+  // when it lands the step's own file joins as a second CONSUMER — which this census will demand
+  // be declared, deliberately.
+  'packages/runner/src/run/shell.ts': 'carrier',
   'packages/agent/src/functions/ops/runs-start.ts': 'carrier',
   'packages/agent/src/functions/ops/runs-get.ts': 'carrier',
   'packages/agent/src/jobs/kinds.ts': 'carrier',
