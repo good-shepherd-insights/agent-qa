@@ -572,7 +572,14 @@ describe('JOBQ-06 — the structural halves', () => {
     expect(source.match(/runPostRunTail\(/gu) ?? []).toHaveLength(2)
     expect(source.match(/runVerdictFirstCurationTail\(/gu) ?? []).toHaveLength(2)
     expect(source.match(/postRunTail\.enqueue\(\)/gu) ?? []).toHaveLength(2)
-    expect(source.match(/postRunTail\.drain\(\)/gu) ?? []).toHaveLength(2)
+    // 404-01 (D-10): both drains now PUMP UNDER THE LEASE the shell's post-verdict step already
+    // acquired. The pin follows the call shape rather than loosening to `drain(`, because a site
+    // that went back to a bare `drain()` would be a site consulting the writer lease a second time
+    // — answered `held` by its own process, handing the chain off to nobody (Pitfall 3).
+    expect(
+      source.match(/postRunTail\.drain\(\{ lease: postVerdict\.takeAcquiredLease\(\) \}\)/gu) ?? [],
+    ).toHaveLength(2)
+    expect(source.match(/postRunTail\.drain\(\)/gu) ?? []).toHaveLength(0)
     expect(source.match(/postRunTail\.finish\(/gu) ?? []).toHaveLength(2)
     // The v51 per-site tail is named at neither site any more (388-02's extraction).
     expect(source.match(/runCurationTail\(/gu) ?? []).toHaveLength(0)
