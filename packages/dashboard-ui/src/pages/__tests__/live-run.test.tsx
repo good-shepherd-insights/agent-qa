@@ -766,6 +766,38 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     })
   })
 
+  it('(D) a retry answered slower than the interval is KEPT: a screencast on call 2 embeds, and the timer does not re-ask over it', async () => {
+    let ordinal = 0
+    fetchLiveUrlMock.mockImplementation(async () => {
+      ordinal += 1
+      if (ordinal === 2) {
+        await new Promise((resolve) => { setTimeout(resolve, NO_STREAM_RETRY_MS + 1) })
+        return {
+          liveUrl: 'http://x/live/r1#v1.a.b',
+          expiresAt: Date.now() + TTL_MS,
+          handle: 0,
+          stream: { kind: 'cdp-screencast' as const },
+        }
+      }
+      return noneAnswer()
+    })
+    await mount()
+    await open()
+    await emit(runStarted([0, 1]), testStarted(1, 'the live member', 1))
+    await advance(NO_STREAM_RETRY_MS)
+    const whileSlow = settled()
+    await advance(NO_STREAM_RETRY_MS)
+    const atNextTick = settled()
+    await advance(2)
+    const afterAnswer = { ...settled(), iframes: qa('iframe').length }
+
+    expect({ whileSlow, atNextTick, afterAnswer }).toEqual({
+      whileSlow: { state: 'waiting', text: 'attaching to the live view...', calls: 2 },
+      atNextTick: { state: 'waiting', text: 'attaching to the live view...', calls: 2 },
+      afterAnswer: { state: 'embedded', text: undefined, calls: 2, iframes: 1 },
+    })
+  })
+
   it('a `none` from a member whose browser is not up yet is a NOT-YET, and the pane keeps asking', async () => {
     fetchLiveUrlMock.mockResolvedValue({
       liveUrl: 'http://x/live/r1#v1.a.b',

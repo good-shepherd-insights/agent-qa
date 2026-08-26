@@ -125,14 +125,19 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
   // Every mint carries the token of the request that asked for it. A handle switch mid-flight would
   // otherwise let a stale answer paint over the newer one.
   const requestRef = useRef(0)
+  // Whether the newest mint has answered. The not-yet poll reads it so a door slower than the
+  // retry interval is not asked again — a new token would discard the answer that was coming.
+  const inFlightRef = useRef(false)
 
   const mintFor = useCallback(
     (nextHandle: number) => {
       const token = requestRef.current + 1
       requestRef.current = token
+      inFlightRef.current = true
       fetchLiveUrl(runId, nextHandle)
         .then((result) => {
           if (requestRef.current !== token) return
+          inFlightRef.current = false
           mintedAtRef.current = Date.now()
           ttlRef.current = Math.max(0, result.expiresAt - Date.now())
           setErrorWord(undefined)
@@ -154,6 +159,7 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
         })
         .catch((error: unknown) => {
           if (requestRef.current !== token) return
+          inFlightRef.current = false
           mintedAtRef.current = undefined
           ttlRef.current = undefined
           setMint(undefined)
@@ -180,6 +186,7 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
       // Nothing to mint for a run that is over, and a token minted now would outlive the thing it
       // addresses. The frame comes down with it.
       requestRef.current += 1
+      inFlightRef.current = false
       mintedAtRef.current = undefined
       ttlRef.current = undefined
       setMint(undefined)
@@ -208,11 +215,15 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
         // The cap is terminal: an answer still in flight — `none` or a late capability alike — is
         // discarded, the same terminal-`no-stream` acceptance stated above this effect.
         requestRef.current += 1
+        inFlightRef.current = false
         setGaveUpWaiting(true)
         setPreviewState('no-stream')
         return
       }
       setRetryTick((tick) => tick + 1)
+      // An unanswered mint still counts toward the cap, but it is not re-asked: a fresh token would
+      // discard the answer on its way, and the answer itself moves the pane when it lands.
+      if (inFlightRef.current) return
       mintFor(handle)
     }, NO_STREAM_RETRY_MS)
     return () => { clearTimeout(timer) }
