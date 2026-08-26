@@ -3,6 +3,8 @@ import type {
   AgentAskResult,
   ClauseReceiptStatus,
   ChatSessionEvent,
+  PostProcessingDisposition,
+  PostProcessingStatus,
   RunEventEnvelope,
   RunServiceReadiness,
   RunsLiveUrlResult,
@@ -1856,4 +1858,290 @@ export function subscribeToChatSessionEvents(
   })
 
   return source
+}
+
+// ---------------------------------------------------------------------------
+// Post-processing chips: one read, a poll floor, and a push channel that only triggers
+//
+// Phase 404-07 · LIFE-03 / LIFE-04, D-16 / D-17 / D-18 / D-22 / D-23.
+// ---------------------------------------------------------------------------
+
+/**
+ * The poll floor while any chip is still moving (D-18).
+ *
+ * A FLOOR AND NOT AN OPTIMISATION. Three of the four postures a chain can be in emit no chip events
+ * into this process at all — a daemon-drained run (`handedOff`), a run drained later by somebody
+ * else (`detached`), and a CLI-launched run opened in a dashboard that was not the drainer. For all
+ * three, this interval is the ONLY thing that ever moves a chip. The push channel below is what
+ * makes the fourth posture feel immediate; it is not what makes any of them correct.
+ */
+export const POST_PROCESSING_POLL_MS = 3000
+
+/**
+ * The six ratified chip events, taken from the schema's own list rather than typed out here.
+ *
+ * A HAND-WRITTEN LIST WOULD BE A SECOND VOCABULARY. `EventSource` dispatches by name, so a name
+ * this file spelled slightly differently from the bus would simply never fire, and the page would
+ * fall back to the poll floor while every test still passed. Filtering the ratified list by stage
+ * prefix means a seventh chip event minted later is listened for the day it exists.
+ */
+export const POST_PROCESSING_CHIP_EVENTS: readonly string[] = RUN_EVENT_TYPES.filter(
+  (type) => type.startsWith('analysis') || type.startsWith('curation'),
+)
+
+/**
+ * The frames the watcher listens for: the six chip ticks plus the door's opening whole-state frame.
+ *
+ * `snapshot` is deliberately NOT a bus event type (404-05, T-404-03), and it is listened for here
+ * on exactly the same terms as the others — as a TRIGGER. Its body is the read route's body and
+ * would be perfectly paintable, which is precisely why this client does not paint it: two paths to
+ * a chip is two spellings of the projection, free to disagree the first time one of them changes.
+ */
+const POST_PROCESSING_STREAM_EVENTS: readonly string[] = [...POST_PROCESSING_CHIP_EVENTS, 'snapshot']
+
+/** The last failure the run's record holds for one stage — the producer's masked, bounded text. */
+export interface PostProcessingStageFailure {
+  readonly error?: string
+  readonly willRetry?: boolean
+}
+
+/**
+ * Per-stage failure text as the route folds it.
+ *
+ * PRESENT-AND-POSSIBLY-EMPTY means the record was read and holds no failure line; the whole key
+ * ABSENT means the events read refused (404-05 D-1). Two different facts, two different shapes —
+ * the projection reads the second as "nobody recorded a reason", which is true either way, but the
+ * distinction survives to anything that later wants it.
+ */
+export interface PostProcessingFailures {
+  readonly analysis?: PostProcessingStageFailure
+  readonly curation?: PostProcessingStageFailure
+}
+
+/**
+ * What one read of the post-processing door produced.
+ *
+ * A CLOSED UNION WITH A REFUSAL ARM, because D-23 forbids the alternative. When chip truth cannot
+ * be read — the op unbound on this host, a job-store schema mismatch, the route down — the honest
+ * answer is the refusal's own name, not an all-pending body. A shape that could only say "here are
+ * your chips" would have forced this client to invent four `pending`s out of a 503.
+ */
+export type PostProcessingRead =
+  | {
+      readonly kind: 'read'
+      readonly status: PostProcessingStatus
+      readonly disposition?: PostProcessingDisposition
+      readonly failures?: PostProcessingFailures
+    }
+  | { readonly kind: 'unavailable'; readonly error: string; readonly reason?: string }
+
+/**
+ * Has this chain finished, whatever became of it? The server's rule, spelled once more.
+ *
+ * The door publishes the same predicate, but it publishes it in `dashboard-server` — a package this
+ * bundle does not and must not depend on. So the rule is re-stated here from the same two clauses
+ * and pinned by cells that feed it the door's own shapes: the notification row is the chain's
+ * terminal receipt and outranks the chips, and absent the row, both chips settled says the same
+ * thing one layer down.
+ */
+export function isPostProcessingTerminal(status: PostProcessingStatus): boolean {
+  const settled = (chip: PostProcessingStatus['chips']['analysis']): boolean =>
+    chip === 'done' || chip === 'failed'
+  if (status.notification !== undefined) return true
+  return settled(status.chips.analysis) && settled(status.chips.curation)
+}
+
+/** The dedicated live channel for one run's chain. One spelling, one door. */
+function postProcessingStreamUrl(runId: string): string {
+  return `${API_BASE}/api/runs/${encodeURIComponent(runId)}/post-processing/stream`
+}
+
+/** The joined read: the op result, the run's posture and its recorded failure lines. */
+function postProcessingReadUrl(runId: string): string {
+  return `${API_BASE}/api/runs/${encodeURIComponent(runId)}/post-processing`
+}
+
+function readString(source: Record<string, unknown>, key: string): string | undefined {
+  const value = source[key]
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+/**
+ * Read the chain's durable state once. NEVER REJECTS.
+ *
+ * A THROWING READ WOULD BECOME A BLANK CHIP AREA at the first hiccup, because the only caller is a
+ * poll whose whole job is to keep asking. Every failure mode — a named refusal from the door, an
+ * unclassified 500, a body this build cannot read, a socket that never connected — resolves to the
+ * `unavailable` arm carrying a name a person can act on, which is what D-23 asks for.
+ *
+ * THE BODY IS TAKEN STRUCTURALLY AND NOT RESHAPED. `status` is forwarded as the op minted it;
+ * `disposition` and `failures` are copied only when present, so `failures: {}` and no `failures`
+ * key stay two distinguishable answers on this side of the wire too.
+ */
+export async function fetchPostProcessing(runId: string): Promise<PostProcessingRead> {
+  let res: Response
+  try {
+    res = await fetch(postProcessingReadUrl(runId))
+  } catch {
+    return { kind: 'unavailable', error: 'route_unreachable' }
+  }
+
+  if (!res.ok) {
+    const payload = await parseErrorPayload(res)
+    const record = payload ?? {}
+    const error = readString(record, 'error') ?? 'post_processing_unavailable'
+    const reason = readString(record, 'reason')
+    return { kind: 'unavailable', error, ...(reason === undefined ? {} : { reason }) }
+  }
+
+  let body: unknown
+  try {
+    body = await res.json()
+  } catch {
+    return { kind: 'unavailable', error: 'malformed_body' }
+  }
+  if (body === null || typeof body !== 'object') {
+    return { kind: 'unavailable', error: 'malformed_body' }
+  }
+
+  const record = body as Record<string, unknown>
+  const status = record.status
+  if (status === null || typeof status !== 'object') {
+    return { kind: 'unavailable', error: 'malformed_body' }
+  }
+
+  const disposition = record.disposition
+  const failures = record.failures
+  return {
+    kind: 'read',
+    status: status as PostProcessingStatus,
+    ...(typeof disposition === 'string'
+      ? { disposition: disposition as PostProcessingDisposition }
+      : {}),
+    ...(failures !== undefined && failures !== null && typeof failures === 'object'
+      ? { failures: failures as PostProcessingFailures }
+      : {}),
+  }
+}
+
+/** What {@link watchPostProcessing} hands back: every read, and only reads. */
+export interface WatchPostProcessingOptions {
+  /**
+   * Called with the result of EVERY read — the first one, every poll, and every re-read a frame
+   * triggered. It is never called with a frame's own bytes, and there is no callback that would.
+   */
+  readonly onRead: (read: PostProcessingRead) => void
+}
+
+/**
+ * Watch one run's post-processing chain: read it now, poll it while it moves, and let the push
+ * channel say "read again" whenever this process is the one draining it.
+ *
+ * THE PUSH IS A TRIGGER, NEVER A PAINT (D-17). Every frame — chip tick or snapshot — calls
+ * `fetchPostProcessing` and hands `onRead` THAT result. This is 388 D-14 applied structurally: a
+ * chip can never show a state the store did not say, so "the chips render correctly from durable
+ * state alone" is true by construction rather than by a reconciliation pass nobody runs.
+ *
+ * THE SOURCE IS CONSTRUCTED AT MOST ONCE, and `streamState` is why that is structural rather than a
+ * flag somebody remembers to check: it moves `unopened → open → closed` and never backwards, so
+ * there is no sequence of reads that can produce a second `EventSource`.
+ *
+ * THE OPEN DECISION IS RE-EVALUATED ON EVERY READ, and that is not belt-and-braces. The dedicated
+ * stream only ever carries THIS process's own drain (404-05 D-16) — the door itself answers 204 for
+ * a run that reads `handedOff` or `detached`. So it is worth opening exactly while this process may
+ * still turn out to be the drainer: `disposition: 'drained'`, or no disposition yet. And "no
+ * disposition yet" is precisely where the D-13 flow ARRIVES: the live page moves the viewer on the
+ * `verdict` envelope, which is emitted BEFORE `runFinished` is durable, so the first read of a
+ * freshly-finished run routinely lands with the posture still unwritten. A client that decided once,
+ * on the first read, would either never open for the ordinary case or open for chains it will never
+ * hear a frame about. Once a read says `handedOff`/`detached` — or says the chain is over — the
+ * source is closed for good and the poll is the channel.
+ *
+ * BOTH CHANNELS STOP AT TERMINAL, and a return visit to a finished run is exactly one read: no
+ * interval, no socket, nothing to clean up but the disposer's own no-ops.
+ */
+export function watchPostProcessing(runId: string, opts: WatchPostProcessingOptions): () => void {
+  let disposed = false
+  let streamState: 'unopened' | 'open' | 'closed' = 'unopened'
+  let source: EventSource | undefined
+  let interval: ReturnType<typeof setInterval> | undefined
+  let inFlight = false
+  let coalesced = false
+
+  const stopPolling = (): void => {
+    if (interval === undefined) return
+    clearInterval(interval)
+    interval = undefined
+  }
+
+  const startPolling = (): void => {
+    if (interval !== undefined || disposed) return
+    interval = setInterval(() => { void read() }, POST_PROCESSING_POLL_MS)
+  }
+
+  /** Shuts the channel for the watcher's LIFE — `closed` is terminal in `streamState`. */
+  const closeStream = (): void => {
+    source?.close()
+    source = undefined
+    streamState = 'closed'
+  }
+
+  const openStream = (): void => {
+    if (streamState !== 'unopened' || disposed) return
+    streamState = 'open'
+    const opened = new EventSource(postProcessingStreamUrl(runId))
+    source = opened
+    for (const type of POST_PROCESSING_STREAM_EVENTS) {
+      // The handler takes NO argument. There is nowhere for the frame's bytes to go.
+      opened.addEventListener(type, () => { void read() })
+    }
+  }
+
+  const read = async (): Promise<void> => {
+    if (disposed) return
+    if (inFlight) {
+      // A frame that lands mid-read becomes ONE follow-up read, however many arrive: the door's
+      // answer is whole-state, so N re-reads for N ticks would ask the same question N times.
+      coalesced = true
+      return
+    }
+
+    inFlight = true
+    let result: PostProcessingRead
+    try {
+      result = await fetchPostProcessing(runId)
+    } finally {
+      inFlight = false
+    }
+    if (disposed) return
+
+    if (result.kind === 'unavailable') {
+      // Retry at the poll cadence and NEVER tighter (T-404-04), and open nothing: a door that
+      // cannot answer a read is not a door worth holding a socket against.
+      startPolling()
+    } else if (isPostProcessingTerminal(result.status)) {
+      stopPolling()
+      closeStream()
+    } else {
+      startPolling()
+      if (result.disposition === undefined || result.disposition === 'drained') openStream()
+      else closeStream()
+    }
+
+    opts.onRead(result)
+
+    if (coalesced) {
+      coalesced = false
+      void read()
+    }
+  }
+
+  void read()
+
+  return () => {
+    disposed = true
+    coalesced = false
+    stopPolling()
+    closeStream()
+  }
 }

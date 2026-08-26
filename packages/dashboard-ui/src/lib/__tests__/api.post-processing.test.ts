@@ -357,8 +357,10 @@ describe('watchPostProcessing reads once and decides both channels from that rea
     source.emit('curationStarted', {})
     await settle()
     await settle()
-    expect(urls.length - before).toBeLessThanOrEqual(2)
-    expect(urls.length - before).toBeGreaterThanOrEqual(1)
+    // EXACTLY TWO, and the number is the claim: the first frame starts a read, the second and
+    // third land while it is in flight and fold into ONE follow-up. Three reads would be fan-out;
+    // one would mean a tick arriving mid-read was silently dropped.
+    expect(urls.length - before).toBe(2)
     dispose()
   })
 
