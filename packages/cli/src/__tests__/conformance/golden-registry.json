@@ -749,7 +749,7 @@
       "classifies": true,
       "id": "runs.digest",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "b7f0d2270b1f73960a5f076138fe2cfdb6ced98b02b4bd4e5207e863b076ed04",
+      "outputSchemaDigest": "a7d095d3c144e00ec60c4a534ac082da95440dfd10dcfabf74200738fc55f5ae",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_get_run_digest"
@@ -849,7 +849,7 @@
       "classifies": true,
       "id": "runs.postprocessing",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "195eea3bd3da1c59083c3a3d88c6df50c8e9b8f42bc66d8016eaa5820bd59898",
+      "outputSchemaDigest": "08fae5020a0eb75ee38875f561f7518c941b32fef8fcba20d9f33c14bf3e5183",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"

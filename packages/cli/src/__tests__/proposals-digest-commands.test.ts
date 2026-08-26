@@ -281,7 +281,7 @@ describe('agent-qa digest (D-17, the on-demand channel)', () => {
 
     const parsed = JSON.parse(invocation.stdout) as RunDigest
     expect(parsed.runId).toBe(NEWER_RUN)
-    expect(parsed.chain).toEqual({ analysis: 'pending', curation: 'pending', issues: 'reserved' })
+    expect(parsed.chain).toEqual({ analysis: 'pending', curation: 'pending' })
     expect(parsed.pendingProposalCount).toBe(0)
   })
 

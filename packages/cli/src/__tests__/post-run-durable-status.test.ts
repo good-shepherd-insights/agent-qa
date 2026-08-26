@@ -72,7 +72,7 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
       // Before anything is queued, the honest answer is the all-pending projection — the control
       // that keeps every later reading a fact about a row rather than about an absence.
       expect((await readStatusThroughTheOp(paths.agentQaRoot, paths.knowledgeRoot, RUN_ID)).chips)
-        .toEqual({ analysis: 'pending', curation: 'pending', issues: 'reserved' })
+        .toEqual({ analysis: 'pending', curation: 'pending' })
 
       const tail = await runRealTail({
         agentQaRoot: paths.agentQaRoot,
@@ -96,7 +96,7 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
       // `post-run-daemon-chain.test.ts` is what holds in place.
       expect(tail.info).toEqual([
         'post-processing — analysis: pending (daemon will drain) · curation: pending'
-        + ' (deferred to a later local run) · issues: reserved'
+        + ' (deferred to a later local run)'
         // 391 D-17: the handed-off tail completed no analyze-run in-process, so the exit line
         // carries the pending-proposal count and the exact fetch command for the digest the
         // daemon's chain will fill in. Nothing is waiting on a human in this fixture, and the
@@ -117,12 +117,11 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
         paths.knowledgeRoot,
         RUN_ID,
       )
-      // Analysis is durably terminal; curation is durably claimed by a live host; the triage slot
-      // is structurally reserved. Three different words, from three different rows, in one read.
+      // Analysis is durably terminal; curation is durably claimed by a live host. Two different
+      // words, from two different rows, in one read.
       expect(midChain.chips).toEqual({
         analysis: 'done',
         curation: 'running',
-        issues: 'reserved',
       })
       expect('notification' in midChain).toBe(false)
 
@@ -148,7 +147,6 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
       expect(afterExit.chips).toEqual({
         analysis: 'done',
         curation: 'done',
-        issues: 'reserved',
       })
       // The attached record is the SAME record the terminal transaction wrote, compared whole:
       // a projection that assembled a plausible notification of its own would fail here.

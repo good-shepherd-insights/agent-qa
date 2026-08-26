@@ -155,7 +155,7 @@ function digestOutput(analysis: AnalysisGetOutput = analysisOutput()): RunDigest
   return {
     runId,
     verdictClusters: analysis.clusters,
-    chain: { analysis: 'done', curation: 'pending', issues: 'reserved' },
+    chain: { analysis: 'done', curation: 'pending' },
     proposalsMintedThisRun: [],
     pendingProposalCount: 2,
     // The op computes this; a fixture that carried `false` here would be pinning the tail's
@@ -166,7 +166,7 @@ function digestOutput(analysis: AnalysisGetOutput = analysisOutput()): RunDigest
     lines: [
       `digest — ${runId}`,
       ...(block === '' ? [] : [block]),
-      'chain — analysis: done · curation: pending · issues: reserved',
+      'chain — analysis: done · curation: pending',
       'proposals — none minted this run · 2 pending overall',
       'candidates — 0 curated · 0 deprecated',
       'quarantine — 0 quarantined · 0 expired',
@@ -177,27 +177,26 @@ function digestOutput(analysis: AnalysisGetOutput = analysisOutput()): RunDigest
 function pendingStatus(): PostProcessingStatus {
   return {
     runId,
-    chips: { analysis: 'pending', curation: 'pending', issues: 'reserved' },
+    chips: { analysis: 'pending', curation: 'pending' },
   }
 }
 
 function doneStatus(): PostProcessingStatus {
   return {
     runId,
-    chips: { analysis: 'done', curation: 'pending', issues: 'reserved' },
+    chips: { analysis: 'done', curation: 'pending' },
   }
 }
 
 function terminalNotification(): RunNotification {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId,
     outcome: 'done',
     verdictSummary: { total: 3, byClass: { app_bug: 3 } },
     stages: {
       analysis: { status: 'done' },
       curation: { status: 'done', curated: 2, deprecated: 0 },
-      issues: { status: 'reserved' },
     },
   } as unknown as RunNotification
 }
@@ -310,7 +309,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
     expect(lines).toHaveLength(2)
     // The exit line first — untouched vocabulary, and NO pointer on this leg: the digest
     // itself is one line down, so a fetch command would be noise (the D-17 either/or).
-    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · issues: reserved')
+    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending')
     expect(lines[0]).not.toContain('agent-qa digest')
     expect(lines[0]).not.toContain('pending overall')
 
@@ -396,7 +395,7 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
 
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toHaveLength(2)
-    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending · issues: reserved')
+    expect(lines[0]).toBe('post-processing — analysis: done · curation: pending')
     expect(lines[1]).not.toContain('analysis — ')
     expect(lines[1]).toContain('2 pending overall')
   })
@@ -435,7 +434,7 @@ describe('the extended exit line — everything else gets count + command (D-17,
     expect(tail.report().drain).toBe('detached')
     const lines = h.info.mock.calls.map(([message]) => String(message))
     expect(lines).toEqual([
-      'post-processing — analysis: pending · curation: pending · issues: reserved'
+      'post-processing — analysis: pending · curation: pending'
       + ` · proposals: 2 pending · digest: ${FETCH_COMMAND}`,
     ])
     // The digest IS read on this leg — the count on the line is its answer, not a guess — and

@@ -296,14 +296,13 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     expect(notifications).toHaveLength(1)
     expect(notifications[0]?.runId).toBe(RUN_ID)
     expect(notifications[0]?.payload).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: RUN_ID,
       outcome: 'done',
       verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },
       stages: {
         analysis: { status: 'done' },
         curation: { status: 'done', curated: 1, deprecated: 0 },
-        issues: { status: 'reserved' },
       },
     })
   })
@@ -400,7 +399,6 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       stages: {
         analysis: { status: 'done' },
         curation: { status: 'failed' },
-        issues: { status: 'reserved' },
       },
     })
     // No counts on a stage that never committed a bundle: zeros would claim it curated
@@ -455,7 +453,6 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       stages: {
         analysis: { status: 'done' },
         curation: { status: 'failed' },
-        issues: { status: 'reserved' },
       },
     })
     // No counts on a stage that committed no bundle: `0 curated` would be a claim about work
@@ -472,7 +469,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       { runId: RUN_ID },
       CALLER,
     ) as PostProcessingStatus
-    expect(status.chips).toEqual({ analysis: 'done', curation: 'failed', issues: 'reserved' })
+    expect(status.chips).toEqual({ analysis: 'done', curation: 'failed' })
   })
 
   // WR-03, the ACCEPT leg. A gate that rejected everything would satisfy the case above just as
@@ -593,7 +590,6 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       stages: {
         analysis: { status: 'failed' },
         curation: { status: 'done', curated: 1, deprecated: 0 },
-        issues: { status: 'reserved' },
       },
       verdictSummary: { total: 0, byClass: {} },
     })

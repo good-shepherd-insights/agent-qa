@@ -26,7 +26,7 @@ import type { Verdict } from '../verdict/verdict'
  * last version's shape then fails to typecheck at its construction site, which is where the
  * mistake is, instead of at the reader that could only report it as corrupt bytes.
  */
-export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 1
+export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 2
 
 /** Whether the chain as a whole finished clean. Every stage done ⇒ `done` (D-12). */
 export type RunNotificationOutcome = 'done' | 'failed'
@@ -47,6 +47,22 @@ export interface RunNotificationVerdictSummary {
   byClass: Partial<Record<Verdict['class'], number>>
 }
 
+/**
+ * The two stages the chain actually runs (narrowed to two in v2 — Phase 404, D-01).
+ *
+ * A stage record carries its STATUS and, for curation, the counts it committed. It carries NO
+ * failure text, and that absence is a decision rather than an omission (404 D-21, T-404-01):
+ * this row is stamped by whichever process drains the chain, INCLUDING the daemon's pump, which
+ * folds with no run masking context at all (388 D-06's `no-masker` posture). A reason stored
+ * here therefore could not be guaranteed masked at the moment it was written, and this row is
+ * read by surfaces that render it directly — so a secret that reached the column would reach a
+ * screen. The masked, bounded reason (`CHIP_ERROR_MAX_LENGTH`) lives instead on the in-process
+ * `*Failed` chip envelope, which is itself durable (it is appended to the run's `events.jsonl`)
+ * and reaches the page through the read route's `runs.events` fold. A `failed` chip with no
+ * such envelope renders `failed` plus a posture-qualified "reason not recorded" line — never
+ * blank. The job store's own per-job failure-reason column is a pump-internal field and is not
+ * surfaced by this contract for the same masking reason.
+ */
 export interface RunNotificationStages {
   analysis: { status: RunNotificationStageStatus }
   /**
@@ -59,12 +75,6 @@ export interface RunNotificationStages {
     curated?: number
     deprecated?: number
   }
-  /**
-   * Structurally true while the issue engine is unbuilt (D-15): no triage job will run, so
-   * the honest answer is neither `pending` (something is coming) nor `done` (something
-   * happened). When the slot is filled, `reserved` simply stops being produced.
-   */
-  issues: { status: 'reserved' }
 }
 
 export interface RunNotification {
@@ -97,35 +107,97 @@ function isCount(value: unknown): boolean {
 }
 
 /**
- * The full-shape guard, checked by EXACT key set rather than by presence.
+ * The older-version migration seam, in the handoff loader's `HANDOFF_MIGRATIONS` idiom.
+ *
+ * Keyed by SOURCE version, one version-step per entry, so the next bump has a home instead of
+ * an `if` somewhere in the guard. Migration is READ-SIDE and in-memory: rows already in a
+ * user's `agent-jobs.db` are never rewritten in place, and the table's own PRAGMA
+ * `user_version` is unchanged by this bump — the column's bytes are what moved, not the
+ * schema of the table holding them. Both store readers call the guard below, so a reader
+ * racing a writer that still stamps the older shape sees the current shape either way.
+ */
+export const RUN_NOTIFICATION_MIGRATIONS: Record<number, (doc: unknown) => unknown> = {
+  /**
+   * v1 → v2 (Phase 404, D-01, 2026-08-26): the chain's stage set narrows to the two stages that
+   * actually run. Written as an ALLOW-LIST over the members this build reads rather than as a
+   * deletion of the member that left: a v1 row that was missing a stage migrates to a stage set
+   * that is missing it too, and is then refused BY NAME by the shape guard, instead of being
+   * quietly admitted because the one key we thought to delete was absent.
+   */
+  1: (doc) => {
+    const record = isRecord(doc) ? doc : {}
+    const stages = isRecord(record.stages) ? record.stages : {}
+    return {
+      ...record,
+      schemaVersion: 2,
+      stages: {
+        ...('analysis' in stages ? { analysis: stages.analysis } : {}),
+        ...('curation' in stages ? { curation: stages.curation } : {}),
+      },
+    }
+  },
+}
+
+/**
+ * The full-shape guard, checked by EXACT key set rather than by presence, with a
+ * migrate-older/reject-newer version walk in front of it (385 D-04; Phase 404 D-01).
  *
  * Presence checks admit a record carrying an extra field, and an extra field on a row several
  * surfaces render is exactly how a payload grows a member nobody declared. The sorted-key
  * comparison is the `CurationTailReceipt` idiom for the same reason.
+ *
+ * The version walk runs FIRST and only forwards: a record stamped older than this build walks
+ * the registry above one step at a time and is then checked against the CURRENT shape in full,
+ * so a migration that produced something malformed is refused here rather than travelling. A
+ * record stamped NEWER is refused by name — this build cannot know what a later contract means,
+ * and guessing is how a reader renders a field it does not understand.
  */
 export function guardRunNotification(value: unknown): RunNotification {
   if (!isRecord(value)) {
     throw new RunNotificationSchemaError('it is not an object')
   }
-  if (Object.keys(value).sort().join(',') !== 'outcome,runId,schemaVersion,stages,verdictSummary') {
+
+  const declared = value.schemaVersion
+  let migrated: Record<string, unknown> = value
+  if (
+    typeof declared === 'number' &&
+    Number.isInteger(declared) &&
+    declared < CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION
+  ) {
+    for (let from = declared; from < CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION; from += 1) {
+      const step = RUN_NOTIFICATION_MIGRATIONS[from]
+      if (step === undefined) break
+      const next = step(migrated)
+      if (!isRecord(next)) {
+        throw new RunNotificationSchemaError(
+          `migrating it from schemaVersion ${String(from)} produced no record`,
+        )
+      }
+      migrated = next
+    }
+  }
+
+  if (
+    Object.keys(migrated).sort().join(',') !== 'outcome,runId,schemaVersion,stages,verdictSummary'
+  ) {
     throw new RunNotificationSchemaError(
-      `its field set is ${JSON.stringify(Object.keys(value).sort())}`,
+      `its field set is ${JSON.stringify(Object.keys(migrated).sort())}`,
     )
   }
-  if (value.schemaVersion !== CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION) {
+  if (migrated.schemaVersion !== CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION) {
     throw new RunNotificationSchemaError(
-      `it declares schemaVersion ${String(value.schemaVersion)}, and this build reads ` +
+      `it declares schemaVersion ${String(migrated.schemaVersion)}, and this build reads ` +
         String(CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION),
     )
   }
-  if (typeof value.runId !== 'string' || value.runId === '') {
+  if (typeof migrated.runId !== 'string' || migrated.runId === '') {
     throw new RunNotificationSchemaError('it names no run')
   }
-  if (value.outcome !== 'done' && value.outcome !== 'failed') {
-    throw new RunNotificationSchemaError(`${String(value.outcome)} is not a chain outcome`)
+  if (migrated.outcome !== 'done' && migrated.outcome !== 'failed') {
+    throw new RunNotificationSchemaError(`${String(migrated.outcome)} is not a chain outcome`)
   }
 
-  const summary = value.verdictSummary
+  const summary = migrated.verdictSummary
   if (!isRecord(summary) || !isCount(summary.total) || !isRecord(summary.byClass)) {
     throw new RunNotificationSchemaError('its verdict summary is not a summary')
   }
@@ -135,11 +207,11 @@ export function guardRunNotification(value: unknown): RunNotification {
     }
   }
 
-  const stages = value.stages
+  const stages = migrated.stages
   if (!isRecord(stages)) {
     throw new RunNotificationSchemaError('it reports no stages')
   }
-  if (Object.keys(stages).sort().join(',') !== 'analysis,curation,issues') {
+  if (Object.keys(stages).sort().join(',') !== 'analysis,curation') {
     throw new RunNotificationSchemaError(
       `its stage set is ${JSON.stringify(Object.keys(stages).sort())}`,
     )
@@ -158,10 +230,6 @@ export function guardRunNotification(value: unknown): RunNotification {
   if ('deprecated' in curation && !isCount(curation.deprecated)) {
     throw new RunNotificationSchemaError('its deprecated count is not a count')
   }
-  const issues = stages.issues
-  if (!isRecord(issues) || issues.status !== 'reserved') {
-    throw new RunNotificationSchemaError('its issues stage is not the reserved slot')
-  }
 
-  return value as unknown as RunNotification
+  return migrated as unknown as RunNotification
 }

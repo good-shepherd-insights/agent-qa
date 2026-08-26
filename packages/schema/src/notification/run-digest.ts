@@ -61,10 +61,11 @@ export interface RunDigestProposalRow {
 }
 
 /**
- * The chain's per-stage outcomes, in the ONE chip vocabulary (388 D-14/C13).
+ * The chain's per-stage outcomes, in the ONE chip vocabulary (388 D-14/C13; narrowed to two —
+ * Phase 404, D-01, 2026-08-26).
  *
- * The three chips are the `runs.postprocessing` values verbatim — not a synonym, not a
- * control-flow word — because three spellings of five words is the state in which the CLI and
+ * The two chips are the `runs.postprocessing` values verbatim — not a synonym, not a
+ * control-flow word — because two spellings of four words is the state in which the CLI and
  * the dashboard disagree about a row neither of them got wrong.
  *
  * `outcome` is present exactly once the chain wrote its terminal row, and it is a fact about
@@ -74,7 +75,6 @@ export interface RunDigestProposalRow {
 export interface RunDigestChainOutcomes {
   analysis: PostProcessingChipStatus
   curation: PostProcessingChipStatus
-  issues: PostProcessingChipStatus
   outcome?: RunNotificationOutcome
 }
 
@@ -163,12 +163,11 @@ export const RunDigestProposalRowSchema = z.object({
 
 /**
  * The chip enums are CONSTRUCTED from the exported vocabulary rather than respelled (C13), so a
- * fourth chip status cannot arrive with this contract still admitting three.
+ * fifth chip status cannot arrive with this contract still admitting four.
  */
 export const RunDigestChainOutcomesSchema = z.object({
   analysis: z.enum(POST_PROCESSING_CHIP_STATUSES),
   curation: z.enum(POST_PROCESSING_CHIP_STATUSES),
-  issues: z.enum(POST_PROCESSING_CHIP_STATUSES),
   outcome: z.enum(['done', 'failed']).optional(),
 }).strict() satisfies z.ZodType<RunDigestChainOutcomes>
 

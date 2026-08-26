@@ -69,14 +69,13 @@ function row(status: JobStatus, claimed = false): PostProcessingJobRow {
 }
 
 const NOTIFICATION: RunNotification = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   runId: RUN_ID,
   outcome: 'done',
   verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },
   stages: {
     analysis: { status: 'done' },
     curation: { status: 'done', curated: 3, deprecated: 1 },
-    issues: { status: 'reserved' },
   },
 }
 
@@ -175,7 +174,7 @@ const CHIP_BY_STATUS: Record<
 }
 
 describe('projectPostProcessingChips is total over the durable chain state (D-14)', () => {
-  it('maps EVERY job status, claimed and unclaimed, identically for all three stages', () => {
+  it('maps EVERY job status, claimed and unclaimed, identically for both stages', () => {
     const produced = new Set<PostProcessingChipStatus>()
 
     for (const [status, expected] of Object.entries(CHIP_BY_STATUS)) {
@@ -184,34 +183,32 @@ describe('projectPostProcessingChips is total over the durable chain state (D-14
         const label = `${status}${claimed ? ' (claimed)' : ''}`
         const only = row(status as JobStatus, claimed)
 
-        // Asserted per STAGE and not once, because the three differ only in what an ABSENCE
+        // Asserted per STAGE and not once, because the stages differ only in what an ABSENCE
         // says: a present row must read the same everywhere, and a projection that special-cased
-        // `issues` would satisfy a single-stage table forever.
+        // one chip would satisfy a single-stage table forever.
         expect(projectPostProcessingChips({ analyzeRun: only }).analysis, label).toBe(cell)
         expect(projectPostProcessingChips({ curateMemory: only }).curation, label).toBe(cell)
-        expect(projectPostProcessingChips({ triageIssues: only }).issues, label).toBe(cell)
         produced.add(cell)
       }
     }
-    // The two absences, folded into the SAME collection rather than asserted beside it, so the
+    // The absences, folded into the SAME collection rather than asserted beside it, so the
     // coverage claim below is about what the projection actually emits.
     const empty = projectPostProcessingChips(undefined)
-    produced.add(empty.analysis).add(empty.issues)
+    produced.add(empty.analysis).add(empty.curation)
 
     // Every member of the one vocabulary is reachable, derived on both sides: no member is
     // declared-but-unproducible, and no case below quietly stops exercising one.
     expect([...produced].sort()).toEqual([...POST_PROCESSING_CHIP_STATUSES].sort())
   })
 
-  it('reports pending/pending/reserved when the project holds no queue database at all', () => {
+  it('reports pending/pending when the project holds no queue database at all', () => {
     expect(projectPostProcessingChips(undefined)).toEqual({
       analysis: 'pending',
       curation: 'pending',
-      issues: 'reserved',
     } satisfies PostProcessingChips)
   })
 
-  it('reports the same triple from a database that holds none of this chain\'s rows', () => {
+  it('reports the same pair from a database that holds none of this chain\'s rows', () => {
     // The two absences answer identically ON PURPOSE and are asserted separately: a project
     // that never enqueued anything and a project whose queue serves other runs are the same
     // fact ABOUT THIS RUN, and a projection that distinguished them would be reporting on the
@@ -219,7 +216,6 @@ describe('projectPostProcessingChips is total over the durable chain state (D-14
     expect(projectPostProcessingChips({})).toEqual({
       analysis: 'pending',
       curation: 'pending',
-      issues: 'reserved',
     })
   })
 
@@ -234,14 +230,6 @@ describe('projectPostProcessingChips is total over the durable chain state (D-14
     expect(projectPostProcessingChips({ curateMemory: row('cancelled') }).curation).toBe('failed')
   })
 
-  it('maps a triage row LIKE THE OTHERS once one exists — reserved is an absence, not a kind', () => {
-    // D-04's rule has to survive the slot being filled. If `issues` were pinned to `reserved`
-    // by the KIND rather than by the absence of a row, the issue engine would land and the
-    // chip would keep reporting that nothing will run while a triage job ran.
-    expect(projectPostProcessingChips({ triageIssues: row('done') }).issues).toBe('done')
-    expect(projectPostProcessingChips({ triageIssues: row('queued', true) }).issues).toBe('running')
-    expect(projectPostProcessingChips({ triageIssues: row('failed') }).issues).toBe('failed')
-  })
 })
 
 describe('the runs.postProcessing op (D-14/D-15)', () => {
@@ -268,7 +256,7 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
 
     expect(status).toEqual({
       runId: RUN_ID,
-      chips: { analysis: 'done', curation: 'done', issues: 'reserved' },
+      chips: { analysis: 'done', curation: 'done' },
       notification: NOTIFICATION,
     })
   })
@@ -279,7 +267,7 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
     // learn to mean "not yet" — which is the state an absent key already says by itself.
     const status = await statusFor({ analyzeRun: row('queued', true) })
 
-    expect(status.chips).toEqual({ analysis: 'running', curation: 'pending', issues: 'reserved' })
+    expect(status.chips).toEqual({ analysis: 'running', curation: 'pending' })
     expect('notification' in status).toBe(false)
   })
 
@@ -288,7 +276,7 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
 
     expect(status).toEqual({
       runId: RUN_ID,
-      chips: { analysis: 'pending', curation: 'pending', issues: 'reserved' },
+      chips: { analysis: 'pending', curation: 'pending' },
     })
   })
 

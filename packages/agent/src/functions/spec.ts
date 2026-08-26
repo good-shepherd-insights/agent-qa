@@ -754,17 +754,21 @@ export interface PostProcessingJobRow {
 }
 
 /**
- * What one run's post-run chain has durably recorded, by member (Phase 388, D-14).
+ * What one run's post-run chain has durably recorded, by member (Phase 388, D-14; narrowed to
+ * the two chip stages — Phase 404, D-01, 2026-08-26).
  *
  * Every member is OPTIONAL, and each absence is a real, different situation: no analyze-run row
  * means nothing was ever enqueued for this run; no curate-memory row means the analysis has not
- * chained yet; no triage-issues row is the reserved slot (D-04/D-15). Padding any of them with a
- * synthetic row would erase exactly the distinction the projection reads.
+ * chained yet. Padding either of them with a synthetic row would erase exactly the distinction
+ * the projection reads.
+ *
+ * The chain's THIRD derived id is still passed to `readChain` (see the port below) and is still
+ * used by the tail's run-scoped drop-guard, but its absence is no longer a chip-side fact: there
+ * is no chip left to report it, so this state stops carrying a member for it.
  */
 export interface PostProcessingChainState {
   readonly analyzeRun?: PostProcessingJobRow
   readonly curateMemory?: PostProcessingJobRow
-  readonly triageIssues?: PostProcessingJobRow
   /** The chain-terminal record, once the terminal transaction wrote it (D-09). */
   readonly notification?: RunNotification
 }
@@ -790,8 +794,9 @@ export interface PostProcessingReaderPort {
   /** The id source THIS host's queue derives job ids with. */
   readonly idSource: JobIdSource
   /**
-   * Durable state for the three ids given, or `undefined` when this project holds no queue
-   * database at all.
+   * Durable state for the ids given, or `undefined` when this project holds no queue database
+   * at all. `ChainJobIds` stays three-wide — chain identity is the job-kind layer's, and the
+   * reader simply no longer reads a row for the id it has no chip for.
    *
    * `undefined` is a distinct answer from an empty state and both are honest: the first says
    * nothing has ever been enqueued here, the second says this chain's rows are not among the

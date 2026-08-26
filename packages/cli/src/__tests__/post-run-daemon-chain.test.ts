@@ -184,7 +184,6 @@ describePosix('a daemon killed mid-chain loses nothing (SC4, ANLZ-05 concurrency
             curated: FIXTURE_CURATION_COUNTS.curated,
             deprecated: FIXTURE_CURATION_COUNTS.deprecated,
           },
-          issues: { status: 'reserved' },
         },
       })
 

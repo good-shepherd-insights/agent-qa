@@ -557,7 +557,7 @@ describe('JOBQ-06 — the structural halves', () => {
       expect(scenario.unexpectedErrors).toEqual([])
       const suffix = tailSuffix(scenario.stderr, scenario.verdictScopedStderr)
       expect(lines(suffix)).toEqual([
-        'post-processing — analysis: pending · curation: pending · issues: reserved'
+        'post-processing — analysis: pending · curation: pending'
         // 389 D-12: nothing drained under --detach, so the line carries the fetch command.
         + ` · proposals: 0 pending · digest: ${digestFetchCommand(RUN_ID)}`,
       ])

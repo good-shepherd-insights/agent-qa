@@ -262,19 +262,17 @@ export const RunNotificationSchema = z.object({
       curated: z.number().int().nonnegative().optional(),
       deprecated: z.number().int().nonnegative().optional(),
     }).strict(),
-    issues: z.object({ status: z.literal('reserved') }).strict(),
   }).strict(),
 }).strict() satisfies z.ZodType<RunNotification>
 
 const PostProcessingChipsSchema = z.object({
   analysis: z.enum(POST_PROCESSING_CHIP_STATUSES),
   curation: z.enum(POST_PROCESSING_CHIP_STATUSES),
-  issues: z.enum(POST_PROCESSING_CHIP_STATUSES),
 }).strict() satisfies z.ZodType<PostProcessingChips>
 
 /**
- * The `runs.postProcessing` result: the three chips, plus the chain's one record once it
- * exists (Phase 388, D-14/D-15).
+ * The `runs.postProcessing` result: the two chips, plus the chain's one record once it
+ * exists (Phase 388, D-14/D-15; narrowed to two — Phase 404, D-01).
  *
  * `notification` is OPTIONAL rather than nullable because absence is the ordinary state of a
  * chain still in flight. A surface that had to distinguish `null` from missing would be

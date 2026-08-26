@@ -214,7 +214,6 @@ function renderDigestLines(digest: Omit<RunDigest, 'lines'>): string[] {
   lines.push(`chain — ${[
     `analysis: ${digest.chain.analysis}`,
     `curation: ${digest.chain.curation}`,
-    `issues: ${digest.chain.issues}`,
     ...(digest.chain.outcome === undefined ? [] : [`chain ${digest.chain.outcome}`]),
   ].join(DIGEST_SEPARATOR)}`)
 

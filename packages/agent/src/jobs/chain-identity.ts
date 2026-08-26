@@ -165,7 +165,6 @@ export function buildChainTerminalNotification(
     stages: {
       analysis: { status: analysisFailed ? 'failed' : 'done' },
       curation,
-      issues: { status: 'reserved' },
     },
   }
 }

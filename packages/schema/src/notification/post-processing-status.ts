@@ -1,22 +1,23 @@
-// THE post-processing chip vocabulary (Phase 388, D-14 / D-15).
+// THE post-processing chip vocabulary (Phase 388, D-14 / D-15; narrowed Phase 404, D-01).
 //
 // One exported closed union, in one place, because the vocabulary appears in three: the bus
 // chip events the in-process tail emits, the read op that projects durable job state, and
-// the CLI's exit summary line. Three spellings of five words is not a duplication a reviewer
+// the CLI's exit summary line. Three spellings of four words is not a duplication a reviewer
 // catches — it is the state in which the dashboard says "queued" while the CLI says
 // "pending" about the same row, and nothing is wrong with either of them.
 //
-// `reserved` is the member that is not in the spec's chip vocabulary. It exists because the
-// issues chip has to answer honestly while the triage slot is unfilled, and neither of the
-// spec's candidates is honest: `pending` says a job is coming and `done` says one happened.
-// The divergence is recorded as a dated reconciliation in REQUIREMENTS.md rather than as a
-// spec edit; when the issue engine lands, `reserved` stops being PRODUCED and the closed
-// union keeps the member, so no consumer has to be rebuilt to stop understanding it.
+// 2026-08-26 (Phase 404, D-01): the chip set is exactly `{analysis, curation}` and the
+// vocabulary is exactly `pending · running · done · failed`. The Issue engine left the spec on
+// 2026-08-25, so the structural member that used to answer for the unfilled triage slot has no
+// slot left to answer for, and a word no producer can produce is a word every consumer still
+// has to render. The JOB-KIND layer is deliberately NOT touched here — the triage job kind, the
+// chain's third derived id and the entity/finding types wait for the Issue-slot cleanup
+// milestone; the chip side simply stops reading and rendering the third id.
 
 import type { RunNotification } from './run-notification'
 
 /**
- * Declared in the order a stage passes through them, with the structural member last.
+ * Declared in the order a stage passes through them.
  *
  * A runtime array rather than a bare type, because the projection and its tests both need to
  * enumerate the vocabulary, and a union that only exists at compile time cannot be walked.
@@ -26,22 +27,21 @@ export const POST_PROCESSING_CHIP_STATUSES = [
   'running',
   'done',
   'failed',
-  'reserved',
 ] as const
 
 export type PostProcessingChipStatus = (typeof POST_PROCESSING_CHIP_STATUSES)[number]
 
 /**
- * The three chips, named rather than indexed.
+ * The two chips, named rather than indexed.
  *
  * Fixed members instead of a record keyed by stage name: the chip set is ratified and closed
- * (spec §4 — notify is not a chip), so a surface that renders all three should fail to
- * compile when a fourth arrives rather than silently render two thirds of the truth.
+ * (spec §4.1 — notify is not a chip), so a surface that renders both should fail to compile
+ * when a third arrives rather than silently render half the truth. That compile error is the
+ * point: it is what walked this narrowing through every consumer in Phase 404.
  */
 export interface PostProcessingChips {
   analysis: PostProcessingChipStatus
   curation: PostProcessingChipStatus
-  issues: PostProcessingChipStatus
 }
 
 export interface PostProcessingStatus {

@@ -483,7 +483,6 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
     expect(line).toBe(
       `post-processing — analysis: ${status.chips.analysis} (daemon will drain)`
       + ` · curation: ${status.chips.curation} (deferred to a later local run)`
-      + ` · issues: ${status.chips.issues}`
       // 389 D-12: this process did not complete analyze-run, so the line carries the one
       // copy-paste that fetches the sentences once the daemon has drained.
       + ` · proposals: 0 pending · digest: ${digestFetchCommand(RUN_ID)}`,
@@ -492,7 +491,6 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
     expect(status.chips).toEqual({
       analysis: 'pending',
       curation: 'pending',
-      issues: 'reserved',
     })
     // The "(daemon will drain)" half is NOT in the DTO — it is the tail's own posture.
     expect(JSON.stringify(status)).not.toContain('daemon will drain')
@@ -526,11 +524,9 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
       expect(status.chips).toEqual({
         analysis: 'done',
         curation: 'pending',
-        issues: 'reserved',
       })
       expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
         'post-processing — analysis: done · curation: pending (deferred to a later local run)'
-        + ' · issues: reserved'
         // 389 D-12: the SECOND tail completed nothing in-process (the first one authored the
         // analysis), so its exit line still points at the fetch command rather than printing
         // sentences it never drained.
@@ -546,7 +542,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
 
     expect(tail.report().drain).toBe('detached')
     expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
-      'post-processing — analysis: pending · curation: pending · issues: reserved'
+      'post-processing — analysis: pending · curation: pending'
       + ` · proposals: 0 pending · digest: ${digestFetchCommand(RUN_ID)}`,
     ])
   })
@@ -614,7 +610,6 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
       expect(human).toContain(`${notification.stages.curation.deprecated!} deprecated`)
       expect(human).toContain(`verdicts ${notification.verdictSummary.total}`)
       expect(human).toContain(`analysis: ${notification.stages.analysis.status}`)
-      expect(human).toContain('issues: reserved')
       // A terminal chain says the terminal thing, not the queued-work thing.
       expect(lines.some((message) => message.startsWith('post-processing —'))).toBe(false)
     })

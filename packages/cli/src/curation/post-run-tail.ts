@@ -796,13 +796,12 @@ type StageDrainer = 'any-host' | 'masked-leg-only'
 
 /**
  * A `Record` over the chip set rather than a condition on the curation stage: the chips are
- * closed and ratified, so a fourth stage must classify its drainer HERE instead of inheriting
- * a promise from a fall-through — the same defect class this phase already named twice.
+ * closed and ratified, so a third stage must classify its drainer HERE instead of inheriting
+ * a promise from a fall-through — the same defect class 388 already named twice.
  */
 const STAGE_DRAINER: Record<keyof PostProcessingChips, StageDrainer> = {
   analysis: 'any-host',
   curation: 'masked-leg-only',
-  issues: 'any-host',
 }
 
 /**
@@ -879,7 +878,6 @@ export function renderPostProcessingSummaryLine(
   return `post-processing — ${[
     stage('analysis', status.chips.analysis),
     stage('curation', status.chips.curation),
-    stage('issues', status.chips.issues),
   ].join(SUMMARY_SEPARATOR)}`
 }
 
@@ -913,7 +911,6 @@ export function renderChainTerminalLine(notification: RunNotification): string {
     `analysis: ${stages.analysis.status}`,
     `curation: ${stages.curation.status}`
       + (counts.length === 0 ? '' : ` (${counts.join(', ')})`),
-    `issues: ${stages.issues.status}`,
   ].join(SUMMARY_SEPARATOR)}`
 }
 

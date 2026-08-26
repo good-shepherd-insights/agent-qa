@@ -417,14 +417,12 @@ describe('a starved own-chain is reported as backlog-exhausted, never a bare pen
       expect(status.chips).toEqual({
         analysis: 'pending',
         curation: 'pending',
-        issues: 'reserved',
       })
       // Token for token, in the ONE chip vocabulary: the parenthetical is posture and the words
       // around it are the op's, exactly as the handed-off line is built (D-08/D-14).
       expect(f.info.mock.calls.map(([message]) => String(message))).toEqual([
         `post-processing — analysis: pending${BACKLOG_PARENTHETICAL}`
         + ` · curation: pending${CURATION_BACKLOG_PARENTHETICAL}`
-        + ' · issues: reserved'
         // 389 D-12: a starved chain completed no analyze-run, so the line carries the fetch
         // command — the sentence stays one copy-paste away whoever drains the backlog.
         + ` · proposals: 0 pending · digest: ${digestFetchCommand(RUN_B)}`,

@@ -489,11 +489,10 @@ describe('the per-run digest, over the composed host (PROP-04 / D-16 / D-18)', (
       expect(digestA.chain).toEqual({
         analysis: 'pending',
         curation: 'pending',
-        issues: 'reserved',
       })
       expect(digestA.chain.outcome).toBeUndefined()
       expect(digestA.lines.some((line) =>
-        line === 'chain — analysis: pending · curation: pending · issues: reserved')).toBe(true)
+        line === 'chain — analysis: pending · curation: pending')).toBe(true)
 
       // The projection wrote nothing. Rendering the same digest twice cannot change the store,
       // which is the whole of "nothing new persisted, nothing to drift".

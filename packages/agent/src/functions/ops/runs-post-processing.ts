@@ -1,10 +1,14 @@
 // `runs.postprocessing` — one run's chip truth, read from durable job state (Phase 388, D-14).
 //
+// 2026-08-26 (Phase 404, D-01): the chip set is exactly two — `{analysis, curation}`. The
+// projection stopped reading the chain's third derived id; the id itself is still derived and
+// still handed to the reader, because the JOB-KIND layer is the Issue-slot cleanup milestone's.
+//
 // THE single producer of a post-processing chip status. The CLI's exit summary line (plan 04),
 // any later status verb, 392's chat and M5's dashboard all call this op; none of them opens
 // `agent-jobs.db`, and none of them re-derives what a row status means. That is the L10
 // thin-client law applied to the one value in this phase that three surfaces render: three
-// spellings of five words is not a duplication a reviewer catches, it is the state in which the
+// spellings of four words is not a duplication a reviewer catches, it is the state in which the
 // dashboard says one thing and the CLI another about the same row, with nothing wrong in either.
 //
 // Chip truth is DURABLE truth on purpose (ANLZ-05). The bus chips a drain emits are a push
@@ -49,11 +53,11 @@ export const RUNS_POST_PROCESSING_FUNCTION_ID = 'runs.postprocessing'
 /**
  * What one job row means as a chip, plus what its ABSENCE means for that particular stage.
  *
- * The absence argument is the whole reason this is one function and not three. Every stage
- * reads a present row identically — that is D-04's rule surviving the triage slot being filled
- * — and the stages differ only in what "no row" says: for analysis and curation it is "not yet"
- * (`pending`), for issues it is "no job will run" (`reserved`, D-15). Pinning `reserved` to the
- * KIND instead would leave the issues chip claiming nothing will run on the day something does.
+ * The absence argument is what keeps this one function rather than one per stage: every stage
+ * reads a present row identically, and a stage differs only in what "no row" says. For both
+ * chips today that is "not yet" (`pending`). The parameter stays even though both call sites
+ * now pass the same word — a stage whose absence means something else would otherwise have to
+ * be written as a second projection, which is the duplication this shape exists to prevent.
  *
  * The claim is read only for a NON-terminal row. A terminal job's claim was released by the
  * transaction that ended it, so consulting it there would be reading a field that says nothing;
@@ -74,7 +78,7 @@ function chipFor(
 }
 
 /**
- * THE projection: durable chain state → the three chips (D-14).
+ * THE projection: durable chain state → the two chips (D-14; narrowed Phase 404, D-01).
  *
  * Closed and total. `undefined` — this project holds no queue database — answers exactly as an
  * empty state does, because both are the same fact about THIS run: nothing was enqueued for it.
@@ -87,7 +91,6 @@ export function projectPostProcessingChips(
   return {
     analysis: chipFor(state?.analyzeRun, 'pending'),
     curation: chipFor(state?.curateMemory, 'pending'),
-    issues: chipFor(state?.triageIssues, 'reserved'),
   }
 }
 
@@ -104,7 +107,7 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
   output: PostProcessingStatusSchema,
   risk: { name: `fn:${RUNS_POST_PROCESSING_FUNCTION_ID}`, recognized: true, readOnly: true },
   /**
-   * THE THREE CHIPS, WHICH ARE THE WHOLE ANSWER (399.1 D-01).
+   * THE TWO CHIPS, WHICH ARE THE WHOLE ANSWER (399.1 D-01; the set narrowed by 404 D-01).
    *
    * A chip reading `failed` is this op reporting a CHAIN's state truthfully; the read succeeded.
    * Folding a red chip into the clause's own status would make "the post-run chain broke" and "I
@@ -114,7 +117,7 @@ export const runsPostProcessingSpec: FunctionSpec<RunsPostProcessingInput, PostP
     return {
       status: 'executed',
       outcome: `chain for ${output.runId} — analysis ${output.chips.analysis}, `
-        + `curation ${output.chips.curation}, issues ${output.chips.issues}`,
+        + `curation ${output.chips.curation}`,
     }
   },
   async invoke(input, deps) {

@@ -197,7 +197,7 @@ describe('a status read creates no queue state (T-388-10 / Pitfall 4)', () => {
 
     expect(status).toEqual({
       runId: RUN_ID,
-      chips: { analysis: 'pending', curation: 'pending', issues: 'reserved' },
+      chips: { analysis: 'pending', curation: 'pending' },
     })
     // The assertion that matters is this one, and it is on the FILESYSTEM rather than on the
     // answer: a read routed through `host.jobs()` returns exactly the same projection while
@@ -239,12 +239,11 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
     expect(status.chips).toEqual({
       analysis: 'pending',
       curation: 'pending',
-      issues: 'reserved',
     })
     expect('notification' in status).toBe(false)
   })
 
-  it('reads a completed chain as done/done/reserved with the notification attached', async () => {
+  it('reads a completed chain as done/done with the notification attached', async () => {
     const harness = createHarness()
     const jobs = await harness.host.jobs()
     const handoff = fixtureHandoff(RUN_ID)
@@ -256,7 +255,7 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
 
     const status = await harness.status()
 
-    expect(status.chips).toEqual({ analysis: 'done', curation: 'done', issues: 'reserved' })
+    expect(status.chips).toEqual({ analysis: 'done', curation: 'done' })
     // The SAME record the terminal transaction wrote, not a rebuild of it: read back through
     // the store's own reader and compared whole, so a projection that assembled a plausible
     // notification of its own would fail here rather than look right.
@@ -268,12 +267,11 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
       stages: {
         analysis: { status: 'done' },
         curation: { status: 'done', curated: 2, deprecated: 1 },
-        issues: { status: 'reserved' },
       },
     })
   })
 
-  it('reads a chain whose curation died as done/failed/reserved (D-12)', async () => {
+  it('reads a chain whose curation died as done/failed (D-12)', async () => {
     const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
     roots.push(agentQaRoot)
     const host = composeLocalAgent({
@@ -307,7 +305,7 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
 
     // The failure is reported per STAGE: a chip set that collapsed to one outcome would say
     // the analysis failed too, and the analysis is exactly the artifact that survived.
-    expect(status.chips).toEqual({ analysis: 'done', curation: 'failed', issues: 'reserved' })
+    expect(status.chips).toEqual({ analysis: 'done', curation: 'failed' })
     expect(status.notification).toMatchObject({ outcome: 'failed' })
   })
 
@@ -333,7 +331,6 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
     expect(other.chips).toEqual({
       analysis: 'pending',
       curation: 'pending',
-      issues: 'reserved',
     })
     expect('notification' in other).toBe(false)
   })
