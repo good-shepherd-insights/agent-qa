@@ -304,6 +304,22 @@ export interface LiveViewHarness {
   readonly server: Server
   /** Register a planted run with the session registry the whole composition reads through. */
   plant(run: PlantedLiveRun): void
+  /**
+   * Write a run ROW for a planted run, and move its status (404-06 · LIFE-01, D-13/D-07).
+   *
+   * WHY A PLANTED SESSION NEEDS ONE. `plant` registers a session with the run-service registry —
+   * which is what makes the run streamable and mintable — and nothing else. The dashboard's own
+   * DURABLE row is written by the reporter subscriber, which only ingests runs the dashboard door
+   * itself started. Run DETAIL reads that row and nothing else, so a cell that navigates a viewer
+   * from the live page to run detail has to supply it, exactly as a real run's subscriber would.
+   *
+   * `setRunStatus` IS THE SUBSCRIBER'S `updateRun` AT `verdict`, AS A SEAM THE CELL OWNS. In
+   * production those two facts — the `verdict` envelope and the row write — race by design (D-07),
+   * and a fixture that coupled them could not express the losing side of that race. The cell fires
+   * each one when it means to.
+   */
+  insertRunRow(input: { readonly runId: string; readonly name: string; readonly status: string }): void
+  setRunStatus(runId: string, status: string): void
   close(): Promise<void>
 }
 
@@ -421,6 +437,19 @@ export async function startLiveViewHarness(input: {
       if (publishSession === undefined) throw new Error('the session registry is not observing')
       publishSession(run.session)
     },
+    insertRunRow: (row) => {
+      db.insertRun({
+        id: row.runId,
+        name: row.name,
+        filePath: 'tests/probe.test.yaml',
+        status: row.status,
+        duration: 0,
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        platform: 'web',
+      })
+    },
+    setRunStatus: (runId, status) => { db.updateRun(runId, { status }) },
     close: async () => {
       started.close()
       sessions.dispose()

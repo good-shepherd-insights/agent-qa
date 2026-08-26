@@ -3,7 +3,17 @@
 // TypeScript and EXECUTED in a browser — `dashboard-dom.test.ts`'s reasoning, unchanged.
 
 // THE HONEST LIVE SURFACE, IN A REAL BROWSER (403-06 Task 1 · HNST-01/02/03, LIVE-01/LIVE-04,
-// D-09..D-12).
+// D-09..D-12; 404-06 · LIFE-01, D-13/D-14/D-07).
+//
+// WHAT PHASE 404 CHANGED HERE (2026-08-26). 403's D-12 ended the live page on the verdict and went
+// nowhere, and cell (6) below measured exactly that: `page.url()` still ended in `/live`. D-13
+// inverts it — the page now navigates to run detail the instant the reducer records the verdict,
+// replacing history. Cell (6) therefore keeps its SUBJECT (the honest terminal band) and moves to
+// the path where the band is still the truthful thing to paint: a `runFinished` with no verdict at
+// all. Cell (9) is the new one, and it measures the navigation itself on the built bundle: the URL
+// becomes `/runs/:id`, the verdict badge is painted in the header, the page does NOT bounce back
+// to `/live` while the durable row is still catching up (D-07), and Back returns to where the
+// viewer came from rather than to a live page whose socket the door has already closed.
 //
 // WHY THIS FILE EXISTS. 403-05 proved the live page's contract in jsdom: 27 cells over a doubled
 // EventSource, five mutation controls, a sentinel asserted on serialised HTML. That is the right
@@ -583,7 +593,20 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     expect(f.dom.cancelCalls()).toBe(0)
   }, 180_000)
 
-  it('(6) D-12: the run ends, the page freezes, and it does not go anywhere', async () => {
+  // RE-PINNED 2026-08-26 (404-06 · D-14). This cell was "(6) D-12: the run ends, the page freezes,
+  // and it does not go anywhere", and its body published `verdict` AND `runFinished` before
+  // asserting the band and a URL still ending in `/live`. D-13 makes that sequence navigate, so
+  // the cell now publishes `runFinished` ALONE — a producer that ended a run without ever
+  // declaring a verdict, which is the first of D-14's paths and the one nothing else measures.
+  // The band is what a viewer gets when the page CANNOT move them to a record of an answer,
+  // because there is no answer. The navigate half moved to cell (9).
+  //
+  // THE TWO CLAIMS THAT CAME DOWN FROM `live-view-anchors.test.ts` CELL (10). That cell used to
+  // wait on the live page's `data-preview-state="ended"` and count its two panes on a REAL run;
+  // D-13 means a real run's live page is gone by then. Both are live-page claims about a run that
+  // ENDED, which is precisely this cell's subject, so they land here — on a planted run whose
+  // ending the cell decides, which is a strictly more deterministic instrument for them anyway.
+  it('(6) D-14 (re-pinned 2026-08-26): a run that ends with NO verdict bands honestly, and goes nowhere', async () => {
     const f = held()
     await onLivePage('r_dom', async (page, attaches) => {
       await page.locator('[data-live-pane="steps"]').waitFor({ state: 'attached', timeout: 20_000 })
@@ -591,12 +614,15 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
 
       publishTo(f.dom, 'stepFinalized', { testIndex: 0, stepIndex: 0, status: 'passed', durationMs: 1200 })
       publishTo(f.dom, 'testFinished', { testId: 't0', testIndex: 0, outcome: 'passed', durationMs: 1400 })
-      publishTo(f.dom, 'verdict', { verdict: 'passed' })
+      // NO `verdict` PUBLISH. That absence is the whole cell — see the note above.
       publishTo(f.dom, 'runFinished', { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: f.dom.bus.currentSeq + 1 })
       f.dom.finish('passed')
 
-      await page.locator('[data-terminal-state="passed"]').waitFor({ state: 'attached', timeout: 30_000 })
+      await page.locator('[data-terminal-state]').waitFor({ state: 'attached', timeout: 30_000 })
       await page.locator('[data-preview-state="ended"]').waitFor({ state: 'attached', timeout: 30_000 })
+      const previewState = await page.locator('[data-preview-state]').getAttribute('data-preview-state')
+      expect(previewState, 'a run this page has watched END has nothing left to embed').toBe('ended')
+      expect(await page.locator('[data-live-pane]').count(), 'two panes, to the last frame').toBe(2)
       // 403-05 D-2: the pill is a claim about a CHANNEL, so it goes away with the channel. A
       // finished run has no liveness to report, and `lost` over a clean `runFinished` would slander
       // the delivery that just completed.
@@ -611,7 +637,8 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
       expect(await page.locator('[data-run-detail-link]').count()).toBe(1)
       expect(
         page.url().endsWith('/live'),
-        'the page does NOT redirect on the verdict — that decision belongs to the person watching',
+        'D-14: with no verdict there is no answer to move the viewer to — the band says the run '
+        + 'ended and the link offers the durable record, which is a person\'s decision to take',
       ).toBe(true)
 
       // NO RECONNECT LOOP against a run the door has finished with. A page that kept re-opening
@@ -623,18 +650,30 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     expect(f.dom.cancelCalls(), 'D-16: no viewer ever cancelled this run').toBe(0)
   }, 150_000)
 
-  it('(7) a member that never started a step says so, rather than showing blank rows', async () => {
+  // RE-PINNED 2026-08-26 (404-06 · D-13). The `did not run` rows are now asserted BEFORE the
+  // verdict is published, because after it the page is no longer on screen — the ORDER is the
+  // re-pin. What the cell gains for it is a second measurement of the navigate, on a run whose
+  // verdict is `failed` rather than `passed`: D-13 moves a viewer on the answer, not on a good
+  // answer, and a failing run is precisely the one 403 worried about redirecting.
+  it('(7) a member that never started a step says so — and THEN the verdict moves the viewer (D-13)', async () => {
     const f = held()
     publishTo(f.none, 'testFinished', { testId: 't0', testIndex: 0, outcome: 'skipped', durationMs: 5 })
-    publishTo(f.none, 'verdict', { verdict: 'failed' })
-    publishTo(f.none, 'runFinished', { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: f.none.bus.currentSeq + 1 })
-    f.none.finish('failed')
 
     await onLivePage('r_none', async (page) => {
       await page.locator('[data-member-note]').waitFor({ state: 'attached', timeout: 30_000 })
       expect(await page.locator('[data-member-note]').textContent()).toBe(DID_NOT_RUN_NOTE)
       expect(await page.locator('[data-member-outcome]').getAttribute('data-member-outcome')).toBe('skipped')
-      await page.locator('[data-terminal-state="failed"]').waitFor({ state: 'attached', timeout: 20_000 })
+      expect(
+        await page.locator('[data-terminal-state]').count(),
+        'nothing has ended yet, so nothing claims it has',
+      ).toBe(0)
+
+      publishTo(f.none, 'verdict', { verdict: 'failed' })
+      await page.waitForURL(/\/runs\/[^/]+$/u, { timeout: 30_000 })
+      expect(page.url().endsWith('/runs/r_none'), `landed on ${page.url()}`).toBe(true)
+
+      publishTo(f.none, 'runFinished', { aggregateVerdict: 'failed', disposition: 'detached', finalSeq: f.none.bus.currentSeq + 1 })
+      f.none.finish('failed')
     })
     expect(f.none.cancelCalls()).toBe(0)
   }, 90_000)
@@ -766,4 +805,76 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
       expect(arm.afterPlant, `${context} — ARM 2`).toBe('embedded')
     }
   }, 600_000)
+  // ---- 404-06 · LIFE-01, D-13/D-14/D-07 --------------------------------------------------------
+  it('(9) LIFE-01/D-13: the verdict MOVES the viewer to run detail, the badge paints, and Back does not return to a dead live page', async () => {
+    const f = held()
+    const run = plantLiveRun({ runId: 'r_nav', heartbeatMs: 10_000, capability: { kind: 'none' } })
+    plantedRuns.push(run)
+    f.harness.plant(run)
+
+    // THE ROW IS PLANTED `running`, AND THAT IS THE NON-VACUITY CONTROL FOR D-07. In production
+    // the dashboard subscriber writes the row at the SAME `verdict` envelope the page navigates
+    // on, and a `fetchRun` a millisecond later can legitimately still read `running`. Run detail's
+    // retired predicate — and its new one, without the navigation-state gate — would bounce that
+    // reading straight back to `/live`, which navigates here again: T-404-15. This cell holds the
+    // row at `running` ACROSS the navigation on purpose, so the no-bounce claim is measured
+    // against the losing side of the race rather than around it.
+    f.harness.insertRunRow({ runId: 'r_nav', name: 'the navigating run', status: 'running' })
+    publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+    publishTo(run, 'testStarted', { testId: 't0', testIndex: 0, name: 'the navigating member', totalSteps: 1 })
+
+    const page = await f.browser.newPage()
+    const navigations: string[] = []
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) navigations.push(frame.url())
+    })
+    try {
+      // THE VIEWER CAME FROM SOMEWHERE. `replace` is only a claim you can measure if there is a
+      // prior entry for Back to return to; a page opened cold has nothing behind it and `goBack()`
+      // would be a no-op that passes either way.
+      await page.goto(`${f.harness.origin}/runs`)
+      await page.goto(`${f.harness.origin}/runs/r_nav/live`)
+      await page.locator('[data-live-pane="steps"]').waitFor({ state: 'attached', timeout: 30_000 })
+      expect(page.url().endsWith('/live'), `started on ${page.url()}`).toBe(true)
+
+      publishTo(run, 'stepFinalized', { testIndex: 0, stepIndex: 0, status: 'passed', durationMs: 1200 })
+      publishTo(run, 'testFinished', { testId: 't0', testIndex: 0, outcome: 'passed', durationMs: 1400 })
+      publishTo(run, 'verdict', { verdict: 'passed' })
+
+      await page.waitForURL(/\/runs\/[^/]+$/u, { timeout: 10_000 })
+      expect(page.url().endsWith('/runs/r_nav'), `landed on ${page.url()}`).toBe(true)
+
+      // AND IT STAYS. The row still says `running`; a page that read it as "this belongs on the
+      // live surface" would already have bounced by now. Two seconds is eight catch-up periods.
+      await page.waitForTimeout(2_000)
+      expect(
+        page.url().endsWith('/runs/r_nav'),
+        `D-07: the viewer was bounced back to a live surface while the durable row caught up — `
+        + `url ${page.url()}, navigations ${JSON.stringify(navigations)}`,
+      ).toBe(true)
+
+      // NOW THE ROW CATCHES UP, as the subscriber's `updateRun` does in production. The header
+      // badge must FOLLOW it — that is what the bounded re-fetch is for, and a page that only read
+      // the row once would sit on `running` under a finished run forever.
+      f.harness.setRunStatus('r_nav', 'passed')
+      await page.locator('[data-verdict-badge="passed"]').waitFor({ state: 'attached', timeout: 3_000 })
+
+      // THE `replace` HALF. Back returns to the list the viewer came from — never to a live page
+      // whose socket the door has already closed, which would immediately move them forward again.
+      await page.goBack()
+      await page.waitForURL(/\/runs$/u, { timeout: 10_000 })
+      expect(
+        page.url().endsWith('/runs'),
+        `Back landed on ${page.url()}; navigations ${JSON.stringify(navigations)}`,
+      ).toBe(true)
+      expect(
+        navigations.some((url) => url.includes('/live')),
+        'the control: this page really was on a live surface at some point',
+      ).toBe(true)
+      console.log(`(9) navigations: ${JSON.stringify(navigations)}`)
+    } finally {
+      await page.close()
+    }
+    expect(run.cancelCalls(), 'INVK-05: navigating away is not owning the run').toBe(0)
+  }, 150_000)
 })

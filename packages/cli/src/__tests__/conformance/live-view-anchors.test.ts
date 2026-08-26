@@ -7,6 +7,14 @@
 // be built inside `composeRunServicePorts`, which runs only when a credential is declared, so a
 // default dashboard streamed nothing and could mint nothing.
 //
+// WHAT PHASE 404 CHANGED HERE (2026-08-26 · 404-06 · LIFE-01, D-13/D-07). Cell (10) used to wait
+// on the live page's terminal band on a REAL run. D-13 moves the viewer to run detail on the
+// verdict, so the band is unreachable there; the cell is re-pinned to the navigation itself and to
+// D-07's no-ping-pong rule, measured at the SUBSCRIBER'S OWN ordering — the one place in the
+// repository where the `verdict` row write and a page's `fetchRun` race for real. The live-page
+// claims it used to carry (`data-preview-state="ended"`, the two-pane count) moved to
+// `live-view-dom.test.ts` cell (6), where a live page still stands at the end of a run.
+//
 // THE LOG-SCAN IS THE STRUCTURAL GUARANTEE (Pitfall 2). The masker is seeded once per run, so a
 // token minted mid-run is not masked by that run — which means "the token never lands anywhere
 // durable" cannot be an assertion about masking. It has to be a scan of the real channels: the
@@ -51,6 +59,14 @@ const REBUILD_INSTRUCTION =
 const ATTACH_BUDGET_MS = 60_000
 /** How long an SSE read or a socket exchange may take. */
 const WIRE_BUDGET_MS = 30_000
+/**
+ * How long cell (10) holds past an observed `runFinished` (404-06 · D-07).
+ *
+ * The width of the `runs.start` door's DETACHED post-run tail (404-04 Task 2) — the window in
+ * which a slow row write or a stale active set could have thrown the viewer back to `/live`. Read
+ * the note inside cell (10) for what this fixture can and cannot reach in that window.
+ */
+const TAIL_WINDOW_HOLD_MS = 5_000
 
 interface Fixture {
   readonly dashboard: ReadySpawnedDashboard
@@ -65,6 +81,26 @@ let fixture: Fixture | undefined
 function held(): Fixture {
   if (fixture === undefined) throw new Error('the live-view anchors fixture never came up')
   return fixture
+}
+
+/**
+ * The run's own recorded log, DISCOVERED rather than derived (404-06; `post-processing-anchors.ts`'s
+ * `readRecordedEvents`, same argument). Re-deriving the runs-dir layout here would be a second
+ * spelling of it; this fixture ran exactly one run, and this refuses rather than guesses if that is
+ * ever untrue.
+ */
+function readRecordedEvents(root: string): { seq: number; type: string }[] {
+  const runsDir = join(root, '.agent-qa', 'runs')
+  const dirs = readdirSync(runsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+  if (dirs.length !== 1) {
+    throw new Error(`expected exactly one run directory under ${runsDir}, found ${JSON.stringify(dirs)}`)
+  }
+  return readFileSync(join(runsDir, dirs[0]!, 'events.jsonl'), 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as { seq: number; type: string })
 }
 
 /** Quote the child's own streams in every failure — a spawned cell's message is its diagnosis. */
@@ -591,7 +627,25 @@ describe('INVK-05 on real sockets: two surfaces, a mid-run resume, and a detach 
     }
   }, 150_000)
 
-  it('(10) THE SHIPPED BINARY: a real run\'s live page reaches its honest terminal state', async () => {
+  // RE-PINNED 2026-08-26 (404-06 · LIFE-01, D-13/D-07). This cell was "(10) THE SHIPPED BINARY: a
+  // real run's live page reaches its honest terminal state", and it waited on `data-terminal-state`
+  // — the live page's terminal band — on a REAL run. D-13 inverts that path: the verdict now moves
+  // the viewer to run detail, so the band is unreachable here and the wait would hang for its whole
+  // budget. The cell keeps its ONE real run, the whole production chain and nothing planted, and
+  // re-pins to the claim D-13 and D-07 actually make on it.
+  //
+  // WHAT MOVED OUT. The `data-preview-state="ended"` wait and the two-pane count are LIVE-PAGE
+  // claims about a run that ended; with the page gone by then they went to `live-view-dom.test.ts`
+  // cell (6) — the planted `runFinished`-with-no-verdict path, where the live page really does stay
+  // and where the ending is an instant the cell decides rather than one it waits out.
+  //
+  // WHAT THIS MEASURES THAT NOTHING ELSE DOES. `live-view-dom.test.ts` cell (9) drives a PLANTED
+  // session whose row this test writes: the ordering between the `verdict` envelope and the durable
+  // row is a seam the cell owns. Here neither is: the run is the spawned binary's own, the row is
+  // written by the dashboard's own reporter subscriber at its own `verdict`, and the page's own
+  // `fetchRun` races that write for real. If D-07's no-ping-pong rule is going to fail at the
+  // subscriber's real ordering, this is the cell it fails in.
+  it('(10) THE SHIPPED BINARY: a real run\'s verdict moves the viewer to run detail, and never back to /live (D-13/D-07)', async () => {
     const f = held()
     const heldBrowser = browser
     if (heldBrowser === undefined) throw new Error('no browser')
@@ -600,6 +654,14 @@ describe('INVK-05 on real sockets: two surfaces, a mid-run resume, and a detach 
     page.on('request', (request) => {
       if (request.url().includes('/api/run-stream/')) attaches.push(request.url())
     })
+    // EVERY MAIN-FRAME NAVIGATION, IN ORDER. A single end-state reading cannot tell "went to run
+    // detail and stayed" from "went, bounced to /live, and was sent back" — the ping-pong D-07
+    // forbids settles in exactly one tick, so the ONLY instrument that can see it is the list.
+    const navigations: string[] = []
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame()) navigations.push(frame.url())
+    })
+    const startedAt = Date.now()
     try {
       // THE WHOLE PRODUCTION CHAIN, and nothing planted anywhere in it: the built `agent-qa
       // dashboard` binary, its own queue, its own run, its own bus, its own `uiDir`, driven by a
@@ -607,61 +669,111 @@ describe('INVK-05 on real sockets: two surfaces, a mid-run resume, and a detach 
       // claim is about the honest END of a real run, not about a passing one.
       await page.goto(`${f.dashboard.origin}/runs/${encodeURIComponent(f.runId)}/live`)
 
-      const terminal = page.locator('[data-terminal-state]')
-      await terminal.waitFor({ state: 'attached', timeout: 60_000 })
-      const verdictWord = await terminal.getAttribute('data-terminal-state')
+      // THE VERDICT ARRIVES BY REPLAY, AND THAT IS A MEASUREMENT, NOT A COMPROMISE. Earlier cells
+      // in this file read the run's SSE to completion, so by now the run has ended and the door
+      // replays `events.jsonl` to this viewer. The planner's explicit assumption is that a viewer
+      // attached AFTER the verdict navigates once, because the replay delivers the verdict envelope
+      // like any other — this is that assumption, on the shipped binary. A viewer attached BEFORE
+      // it is `live-view-dom.test.ts` cell (9).
+      await page.waitForURL(/\/runs\/[^/]+$/u, { timeout: 60_000 })
+      const arrivedAt = Date.now()
+      expect(
+        page.url().endsWith(`/runs/${f.runId}`),
+        `landed on ${page.url()}; navigations ${JSON.stringify(navigations)}. ${childContext(f.dashboard)}`,
+      ).toBe(true)
+
+      // THE BADGE FOLLOWS THE ROW, WITHIN THE CATCH-UP. The subscriber writes the row's status at
+      // the SAME `verdict` envelope this page navigated on, and the page's own `fetchRun` may win
+      // that race — D-07's bounded re-fetch is what turns "the row is a moment behind" into "the
+      // header says the verdict word a moment later" instead of "the viewer is back on /live".
+      const badge = page.locator('[data-verdict-badge]')
+      await badge.waitFor({ state: 'attached', timeout: 3_000 })
+      const verdictWord = await badge.getAttribute('data-verdict-badge')
       expect(
         TERMINAL_RUN_WORDS as readonly string[],
-        `the page named a verdict this build has no terminal word for: ${String(verdictWord)}. `
+        `the header named a verdict this build has no terminal word for: ${String(verdictWord)}. `
         + childContext(f.dashboard),
       ).toContain(verdictWord)
 
-      // THE PREVIEW STATE IS ASSERTED, NOT RECORDED, and the strictness rests on an OBSERVED FACT
-      // rather than on timing — which is why the two-value form this cell used to carry could go.
-      //
-      // THE PRECONDITION IS THE `waitFor` FOUR LINES ABOVE. `live-run.tsx:297-298` renders
-      // `data-terminal-state` exactly when `state.terminal` is true, and `:340` hands that SAME
-      // `state.terminal` to `<PreviewPane terminal={…}>`, whose `ended = terminal || runOver`
-      // drives the `'ended'` branch. So `[data-terminal-state]` attached means the run is over as
-      // far as the pane is concerned, and `ended` is the one honest word left. The pane sets it
-      // from an effect one tick after that same render, so this waits on a bounded budget rather
-      // than reading the attribute once and racing a tick.
-      //
-      // AND `embedded` IS NOT THIS CELL'S CLAIM. The shipped zero-token binary is browserless: it
-      // has no browser to stream and no LLM to drive one, so it genuinely cannot reach `embedded`.
-      // The `embedded`-under-production-ordering assertion lives in `live-view-dom.test.ts` cell
-      // (8), which drives a planted latching session that really streams.
-      await page.locator('[data-preview-state="ended"]').waitFor({ state: 'attached', timeout: 30_000 })
-      const previewState = await page.locator('[data-preview-state]').getAttribute('data-preview-state')
-      expect(previewState, 'a run this page has watched END has nothing left to embed').toBe('ended')
+      // AND NOW THE WINDOW AFTER THE END. The test opens its OWN reader on the same run so the hold
+      // below starts from an observed `runFinished` rather than from a number somebody guessed, and
+      // then holds a further 5 s — the width of the `runs.start` door's detached post-run tail
+      // (404-04 Task 2). See the note under the assertions for what this fixture can and cannot
+      // reach there.
+      const reader = openIdStream(`${f.dashboard.origin}/api/run-stream/${encodeURIComponent(f.runId)}`)
+      await reader.waitForEvent('runFinished', WIRE_BUDGET_MS)
+      reader.abort()
+      await page.waitForTimeout(TAIL_WINDOW_HOLD_MS)
 
-      expect(await page.locator('[data-live-pane]').count(), 'two panes on the shipped binary too').toBe(2)
+      // D-07, AS ONE READING OF THE WHOLE LIST, AND THE INSTRUMENT IS THE ORDER RATHER THAN THE
+      // COUNT. Measured: the initial `/live` entry appears TWICE, because `createBrowserRouter`
+      // normalises the URL on hydration with a same-document replace to the same address — both
+      // entries land before the arrival and neither is a bounce. A count-of-`/live` assertion
+      // would therefore have been red on a page doing nothing wrong, and would have said nothing
+      // about the failure it was aimed at. A PING-PONG IS AN ORDERING: `/runs/:id`, then `/live`
+      // again, then `/runs/:id` again. So every entry after the first run-detail arrival must be
+      // the run-detail URL, and the arrival must have been reached from a live page at all.
+      const firstDetail = navigations.findIndex((url) => /\/runs\/[^/]+$/u.test(url))
+      expect(
+        firstDetail,
+        `no run-detail entry at all: ${JSON.stringify(navigations)}. ${childContext(f.dashboard)}`,
+      ).toBeGreaterThan(0)
+      expect(
+        navigations.slice(0, firstDetail).every((url) => url.includes('/live')),
+        `the control: this viewer really was on the live surface before the verdict — `
+        + JSON.stringify(navigations),
+      ).toBe(true)
+      expect(
+        navigations.slice(firstDetail + 1).filter((url) => url.includes('/live')),
+        'D-07: nothing after the arrival may be a live URL — not at the verdict race, where the '
+        + `subscriber's row write and this page's fetchRun collide for real, and not during the `
+        + `tail window. navigations ${JSON.stringify(navigations)}. ${childContext(f.dashboard)}`,
+      ).toEqual([])
+      expect(page.url().endsWith(`/runs/${f.runId}`), `ended on ${page.url()}`).toBe(true)
 
-      // HNST-01 ON THE SHIPPED CHAIN. `plannedAction` is a FIELD NAME the bus really carries, so
-      // its absence from the served document is a claim about this page and not about a payload
-      // shape nothing produces.
+      // WHAT THIS FIXTURE CANNOT REACH, STATED RATHER THAN IMPLIED (WINDOWS #281, 404-05 D-6 /
+      // 404-04 D-6). `spawnDashboard` runs the child under `hermeticEnv`, which points `HOME` into
+      // the temp project, so the member resolves no Playwright browser and raises a FRAMEWORK
+      // error — and `in-process-run-execution.ts` re-throws that ABOVE the line that starts the
+      // detached post-run tail. The tail therefore never runs here, and the 5 s hold above is a
+      // window in which no chain is draining. Everything asserted above IS measured: the verdict
+      // arrives, the page moves, the row catches up, and nothing re-enters /live through
+      // `runFinished` and five further seconds. The tail-window half is not.
+      //
+      // THIS ASSERTION IS THE TRIPWIRE. The day this fixture can reach a real verdict — a
+      // browserless member, an installed browser in the child, any harness change that makes the
+      // tail run — a chip envelope lands in this run's own log and this cell REDS, which is the
+      // signal to promote the hold above from a hold into a genuine tail-window measurement.
+      const recorded = readRecordedEvents(f.root)
+      const afterFinished = recorded
+        .slice(recorded.findIndex((event) => event.type === 'runFinished') + 1)
+        .map((event) => event.type)
+      expect(
+        afterFinished,
+        'WINDOWS #281 no longer holds: this run\'s log carries post-`runFinished` envelopes, so the '
+        + 'detached tail DID run. Re-pin the 5 s hold above as a real tail-window measurement — it '
+        + 'has been a vacuous window until now and this cell said so.',
+      ).toEqual([])
+
+      // HNST-01 ON THE SHIPPED CHAIN, NOW READ OFF THE RUN-DETAIL DOCUMENT. `plannedAction` is a
+      // FIELD NAME the bus really carries, so its absence from the served document is a claim about
+      // this page and not about a payload shape nothing produces.
       const html = await page.evaluate(() => document.documentElement.outerHTML)
       expect(html.length, 'the positive control — a document was actually read').toBeGreaterThan(500)
       expect(html, 'no provisional payload field is reachable on the shipped surface')
         .not.toContain('plannedAction')
 
-      // The member either says `did not run` or shows rows in final statuses. Both are honest; a
-      // pending row under a finished run is the one thing neither of them is.
-      const note = await page.locator('[data-member-note]').count()
-      const statuses = await page.locator('[data-step-status]').evaluateAll(
-        (nodes) => nodes.map((node) => node.getAttribute('data-step-status') ?? ''),
-      )
-      expect(
-        note > 0 || (statuses.length > 0 && !statuses.includes('pending') && !statuses.includes('running')),
-        `the member neither said it did not run nor settled its rows: ${JSON.stringify(statuses)}`,
-      ).toBe(true)
-
-      // NO RECONNECT LOOP against a retained run the door has finished with.
+      // NO RECONNECT LOOP behind the arrival. Run detail does not stream, so a growing attach count
+      // here would be a live page this viewer keeps being returned to.
       const settled = attaches.length
       await page.waitForTimeout(5_000)
       expect(attaches.length, `attaches: ${JSON.stringify(attaches)}`).toBe(settled)
 
-      console.log(`(10) shipped binary: terminal ${String(verdictWord)}, preview ${String(previewState)}, member-note ${String(note)}, statuses ${JSON.stringify(statuses)}`)
+      console.log(
+        `(10) shipped binary: verdict ${String(verdictWord)}, arrived in ${String(arrivedAt - startedAt)}ms, `
+        + `navigations ${JSON.stringify(navigations)}, attaches ${String(attaches.length)}, `
+        + `post-runFinished envelopes ${JSON.stringify(afterFinished)}`,
+      )
     } finally {
       await page.close()
     }
