@@ -9,6 +9,8 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ShortcutLegend } from "@/components/shortcut-hints"
+import { PostProcessingChips } from "@/components/run-detail/post-processing-chips"
+import type { PostProcessingView } from "@/lib/post-processing-view"
 import type { RunRow, StepRow } from "@/lib/api"
 import { triggerRun } from "@/lib/api"
 import { resolveVideoSrc } from "@/lib/artifact-media"
@@ -62,9 +64,29 @@ interface RunNavbarProps {
   shortcutsOpen: boolean
   onToggleShortcuts: () => void
   onOpenArtifacts?: (tab: "attributes" | "config" | "memory") => void
+  /**
+   * The post-processing projection to paint beside the verdict badge (404-07, D-20).
+   *
+   * TWO PROPS AND NOT ONE, because "no read has landed yet" and "this header was never wired for
+   * chips" are different facts that a single optional prop would spell identically. The navbar is
+   * PRESENTATIONAL (400 D-13): it neither knows a run id nor asks anything, so it cannot tell those
+   * two apart on its own, and a chip area that appeared out of a `undefined` would put a permanent
+   * placeholder into every surface that renders this header without a client behind it.
+   */
+  postProcessing?: PostProcessingView | undefined
+  /** Whether a chip client is wired at all. See {@link RunNavbarProps.postProcessing}. */
+  hasPostProcessing?: boolean
 }
 
-export function RunNavbar({ run, steps, shortcutsOpen, onToggleShortcuts, onOpenArtifacts }: RunNavbarProps) {
+export function RunNavbar({
+  run,
+  steps,
+  shortcutsOpen,
+  onToggleShortcuts,
+  onOpenArtifacts,
+  postProcessing,
+  hasPostProcessing = false,
+}: RunNavbarProps) {
   const navigate = useNavigate()
   const totalTokens = steps.reduce((sum, s) => sum + (s.totalTokens ?? 0), 0)
   const totalPrompt = steps.reduce((sum, s) => sum + (s.promptTokens ?? 0), 0)
@@ -113,6 +135,8 @@ export function RunNavbar({ run, steps, shortcutsOpen, onToggleShortcuts, onOpen
           </a>
         ) : null}
         <StatusBadge status={run.status} />
+        {/* D-20: the lifecycle story on one line — execution truth, then post-processing truth. */}
+        {hasPostProcessing ? <PostProcessingChips view={postProcessing} /> : null}
       </div>
 
       <div className="flex items-center gap-3 shrink-0">

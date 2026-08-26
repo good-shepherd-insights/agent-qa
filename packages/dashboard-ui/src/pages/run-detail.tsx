@@ -23,8 +23,9 @@ import { StepTree } from "@/components/run-detail/step-tree"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import type { ScreenshotSide } from "@/components/run-detail/tab-overview"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { fetchRun, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary } from "@/lib/api"
-import type { RunRow, StepRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary } from "@/lib/api"
+import { fetchRun, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
+import type { RunRow, StepRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary, PostProcessingRead } from "@/lib/api"
+import { projectPostProcessingView } from "@/lib/post-processing-view"
 import { resolveVideoSrc } from "@/lib/artifact-media"
 import { getRunStatusDescriptor, getStatusBadgeClassName, shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
@@ -215,6 +216,13 @@ export default function RunDetailPage() {
   const [allExecutionLogs, setAllExecutionLogs] = useState<ExecutionLogEntry[]>([])
   const [accessibilitySummary, setAccessibilitySummary] = useState<AccessibilitySummary | null>(null)
 
+  // THE CHIP CLIENT LIVES HERE, NOT IN THE HEADER (404-07, D-20 / 400 D-13). The navbar is
+  // presentational: it takes a view and paints it. A header that fetched for itself would open one
+  // client per mount of a component that remounts, and would be a second answer to "what does this
+  // page know about this chain". The raw READ is what is held — the projection is pure and total,
+  // so re-deriving it on render costs nothing and keeps exactly one copy of the mapping.
+  const [postProcessingRead, setPostProcessingRead] = useState<PostProcessingRead | undefined>(undefined)
+
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [screenshotSideSelection, setScreenshotSideSelection] = useState<{ key: string; side: ScreenshotSide } | null>(null)
   const [artifactDrawerOpen, setArtifactDrawerOpen] = useState(false)
@@ -235,6 +243,16 @@ export default function RunDetailPage() {
     if (!run?.status) return
     recordRunDetailStatus?.(run.status)
   }, [recordRunDetailStatus, run?.status])
+
+  // One read now, a 3 s poll while the chain is still moving, and the dedicated stream's frames as
+  // triggers to read again — all of it inside `watchPostProcessing`. The page's whole part is to
+  // subscribe for the id it was asked for, forget the previous run's answer when that id changes,
+  // and hand back the disposer so nothing outlives the screen it was for.
+  useEffect(() => {
+    if (!id) return
+    setPostProcessingRead(undefined)
+    return watchPostProcessing(id, { onRead: setPostProcessingRead })
+  }, [id])
 
   useEffect(() => {
     if (!id) return
@@ -841,6 +859,10 @@ export default function RunDetailPage() {
           shortcutsOpen={shortcutsOpen}
           onToggleShortcuts={() => setShortcutsOpen(prev => !prev)}
           onOpenArtifacts={openArtifactDrawer}
+          hasPostProcessing
+          postProcessing={
+            postProcessingRead === undefined ? undefined : projectPostProcessingView(postProcessingRead)
+          }
         />
 
         <ResizablePanelGroup

@@ -58,6 +58,13 @@ vi.mock("@/lib/api", () => ({
   fetchExecutionLogs: fetchExecutionLogsMock,
   fetchAccessibilitySummary: fetchAccessibilitySummaryMock,
   triggerRun: vi.fn(),
+  // 2026-08-27 (404-07): run detail now subscribes a post-processing chip client on mount. This
+  // whole-module mock REPLACES `@/lib/api`, so an omitted export is `undefined` at the call site
+  // and every cell in this file dies before it asserts. It is a no-op DOUBLE rather than the real
+  // function on purpose: the real one constructs an `EventSource` and a 3 s interval against a
+  // `fetch` these cells do not stub, which is a socket and a poll inside a test about something
+  // else. The client's own behaviour is measured in `run-detail.post-processing.test.tsx`.
+  watchPostProcessing: () => () => {},
 }))
 
 // `useLocation` STAYS REAL — the navigation state under test is what the router hands the page,
