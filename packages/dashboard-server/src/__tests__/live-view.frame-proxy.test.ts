@@ -35,7 +35,11 @@ import WebSocket from 'ws'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { DashboardDatabase } from '../db/database.js'
-import { LIVE_EMBED_EXPIRED_MESSAGE, LIVE_EMBED_STATES } from '../live-view/embed-page.js'
+import {
+  LIVE_EMBED_EXPIRED_MESSAGE,
+  LIVE_EMBED_NO_STREAM_MESSAGE,
+  LIVE_EMBED_STATES,
+} from '../live-view/embed-page.js'
 import { createFrameProxy } from '../live-view/frame-proxy.js'
 import {
   LIVE_VIEW_HELLO_MAX_BYTES,
@@ -843,6 +847,29 @@ describe('the frame proxy through the production startServer frame (403 D-06/D-1
       `no branch keyed on the 'expired' reason assigns ${JSON.stringify(LIVE_EMBED_EXPIRED_MESSAGE)}`,
     ).toBe(true)
     expect(LIVE_EMBED_STATES, 'and `expired` is a declared state of the page').toContain('expired')
+  })
+
+  it('(25) the served page carries the EXACT no-stream copy, in the branch keyed on kind none (403-15, G-403-1)', async () => {
+    const planted = plantSession({ runId: 'r1' })
+    const frame = await productionFrame({ r1: planted.session })
+    const body = await (await fetch(`${frame.origin}/live/r1`)).text()
+    const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/u.exec(body)?.[1] ?? ''
+    expect(script.length, 'the served document must contain the embed script').toBeGreaterThan(200)
+
+    // THE SAME SHAPE AS (20): the constant and the served bytes are one string, or the pane and
+    // the embed drift apart again the way G-403-1 found them.
+    expect(script, 'the served script must carry the exported no-stream message verbatim')
+      .toContain(JSON.stringify(LIVE_EMBED_NO_STREAM_MESSAGE))
+
+    const noneBranch = /kind === 'none'[^\n]*\n?[^\n]*/gu
+    const branches = script.match(noneBranch) ?? []
+    expect(
+      branches.some((line) => line.includes(JSON.stringify(LIVE_EMBED_NO_STREAM_MESSAGE))),
+      `no branch keyed on kind === 'none' assigns ${JSON.stringify(LIVE_EMBED_NO_STREAM_MESSAGE)}`,
+    ).toBe(true)
+    expect(LIVE_EMBED_STATES, 'and `no-stream` is a declared state of the page').toContain('no-stream')
+    // This document owns no step list and cannot see its host's, so it names no position for one.
+    expect(LIVE_EMBED_NO_STREAM_MESSAGE).not.toMatch(/\b(?:below|beneath|above|left|right)\b/u)
   })
 
   it('(22) THE FRAME IS THE SHIPPED ONE — asserted on this file\'s own source', async () => {

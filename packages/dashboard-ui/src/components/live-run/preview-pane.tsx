@@ -46,11 +46,14 @@ import type { RunsLiveUrlResult } from '@vostride/agent-qa-schema'
  * still declares `none` has genuinely nothing to stream, and gets the sentence.
  */
 
-/** What a target that declared no live stream renders. The steps pane keeps working regardless. */
-export const NO_STREAM_TEXT = 'no live preview for this target — steps still advance below'
+/** What a target that declared no live stream renders; the step list is named by role, never by position. */
+export const NO_STREAM_TEXT = 'no live preview for this target — the step list keeps advancing'
 
-/** What the pane observed when its bounded wait expired, without claiming the target has no preview. */
-export const WAITING_GAVE_UP_TEXT = 'waited for the live view, but nothing arrived — steps still advance below'
+/** What the pane observed when its bounded wait expired, claiming nothing about whether the target has a preview. */
+export const WAITING_GAVE_UP_TEXT = 'waited for the live view, but nothing arrived — the step list keeps advancing'
+
+/** The badge that tells the gave-up arm apart at a glance; a sibling of the sentence, never part of it. */
+export const WAITING_GAVE_UP_LABEL = 'gave up'
 
 /**
  * How long the pane waits before asking again while it is in the NOT-YET state.
@@ -283,9 +286,20 @@ export function PreviewPane({ runId, handles, membersByHandle, terminal, runOver
           />
         )}
         {previewState === 'no-stream' && (
-          <p className="p-6 text-sm text-muted-foreground">
-            {gaveUpWaiting ? WAITING_GAVE_UP_TEXT : NO_STREAM_TEXT}
-          </p>
+          <div className="flex flex-col items-center gap-2 p-6">
+            {/* A sibling, not a child: the sentence is read with exact equality, and a label inside the <p> would change it. */}
+            {gaveUpWaiting && (
+              <span
+                data-preview-reason-label
+                className="rounded-sm border border-amber-500/20 bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-500"
+              >
+                {WAITING_GAVE_UP_LABEL}
+              </span>
+            )}
+            <p data-preview-reason={gaveUpWaiting ? 'gave-up' : 'declared'} className="text-sm text-muted-foreground">
+              {gaveUpWaiting ? WAITING_GAVE_UP_TEXT : NO_STREAM_TEXT}
+            </p>
+          </div>
         )}
         {(previewState === 'minting' || previewState === 'waiting') && (
           // THE SAME MOTION FOR BOTH, DELIBERATELY. To the person watching, "asking" and "asking

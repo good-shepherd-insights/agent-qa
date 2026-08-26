@@ -34,6 +34,7 @@ import {
   NO_STREAM_RETRY_MS,
   NO_STREAM_TEXT,
   WAITING_ATTEMPT_LIMIT,
+  WAITING_GAVE_UP_LABEL,
   WAITING_GAVE_UP_TEXT,
 } from '@/components/live-run/preview-pane'
 import { STEPS_EMPTY_TEXT } from '@/components/live-run/step-list'
@@ -562,6 +563,11 @@ describe('the page ends where the run ends, and stays there (D-12)', () => {
 })
 
 describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)', () => {
+  // NO SENTENCE NAMES A POSITION FOR THE STEPS PANE (403-15, G-403-1). The live page renders the
+  // step list BESIDE the preview and the served embed owns no step list at all, so a direction
+  // word is false in every host; the pane names the steps pane by ROLE instead.
+  const DIRECTION_WORDS = /\b(?:below|beneath|above|left|right)\b/u
+
   // `none` IS TWO SITUATIONS WEARING ONE WORD (403-07, gap 1), and the pane's whole honesty rests
   // on telling them apart. `startRun` publishes the session synchronously; the member's browser —
   // and therefore its screencast capability — arrives later, so the FIRST mint of an ordinary run
@@ -588,12 +594,16 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
       at0,
       after: previewState(),
       text: q('[data-preview-state] p')?.textContent,
+      reason: q('[data-preview-reason]')?.getAttribute('data-preview-reason'),
+      label: q('[data-preview-reason-label]'),
       memberNote: q('[data-member-note]') !== null,
       iframes: qa('iframe').length,
     }).toEqual({
       at0: 'waiting',
       after: 'no-stream',
       text: NO_STREAM_TEXT,
+      reason: 'declared',
+      label: null,
       memberNote: true,
       iframes: 0,
     })
@@ -616,6 +626,8 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     }
     const afterCap = previewState()
     const textAfterCap = q('[data-preview-state] p')?.textContent
+    const reasonAfterCap = q('[data-preview-reason]')?.getAttribute('data-preview-reason')
+    const labelAfterCap = q('[data-preview-reason-label]')?.textContent
     const callsAfterCap = fetchLiveUrlMock.mock.calls.length
 
     const picker = q('[data-handle-picker]') as HTMLSelectElement | null
@@ -632,6 +644,8 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
       at0,
       afterCap,
       textAfterCap,
+      reasonAfterCap,
+      labelAfterCap,
       callsAfterCap,
       afterSwitch: previewState(),
       callsAfterSwitch: fetchLiveUrlMock.mock.calls.length,
@@ -640,6 +654,8 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
       at0: 'waiting',
       afterCap: 'no-stream',
       textAfterCap: WAITING_GAVE_UP_TEXT,
+      reasonAfterCap: 'gave-up',
+      labelAfterCap: WAITING_GAVE_UP_LABEL,
       callsAfterCap: WAITING_ATTEMPT_LIMIT,
       afterSwitch: 'waiting',
       callsAfterSwitch: WAITING_ATTEMPT_LIMIT + 1,
@@ -793,7 +809,11 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
 
     expect(previewState()).toBe('no-stream')
     expect(q('[data-live-pane="preview"]')?.textContent).toContain(NO_STREAM_TEXT)
-    expect(NO_STREAM_TEXT).toBe('no live preview for this target — steps still advance below')
+    expect(q('[data-preview-reason]')?.getAttribute('data-preview-reason')).toBe('declared')
+    expect(NO_STREAM_TEXT).toContain('step list')
+    expect(WAITING_GAVE_UP_TEXT).toContain('step list')
+    expect(NO_STREAM_TEXT).not.toMatch(DIRECTION_WORDS)
+    expect(WAITING_GAVE_UP_TEXT).not.toMatch(DIRECTION_WORDS)
     expect(q('iframe')).toBeNull()
 
     // AND THE SENTENCE IS TERMINAL. A retry that fired from `no-stream` would poll straight

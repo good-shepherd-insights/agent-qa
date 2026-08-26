@@ -41,6 +41,15 @@ export type LiveEmbedState = (typeof LIVE_EMBED_STATES)[number]
  */
 export const LIVE_EMBED_EXPIRED_MESSAGE = 'link expired'
 
+/**
+ * What a target that declared NO live stream says, exactly (D-08).
+ *
+ * This document owns no step list, and its host — the dashboard iframe today, the 408 MCP App
+ * later — is invisible to it, so the sentence claims nothing about where or whether steps are
+ * shown. Exported so the served bytes are pinned against the constant (frame-proxy cell 25).
+ */
+export const LIVE_EMBED_NO_STREAM_MESSAGE = 'no live preview for this target'
+
 const STYLE = `
   :root { color-scheme: dark light }
   html, body { margin: 0; height: 100%; background: #0b0d10; }
@@ -62,6 +71,7 @@ export function renderLiveEmbedPage(input: { runId: string; nonce: string }): st
   const runIdLiteral = JSON.stringify(input.runId).replaceAll('<', '\\u003c')
   const wsPathLiteral = JSON.stringify(LIVE_VIEW_WS_PATH)
   const expiredLiteral = JSON.stringify(LIVE_EMBED_EXPIRED_MESSAGE)
+  const noStreamLiteral = JSON.stringify(LIVE_EMBED_NO_STREAM_MESSAGE)
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -144,7 +154,7 @@ export function renderLiveEmbedPage(input: { runId: string; nonce: string }): st
       if (msg.stream && msg.stream.kind === 'cdp-screencast') {
         setState('connecting', 'waiting for the first frame…');
       } else if (msg.stream && msg.stream.kind === 'none') {
-        setState('no-stream', 'no live preview for this target — steps still advance below');
+        setState('no-stream', ${noStreamLiteral});
       } else {
         setState('no-stream', 'unsupported stream kind');
       }
