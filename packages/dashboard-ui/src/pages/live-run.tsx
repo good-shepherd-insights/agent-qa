@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { Radio, XCircle } from 'lucide-react'
 
@@ -14,7 +14,7 @@ import { usePageTitle } from '@/hooks/use-page-title'
 import { getRunFaviconState, type RunFaviconState, useRunStatusFavicon } from '@/hooks/use-run-status-favicon'
 import { cancelRun, classifyRunStreamClose, fetchRun, openRunStream } from '@/lib/api'
 import type { RunRow } from '@/lib/api'
-import { routes } from '@/lib/routes'
+import { routes, type RunDetailNavigationState } from '@/lib/routes'
 import {
   createInitialRunStreamState,
   markGap,
@@ -49,11 +49,30 @@ import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
  *  - HNST-03: liveness is read off BUS ENVELOPES, so a socket to a dead run goes `lost` rather than
  *    reading "connected" forever.
  *
- * AND AT THE END IT STOPS (D-12). `runFinished` freezes the rows, closes the source, and offers run
- * detail as a link. It does not navigate: auto-advancing on the verdict is LIFE-01's clause and
- * belongs with the phase that owns verdict-exactly-once, against a run-detail page 405 has not yet
- * rebuilt. A page that redirected here would take the decision away from a person watching a
- * failure land.
+ * AND AT THE END IT MOVES WITH THE RUN (2026-08-26, Phase 404 · LIFE-01, D-13/D-14 — this
+ * paragraph replaces 403's D-12 "it does not navigate", which deferred the decision to the phase
+ * that owns verdict-exactly-once against a run-detail page 405 had not yet rebuilt; both are now
+ * true, so the deferral is spent).
+ *
+ * THE TRIGGER IS THE `verdict` ENVELOPE, NOT `runFinished`. The verdict is the moment the run's
+ * answer exists; `runFinished` comes after the post-verdict step, which D-10 says never gates
+ * anything a person sees. Navigating on the later one would tie a person's screen to a lease
+ * consult and a durable enqueue. The reducer takes the FIRST verdict and drops any second
+ * (403-04 D-4), so the effect below keyed on that field fires exactly once per run.
+ *
+ * AND IT REPLACES HISTORY. Back returns to wherever the person came from — never to a live page
+ * whose socket the door has already closed, which is a screen that would immediately move them
+ * forward again. The arrival carries ONE field of navigation state, `arrivedOnVerdict`, which is
+ * the only thing run detail cannot work out for itself: the run row's status is written by the
+ * dashboard subscriber at the SAME envelope, so a `fetchRun` a millisecond later may still read
+ * `running` and would otherwise bounce the viewer straight back here (D-07, T-404-15).
+ *
+ * THE TERMINAL BAND SURVIVES AS THE HONEST FALLBACK (D-14), rendered on exactly the paths where
+ * navigation CANNOT happen — a `runFinished` observed with no verdict at all (a malformed
+ * producer), and a close the door classifies past the end of its retention window, where the
+ * replay delivers no verdict to move on. A page that deleted the band would show a run that ended
+ * without a verdict nothing whatsoever. `state.verdict` is read FIRST in both arms: if a replay
+ * delivered one, the navigation fires and the band is moot.
  */
 
 const SOURCE_OPEN = 1
@@ -90,6 +109,7 @@ const NOT_YET_ATTACH_LIMIT = 8
 export default function LiveRunPage() {
   usePageTitle('Live Run')
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
 
   const [state, setState] = useState<RunStreamState>(createInitialRunStreamState)
   const [now, setNow] = useState(() => Date.now())
@@ -116,6 +136,18 @@ export default function LiveRunPage() {
     const timer = setInterval(() => { setNow(Date.now()) }, CLOCK_TICK_MS)
     return () => { clearInterval(timer) }
   }, [])
+
+  // D-13. THE RUN ANSWERED, SO THE VIEWER MOVES TO THE RECORD OF IT — see the header block for
+  // why this keys on `verdict` and not on `runFinished`, and why the history entry is REPLACED.
+  // `state.verdict` is first-verdict-wins in the reducer, so this effect's dependency cannot
+  // change twice for one run and cannot fire twice.
+  useEffect(() => {
+    if (id === undefined || state.verdict === undefined) return
+    navigate(
+      routes.runDetail(id),
+      { replace: true, state: { arrivedOnVerdict: state.verdict } satisfies RunDetailNavigationState },
+    )
+  }, [id, state.verdict, navigate])
 
   useEffect(() => {
     if (id === undefined) return
@@ -279,6 +311,14 @@ export default function LiveRunPage() {
   const title = fallbackRun?.name ?? 'Live Run'
   const isOver = state.terminal || runOver
 
+  // D-14, AND THE WHOLE OF WHY THE BAND IS NOT DEAD CODE. The band is what this page has to say
+  // when it CANNOT move the viewer to the record: `runFinished` landed and no verdict ever did.
+  // With a verdict the effect above has already navigated, and painting "run ended, stay put" in
+  // the same tick would be the page contradicting itself. `runOver` — the door classified the
+  // close past the end of its retention window — renders its own sentence just below, on the same
+  // no-verdict reasoning.
+  const bandsTerminal = state.terminal && state.verdict === undefined
+
   return (
     <div className="flex h-screen min-w-0 flex-col overflow-hidden">
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
@@ -331,9 +371,9 @@ export default function LiveRunPage() {
         </div>
       </div>
 
-      {(state.terminal || runMetaFailed || runOver || state.gap !== undefined || state.notices.length > 0) && (
+      {(bandsTerminal || runMetaFailed || runOver || state.gap !== undefined || state.notices.length > 0) && (
         <div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-3 py-2 text-xs">
-          {state.terminal && (
+          {bandsTerminal && (
             <div data-terminal-state={verdictDescriptor.normalized} className="flex items-center gap-2">
               <Badge className={getStatusBadgeClassName(verdictDescriptor.tone)}>{verdictDescriptor.label}</Badge>
               <span className="text-muted-foreground">{RUN_ENDED_TEXT}</span>

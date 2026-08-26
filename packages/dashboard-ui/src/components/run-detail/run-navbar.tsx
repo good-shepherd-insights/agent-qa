@@ -1,3 +1,4 @@
+import type * as React from "react"
 import { useNavigate } from "react-router"
 import { routes } from "@/lib/routes"
 import { toast } from "sonner"
@@ -14,23 +15,45 @@ import { resolveVideoSrc } from "@/lib/artifact-media"
 import { formatDuration } from "@/lib/utils"
 import { formatTokens } from "@/lib/format"
 
-function StatusBadge({ status }: { status: string }) {
+type StatusBadgeLook = Pick<React.ComponentProps<typeof Badge>, "variant" | "className"> & { label: string }
+
+/** The closed switch, as data. One arm per word, unchanged in what it paints. */
+function statusBadgeLook(status: string): StatusBadgeLook {
   switch (status) {
     case "passed":
-      return <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">Passed</Badge>
+      return { label: "Passed", className: "bg-emerald-500/15 text-emerald-500 border-emerald-500/20" }
     case "failed":
-      return <Badge variant="destructive">Failed</Badge>
+      return { label: "Failed", variant: "destructive" }
     case "healed":
-      return <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">Healed</Badge>
+      return { label: "Healed", className: "bg-amber-500/15 text-amber-500 border-amber-500/20" }
     case "flaky":
-      return <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">Flaky</Badge>
+      return { label: "Flaky", className: "bg-amber-500/15 text-amber-500 border-amber-500/20" }
     case "skipped":
-      return <Badge variant="secondary">Skipped</Badge>
+      return { label: "Skipped", variant: "secondary" }
     case "cancelled":
-      return <Badge className="bg-muted text-muted-foreground border-border">Cancelled</Badge>
+      return { label: "Cancelled", className: "bg-muted text-muted-foreground border-border" }
     default:
-      return <Badge variant="outline">{status}</Badge>
+      return { label: status, variant: "outline" }
   }
+}
+
+/**
+ * THE HEADER'S VERDICT BADGE, ADDRESSABLE (2026-08-26, Phase 404 · LIFE-01, D-13/D-15).
+ *
+ * The badge's visible text is a LABEL — title-cased, and `Cancelled` for a row that says
+ * `cancelled`. A DOM cell reading that text would be asserting on presentation, and a page that
+ * painted the right word into the wrong element would still pass. The hook below carries the RAW
+ * status string instead — the same bytes the dashboard subscriber wrote to the run row at the
+ * `verdict` envelope — so "the viewer was moved to run detail AND the verdict is painted in its
+ * header" is one selector against one fact.
+ *
+ * WHY THE SWITCH BECAME A LOOKUP. The attribute belongs on the badge ROOT, and seven `return`
+ * arms meant seven places for it to drift out of. One render site is one place it can be wrong.
+ * Nothing about what is painted changed.
+ */
+function StatusBadge({ status }: { status: string }) {
+  const { label, ...look } = statusBadgeLook(status)
+  return <Badge data-verdict-badge={status} {...look}>{label}</Badge>
 }
 
 interface RunNavbarProps {

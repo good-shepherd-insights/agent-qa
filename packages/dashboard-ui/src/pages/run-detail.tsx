@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { useParams, useNavigate, useSearchParams } from "react-router"
-import { routes } from "@/lib/routes"
+import { useParams, useNavigate, useSearchParams, useLocation } from "react-router"
+import { routes, arrivedOnVerdictFrom, VERDICT_ROW_CATCH_UP_MAX, VERDICT_ROW_CATCH_UP_MS } from "@/lib/routes"
 import { toast } from "sonner"
 import { FileSearch, X, AlertCircle, ChevronRight, Copy, Check } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -23,10 +23,10 @@ import { StepTree } from "@/components/run-detail/step-tree"
 import { TabPanels } from "@/components/run-detail/tab-panels"
 import type { ScreenshotSide } from "@/components/run-detail/tab-overview"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
-import { fetchRun, fetchActiveExecutions, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary } from "@/lib/api"
+import { fetchRun, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary } from "@/lib/api"
 import type { RunRow, StepRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary } from "@/lib/api"
 import { resolveVideoSrc } from "@/lib/artifact-media"
-import { getRunStatusDescriptor, getStatusBadgeClassName } from "@/lib/status"
+import { getRunStatusDescriptor, getStatusBadgeClassName, shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
 import { getRunFaviconState, useRunStatusFavicon } from "@/hooks/use-run-status-favicon"
@@ -182,6 +182,11 @@ type CurrentScreenshotPair = {
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  // D-07. The one thing this page cannot work out from the run row: whether the viewer arrived
+  // here BECAUSE the live page just watched this run's verdict land. Written by `live-run.tsx`,
+  // read structurally, `undefined` for anything that is not the shape. See the loader below.
+  const arrivedOnVerdict = arrivedOnVerdictFrom(location.state)
   const [searchParams, setSearchParams] = useSearchParams()
   const productTour = useOptionalProductTour()
   const recordRunDetailStatus = productTour?.recordRunDetailStatus
@@ -238,23 +243,46 @@ export default function RunDetailPage() {
 
     let cancelled = false
     let retryCount = 0
+    // The bounded row catch-up below, so the effect's own teardown can disarm it. A page that
+    // unmounted mid-catch-up and still woke up to fetch would be a request for a screen nobody
+    // is looking at.
+    let catchUpAttempts = 0
+    let catchUpTimer: ReturnType<typeof setTimeout> | undefined
 
     async function loadRun() {
       try {
-        const { executions } = await fetchActiveExecutions()
+        const data = await fetchRun(id!)
         if (cancelled) return
-        if (executions.some(e => e.runId === id)) {
+
+        // THE BOUNCE, RE-KEYED (2026-08-26, Phase 404 · D-07, T-404-15).
+        //
+        // WHAT THIS REPLACED. Until 404 the loader began by reading `/api/execution/active` and
+        // bounced to `/live` for any run in that set. D-07 retires that reading: an execution
+        // stays "active" until its POST-RUN TAIL finishes, and the tail runs after the verdict —
+        // so a viewer whom the live page had just moved here on the verdict (D-13) was thrown
+        // straight back to `/live`, which navigated them here again. A ping-pong nobody can click
+        // their way out of, for as long as curation takes.
+        //
+        // THE PREDICATE IS NOW THE ROW'S OWN STATUS, which the dashboard subscriber writes at the
+        // `verdict` envelope. One producer, one fact.
+        const rowIsLive = shouldRouteRunToLive(data.run.status)
+        if (rowIsLive && arrivedOnVerdict === undefined) {
           navigate(routes.runLive(id!), { replace: true })
           return
         }
-      } catch {
-        // fall through
-      }
 
-      try {
-        const data = await fetchRun(id!)
-        if (cancelled) return
         setRun(data.run)
+
+        // AND THE RACE THE PREDICATE CANNOT SEE. `updateRun` at `verdict` and this `fetchRun`
+        // race by design — D-13 navigates on the ENVELOPE, the earliest honest moment, and the
+        // durable row follows within milliseconds. An arrival carrying `arrivedOnVerdict` never
+        // bounces on any attempt; it renders the row it got and re-asks on a bounded cadence
+        // until the row reads terminal, so the header badge follows the row rather than freezing
+        // on a stale `running`.
+        if (rowIsLive && catchUpAttempts < VERDICT_ROW_CATCH_UP_MAX) {
+          catchUpAttempts += 1
+          catchUpTimer = setTimeout(() => { if (!cancelled) void loadRun() }, VERDICT_ROW_CATCH_UP_MS)
+        }
 
         if (isSuiteParentRun(data.run) && data.tests && data.tests.length > 0) {
           setSuiteTests(data.tests)
@@ -312,8 +340,9 @@ export default function RunDetailPage() {
     loadRun()
     return () => {
       cancelled = true
+      if (catchUpTimer !== undefined) clearTimeout(catchUpTimer)
     }
-  }, [id, navigate])
+  }, [id, navigate, arrivedOnVerdict])
 
   useEffect(() => {
     if (!id || isLoading) return

@@ -525,16 +525,69 @@ describe('a stream that carried no step is never a blank pane (HNST-01 empty edg
   })
 })
 
-describe('the page ends where the run ends, and stays there (D-12)', () => {
-  it('freezes with the verdict, ends the preview, links run detail, and neither reconnects nor navigates', async () => {
+describe('the page ends where the run ends, and MOVES the viewer with it (D-13, 2026-08-26)', () => {
+  // WHAT REPLACED WHAT (Phase 404 · LIFE-01, D-13). 403 D-12 ended this page on the verdict and
+  // deliberately went nowhere: run detail had not been rebuilt, and a redirect would have taken
+  // the decision away from a person watching a failure land. 404 owns verdict-exactly-once and
+  // run detail is rebuilt, so the page now moves with the run — on the ENVELOPE, not on
+  // `runFinished`, because the post-verdict step sits between the two and D-10 says it never
+  // gates anything a person sees.
+  //
+  // `replace`, NOT `push`. Back must return to wherever the person came from. A pushed entry
+  // would put a DEAD live page — a socket the door has already closed — one Back press away, and
+  // the page they landed on would immediately navigate them forward again.
+  it('navigates to run detail on the FIRST verdict, replacing history and naming the verdict word', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
+    expect(navigateMock, 'a running run goes nowhere').not.toHaveBeenCalled()
+    expect(q('[data-terminal-state]'), 'and shows no terminal band').toBeNull()
+
+    await emit(stepFinalized(0, 0, { status: 'passed' }), testFinished(0, 'passed'), verdict('passed'))
+
+    expect(navigateMock).toHaveBeenCalledTimes(1)
+    expect(navigateMock).toHaveBeenCalledWith(
+      `/runs/${RUN_ID}`,
+      { replace: true, state: { arrivedOnVerdict: 'passed' } },
+    )
+    // THE BAND IS NOT ON SCREEN AT THE MOMENT OF NAVIGATION. D-14 keeps it for the paths where
+    // navigation CANNOT happen; painting it here would be a page saying "this run is over, stay
+    // put" in the same tick it moved the viewer somewhere else.
+    expect(q('[data-terminal-state]')).toBeNull()
+  })
+
+  it('a second verdict and a following `runFinished` add no second navigation', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1))
+    await emit(verdict('passed'))
+    expect(navigateMock).toHaveBeenCalledTimes(1)
+
+    // The reducer takes the FIRST verdict and drops the rest (403-04 D-4); this asserts the EFFECT
+    // inherits that, because an effect keyed on a field that never changes cannot fire twice.
+    await emit(verdict('failed'), runFinished())
+    await advance(30_000)
+
+    expect(navigateMock, 'one run, one arrival').toHaveBeenCalledTimes(1)
+    expect(sources(), 'and no reconnect behind it').toHaveLength(1)
+    expect(classifyRunStreamCloseMock).not.toHaveBeenCalled()
+  })
+
+  // RE-PINNED 2026-08-26 (404-06, D-14). Before this phase this cell was "freezes with the
+  // verdict, ends the preview, links run detail, and neither reconnects nor navigates" and it
+  // published `verdict` + `runFinished` together. D-13 inverts that path: a verdict NAVIGATES. So
+  // the cell keeps its subject — the honest terminal band — and moves to the path where the band
+  // is still the only truthful thing to render: a producer that ended a run without ever declaring
+  // a verdict. The band is a FALLBACK now, and this is what it falls back from.
+  it('a `runFinished` with NO verdict renders the terminal band, links run detail, and goes nowhere (D-14 fallback)', async () => {
     await mount()
     await open()
     await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
     expect(sources()).toHaveLength(1)
 
-    await emit(stepFinalized(0, 0, { status: 'passed' }), testFinished(0, 'passed'), verdict('passed'), runFinished())
+    await emit(stepFinalized(0, 0, { status: 'passed' }), testFinished(0, 'passed'), runFinished())
 
-    expect(q('[data-terminal-state]')?.getAttribute('data-terminal-state')).toBe('passed')
+    expect(q('[data-terminal-state]')).not.toBeNull()
     expect(document.body.textContent).toContain('run ended')
     expect(previewState()).toBe('ended')
     expect(q('[data-live-embed]')).toBeNull()
@@ -545,9 +598,31 @@ describe('the page ends where the run ends, and stays there (D-12)', () => {
     await advance(30_000)
 
     expect(sources()).toHaveLength(1)
-    expect(navigateMock).not.toHaveBeenCalled()
+    expect(
+      navigateMock,
+      'D-14: with no verdict there is nothing to move the viewer TO the record about — the band '
+      + 'says so and the link offers it',
+    ).not.toHaveBeenCalled()
     expect(observedPath).toBe(`/runs/${RUN_ID}/live`)
     expect(classifyRunStreamCloseMock).not.toHaveBeenCalled()
+  })
+
+  // THE SECOND D-14 PATH, and the one that is not a producer defect at all. A close the door
+  // classifies as `unknown_run` after this page has already folded envelopes is a retention window
+  // that elapsed — the replay would land past the end. No verdict ever reaches the reducer, so
+  // there is nothing to navigate on, and the honest thing is the band plus the durable link.
+  it('a close classified past the end (`unknown_run` with envelopes already seen) bands rather than navigates (D-14)', async () => {
+    classifyRunStreamCloseMock.mockResolvedValue({ kind: 'unknown_run' })
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1))
+
+    await fail(CLOSED)
+
+    expect(q('[data-run-over]')?.textContent?.trim()).toBe('this run is over — view run detail')
+    expect(q('[data-run-detail-link]')?.getAttribute('href')).toBe(`/runs/${RUN_ID}`)
+    expect(navigateMock, 'a page that never saw a verdict has no verdict to move on').not.toHaveBeenCalled()
+    expect(observedPath).toBe(`/runs/${RUN_ID}/live`)
   })
 
   it('the rows are frozen: an envelope after `runFinished` changes no status', async () => {
