@@ -234,6 +234,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // this name on the wire, and the alternative is a literal in the CLI — a second declaration of
   // a capability's name. A string is not a dispatch handle.
   'RUNS_DIGEST_FUNCTION_ID',
+  // 404 plan 05 (D-22): the recorded-event stream's id, on the footing of every op-id constant
+  // around it. The dashboard's post-processing read joins chip truth with the run's own recorded
+  // POSTURE — who was going to drain the chain, and the last per-stage failure line — and it
+  // dispatches that read through the injected host. `packages/dashboard-server` may not import
+  // this package at all, so the id has to be HANDED to it; a literal there would be a name it
+  // cannot type-check against the spec that answers to it. A string is not a dispatch handle.
+  'RUNS_EVENTS_FUNCTION_ID',
   // 392 plan 07: the run listing's id — what the `status` alias resolves to, published so the
   // composed compound e2e names the op by IMPORT rather than by a literal it made up.
   'RUNS_LIST_FUNCTION_ID',

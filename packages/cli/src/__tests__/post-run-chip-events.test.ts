@@ -434,6 +434,105 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
 })
 
 /**
+ * The emitter's SECOND SINK — the dashboard relay (Phase 404 plan 05, D-16).
+ *
+ * WHAT THE SINK MAY AND MAY NOT COST. The trail is the record: `events.jsonl` is what
+ * `runs.postprocessing` is reconciled against and what a later reader replays. The relay is a
+ * convenience for a browser that happens to be open right now — so it runs AFTER the line is on
+ * disk, it hands over the same object rather than a copy anybody could have edited on the way, and
+ * a listener that throws is swallowed here for the run bus's own subscriber-fault reason. The
+ * strongest statement of all of that is the byte cell: a run drained with a relay and a run drained
+ * without one leave IDENTICAL files.
+ */
+describe("the relay is the emitter's second sink and never its first (404 D-16)", () => {
+  it('hands the relay every appended envelope, in order, AFTER the line is on disk', async () => {
+    const f = fixture()
+    const relayed: RunEventEnvelope[] = []
+    /** What the file held at the moment each relay call was made. */
+    const linesAtRelay: number[] = []
+    const tail = runPostRunTail({
+      ...f.options(),
+      relay: (envelope) => {
+        relayed.push(envelope)
+        linesAtRelay.push(
+          readFileSync(f.eventsPath, 'utf8').split('\n').filter((line) => line.length > 0).length,
+        )
+      },
+    })
+    await stepEnqueue(f.agentQaRoot)
+    await tail.drain()
+
+    const appended = readEvents(f.eventsPath).slice(FIXTURE_EVENT_LINES.length)
+    expect(appended.map((event) => event.type)).toEqual([
+      'analysisStarted',
+      'analysisCompleted',
+      'curationStarted',
+      'curationCompleted',
+    ])
+    // ONE RELAY CALL PER APPEND AND NO OTHERS. A sink that fired on an outcome the drop-guard
+    // discarded, or twice for one line, breaks this correspondence rather than an inequality
+    // somewhere downstream.
+    expect(relayed).toEqual(appended)
+    // AFTER, not before: by the time each call was made its own line was already the last one on
+    // disk. A relay invoked ahead of `appendFileSync` would show one fewer line every time.
+    expect(linesAtRelay).toEqual(
+      appended.map((_event, index) => FIXTURE_EVENT_LINES.length + index + 1),
+    )
+    // The SAME object that was serialised, not a structural twin: the envelope the browser is
+    // told about and the envelope the file holds cannot be two values that merely agree today.
+    for (const [index, envelope] of relayed.entries()) {
+      expect(JSON.stringify(envelope)).toBe(JSON.stringify(appended[index]))
+    }
+  })
+
+  it('leaves the trail BYTE-IDENTICAL to a run drained with no relay at all', async () => {
+    const withRelay = fixture()
+    const relayed: RunEventEnvelope[] = []
+    const relayTail = runPostRunTail({
+      ...withRelay.options(),
+      relay: (envelope) => { relayed.push(envelope) },
+    })
+    await stepEnqueue(withRelay.agentQaRoot)
+    await relayTail.drain()
+
+    const without = fixture()
+    const plainTail = runPostRunTail(without.options())
+    await stepEnqueue(without.agentQaRoot)
+    await plainTail.drain()
+
+    expect(relayed.length, 'the relay did fire — otherwise the byte claim is vacuous').toBe(4)
+    expect(readFileSync(withRelay.eventsPath, 'utf8'))
+      .toBe(readFileSync(without.eventsPath, 'utf8'))
+  })
+
+  it('swallows a THROWING relay: the append still happened and observe() never threw', async () => {
+    const f = fixture()
+    let calls = 0
+    const tail = runPostRunTail({
+      ...f.options(),
+      relay: () => {
+        calls += 1
+        throw new Error('a viewer fault, mid-append')
+      },
+    })
+    await stepEnqueue(f.agentQaRoot)
+    // A throw out of the sink would surface HERE, as a rejected drain — the pump calls `observe()`
+    // synchronously inside its own loop.
+    await expect(tail.drain()).resolves.toBeUndefined()
+
+    expect(calls, 'it threw on every one of them, not just the first').toBe(4)
+    expect(tail.report().drain).toBe('drained')
+    const appended = readEvents(f.eventsPath).slice(FIXTURE_EVENT_LINES.length)
+    expect(appended.map((event) => event.type), 'the trail is complete regardless').toEqual([
+      'analysisStarted',
+      'analysisCompleted',
+      'curationStarted',
+      'curationCompleted',
+    ])
+  })
+})
+
+/**
  * Read the SAME op the tail renders from, through a second composition.
  *
  * A second host is what makes the token-equality claim non-circular: if the line were built

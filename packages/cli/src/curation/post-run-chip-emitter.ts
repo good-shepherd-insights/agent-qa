@@ -137,6 +137,24 @@ export interface CreatePostRunChipEmitterOptions {
   readonly maskingContext?: MaskingContext
   /** The tail's one wall clock, so envelope stamps and budget arithmetic share a source. */
   readonly now?: () => number
+  /**
+   * The dashboard's SECOND SINK for the same envelope (404 D-16).
+   *
+   * THE FILE STAYS THE RECORD AND THIS IS A CONVENIENCE. A run's post-processing chain runs after
+   * `runFinished`, which is where the run event stream closes — so the chips a browser wants to
+   * watch are appended by a leg no open SSE is listening to. When `agent-qa dashboard` is the host,
+   * it threads its in-process relay here and the page learns that the durable answer moved. Every
+   * other host threads nothing and the emitter behaves exactly as it did before this field existed.
+   *
+   * CALLED AFTER THE APPEND, WITH THE SAME OBJECT. After, because the trail is the thing that must
+   * survive; the same object, because the envelope a viewer is told about and the envelope the file
+   * holds may not be two values that merely agree today.
+   *
+   * A LISTENER FAULT IS SWALLOWED HERE, on the run bus's own subscriber-fault discipline: this
+   * emitter's job is the trail, it is called synchronously from inside the pump's loop, and a
+   * viewer's exception thrown out of `observe()` would abort a DRAIN over a browser bug.
+   */
+  readonly relay?: (envelope: RunEventEnvelope) => void
 }
 
 /**
@@ -216,6 +234,15 @@ export function createPostRunChipEmitter(
     nextSeq += 1
     emitted += 1
     appendFileSync(eventsPath, `${JSON.stringify(envelope)}\n`)
+    // D-16's second sink, and its position is the whole contract: below the append, so the record
+    // exists before anybody is told about it, and inside the drop-guard's shadow — `observe()`
+    // returns above this function for an outcome that belongs to another run's chain, so the guard
+    // that keeps a foreign chip out of this file is the same one that keeps it off this wire.
+    try {
+      options.relay?.(envelope)
+    } catch {
+      /* the trail is written; a viewer's fault is not the emitter's, and never the drain's */
+    }
   }
 
   return {

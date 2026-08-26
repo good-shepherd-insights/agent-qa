@@ -329,7 +329,18 @@ async function readStatusThroughTheOp(
  * Run A is queued by its step and detaches; run B is queued by its step and drains the shared
  * queue in-process (404 D-05: the hand-off is the step's on both sides).
  */
-async function driveTwoRuns(f: Fixture): Promise<{ jobsRun: number; drain: string }> {
+async function driveTwoRuns(
+  f: Fixture,
+  /**
+   * 404-05 (D-16): the dashboard's second chip sink, attached to run B's tail only.
+   *
+   * Threaded through this shared driver rather than into a fourth copy of it, because the claim
+   * the relay cell makes is exactly the claim this driver already sets up: run B's pump genuinely
+   * claims and runs run A's jobs, so an outcome the drop-guard discards genuinely reaches
+   * `observe()`. A relay cell over a fixture with no foreign work would be measuring nothing.
+   */
+  relay?: (envelope: RunEventEnvelope) => void,
+): Promise<{ jobsRun: number; drain: string }> {
   const tailA = runPostRunTail(f.options(RUN_A, {
     baseMs: Date.parse('2026-01-01T00:00:00.000Z'),
   }))
@@ -338,9 +349,10 @@ async function driveTwoRuns(f: Fixture): Promise<{ jobsRun: number; drain: strin
   await tailA.finish({ detached: true })
   expect(tailA.report().drain).toBe('detached')
 
-  const tailB = runPostRunTail(f.options(RUN_B, {
-    baseMs: Date.parse('2026-01-01T01:00:00.000Z'),
-  }))
+  const tailB = runPostRunTail({
+    ...f.options(RUN_B, { baseMs: Date.parse('2026-01-01T01:00:00.000Z') }),
+    ...(relay === undefined ? {} : { relay }),
+  })
   await stepEnqueue(f.agentQaRoot, RUN_B)
   await tailB.drain()
   return { jobsRun: tailB.report().jobsRun, drain: tailB.report().drain }
@@ -375,6 +387,29 @@ describe('the chip trail is scoped to the run whose tail is draining (ANLZ-05, D
     }
     // Nothing in B's file names the other run, in any field.
     expect(readFileSync(f.eventsPath(RUN_B), 'utf8')).not.toContain(RUN_A)
+  })
+
+  it('never PUSHES a foreign envelope to the dashboard relay either (404 D-16, T-404-02)', async () => {
+    // The relay is fed from inside `append`, which the drop-guard returns above — so the guard
+    // that keeps run A out of run B's FILE is the same one that keeps it off run B's wire. Stated
+    // as a cell because "the same guard" is a property of where a line sits, and where a line sits
+    // is exactly what a later edit moves.
+    const f = fixture()
+    const relayed: RunEventEnvelope[] = []
+    const report = await driveTwoRuns(f, (envelope) => { relayed.push(envelope) })
+
+    expect(report.jobsRun, "A's work genuinely ran under B's pump").toBe(4)
+    expect(relayed.map((event) => event.runId), 'four envelopes, all B\'s').toEqual([
+      RUN_B, RUN_B, RUN_B, RUN_B,
+    ])
+    expect(relayed.map((event) => event.type)).toEqual([
+      'analysisStarted',
+      'analysisCompleted',
+      'curationStarted',
+      'curationCompleted',
+    ])
+    // …and the relayed envelopes are exactly B's appended lines, so the wire and the record agree.
+    expect(relayed).toEqual(readEvents(f.eventsPath(RUN_B)).slice(fixtureEventLines(RUN_B).length))
   })
 
   it('still advances the foreign run\'s durable rows under this tail\'s pump', async () => {

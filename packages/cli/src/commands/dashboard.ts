@@ -1086,6 +1086,18 @@ export function partitionDashboardRunArgs(args: readonly string[]): {
 export async function createDashboardRunDoor(input: {
   /** The dashboard database THIS SERVER holds. One connection, one writer, one process. */
   readonly db: unknown
+  /**
+   * The post-processing relay's `publish`, as the chip emitter's SECOND SINK (404-05, D-16).
+   *
+   * Threaded through the BRIDGE because that is the seam the tail is composed behind: the drain leg
+   * `runs.start` starts (404-04) reads `runBridge.chipRelay` and hands it to
+   * `composeCliPostRunTail` as `relay`, which hands it to the one `createChipEmitter` site. Passing
+   * it to `startServer` alone would give the server a registry nothing publishes to.
+   *
+   * OPTIONAL, because the cells that compose this door to measure something else compose no relay,
+   * and a door with no push channel is exactly today's behaviour.
+   */
+  readonly chipRelay?: (envelope: RunEventEnvelope) => void
 }): Promise<DashboardRunDoor> {
   const {
     createDashboardRunIngest,
@@ -1130,6 +1142,9 @@ export async function createDashboardRunDoor(input: {
   const runBridge: NonNullable<ComposeCliLocalAgentInput['runBridge']> = {
     // 402-06 (T-402-04): READ PER RUN, never captured. See `bindMaskingSecrets`.
     maskingSecrets: () => mergedSecretStore(...maskingSecretStores),
+    // 404-05 (D-16): the chip emitter's second sink, on the conditional-spread house rule — an
+    // absent relay is an ABSENT field, so the drain leg's own `relay === undefined` arm decides.
+    ...(input.chipRelay === undefined ? {} : { chipRelay: input.chipRelay }),
     // THE BRIDGE HOOK (D-09). Routed by the session's OWN id rather than by "the run in flight",
     // because this door runs as many at once as the queue has slots.
     onSession: (session: RunSession): void => {
@@ -1581,6 +1596,7 @@ async function startDashboardBackedServices(
     const {
       DashboardDatabase,
       createConfirmRegistry,
+      createPostProcessingRelay,
       resolveDashboardDbPath,
       startServer,
     } = await import('@vostride/agent-qa-dashboard')
@@ -1634,7 +1650,17 @@ async function startDashboardBackedServices(
     // COMPOSED BEFORE THE HOST AND BOUND AFTER IT, for the reason `composed` and `boundOrigin`
     // inside `composeDashboardDoor` are boxes: the bridge is an INPUT to the composition and the
     // starter needs the composition's registry, so one of the two has to be read at call time.
-    const runDoor = await createDashboardRunDoor({ db })
+    // ---- The post-processing chip relay (404-05, D-16) ---------------------------------------
+    //
+    // ONE OBJECT, TWO HALVES, AND THEY HAVE TO BE THE SAME ONE. `publish` becomes the chip
+    // emitter's second sink, down inside whatever tail this process's drain leg composes; the relay
+    // itself becomes the stream door's subscription registry. Composed HERE, above both, for the
+    // reason `sessions` is composed above both run-service arms: a relay built inside either half
+    // would be a registry the other half never reaches, and the failure would look like a live
+    // channel that heartbeats forever at a page whose chips are demonstrably moving.
+    const postProcessingRelay = createPostProcessingRelay()
+
+    const runDoor = await createDashboardRunDoor({ db, chipRelay: postProcessingRelay.publish })
 
     // ---- The live-view composition (403 D-03/D-14 — closes WINDOWS #264) -----------------------
     //
@@ -1714,6 +1740,10 @@ async function startDashboardBackedServices(
       // registry is hoisted above both, so the local run-stream door and the frame socket can
       // attach to a run this process is executing whether or not a credential was declared.
       runServiceAttach: sessions.attach,
+      // 404-05 (D-16): the other half of the relay above. Unconditional on both token arms, on
+      // `runServiceAttach`'s own argument — a run this process drains is a run this process can
+      // push chips for, whether or not a run-service credential was ever declared.
+      postProcessingRelay,
       // 403 D-03/D-06: the live-view seam, likewise on both arms. `validate` is the function
       // layer's own validator by reference; `mintLiveUrl` dispatches the op through the SHIPPED
       // dispatcher, so the mint pays the op-level gate and the receipt classification exactly as

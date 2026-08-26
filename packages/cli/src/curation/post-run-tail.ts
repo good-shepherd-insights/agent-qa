@@ -304,11 +304,11 @@ export interface RunPostRunTailOptions extends Pick<
   /**
    * The dashboard's second chip sink (404 D-16), accepted here and threaded to the emitter.
    *
-   * A PASS-THROUGH DECLARED AHEAD OF ITS CONSUMER, and deliberately so: the composition seam
-   * (`composeCliPostRunTail`) and the emitter side (404-05) land in different plans, and a field
-   * added on the emitter side alone would leave the composition unable to name it. It is forwarded
-   * to `createChipEmitter` in 404-05; today it is carried and not read, which is stated here rather
-   * than implied.
+   * A PASS-THROUGH, threaded to `createChipEmitter` at the ONE construction site below. It was
+   * declared ahead of its consumer in 404-04 — the composition seam (`composeCliPostRunTail`) and
+   * the emitter side landed in different plans, and a field added on the emitter alone would have
+   * left the composition unable to name it; 404-05 filled the emitter side, so the value now
+   * reaches a sink rather than stopping here.
    */
   relay?: (envelope: RunEventEnvelope) => void
   /** Focused test seam. Production callers omit it. */
@@ -584,6 +584,10 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           // with above: the chip's error text crosses the same disclosure boundary the fold's
           // does, and it may not be the one output that skipped the masker (WR-08).
           ...(opts.maskingContext === undefined ? {} : { maskingContext: opts.maskingContext }),
+          // 404-05 (D-16): the dashboard's second sink, threaded on the same conditional idiom —
+          // an absent relay is an ABSENT field, never a present `undefined`, so the emitter's own
+          // optional call is what decides, in one place.
+          ...(opts.relay === undefined ? {} : { relay: opts.relay }),
           now: () => ops().now(),
         })
         // Pitfall 7, the daemon's sequence verbatim (host.ts:1759): adopt the epoch the lease
