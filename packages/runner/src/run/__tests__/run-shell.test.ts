@@ -234,7 +234,7 @@ describe('run lifecycle emission (SESSION-04, spec §2.2)', () => {
     expect(skipped).toContainEqual(expect.objectContaining({ testId: 'g1-b', outcome: 'skipped' }))
   })
 
-  it('publishes verdict exactly once, before runFinished; runFinished is last, once, detached, with finalSeq = its own seq', async () => {
+  it('publishes verdict exactly once, before runFinished; runFinished is last, once, and with NO postVerdict port composed reads detached, with finalSeq = its own seq', async () => {
     const session = startRun(baseConfig())
     const events = drain(session)
     await done(session)
@@ -248,7 +248,14 @@ describe('run lifecycle emission (SESSION-04, spec §2.2)', () => {
     expect(verdictIdx).toBeLessThan(finishIdx)
     expect(finishIdx).toBe(events.length - 1)
     const finishPayload = finishes[0].payload as { disposition: string; finalSeq: number }
-    expect(finishPayload.disposition).toBe('detached')
+    // 404 D-09/D-10: `detached` is no longer a hardcoded literal — it is what the shell decides
+    // when NO `ports.postVerdict` step was composed, which is this config. Nothing will be drained
+    // from a host that composed no step, and the wire says exactly that (with no warning: nothing
+    // was promised). The three decided values are pinned in the port cells below.
+    expect(
+      finishPayload.disposition,
+      'a run with no post-verdict port composed reports detached',
+    ).toBe('detached')
     expect(finishPayload.finalSeq).toBe(finishes[0].seq)
   })
 

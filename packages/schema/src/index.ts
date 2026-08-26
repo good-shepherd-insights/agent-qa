@@ -446,6 +446,8 @@ export type {
   RunEventType,
   RunStartedPayload,
   RunFinishedPayload,
+  // 404-01 (D-09): the ratified post-processing posture union `runFinished.disposition` carries.
+  PostProcessingDisposition,
   VerdictPayload,
   RunWarningPayload,
   RunErrorPayload,

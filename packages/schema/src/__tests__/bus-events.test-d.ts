@@ -31,7 +31,14 @@ expectTypeOf<RunEventEnvelope['payload']>().toEqualTypeOf<RunEventPayload>()
 expectTypeOf<RunEventType>().toEqualTypeOf<(typeof RUN_EVENT_TYPES)[number]>()
 
 // The discriminated union narrows payload on `type`.
-expectTypeOf<Extract<RunEvent, { type: 'runFinished' }>['payload']['disposition']>().toEqualTypeOf<'detached'>()
+//
+// 2026-08-26 (404-01, D-09): the pin is the RATIFIED THREE-VALUE UNION, not the M1 literal it
+// replaced. Written as the union spelled out rather than as `PostProcessingDisposition` so a
+// fourth arm quietly added to that alias reds HERE — the union is a published bus-contract shape
+// that 408's embed and every thin client parse, and D-11's whole argument is that undecidable
+// cases degrade to `detached` with a warning rather than widening it.
+expectTypeOf<Extract<RunEvent, { type: 'runFinished' }>['payload']['disposition']>()
+  .toEqualTypeOf<'drained' | 'handedOff' | 'detached'>()
 
 // --- RunSession M1-lite contract pins (D-13, SESSION-01) ---------------------
 

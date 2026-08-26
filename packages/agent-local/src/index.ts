@@ -124,6 +124,11 @@ export type {
   BaselineProbeResult,
   ConfigDigests,
   MemberTestExecutor,
+  // 404-01 (D-10): a host composing `RunInvocationCoreOptions.postVerdict` writes a port of this
+  // shape, so its vocabulary travels the same hop the assembler's does.
+  PostVerdictOutcome,
+  PostVerdictPort,
+  PostVerdictStepInput,
   RunConfig,
   RunMemberDescriptor,
 } from './composition/run-invocation-core.js'

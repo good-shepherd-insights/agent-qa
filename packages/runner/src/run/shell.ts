@@ -12,8 +12,19 @@
 // Terminal sequence is owned by ONE code path (RESEARCH Pitfall 7): compute the aggregate verdict,
 // publish `verdict` EXACTLY once (before any post-processing event, SESSION-02), set the terminal
 // status, assemble + persist the handoff (a store failure degrades with a runWarning and NEVER
-// gates `done`, D-07), resolve `done` (which NEVER rejects, D-13/D-17), then publish `runFinished`
-// LAST with `disposition: 'detached'` and `finalSeq` equal to its own seq, and close the bus.
+// gates `done`, D-07), finalize the run artifact, AWAIT the post-verdict step, resolve `done`
+// (which NEVER rejects, D-13/D-17), then publish `runFinished` LAST with the DECIDED disposition
+// and `finalSeq` equal to its own seq, and close the bus.
+//
+// 2026-08-26 (Phase 404 D-09/D-10) supersedes the sentence above that had `runFinished` publish
+// the hardcoded detached literal: the value is no longer a literal. Between `runArtifactStore.finalize`
+// and `runFinished` the shell awaits ONE host-supplied `ports.postVerdict` step — the durable
+// enqueue plus a single writer-lease consult — and publishes whatever posture it decided. That
+// step is BOUNDED by `POST_VERDICT_STEP_BUDGET_MS` and degrades in every direction: absent, thrown,
+// warned or overrun all read `detached`, three of the four with a named `runWarning`. It NEVER
+// gates `done`, it publishes nothing itself, and `cancelBudget` / `liveStreams.close()` /
+// `bus.close()` are untouched behind it — so `done` still resolves after `runFinished` and a closed
+// bus (403-03 D-3).
 //
 // The nine post-processing chip events have no producer here (M1b/M2 own them, deferred).
 
@@ -22,6 +33,7 @@ import type {
   MaskingContext,
   MemberTestOutcome,
   PerTestOutcome,
+  PostProcessingDisposition,
   RunCompletion,
   RunSession,
   RunStatus,
@@ -37,7 +49,8 @@ import { deriveAggregateVerdict, deriveMemberOutcome } from './verdict.js'
 import { classifyRootCause } from './root-cause.js'
 import { createMemberEventSink } from './event-sink.js'
 import { assembleHandoff, assemblePerTestOutcome, skippedPerTestOutcome } from './handoff-assembly.js'
-import type { MemberEvidenceContext, RunConfig } from './ports.js'
+import type { MemberEvidenceContext, PostVerdictOutcome, RunConfig, RunTimerPort } from './ports.js'
+import { POST_VERDICT_STEP_BUDGET_MS } from './ports.js'
 import type { RunMemberDescriptor } from './ports.js'
 import type { TestResult } from '../result.js'
 
@@ -53,6 +66,50 @@ export type {
 const IDENTITY_MASKING: MaskingContext = {
   mask: (text: string) => text,
   unmask: (text: string) => text,
+}
+
+/**
+ * The budget's own answer, as a VALUE rather than a rejection (404 D-10).
+ *
+ * A sentinel keeps the two outcomes in one type, so the shell's `catch` stays reserved for what a
+ * throw actually means — the STEP failed — rather than absorbing the timeout as if the host's code
+ * had raised. `unique symbol` makes the narrowing exhaustive at the one comparison site.
+ */
+const POST_VERDICT_TIMED_OUT: unique symbol = Symbol('post-verdict-budget-expired')
+
+/**
+ * Race a promise against a bounded one-shot, on the run's OWN clock when it has one.
+ *
+ * `ports.timer` is the clock `runBudgetMs` is armed on, so a unit pin that fires the fake timer
+ * drives this bound deterministically; without one, a real unref'd `setTimeout` bounds it exactly
+ * as the bus's default clock does. The timer is ALWAYS cancelled — a bound that outlived the race
+ * it bounded would keep the process alive past a run that had already finished.
+ *
+ * The loser is not cancelled, and cannot be: a promise the host handed over has no abort seam. A
+ * step that answers after the budget answers into a void, which is what "detached" already means.
+ */
+async function raceWithBudget(
+  work: Promise<PostVerdictOutcome>,
+  budgetMs: number,
+  timer: RunTimerPort | undefined,
+): Promise<PostVerdictOutcome | typeof POST_VERDICT_TIMED_OUT> {
+  let cancel: (() => void) | undefined
+  const expiry = new Promise<typeof POST_VERDICT_TIMED_OUT>(resolve => {
+    if (timer !== undefined) {
+      cancel = timer.schedule(budgetMs, () => resolve(POST_VERDICT_TIMED_OUT))
+      return
+    }
+    const handle = setTimeout(() => resolve(POST_VERDICT_TIMED_OUT), budgetMs) as unknown as {
+      unref?: () => void
+    }
+    handle.unref?.()
+    cancel = () => clearTimeout(handle as unknown as ReturnType<typeof setTimeout>)
+  })
+  try {
+    return await Promise.race([work, expiry])
+  } finally {
+    cancel?.()
+  }
 }
 
 /**
@@ -549,10 +606,64 @@ export function startRun(config: RunConfig): RunSession {
       })
     }
 
-    // runFinished LAST, once, detached, finalSeq = its own seq (the next seq the bus will stamp).
+    // 404 D-10: the ONE awaited post-verdict step — enqueue + a single writer-lease consult,
+    // performed by a HOST-supplied port so the runner still names no queue and no lease
+    // (validate:arch storageNeutral). It decides `runFinished.disposition` and nothing else: the
+    // step returns a value and never touches the bus, so the terminal sequence keeps ONE owner
+    // (Pitfall 7).
+    //
+    // DEGRADE, NEVER GATE (D-11, 403-03 D-3). Four ways this can fail to decide, and all four end
+    // the same way — `detached` plus a named `runWarning`, with `runFinished` still published last
+    // and `bus.close()` still behind it: an absent port (no warning: nothing was promised), a
+    // throw, a resolution carrying its own warning, and a step that outlives
+    // POST_VERDICT_STEP_BUDGET_MS. The budget is raced on `ports.timer` when one is injected — the
+    // SAME clock `runBudgetMs` is armed on, so a fake timer drives the timeout deterministically —
+    // and on a real one-shot otherwise.
+    let disposition: PostProcessingDisposition = 'detached'
+    if (ports.postVerdict !== undefined) {
+      const step = ports.postVerdict
+      try {
+        const outcome = await raceWithBudget(
+          step.run({
+            runId: config.runId,
+            verdict,
+            ...(config.gateRun === true ? { gateRun: true as const } : {}),
+            ...(config.excludedFromOutcomes === true
+              ? { excludedFromOutcomes: true as const }
+              : {}),
+          }),
+          POST_VERDICT_STEP_BUDGET_MS,
+          timer,
+        )
+        if (outcome === POST_VERDICT_TIMED_OUT) {
+          bus.publish('runWarning', {
+            code: 'post-verdict-step-timeout',
+            message:
+              `The post-verdict step did not answer within ${String(POST_VERDICT_STEP_BUDGET_MS)}ms; `
+              + 'the run is reported detached and nothing will be drained from this process.',
+          })
+        } else {
+          disposition = outcome.disposition
+          if (outcome.warning !== undefined) {
+            bus.publish('runWarning', {
+              code: outcome.warning.code,
+              message: outcome.warning.message,
+            })
+          }
+        }
+      } catch (error) {
+        bus.publish('runWarning', {
+          code: 'post-verdict-step-failed',
+          message: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    // runFinished LAST, once, carrying the decided disposition, finalSeq = its own seq (the next
+    // seq the bus will stamp).
     bus.publish('runFinished', {
       aggregateVerdict: verdict,
-      disposition: 'detached',
+      disposition,
       finalSeq: bus.currentSeq + 1,
     })
 

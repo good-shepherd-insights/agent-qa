@@ -1879,7 +1879,7 @@ async function executeSuites(
           })
         },
         warn: (message) => console.warn(pc.yellow(`  Quarantine: ${message}`)),
-        afterVerdict: async ({ verdict, maskingContext, auditSink }) => {
+        afterVerdict: async ({ verdict, maskingContext, auditSink, postVerdict }) => {
           clearGraceTimer()
           activeRunSession = undefined
           // D-14: freeze the verdict-mapped code before the curation tail. A tail failure or a
@@ -1910,7 +1910,11 @@ async function executeSuites(
             exitCode: verdictExitCode,
             detach: opts.detach === true,
             enqueue: () => postRunTail.enqueue(),
-            runTail: () => postRunTail.drain(),
+            // 404 D-10: pump under the lease the shell's post-verdict step ALREADY acquired.
+            // Taking it here rather than letting `drain()` consult again is what keeps acquire
+            // -> pump -> release one lease; a second consult would answer `held` by this very
+            // process and hand the chain off to nobody (RESEARCH Pitfall 3).
+            runTail: () => postRunTail.drain({ lease: postVerdict.takeAcquiredLease() }),
             // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
             finish: (input) => postRunTail.finish(input),
             onUnexpectedError: () => {
@@ -4872,7 +4876,7 @@ export function createRunCommand(): Command {
               // The post-verdict tail, run INSIDE the run's own safety scope so its curation egress
               // masks like every other. The `--all` fold happens on the freeze line below and is
               // untouched by this rework.
-              afterVerdict: async ({ verdict, maskingContext, auditSink }) => {
+              afterVerdict: async ({ verdict, maskingContext, auditSink, postVerdict }) => {
                 clearGraceTimer()
                 activeRunSession = undefined
                 // Freeze the complete --all-aware exit code before the tail begins. Signals remain
@@ -4903,7 +4907,8 @@ export function createRunCommand(): Command {
                   exitCode,
                   detach: opts.detach === true,
                   enqueue: () => postRunTail.enqueue(),
-                  runTail: () => postRunTail.drain(),
+                  // 404 D-10: the same one-lease rule as the multi-suite site above.
+                  runTail: () => postRunTail.drain({ lease: postVerdict.takeAcquiredLease() }),
                   // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.
                   finish: (input) => postRunTail.finish(input),
                   onUnexpectedError: () => {

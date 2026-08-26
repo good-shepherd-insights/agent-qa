@@ -103,16 +103,29 @@ export interface RunStartedPayload {
  * emitted onto the run bus and durable job state is the only truth — which is the 386 D-16
  * two-receipt rule: a second process never writes a finished run's log.
  *
- * `disposition` stays the literal `'detached'`, deliberately. It describes how the RUN was
- * disposed of, not what happened to its post-processing, and widening it to carry a
- * post-processing member would make a fact about the chain readable off a field every
- * consumer already reads as a fact about the run. Chip status is answered by
- * `runs.postprocessing` over durable state (D-14), which is the answer that survives a closed
- * socket.
+ * `disposition` — SUPERSEDED 2026-08-26 (Phase 404, D-09). It read "stays the literal
+ * `'detached'`, deliberately" while nothing decided it; it now carries the ratified three-value
+ * {@link PostProcessingDisposition}, and the reason the old paragraph gave is exactly why the
+ * three values mean what they do: this field is the POSTURE decided at the verdict, never a
+ * report of the chain.
+ *
+ *   - `handedOff` — a current-epoch writer-lease holder exists, so somebody else will drain.
+ *   - `drained`   — no holder; THIS process took the lease and will pump under it.
+ *   - `detached`  — `--detach`, a gate-run skip, or an undecidable consult (a refused lease, no
+ *                   queue composed on this host, a step that threw or overran its budget). Every
+ *                   undecidable case is `detached` PLUS a named `runWarning` (D-11); the union is
+ *                   never widened with a fourth arm.
+ *
+ * What actually BECAME of the chain is chip truth — `runs.postprocessing` over durable job state
+ * (D-14) — and never this field. A `drained` run whose pump then failed still reads `drained`
+ * here, because the promise this field makes is about who owns the work, not about the outcome.
+ * Pre-404 logs carry the literal `'detached'`, which remains true of them.
  */
+export type PostProcessingDisposition = 'drained' | 'handedOff' | 'detached'
+
 export interface RunFinishedPayload {
   aggregateVerdict: RunStatus
-  disposition: 'detached'
+  disposition: PostProcessingDisposition
   finalSeq: number
 }
 

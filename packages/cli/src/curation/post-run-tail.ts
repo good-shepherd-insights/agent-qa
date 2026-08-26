@@ -287,7 +287,20 @@ export interface RunPostRunTailOptions extends Pick<
  */
 export interface PostRunTailHandle {
   enqueue(): Promise<void>
-  drain(): Promise<void>
+  /**
+   * Pump this run's chain.
+   *
+   * `input.lease` is the authority the 404 D-10 post-verdict step ALREADY acquired inside the
+   * shell, handed over rather than re-consulted. ONE LEASE PER RUN: acquire → pump → release. A
+   * process that holds the writer lease and calls `acquireWriterLease` again is answered `held` —
+   * by itself — and this pump would then "hand off" to nobody, leaving the chain unclaimed and the
+   * chips frozen (RESEARCH Pitfall 3, the 387-08 D-18 shape `CurationWriterAuthority` was minted
+   * for).
+   *
+   * Absent ⇒ today's own consult, unchanged. That arm is not legacy debt: a harness driving this
+   * tail directly (`runRealTail`) never ran a shell and so has no lease to hand over.
+   */
+  drain(input?: { readonly lease?: CurationWriterAuthority }): Promise<void>
   /**
    * The user-facing close-out, run on EVERY leg — including the one `--detach` short-circuits.
    *
@@ -470,7 +483,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       }
     },
 
-    async drain(): Promise<void> {
+    async drain(input: { readonly lease?: CurationWriterAuthority } = {}): Promise<void> {
       if (knowledgeRoot === undefined || host === undefined) {
         // The enqueue leg never got far enough to know where knowledge lives. Draining would
         // mean re-deriving it here and drifting from what the enqueue used.
@@ -481,23 +494,44 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       let acquiredLeaseId: string | undefined
       try {
         drainDeadlineMs = ops().now() + DRAIN_BUDGET_MS
-        const acquired = ops().acquireWriterLease(root)
-        if (acquired.kind === 'held') {
-          // Pitfall 8: the SHIPPED envelope, verbatim. Its handler already calls both
-          // `requestDrain` and `jobDispatcher.wake()`, so reusing it wakes the agent-job
-          // pump with zero protocol change — and a nudge that never lands is invisible by
-          // design, because the daemon's 5s poll is the backstop (386 D-13).
-          void ops().nudgeDaemon(opts.agentQaRoot, { knowledgeRoot: root })
-            .catch(() => undefined)
-          drainOutcome = 'handed-off'
-          return
+        const handed = input.lease
+        if (handed !== undefined) {
+          // 404 D-10: the step already consulted. Take its authority and go straight to the
+          // acquired branch's own sequence — adopt the epoch it minted, reclaim what a dead holder
+          // left, pump. No second `acquireWriterLease` call happens on this path at all, which is
+          // the whole point (Pitfall 3): the `held` and `refused` arms below are unreachable for a
+          // lease this process is already holding, and reaching them would be the bug.
+          //
+          // The release in this method's `finally` releases whichever lease the pump held, so the
+          // handed-over authority still leaves through exactly one release.
+          acquiredLeaseId = handed.leaseId
+          heldAuthority = handed
+        } else {
+          const acquired = ops().acquireWriterLease(root)
+          if (acquired.kind === 'held') {
+            // Pitfall 8: the SHIPPED envelope, verbatim. Its handler already calls both
+            // `requestDrain` and `jobDispatcher.wake()`, so reusing it wakes the agent-job
+            // pump with zero protocol change — and a nudge that never lands is invisible by
+            // design, because the daemon's 5s poll is the backstop (386 D-13).
+            void ops().nudgeDaemon(opts.agentQaRoot, { knowledgeRoot: root })
+              .catch(() => undefined)
+            drainOutcome = 'handed-off'
+            return
+          }
+          if (acquired.kind !== 'acquired') {
+            drainOutcome = 'refused'
+            return
+          }
+          acquiredLeaseId = acquired.leaseId
+          heldAuthority = { leaseId: acquired.leaseId, epoch: acquired.epoch }
         }
-        if (acquired.kind !== 'acquired') {
+        const authority = heldAuthority
+        if (authority === undefined) {
+          // Unreachable: both arms above either returned or assigned. Asserted rather than assumed
+          // — a silently absent authority would pump under no fence at all.
           drainOutcome = 'refused'
           return
         }
-        acquiredLeaseId = acquired.leaseId
-        heldAuthority = { leaseId: acquired.leaseId, epoch: acquired.epoch }
         const jobs = await host.jobs()
         /**
          * This run's chain ids, derived ONCE per drain, from the queue's OWN id source.
@@ -537,7 +571,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // Pitfall 7, the daemon's sequence verbatim (host.ts:1759): adopt the epoch the lease
         // just minted, then reclaim rows a dead holder left claimed. Both are safe here for
         // the same reason they are safe there — exactly one fence-holder exists at a time.
-        const fence = await jobs.store.adoptEpoch(acquired.epoch)
+        const fence = await jobs.store.adoptEpoch(authority.epoch)
         await jobs.queue.recoverAbandonedClaims({ fence })
         drainOutcome = 'drained'
         /**

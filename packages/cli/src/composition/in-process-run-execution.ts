@@ -73,6 +73,11 @@ import type {
 } from '@vostride/agent-qa-agent-local'
 
 import { assembleCliRun } from './run-assembly.js'
+import {
+  createPostVerdictStep,
+  releaseUntakenPostVerdictLease,
+  type PostVerdictHandoff,
+} from '../curation/post-verdict-step.js'
 import { attachRunSubscribers, buildRunSafetyHooks, createLivePauseController } from '../run-session-composition.js'
 import {
   isMintedCliRunId,
@@ -81,6 +86,15 @@ import {
   resolveRunInvocationInputs,
 } from '../commands/run.js'
 import type { ProducedCliRunMembers, RunInvocationInputs, RunOptions } from '../commands/run.js'
+
+/**
+ * The box a door reads when no post-verdict step was ever composed for this run — a denial, an
+ * assembly that threw, or a core with no factory. It acquired nothing, so it hands back nothing.
+ */
+const UNCOMPOSED_POST_VERDICT: PostVerdictHandoff = Object.freeze({
+  outcome: undefined,
+  takeAcquiredLease: () => undefined,
+})
 
 /**
  * The typed input failure, re-exported so a composing door has ONE import site for this module's
@@ -124,6 +138,20 @@ export interface CliRunVerdictContext {
   readonly auditSink: NonNullable<RunInvocationCoreOptions['auditSink']>
   readonly configDir: string
   readonly configFilePath: string
+  /**
+   * This run's post-verdict handoff box (404 D-10) — the writer lease the shell's step already
+   * acquired, if it acquired one.
+   *
+   * A DOOR'S TAIL MUST TAKE IT RATHER THAN CONSULT THE LEASE AGAIN. The step ran inside the shell,
+   * before `runFinished`; a tail that called `acquireWriterLease` for itself would be answered
+   * `held` by its OWN process and would hand its work off to nobody (RESEARCH Pitfall 3). Hand it
+   * to the pump — `postRunTail.drain({ lease: postVerdict.takeAcquiredLease() })` — so acquire →
+   * pump → release stays one lease.
+   *
+   * A door with no tail leaves it untaken, and the drive releases it with a named warning below;
+   * that fallback is the reason the step is allowed to acquire at all.
+   */
+  readonly postVerdict: PostVerdictHandoff
 }
 
 /** What one in-process run answers with. A non-zero `exitCode` is a real run, not an error. */
@@ -386,6 +414,20 @@ export async function runInProcessCliRun(
   let quarantined: readonly QuarantineAppliedEntry[] = []
   let startedSession: RunSession | undefined
   let startedSubscribers: { flush(): Promise<void> } | undefined
+  /**
+   * This run's post-verdict handoff box (404 D-10), captured when the core builds the step.
+   *
+   * ONE VARIABLE RATHER THAN A MAP KEYED BY RUN ID: this drive serves exactly one run — the id is
+   * decided a few lines above and the core is constructed around it — so a keyed collection would
+   * be a cache whose only entry is this run's, and nothing would ever evict it.
+   *
+   * `UNCOMPOSED_POST_VERDICT` is what a door reads if the run never reached assembly. It is not a
+   * stub standing in for a real box: a run whose step was never built acquired no lease, so the
+   * honest answer to "what did your step acquire" is `undefined` — and a required field beats an
+   * optional one here, because a tail that forgot to take the lease is the defect this seam exists
+   * to prevent, and an optional member is a member a door forgets.
+   */
+  let postVerdictHandoff: PostVerdictHandoff | undefined
 
   const core = createRunInvocationCore({
     configPath,
@@ -457,6 +499,22 @@ export async function runInProcessCliRun(
       options.onSession?.(session)
       startedSubscribers = options.subscribers?.({ session, quarantined, maskingContext, live })
     },
+    // 404 D-05/D-10: the post-verdict step, composed HERE and threaded by the core so no door can
+    // forget it. It speaks writer-lease vocabulary `agent-local`'s runner seam may not name, which
+    // is exactly why the core takes a factory rather than building one.
+    //
+    // The knowledge root is the producer's already-resolved value, not a second resolution: the
+    // consult, the enqueue and the drain must address ONE root.
+    postVerdict: () => {
+      const step = createPostVerdictStep({
+        runId,
+        agentQaRoot: options.agentQaRoot,
+        knowledgeRoot: produced.knowledgeRoot,
+        log: { warn: options.warn ?? (() => { /* a door with no renderer drops the line */ }) },
+      })
+      postVerdictHandoff = step.handoff
+      return step.port
+    },
   })
 
   return await runSafetyScope(
@@ -487,18 +545,35 @@ export async function runInProcessCliRun(
         if (frameworkError !== undefined) throw frameworkError
 
         const exitCode = mapVerdictToExitCode(verdict as never)
-        const finalExitCode = options.afterVerdict === undefined
-          ? exitCode
-          : await options.afterVerdict({
-              runId,
-              verdict,
-              exitCode,
-              maskingContext,
-              auditSink,
-              configDir: produced.configDir,
-              configFilePath: produced.configFilePath,
-            })
-        return { runId, verdict, exitCode: finalExitCode }
+        const postVerdict = postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT
+        try {
+          const finalExitCode = options.afterVerdict === undefined
+            ? exitCode
+            : await options.afterVerdict({
+                runId,
+                verdict,
+                exitCode,
+                maskingContext,
+                auditSink,
+                configDir: produced.configDir,
+                configFilePath: produced.configFilePath,
+                postVerdict,
+              })
+          return { runId, verdict, exitCode: finalExitCode }
+        } finally {
+          // 404 D-10, the structural no-leak rule: any lease still in the box here is a lease
+          // "released untaken". If the tail took it this is a no-op; if this door has no tail — or
+          // its tail threw before taking it — the lease is released HERE and the fact is named,
+          // rather than left to expire on its TTL while every reader of the wire believes somebody
+          // is draining. Warn-only: the exit code froze above, and a `finally` keeps the rule true
+          // on the throwing path too.
+          releaseUntakenPostVerdictLease({
+            handoff: postVerdict,
+            knowledgeRoot: produced.knowledgeRoot,
+            runId,
+            log: { warn: options.warn ?? (() => { /* a door with no renderer drops the line */ }) },
+          })
+        }
       } finally {
         // Dispose LAST, after `done`, finalize and the flush, so every late masker still replaces.
         maskingContext.dispose()

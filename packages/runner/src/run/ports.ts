@@ -5,10 +5,18 @@
 // timers) crosses to `runner-local` behind these seams (validate:arch storageNeutral,
 // the FsActionCache / storage-state port precedent). Declared interface-first so
 // Plans 06–10 build against them without exploration.
+//
+// 2026-08-26 (Phase 404 D-10): `POST_VERDICT_STEP_BUDGET_MS` is the first VALUE this module
+// exports, and it stays inside the rule the header states. The rule is about IMPLEMENTATION —
+// nothing here may open a file, name a provider or hold state. A bound is neither: it is part of
+// the port's contract (the shell races the step against it; the host may not choose its own), and
+// putting it beside the interface it bounds is what keeps the two from drifting.
 
 import type {
+  PostProcessingDisposition,
   RunEventEnvelope,
   RunId,
+  RunStatus,
   ScopeKey,
   ExecutionContext,
   MaskingContext,
@@ -101,6 +109,62 @@ export interface HookExecutorPort {
 export interface HandoffStorePort {
   save(handoff: CompletedRunHandoff): void
 }
+
+/**
+ * What the post-verdict step is told about the run whose posture it is deciding (404 D-10).
+ *
+ * The two markers are read off the ASSEMBLED `RunConfig` — the same values `startRun` was handed
+ * — never off ambient state, so a gate-run skip (D-08) is decided from the run's own record.
+ * Absent means absent: `?: true` carriers are conditionally spread, never written as `undefined`.
+ */
+export interface PostVerdictStepInput {
+  readonly runId: RunId
+  readonly verdict: RunStatus
+  readonly gateRun?: true
+  readonly excludedFromOutcomes?: true
+}
+
+/**
+ * The step's answer: the posture, and — when the consult could not decide — the reason, by name.
+ *
+ * A warning rather than a fourth union arm (D-11). `detached` is the honest "nothing will be
+ * drained from here", and the cause travels on the `runWarning` channel a surface already reads.
+ */
+export interface PostVerdictOutcome {
+  readonly disposition: PostProcessingDisposition
+  readonly warning?: { readonly code: string; readonly message: string }
+}
+
+/**
+ * The post-verdict step (404 D-10) — the `HandoffStorePort` idiom applied to the ONE decision the
+ * shell delays `runFinished` for.
+ *
+ * WHAT IT MAY DO: the durable enqueue and ONE writer-lease consult. Milliseconds. The runner
+ * names no queue, no sqlite and no lease vocabulary (validate:arch storageNeutral) — the HOST
+ * supplies the implementation, and the shell only awaits it.
+ *
+ * WHAT IT MAY NOT DO: gate `done`. A throw, a resolution past
+ * {@link POST_VERDICT_STEP_BUDGET_MS}, or an absent port all yield `detached` plus a named
+ * `runWarning`, and `runFinished` still publishes last with `bus.close()` behind it (403-03 D-3).
+ * The step returns a VALUE and never touches the bus: the shell keeps sole ownership of the
+ * terminal sequence.
+ *
+ * THE SHELL HOLDS NO LEASE. Whatever the step acquired stays with the host, which hands it to its
+ * own pump — acquire → pump → release is ONE lease, never re-acquired (RESEARCH Pitfall 3).
+ */
+export interface PostVerdictPort {
+  run(input: PostVerdictStepInput): Promise<PostVerdictOutcome>
+}
+
+/**
+ * The hard bound the shell races the step against (404 D-10, RESEARCH Pitfall 1).
+ *
+ * `acquireWriterLease` has contention/deadline semantics of its own, and a busy sqlite enqueue can
+ * stall; without a bound here `runFinished`, `done`, the SSE close and the dashboard finalize all
+ * slide behind it. Five seconds is generous for "enqueue + one consult" and still far below any
+ * drain budget — reaching it means the consult is not going to answer, which is `detached`.
+ */
+export const POST_VERDICT_STEP_BUDGET_MS = 5_000
 
 /**
  * The D-08 run-artifact persistence seam: a runner-owned port whose only implementation is the
@@ -306,6 +370,12 @@ export interface RunPorts {
    * hub's own option, so the shell forwards rather than adapts; absent ⇒ reported nowhere.
    */
   onSubscriberFault?: (code: string, message: string) => void
+  /**
+   * The 404 D-10 post-verdict step, awaited between `runArtifactStore.finalize` and
+   * `runFinished`. Absent ⇒ `disposition: 'detached'` with NO warning — a host that composed no
+   * step is not an error, it is a host from which nothing will be drained, and the wire says so.
+   */
+  postVerdict?: PostVerdictPort
 }
 
 /**

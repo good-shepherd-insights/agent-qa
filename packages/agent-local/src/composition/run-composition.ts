@@ -80,6 +80,7 @@ import type {
   Planner,
   PlatformAdapter,
   KnowledgeHintReader,
+  PostVerdictPort,
   RecordLedger,
   RunArtifactStorePort,
   RunJsHandler,
@@ -311,6 +312,17 @@ export interface RunPersistencePorts {
    * hop. Non-durable and off the bus by construction; the run's transcript never records a viewer.
    */
   onSubscriberFault?: (code: string, message: string) => void
+  /**
+   * 404-01 (D-05/D-10): the host-composed post-verdict step the shell awaits between `verdict` and
+   * `runFinished`. Declared here for the SAME reason `onSubscriberFault` is — `assembleCliRun`
+   * spreads THIS interface into `RunConfig.ports`, so a member declared on only one side of that
+   * hop is invisible in the type and would silently never reach `startRun`.
+   *
+   * It is NOT built by `buildRunPorts`: this package's runner seam names no queue and no writer
+   * lease, and inventing a second spelling of either here is what D-05 exists to prevent. The core
+   * threads whatever the HOST handed it (`RunInvocationCoreOptions.postVerdict`) and nothing else.
+   */
+  postVerdict?: PostVerdictPort
 }
 
 /**

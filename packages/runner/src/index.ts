@@ -200,7 +200,12 @@ export type {
   HookExecutorPort,
   HookExecuteOptions,
   RunArtifactStorePort,
+  // 404-01 (D-10): the post-verdict step the shell awaits between `verdict` and `runFinished`.
+  PostVerdictPort,
+  PostVerdictStepInput,
+  PostVerdictOutcome,
 } from './run/ports.js'
+export { POST_VERDICT_STEP_BUDGET_MS } from './run/ports.js'
 // Phase 363 D-06 — runner-owned hook contracts + orchestration. The Docker impl
 // (DockerHookExecutor) lives in runner-local behind the HookExecutorPort above.
 export * from './hooks/index.js'

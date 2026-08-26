@@ -47,7 +47,7 @@ import type {
   TrustCredential,
 } from '@vostride/agent-qa-schema'
 import { startRun } from '@vostride/agent-qa-runner'
-import type { RunConfig } from '@vostride/agent-qa-runner'
+import type { PostVerdictPort, RunConfig } from '@vostride/agent-qa-runner'
 
 import { buildRunAuditSink, buildRunPorts, runDirFor } from './run-composition.js'
 import type { RunExecutionContext, RunPersistencePorts } from './run-composition.js'
@@ -67,6 +67,11 @@ export type {
   BaselineProbeResult,
   ConfigDigests,
   MemberTestExecutor,
+  // 404-01 (D-10): the post-verdict step's vocabulary, on the same terms as the rest of this
+  // block — a host writing the factory below needs the shape it must return.
+  PostVerdictOutcome,
+  PostVerdictPort,
+  PostVerdictStepInput,
   RunConfig,
   RunMemberDescriptor,
 } from '@vostride/agent-qa-runner'
@@ -332,6 +337,27 @@ export interface RunInvocationCoreOptions {
    * hook). Subscribers attach here; the bus replays from seq 1, so nothing is missed.
    */
   readonly onSession?: (session: RunSession) => void
+  /**
+   * Build this run's post-verdict step (404 D-05/D-10) — the durable `analyze-run` enqueue plus
+   * ONE writer-lease consult, awaited by the shell between `verdict` and `runFinished`, whose
+   * answer becomes `runFinished.disposition`.
+   *
+   * HOST-COMPOSED, CORE-THREADED, and both halves are load-bearing. It is host-composed because
+   * the step speaks queue and writer-lease vocabulary this package's runner seam may not name —
+   * the same argument that made `mintRunId` an option rather than a local. It is threaded HERE
+   * rather than left to each door because the enqueue is precisely what the `runs.start` door and
+   * the daemon door forgot: a door that supplies no factory gets a run whose wire honestly reads
+   * `detached`, and a door that supplies one cannot then forget to wire it in.
+   *
+   * Called ONCE per run, after the gate has allowed and the persistence ports exist, so a denied
+   * run never composes one. Absent ⇒ no `postVerdict` member reaches `RunConfig.ports` at all
+   * (conditional spread, never an `undefined` field), and the shell reports `detached` with no
+   * warning — which is the truth about a host from which nothing will be drained.
+   */
+  readonly postVerdict?: (input: {
+    readonly runId: string
+    readonly configDir: string
+  }) => PostVerdictPort
 }
 
 /**
@@ -430,12 +456,19 @@ export function createRunInvocationCore(
 
       // (5) Assembly — the first line that may touch the target, and it is below the verdict.
       const ports = buildRunPorts({ configDir, runId })
+      // 404 D-05/D-10: the post-verdict step, built ONCE per run and spread into the ports the
+      // assembler receives — so it rides the same hop `handoffStore` does and reaches
+      // `RunConfig.ports` through the door's own assembler without the door remembering to add it.
+      const postVerdict = options.postVerdict?.({ runId, configDir })
       const assembled = await options.assembleRun({
         runId,
         request,
         executionContext: options.executionContext,
         auditSink,
-        ports,
+        ports: {
+          ...ports,
+          ...(postVerdict === undefined ? {} : { postVerdict }),
+        },
         configDir,
         configPath: request.configPath ?? options.configPath,
         targetClass,
