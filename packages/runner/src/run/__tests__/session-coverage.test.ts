@@ -261,7 +261,6 @@ describe('SESSION-02 — the typed event bus implements bus schema v1 over a gap
     const chips = new Set([
       'analysisStarted', 'analysisCompleted', 'analysisFailed',
       'curationStarted', 'curationCompleted', 'curationFailed',
-      'issuesStarted', 'issuesCompleted', 'issuesFailed',
     ])
     expect(events.some(e => chips.has(e.type))).toBe(false)
     // ...yet they ARE members of the vocabulary (append-only enum, producers land in M1b/M2).
@@ -372,9 +371,6 @@ const EVENT_FIXTURES: Record<RunEventType, RunEvent> = {
   curationStarted: chip('curationStarted'),
   curationCompleted: chip('curationCompleted'),
   curationFailed: chip('curationFailed'),
-  issuesStarted: chip('issuesStarted'),
-  issuesCompleted: chip('issuesCompleted'),
-  issuesFailed: chip('issuesFailed'),
 }
 
 /** Recursive walk asserting no value is a live handle (Uint8Array/Buffer-like/function). */

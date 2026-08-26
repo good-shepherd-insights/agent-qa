@@ -58,14 +58,20 @@ interface StageChipKinds {
 /**
  * Which job kind speaks through which chip.
  *
- * `triage-issues` is mapped even though 388 never enqueues one (D-04/D-15). The mapping is what
- * the stage WOULD emit if a triage job ran, and no envelope is ever built from it because the
- * emitter only speaks about outcomes it observed — so the reserved slot costs a table row here
- * and nothing on disk. Pinning it to "no chips ever" instead would mean the day the issue
- * engine lands, the one stage with a live producer is the one with no push path.
+ * The table names what a job kind EMITS, so a kind that emits nothing has no row. As of
+ * 2026-08-26 (Phase 404 D-01/D-02) that is the reserved `triage-issues` kind: the chip set is
+ * `{analysis, curation}` and the three `issues*` event names no longer exist, so the row that
+ * used to describe what a triage job "would" emit could only name events the enum does not
+ * carry. The kind itself stays in `JOB_KINDS` — retiring it is the Issue-slot cleanup
+ * milestone's work, not this one; the chip side simply stops speaking for it. The emitter's
+ * run-scoped drop-guard still consults all three chain ids, so a stray triage row observed by
+ * this pump is dropped by id rather than mis-attributed.
  *
- * `notify` is absent because it is not a job kind at all: the chain terminal is a function-layer
- * emission over a durable row (D-09), not a queue member, and it is not a chip.
+ * `Partial<Record<JobKind, StageChipKinds>>` is what makes an absent kind legal: a kind with no
+ * row emits nothing, while a kind WITH a row that grows a chip member is still a compile error.
+ *
+ * `notify` is absent for a different reason: it is not a job kind at all — the chain terminal is
+ * a function-layer emission over a durable row (D-09), not a queue member, and it is not a chip.
  */
 const STAGE_CHIPS: Partial<Record<JobKind, StageChipKinds>> = {
   'analyze-run': {
@@ -77,11 +83,6 @@ const STAGE_CHIPS: Partial<Record<JobKind, StageChipKinds>> = {
     started: 'curationStarted',
     completed: 'curationCompleted',
     failed: 'curationFailed',
-  },
-  'triage-issues': {
-    started: 'issuesStarted',
-    completed: 'issuesCompleted',
-    failed: 'issuesFailed',
   },
 }
 

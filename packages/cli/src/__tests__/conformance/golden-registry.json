@@ -769,7 +769,7 @@
       "classifies": true,
       "id": "runs.events",
       "inputSchemaDigest": "673158dacd01df7d44f83fa974746da4305048063dd0261603d2bf14410fbd2b",
-      "outputSchemaDigest": "406b85e20b9231ca48611ab78a331654e0f1f98b05af908097d512be7bb82dca",
+      "outputSchemaDigest": "5c95563c2afcb63d5f53adfe6fe7683e1f717a1e9074f4b54ed5fcd4a29775dc",
       "partition": {
         "kind": "unprojected",
         "reason": "not-mid-flight-read"

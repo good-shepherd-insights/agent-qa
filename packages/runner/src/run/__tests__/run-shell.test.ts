@@ -273,7 +273,6 @@ describe('run lifecycle emission (SESSION-04, spec §2.2)', () => {
     const chips = new Set([
       'analysisStarted', 'analysisCompleted', 'analysisFailed',
       'curationStarted', 'curationCompleted', 'curationFailed',
-      'issuesStarted', 'issuesCompleted', 'issuesFailed',
     ])
     expect(events.some(e => chips.has(e.type))).toBe(false)
   })

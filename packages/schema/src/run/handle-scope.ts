@@ -90,9 +90,6 @@ export const RUN_EVENT_SCOPE = {
   curationStarted: 'run',
   curationCompleted: 'run',
   curationFailed: 'run',
-  issuesStarted: 'run',
-  issuesCompleted: 'run',
-  issuesFailed: 'run',
 } as const satisfies Record<RunEventType, RunEventScope>
 
 /** The frozen list, re-exported here so a consumer walking the table has the roster beside it. */

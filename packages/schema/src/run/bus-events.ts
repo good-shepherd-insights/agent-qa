@@ -17,9 +17,20 @@ export const CURRENT_BUS_SCHEMA_VERSION = 1
 /**
  * The complete §2.2 event vocabulary M1 ships: every group EXCEPT the reserved
  * control/arbiter group (Live view / M5). Eleven lifecycle/diagnostic events plus the
- * nine post-processing chip events — camelCase, names verbatim per spec §2.2
+ * six post-processing chip events — camelCase, names verbatim per spec §2.2
  * (Ratified 2026-07-05). The enum is append-only; the chip group is DEFINED here but
  * emitted by no M1 producer.
+ *
+ * 2026-08-26, Phase 404 D-02: the three reserved `issues*` chip names (started/completed/
+ * failed) were REMOVED from this enum, from the payload aliases, from the {@link RunEvent}
+ * union and from `handle-scope.ts`. They are spelled by pattern rather than verbatim here
+ * on purpose: D-04's chip-side grep-clean bar treats a literal occurrence of any of the
+ * three as a live reference, and a comment is not an exception worth carving. They were defined in bus schema 1 and emitted by no producer,
+ * ever; they are removed after the 2026-08-25 amendment of `live-view.md` §4.3 and
+ * `runner.md` §2.2 retired the reserved third chip. The append-only law protects
+ * consumers of SHIPPED producers and therefore did not bind here — no reader on any wire
+ * loses a name it could have received. Consumers now get a six-arm exhaustive switch
+ * with no dead arms.
  */
 export const RUN_EVENT_TYPES = [
   // Run lifecycle
@@ -47,9 +58,6 @@ export const RUN_EVENT_TYPES = [
   'curationStarted',
   'curationCompleted',
   'curationFailed',
-  'issuesStarted',
-  'issuesCompleted',
-  'issuesFailed',
   // Phase 363 D-01/Q-3 parity appends (append-only per spec §2.2): hook lifecycle
   // (hookStarted/hookFinished) closes the reporter-parity gap before the v1 Reporter
   // interface is deleted; testRetryScheduled (resolves RESEARCH Open Q-3) marks a
@@ -320,9 +328,6 @@ export type AnalysisFailedPayload = ChipEventPayload
 export type CurationStartedPayload = ChipEventPayload
 export type CurationCompletedPayload = ChipEventPayload
 export type CurationFailedPayload = ChipEventPayload
-export type IssuesStartedPayload = ChipEventPayload
-export type IssuesCompletedPayload = ChipEventPayload
-export type IssuesFailedPayload = ChipEventPayload
 
 // --- Envelope + event union --------------------------------------------------
 
@@ -370,8 +375,9 @@ interface RunEventOf<T extends RunEventType, P extends RunEventPayload> {
 
 /**
  * The discriminated bus-event union: each event `type` mapped to its payload. M5 replay
- * tooling and M1b eval consume this to narrow on `type`. The nine chip events are members
- * of the union (defined-never-emitted in M1).
+ * tooling and M1b eval consume this to narrow on `type`. The six chip events are members
+ * of the union (defined-never-emitted in M1; the reserved `issues*` triple was removed
+ * 2026-08-26 — see the {@link RUN_EVENT_TYPES} header).
  */
 export type RunEvent =
   | RunEventOf<'runStarted', RunStartedPayload>
@@ -394,6 +400,3 @@ export type RunEvent =
   | RunEventOf<'curationStarted', CurationStartedPayload>
   | RunEventOf<'curationCompleted', CurationCompletedPayload>
   | RunEventOf<'curationFailed', CurationFailedPayload>
-  | RunEventOf<'issuesStarted', IssuesStartedPayload>
-  | RunEventOf<'issuesCompleted', IssuesCompletedPayload>
-  | RunEventOf<'issuesFailed', IssuesFailedPayload>

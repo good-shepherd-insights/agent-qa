@@ -289,7 +289,11 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
     }
   })
 
-  it('emits no issues chip at all while the triage slot is unfilled (D-15)', async () => {
+  // 404 D-01/D-02 (2026-08-26): the reserved job kind lost its `STAGE_CHIPS` row and the three
+  // `issues*` event names left `RUN_EVENT_TYPES` entirely. The cell survives as the runtime
+  // proof that the reserved kind emits NOTHING — the enum removal alone cannot say that,
+  // because a row could still be re-added naming any surviving name.
+  it('emits no issues chip at all — the reserved job kind emits nothing (D-15, 404 D-02)', async () => {
     const f = fixture()
     const tail = runPostRunTail(f.options())
     await tail.enqueue()

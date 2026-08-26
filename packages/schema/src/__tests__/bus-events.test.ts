@@ -60,9 +60,6 @@ const EXPECTED_EVENT_TYPES: readonly string[] = [
   'curationStarted',
   'curationCompleted',
   'curationFailed',
-  'issuesStarted',
-  'issuesCompleted',
-  'issuesFailed',
   // Phase 363 D-01/Q-3 parity appends — hook lifecycle + retry visibility
   'hookStarted',
   'hookFinished',
@@ -81,7 +78,11 @@ describe('bus schema v1 — envelope + event vocabulary (D-05, spec §2.2)', () 
     expect([...RUN_EVENT_TYPES].sort()).toEqual([...EXPECTED_EVENT_TYPES].sort())
   })
 
-  it('defines the nine chip events verbatim (Ratified 2026-07-05, spec §2.2)', () => {
+  // 404 D-02 (2026-08-26): the chip group is SIX. The reserved `issues*` triple was
+  // defined in bus schema 1 and emitted by no producer, ever, and left the enum when the
+  // 2026-08-25 spec amendment retired the third chip. Asserted set-equal, not just
+  // membership, so a re-added name reds this cell.
+  it('defines exactly the six chip events verbatim (spec §2.2 as amended 2026-08-25)', () => {
     const chips = [
       'analysisStarted',
       'analysisCompleted',
@@ -89,13 +90,13 @@ describe('bus schema v1 — envelope + event vocabulary (D-05, spec §2.2)', () 
       'curationStarted',
       'curationCompleted',
       'curationFailed',
-      'issuesStarted',
-      'issuesCompleted',
-      'issuesFailed',
     ]
     for (const chip of chips) {
       expect(RUN_EVENT_TYPES).toContain(chip)
     }
+    expect(
+      RUN_EVENT_TYPES.filter((type) => /^(analysis|curation|issues)/.test(type)),
+    ).toEqual(chips)
   })
 
   it('an envelope { seq, ts, runId, type, payload } JSON-round-trips deep-equal', () => {
@@ -192,7 +193,7 @@ describe('bus schema v1 — Phase 363 parity event vocabulary (D-01, spec §2.2)
     }
     // Existing entries keep their order; the appends land after them.
     const idx = (t: string) => (RUN_EVENT_TYPES as readonly string[]).indexOf(t)
-    expect(idx('hookStarted')).toBeGreaterThan(idx('issuesFailed'))
+    expect(idx('hookStarted')).toBeGreaterThan(idx('curationFailed'))
     expect(idx('hookFinished')).toBeGreaterThan(idx('hookStarted'))
     expect(idx('testRetryScheduled')).toBeGreaterThan(idx('hookFinished'))
   })

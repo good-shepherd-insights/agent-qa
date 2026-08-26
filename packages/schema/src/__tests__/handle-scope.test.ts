@@ -46,7 +46,8 @@ describe('RUN_EVENT_SCOPE — a TOTAL, positive classification of the frozen eve
     }
     expect(unclassified).toEqual([])
     // Non-vacuity: the list this walked is the real one, not an empty array a refactor emptied.
-    expect(RUN_EVENT_TYPES.length).toBeGreaterThanOrEqual(23)
+    // 20 since 404 D-02 (2026-08-26) removed the three never-emitted `issues*` names.
+    expect(RUN_EVENT_TYPES.length).toBeGreaterThanOrEqual(20)
   })
 
   it('classifies with a CLOSED vocabulary — no fall-through, no undefined, no stray value', () => {
@@ -80,9 +81,6 @@ describe('RUN_EVENT_SCOPE — a TOTAL, positive classification of the frozen eve
       'curationStarted',
       'curationCompleted',
       'curationFailed',
-      'issuesStarted',
-      'issuesCompleted',
-      'issuesFailed',
     ])
     // Every member-scoped payload declares `testIndex: number` REQUIRED — that is the ground
     // truth this classification is derived from, not a preference.

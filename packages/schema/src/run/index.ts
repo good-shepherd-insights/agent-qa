@@ -68,9 +68,6 @@ export type {
   CurationStartedPayload,
   CurationCompletedPayload,
   CurationFailedPayload,
-  IssuesStartedPayload,
-  IssuesCompletedPayload,
-  IssuesFailedPayload,
   // 363 D-01 parity appends: hook lifecycle + retry payloads.
   HookStartedPayload,
   HookFinishedPayload,

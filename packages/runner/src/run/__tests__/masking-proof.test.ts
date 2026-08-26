@@ -41,7 +41,6 @@ const IDENTITY: MaskingContext = {
 const CHIP_EVENT_TYPES = [
   'analysisStarted', 'analysisCompleted', 'analysisFailed',
   'curationStarted', 'curationCompleted', 'curationFailed',
-  'issuesStarted', 'issuesCompleted', 'issuesFailed',
 ] as const
 
 function makeCapturingEventLog(): { port: EventLogPort; lines: RunEventEnvelope[] } {
