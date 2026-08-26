@@ -67,11 +67,13 @@ const STYLE = `
  */
 export function renderLiveEmbedPage(input: { runId: string; nonce: string }): string {
   // JSON.stringify is the escape: the value lands inside a script as a STRING LITERAL, and the
-  // `<` guard below closes the one hole that leaves (a `</script` sequence inside it).
-  const runIdLiteral = JSON.stringify(input.runId).replaceAll('<', '\\u003c')
-  const wsPathLiteral = JSON.stringify(LIVE_VIEW_WS_PATH)
-  const expiredLiteral = JSON.stringify(LIVE_EMBED_EXPIRED_MESSAGE)
-  const noStreamLiteral = JSON.stringify(LIVE_EMBED_NO_STREAM_MESSAGE)
+  // `<` guard closes the one hole that leaves (a `</script` sequence inside it). One helper for
+  // every value that enters the script, so the guard cannot be forgotten for a new one.
+  const scriptLiteral = (value: string) => JSON.stringify(value).replaceAll('<', '\\u003c')
+  const runIdLiteral = scriptLiteral(input.runId)
+  const wsPathLiteral = scriptLiteral(LIVE_VIEW_WS_PATH)
+  const expiredLiteral = scriptLiteral(LIVE_EMBED_EXPIRED_MESSAGE)
+  const noStreamLiteral = scriptLiteral(LIVE_EMBED_NO_STREAM_MESSAGE)
 
   return `<!DOCTYPE html>
 <html lang="en">
