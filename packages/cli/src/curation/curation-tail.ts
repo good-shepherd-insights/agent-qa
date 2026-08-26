@@ -30,7 +30,11 @@ import {
   loadCompletedRunHandoff,
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
-import type { AuditSink } from '@vostride/agent-qa-safety'
+import {
+  defaultGuardrailPolicyInput,
+  loadGuardrailPolicy,
+  type AuditSink,
+} from '@vostride/agent-qa-safety'
 import { JsonlAuditSink, runSafetyScope } from '@vostride/agent-qa-safety-local'
 import type {
   GuardrailPolicy,
@@ -849,6 +853,24 @@ export async function runCurationTail(opts: RunCurationTailOptions): Promise<voi
       if (opts.signal?.aborted === true) return
     }
   }
+}
+
+/**
+ * The ONE guardrail policy the post-run legs fold under (404 D-06).
+ *
+ * IT LIVES HERE BECAUSE OF THE FIREWALL, and that is a real constraint rather than filing. FUNC-02
+ * lets a `packages/cli` file name only `agent`, `agent-local`, `analytics` and `schema` unless it
+ * carries an exact ledger entry, and the ledger ONLY EVER SHRINKS — a file written today can never
+ * join it. This file is ledgered for `@vostride/agent-qa-safety`; `post-run-tail-composition.ts`
+ * is not and never will be. So the one composition helper every host's tail goes through resolves
+ * its default policy by calling this, rather than by naming the gate package itself.
+ *
+ * IT IS THE SAME EXPRESSION BOTH `run.ts` SITES USED, moved rather than re-chosen:
+ * `loadGuardrailPolicy(defaultGuardrailPolicyInput)`. A caller with a policy of its own still
+ * passes one; this is what an absent one resolves to, in one place instead of per site.
+ */
+export function defaultPostRunGuardrailPolicy(): GuardrailPolicy {
+  return loadGuardrailPolicy(defaultGuardrailPolicyInput)
 }
 
 export interface RunVerdictFirstCurationTailOptions {

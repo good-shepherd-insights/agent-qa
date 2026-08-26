@@ -163,6 +163,15 @@ export interface CliRunOutcome {
   readonly runId: string
   readonly verdict: string
   readonly exitCode: number
+  /**
+   * The DETACHED post-processing leg, still in flight (404 D-06).
+   *
+   * Present only when the door supplied a `postRunTail`. It never rejects — the drive catches and
+   * warns — so awaiting it is safe and not awaiting it is the point: `execute()` resolving before
+   * this settles is exactly what keeps `run-settled` off the drain's clock (RESEARCH Pitfall 2).
+   * When it resolves, the untaken-lease backstop has run and the masking context is disposed.
+   */
+  readonly settled?: Promise<void>
 }
 
 /**
@@ -250,6 +259,32 @@ export interface InProcessCliRunExecutionOptions {
     readonly detach?: true
     readonly writerAuthority?: CurationWriterAuthority
   }
+  /**
+   * The DETACHED post-processing leg, for doors whose `execute()` promise something else waits on.
+   *
+   * WHY DETACHED AND NOT AWAITED (D-06, RESEARCH Pitfall 2). `dashboard-server`'s in-process
+   * backend emits `'run-settled'` — the db finalize, the Appium lease release, the handle cleanup —
+   * when the `invokeRun` promise settles. A drain awaited inside `execute()` would hold all three
+   * for up to `DRAIN_BUDGET_MS`, so the runs list would keep showing "running" for a minute after
+   * the verdict and a leased device would stay leased. The run's lifecycle ends at `runFinished`;
+   * curation is post-processing (D-07), and this option is where that sentence becomes code.
+   *
+   * WHY THE MASKER IS DISPOSED IN *ITS* `finally` AND NOT THE DRIVE'S (T-404-01). The fold this leg
+   * runs emits candidate prose, and that prose crosses the same disclosure boundary every other run
+   * output does. If the drive disposed the masking context on its way out, this leg would fold with
+   * a dead masker — `masker-active` by declaration and a pass-through in fact. So the drive HANDS
+   * OVER its dispose duty: the fold runs inside the masker's lifetime, and the masker is disposed
+   * once the leg settles, whichever way it settled.
+   *
+   * IT RUNS AFTER `afterVerdict` HAS SETTLED, so a door supplying both gets them in that order and
+   * never concurrently. A throw is caught and warned by name — post-processing may never cost the
+   * verdict (JOBQ-06) — and the untaken-lease backstop still runs behind it.
+   *
+   * THE IN-FLIGHT PROMISE IS RETURNED on the outcome as `settled`, so a caller that DOES want to
+   * wait (a cell; a host that later decides `run-settled` should include curation) can, without the
+   * drive deciding that for everyone.
+   */
+  readonly postRunTail?: (context: CliRunVerdictContext) => Promise<void>
   /** Where a quarantine-fold warning goes. The door owns its rendering. */
   readonly warn?: (message: string) => void
   /**
@@ -553,6 +588,55 @@ export async function runInProcessCliRun(
     },
   })
 
+  const warnByName = options.warn ?? ((): void => { /* a door with no renderer drops the line */ })
+
+  /**
+   * The detached post-processing leg, once started. `undefined` for every door without one.
+   *
+   * Its presence is what MOVES the close-out below out of the drive's `finally` and onto this
+   * promise's own — the two must never both run, and which one does is decided exactly once.
+   */
+  let detachedTail: Promise<void> | undefined
+
+  /**
+   * Release whatever lease nobody took, then dispose the masker. Exactly once, whoever runs it.
+   *
+   * 404 D-10, the structural no-leak rule: any lease still in the box here is a lease "released
+   * untaken". If the tail took it this is a no-op; if something filled the box ahead of a pump
+   * that never came, the lease is released HERE and the fact is named, rather than left to expire
+   * on its TTL while every reader of the wire believes somebody is draining.
+   *
+   * IT IS THE OUTERMOST THING, NOT SOMETHING AROUND `afterVerdict`, and the difference is a
+   * measured one (404-01): a framework error re-thrown above `mapVerdictToExitCode` skips
+   * `afterVerdict` entirely, and a release scoped to that call left the lease held for its whole
+   * TTL — the very posture this rule exists to prevent, on the ONE path most likely to produce it.
+   * It runs BEFORE the masker is disposed below, so its warning still masks.
+   *
+   * 2026-08-26: it ACQUIRES NOTHING to check. The step's acquisition is lazy, so that same
+   * framework-error path now arrives here with an empty box and this call is silent — the
+   * `released untaken` line stopped being ordinary run output, which is what
+   * `run-parity.e2e.test.ts` measures. The backstop stays because the box can still be filled by a
+   * host that supplies its own authority (the daemon door).
+   *
+   * 404 D-06: WHY IT IS A FUNCTION RATHER THAN A `finally` BODY. A door with a detached post-run
+   * tail needs the masker ALIVE while that tail folds — the fold emits candidate prose across the
+   * same disclosure boundary every other run output crosses (T-404-01) — and the drive returns
+   * long before the tail settles. So the drive's `finally` runs this only when no tail was started,
+   * and the tail's own `finally` runs it otherwise. Exactly one of the two, decided by
+   * `detachedTail`'s presence at the moment the drive leaves.
+   */
+  const closeOutRun = (): void => {
+    releaseUntakenPostVerdictLease({
+      handoff: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,
+      knowledgeRoot: produced.knowledgeRoot,
+      runId,
+      log: { warn: warnByName },
+    })
+    // Dispose LAST, after `done`, finalize, the flush and any detached tail, so every late masker
+    // still replaces.
+    maskingContext.dispose()
+  }
+
   return await runSafetyScope(
     { maskingContext, auditSink, executionContext: options.executionContext },
     async (): Promise<CliRunOutcome> => {
@@ -581,45 +665,39 @@ export async function runInProcessCliRun(
         if (frameworkError !== undefined) throw frameworkError
 
         const exitCode = mapVerdictToExitCode(verdict as never)
+        const verdictContext: CliRunVerdictContext = {
+          runId,
+          verdict,
+          exitCode,
+          maskingContext,
+          auditSink,
+          configDir: produced.configDir,
+          configFilePath: produced.configFilePath,
+          postVerdict: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,
+        }
         const finalExitCode = options.afterVerdict === undefined
           ? exitCode
-          : await options.afterVerdict({
-              runId,
-              verdict,
-              exitCode,
-              maskingContext,
-              auditSink,
-              configDir: produced.configDir,
-              configFilePath: produced.configFilePath,
-              postVerdict: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,
-            })
-        return { runId, verdict, exitCode: finalExitCode }
+          : await options.afterVerdict(verdictContext)
+        if (options.postRunTail === undefined) {
+          return { runId, verdict, exitCode: finalExitCode }
+        }
+        // 404 D-06 / RESEARCH Pitfall 2: START it and RETURN. The dispose duty travels with it —
+        // see `closeOutRun` and the `postRunTail` option's own doc for why the masker may not be
+        // torn down before the fold that needs it.
+        detachedTail = options.postRunTail(verdictContext)
+          .catch((error: unknown) => {
+            warnByName(
+              `Run ${runId}: the post-run tail did not complete (`
+              + `${error instanceof Error ? error.message : String(error)}`
+              + '); queued work will resume on the next run or when the daemon drains it.',
+            )
+          })
+          .finally(closeOutRun)
+        return { runId, verdict, exitCode: finalExitCode, settled: detachedTail }
       } finally {
-        // 404 D-10, the structural no-leak rule: any lease still in the box here is a lease
-        // "released untaken". If the tail took it this is a no-op; if something filled the box
-        // ahead of a pump that never came, the lease is released HERE and the fact is named,
-        // rather than left to expire on its TTL while every reader of the wire believes somebody
-        // is draining.
-        //
-        // IT SITS IN THE OUTERMOST `finally`, NOT AROUND `afterVerdict`, and the difference is a
-        // measured one (404-01): a framework error re-thrown above `mapVerdictToExitCode` skips
-        // `afterVerdict` entirely, and a release scoped to that call left the lease held for its
-        // whole TTL — the very posture this rule exists to prevent, on the ONE path most likely to
-        // produce it. Before `maskingContext.dispose()` so the warning still masks.
-        //
-        // 2026-08-26: it ACQUIRES NOTHING to check. The step's acquisition is lazy, so that same
-        // framework-error path now arrives here with an empty box and this call is silent — the
-        // `released untaken` line stopped being ordinary run output, which is what
-        // `run-parity.e2e.test.ts` measures. The backstop stays because the box can still be
-        // filled by a host that supplies its own authority (404-04's daemon door).
-        releaseUntakenPostVerdictLease({
-          handoff: postVerdictHandoff ?? UNCOMPOSED_POST_VERDICT,
-          knowledgeRoot: produced.knowledgeRoot,
-          runId,
-          log: { warn: options.warn ?? (() => { /* a door with no renderer drops the line */ }) },
-        })
-        // Dispose LAST, after `done`, finalize and the flush, so every late masker still replaces.
-        maskingContext.dispose()
+        // The close-out runs HERE unless the detached tail took ownership of it — see
+        // `closeOutRun`'s own doc for why that hand-over is the whole of D-06's masker rule.
+        if (detachedTail === undefined) closeOutRun()
       }
     },
   )

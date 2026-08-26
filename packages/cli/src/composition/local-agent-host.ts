@@ -127,6 +127,7 @@ import type {
   FunctionCaller,
   GrantRecordOutcome,
   RiskActionDescriptor,
+  RunEventEnvelope,
   RunId,
   RunSession,
   RunsStartInput,
@@ -278,9 +279,14 @@ export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
  *
  * The enqueue is now the CORE's: the runner shell awaits a post-verdict step between `verdict` and
  * `runFinished` on every door (`curation/post-verdict-step.ts`), so this door needs no fold to
- * queue its work and the sentence above is once again about folding alone. What this door still
- * lacks is the DRAIN leg — nothing here pumps the chain it now queues, so its runs read a lease
- * posture and wait for a daemon or a later local run. That leg lands in 404-04 Task 2.
+ * queue its work and the sentence above is once again about folding alone.
+ *
+ * The DRAIN leg is `postRunTail` below (D-06), and it is deliberately NOT `afterVerdict`. A drain
+ * inside `afterVerdict` is inside `execute()`, and `dashboard-server` emits `'run-settled'` — db
+ * finalize, Appium release, handle cleanup — when that promise settles, so the runs list would show
+ * "running" for a minute after the verdict and a leased device would stay leased (Pitfall 2). The
+ * drive starts the tail AFTER `afterVerdict` settles, does not await it, and hands it the masker's
+ * dispose duty so the fold still runs inside the masker's lifetime.
  *
  * WHAT ARRIVES FROM THE HOST SINCE 401-07: `onSession`, `subscribers`, `resolveAppiumUrl` and
  * `resolveRunFlags`, all four through `runBridge` and all four absent unless a host asks. A host that watches its runs
@@ -374,6 +380,48 @@ function createComposedRunExecution(input: {
             ...(input.runBridge?.maskingSecrets === undefined
               ? {}
               : { maskingSecrets: input.runBridge.maskingSecrets }),
+            // ═══ 2026-08-26 — Phase 404 D-06: THIS DOOR'S DRAIN LEG ═══
+            //
+            // `postRunTail` and not `afterVerdict`: the drive starts this AFTER `afterVerdict`
+            // settles and does NOT await it, so `execute()` resolves and `dashboard-server`'s
+            // `'run-settled'` (db finalize, Appium release, handle cleanup) fires on the verdict's
+            // clock rather than on the drain's (RESEARCH Pitfall 2). The masker is disposed in
+            // this leg's own `finally`, so the fold runs inside its lifetime (T-404-01).
+            //
+            // DRAIN ONLY IF THE LEASE WAS ACTUALLY TAKEABLE. `takeAcquiredLease()` is the step's
+            // one acquisition; `undefined` means somebody else holds it (or the posture was
+            // `detached`), and pumping anyway would mean a second consult answered `held` by this
+            // very process (Pitfall 3). `finish()` runs on BOTH arms, because the posture that
+            // most needs a line about work left queued is the one where nothing drained.
+            //
+            // DEFERRED IMPORT, for the reason the drive's own is: `post-run-tail.ts` imports THIS
+            // file statically (`composeCliLocalAgent`), so a static import back would close an
+            // ESM cycle at module-evaluation time.
+            postRunTail: async (context): Promise<void> => {
+              const { composeCliPostRunTail } = await import(
+                '../curation/post-run-tail-composition.js'
+              )
+              const tail = composeCliPostRunTail({
+                runId: context.runId,
+                configDir: context.configDir,
+                configFilePath: context.configFilePath,
+                knowledgeConfig: inputs.config.knowledge,
+                auditSink: context.auditSink,
+                maskingContext: context.maskingContext,
+                // LOG, NEVER PRINT. The tail's close-out line and digest block are CLI outputs, and
+                // this door serves `agent-qa fn --json` (stdout is the JSON document) and the MCP
+                // host (stdout IS the JSON-RPC connection). Both go to the same stderr sink the
+                // quarantine warning uses, so nothing this door serves can have its channel
+                // corrupted by a post-run line.
+                log: { warn, info: warn },
+                ...(input.runBridge?.chipRelay === undefined
+                  ? {}
+                  : { relay: input.runBridge.chipRelay }),
+              })
+              const lease = context.postVerdict.takeAcquiredLease()
+              if (lease !== undefined) await tail.drain({ lease })
+              await tail.finish({ detached: lease === undefined })
+            },
             warn,
           },
           request,
@@ -576,6 +624,15 @@ export interface ComposeCliLocalAgentInput {
      * `InProcessCliRunExecutionOptions` for why it is a resolver rather than a store.
      */
     readonly maskingSecrets?: InProcessCliRunExecutionOptions['maskingSecrets']
+    /**
+     * This host's SECOND chip sink (404 D-16) — the dashboard's live push channel.
+     *
+     * A PASS-THROUGH LIKE ITS FIVE SIBLINGS: this composition neither creates nor defaults it. It
+     * is handed to `composeCliPostRunTail` as `relay`, which threads it to the chip emitter in
+     * 404-05. A host that watches its own runs' chips supplies one; every other door passes
+     * nothing and the emitter writes only to `events.jsonl`, exactly as it does today.
+     */
+    readonly chipRelay?: (envelope: RunEventEnvelope) => void
   }
   /**
    * 403 D-03: the live-view mint seam, FORWARDED UNTOUCHED to `composeLocalAgent`.

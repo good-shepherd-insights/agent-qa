@@ -151,18 +151,44 @@ describe('the suite path seeds a real run MaskingContext inside runSafetyScope (
     expect(count(runSource, 'bindRunContext: ({ maskingContext, safetyHooks }) =>')).toBe(2)
   })
 
-  it('disposes the run MaskingContext inside a finally, lexically after the producer finalises', () => {
-    // 401-11: the ordering is unchanged and it moved with the body it orders. `lifecycle.finalize()`
-    // is `produced.finalize?.()` now — the suite half's lifecycle, reached through the producer that
-    // owns it — and dispose is still the last statement of the scope's `finally`.
-    const finalizeIdx = driveSource.indexOf('await produced.finalize?.()')
-    const disposeIdx = driveSource.indexOf('maskingContext.dispose()')
-    expect(finalizeIdx).toBeGreaterThan(0)
-    expect(disposeIdx).toBeGreaterThan(finalizeIdx)
-    expect(driveSource.slice(finalizeIdx, disposeIdx)).toContain('finally {')
-    // And `run.ts` disposes nothing of its own — a second dispose would be a second lifecycle.
-    expect(count(runSource, 'maskingContext.dispose()')).toBe(0)
-  })
+  it('disposes the run MaskingContext from a finally, after the producer finalises, exactly once',
+    () => {
+      // 401-11: the ordering is unchanged and it moved with the body it orders. `lifecycle.finalize()`
+      // is `produced.finalize?.()` now — the suite half's lifecycle, reached through the producer
+      // that owns it.
+      //
+      // 404 D-06: the dispose is no longer a LITERAL inside the scope's `finally`. It is the last
+      // statement of `closeOutRun`, which the drive's `finally` runs when no detached post-run leg
+      // was started and the LEG's own `finally` runs when one was — because a masker torn down on
+      // the drive's way out would leave that leg's fold `masker-active` by declaration and a
+      // pass-through in fact (T-404-01). The claim is therefore pinned as SHAPE rather than as a
+      // character offset: one dispose site, reached only from a `finally`, on both paths, and the
+      // lease released before it so the warning still masks.
+      expect(count(driveSource, 'maskingContext.dispose()'), 'ONE lifecycle, ONE dispose').toBe(1)
+      const closeOutIdx = driveSource.indexOf('const closeOutRun = (): void => {')
+      const disposeIdx = driveSource.indexOf('maskingContext.dispose()')
+      expect(closeOutIdx).toBeGreaterThan(0)
+      expect(disposeIdx, 'the dispose lives inside the close-out').toBeGreaterThan(closeOutIdx)
+      expect(
+        driveSource.slice(closeOutIdx, disposeIdx),
+        'the untaken lease is released BEFORE the masker dies, so its warning still masks',
+      ).toContain('releaseUntakenPostVerdictLease({')
+
+      // Both call sites, and both are a `finally`. `produced.finalize?.()` precedes both, so the
+      // teardown order this cell has always been about is unchanged.
+      const finalizeIdx = driveSource.indexOf('await produced.finalize?.()')
+      expect(finalizeIdx).toBeGreaterThan(0)
+      const driveFinally = driveSource.indexOf('if (detachedTail === undefined) closeOutRun()')
+      expect(driveFinally, 'the drive still owns the close-out when nobody took it').toBeGreaterThan(finalizeIdx)
+      expect(driveSource.slice(finalizeIdx, driveFinally)).toContain('finally {')
+      expect(
+        count(driveSource, '.finally(closeOutRun)'),
+        'and the detached leg owns it when one was started — exactly one other call site',
+      ).toBe(1)
+
+      // And `run.ts` disposes nothing of its own — a second dispose would be a second lifecycle.
+      expect(count(runSource, 'maskingContext.dispose()')).toBe(0)
+    })
 })
 
 // (e) SESSION-04 force-exit backstop (Plan 361-13 Task 3): BOTH handleShutdown paths arm a bounded

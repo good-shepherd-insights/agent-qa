@@ -1686,7 +1686,13 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
     // fold is reached THROUGH it (as `curate-memory`'s body and as the prior-run sweep), so
     // `run.ts` names it no more. The claim this case makes is unchanged: BOTH verdict sites go
     // through the one helper, and a site that grew its own tail again fails right here.
-    expect(source.match(/runPostRunTail\(/g)).toHaveLength(2)
+    //
+    // 404 D-06: the helper is `composeCliPostRunTail`, and `run.ts` no longer spells the tail's
+    // option literal at all. The composition moved because the `runs.start` door needs the SAME
+    // one — three spellings of "how this project's tail is composed" is how a field added to the
+    // tail reaches two of them.
+    expect(source.match(/composeCliPostRunTail\(/g)).toHaveLength(2)
+    expect(source.match(/runPostRunTail\(/g)).toBeNull()
     expect(source.match(/runCurationTail\(/g)).toBeNull()
     expect(source.match(/runVerdictFirstCurationTail\(/g)).toHaveLength(2)
   })

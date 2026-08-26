@@ -609,7 +609,13 @@ describe('JOBQ-06 — the structural halves', () => {
       'utf8',
     )
     // Pitfall 1's regression pin: two sites, one helper, TWO legs each since 404 D-05.
-    expect(source.match(/runPostRunTail\(/gu) ?? []).toHaveLength(2)
+    //
+    // 404 D-06: the helper is `composeCliPostRunTail`, and `runPostRunTail` is named at NEITHER
+    // site any more. The composition moved so the `runs.start` door could reach the same one —
+    // three spellings of "how this project's tail is composed" is how a field added to the tail
+    // reaches two of them.
+    expect(source.match(/composeCliPostRunTail\(/gu) ?? []).toHaveLength(2)
+    expect(source.match(/runPostRunTail\(/gu) ?? []).toHaveLength(0)
     expect(source.match(/runVerdictFirstCurationTail\(/gu) ?? []).toHaveLength(2)
     // 404 D-05: neither site enqueues. A site that reacquired an enqueue leg would be a SECOND
     // durable hand-off path — invisible behind the store's idempotency index, and the reason the

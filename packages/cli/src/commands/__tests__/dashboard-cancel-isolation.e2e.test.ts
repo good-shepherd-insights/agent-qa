@@ -82,6 +82,20 @@ interface Envelope {
 // this cell's plant depends on.
 
 /** The event types a run wrote to ITS OWN durable log, in order. */
+/**
+ * The RUN-SCOPED prefix of a run's log: everything up to and including `runFinished`.
+ *
+ * 404 D-06 gave the `runs.start` door a drain leg, so a finished run's log continues with the chip
+ * envelopes that drain emits. Those are post-processing and this cell is about the run, so the
+ * comparison is made over the prefix — and a chip line that appeared BEFORE `runFinished` would be
+ * caught by the ordering assertion at the call site rather than silently trimmed here.
+ */
+function runScopedTypes(fixture: Fixture, runId: string): string[] {
+  const all = loggedTypes(fixture, runId)
+  const finishedAt = all.indexOf('runFinished')
+  return finishedAt < 0 ? all : all.slice(0, finishedAt + 1)
+}
+
 function loggedTypes(fixture: Fixture, runId: string): string[] {
   return readFileSync(join(fixture.agentQaRoot, 'runs', runId, 'events.jsonl'), 'utf8')
     .split('\n')
@@ -215,12 +229,30 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
       // carries the member-0 failure, the `runWarning` that failure raised, and member 1's
       // fail-fast `testFinished`. Every event the cancelled run is missing is work the survivor
       // did — which is the claim, stated as a subset rather than as "both logs are non-empty".
-      const cancelledTypes = loggedTypes(fixture, cancelled)
-      const survivorTypes = loggedTypes(fixture, survivor)
+      //
+      // 2026-08-26 (404 D-06): the run's log now continues PAST `runFinished`. This door drains
+      // its own post-processing chain in-process, so the chip envelopes the drain emits land in
+      // the run's own `events.jsonl` — which is the whole point of giving `runs.start` a drain leg
+      // and is why a dashboard user's chips advance at all. The claim this cell makes is about the
+      // RUN, so it is stated over the run-scoped PREFIX (everything up to and including
+      // `runFinished`) and the post-processing tail is asserted separately as what it is.
+      const cancelledTypes = runScopedTypes(fixture, cancelled)
+      const survivorTypes = runScopedTypes(fixture, survivor)
       expect(cancelledTypes).toEqual(['runStarted', 'testStarted', 'testFinished', 'verdict', 'runFinished'])
       expect(survivorTypes).toEqual([
         'runStarted', 'testStarted', 'runWarning', 'testFinished', 'testFinished', 'verdict', 'runFinished',
       ])
+      // Nothing post-processing precedes `runFinished`, on either run — LIFE-01's own ordering,
+      // re-measured here because this is where a chip line would first be seen out of place.
+      for (const runId of [cancelled, survivor]) {
+        const all = loggedTypes(fixture, runId)
+        const finishedAt = all.indexOf('runFinished')
+        expect(finishedAt, `${runId}: runFinished must be present`).toBeGreaterThanOrEqual(0)
+        expect(
+          all.slice(0, finishedAt).filter((type) => type.startsWith('analysis') || type.startsWith('curation')),
+          `${runId}: no post-processing envelope may precede runFinished`,
+        ).toEqual([])
+      }
       expect(survivorTypes.length).toBeGreaterThan(cancelledTypes.length)
       // The member count both runs SET OUT to do is the same, so a shorter log is missing work.
       for (const runId of [cancelled, survivor]) {

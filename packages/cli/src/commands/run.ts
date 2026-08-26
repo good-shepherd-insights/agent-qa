@@ -78,16 +78,12 @@ import {
 } from '../run-session-composition.js'
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import type { CliAnalyticsHost } from '../composition/analytics-host.js'
-import {
-  defaultGuardrailPolicyInput,
-  loadGuardrailPolicy,
-  type SafetyHookRunner,
-} from '@vostride/agent-qa-safety'
+import type { SafetyHookRunner } from '@vostride/agent-qa-safety'
 import {
   runVerdictFirstCurationTail,
   type CurationTailModelDeps,
 } from '../curation/curation-tail.js'
-import { runPostRunTail } from '../curation/post-run-tail.js'
+import { composeCliPostRunTail } from '../curation/post-run-tail-composition.js'
 import { flushWorkingMemory } from '../wm-flush.js'
 import { isPathInsideDir } from '@vostride/agent-qa-core'
 import { createShutdownController } from './shutdown-controller.js'
@@ -1898,18 +1894,16 @@ async function executeSuites(
           // post-verdict step performed it before `runFinished`, on this door and on every other,
           // and it ran under `--detach` too (Pitfall 8). What is detach-gated is the in-process
           // chain drain, and neither leg can replace the code frozen on the line above.
-          const postRunTail = runPostRunTail({
+          const postRunTail = composeCliPostRunTail({
             runId,
-            agentQaRoot: resolvePath(configDir, '.agent-qa'),
-            configPath: resolvePath(configFilePath),
-            knowledgeConfig: config.knowledge,
             configDir,
+            configFilePath,
+            knowledgeConfig: config.knowledge,
             auditSink,
             maskingContext,
             ...(produced.getCurationModelDeps() === undefined
               ? {}
               : { modelDeps: produced.getCurationModelDeps()! }),
-            policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
             signal: curationAbortController.signal,
             log: curationTailLog,
           })
@@ -4900,18 +4894,16 @@ export function createRunCommand(): Command {
                   verdictExitCode !== 0 ? verdictExitCode : (suitesFailed ? 1 : 0)
                 // 388-02: the same shared tail as the multi-suite site above, and the same 404
                 // D-05 posture — the enqueue happened in the shell, so this handle has two legs.
-                const postRunTail = runPostRunTail({
+                const postRunTail = composeCliPostRunTail({
                   runId: singleRunId,
-                  agentQaRoot: resolvePath(configDir, '.agent-qa'),
-                  configPath: configFilePath,
-                  knowledgeConfig: config.knowledge,
                   configDir,
+                  configFilePath,
+                  knowledgeConfig: config.knowledge,
                   auditSink,
                   maskingContext,
                   ...(produced.getCurationModelDeps() === undefined
                     ? {}
                     : { modelDeps: produced.getCurationModelDeps()! }),
-                  policy: loadGuardrailPolicy(defaultGuardrailPolicyInput),
                   signal: curationAbortController.signal,
                   log: curationTailLog,
                 })
