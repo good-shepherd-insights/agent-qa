@@ -173,6 +173,49 @@ const CHIP_BY_STATUS: Record<
   cancelled: { unclaimed: 'failed', claimed: 'failed' },
 }
 
+// ------------------------------------------------------------------------------------------
+// The CLOSED-UNION cells (Phase 404, D-04). Mutation-measured by
+// `scripts/404-chip-teardown-mutation.sh`, which re-adds a third chip arm (M1) and a fifth
+// status (M2) and requires each to red a cell named below.
+//
+// SET-EQUALITY, NEVER MEMBERSHIP. A cell that asserts the chips CONTAIN `analysis` and
+// `curation`, or that the vocabulary CONTAINS four words, cannot fail on an ADDITION — and an
+// addition is the direction that matters here: the whole point of the teardown is that a
+// member which no producer can produce cannot quietly come back and make every consumer render
+// a word about a slot that will never fill.
+// ------------------------------------------------------------------------------------------
+
+describe('the chip set and its vocabulary are closed (404 D-01/D-04)', () => {
+  it('projects EXACTLY the two chips, by key set', () => {
+    // Read off the projection's own output rather than off the type: a type is erased before
+    // anything runs, and it is the runtime object every surface iterates.
+    expect(Object.keys(projectPostProcessingChips(undefined)).sort())
+      .toEqual(['analysis', 'curation'])
+    expect(Object.keys(projectPostProcessingChips({ analyzeRun: row('done') })).sort())
+      .toEqual(['analysis', 'curation'])
+  })
+
+  it('declares EXACTLY the four status words, in the order a stage passes through them', () => {
+    // Order asserted too, because the array is the enumeration surfaces walk — a reordering is a
+    // change to what a caller iterating it renders first, and the constant's own doc claims the
+    // order is the lifecycle.
+    expect([...POST_PROCESSING_CHIP_STATUSES]).toEqual(['pending', 'running', 'done', 'failed'])
+  })
+
+  it('has no reserved-slot row left in the exhaustive status table', () => {
+    // The table below is what pins `chipFor`. A structural placeholder returning from the dead
+    // would arrive as a row here first, so the table's own key set is asserted against the job
+    // statuses it claims to range over — not against a count somebody could bump.
+    expect(Object.keys(CHIP_BY_STATUS).sort()).toEqual(
+      ['authored', 'bundling', 'cancelled', 'committing', 'done', 'failed', 'queued'],
+    )
+    const produced = new Set(
+      Object.values(CHIP_BY_STATUS).flatMap((cell) => [cell.claimed, cell.unclaimed]),
+    )
+    expect([...produced].sort()).toEqual(['done', 'failed', 'pending', 'running'])
+  })
+})
+
 describe('projectPostProcessingChips is total over the durable chain state (D-14)', () => {
   it('maps EVERY job status, claimed and unclaimed, identically for both stages', () => {
     const produced = new Set<PostProcessingChipStatus>()

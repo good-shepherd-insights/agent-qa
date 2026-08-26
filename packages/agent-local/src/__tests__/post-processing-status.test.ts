@@ -13,6 +13,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { chainJobIdsForRun, invokeFunction, RUNS_POST_PROCESSING_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import type { ClockPort, ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -334,4 +335,93 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
     })
     expect('notification' in other).toBe(false)
   })
+})
+
+// ------------------------------------------------------------------------------------------
+// The STORED-ROW cell (Phase 404, D-01 / D-04; RESEARCH Pitfall 7).
+//
+// Every cell above writes its notification with THIS build's writer, so together they measure
+// this build talking to itself. The row is durable — it is sitting in users' `agent-jobs.db`
+// right now, stamped by the build that shipped before the narrowing — and the only thing
+// standing between those bytes and a surface is `guardRunNotification`, reached through the op.
+// Pinning the migration at the guard alone would leave the WIRING free: a reader that stopped
+// calling the guard, or an op that read the column some other way, passes every guard-level
+// cell in `schema` and hands a three-stage record straight to a renderer.
+// ------------------------------------------------------------------------------------------
+
+describe('a row another build wrote still reads, through the op (D-01, Pitfall 7)', () => {
+  it('reads a stored schemaVersion-1 notification as a two-stage schemaVersion-2 record',
+    async () => {
+      const harness = createHarness()
+      const jobs = await harness.host.jobs()
+      const handoff = fixtureHandoff(RUN_ID)
+      writeHandoff(harness.agentQaRoot, handoff)
+
+      const fence = await jobs.store.adoptEpoch(1)
+      await jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
+      await pump(jobs, fence)
+      // The store is closed before the column is rewritten: the point is bytes at rest that this
+      // process did not author, and a live handle would leave the row half this build's.
+      await harness.host.close()
+      hosts.splice(hosts.indexOf(harness.host), 1)
+
+      // The PREVIOUS contract, written by hand because no build in this tree can still produce
+      // it — three stages, the third the structural placeholder, stamped schemaVersion: 1.
+      const legacyPayload = {
+        schemaVersion: 1,
+        runId: RUN_ID,
+        outcome: 'done',
+        verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },
+        stages: {
+          analysis: { status: 'done' },
+          curation: { status: 'done', curated: 2, deprecated: 1 },
+          issues: { status: 'reserved' },
+        },
+      }
+      const dbPath = join(harness.agentQaRoot, AGENT_JOB_STORE_DB_FILE)
+      const db = new DatabaseSync(dbPath)
+      try {
+        // Asserted rather than assumed: an UPDATE that matched no row would leave this build's
+        // own v2 record in place and make every claim below vacuous.
+        const updated = db
+          .prepare('UPDATE notifications SET payload = ? WHERE run_id = ?')
+          .run(JSON.stringify(legacyPayload), RUN_ID)
+        expect(Number(updated.changes)).toBe(1)
+      } finally {
+        db.close()
+      }
+
+      // A COLD host — nothing of the process that wrote the rows survives into this read.
+      const cold = composeLocalAgent({
+        mintQuarantineIdentityPath: MINT_IDENTITY,
+        agentQaRoot: harness.agentQaRoot,
+        config: TEST_CONFIG,
+        knowledgeRoot: () => join(harness.agentQaRoot, 'knowledge'),
+        model: () => TEST_MODEL,
+        clock: createSteppingClock(),
+        postRun: {
+          curateRun: async () => ({ curated: 2, deprecated: 1, complete: true }),
+          candidateProse: 'masker-active',
+        },
+      })
+      hosts.push(cold)
+      const status = await invokeFunction(
+        cold.registry,
+        RUNS_POST_PROCESSING_FUNCTION_ID,
+        { runId: RUN_ID },
+        CALLER,
+      ) as PostProcessingStatus
+
+      const notification = status.notification
+      expect(notification).toBeDefined()
+      expect(notification!.schemaVersion).toBe(2)
+      // Set-equality on the keys: the placeholder must be GONE from what a surface receives, not
+      // merely unrendered by the surfaces that happen to exist today.
+      expect(Object.keys(notification!.stages).sort()).toEqual(['analysis', 'curation'])
+      // The counts survived the walk — a migration that rebuilt the stage record instead of
+      // narrowing it would drop them and still pass the key-set claim above.
+      expect(notification!.stages.curation).toEqual({ status: 'done', curated: 2, deprecated: 1 })
+      // And the chips the same read projects are the two, by key set.
+      expect(Object.keys(status.chips).sort()).toEqual(['analysis', 'curation'])
+    })
 })
