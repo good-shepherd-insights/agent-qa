@@ -152,6 +152,33 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     expect(h.releaseLease).not.toHaveBeenCalled()
   })
 
+  it('pumps under a HANDED lease and never consults the writer lease again (Pitfall 3)', async () => {
+    // THE ONE-LEASE RULE, from the tail's side. The 404 D-10 post-verdict step acquires exactly
+    // once and hands the authority over; a tail that consulted for itself would be answered
+    // `held` — BY ITS OWN PROCESS — and would then "hand off" this run's chain to nobody, leaving
+    // the rows claimed and the chips frozen.
+    //
+    // The harness's acquisition is rigged to answer `held` precisely so the two behaviours are
+    // distinguishable: a tail that honours the handed lease pumps and reports `drained`; one that
+    // re-acquires reports `handed-off` and nudges a daemon that does not exist.
+    const h = harness({ lease: { kind: 'held', holder: { pid: 4242 } } as never })
+    const tail = runPostRunTail(options(h))
+    await tail.drain({ lease: { leaseId: 'lease-from-the-step', epoch: 9 } })
+
+    expect(
+      h.operations.acquireWriterLease as unknown as ReturnType<typeof vi.fn>,
+      'a second consult is the defect; the authority was already decided at the verdict',
+    ).not.toHaveBeenCalled()
+    expect(tail.report().drain, 'the handed authority is what the pump runs under').toBe('drained')
+    expect(h.adoptEpoch, 'and it adopts the epoch the STEP minted, not one of its own').toHaveBeenCalledWith(9)
+    expect(h.nudgeDaemon, 'nobody to hand off to — this process is the holder').not.toHaveBeenCalled()
+    // Acquire -> pump -> release stays ONE lease: whichever leg held it, exactly one release.
+    expect(h.releaseLease).toHaveBeenCalledWith({
+      knowledgeRoot,
+      leaseId: 'lease-from-the-step',
+    })
+  })
+
   it('drains the chain in-process through the full authority dance when the lease is free', async () => {
     const ran = [
       { ran: true, disposition: 'completed', job: { id: String(OWN_CHAIN.analyzeRun) } },
