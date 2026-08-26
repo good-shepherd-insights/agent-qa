@@ -56,6 +56,7 @@ import {
   curateCompletedRun,
   defaultCurationTailOperations,
   type CurationTailOperations,
+  type CurationWriterAuthority,
 } from '../curation/curation-tail.js'
 import { exercisedAnchors } from '../curation/handoff-anchors.js'
 import {
@@ -607,6 +608,16 @@ async function composeDaemonRunExecution(input: {
   readonly analytics: CliAnalyticsHost | undefined
   readonly recordDaemonEvent: (event: DaemonEvent) => void
   readonly logger: DaemonHostLogger
+  /**
+   * THIS daemon's own writer lease, read per run rather than captured (404 D-05/D-09, Open Q2).
+   *
+   * A resolver because of an ORDER this composition cannot change: `runExecution` is composed at
+   * startup, several steps BEFORE `acquireWriterLease` runs, so a value captured here would always
+   * be `undefined`. Read at `execute()` time — which is minutes later, after the lease exists — it
+   * is the authority the daemon is actually holding. The same reason `resolveWriterAuthority` on
+   * the local-agent composition is a function.
+   */
+  readonly resolveWriterAuthority: () => CurationWriterAuthority | undefined
 }): Promise<RunExecutionPort> {
   const { resolveRunInvocationInputs } = await import('../commands/run.js')
   const { refuseUnhonourableRequestFields, runInProcessCliRun } =
@@ -661,6 +672,10 @@ async function composeDaemonRunExecution(input: {
         warn: (message: string) => input.logger.info(message),
       })
 
+      // Read ONCE per run, here, so the conditional spread and the value it spreads are the same
+      // reading — two calls could straddle a lease this daemon lost between them.
+      const daemonAuthority = input.resolveWriterAuthority()
+
       let startedRunId: string | undefined
       try {
         const finished = await runInProcessCliRun(
@@ -682,15 +697,38 @@ async function composeDaemonRunExecution(input: {
             // reporter here would be the console tee under another name.
             trust: { trustMode: inputs.config.safety?.trustMode === true },
             inputs,
+            // ═══ 2026-08-26 — Phase 404 D-05/D-09: THIS DOOR HANDS OVER ITS OWN LEASE ═══
+            //
+            // The daemon holds this project's writer lease for its whole lifetime and heartbeats
+            // it. Its dispatched runs execute IN THIS PROCESS, so the shell's post-verdict step
+            // would consult a lease this very process is holding and be answered `held` — by
+            // itself — and report `handedOff` to nobody (RESEARCH Pitfall 3). D-09 says a
+            // daemon-launched run drained by the daemon's own pump reads `drained`, so the door
+            // that MINTED the lease says so instead of asking.
+            //
+            // NO SECOND ACQUISITION HAPPENS ON THIS PATH AT ALL, and nothing releases the handed
+            // authority either: the step's no-leak backstop deliberately refuses to release a
+            // supplied lease (`takeUnclaimedLease`), because that lease is alive and this run is
+            // not what ends it.
+            //
+            // THE ENQUEUE IS THE CORE'S NOW. Before this change the daemon door's runs queued
+            // nothing whatsoever — the enqueue lived in `commands/run.ts`'s tail and this door
+            // supplies no `afterVerdict`. The step performs it on every door, so the daemon's own
+            // pump has something to drain. What this door still supplies is no TAIL: 388 D-13 —
+            // the daemon emits no chips, and its pump drains under the lease it already holds.
+            ...(daemonAuthority === undefined
+              ? {}
+              : { postProcessing: { writerAuthority: daemonAuthority } }),
             onSession: (session) => { startedRunId = session.id as unknown as string },
             warn: (message: string) => input.logger.info(message),
           },
           request,
         )
         // The run's OWN completion. `exitCode` here is `mapVerdictToExitCode(verdict)` and nothing
-        // else — this door supplies no `afterVerdict`, so no fold of its own can have touched it —
-        // which is why the outcome is read off it rather than off a second verdict table minted
-        // here. Byte-identical semantics to the child's exit code it replaces.
+        // else — this door supplies no `afterVerdict` (see the 404 note above for what that does
+        // and no longer does NOT mean), so no fold of its own can have touched it — which is why
+        // the outcome is read off it rather than off a second verdict table minted here.
+        // Byte-identical semantics to the child's exit code it replaces.
         recordRunOutcome(finished.runId, finished.exitCode === 0 ? 'completed' : 'failed')
         return { runId: asRunId(finished.runId) }
       } catch (error) {
@@ -736,6 +774,15 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       )
     }
   }
+  /**
+   * This daemon's writer lease, filled the moment it is acquired (404 D-05/D-09, Open Q2).
+   *
+   * Declared HERE because the run-execution composition below happens at startup, well before
+   * `acquireWriterLease` runs — see `composeDaemonRunExecution`'s `resolveWriterAuthority` doc. It
+   * is written exactly once, and only from the acquisition's own outcome.
+   */
+  let daemonWriterAuthority: CurationWriterAuthority | undefined
+
   let runExecution = input.runExecution
   if (runExecution === undefined && input.configPath !== undefined) {
     runExecution = await composeDaemonRunExecution({
@@ -744,6 +791,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       analytics: input.analytics,
       recordDaemonEvent,
       logger,
+      resolveWriterAuthority: () => daemonWriterAuthority,
     })
   }
   // `operations` is test-only. Legacy injected drain fixtures opt out unless they also provide
@@ -894,6 +942,9 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     return 1
   }
   operations.trace?.('lease-acquired')
+  // 404 D-09: the door's runs now report `drained` off THIS pair rather than re-consulting a lease
+  // this process is holding (Pitfall 3).
+  daemonWriterAuthority = { leaseId: acquired.leaseId, epoch: acquired.epoch }
 
   const authority: LeaseOperationOptions = {
     knowledgeRoot: input.knowledgeRoot,

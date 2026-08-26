@@ -73,6 +73,7 @@ import type {
 } from '@vostride/agent-qa-agent-local'
 
 import { assembleCliRun } from './run-assembly.js'
+import type { CurationWriterAuthority } from '../curation/curation-tail.js'
 import {
   createPostVerdictStep,
   releaseUntakenPostVerdictLease,
@@ -227,6 +228,28 @@ export interface InProcessCliRunExecutionOptions {
    * returned would run it outside the masking context.
    */
   readonly afterVerdict?: (context: CliRunVerdictContext) => Promise<number> | number
+  /**
+   * What this door wants the shell's POST-VERDICT step to do about post-processing (404 D-05/D-09).
+   *
+   * TWO INDEPENDENT FIELDS, NOT A MODE, because they are answers to two different questions and no
+   * door supplies both:
+   *
+   *   - `detach` — `agent-qa run --detach`. Skip the LEASE; the durable enqueue still happens
+   *     (RESEARCH Pitfall 8: detaching asks this process not to SPEND itself on the work, never to
+   *     forget the work exists). The run reads `detached`.
+   *   - `writerAuthority` — the DAEMON door, which already holds this project's writer lease and
+   *     heartbeats it for its own lifetime. Handing it over is what lets the step report `drained`
+   *     (D-09: a daemon-launched run drained by the daemon's own pump is drained) without calling
+   *     `acquireWriterLease` — which would be answered `held` by this very process and hand the
+   *     chain off to nobody (Pitfall 3, Open Q2).
+   *
+   * ABSENT ⇒ the ordinary consult: a probe of the lease, and `drained`/`handedOff`/`detached` off
+   * what it found. That is what every other door gets, and it is byte-identical to 404-01.
+   */
+  readonly postProcessing?: {
+    readonly detach?: true
+    readonly writerAuthority?: CurationWriterAuthority
+  }
   /** Where a quarantine-fold warning goes. The door owns its rendering. */
   readonly warn?: (message: string) => void
   /**
@@ -513,6 +536,16 @@ export async function runInProcessCliRun(
         runId,
         agentQaRoot: options.agentQaRoot,
         knowledgeRoot: produced.knowledgeRoot,
+        // The PRODUCER's resolved config file, not the raw `configPath` this drive was handed: the
+        // enqueue's host is composed against the project the run actually resolved, and the tail
+        // composes its own host from the same value one layer up (D-05).
+        configPath: produced.configFilePath,
+        // Conditionally spread on this file's house rule — an absent posture is an ABSENT field,
+        // so the step's own defaults live in exactly one place.
+        ...(options.postProcessing?.detach === true ? { detach: true as const } : {}),
+        ...(options.postProcessing?.writerAuthority === undefined
+          ? {}
+          : { writerAuthority: options.postProcessing.writerAuthority }),
         log: { warn: options.warn ?? (() => { /* a door with no renderer drops the line */ }) },
       })
       postVerdictHandoff = step.handoff

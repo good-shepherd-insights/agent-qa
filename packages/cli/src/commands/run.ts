@@ -1860,6 +1860,11 @@ async function executeSuites(
         // The members this door already produced — the SAME suite factory the default dispatcher
         // reaches for a suite pattern, handed over rather than re-run.
         produceMembers: async () => produced,
+        // 404 D-05/D-09: what the shell's post-verdict step should do about POST-PROCESSING for this
+        // run. `--detach` asks this process not to SPEND itself on the chain, so it skips the LEASE —
+        // never the enqueue, which the step performs either way (RESEARCH Pitfall 8). The literal-only
+        // spread is the same house rule the INVK-06 markers ride: an absent flag is an ABSENT field.
+        postProcessing: opts.detach === true ? { detach: true } : {},
         onSession: (session) => {
           activeRunSession = session
         },
@@ -1889,8 +1894,10 @@ async function executeSuites(
             shutdownRequested ? 'cancelled' : (verdict as never),
           )
           // 388-02 D-01: ONE shared post-run tail serves both of this command's tail sites
-          // (Pitfall 1). The enqueue leg runs even under `--detach`; only the in-process chain
-          // drain is detach-gated. Neither can replace the code frozen on the line above.
+          // (Pitfall 1). 404 D-05: the ENQUEUE is no longer one of its legs — the shell's
+          // post-verdict step performed it before `runFinished`, on this door and on every other,
+          // and it ran under `--detach` too (Pitfall 8). What is detach-gated is the in-process
+          // chain drain, and neither leg can replace the code frozen on the line above.
           const postRunTail = runPostRunTail({
             runId,
             agentQaRoot: resolvePath(configDir, '.agent-qa'),
@@ -1909,7 +1916,6 @@ async function executeSuites(
           return await runVerdictFirstCurationTail({
             exitCode: verdictExitCode,
             detach: opts.detach === true,
-            enqueue: () => postRunTail.enqueue(),
             // 404 D-10: pump under the lease the shell's post-verdict step ALREADY acquired.
             // Taking it here rather than letting `drain()` consult again is what keeps acquire
             // -> pump -> release one lease; a second consult would answer `held` by this very
@@ -4854,6 +4860,11 @@ export function createRunCommand(): Command {
               // because this door needed them for `--list-tests`, `--dry-run` and its parse-error
               // report before it could get here.
               produceMembers: async () => produced,
+              // 404 D-05/D-09: what the shell's post-verdict step should do about POST-PROCESSING for this
+              // run. `--detach` asks this process not to SPEND itself on the chain, so it skips the LEASE —
+              // never the enqueue, which the step performs either way (RESEARCH Pitfall 8). The literal-only
+              // spread is the same house rule the INVK-06 markers ride: an absent flag is an ABSENT field.
+              postProcessing: opts.detach === true ? { detach: true } : {},
               onSession: (session) => {
                 activeRunSession = session
               },
@@ -4887,7 +4898,8 @@ export function createRunCommand(): Command {
                 )
                 const exitCode =
                   verdictExitCode !== 0 ? verdictExitCode : (suitesFailed ? 1 : 0)
-                // 388-02: the same shared tail as the multi-suite site above.
+                // 388-02: the same shared tail as the multi-suite site above, and the same 404
+                // D-05 posture — the enqueue happened in the shell, so this handle has two legs.
                 const postRunTail = runPostRunTail({
                   runId: singleRunId,
                   agentQaRoot: resolvePath(configDir, '.agent-qa'),
@@ -4906,7 +4918,6 @@ export function createRunCommand(): Command {
                 return await runVerdictFirstCurationTail({
                   exitCode,
                   detach: opts.detach === true,
-                  enqueue: () => postRunTail.enqueue(),
                   // 404 D-10: the same one-lease rule as the multi-suite site above.
                   runTail: () => postRunTail.drain({ lease: postVerdict.takeAcquiredLease() }),
                   // 388-04 D-08: the close-out line runs on BOTH paths, --detach included.

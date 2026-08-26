@@ -1,7 +1,7 @@
 // The one post-run tail (Phase 388 plan 02, D-01 / D-03 / D-05 / D-07).
 //
-// Both of `run.ts`'s tail call sites end here. What the run process owes the post-run chain is
-// two separable things, and separating them is the whole design:
+// Every door's tail ends here. What the run process owes the post-run chain is two separable
+// things, and separating them is the whole design:
 //
 //   1. ENQUEUE — a durable record that this run has analysis waiting. Idempotent by `runId`,
 //      fence-free (385 D-02), and performed even under `--detach`, because detaching asks this
@@ -9,6 +9,22 @@
 //   2. DRAIN OR HAND OFF — spending this process on the chain when nothing else can. If the
 //      writer lease is free, pump the chain here under the ONE budget; if a daemon holds it,
 //      nudge and return immediately. The run process never waits on the daemon (D-03).
+//
+// ═══ 2026-08-26 — Phase 404 D-05: LEG 1 NO LONGER LIVES IN THIS FILE ═══
+//
+// The enqueue moved into `curation/post-verdict-step.ts`, which the runner SHELL awaits between
+// the verdict and `runFinished`. The reason is not tidiness: this tail was reachable only from
+// `commands/run.ts`, so a run started through the dashboard, MCP, chat or the daemon reached its
+// verdict and queued nothing at all — LIFE-03's posture clause was vacuous for every non-CLI run,
+// and a dashboard-only user read `pending` forever. The step is composed by the one invocation
+// core, so no door can forget it. `PostRunTailHandle` therefore has no `enqueue()` member, and
+// `drain()` resolves the knowledge root and composes its host for ITSELF rather than inheriting
+// them from a leg that ran first.
+//
+// The paragraph above still describes what the RUN owes; it is simply owed from two files now,
+// and the split is exactly the "verdict ≠ done" line this phase draws. What stays here is leg 2
+// and the user-facing close-out: the pump, its budget, its chip emitter, the exit-summary line
+// and the digest block.
 //
 // Everything below is warn-only. The exit code was frozen by `mapVerdictToExitCode` before this
 // file is reached, and `runVerdictFirstCurationTail` returns it whatever happens here (JOBQ-06).
@@ -32,11 +48,11 @@ import {
 import type { JobModelCapability } from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS, LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { AnalyzeRunPayloadSchema } from '@vostride/agent-qa-schema'
 import type {
   PostProcessingChips,
   PostProcessingStatus,
   RunDigest,
+  RunEventEnvelope,
   RunNotification,
 } from '@vostride/agent-qa-schema'
 
@@ -52,7 +68,6 @@ import {
   completedRunDir,
   completedRunHandoffPath,
   curateCompletedRun,
-  curationTailHandoffDigest,
   defaultCurationTailOperations,
   runCurationTail,
   type CurationTailOperations,
@@ -193,7 +208,7 @@ export interface PostRunTailHostInput {
  * "no LLM configured" still never means "no post-run chain", it means the honest
  * transport-throw path for the one job that genuinely needed a model.
  */
-function resolvePostRunJobModel(configPath: string): Promise<JobModelCapability> {
+export function resolvePostRunJobModel(configPath: string): Promise<JobModelCapability> {
   return resolveCliJobModel(configPath).catch((error: unknown) => ({
     modelId: 'unavailable:post-run-tail',
     generate: (): Promise<never> => {
@@ -273,6 +288,29 @@ export interface RunPostRunTailOptions extends Pick<
 > {
   /** The resolved project config file; the composition resolves everything else from it. */
   configPath: string
+  /**
+   * What the post-verdict step's enqueue answered (404 D-05).
+   *
+   * Threaded rather than performed, because this tail no longer enqueues: `report().enqueue` is
+   * read by cells and by the daemon fixtures, and a report that always said `skipped` would be a
+   * quieter second answer to a question the step already answered. Absent ⇒ `skipped`, which is
+   * the honest reading for a harness that drove the tail with no step in front of it.
+   *
+   * `failed` is also the one value that CHANGES this file's behaviour: `finish()` returns early,
+   * because nothing is queued and the step's own warning has already said everything true about
+   * this run.
+   */
+  enqueueOutcome?: PostRunEnqueueOutcome
+  /**
+   * The dashboard's second chip sink (404 D-16), accepted here and threaded to the emitter.
+   *
+   * A PASS-THROUGH DECLARED AHEAD OF ITS CONSUMER, and deliberately so: the composition seam
+   * (`composeCliPostRunTail`) and the emitter side (404-05) land in different plans, and a field
+   * added on the emitter side alone would leave the composition unable to name it. It is forwarded
+   * to `createChipEmitter` in 404-05; today it is carried and not read, which is stated here rather
+   * than implied.
+   */
+  relay?: (envelope: RunEventEnvelope) => void
   /** Focused test seam. Production callers omit it. */
   operations?: Partial<PostRunTailOperations>
 }
@@ -280,13 +318,13 @@ export interface RunPostRunTailOptions extends Pick<
 /**
  * The two legs of the tail, handed to the verdict-first wrapper separately.
  *
- * Two callables rather than one call because the wrapper gates them differently and that gate
- * is the D-03 decision itself: `enqueue` runs before the `--detach` short-circuit, `drain`
- * after it. Folding them into one function would have forced the wrapper to learn what detach
- * means for each half, which is precisely the knowledge this file owns.
+ * 2026-08-26 (404 D-05): THERE IS NO `enqueue()` MEMBER. There were three legs, and the first one
+ * — the durable hand-off — is now `enqueueAnalyzeRun` inside `post-verdict-step.ts`, called by the
+ * shell before `runFinished` on every door rather than by this file on one. The wrapper's
+ * `--detach` gate therefore no longer straddles the enqueue at all: detach skips the DRAIN, and the
+ * enqueue happened in the shell whatever the flag said (RESEARCH Pitfall 8).
  */
 export interface PostRunTailHandle {
-  enqueue(): Promise<void>
   /**
    * Pump this run's chain.
    *
@@ -299,6 +337,10 @@ export interface PostRunTailHandle {
    *
    * Absent ⇒ today's own consult, unchanged. That arm is not legacy debt: a harness driving this
    * tail directly (`runRealTail`) never ran a shell and so has no lease to hand over.
+   *
+   * 2026-08-26 (404 D-05): IT RESOLVES ITS OWN KNOWLEDGE ROOT AND COMPOSES ITS OWN HOST. Those two
+   * used to be side effects of the `enqueue()` leg, so a tail whose enqueue had not run reported
+   * `not-attempted` and drained nothing. With the enqueue in the shell that would be every tail.
    */
   drain(input?: { readonly lease?: CurationWriterAuthority }): Promise<void>
   /**
@@ -371,7 +413,14 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     ...opts.operations,
   })
 
-  let enqueueOutcome: PostRunEnqueueOutcome = 'skipped'
+  /**
+   * What the post-verdict step's enqueue answered, threaded rather than performed (404 D-05).
+   *
+   * `skipped` when no step ran in front of this tail — a harness, or a door composing the tail
+   * directly. It is not a claim that nothing is queued; it is the honest "this process did not do
+   * the queuing and was not told what happened".
+   */
+  const enqueueOutcome: PostRunEnqueueOutcome = opts.enqueueOutcome ?? 'skipped'
   let drainOutcome: PostRunDrainOutcome = 'not-attempted'
   let jobsRun = 0
   /**
@@ -438,59 +487,28 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   }
 
   return {
-    async enqueue(): Promise<void> {
-      try {
-        const handoff = ops().loadCompletedRunHandoff(
-          completedRunHandoffPath(opts.agentQaRoot, opts.runId),
-        )
-        knowledgeRoot = ops().resolveKnowledgeRoot(opts.knowledgeConfig, opts.configDir)
-        const jobs = await openHost().jobs()
-        // WTST-06 / 393 D-20: the analyze-run payload is MINTED here, schema-validated, and the
-        // two run markers are COPIED onto it from the loaded handoff.
-        //
-        // Copied, never re-derived and never re-digested. `gateRun` and `excludedFromOutcomes`
-        // already live inside the handoff whose bytes `handoffDigest` pins, so these fields add
-        // no integrity guarantee whatsoever — what they add is the ability to see what a QUEUED
-        // job is without loading the handoff it points at, which is WTST-06's ratified sentence
-        // taken literally. Anyone who needs the authoritative answer reads the handoff.
-        //
-        // The conditional spread is the `runs-start.ts:67` idiom, and it is load-bearing twice
-        // over: the carriers are `?: true`, so an unconditional copy would write `undefined`
-        // into the payload for every ordinary run, and `AnalyzeRunPayloadSchema` refuses a
-        // literal `false` — a producer may not half-express a marker. The two flags are DISTINCT
-        // axes (C8): a gate run still feeds curation, so each is copied on its own condition.
-        const payload = AnalyzeRunPayloadSchema.parse({
-          runId: opts.runId,
-          // D-20/D-06: the digest is minted ONCE per run and shared with the receipt. A
-          // second mint here would be a second answer to "which bytes were analysed".
-          handoffDigest: curationTailHandoffDigest(handoff),
-          handoffSchemaVersion: handoff.schemaVersion,
-          executionContext: handoff.executionContext,
-          ...(handoff.gateRun === undefined ? {} : { gateRun: handoff.gateRun }),
-          ...(handoff.excludedFromOutcomes === undefined
-            ? {}
-            : { excludedFromOutcomes: handoff.excludedFromOutcomes }),
-        })
-        const outcome = await jobs.queue.enqueue('analyze-run', payload, opts.runId)
-        enqueueOutcome = outcome.deduped ? 'deduped' : 'enqueued'
-      } catch (error) {
-        enqueueOutcome = 'failed'
-        opts.log.warn(enqueueFailureWarning(
-          opts.runId,
-          completedRunHandoffPath(opts.agentQaRoot, opts.runId),
-          error,
-        ))
-      }
-    },
-
     async drain(input: { readonly lease?: CurationWriterAuthority } = {}): Promise<void> {
-      if (knowledgeRoot === undefined || host === undefined) {
-        // The enqueue leg never got far enough to know where knowledge lives. Draining would
-        // mean re-deriving it here and drifting from what the enqueue used.
+      let root: string
+      let openedHost: LocalAgentHost
+      try {
+        // 404 D-05: resolved and composed HERE. The enqueue leg used to do both as a side effect,
+        // and the step that replaced it runs in the shell — a tail that waited for a leg that no
+        // longer exists would report `not-attempted` for every run there is.
+        //
+        // ONE ROOT, still: `resolveKnowledgeRoot` is the same pure function over the same
+        // `knowledgeConfig`/`configDir` the producer resolved the run's root from, so this is a
+        // re-derivation of a value rather than a second answer to where knowledge lives.
+        knowledgeRoot ??= ops().resolveKnowledgeRoot(opts.knowledgeConfig, opts.configDir)
+        root = knowledgeRoot
+        openedHost = openHost()
+      } catch (error) {
+        // Constructing the operations table or the composition reads the shipped modules, and a
+        // build where one of those reads throws must not send the exception past
+        // `runVerdictFirstCurationTail` into the command's framework catch (JOBQ-06).
         drainOutcome = 'not-attempted'
+        opts.log.warn(drainFailureWarning(opts.runId, error))
         return
       }
-      const root = knowledgeRoot
       let acquiredLeaseId: string | undefined
       try {
         drainDeadlineMs = ops().now() + DRAIN_BUDGET_MS
@@ -532,7 +550,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           drainOutcome = 'refused'
           return
         }
-        const jobs = await host.jobs()
+        const jobs = await openedHost.jobs()
         /**
          * This run's chain ids, derived ONCE per drain, from the queue's OWN id source.
          *
@@ -669,7 +687,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           }
         }
         try {
-          await host.close()
+          await openedHost.close()
         } catch {
           // Same posture: a store handle that will not close is the process's problem, and
           // the process is about to exit.
@@ -724,18 +742,28 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         if (digest === undefined || digest.lines.length === 0) return
         opts.log.info?.(digest.lines.join('\n'))
       }
+      // 404 D-05: the step's answer, not this file's. Nothing is queued and the step's own
+      // `post-run-enqueue-failed` warning has already said everything true about this run, so a
+      // close-out line built from an empty chain would be the second, quieter version of it.
+      if (enqueueOutcome === 'failed') return
+      let openedHost: LocalAgentHost
       try {
-        // Nothing was composed ⇒ the enqueue never got as far as a host, which means nothing
-        // is queued and the D-07 warning has already said everything true about this run.
-        if (host === undefined || enqueueOutcome === 'failed') return
-        const status = await ops().readPostProcessingStatus(host, opts.runId)
+        // Composed HERE rather than inherited: the detach leg never calls `drain()`, and it is
+        // exactly the posture that most needs a line about work left queued (388-04 D-08).
+        openedHost = openHost()
+      } catch (error) {
+        opts.log.warn(summaryFailureWarning(opts.runId, error))
+        return
+      }
+      try {
+        const status = await ops().readPostProcessingStatus(openedHost, opts.runId)
         if (status.notification !== undefined && drainOutcome === 'drained') {
           // D-09: this process ran the chain to its terminal, so the human line is the honest
           // close-out — it reports what HAPPENED, where the summary reports what is pending.
           // Rendered from the row and NOTHING else, so the fetch command never grafts onto
           // it; the digest itself follows when this process authored the analysis.
           opts.log.info?.(renderChainTerminalLine(status.notification))
-          await printDigestBlock(host)
+          await printDigestBlock(openedHost)
           return
         }
         // D-08: work stays queued. The statuses are durable; the parenthetical is posture —
@@ -747,16 +775,16 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           renderPostProcessingSummaryLine(status, postureOf(drainOutcome))
           + (analyzeRunCompleted
             ? ''
-            : renderDigestPointer(opts.runId, await readDigest(host))),
+            : renderDigestPointer(opts.runId, await readDigest(openedHost))),
         )
-        await printDigestBlock(host)
+        await printDigestBlock(openedHost)
       } catch (error) {
         opts.log.warn(summaryFailureWarning(opts.runId, error))
       } finally {
         try {
-          // Idempotent, and the detach leg's only close: `enqueue` opens the store and the
+          // Idempotent, and the detach leg's only close: this leg opened the store and the
           // drain that would have closed it never ran.
-          await host?.close()
+          await openedHost.close()
         } catch {
           // The process is about to exit; a handle that will not close is not worth the
           // verdict-first guarantee.
@@ -960,23 +988,6 @@ function digestReadFailureWarning(runId: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error)
   return `The digest for ${runId} could not be read for printing (${detail}); it remains `
     + `readable via ${digestFetchCommand(runId)}.`
-}
-
-/**
- * The D-07 warning, final wording. ONE line, and every clause in it is load-bearing.
- *
- * It names the RUN so the loss is attributable; it says the verdict and exit code are
- * unaffected so nobody reads a post-processing warning as a test result (JOBQ-06 in the one
- * place a user actually meets it); and it names the handoff's PATH, because "the handoff
- * remains on disk" is only actionable if the reader is told where on disk. The handoff is the
- * whole input the analysis needs, so that path IS the manual re-queue path — there is no
- * retry file and no reconciliation sweep in this build (D-07), by decision.
- */
-function enqueueFailureWarning(runId: string, handoffPath: string, error: unknown): string {
-  const detail = error instanceof Error ? error.message : String(error)
-  return `Post-run analysis was not queued for ${runId} (${detail}); the verdict and exit code `
-    + `are unaffected. The run handoff is still on disk at ${handoffPath}, so the analysis can `
-    + 'be queued again from there.'
 }
 
 /**

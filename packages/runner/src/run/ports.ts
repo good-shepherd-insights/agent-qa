@@ -405,6 +405,18 @@ export interface RunConfig {
    * C8-ratified, gate runs still feed curation. Only literal true marks a gate run;
    * absence denotes an ordinary run and remains absent in JSON. 384 threads the carrier
    * only — the exclusion semantics land in 388/393.
+   *
+   * ═══ 2026-08-26 — Phase 404 D-08 amends "gate runs still feed curation" ═══
+   *
+   * They still feed the FOLD — a gate run's handoff, folded, still emits curation candidates, and
+   * the outcome-side exclusion still keys on `excludedFromOutcomes` alone. What changed is the
+   * QUEUE: the post-verdict step enqueues NOTHING for a run carrying either marker, so no
+   * `analyze-run` row exists for a `write_test` keep-filter probe. The reasons are all about the
+   * gate loop rather than about correctness — no strong-model analysis cost per keep-gate
+   * iteration, no draft evidence reaching curation through the chain, and no post-processing chips
+   * about a run nobody will ever open. The marker still rides the handoff and the payload schema
+   * still carries it, because the exclusion is a decision the enqueue takes and not a fact the
+   * record forgets.
    */
   gateRun?: true
   members: readonly RunMemberDescriptor[]

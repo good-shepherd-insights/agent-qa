@@ -35,6 +35,7 @@ import {
   type PostRunTailOperations,
   type PostRunTailReport,
 } from '../../curation/post-run-tail.js'
+import { enqueueThroughTheStep } from '../post-run-step-harness.js'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -152,12 +153,16 @@ export interface TailOutcome {
 }
 
 /**
- * Drive the SHIPPED `runPostRunTail` at this project, from a process that is not the daemon.
+ * Drive the SHIPPED post-run leg at this project, from a process that is not the daemon.
  *
  * `acquireWriterLease` and `nudgeDaemon` are the REAL ones — that is the entire point. The lease
  * the daemon holds is what turns this into the `handed-off` posture, and the nudge really crosses
  * the daemon's unix socket. Only the two things a production run would have resolved from a config
  * file are supplied directly: where knowledge lives, and a host composed over this root.
+ *
+ * 2026-08-26 (404 D-05): the hand-off is the post-verdict STEP's, so this drives
+ * `enqueueAnalyzeRun` and then the tail's two legs — the same two calls the shell and
+ * `commands/run.ts` make between them, in the same order.
  */
 export async function runRealTail(input: {
   readonly agentQaRoot: string
@@ -167,8 +172,19 @@ export async function runRealTail(input: {
 }): Promise<TailOutcome> {
   const info: string[] = []
   const warn: string[] = []
+  const enqueueOutcome = await enqueueThroughTheStep({
+    runId: input.runId,
+    agentQaRoot: input.agentQaRoot,
+    configPath: join(input.agentQaRoot, 'agent-qa.config.yaml'),
+    composeHost: () => {
+      const host = openProjectHost(input.agentQaRoot, input.knowledgeRoot)
+      input.hosts.push(host)
+      return host
+    },
+  })
   const tail = runPostRunTail({
     runId: input.runId,
+    enqueueOutcome,
     agentQaRoot: input.agentQaRoot,
     configPath: join(input.agentQaRoot, 'agent-qa.config.yaml'),
     knowledgeConfig: { dir: input.knowledgeRoot },
@@ -189,7 +205,6 @@ export async function runRealTail(input: {
       },
     } satisfies Partial<PostRunTailOperations>,
   })
-  await tail.enqueue()
   await tail.drain()
   await tail.finish()
   return { report: tail.report(), info, warn }

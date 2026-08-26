@@ -17,7 +17,7 @@
 //                                   DIFFERENT MODULE, shipped by plan 393-03
 //   leg 3  run_fingerprint_windows  390's quarantine detection window
 //   leg 4  the curation queue       the POSITIVE half — candidates ARE emitted (C8)
-//   leg 5  the analyze-run payload   the flags reach the queue record (D-20's ratified sentence)
+//   leg 5  the analyze-run queue     a flagged run is NEVER queued at all (404 D-08)
 //
 // Leg 2 is deliberately its own named assertion even though plan 393-03 enforced the exclusion
 // with ONE gated member list in `projectRunOutcomes` that BOTH projections are computed from —
@@ -76,11 +76,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { emitCurationCandidates, type EmitReport } from '../curation/emit-candidates.js'
 import { exercisedAnchors } from '../curation/handoff-anchors.js'
-import {
-  runPostRunTail,
-  type PostRunTailOperations,
-  type RunPostRunTailOptions,
-} from '../curation/post-run-tail.js'
+import { createPostVerdictStep } from '../curation/post-verdict-step.js'
+import { defaultCurationTailOperations } from '../curation/curation-tail.js'
 
 const RUN_ID = 'run-393-05-gate-exclusion'
 const BUILD_ORDINAL = 7
@@ -346,49 +343,63 @@ function withIndex<T>(target: Side, read: (db: ReturnType<typeof openIndexWriter
   }
 }
 
-// ---- the tail's payload ------------------------------------------------------------------------
+// ---- the step, and what it did or did not queue --------------------------------------------------
 
-function tailOptions(target: Side): RunPostRunTailOptions {
-  const overrides: Partial<PostRunTailOperations> = {}
-  return {
-    runId: RUN_ID,
+function openTargetHost(target: Side): LocalAgentHost {
+  const host = composeLocalAgent({
+    mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot: target.agentQaRoot,
-    configPath: join(target.agentQaRoot, 'agent-qa.config.yaml'),
-    knowledgeConfig: { dir: 'knowledge' },
-    configDir: target.agentQaRoot,
-    auditSink: {} as AuditSink,
-    policy: POLICY,
-    log: { warn: vi.fn() },
-    operations: {
-      resolveKnowledgeRoot: () => target.knowledgeRoot,
-      runCurationTail: async () => undefined,
-      composeHost: () => {
-        const host = composeLocalAgent({
-          mintQuarantineIdentityPath: MINT_IDENTITY,
-          agentQaRoot: target.agentQaRoot,
-          config: TEST_CONFIG,
-          knowledgeRoot: () => target.knowledgeRoot,
-          model: () => TEST_MODEL,
-          idSource: DIGEST_JOB_ID_SOURCE,
-          postRun: {
-            curateRun: async () => ({ curated: 0, deprecated: 0, complete: true }),
-            candidateProse: 'masker-active',
-          },
-        })
-        hosts.push(host)
-        return host
-      },
-      ...overrides,
+    config: TEST_CONFIG,
+    knowledgeRoot: () => target.knowledgeRoot,
+    model: () => TEST_MODEL,
+    idSource: DIGEST_JOB_ID_SOURCE,
+    postRun: {
+      curateRun: async () => ({ curated: 0, deprecated: 0, complete: true }),
+      candidateProse: 'masker-active',
     },
-  }
+  })
+  hosts.push(host)
+  return host
 }
 
-/** Enqueue only — the drain has its own suites, and the claim here is about the queue RECORD. */
-async function enqueuedAnalyzeRunPayload(target: Side): Promise<Record<string, unknown>> {
-  const tail = runPostRunTail(tailOptions(target))
-  await tail.enqueue()
-  expect(tail.report().enqueue).toBe('enqueued')
+/**
+ * Run the SHIPPED post-verdict step over this side, with the markers the shell would have copied
+ * off `RunConfig`, and report the posture it decided.
+ *
+ * The step and not the tail (404 D-05): the enqueue lives there now, and so does D-08's skip. The
+ * markers are passed on the STEP INPUT rather than read back out of the handoff, because that is
+ * exactly how the shell supplies them — `shell.ts` spreads `config.gateRun`/`config.excludedFromOutcomes`
+ * onto the step input, and a cell that fed them in some other way would be measuring its own wiring.
+ */
+async function runStepOver(
+  target: Side,
+  markers: { gateRun?: true; excludedFromOutcomes?: true } = {},
+): Promise<string> {
+  const step = createPostVerdictStep({
+    runId: RUN_ID,
+    agentQaRoot: target.agentQaRoot,
+    knowledgeRoot: target.knowledgeRoot,
+    configPath: join(target.agentQaRoot, 'agent-qa.config.yaml'),
+    log: { warn: vi.fn() },
+    operations: {
+      loadCompletedRunHandoff: defaultCurationTailOperations().loadCompletedRunHandoff,
+      composeHost: () => openTargetHost(target),
+      // Nobody holds this fixture's lease, so the ordinary path would read `drained`. That makes
+      // `detached` on the flagged side a real differential rather than a shared default.
+      readWriterLease: (() => ({ kind: 'absent' })) as never,
+      nudgeDaemon: (async () => undefined) as never,
+    },
+  })
+  const outcome = await step.port.run({
+    runId: RUN_ID as never,
+    verdict: 'failed' as never,
+    ...markers,
+  })
+  return outcome.disposition
+}
 
+/** Every `analyze-run` row this side's queue holds, read through a SECOND composition. */
+async function analyzeRunRows(target: Side): Promise<Record<string, unknown>[]> {
   const host = composeLocalAgent({
     mintQuarantineIdentityPath: MINT_IDENTITY,
     agentQaRoot: target.agentQaRoot,
@@ -399,9 +410,9 @@ async function enqueuedAnalyzeRunPayload(target: Side): Promise<Record<string, u
   })
   try {
     const dump = await (await host.jobs()).store.dumpState()
-    const analyze = dump.jobs.filter((row) => row.kind === 'analyze-run')
-    expect(analyze).toHaveLength(1)
-    return analyze[0]!.payload as Record<string, unknown>
+    return dump.jobs
+      .filter((row) => row.kind === 'analyze-run')
+      .map((row) => row.payload as Record<string, unknown>)
   } finally {
     await host.close()
   }
@@ -552,47 +563,55 @@ describe('leg-4-curation-candidates-emitted — knowledge curation still consume
   })
 })
 
-describe('leg-5-analyze-run-payload — the markers reach the queue record (D-20)', () => {
-  it('enqueues the flagged handoff with both flags and the unflagged twin with neither key', async () => {
+describe('leg-5-analyze-run-queue — a flagged run is never queued at all (404 D-08)', () => {
+  it('queues ZERO rows for the flagged twin and exactly one for the unflagged twin', async () => {
     const { flagged, plain } = twins()
 
-    const flaggedPayload = await enqueuedAnalyzeRunPayload(flagged)
-    expect(flaggedPayload).toMatchObject({ gateRun: true, excludedFromOutcomes: true })
+    // The DIFFERENTIAL, and the reason this leg is a twin comparison rather than a zero-check:
+    // "no analyze-run row" is satisfied just as well by a fixture that could never have produced
+    // one. The unflagged side, byte-identical but for the markers, is what proves the queue was
+    // reachable and the skip is a decision.
+    expect(
+      await runStepOver(flagged, { gateRun: true, excludedFromOutcomes: true }),
+      'no strong-model analysis is queued per keep-gate iteration, so nothing promises a drain',
+    ).toBe('detached')
+    expect(
+      await analyzeRunRows(flagged),
+      'a gate-run reaches curation through the FOLD, never through the chain (D-08)',
+    ).toHaveLength(0)
 
-    const plainPayload = await enqueuedAnalyzeRunPayload(plain)
+    expect(
+      await runStepOver(plain),
+      'nobody holds this fixture\'s lease, so an ordinary run takes it and pumps',
+    ).toBe('drained')
+    const plainRows = await analyzeRunRows(plain)
+    expect(plainRows).toHaveLength(1)
+    const payload = plainRows[0]!
+    expect(payload).toMatchObject({
+      runId: RUN_ID,
+      handoffSchemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+      executionContext: 'local-headless',
+    })
+    expect(typeof payload.handoffDigest).toBe('string')
     // ABSENT, not false and not null. `in` rather than a value comparison, because
     // `payload.gateRun === undefined` is also true of a payload carrying the key explicitly set
     // to undefined — a shape a queue inspector would render as present.
-    expect('gateRun' in plainPayload).toBe(false)
-    expect('excludedFromOutcomes' in plainPayload).toBe(false)
-
-    // Both payloads still carry the shared four fields, so the difference above is the markers
-    // and not two differently-assembled payloads.
-    for (const payload of [flaggedPayload, plainPayload]) {
-      expect(payload).toMatchObject({
-        runId: RUN_ID,
-        handoffSchemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
-        executionContext: 'local-headless',
-      })
-      expect(typeof payload.handoffDigest).toBe('string')
-    }
-    expect(flaggedPayload.handoffDigest).not.toBe(plainPayload.handoffDigest)
+    expect('gateRun' in payload).toBe(false)
+    expect('excludedFromOutcomes' in payload).toBe(false)
   })
 
-  it('copies each marker independently — a per-axis handoff yields a per-axis payload (C8)', async () => {
+  it('each marker suppresses the queue INDEPENDENTLY — the flags are distinct axes (C8/D-08)', async () => {
     // The adjacency WTST-06 resolves explicitly: the flags are DISTINCT axes. A gate run that
     // still counts (`gateRun` alone) and an excluded run that is not a gate run
-    // (`excludedFromOutcomes` alone) are both real, and a mint that copied one from the other
-    // would be invisible to the both-flags case above.
-    const gateOnly = await enqueuedAnalyzeRunPayload(side('gate-only', { gateRun: true }))
-    expect(gateOnly).toMatchObject({ gateRun: true })
-    expect('excludedFromOutcomes' in gateOnly).toBe(false)
+    // (`excludedFromOutcomes` alone) are both real, and a skip that keyed on one flag while
+    // reading the other would be invisible to the both-flags case above.
+    const gateOnly = side('gate-only', { gateRun: true })
+    expect(await runStepOver(gateOnly, { gateRun: true })).toBe('detached')
+    expect(await analyzeRunRows(gateOnly)).toHaveLength(0)
 
-    const excludedOnly = await enqueuedAnalyzeRunPayload(
-      side('excluded-only', { excludedFromOutcomes: true }),
-    )
-    expect(excludedOnly).toMatchObject({ excludedFromOutcomes: true })
-    expect('gateRun' in excludedOnly).toBe(false)
+    const excludedOnly = side('excluded-only', { excludedFromOutcomes: true })
+    expect(await runStepOver(excludedOnly, { excludedFromOutcomes: true })).toBe('detached')
+    expect(await analyzeRunRows(excludedOnly)).toHaveLength(0)
   })
 
   it('and the fold exclusion keys ONLY on excludedFromOutcomes, never on gateRun', () => {

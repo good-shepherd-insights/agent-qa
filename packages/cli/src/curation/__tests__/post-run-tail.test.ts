@@ -301,7 +301,6 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
   it('prints the digest after the exit line, bytes identical to the op result', async () => {
     const h = harness({ runNextJob: pump([ANALYZE_COMPLETED]), status: doneStatus() })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
     await tail.finish()
 
@@ -342,7 +341,6 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
       status: { ...doneStatus(), notification: terminalNotification() },
     })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
     await tail.finish()
 
@@ -366,7 +364,6 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
       let reads = 0
       ;(h.operations as { now: () => number }).now = () => 1_000 + (reads++) * 30_000
       const tail = runPostRunTail(options(h))
-      await tail.enqueue()
       await tail.drain()
       expect(tail.report().drain).toBe('budget-exhausted')
       await tail.finish()
@@ -389,7 +386,6 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
       digest: digestOutput({ runId, verdicts: [], sentences: [], clusters: [] }),
     })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
     await tail.finish()
 
@@ -409,7 +405,6 @@ describe('the digest block — in-process analyze-run completed (D-17, over 389 
       }),
     })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
     await expect(tail.finish()).resolves.toBeUndefined()
 
@@ -428,7 +423,6 @@ describe('the extended exit line — everything else gets count + command (D-17,
   it('extends the summary line under --detach: no block, no wait, one copy-paste', async () => {
     const h = harness()
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.finish({ detached: true })
 
     expect(tail.report().drain).toBe('detached')
@@ -446,7 +440,6 @@ describe('the extended exit line — everything else gets count + command (D-17,
     async () => {
       const h = harness({ lease: { kind: 'held', holder: { pid: 4242 } } as never })
       const tail = runPostRunTail(options(h))
-      await tail.enqueue()
       await tail.drain()
       await tail.finish()
 
@@ -475,7 +468,6 @@ describe('the extended exit line — everything else gets count + command (D-17,
     let reads = 0
     ;(h.operations as { now: () => number }).now = () => 1_000 + (reads++) * 30_000
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
     expect(tail.report().drain).toBe('budget-exhausted')
     await tail.finish()
@@ -496,7 +488,6 @@ describe('the extended exit line — everything else gets count + command (D-17,
         }]),
       })
       const tail = runPostRunTail(options(h))
-      await tail.enqueue()
       await tail.drain()
       await tail.finish()
 
@@ -517,7 +508,6 @@ describe('the extended exit line — everything else gets count + command (D-17,
       }),
     })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
     await tail.finish()
 
@@ -535,7 +525,6 @@ describe('prohibitions: never-wait and print-not-publish (388 D-03 / C13)', () =
   it('the print path emits NO chip or bus event — chips observe pump outcomes only', async () => {
     const h = harness({ runNextJob: pump([ANALYZE_COMPLETED]), status: doneStatus() })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
     const observedDuringPump = h.chipObserve.mock.calls.length
     expect(observedDuringPump).toBe(1)

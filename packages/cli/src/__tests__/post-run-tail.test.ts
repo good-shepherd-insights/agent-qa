@@ -4,6 +4,13 @@
 // drains, who hands off, when the pump stops, what a failure costs — rather than sqlite or a
 // lease file. The durable half (one row for two tail runs) is proven against the real store in
 // `post-run-enqueue-idempotency.test.ts`; splitting them keeps each proof about one thing.
+//
+// 2026-08-26 (404 D-05): THE ENQUEUE CELLS LEFT THIS FILE. The payload's shape, its idempotency
+// key, `deduped`-is-a-success and the D-07 warning are now pinned in
+// `curation/__tests__/post-verdict-step.test.ts`, because that is where the enqueue is. What
+// replaced them here is the complementary claim — this tail enqueues NOTHING — plus the two legs
+// that used to depend on `enqueue()` having run first: `drain()` resolves its own knowledge root
+// and composes its own host, and `finish()` composes one for the detach posture that never drains.
 
 import { describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
@@ -131,40 +138,9 @@ function options(h: Harness): RunPostRunTailOptions {
 }
 
 describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
-  it('enqueues analyze-run with the run-tail digest and runId as the idempotency key', async () => {
-    const h = harness()
-    const tail = runPostRunTail(options(h))
-    await tail.enqueue()
-
-    expect(h.enqueue).toHaveBeenCalledTimes(1)
-    const [kind, payload, key] = h.enqueue.mock.calls[0] as [string, Record<string, unknown>, string]
-    expect(kind).toBe('analyze-run')
-    expect(key).toBe(runId)
-    expect(payload).toMatchObject({
-      runId,
-      handoffSchemaVersion: 5,
-      executionContext: 'local-headless',
-    })
-    // D-06: the digest pins the BYTES, so it must be a sha256 of the handoff and not a path.
-    expect(payload.handoffDigest).toMatch(/^[0-9a-f]{64}$/u)
-    expect(tail.report().enqueue).toBe('enqueued')
-  })
-
-  it('reports a deduped enqueue as a success, never an error', async () => {
-    const h = harness({
-      enqueue: vi.fn(async () => ({ job: { id: 'job_analyze' }, deduped: true })),
-    })
-    const tail = runPostRunTail(options(h))
-    await tail.enqueue()
-
-    expect(tail.report().enqueue).toBe('deduped')
-    expect(h.warn).not.toHaveBeenCalled()
-  })
-
   it('hands off with a nudge and returns immediately when the lease is held', async () => {
     const h = harness({ lease: { kind: 'held', holder: { pid: 4242 } } as never })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
 
     expect(h.nudgeDaemon).toHaveBeenCalledWith(agentQaRoot, { knowledgeRoot })
@@ -185,14 +161,15 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     let call = 0
     const h = harness({ runNextJob: vi.fn(async () => ran[call++]) })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
 
     // Pitfall 7, in order: adopt the epoch the lease minted, reclaim abandoned claims, then pump.
     expect(h.adoptEpoch).toHaveBeenCalledWith(7)
     expect(h.recoverAbandonedClaims).toHaveBeenCalledWith({ fence: { epoch: 7 } })
     expect(h.runNextJob).toHaveBeenCalledTimes(3)
-    expect(tail.report()).toEqual({ enqueue: 'enqueued', drain: 'drained', jobsRun: 2 })
+    // `enqueue: 'skipped'` is the honest reading for a tail no step ran in front of: this file's
+    // harness drives `drain()` directly, and the tail no longer performs a hand-off of its own.
+    expect(tail.report()).toEqual({ enqueue: 'skipped', drain: 'drained', jobsRun: 2 })
     expect(h.nudgeDaemon).not.toHaveBeenCalled()
     expect(h.releaseLease).toHaveBeenCalledWith({ knowledgeRoot, leaseId: 'lease-1' })
     expect(h.close).toHaveBeenCalledTimes(1)
@@ -201,7 +178,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
   it('runs the prior-run sweep under the SAME lease and the remainder of the one budget', async () => {
     const h = harness()
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
 
     expect(h.runCurationTail).toHaveBeenCalledTimes(1)
@@ -222,7 +198,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     }))
     const h = harness({ runNextJob })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
 
     // Never sleep the run process on a backoff — one claim, then out.
@@ -247,7 +222,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
       }))
       const h = harness({ runNextJob })
       const tail = runPostRunTail(options(h))
-      await tail.enqueue()
       await tail.drain()
 
       expect(runNextJob).toHaveBeenCalledTimes(1)
@@ -268,7 +242,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     let reads = 0
     ;(h.operations as { now: () => number }).now = () => 1_000 + (reads++) * 30_000
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
 
     expect(tail.report().drain).toBe('budget-exhausted')
@@ -290,7 +263,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
       let reads = 0
       ;(h.operations as { now: () => number }).now = () => 1_000 + (reads++) * 30_000
       const tail = runPostRunTail(options(h))
-      await tail.enqueue()
       await tail.drain()
 
       expect(tail.report().drain).toBe('backlog-exhausted')
@@ -310,7 +282,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
         })),
       })
       const tail = runPostRunTail(options(h))
-      await tail.enqueue()
       await tail.drain()
 
       // CHAIN_PUMP_BOUND claims, none of them this run's.
@@ -332,7 +303,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
         })),
       })
       const tail = runPostRunTail(options(h))
-      await tail.enqueue()
       await tail.drain()
 
       expect(h.runNextJob).toHaveBeenCalledTimes(16)
@@ -344,7 +314,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     // somebody ran them, so a starvation posture here would report a backlog that does not exist.
     const h = harness({ runNextJob: vi.fn(async () => ({ ran: false, reason: 'no-job' })) })
     const tail = runPostRunTail(options(h))
-    await tail.enqueue()
     await tail.drain()
 
     expect(tail.report().drain).toBe('drained')
@@ -363,7 +332,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
         }),
       })
       const tail = runPostRunTail({ ...options(h), signal: controller.signal })
-      await tail.enqueue()
       await tail.drain()
 
       expect(h.runNextJob).toHaveBeenCalledTimes(1)
@@ -383,7 +351,6 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
         }),
       })
       const tail = runPostRunTail(options(h))
-      await tail.enqueue()
       await tail.drain()
 
       // The warning is the part that already worked, and it is why this is latent rather than
@@ -399,42 +366,48 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
       expect(tail.report().jobsRun).toBe(0)
     })
 
-  it('logs ONE warning and resolves when the enqueue fails, still reporting (JOBQ-06/D-07)', async () => {
-    const h = harness({
-      enqueue: vi.fn(async () => {
-        throw new Error('SQLITE_BUSY: database is locked')
-      }),
-    })
-    const tail = runPostRunTail(options(h))
-    await expect(tail.enqueue()).resolves.toBeUndefined()
-
-    expect(h.warn).toHaveBeenCalledTimes(1)
-    const warning = String(h.warn.mock.calls[0]![0])
-    expect(warning).toContain(runId)
-    expect(warning).toContain('SQLITE_BUSY')
-    // The whole point of the warning is that it says what was NOT affected.
-    expect(warning).toContain('verdict and exit code are unaffected')
-    expect(tail.report().enqueue).toBe('failed')
-  })
-
-  it('enqueues under --detach and skips only the drain (D-03, Pitfall 3)', async () => {
+  it('ENQUEUES NOTHING — leg 1 belongs to the post-verdict step now (404 D-05)', async () => {
+    // The complementary half of the relocation, and the one that can go silently wrong: a tail
+    // that kept a queue write of its own would put a SECOND row-writing path back into the
+    // product, and the store's idempotency index would hide it behind a `deduped` nobody reads.
     const h = harness()
     const tail = runPostRunTail(options(h))
+    await tail.drain()
+
+    expect(h.enqueue, 'the queue is only ever written by the step the shell awaits').not.toHaveBeenCalled()
+    expect(tail.report().drain, 'and the drain still ran — this is not a dead tail').toBe('drained')
+  })
+
+  it('threads the STEP\'s enqueue outcome into the report rather than performing one', async () => {
+    const h = harness()
+    const tail = runPostRunTail({ ...options(h), enqueueOutcome: 'deduped' })
+    await tail.drain()
+
+    expect(
+      tail.report().enqueue,
+      'the report answers what the step said, so `deduped` stays a success all the way out',
+    ).toBe('deduped')
+    expect(h.enqueue).not.toHaveBeenCalled()
+  })
+
+  it('skips only the drain under --detach; the enqueue already happened in the shell (Pitfall 8)', async () => {
+    const h = harness()
+    const tail = runPostRunTail({ ...options(h), enqueueOutcome: 'enqueued' })
 
     const exitCode = await runVerdictFirstCurationTail({
       exitCode: 3,
       detach: true,
-      enqueue: () => tail.enqueue(),
       runTail: () => tail.drain(),
     })
 
     expect(exitCode).toBe(3)
-    expect(h.enqueue).toHaveBeenCalledTimes(1)
     expect(
       h.operations.acquireWriterLease as unknown as ReturnType<typeof vi.fn>,
     ).not.toHaveBeenCalled()
     expect(h.runNextJob).not.toHaveBeenCalled()
     expect(tail.report()).toEqual({
+      // What the step reported, carried through unchanged: detaching never means "forget the work
+      // exists", and a report that said `skipped` here would say it did.
       enqueue: 'enqueued',
       drain: 'not-attempted',
       jobsRun: 0,
@@ -486,12 +459,14 @@ describe('the tail can never reach the exit code (JOBQ-06)', () => {
     const exitCode = await runVerdictFirstCurationTail({
       exitCode: 0,
       detach: false,
-      enqueue: () => tail.enqueue(),
       runTail: () => tail.drain(),
     })
 
     expect(exitCode).toBe(0)
-    expect(tail.report().enqueue).toBe('failed')
+    // 404 D-05: `drain()` is the leg that builds the table now, so it is the leg that must absorb
+    // a table that cannot be built. The claim is unchanged — a post-run concern may never reach
+    // the process code — only the leg that carries it.
+    expect(tail.report().drain).toBe('not-attempted')
     expect(warn).toHaveBeenCalledTimes(1)
   })
 })

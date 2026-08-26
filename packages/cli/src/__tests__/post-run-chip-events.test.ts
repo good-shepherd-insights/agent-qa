@@ -41,6 +41,7 @@ import {
   type PostRunTailOperations,
   type RunPostRunTailOptions,
 } from '../curation/post-run-tail.js'
+import { enqueueThroughTheStep } from './post-run-step-harness.js'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -265,7 +266,7 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
   it('continues the run log seq and appends one pair per drained stage', async () => {
     const f = fixture()
     const tail = runPostRunTail(f.options())
-    await tail.enqueue()
+    await stepEnqueue(f.agentQaRoot)
     await tail.drain()
 
     expect(tail.report().drain).toBe('drained')
@@ -296,7 +297,7 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
   it('emits no issues chip at all — the reserved job kind emits nothing (D-15, 404 D-02)', async () => {
     const f = fixture()
     const tail = runPostRunTail(f.options())
-    await tail.enqueue()
+    await stepEnqueue(f.agentQaRoot)
     await tail.drain()
 
     const types = readEvents(f.eventsPath).map((event) => event.type)
@@ -311,7 +312,7 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
       acquireWriterLease: () => ({ kind: 'held', holder: { pid: 4242 } }),
       nudgeDaemon: async () => undefined,
     } as unknown as Partial<PostRunTailOperations>))
-    await tail.enqueue()
+    await stepEnqueue(f.agentQaRoot)
     await tail.drain()
 
     expect(tail.report().drain).toBe('handed-off')
@@ -321,7 +322,7 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
   it('appends nothing when the drain leg never runs (--detach)', async () => {
     const f = fixture()
     const tail = runPostRunTail(f.options())
-    await tail.enqueue()
+    await stepEnqueue(f.agentQaRoot)
     // `runVerdictFirstCurationTail` short-circuits before `drain()` under --detach.
 
     expect(tail.report().drain).toBe('not-attempted')
@@ -336,7 +337,7 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
         },
       })
       const tail = runPostRunTail(f.options())
-      await tail.enqueue()
+      await stepEnqueue(f.agentQaRoot)
       await tail.drain()
 
       const appended = readEvents(f.eventsPath).slice(FIXTURE_EVENT_LINES.length)
@@ -374,7 +375,7 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
         },
       })
       const tail = runPostRunTail(f.options())
-      await tail.enqueue()
+      await stepEnqueue(f.agentQaRoot)
       await tail.drain()
 
       const appended = readEvents(f.eventsPath).slice(FIXTURE_EVENT_LINES.length)
@@ -400,7 +401,7 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
       },
     })
     const tail = runPostRunTail(f.options())
-    await tail.enqueue()
+    await stepEnqueue(f.agentQaRoot)
     await tail.drain()
 
     const failure = readEvents(f.eventsPath).at(-1)!.payload as { error?: string }
@@ -439,6 +440,26 @@ describe('the post-run chip emitter (ANLZ-05, D-13/D-16)', () => {
  * from anything the tail held in memory, the values compared here — which came out of a cold
  * registry over the same database — would be free to disagree with it.
  */
+async function stepEnqueue(agentQaRoot: string): Promise<void> {
+  await enqueueThroughTheStep({
+    runId: RUN_ID,
+    agentQaRoot,
+    configPath: join(agentQaRoot, 'agent-qa.config.yaml'),
+    composeHost: () => {
+      const host = composeLocalAgent({
+        mintQuarantineIdentityPath: MINT_IDENTITY,
+        agentQaRoot,
+        config: TEST_CONFIG,
+        knowledgeRoot: () => join(agentQaRoot, 'knowledge'),
+        model: () => TEST_MODEL,
+        idSource: DIGEST_JOB_ID_SOURCE,
+      })
+      hosts.push(host)
+      return host
+    },
+  })
+}
+
 async function readStatusThroughTheOp(
   agentQaRoot: string,
 ): Promise<PostProcessingStatus> {
@@ -469,7 +490,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
       acquireWriterLease: () => ({ kind: 'held', holder: { pid: 4242 } }),
       nudgeDaemon: async () => undefined,
     } as unknown as Partial<PostRunTailOperations>))
-    await tail.enqueue()
+    await stepEnqueue(f.agentQaRoot)
     await tail.drain()
     await tail.finish()
 
@@ -502,7 +523,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
       // First tail: the budget is spent the instant `analyze-run` lands, so the chain stops
       // mid-flight with `curate-memory` durably queued and nothing claiming it.
       const first = runPostRunTail(f.options())
-      await first.enqueue()
+      await stepEnqueue(f.agentQaRoot)
       await first.drain()
       expect(first.report().drain).toBe('budget-exhausted')
 
@@ -513,7 +534,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
         nudgeDaemon: async () => undefined,
       } as unknown as Partial<PostRunTailOperations>))
       f.info.mockClear()
-      await second.enqueue()
+      await stepEnqueue(f.agentQaRoot)
       await second.drain()
       await second.finish()
 
@@ -537,7 +558,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
   it('drops the daemon parenthetical under --detach, where nobody promised to drain', async () => {
     const f = fixture()
     const tail = runPostRunTail(f.options())
-    await tail.enqueue()
+    await stepEnqueue(f.agentQaRoot)
     await tail.finish({ detached: true })
 
     expect(tail.report().drain).toBe('detached')
@@ -564,7 +585,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
         acquireWriterLease: () => ({ kind: 'held', holder: { pid: 4242 } }),
         nudgeDaemon: async () => undefined,
       } as unknown as Partial<PostRunTailOperations>))
-      await handedOff.enqueue()
+      await stepEnqueue(f.agentQaRoot)
       await handedOff.drain()
       await handedOff.finish()
       expect(handedOff.report().drain).toBe('handed-off')
@@ -594,7 +615,7 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
     async () => {
       const f = fixture()
       const tail = runPostRunTail(f.options())
-      await tail.enqueue()
+      await stepEnqueue(f.agentQaRoot)
       await tail.drain()
       await tail.finish()
 
@@ -614,22 +635,18 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
       expect(lines.some((message) => message.startsWith('post-processing —'))).toBe(false)
     })
 
-  it('names the handoff on disk as the manual re-queue path when the enqueue fails (D-07)',
+  it('says NOTHING at all when the step reported a failed hand-off (D-07, 404 D-05)',
     async () => {
+      // The D-07 warning itself — the run id, "verdict and exit code are unaffected", and the
+      // handoff's own path as the manual re-queue route — is now published by the SHELL, off the
+      // step's `post-run-enqueue-failed` outcome, and is pinned in `post-verdict-step.test.ts`.
+      // What is pinned HERE is the tail's half of that split: told `failed`, it prints no
+      // close-out line and adds no second, quieter warning of its own.
       const f = fixture()
-      const tail = runPostRunTail(f.options({
-        loadCompletedRunHandoff: () => {
-          throw new Error('the handoff store is unreachable')
-        },
-      }))
-      await tail.enqueue()
+      const tail = runPostRunTail({ ...f.options(), enqueueOutcome: 'failed' })
       await tail.finish()
 
-      expect(f.warn).toHaveBeenCalledTimes(1)
-      const warning = String(f.warn.mock.calls[0]![0])
-      expect(warning).toContain(RUN_ID)
-      expect(warning).toContain('verdict and exit code are unaffected')
-      expect(warning).toContain(join(f.agentQaRoot, RUNS_SUBDIR, slugBranch(RUN_ID), HANDOFF_FILE))
+      expect(f.warn, 'the shell already said everything true about this run').not.toHaveBeenCalled()
       // Nothing is queued, so nothing may claim to be.
       expect(f.info).not.toHaveBeenCalled()
     })

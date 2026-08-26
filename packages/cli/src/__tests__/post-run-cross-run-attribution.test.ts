@@ -46,6 +46,7 @@ import {
   type PostRunTailOperations,
   type RunPostRunTailOptions,
 } from '../curation/post-run-tail.js'
+import { enqueueThroughTheStep } from './post-run-step-harness.js'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -280,6 +281,26 @@ function readEvents(eventsPath: string): RunEventEnvelope[] {
  * shares no memory with the tail under test — a registry opened over the same database after the
  * drain returned.
  */
+async function stepEnqueue(agentQaRoot: string, runId: string): Promise<void> {
+  await enqueueThroughTheStep({
+    runId,
+    agentQaRoot,
+    configPath: join(agentQaRoot, 'agent-qa.config.yaml'),
+    composeHost: () => {
+      const host = composeLocalAgent({
+        mintQuarantineIdentityPath: MINT_IDENTITY,
+        agentQaRoot,
+        config: TEST_CONFIG,
+        knowledgeRoot: () => join(agentQaRoot, 'knowledge'),
+        model: () => TEST_MODEL,
+        idSource: DIGEST_JOB_ID_SOURCE,
+      })
+      hosts.push(host)
+      return host
+    },
+  })
+}
+
 async function readStatusThroughTheOp(
   agentQaRoot: string,
   runId: string,
@@ -304,12 +325,15 @@ async function readStatusThroughTheOp(
   }
 }
 
-/** Run A enqueues and detaches; run B enqueues and drains the shared queue in-process. */
+/**
+ * Run A is queued by its step and detaches; run B is queued by its step and drains the shared
+ * queue in-process (404 D-05: the hand-off is the step's on both sides).
+ */
 async function driveTwoRuns(f: Fixture): Promise<{ jobsRun: number; drain: string }> {
   const tailA = runPostRunTail(f.options(RUN_A, {
     baseMs: Date.parse('2026-01-01T00:00:00.000Z'),
   }))
-  await tailA.enqueue()
+  await stepEnqueue(f.agentQaRoot, RUN_A)
   // The real `--detach` close-out: `drain()` is never called and the host is closed by `finish`.
   await tailA.finish({ detached: true })
   expect(tailA.report().drain).toBe('detached')
@@ -317,7 +341,7 @@ async function driveTwoRuns(f: Fixture): Promise<{ jobsRun: number; drain: strin
   const tailB = runPostRunTail(f.options(RUN_B, {
     baseMs: Date.parse('2026-01-01T01:00:00.000Z'),
   }))
-  await tailB.enqueue()
+  await stepEnqueue(f.agentQaRoot, RUN_B)
   await tailB.drain()
   return { jobsRun: tailB.report().jobsRun, drain: tailB.report().drain }
 }
@@ -395,14 +419,14 @@ describe('a starved own-chain is reported as backlog-exhausted, never a bare pen
       const tailA = runPostRunTail(f.options(RUN_A, {
         baseMs: Date.parse('2026-01-01T00:00:00.000Z'),
       }))
-      await tailA.enqueue()
+      await stepEnqueue(f.agentQaRoot, RUN_A)
       await tailA.finish({ detached: true })
 
       const tailB = runPostRunTail(f.options(RUN_B, {
         baseMs: Date.parse('2026-01-01T01:00:00.000Z'),
       }))
       f.info.mockClear()
-      await tailB.enqueue()
+      await stepEnqueue(f.agentQaRoot, RUN_B)
       await tailB.drain()
 
       // One job ran and it was A's: B's own chain was never claimed, and the posture says so
@@ -439,7 +463,7 @@ describe('a starved own-chain is reported as backlog-exhausted, never a bare pen
     const tailB = runPostRunTail(f.options(RUN_B, {
       baseMs: Date.parse('2026-01-01T01:00:00.000Z'),
     }))
-    await tailB.enqueue()
+    await stepEnqueue(f.agentQaRoot, RUN_B)
     await tailB.drain()
 
     expect(tailB.report().jobsRun).toBe(1)

@@ -1,10 +1,16 @@
-// SC1: the REAL post-run tail, run twice, produces ONE analyze-run job (Phase 388 plan 02).
+// SC1: the REAL post-run hand-off + tail, run twice, produces ONE analyze-run job (388 plan 02).
 //
-// The claim is about the TAIL, not about `enqueue` — calling `queue.enqueue` twice would only
-// re-prove the store's shipped unique index (385 D-08), which is the mechanism here and not the
-// subject. So this drives `runPostRunTail` end to end against a real sqlite store, a real
-// handoff on disk, the real composition root and the real handler bodies, twice, and compares
-// the store's LOGICAL DUMP — the 385 D-03 ratified comparator — across the two runs.
+// The claim is about the WHOLE post-run leg, not about `queue.enqueue` — calling that twice would
+// only re-prove the store's shipped unique index (385 D-08), which is the mechanism here and not
+// the subject. So this drives the shipped `enqueueAnalyzeRun` and then `runPostRunTail` end to end
+// against a real sqlite store, a real handoff on disk, the real composition root and the real
+// handler bodies, twice, and compares the store's LOGICAL DUMP — the 385 D-03 ratified comparator
+// — across the two runs.
+//
+// 2026-08-26 (404 D-05): the hand-off is the POST-VERDICT STEP's now, so the enqueue half of each
+// pass goes through `enqueueThroughTheStep` — the shipped `enqueueAnalyzeRun` over this fixture's
+// own host. Nothing about the claim moved: the same two passes, the same real store, the same
+// comparator.
 //
 // Only three operations are injected, and none of them is the thing under test: `composeHost`
 // (to bind a fast `curateRun` stub and a config/model pair with no provider behind them),
@@ -40,6 +46,7 @@ import {
   type PostRunTailOperations,
   type RunPostRunTailOptions,
 } from '../curation/post-run-tail.js'
+import { enqueueThroughTheStep } from './post-run-step-harness.js'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -130,6 +137,8 @@ interface Fixture {
   warn: ReturnType<typeof vi.fn>
   runCurationTail: ReturnType<typeof vi.fn>
   options(overrides?: Partial<PostRunTailOperations>): RunPostRunTailOptions
+  /** The shipped step's hand-off, over this fixture's own host (404 D-05). */
+  enqueue(): Promise<'enqueued' | 'deduped'>
 }
 
 function fixture(): Fixture {
@@ -146,6 +155,28 @@ function fixture(): Fixture {
   const curateCalls: string[] = []
   const warn = vi.fn<(message: string) => void>()
   const runCurationTail = vi.fn(async () => undefined)
+  const configPath = join(agentQaRoot, 'agent-qa.config.yaml')
+  const openHost = (): LocalAgentHost => {
+    const host = composeLocalAgent({
+      mintQuarantineIdentityPath: MINT_IDENTITY,
+      agentQaRoot,
+      config: TEST_CONFIG,
+      knowledgeRoot: () => knowledgeRoot,
+      model: () => TEST_MODEL,
+      idSource: DIGEST_JOB_ID_SOURCE,
+      postRun: {
+        curateRun: async (input) => {
+          curateCalls.push(input.runId)
+          return { curated: 1, deprecated: 0, complete: true }
+        },
+        // True of this substitute: it records the call and returns counts, never reaching
+        // candidate emission at all.
+        candidateProse: 'masker-active',
+      },
+    })
+    hosts.push(host)
+    return host
+  }
 
   return {
     agentQaRoot,
@@ -153,6 +184,14 @@ function fixture(): Fixture {
     curateCalls,
     warn,
     runCurationTail,
+    async enqueue(): Promise<'enqueued' | 'deduped'> {
+      return await enqueueThroughTheStep({
+        runId: RUN_ID,
+        agentQaRoot,
+        configPath,
+        composeHost: openHost,
+      })
+    },
     options(overrides: Partial<PostRunTailOperations> = {}): RunPostRunTailOptions {
       return {
         runId: RUN_ID,
@@ -166,27 +205,7 @@ function fixture(): Fixture {
         operations: {
           resolveKnowledgeRoot: () => knowledgeRoot,
           runCurationTail,
-          composeHost: () => {
-            const host = composeLocalAgent({
-              mintQuarantineIdentityPath: MINT_IDENTITY,
-              agentQaRoot,
-              config: TEST_CONFIG,
-              knowledgeRoot: () => knowledgeRoot,
-              model: () => TEST_MODEL,
-              idSource: DIGEST_JOB_ID_SOURCE,
-              postRun: {
-                curateRun: async (input) => {
-                  curateCalls.push(input.runId)
-                  return { curated: 1, deprecated: 0, complete: true }
-                },
-                // True of this substitute: it records the call and returns counts, never
-                // reaching candidate emission at all.
-                candidateProse: 'masker-active',
-              },
-            })
-            hosts.push(host)
-            return host
-          },
+          composeHost: openHost,
           ...overrides,
         },
       }
@@ -252,18 +271,18 @@ describe('SC1 — the real post-run tail run twice (ANLZ-01, D-03/D-07)', () => 
     const f = fixture()
     const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
 
-    const first = runPostRunTail(f.options())
-    await first.enqueue()
+    const firstEnqueue = await f.enqueue()
+    const first = runPostRunTail({ ...f.options(), enqueueOutcome: firstEnqueue })
     await first.drain()
     const afterFirst = await readDurableState(f.agentQaRoot)
 
-    const second = runPostRunTail(f.options())
-    await second.enqueue()
+    const secondEnqueue = await f.enqueue()
+    const second = runPostRunTail({ ...f.options(), enqueueOutcome: secondEnqueue })
     await second.drain()
     const afterSecond = await readDurableState(f.agentQaRoot)
 
     expect(first.report().enqueue).toBe('enqueued')
-    // A deduped second hand-off is a SUCCESS. If the tail ever reported it as a failure this
+    // A deduped second hand-off is a SUCCESS. If the step ever reported it as a failure this
     // would be 'failed' and the D-07 warning would have fired for a healthy run.
     expect(second.report().enqueue).toBe('deduped')
     expect(f.warn).not.toHaveBeenCalled()
@@ -289,15 +308,16 @@ describe('SC1 — the real post-run tail run twice (ANLZ-01, D-03/D-07)', () => 
     expect(first1.chain.match(/"kind":"analyze-run"/g) ?? []).toHaveLength(1)
   })
 
-  it('still enqueues under --detach, and drains nothing (D-03, Pitfall 3)', async () => {
+  it('still enqueues under --detach, and drains nothing (D-03, Pitfall 8)', async () => {
     const f = fixture()
     const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
-    const tail = runPostRunTail(f.options())
+    // 404 D-05/Pitfall 8: the hand-off happens in the shell's step, which does NOT skip it under
+    // `--detach`. Detaching declines to SPEND this process on the work, never to forget it exists.
+    const tail = runPostRunTail({ ...f.options(), enqueueOutcome: await f.enqueue() })
 
     const exitCode = await runVerdictFirstCurationTail({
       exitCode: 1,
       detach: true,
-      enqueue: () => tail.enqueue(),
       runTail: () => tail.drain(),
     })
 
@@ -318,24 +338,34 @@ describe('SC1 — the real post-run tail run twice (ANLZ-01, D-03/D-07)', () => 
     expect(tail.report().drain).toBe('not-attempted')
   })
 
-  it('returns the frozen exit code when the enqueue rejects, warning exactly once (JOBQ-06)', async () => {
+  it('a failed hand-off REJECTS out of the step, and the tail still prints nothing about it', async () => {
+    // JOBQ-06's two halves, split the way 404 D-05 splits the work. The step RAISES — the shell
+    // catches it and publishes `post-run-enqueue-failed`, pinned in `post-verdict-step.test.ts` —
+    // and this file pins the tail-side consequence: told `failed`, `finish()` says nothing at all,
+    // because the step's own warning already said everything true about this run.
     const f = fixture()
-    const tail = runPostRunTail(f.options({
+    await expect(enqueueThroughTheStep({
+      runId: RUN_ID,
+      agentQaRoot: f.agentQaRoot,
+      configPath: join(f.agentQaRoot, 'agent-qa.config.yaml'),
+      composeHost: () => {
+        throw new Error('the handoff store is unreachable')
+      },
       loadCompletedRunHandoff: () => {
         throw new Error('the handoff store is unreachable')
       },
-    }))
+    })).rejects.toThrow('the handoff store is unreachable')
 
+    const tail = runPostRunTail({ ...f.options(), enqueueOutcome: 'failed' })
     const exitCode = await runVerdictFirstCurationTail({
       exitCode: 7,
-      detach: false,
-      enqueue: () => tail.enqueue(),
+      detach: true,
       runTail: () => tail.drain(),
+      finish: (input) => tail.finish(input),
     })
 
-    expect(exitCode).toBe(7)
+    expect(exitCode, 'the verdict\'s code was frozen long before any of this').toBe(7)
     expect(tail.report().enqueue).toBe('failed')
-    expect(f.warn).toHaveBeenCalledTimes(1)
-    expect(String(f.warn.mock.calls[0]![0])).toContain('verdict and exit code are unaffected')
+    expect(f.warn, 'no second, quieter version of a warning the shell already published').not.toHaveBeenCalled()
   })
 })

@@ -68,6 +68,7 @@ import {
   type PostRunTailOperations,
   type RunPostRunTailOptions,
 } from '../curation/post-run-tail.js'
+import { enqueueThroughTheStep } from './post-run-step-harness.js'
 
 const MINT_IDENTITY = (filePath: string): string => filePath
 
@@ -290,6 +291,25 @@ function composeCold(f: Fixture): LocalAgentHost {
   })
 }
 
+/**
+ * Queue this run's `analyze-run` row through the SHIPPED post-verdict step (404 D-05).
+ *
+ * The hand-off left the tail, so a suite that drives the pump has to put its rows there the way
+ * the product does — `enqueueAnalyzeRun` over a cold composition of the same project.
+ */
+async function stepEnqueue(f: Fixture, runId: string): Promise<void> {
+  await enqueueThroughTheStep({
+    runId,
+    agentQaRoot: f.agentQaRoot,
+    configPath: join(f.agentQaRoot, 'agent-qa.config.yaml'),
+    composeHost: () => {
+      const host = composeCold(f)
+      hosts.push(host)
+      return host
+    },
+  })
+}
+
 /** One real published record for a proposal below to be about. */
 function publishRecord(f: Fixture, summary: string): string {
   ordinal += 1
@@ -388,7 +408,7 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
     const foreign = await mint(f, OTHER_RUN, 'coupon field')
 
     const tail = runPostRunTail(f.options(RUN_ID))
-    await tail.enqueue()
+    await stepEnqueue(f, RUN_ID)
     await tail.drain()
     await tail.finish()
     expect(tail.report().drain).toBe('drained')
@@ -430,7 +450,7 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
     await mint(f, OTHER_RUN, 'coupon field')
 
     const tail = runPostRunTail(f.options(RUN_ID))
-    await tail.enqueue()
+    await stepEnqueue(f, RUN_ID)
     await tail.drain()
     await tail.finish()
 
@@ -458,7 +478,7 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
       await mint(f, RUN_ID, 'checkout button')
 
       const tail = runPostRunTail(f.options(RUN_ID))
-      await tail.enqueue()
+      await stepEnqueue(f, RUN_ID)
       await tail.drain()
       await tail.finish()
 
@@ -501,7 +521,7 @@ describe('SC3 — one heartbeat, N proposals, ONE digest, ONE notify row (PROP-0
         nudgeDaemon: async () => undefined,
       } as unknown as Partial<PostRunTailOperations>,
     })
-    await tail.enqueue()
+    await stepEnqueue(f, EMPTY_RUN)
     await tail.drain()
     await tail.finish()
     expect(tail.report().drain).toBe('handed-off')

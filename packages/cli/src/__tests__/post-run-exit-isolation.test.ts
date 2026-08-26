@@ -7,7 +7,23 @@
 // spot-checks cannot carry: `expect(exitCode).toBe(1)` passes just as happily against a tail
 // that interleaved a warning through the reporter's summary block (RESEARCH Pitfall 10).
 //
-// So the same scenario runs TWICE — enqueue induced to fail, and not — and what is compared is
+// ═══ 2026-08-26 — Phase 404 D-05/D-10 SUPERSEDE THE FIRST CLAUSE, DELIBERATELY ═══
+//
+// "the exit code is determined BEFORE the enqueue" was true of a build where the enqueue lived in
+// `commands/run.ts`'s tail. It is no longer: D-10 has the runner SHELL await a post-verdict step
+// between `verdict` and `runFinished`, and D-05 put the durable hand-off inside it — so the
+// enqueue happens before `mapVerdictToExitCode` is ever reached, on EVERY door rather than on
+// this one. That is the ratified design and not a regression: the step is bounded at
+// `POST_VERDICT_STEP_BUDGET_MS`, its failure degrades to `detached` + a named `runWarning`, and
+// `runFinished` still publishes last. The enqueue's own failure legs therefore moved to
+// `curation/__tests__/post-verdict-step.test.ts` with the enqueue.
+//
+// WHAT SURVIVES HERE IS THE PART THAT WAS ALWAYS THE POINT: nothing the post-run TAIL does can
+// change the frozen exit code, and no post-run byte may precede a verdict byte. The scenario
+// below therefore compares a clean run against one whose STEP already failed — the posture the
+// tail is told about through `enqueueOutcome: 'failed'` — plus the tail's own induced failures.
+//
+// So the same scenario runs TWICE — post-processing induced to fail, and not — and what is compared is
 // the WHOLE captured byte sequence of each channel, the 385 D-03 logical-dump discipline
 // applied to output. Three things make the comparison non-vacuous rather than a comparison of
 // two empty strings:
@@ -59,6 +75,7 @@ import {
   type PostRunTailOperations,
   type RunPostRunTailOptions,
 } from '../curation/post-run-tail.js'
+import { enqueueThroughTheStep } from './post-run-step-harness.js'
 import { createConsoleReporter } from '../reporters/console-reporter.js'
 import { buildReporterFixture } from './reporters/fixtures.js'
 
@@ -162,6 +179,8 @@ interface Fixture {
   agentQaRoot: string
   /** The composition every scenario uses — wrapped, never replaced, by the failure legs. */
   composeTestHost(input: PostRunTailHostInput): LocalAgentHost
+  /** The SHELL's hand-off, run where the shell runs it: before any verdict output (404 D-05). */
+  stepEnqueue(): Promise<void>
   options(overrides?: Partial<PostRunTailOperations>): RunPostRunTailOptions
 }
 
@@ -205,6 +224,14 @@ function fixture(): Fixture {
   return {
     agentQaRoot,
     composeTestHost,
+    async stepEnqueue(): Promise<void> {
+      await enqueueThroughTheStep({
+        runId: RUN_ID,
+        agentQaRoot,
+        configPath: join(agentQaRoot, 'agent-qa.config.yaml'),
+        composeHost: composeTestHost,
+      })
+    },
     options(overrides: Partial<PostRunTailOperations> = {}): RunPostRunTailOptions {
       return {
         runId: RUN_ID,
@@ -270,10 +297,10 @@ interface Scenario {
   verdictScopedStderr: string
   /** Anything the wrapper's defensive boundary had to catch — this must stay empty (D-07). */
   unexpectedErrors: unknown[]
-  /** Ordered landmarks, for the freeze-before-enqueue pin. */
+  /** Ordered landmarks, for the freeze-before-post-processing pin. */
   order: string[]
-  /** Everything on stdout at the instant the enqueue ran. */
-  stdoutAtEnqueue: string | undefined
+  /** Everything on stdout at the instant the drain leg ran. */
+  stdoutAtDrain: string | undefined
 }
 
 /**
@@ -286,11 +313,21 @@ interface Scenario {
  */
 async function runScenario(
   f: Fixture,
-  input: { operations?: Partial<PostRunTailOperations>; detach?: boolean } = {},
+  input: {
+    operations?: Partial<PostRunTailOperations>
+    detach?: boolean
+    /** What the shell's post-verdict step reported (404 D-05). Default: an ordinary hand-off. */
+    enqueueOutcome?: RunPostRunTailOptions['enqueueOutcome']
+  } = {},
 ): Promise<Scenario> {
   const channels: Channels = { stdout: '', stderr: '' }
   const order: string[] = []
-  let stdoutAtEnqueue: string | undefined
+  let stdoutAtDrain: string | undefined
+  // The shell's post-verdict step, at the point the shell runs it: between `verdict` and
+  // `runFinished`, i.e. BEFORE any of the verdict-scoped output below. Skipped when the caller
+  // is modelling a step whose own hand-off failed.
+  if (input.enqueueOutcome !== 'failed') await f.stepEnqueue()
+
   const restore = captureChannels(channels)
   try {
     // 1. The SHIPPED console reporter over the SHIPPED envelope fixture, through the reporter's
@@ -323,18 +360,17 @@ async function runScenario(
     // 4. The tail, bound exactly as both run.ts sites bind it. Each leg records the moment the
     //    WRAPPER called it — the ordering claim is about the wrapper's gates, so a landmark
     //    that vanished when a leg short-circuited would let a reorder hide behind an absence.
-    const tail = runPostRunTail(f.options(input.operations))
+    const tail = runPostRunTail({
+      ...f.options(input.operations),
+      enqueueOutcome: input.enqueueOutcome ?? 'enqueued',
+    })
     const unexpectedErrors: unknown[] = []
     const returned = await runVerdictFirstCurationTail({
       exitCode,
       detach: input.detach === true,
-      enqueue: async () => {
-        order.push('enqueue')
-        stdoutAtEnqueue = channels.stdout
-        await tail.enqueue()
-      },
       runTail: async () => {
         order.push('drain')
+        stdoutAtDrain = channels.stdout
         await tail.drain()
       },
       finish: async (i) => {
@@ -354,7 +390,7 @@ async function runScenario(
       verdictScopedStderr,
       unexpectedErrors,
       order,
-      stdoutAtEnqueue,
+      stdoutAtDrain,
     }
   } finally {
     restore()
@@ -372,13 +408,17 @@ function lines(text: string): string[] {
 }
 
 /**
- * The enqueue leg, rejected inside the STORE — the truest form of "the enqueue failed".
+ * The PUMP, rejected inside the store — the truest form of "the drain failed".
  *
  * The real composition is WRAPPED rather than replaced: everything else about the host, the
  * queue and the handlers stays the shipped thing, so what the clean run and this run differ by
  * is one rejected call and nothing else.
+ *
+ * 2026-08-26: this used to reject `queue.enqueue`. The tail does not enqueue any more (404 D-05),
+ * so the equivalent injection one layer along is the claim the pump makes — same host, same
+ * wrapper idiom, same single rejected call.
  */
-function rejectTheEnqueue(f: Fixture, message: string): Partial<PostRunTailOperations> {
+function rejectThePump(f: Fixture, message: string): Partial<PostRunTailOperations> {
   return {
     composeHost: (composeInput) => {
       const host = f.composeTestHost(composeInput)
@@ -390,7 +430,7 @@ function rejectTheEnqueue(f: Fixture, message: string): Partial<PostRunTailOpera
             ...jobs,
             queue: {
               ...jobs.queue,
-              enqueue: async () => {
+              runNextJob: async () => {
                 throw new Error(message)
               },
             },
@@ -401,7 +441,7 @@ function rejectTheEnqueue(f: Fixture, message: string): Partial<PostRunTailOpera
   }
 }
 
-/** The host itself refusing to open its store — the enqueue never reaches a queue at all. */
+/** The host itself refusing to open its store — the pump never reaches a queue at all. */
 function rejectTheStoreOpen(f: Fixture, message: string): Partial<PostRunTailOperations> {
   return {
     composeHost: (composeInput) => ({
@@ -413,13 +453,14 @@ function rejectTheStoreOpen(f: Fixture, message: string): Partial<PostRunTailOpe
   }
 }
 
-describe('JOBQ-06 — an induced enqueue failure is invisible to the verdict', () => {
+describe('JOBQ-06 — an induced post-processing failure is invisible to the verdict', () => {
   it('is byte-identical to the clean run in exit code and verdict-scoped output', async () => {
     const clean = await runScenario(fixture())
     const failing = fixture()
-    const failed = await runScenario(failing, {
-      operations: rejectTheEnqueue(failing, 'the job store rejected the hand-off'),
-    })
+    // The 404 D-05 posture: the SHELL's step already failed the hand-off and already published
+    // `post-run-enqueue-failed` on the bus. What this scenario measures is what the tail does
+    // with that news — which is nothing at all, on either channel.
+    const failed = await runScenario(failing, { enqueueOutcome: 'failed' })
 
     // The verdict-scoped output is REAL and substantial — a byte comparison of two empty
     // strings would prove nothing, so this is asserted before anything is compared to it.
@@ -443,14 +484,12 @@ describe('JOBQ-06 — an induced enqueue failure is invisible to the verdict', (
     // 3. The stderr prefix — everything written before the tail — is byte-identical too.
     expect(failed.verdictScopedStderr).toBe(clean.verdictScopedStderr)
 
-    // 4. The sole difference is one warning, and it lands strictly AFTER the boundary.
+    // 4. The failed run adds NOTHING after the boundary. The D-07 warning is the shell's now, so
+    //    a tail that printed one here would be the second, quieter copy of a sentence a user
+    //    already read — and any byte at all here would have to be one nobody asked for.
     const failedSuffix = tailSuffix(failed.stderr, failed.verdictScopedStderr)
     const cleanSuffix = tailSuffix(clean.stderr, clean.verdictScopedStderr)
-    expect(lines(failedSuffix)).toHaveLength(1)
-    expect(failedSuffix).toContain('the job store rejected the hand-off')
-    expect(failedSuffix).toContain('the verdict and exit code are unaffected')
-    expect(failed.stderr.indexOf('was not queued'))
-      .toBeGreaterThanOrEqual(failed.verdictScopedStderr.length)
+    expect(lines(failedSuffix)).toEqual([])
     // The clean run's own close-out is the other half of the divergence: the suffixes DIFFER,
     // which is why the prefix identity above is a claim and not an artefact. Since 389 D-12
     // the clean drain also prints a block after the close-out, and since 391 D-17 that block
@@ -475,13 +514,13 @@ describe('JOBQ-06 — an induced enqueue failure is invisible to the verdict', (
 
   it.each([
     {
-      leg: 'the handoff cannot be read',
+      leg: 'the knowledge root cannot be resolved',
       inject: (): Partial<PostRunTailOperations> => ({
-        loadCompletedRunHandoff: () => {
-          throw new Error('the handoff store is unreachable')
+        resolveKnowledgeRoot: () => {
+          throw new Error('the knowledge root is unresolvable')
         },
       }),
-      detail: 'the handoff store is unreachable',
+      detail: 'the knowledge root is unresolvable',
     },
     {
       leg: 'the job store will not open',
@@ -490,10 +529,10 @@ describe('JOBQ-06 — an induced enqueue failure is invisible to the verdict', (
       detail: 'the job store could not be opened',
     },
     {
-      leg: 'the queue rejects the hand-off',
+      leg: 'the queue rejects the pump',
       inject: (f: Fixture): Partial<PostRunTailOperations> =>
-        rejectTheEnqueue(f, 'the job store rejected the hand-off'),
-      detail: 'the job store rejected the hand-off',
+        rejectThePump(f, 'the job store rejected the claim'),
+      detail: 'the job store rejected the claim',
     },
     {
       leg: 'the durable status read fails',
@@ -523,35 +562,36 @@ describe('JOBQ-06 — an induced enqueue failure is invisible to the verdict', (
 })
 
 describe('JOBQ-06 — the structural halves', () => {
-  it('runs the enqueue only after the verdict output is complete and the code is frozen',
+  it('runs the drain only after the verdict output is complete and the code is frozen',
     async () => {
       const f = fixture()
       const scenario = await runScenario(f)
 
-      // A behavioural pin, not a source grep: a wrapper that moved the enqueue past the drain,
-      // or past the detach gate, reorders this list.
+      // A behavioural pin, not a source grep: a wrapper that moved a post-run leg ahead of the
+      // freeze, or past the detach gate, reorders this list. Two landmarks rather than three
+      // since 404 D-05 — the hand-off is the shell's, and it is bounded and degraded there.
       expect(scenario.order).toEqual([
         'verdict-output',
         'exit-code-frozen',
-        'enqueue',
         'drain',
         'finish',
       ])
-      // The enqueue observed a verdict-scoped output that was already whole — and nothing was
+      // The drain observed a verdict-scoped output that was already whole — and nothing was
       // appended to it afterwards, so no post-processing byte can precede a verdict byte.
-      expect(scenario.stdoutAtEnqueue).toBe(scenario.verdictScopedStdout)
-      expect(scenario.stdout).toBe(scenario.stdoutAtEnqueue)
+      expect(scenario.stdoutAtDrain).toBe(scenario.verdictScopedStdout)
+      expect(scenario.stdout).toBe(scenario.stdoutAtDrain)
       expect(scenario.exitCode).toBe(mapVerdictToExitCode('failed'))
     })
 
-  it('still enqueues before the detach short-circuit, with the close-out on the same channel',
+  it('skips only the drain under --detach, with the close-out on the same channel',
     async () => {
       const f = fixture()
       const scenario = await runScenario(f, { detach: true })
 
-      // D-03 under the final plan-04 tail shape: the enqueue and the close-out both run; the
-      // drain does not.
-      expect(scenario.order).toEqual(['verdict-output', 'exit-code-frozen', 'enqueue', 'finish'])
+      // D-03 under the 404 D-05 tail shape: the close-out runs, the drain does not, and the
+      // hand-off already happened in the shell — which is what `--detach` has always meant
+      // (RESEARCH Pitfall 8) and no longer needs a leg here to express.
+      expect(scenario.order).toEqual(['verdict-output', 'exit-code-frozen', 'finish'])
       expect(scenario.stdout).toBe(scenario.verdictScopedStdout)
       expect(scenario.exitCode).toBe(mapVerdictToExitCode('failed'))
       expect(scenario.unexpectedErrors).toEqual([])
@@ -568,10 +608,15 @@ describe('JOBQ-06 — the structural halves', () => {
       new URL('../commands/run.ts', import.meta.url),
       'utf8',
     )
-    // Pitfall 1's regression pin: two sites, one helper, three legs each.
+    // Pitfall 1's regression pin: two sites, one helper, TWO legs each since 404 D-05.
     expect(source.match(/runPostRunTail\(/gu) ?? []).toHaveLength(2)
     expect(source.match(/runVerdictFirstCurationTail\(/gu) ?? []).toHaveLength(2)
-    expect(source.match(/postRunTail\.enqueue\(\)/gu) ?? []).toHaveLength(2)
+    // 404 D-05: neither site enqueues. A site that reacquired an enqueue leg would be a SECOND
+    // durable hand-off path — invisible behind the store's idempotency index, and the reason the
+    // dashboard, MCP and daemon doors queued nothing at all before the relocation.
+    expect(source.match(/postRunTail\.enqueue\(\)/gu) ?? []).toHaveLength(0)
+    // …and both sites tell the shell's step what to do about post-processing.
+    expect(source.match(/postProcessing:/gu) ?? []).toHaveLength(2)
     // 404-01 (D-10): both drains now PUMP UNDER THE LEASE the shell's post-verdict step already
     // acquired. The pin follows the call shape rather than loosening to `drain(`, because a site
     // that went back to a bare `drain()` would be a site consulting the writer lease a second time

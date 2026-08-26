@@ -269,6 +269,19 @@ export function createMaskedConfigReader(configPath: string): ConfigReaderPort {
  * work at this door), `afterVerdict` (a `runs.start` ack is a START, not an outcome — there is no
  * door-level fold to apply), and `trust.credential` (402's parameter).
  *
+ * ═══ 2026-08-26 — Phase 404 D-05: WHAT `afterVerdict`'s ABSENCE USED TO COST ═══
+ *
+ * It was not merely "no fold to apply". `afterVerdict` was also where `commands/run.ts` performed
+ * the durable `analyze-run` ENQUEUE, so every run through this door — the dashboard, MCP and chat
+ * doors all reach it — finished its verdict and queued NOTHING. A dashboard-only user's run was
+ * analysed and curated by nobody, ever, and read `pending` for as long as they cared to look.
+ *
+ * The enqueue is now the CORE's: the runner shell awaits a post-verdict step between `verdict` and
+ * `runFinished` on every door (`curation/post-verdict-step.ts`), so this door needs no fold to
+ * queue its work and the sentence above is once again about folding alone. What this door still
+ * lacks is the DRAIN leg — nothing here pumps the chain it now queues, so its runs read a lease
+ * posture and wait for a daemon or a later local run. That leg lands in 404-04 Task 2.
+ *
  * WHAT ARRIVES FROM THE HOST SINCE 401-07: `onSession`, `subscribers`, `resolveAppiumUrl` and
  * `resolveRunFlags`, all four through `runBridge` and all four absent unless a host asks. A host that watches its runs
  * needs the first; one that writes its own rows needs the second (D-04 still holds for a host that
