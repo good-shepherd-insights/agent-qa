@@ -20,7 +20,8 @@ import type {
   RunConfig,
   RunMemberDescriptor,
 } from '../shell.js'
-import type { EventLogPort, HandoffStorePort, RunTimerPort } from '../ports.js'
+import type { EventLogPort, HandoffStorePort, RunArtifactStorePort, RunTimerPort } from '../ports.js'
+import { POST_VERDICT_STEP_BUDGET_MS } from '../ports.js'
 import type { EvidenceArtifactStorePort } from '../../loop/ports.js'
 import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { RunArtifactStageInput, RunArtifactFinalizeInput } from '@vostride/agent-qa-schema'
@@ -787,6 +788,285 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
 
     expect(store.saved).toHaveLength(1)
     expect(JSON.stringify(store.saved[0])).not.toContain('rootCause')
+  })
+})
+
+// ---- The post-verdict step (404 D-10/D-11) -------------------------------
+//
+// THE CONTRACT UNDER TEST IS "DEGRADE, NEVER GATE". The shell delays `runFinished` for exactly one
+// host-supplied step, and every way that step can fail to decide must end the same way: the wire
+// reads `detached`, a named `runWarning` says why, `done` still resolves, and `runFinished` is
+// still last and still once. These cells drive all four ways — warned, thrown, timed out, absent
+// (the absent arm is pinned by the ordering cell far above, which composes no port) — plus the two
+// deciding answers, plus what the step is actually told.
+//
+// EVERY CELL BELOW IS ORDER-AWARE. `orderLog` is written by the artifact store and by the port
+// itself, so "after finalize, before runFinished" is read off the sequence the shell actually
+// executed rather than inferred from the event list alone.
+
+interface FakePostVerdictPort {
+  run: ReturnType<typeof vi.fn>
+}
+
+function makeOrderingArtifactStore(log: string[]): RunArtifactStorePort {
+  return {
+    stage(_document: RunArtifactStageInput) {
+      log.push('artifact.stage')
+    },
+    finalize(_patch: RunArtifactFinalizeInput) {
+      log.push('artifact.finalize')
+    },
+  }
+}
+
+function warningsOf(events: RunEventEnvelope[], code: string): RunEventEnvelope[] {
+  return events.filter(
+    e => e.type === 'runWarning' && (e.payload as { code?: string }).code === code,
+  )
+}
+
+describe('post-verdict step — the degrade-never-gate contract (404 D-10/D-11)', () => {
+  it('a port answering handedOff decides the wire, publishes no warning, and ran AFTER finalize and BEFORE runFinished', async () => {
+    const orderLog: string[] = []
+    let sawRunFinishedDuringStep = true
+    let events: RunEventEnvelope[] = []
+    const port: FakePostVerdictPort = {
+      run: vi.fn(async () => {
+        orderLog.push('postVerdict')
+        sawRunFinishedDuringStep = events.some(e => e.type === 'runFinished')
+        return { disposition: 'handedOff' as const }
+      }),
+    }
+    const session = startRun(
+      baseConfig({
+        ports: {
+          handoffStore: makeFakeHandoffStore(),
+          eventLog: makeFakeEventLog(),
+          runArtifactStore: makeOrderingArtifactStore(orderLog),
+          postVerdict: port,
+        },
+      }),
+    )
+    events = drain(session)
+    await done(session)
+
+    const finishes = events.filter(e => e.type === 'runFinished')
+    expect(finishes, 'runFinished is published exactly once').toHaveLength(1)
+    expect(
+      (finishes[0].payload as { disposition: string }).disposition,
+      'the shell publishes whatever posture the step decided',
+    ).toBe('handedOff')
+    expect(
+      events.filter(e => e.type === 'runWarning'),
+      'a step that decided cleanly gives the run nothing to warn about',
+    ).toEqual([])
+    expect(
+      orderLog,
+      'the step is awaited AFTER the artifact finalize and before anything else',
+    ).toEqual(['artifact.stage', 'artifact.finalize', 'postVerdict'])
+    expect(
+      sawRunFinishedDuringStep,
+      'runFinished had not been published yet while the step was still running',
+    ).toBe(false)
+  })
+
+  it('a port answering detached WITH a warning publishes exactly that code and message, before runFinished', async () => {
+    let events: RunEventEnvelope[] = []
+    const port: FakePostVerdictPort = {
+      run: vi.fn(async () => ({
+        disposition: 'detached' as const,
+        warning: { code: 'writer-lease-refused', message: 'corrupt-epoch-state' },
+      })),
+    }
+    const session = startRun(
+      baseConfig({
+        ports: {
+          handoffStore: makeFakeHandoffStore(),
+          eventLog: makeFakeEventLog(),
+          postVerdict: port,
+        },
+      }),
+    )
+    events = drain(session)
+    await done(session)
+
+    const refusals = warningsOf(events, 'writer-lease-refused')
+    expect(refusals, 'the step\'s own warning is published exactly once').toHaveLength(1)
+    expect(
+      (refusals[0].payload as { message: string }).message,
+      'the shell relays the step\'s message verbatim rather than composing its own',
+    ).toBe('corrupt-epoch-state')
+    const finish = events.find(e => e.type === 'runFinished')
+    expect(finish, 'runFinished is still published').toBeDefined()
+    expect(
+      refusals[0].seq,
+      'the reason lands before the wire that carries the posture it explains',
+    ).toBeLessThan(finish!.seq)
+    expect((finish!.payload as { disposition: string }).disposition).toBe('detached')
+  })
+
+  it('a port that REJECTS degrades to detached with post-verdict-step-failed, and done still resolves', async () => {
+    let events: RunEventEnvelope[] = []
+    const port: FakePostVerdictPort = {
+      run: vi.fn(async () => {
+        throw new Error('sqlite is busy')
+      }),
+    }
+    const session = startRun(
+      baseConfig({
+        ports: {
+          handoffStore: makeFakeHandoffStore(),
+          eventLog: makeFakeEventLog(),
+          postVerdict: port,
+        },
+      }),
+    )
+    events = drain(session)
+    const { verdict } = await done(session)
+
+    expect(verdict, 'a step that threw cannot change the run\'s verdict').toBe('passed')
+    const failures = warningsOf(events, 'post-verdict-step-failed')
+    expect(failures, 'the throw is named exactly once').toHaveLength(1)
+    expect(
+      (failures[0].payload as { message: string }).message,
+      'the error\'s own message is what a reader gets',
+    ).toBe('sqlite is busy')
+    const finishes = events.filter(e => e.type === 'runFinished')
+    expect(finishes, 'runFinished is still last and still once').toHaveLength(1)
+    expect(events[events.length - 1].type).toBe('runFinished')
+    expect((finishes[0].payload as { disposition: string }).disposition).toBe('detached')
+  })
+
+  it('a port that NEVER resolves is bounded: done stays pending until the budget fires, then reads detached with post-verdict-step-timeout', async () => {
+    const timer = makeFakeTimer()
+    let events: RunEventEnvelope[] = []
+    const port: FakePostVerdictPort = {
+      run: vi.fn(() => new Promise<never>(() => { /* answers never */ })),
+    }
+    const session = startRun(
+      baseConfig({
+        ports: {
+          handoffStore: makeFakeHandoffStore(),
+          eventLog: makeFakeEventLog(),
+          timer,
+          postVerdict: port,
+        },
+      }),
+    )
+    events = drain(session)
+    await vi.waitFor(() => {
+      expect(port.run).toHaveBeenCalled()
+    })
+
+    // THE BOUND IS REAL, NOT A RACE THE FAKE TIMER HAPPENED TO WIN. With the budget NOT fired the
+    // run must still be waiting: if `done` resolved here, the timeout cell below would be green for
+    // a shell that never armed a bound at all.
+    const sentinel = Symbol('still-pending')
+    const pending = await Promise.race([
+      done(session).then(() => 'resolved' as const),
+      new Promise<typeof sentinel>(resolve => { setTimeout(() => resolve(sentinel), 25) }),
+    ])
+    expect(pending, 'done does not resolve while the step is still inside its budget').toBe(sentinel)
+
+    timer.fireLatest()
+    const { verdict } = await done(session)
+    expect(verdict, 'a step that hung cannot change the run\'s verdict').toBe('passed')
+    const timeouts = warningsOf(events, 'post-verdict-step-timeout')
+    expect(timeouts, 'the overrun is named exactly once').toHaveLength(1)
+    expect(
+      (timeouts[0].payload as { message: string }).message,
+      'the warning names the budget the step overran',
+    ).toContain(String(POST_VERDICT_STEP_BUDGET_MS))
+    const finishes = events.filter(e => e.type === 'runFinished')
+    expect(finishes).toHaveLength(1)
+    expect((finishes[0].payload as { disposition: string }).disposition).toBe('detached')
+    expect(events[events.length - 1].type).toBe('runFinished')
+  })
+
+  it('the step is told the runId and the aggregate verdict, and NOTHING the config did not carry', async () => {
+    const port: FakePostVerdictPort = {
+      run: vi.fn(async () => ({ disposition: 'drained' as const })),
+    }
+    const session = startRun(
+      baseConfig({
+        executor: scriptedExecutor({ a: failResult('a') }, []),
+        ports: {
+          handoffStore: makeFakeHandoffStore(),
+          eventLog: makeFakeEventLog(),
+          postVerdict: port,
+        },
+      }),
+    )
+    drain(session)
+    await done(session)
+
+    expect(port.run, 'the step runs exactly once per run').toHaveBeenCalledTimes(1)
+    const input = port.run.mock.calls[0][0] as Record<string, unknown>
+    expect(input.runId, 'the step is told the run it is deciding for').toBe('run-1')
+    expect(input.verdict, 'the step is told the AGGREGATE verdict, not a member outcome').toBe('failed')
+    expect(
+      Object.keys(input).sort(),
+      'absent markers are ABSENT keys — never an undefined a consumer must re-check',
+    ).toEqual(['runId', 'verdict'])
+  })
+
+  it('the step is told gateRun and excludedFromOutcomes exactly when the config carries them', async () => {
+    const port: FakePostVerdictPort = {
+      run: vi.fn(async () => ({ disposition: 'drained' as const })),
+    }
+    const session = startRun(
+      baseConfig({
+        gateRun: true,
+        excludedFromOutcomes: true,
+        ports: {
+          handoffStore: makeFakeHandoffStore(),
+          eventLog: makeFakeEventLog(),
+          postVerdict: port,
+        },
+      }),
+    )
+    drain(session)
+    await done(session)
+
+    const input = port.run.mock.calls[0][0] as Record<string, unknown>
+    expect(
+      Object.keys(input).sort(),
+      'both INVK-06 markers ride the step input when the run carries them',
+    ).toEqual(['excludedFromOutcomes', 'gateRun', 'runId', 'verdict'])
+    expect(input.gateRun, 'only the literal true carries').toBe(true)
+    expect(input.excludedFromOutcomes, 'only the literal true carries').toBe(true)
+  })
+
+  it('done resolves only after runFinished AND bus.close() — the 403-03 D-3 invariant, restated over the new step', async () => {
+    let events: RunEventEnvelope[] = []
+    const port: FakePostVerdictPort = {
+      run: vi.fn(async () => ({ disposition: 'drained' as const })),
+    }
+    const session = startRun(
+      baseConfig({
+        ports: {
+          handoffStore: makeFakeHandoffStore(),
+          eventLog: makeFakeEventLog(),
+          postVerdict: port,
+        },
+      }),
+    )
+    events = drain(session)
+    await done(session)
+
+    expect(events[events.length - 1].type, 'runFinished is the last thing the bus published').toBe('runFinished')
+
+    // A LATE SUBSCRIBER SEES A CLOSED BUS. Its replay ends at `runFinished`, and — because a
+    // detaching replay makes the bus publish `subscriber-detached`, which a closed bus refuses —
+    // a throwing late subscriber raises the closed-bus error instead. That is the observable form
+    // of "bus.close() had already run when `done` resolved".
+    const late: RunEventEnvelope[] = []
+    session.subscribe(1, event => late.push(event))
+    expect(late[late.length - 1].type, 'a late subscriber replays to runFinished and no further').toBe('runFinished')
+    expect(
+      () => session.subscribe(1, () => { throw new Error('late subscriber faults') }),
+      'the bus was already closed when done resolved',
+    ).toThrow(/after close\(\)/u)
   })
 })
 
