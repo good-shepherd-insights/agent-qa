@@ -32,8 +32,10 @@ import type { ScopeKey } from '../identity/scope-key'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
 
 // The complete §2.2 event vocabulary M1 ships: every group EXCEPT the reserved
-// control/arbiter group (M5). The eleven lifecycle/diagnostic events plus the nine
-// chip events — camelCase, names verbatim per spec §2.2 (Ratified 2026-07-05).
+// control/arbiter group (M5). The eleven lifecycle/diagnostic events, the three parity appends
+// and the six chip events — camelCase, names verbatim per spec §2.2 (Ratified 2026-07-05). SIX
+// chips since 404 D-02 (2026-08-26): the three names for the third chain member were never
+// emitted by any producer and left the vocabulary with it.
 const EXPECTED_EVENT_TYPES: readonly string[] = [
   // Run lifecycle
   'runStarted',

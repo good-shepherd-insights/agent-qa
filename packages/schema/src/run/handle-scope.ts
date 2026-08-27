@@ -56,8 +56,10 @@ export type RunEventScope = 'run' | 'member' | 'member-when-addressed'
  *   declares `testIndex: number` REQUIRED, and the sink binds it at construction. The
  *   classification is read off the payload types, not chosen.
  * - **Hooks** (`hookStarted`, `hookFinished`) — see the header note above.
- * - **The nine post-run chip events** — run-scoped by nature: `ChipEventPayload` is
+ * - **The six post-run chip events** — run-scoped by nature: `ChipEventPayload` is
  *   `{ runId, error?, willRetry? }`. There is no member producer and no field that could name one.
+ *   SIX since 404 D-02 (2026-08-26), not nine: the three never-emitted names for the third chain
+ *   member were removed from the frozen vocabulary, and this table lost the same three keys.
  */
 export const RUN_EVENT_SCOPE = {
   // Run lifecycle

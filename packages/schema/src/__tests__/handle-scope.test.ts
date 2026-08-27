@@ -63,7 +63,7 @@ describe('RUN_EVENT_SCOPE — a TOTAL, positive classification of the frozen eve
   })
 
   it('pins the classification itself, so a silent re-classification is a failing diff', () => {
-    // The nine post-run chip events are run-scoped BY NATURE: `ChipEventPayload` is
+    // The six post-run chip events are run-scoped BY NATURE: `ChipEventPayload` is
     // `{ runId, error?, willRetry? }` — there is no member producer and no field that could name
     // one. The lifecycle/diagnostic run-scoped set is D-14's own list plus `runStarted`.
     expect(

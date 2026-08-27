@@ -26,7 +26,9 @@
 // `bus.close()` are untouched behind it — so `done` still resolves after `runFinished` and a closed
 // bus (403-03 D-3).
 //
-// The nine post-processing chip events have no producer here (M1b/M2 own them, deferred).
+// The six post-processing chip events have no producer HERE — the chain pump emits them, one per
+// job outcome it observes (404-05). What this file owns of post-processing is the awaited step
+// above and the disposition it publishes; the chips are somebody else's line on the bus.
 
 import type {
   MaskFn,
