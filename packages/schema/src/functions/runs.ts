@@ -580,6 +580,22 @@ const VerifierVerdictSchema = z.object({
   reasoning: z.string(),
 }).strict() satisfies z.ZodType<VerifierVerdict>
 
+/**
+ * A WALL-CLOCK DURATION IS NOT AN INTEGER, and asserting that it is refuses every real run.
+ *
+ * Measured by 405-12 on the shipped binary: `runs.detail` answered `500 read_failed / ZodError` for
+ * a populated run because both duration fields carried `.int()`, and the producer is a
+ * `performance.now()` delta — the first real run through this contract reported
+ * `227.4079999999999`. Every cell that had exercised these schemas built its rows by hand, and a
+ * hand-written millisecond is a whole number, so the constraint held right up to the moment
+ * somebody measured one.
+ *
+ * The interfaces beside these schemas type both fields as plain `number`; this is the schema
+ * catching up to the type and to the producer, not a relaxation of either. `finite` stays because
+ * a stored infinity is a real nonsense value and `nonnegative` because time does not run backwards.
+ */
+const durationMsSchema = z.number().finite().nonnegative()
+
 export const RunDetailMemberSchema = z.object({
   testIndex: z.number().int().nonnegative(),
   testId: z.string().optional(),
@@ -590,7 +606,7 @@ export const RunDetailMemberSchema = z.object({
   suiteIndex: z.number().int().nonnegative().optional(),
   totalSteps: z.number().int().nonnegative().optional(),
   outcome: z.enum(memberTestOutcomeValues).optional(),
-  durationMs: z.number().int().nonnegative().optional(),
+  durationMs: durationMsSchema.optional(),
   failureSummary: z.string().optional(),
   retryCount: z.number().int().nonnegative().optional(),
   attempts: z.number().int().positive(),
@@ -611,7 +627,7 @@ export const RunDetailStepSchema = z.object({
   selfHealOccurred: z.boolean(),
   briefDigest: z.string(),
   status: z.enum(['passed', 'failed', 'healed', 'skipped', 'cancelled']).optional(),
-  durationMs: z.number().int().nonnegative().optional(),
+  durationMs: durationMsSchema.optional(),
   error: z.string().optional(),
   tokenUsage: RunStepTokenUsageSchema.optional(),
 }).strict() satisfies z.ZodType<RunDetailStep>
