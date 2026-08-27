@@ -183,7 +183,7 @@ function runRow(status: string): RunRow {
     metadata: null,
     startedAt: null,
     endedAt: null,
-    videoPath: null,
+  videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,
@@ -206,7 +206,6 @@ describe("RunNavbar puts the chips beside the verdict badge (D-20)", () => {
     const host = mount(
       <MemoryRouter><RunNavbar
         run={runRow("passed")}
-        steps={[]}
         shortcutsOpen={false}
         onToggleShortcuts={() => {}}
         hasPostProcessing
@@ -224,7 +223,7 @@ describe("RunNavbar puts the chips beside the verdict badge (D-20)", () => {
   it("renders no chip area at all when the header was not wired for one", () => {
     const host = mount(
       <MemoryRouter>
-        <RunNavbar run={runRow("passed")} steps={[]} shortcutsOpen={false} onToggleShortcuts={() => {}} />
+        <RunNavbar run={runRow("passed")} shortcutsOpen={false} onToggleShortcuts={() => {}} />
       </MemoryRouter>,
     )
     expect(host.querySelectorAll("[data-verdict-badge]")).toHaveLength(1)

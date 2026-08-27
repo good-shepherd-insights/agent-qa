@@ -3,21 +3,37 @@ import { Camera, Crosshair, Maximize2, Search, X } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import type { StepAnnotation } from "@/lib/api"
-import { resolveScreenshotSrc } from "@/lib/artifact-media"
 import { cn } from "@/lib/utils"
 
+// THE VIEWER TAKES A MINTED URL, NOT A PATH (405-11 · D-14).
+//
+// It used to take a filesystem-ish path and build a serving URL out of it by splitting on slashes
+// and guessing which segment was the run. Refs are the only artifact addressing now, and the ONE
+// minter is the route map: the caller resolves a ref to a `src` and hands it down. So this
+// component builds no URL at all, which is the property 405-13 greps the source tree for.
 interface ScreenshotViewerProps {
-  screenshotPath: string
+  /** An already-minted, same-origin URL. Never a path, never anything this file assembles. */
+  src: string
   annotation?: StepAnnotation | null
   refLabel?: string
   className?: string
+  /**
+   * Told when the image request FAILED (D-15).
+   *
+   * A blob that was garbage-collected or never written answers 404, and the owner of the pane needs
+   * to say "screenshot unavailable" in its own words rather than leave a broken image element on
+   * the page. The viewer still paints its own fallback when nobody is listening, so a caller that
+   * does not pass this cannot produce a broken `img` by omission.
+   */
+  onUnavailable?: () => void
 }
 
 export function ScreenshotViewer({
-  screenshotPath,
+  src,
   annotation,
   refLabel,
   className,
+  onUnavailable,
 }: ScreenshotViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [instanceId] = useState(() => Math.random().toString(36).slice(2, 8))
@@ -31,7 +47,13 @@ export function ScreenshotViewer({
   const [fullscreen, setFullscreen] = useState(false)
   const [annotationsVisible, setAnnotationsVisible] = useState(true)
 
-  const src = resolveScreenshotSrc(screenshotPath)
+  // A NEW `src` IS A NEW QUESTION (405-11). The load and error flags describe ONE request; carrying
+  // them across a swap would leave the previous image's failure painted over a blob that was never
+  // asked for, which reads as "this evidence is gone" about the wrong sub-action.
+  useEffect(() => {
+    setImageLoaded(false)
+    setImageError(false)
+  }, [src])
 
   useEffect(() => {
     const container = containerRef.current
@@ -343,7 +365,10 @@ export function ScreenshotViewer({
             !imageLoaded && "opacity-0",
           )}
           onLoad={handleImageLoad}
-          onError={() => setImageError(true)}
+          onError={() => {
+            setImageError(true)
+            onUnavailable?.()
+          }}
         />
 
         {annotationOverlays}

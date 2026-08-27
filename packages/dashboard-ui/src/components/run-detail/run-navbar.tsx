@@ -3,7 +3,7 @@ import { useNavigate } from "react-router"
 import { routes } from "@/lib/routes"
 import { toast } from "sonner"
 import {
-  ArrowUpRight, Clock, Brain, Cpu, Video, ExternalLink,
+  ArrowUpRight, Clock, Brain, Cpu, ExternalLink,
   RotateCcw, ChevronRight, Keyboard, PanelRightOpen,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -11,11 +11,11 @@ import { Button } from "@/components/ui/button"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 import { PostProcessingChips } from "@/components/run-detail/post-processing-chips"
 import type { PostProcessingView } from "@/lib/post-processing-view"
-import type { RunRow, StepRow } from "@/lib/api"
+import type { RunRow } from "@/lib/api"
 import { triggerRun } from "@/lib/api"
-import { resolveVideoSrc } from "@/lib/artifact-media"
+import { tokenSummaryLine } from "@/lib/run-detail-view"
 import { formatDuration } from "@/lib/utils"
-import { formatTokens } from "@/lib/format"
+import type { RunTokenTotals } from "@vostride/agent-qa-schema"
 
 type StatusBadgeLook = Pick<React.ComponentProps<typeof Badge>, "variant" | "className"> & { label: string }
 
@@ -60,7 +60,17 @@ function StatusBadge({ status }: { status: string }) {
 
 interface RunNavbarProps {
   run: RunRow
-  steps: StepRow[]
+  /**
+   * The run's model spend, as the read op summed it (405-11 · D-06).
+   *
+   * OPTIONAL BECAUSE THE READ MAY NOT HAVE LANDED — `undefined` here means "nobody has answered
+   * yet", which is a different fact from a projection that answered "nothing was measured". The
+   * first renders no line at all; the second renders the not-measured sentence, because a run
+   * that recorded no usage is a fact worth stating. The header previously summed three counters
+   * off v1 step rows and guarded the span on a positive total, which spelled "unmeasured" and
+   * "zero" identically — the exact collapse D-06 exists to prevent.
+   */
+  tokens?: RunTokenTotals
   shortcutsOpen: boolean
   onToggleShortcuts: () => void
   onOpenArtifacts?: (tab: "attributes" | "config" | "memory") => void
@@ -80,7 +90,7 @@ interface RunNavbarProps {
 
 export function RunNavbar({
   run,
-  steps,
+  tokens,
   shortcutsOpen,
   onToggleShortcuts,
   onOpenArtifacts,
@@ -88,9 +98,6 @@ export function RunNavbar({
   hasPostProcessing = false,
 }: RunNavbarProps) {
   const navigate = useNavigate()
-  const totalTokens = steps.reduce((sum, s) => sum + (s.totalTokens ?? 0), 0)
-  const totalPrompt = steps.reduce((sum, s) => sum + (s.promptTokens ?? 0), 0)
-  const totalCompletion = steps.reduce((sum, s) => sum + (s.completionTokens ?? 0), 0)
   const isSuiteParent = run.suiteId != null && run.parentRunId == null
   const sourceHref = isSuiteParent && run.suiteId
     ? routes.suiteView(run.suiteId)
@@ -99,7 +106,6 @@ export function RunNavbar({
       : null
   const sourceLabel = isSuiteParent && run.suiteId ? "Open suite" : "Open test"
 
-  const videoSrc = resolveVideoSrc(run.id, run.videoPath)
   const farmUrl = (run.metadata as Record<string, unknown>)?.farmSessionUrl as string | undefined
 
   const handleRerun = () => {
@@ -146,13 +152,13 @@ export function RunNavbar({
             {run.modelName}
           </span>
         )}
-        {totalTokens > 0 && (
+        {tokens === undefined ? null : (
           <span
+            data-run-token-summary
             className="text-xs text-muted-foreground flex items-center gap-1 cursor-default"
-            title="Prompt tokens / Completion tokens"
           >
             <Cpu className="h-3.5 w-3.5" />
-            {formatTokens(totalPrompt)} / {formatTokens(totalCompletion)}
+            {tokenSummaryLine(tokens)}
           </span>
         )}
         <span className="text-xs text-muted-foreground flex items-center gap-1">
@@ -211,13 +217,6 @@ export function RunNavbar({
                   ]} />
                 </div>
                 <div>
-                  <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-2">Screenshots</h4>
-                  <ShortcutLegend hints={[
-                    { key: "B", label: "Before screenshot" },
-                    { key: "A", label: "After screenshot" },
-                  ]} />
-                </div>
-                <div>
                   <h4 className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-2">Phases</h4>
                   <ShortcutLegend hints={[
                     { key: "Shift+1", label: "Toggle Observe" },
@@ -233,7 +232,6 @@ export function RunNavbar({
                     { key: "C", label: "Artifacts: Config" },
                     { key: "M", label: "Artifacts: Memory" },
                     { key: "R", label: "Re-run" },
-                    { key: "V", label: "Video" },
                     { key: "Shift+?", label: "Shortcuts" },
                     { key: "Esc", label: "Close" },
                   ]} />
@@ -252,14 +250,6 @@ export function RunNavbar({
         >
           <RotateCcw className="h-3.5 w-3.5" />
         </Button>
-
-        {videoSrc && (
-          <a href={videoSrc} target="_blank" rel="noopener noreferrer" aria-label="Open recording" title="Recording (V)">
-            <Button variant="ghost" size="icon-sm">
-              <Video className="h-3.5 w-3.5" />
-            </Button>
-          </a>
-        )}
 
         {farmUrl && (
           <a href={farmUrl} target="_blank" rel="noopener noreferrer" title="BrowserStack">

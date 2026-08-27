@@ -2,28 +2,27 @@ import { useRef, useEffect } from "react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { TabOverview } from "./tab-overview"
-import type { ScreenshotEmptyState, ScreenshotSide } from "./tab-overview"
+import type { ScreenshotEmptyState } from "./tab-overview"
 import { TabEnv } from "./tab-env"
 import { TabNetwork } from "./tab-network"
 import { TabConsole } from "./tab-console"
 import { TabAriaTree } from "./tab-aria-tree"
 import { TabA11y } from "./tab-a11y"
-import type { AccessibilitySummary, StepRow, SubActionData, ExecutionLogEntry } from "@/lib/api"
+import type { AccessibilitySummary, ExecutionLogEntry } from "@/lib/api"
 import type { DisplayStep } from "@/lib/display-step"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
+import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
 
 interface TabPanelsProps {
   activeTab: string
   onTabChange: (tab: string) => void
   step: DisplayStep | null
-  subAction: SubActionData | null
+  subAction: RunDetailSubAction | null
   runId: string | null
   allSteps: DisplayStep[]
   executionLogs?: ExecutionLogEntry[]
   accessibilitySummary?: AccessibilitySummary | null
   platform?: string
-  screenshotSide?: ScreenshotSide
-  onScreenshotSideChange?: (side: ScreenshotSide) => void
   screenshotEmptyState?: ScreenshotEmptyState
   pipelineRef?: React.RefObject<ReasoningPipelineHandle | null>
 }
@@ -38,8 +37,6 @@ export function TabPanels({
   executionLogs = [],
   accessibilitySummary,
   platform,
-  screenshotSide,
-  onScreenshotSideChange,
   screenshotEmptyState = "absent",
   pipelineRef,
 }: TabPanelsProps) {
@@ -87,8 +84,6 @@ export function TabPanels({
             step={step}
             subAction={subAction}
             runId={runId}
-            screenshotSide={screenshotSide}
-            onScreenshotSideChange={onScreenshotSideChange}
             screenshotEmptyState={screenshotEmptyState}
             pipelineRef={pipelineRef}
           />
@@ -97,7 +92,7 @@ export function TabPanels({
 
       <TabsContent value="env" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
-          <TabEnv step={step as unknown as StepRow} executionLogs={executionLogs} />
+          <TabEnv step={step} executionLogs={executionLogs} />
         </ScrollArea>
       </TabsContent>
 
@@ -119,13 +114,13 @@ export function TabPanels({
 
       <TabsContent value="aria" className="flex flex-1 min-h-0 overflow-hidden">
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          <TabAriaTree step={step} subAction={subAction} runId={runId ?? ''} />
+          <TabAriaTree step={step} />
         </div>
       </TabsContent>
 
       <TabsContent value="a11y" className="flex-1 min-h-0">
         <ScrollArea className="h-full">
-          <TabA11y step={step as unknown as StepRow} summary={accessibilitySummary} />
+          <TabA11y step={step} summary={accessibilitySummary} />
         </ScrollArea>
       </TabsContent>
     </Tabs>

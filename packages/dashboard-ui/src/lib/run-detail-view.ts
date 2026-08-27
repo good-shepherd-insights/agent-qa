@@ -20,6 +20,7 @@
 // reads, which is the one place that lie is unrecoverable.
 
 import type {
+  ArtifactRef,
   RunDetailMember,
   RunDetailProjection,
   RunDetailStep,
@@ -284,4 +285,52 @@ export function screenStateChangeLabel(subAction: RunDetailSubAction): string {
  */
 export function showMemberChrome(projection: Pick<RunDetailProjection, 'members'>): boolean {
   return projection.members.length > 1
+}
+
+// ------------------------- the decision screenshot -------------------------
+
+/**
+ * The id prefix the evidence store mints a decision screenshot under (405-11 · D-14 / D-15).
+ *
+ * A sub-action's `artifactRefs` is an open list — the producer is free to attach other evidence to
+ * the same turn — so the overview SELECTS by this prefix rather than taking the first entry. Taking
+ * whatever happened to be first would put an arbitrary blob into an `img` the moment a second
+ * channel starts recording, which is a wrong picture rather than a missing one.
+ */
+export const DECISION_SCREENSHOT_REF_PREFIX = 'decision-screenshot:'
+
+/**
+ * The decision screenshot recorded for this sub-action, or nothing.
+ *
+ * ONE SHOT PER TURN, not a before/after pair. The bus records the screen the planner LOOKED AT when
+ * it decided; there is no post-action capture on the same sub-action, so there is no second side to
+ * select. Deriving an "after" from the next sub-action's shot would be a join nobody recorded — the
+ * screen may have moved for reasons this action did not cause, and a caption claiming otherwise is
+ * a lie a reader cannot check.
+ */
+export function decisionScreenshotRef(
+  subAction: Pick<RunDetailSubAction, 'artifactRefs'>,
+): ArtifactRef | undefined {
+  return subAction.artifactRefs?.find((ref) => ref.id.startsWith(DECISION_SCREENSHOT_REF_PREFIX))
+}
+
+/**
+ * One step's spend, in the shape {@link tokenSummaryLine} reads (D-06).
+ *
+ * ABSENT STAYS ABSENT. A step that reported no usage becomes one UNMEASURED step and carries no
+ * sums at all, so the line says "tokens not measured" rather than `0 tokens across 0 of 1 steps`.
+ * A step that genuinely reported zero becomes one MEASURED step whose sums are zero, and reads as
+ * the measurement it is. There is no `?? 0` on this path and none can be added without reddening a
+ * cell — which is the entire reason the run-level totals were given this shape upstream.
+ */
+export function stepTokenTotals(step: Pick<RunDetailStep, 'tokenUsage'>): RunTokenTotals {
+  const usage = step.tokenUsage
+  if (usage === undefined) return { measuredSteps: 0, unmeasuredSteps: 1 }
+  return {
+    measuredSteps: 1,
+    unmeasuredSteps: 0,
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    totalTokens: usage.totalTokens,
+  }
 }

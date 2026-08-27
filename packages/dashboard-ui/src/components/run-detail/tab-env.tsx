@@ -2,10 +2,11 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/component
 import { Badge } from "@/components/ui/badge"
 import { ChevronRight, CheckCircle2, XCircle } from "lucide-react"
 import { cn, formatDuration } from "@/lib/utils"
-import type { StepRow, ExecutionLogEntry, LiveExecutionLogEntry } from "@/lib/api"
+import type { ExecutionLogEntry, LiveExecutionLogEntry } from "@/lib/api"
+import type { DisplayStep } from "@/lib/display-step"
 
 interface TabEnvProps {
-  step: Pick<StepRow, "variableSnapshot">
+  step: Pick<DisplayStep, "variableSnapshot">
   executionLogs?: Array<ExecutionLogEntry | LiveExecutionLogEntry>
 }
 

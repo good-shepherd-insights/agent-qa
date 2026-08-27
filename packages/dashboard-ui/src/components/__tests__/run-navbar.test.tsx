@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { RunNavbar } from "@/components/run-detail/run-navbar"
 import { triggerRun } from "@/lib/api"
+import { TOKENS_NOT_MEASURED_LABEL } from "@/lib/run-detail-view"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -89,6 +90,7 @@ const baseRun = {
   name: "Login run",
   filePath: "tests/login.yaml",
   status: "passed",
+  videoPath: null,
   duration: 1200,
   attributes: {
     "agent-qa.trigger": "cli",
@@ -98,7 +100,6 @@ const baseRun = {
   metadata: null,
   startedAt: "2026-04-18T00:00:00.000Z",
   endedAt: "2026-04-18T00:00:01.200Z",
-  videoPath: null,
   failureSummary: null,
   errorLog: null,
   memoryLog: null,
@@ -120,7 +121,6 @@ describe("RunNavbar", () => {
     mount(
       <RunNavbar
         run={{ ...baseRun, testId: "t_login", name: "Test run" }}
-        steps={[]}
         shortcutsOpen={false}
         onToggleShortcuts={() => {}}
       />,
@@ -139,7 +139,6 @@ describe("RunNavbar", () => {
     mount(
       <RunNavbar
         run={{ ...baseRun, suiteId: "s_smoke", name: "Suite run" }}
-        steps={[]}
         shortcutsOpen={false}
         onToggleShortcuts={() => {}}
       />,
@@ -157,7 +156,6 @@ describe("RunNavbar", () => {
     mount(
       <RunNavbar
         run={{ ...baseRun, name: "Detached run" }}
-        steps={[]}
         shortcutsOpen={false}
         onToggleShortcuts={() => {}}
       />,
@@ -167,40 +165,94 @@ describe("RunNavbar", () => {
     expect(container.querySelector('a[aria-label="Open suite"]')).toBeNull()
   })
 
-  it("documents the screenshot Before and After shortcuts", () => {
+  // THE LEGEND DOCUMENTS THE KEYS THAT EXIST, AND ONLY THOSE (405-11 - D-14).
+  //
+  // It used to advertise a Before/After screenshot pair. The bus records ONE decision screenshot
+  // per turn - the screen the planner looked at when it decided - so there is no second side to
+  // select and the two keys were removed with the segmented control they drove. A legend row for a
+  // key that does nothing is worse than no row: it sends a reader hunting for a feature.
+  it("documents the keys that exist, and advertises no side-selection the page cannot honour", () => {
     mount(
       <RunNavbar
         run={{ ...baseRun, name: "Screenshot run" }}
-        steps={[]}
         shortcutsOpen={true}
         onToggleShortcuts={() => {}}
       />,
     )
 
-    expect(container.textContent).toContain("Screenshots")
-    expect(container.textContent).toContain("Before screenshot")
-    expect(container.textContent).toContain("After screenshot")
     expect(container.textContent).toContain("Details: Attributes")
     expect(container.textContent).toContain("Artifacts: Config")
     expect(container.textContent).toContain("Artifacts: Memory")
     expect(container.textContent).toContain("Shift+?")
+    expect(container.textContent).not.toContain("Before screenshot")
+    expect(container.textContent).not.toContain("After screenshot")
   })
 
-  it("links recording action to the canonical run video path", () => {
+  // THE RECORDING ACTION IS GONE, AND THAT IS THE ASSERTION (405-11 - D-14).
+  //
+  // This cell used to pin the href the header built for a run recording out of a stored path. Refs
+  // are the only artifact addressing now and no producer writes a recording ref, so the header has
+  // no video surface at all - an honest absence, not a surviving path. If a recording producer
+  // lands later, this cell is what has to change, and it will change to assert a MINTED href.
+  it("offers no recording action while no producer records one by ref", () => {
     mount(
       <RunNavbar
-        run={{ ...baseRun, videoPath: "r_run-id/recording.webm" }}
-        steps={[]}
+        run={baseRun}
+        shortcutsOpen
+        onToggleShortcuts={() => {}}
+      />,
+    )
+
+    expect(container.querySelector('a[aria-label="Open recording"]')).toBeNull()
+    expect(container.querySelectorAll('a[href^="/api/videos/"]')).toHaveLength(0)
+    expect(container.textContent).not.toContain("Video")
+  })
+
+  // D-06 CARRIED INTO THE HEADER. The old span summed three per-step counters and was guarded on a
+  // positive total, so a run nobody measured and a run that spent nothing rendered identically -
+  // as nothing. The projection's own sum answers both questions separately, and the header says
+  // which one it is.
+  it("says tokens were not measured rather than rendering nothing for an unmeasured run", () => {
+    mount(
+      <RunNavbar
+        run={baseRun}
+        tokens={{ measuredSteps: 0, unmeasuredSteps: 3 }}
         shortcutsOpen={false}
         onToggleShortcuts={() => {}}
       />,
     )
 
-    const link = container.querySelector('a[aria-label="Open recording"]') as HTMLAnchorElement | null
-    expect(link).not.toBeNull()
-    expect(link?.getAttribute("href")).toBe("/api/videos/r_run-id/recording.webm")
-    expect(link?.getAttribute("target")).toBe("_blank")
-    expect(link?.getAttribute("rel")).toBe("noopener noreferrer")
+    const line = container.querySelector('[data-run-token-summary]')
+    expect(line?.textContent).toContain(TOKENS_NOT_MEASURED_LABEL)
+  })
+
+  it("reports the measured sum and how much of the run it covers", () => {
+    mount(
+      <RunNavbar
+        run={baseRun}
+        tokens={{
+          measuredSteps: 2,
+          unmeasuredSteps: 1,
+          promptTokens: 900,
+          completionTokens: 100,
+          totalTokens: 1000,
+        }}
+        shortcutsOpen={false}
+        onToggleShortcuts={() => {}}
+      />,
+    )
+
+    const line = container.querySelector('[data-run-token-summary]')
+    expect(line?.textContent).toContain("2 of 3 steps")
+    expect(line?.textContent).not.toContain(TOKENS_NOT_MEASURED_LABEL)
+  })
+
+  it("renders no token line at all while the durable read has not landed", () => {
+    mount(
+      <RunNavbar run={baseRun} shortcutsOpen={false} onToggleShortcuts={() => {}} />,
+    )
+
+    expect(container.querySelector('[data-run-token-summary]')).toBeNull()
   })
 
   it("opens run details on the Attributes tab from the navbar action", () => {
@@ -208,7 +260,6 @@ describe("RunNavbar", () => {
     mount(
       <RunNavbar
         run={{ ...baseRun, name: "Artifact run" }}
-        steps={[]}
         shortcutsOpen={false}
         onToggleShortcuts={() => {}}
         onOpenArtifacts={onOpenArtifacts}
@@ -232,7 +283,6 @@ describe("RunNavbar", () => {
     mount(
       <RunNavbar
         run={{ ...baseRun, name: "Screenshot run" }}
-        steps={[]}
         shortcutsOpen={true}
         onToggleShortcuts={onToggleShortcuts}
       />,
@@ -261,7 +311,6 @@ describe("RunNavbar", () => {
           suiteId: "s_sample_basic",
           parentRunId: null,
         }}
-        steps={[]}
         shortcutsOpen={false}
         onToggleShortcuts={() => {}}
       />,

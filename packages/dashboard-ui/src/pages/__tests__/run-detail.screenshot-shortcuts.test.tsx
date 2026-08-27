@@ -12,6 +12,9 @@ import type { RunDetailGroup } from "@/lib/run-detail-view"
 import type { RunDetailProjection } from "@vostride/agent-qa-schema"
 import { asRef } from "@vostride/agent-qa-schema"
 
+import { routes } from "@/lib/routes"
+import { SCREENSHOT_UNAVAILABLE_LABEL } from "@/lib/run-detail-view"
+
 import RunDetailPage from "@/pages/run-detail"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -113,18 +116,17 @@ vi.mock("@/components/run-detail/step-tree", () => ({
   },
 }))
 
+// A FAITHFUL DOUBLE, NOT A BLANK. It renders the `img` the real viewer renders and wires the same
+// failure callback, so the cells below measure the minted `src` and the D-15 refusal rather than
+// the mock. The real component drives a `ResizeObserver` jsdom does not provide.
 vi.mock("@/components/screenshot-viewer", () => ({
-  ScreenshotViewer: ({ screenshotPath }: { screenshotPath: string }) => (
-    <div data-testid="screenshot-viewer">{screenshotPath}</div>
+  ScreenshotViewer: ({ src, onUnavailable }: { src: string; onUnavailable?: () => void }) => (
+    <img data-testid="screenshot-viewer" src={src} onError={() => onUnavailable?.()} />
   ),
 }))
 
 vi.mock("@/components/reasoning-pipeline", () => ({
   ReasoningPipeline: () => <div data-testid="reasoning-pipeline" />,
-}))
-
-vi.mock("@/components/healing-chain", () => ({
-  HealingChain: () => <div data-testid="healing-chain" />,
 }))
 
 vi.mock("@/components/ui/tooltip", () => ({
@@ -168,7 +170,11 @@ vi.mock("@/components/ui/button", () => ({
   ),
 }))
 
-function makeProjection(runId: string): RunDetailProjection {
+const DECISION_SHA = "a1b2c3d4".repeat(8)
+
+function makeProjection(runId: string, artifactRefs = [
+  { id: `decision-screenshot:${DECISION_SHA}`, sha: DECISION_SHA },
+]): RunDetailProjection {
   return {
     runId,
     members: [{ testIndex: 0, name: "Screenshot test", attempts: 1 }],
@@ -194,6 +200,7 @@ function makeProjection(runId: string): RunDetailProjection {
         plannedAction: { type: "click", ref: asRef("checkout") },
         result: { success: true },
         screenStateHash: "abcdef0123456789".repeat(4),
+        artifactRefs,
       },
     ],
     tokens: { measuredSteps: 0, unmeasuredSteps: 1 },
@@ -300,8 +307,8 @@ async function renderAt(url: string) {
   return container
 }
 
-function screenshotPath(view: HTMLElement) {
-  return view.querySelector('[data-testid="screenshot-viewer"]')?.textContent ?? ""
+function screenshotSrc(view: HTMLElement) {
+  return view.querySelector('[data-testid="screenshot-viewer"]')?.getAttribute("src") ?? ""
 }
 
 function expectSearchParams(
@@ -353,18 +360,24 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-// THE A/B SHORTCUTS, WHILE THE PAIR HAS NO PRODUCER (405-08 → 405-11).
+// THE SCREENSHOT PANE, THROUGH THE PAGE (405-11 · D-14 / D-15).
 //
-// WHAT THESE CELLS USED TO PIN. `screenshotBeforePath` / `screenshotAfterPath` on a v1 sub-action
-// row, fetched with the run. 405-07 deleted the path-addressed artifact routes and D-14 replaced
-// them with content-addressed refs; the durable sub-action carries `artifactRefs`, and 405-11 owns
-// minting a screenshot `src` from one. So there is no pair to select a SIDE of right now, and the
-// honest thing to pin in the meantime is the property that must hold either way: A and B are inert
-// when nothing is recorded, and they never disturb the selection or the URL. Rewriting them as
-// side-selection cells against fabricated paths would pin a fiction; skipping them would leave the
-// hotkeys unguarded through the seam. The side-selection assertions move to 405-11 with the
-// producer.
-describe("RunDetailPage screenshot shortcuts", () => {
+// WHAT THESE CELLS USED TO PIN, AND WHY THEY DO NOT ANY MORE. Until 405-07 there were four of them
+// asserting that `a` and `b` selected the After/Before side of a screenshot pair built from two
+// stored capture paths. 405-08 could not keep them — the paths' producer was deleted and the ref
+// side had not landed — so it consolidated them into two cells asserting the keys were INERT, and
+// handed the side-selection assertions here.
+//
+// THERE IS NO SIDE TO SELECT, AND SO THERE ARE NO KEYS. The bus records ONE decision screenshot per
+// sub-action: the screen the planner LOOKED AT when it decided. It records no post-action capture
+// on the same turn, so a "Before/After" control would have to derive its second side from
+// somewhere — the obvious candidate being the NEXT sub-action's shot, which is a join nobody
+// recorded. The screen may have moved for reasons this action did not cause, and a caption
+// claiming otherwise is a lie a reader cannot check. So the pair, its segmented control, its two
+// hotkeys and their legend rows are all retired together, and the coverage those cells were
+// carrying is restored HERE, against the thing that does exist: a ref-minted image, its D-15
+// refusal, and the absence of any key that pretends otherwise.
+describe("RunDetailPage decision screenshot", () => {
   it("syncs the default selected step into the URL, by its member-scoped key, without repeated rewrites", async () => {
     const view = await renderAt("/runs/run-1")
     const location = view.querySelector('[data-testid="location"]') as HTMLElement
@@ -376,38 +389,55 @@ describe("RunDetailPage screenshot shortcuts", () => {
     expect(location.getAttribute("data-search")).toBe("?step=0%3A0")
   })
 
-  it("leaves A and B inert while no screenshot pair is recorded, and never shows a broken image", async () => {
+  it("renders the selected sub-action's decision screenshot from its ref, through the one minter", async () => {
     const view = await renderAt("/runs/run-1?step=0:0&sub=0")
-    const location = view.querySelector('[data-testid="location"]') as HTMLElement
     const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
 
-    expect(screenshotPath(view)).toBe("")
-    expect(view.querySelector("img")).toBeNull()
     expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
-    expect(location.getAttribute("data-search")).toBe("?step=0%3A0&sub=0")
-
-    await act(async () => {
-      latestShortcuts().a(new KeyboardEvent("keydown", { key: "a" }))
-      latestShortcuts().b(new KeyboardEvent("keydown", { key: "b" }))
-    })
-
-    expect(screenshotPath(view)).toBe("")
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
-    expect(location.getAttribute("data-search")).toBe("?step=0%3A0&sub=0")
+    expect(view.querySelector('[data-artifact-state="available"]')).not.toBeNull()
+    expect(screenshotSrc(view)).toBe(routes.runArtifact("run-1", DECISION_SHA))
   })
 
-  it("no-ops outside overview without changing the active tab URL or selected sub-action marker", async () => {
+  it("renders a visible refusal, and no image, when the blob request fails", async () => {
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
+
+    const image = view.querySelector("img")
+    expect(image).not.toBeNull()
+
+    await act(async () => {
+      image!.dispatchEvent(new Event("error"))
+    })
+
+    expect(view.querySelector("img")).toBeNull()
+    expect(view.querySelector('[data-artifact-state="unavailable"]')).not.toBeNull()
+    expect(view.textContent).toContain(SCREENSHOT_UNAVAILABLE_LABEL)
+  })
+
+  it("shows no image at all for a turn that recorded no screenshot", async () => {
+    fetchRunDetailMock.mockImplementation(async (id: string) => makeProjection(id, []))
+
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
+
+    expect(view.querySelector("img")).toBeNull()
+    expect(view.querySelector('[data-artifact-state="available"]')).toBeNull()
+    expect(view.textContent).not.toContain(SCREENSHOT_UNAVAILABLE_LABEL)
+  })
+
+  // A retired key must be GONE, not silently rebound. A page that still answered `a` would be
+  // doing something a reader has no way to predict.
+  it("binds no screenshot side-selection key, and no video key", async () => {
+    await renderAt("/runs/run-1?step=0:0&sub=0")
+
+    const bound = Object.keys(latestShortcuts())
+    expect(bound).not.toContain("a")
+    expect(bound).not.toContain("b")
+    expect(bound).not.toContain("v")
+  })
+
+  it("keeps the selection and the URL untouched when the viewer is on another tab", async () => {
     const view = await renderAt("/runs/run-1?step=0:0&sub=0&tab=network")
     const location = view.querySelector('[data-testid="location"]') as HTMLElement
     const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
-
-    expectSearchParams(location, { step: "0:0", sub: "0", tab: "network" })
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
-
-    await act(async () => {
-      latestShortcuts().a(new KeyboardEvent("keydown", { key: "a" }))
-      latestShortcuts().b(new KeyboardEvent("keydown", { key: "b" }))
-    })
 
     expectSearchParams(location, { step: "0:0", sub: "0", tab: "network" })
     expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")

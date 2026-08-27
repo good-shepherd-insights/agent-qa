@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { useParams, useNavigate, useSearchParams, useLocation } from "react-router"
 import { routes, arrivedOnVerdictFrom, VERDICT_ROW_CATCH_UP_MAX, VERDICT_ROW_CATCH_UP_MS } from "@/lib/routes"
 import { toast } from "sonner"
-import { FileSearch, X, AlertCircle, ChevronRight, Copy, Check } from "lucide-react"
+import { FileSearch, AlertCircle, ChevronRight, Copy, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -20,11 +20,10 @@ import { ArtifactDrawer, type ArtifactDrawerTab } from "@/components/run-detail/
 import { HookDetailPanel } from "@/components/run-detail/hook-detail-panel"
 import { StepTree } from "@/components/run-detail/step-tree"
 import { TabPanels } from "@/components/run-detail/tab-panels"
-import type { ScreenshotSide } from "@/components/run-detail/tab-overview"
 import type { ReasoningPipelineHandle } from "@/components/reasoning-pipeline"
 import { fetchRun, fetchRunDetail, triggerRun, fetchExecutionLogs, fetchRunArtifact, fetchAccessibilitySummary, watchPostProcessing } from "@/lib/api"
-import type { RunRow, StepRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary, PostProcessingRead } from "@/lib/api"
-import type { RunDetailProjection } from "@vostride/agent-qa-schema"
+import type { RunRow, ExecutionLogEntry, RunArtifactResponse, AccessibilitySummary, PostProcessingRead } from "@/lib/api"
+import type { RunDetailProjection, RunDetailSubAction } from "@vostride/agent-qa-schema"
 import {
   MEMBER_FILTER_ALL,
   RUN_DETAIL_UNAVAILABLE_LABEL,
@@ -35,7 +34,6 @@ import {
   showMemberChrome,
 } from "@/lib/run-detail-view"
 import { projectPostProcessingView } from "@/lib/post-processing-view"
-import { resolveVideoSrc } from "@/lib/artifact-media"
 import { shouldRouteRunToLive } from "@/lib/status"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
@@ -95,17 +93,6 @@ function FailureBanner({ summary }: { summary: string }) {
   )
 }
 
-/**
- * THE v1 TOKEN LINE HAS NO PRODUCER ON THIS PAGE (405-08).
- *
- * `RunNavbar` still sums `promptTokens` / `completionTokens` off v1 step ROWS, and this page no
- * longer reads any. Handing it an empty list is the honest wiring in the meantime: its token span
- * is guarded on `totalTokens > 0`, so the header renders NOTHING rather than a fabricated
- * `0 / 0` — "nobody measured this" and "this was free" must not collapse into each other (D-06).
- * 405-11 repoints the header onto `tokenSummaryLine`, whose absent-is-not-zero rule is already
- * pinned in `run-detail-view.ts`.
- */
-const NO_V1_STEP_ROWS: StepRow[] = []
 
 /**
  * Which step a link is pointing at (405-08 · D-16).
@@ -170,11 +157,6 @@ function scrollElementIntoContainerView(container: HTMLElement, element: HTMLEle
   container.scrollTop = top
 }
 
-type CurrentScreenshotPair = {
-  key: string
-  beforePath: string | null
-  afterPath: string | null
-}
 
 export default function RunDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -200,9 +182,6 @@ export default function RunDetailPage() {
   const [detail, setDetail] = useState<RunDetailProjection | null | undefined>(undefined)
   const [isLoading, setIsLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
-  const [showVideo, setShowVideo] = useState(false)
-  const [videoSpeed, setVideoSpeed] = useState(1)
-  const videoRef = useRef<HTMLVideoElement>(null)
   const pipelineRef = useRef<ReasoningPipelineHandle | null>(null)
   const stepTreeScrollRef = useRef<HTMLDivElement | null>(null)
   const skippedInitialDefaultSelectionRef = useRef<string | null>(null)
@@ -219,7 +198,6 @@ export default function RunDetailPage() {
   const [postProcessingRead, setPostProcessingRead] = useState<PostProcessingRead | undefined>(undefined)
 
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
-  const [screenshotSideSelection, setScreenshotSideSelection] = useState<{ key: string; side: ScreenshotSide } | null>(null)
   const [artifactDrawerOpen, setArtifactDrawerOpen] = useState(false)
   const [artifactDrawerTab, setArtifactDrawerTab] = useState<ArtifactDrawerTab>("attributes")
   const [artifactResponse, setArtifactResponse] = useState<RunArtifactResponse | null>(null)
@@ -434,57 +412,21 @@ export default function RunDetailPage() {
     return () => { cancelled = true }
   }, [accessibilityRunId])
 
-  // THE OVERVIEW'S SUB-ACTION IS STILL THE v1 ONE, AND IT IS NOW ALWAYS ABSENT (405-08 → 405-11).
-  // The tree selects durable sub-actions by ordinal, but the panels below read `SubActionData` —
-  // its reasoning blocks, its annotation and its screenshot paths. `subActionsData` has no
-  // producer on this page any more, so this resolves to `null` and the panels render their
-  // no-selection state. 405-11 repoints them onto `RunDetailSubAction` and content-addressed
-  // screenshot refs, and deletes the v1 shape with them. Leaving the reads in place rather than
-  // half-rewiring them keeps ONE plan responsible for that seam.
-  const selectedSubAction = useMemo(() => {
+  // THE SELECTED SUB-ACTION IS THE DURABLE ONE (405-11 · D-16).
+  //
+  // The tree selects by ordinal within the step, and the step now carries the projection's own
+  // `subActions` in the producer's order, so the panel below reads the SAME row the tree
+  // highlighted. Before this plan the panel read a v1 shape whose producer was already deleted, so
+  // it resolved to nothing on every selection and the overview rendered its no-selection state for
+  // runs that had recorded plenty.
+  //
+  // An ordinal that names no recorded sub-action resolves to `null` rather than throwing: `?sub=`
+  // is hand-editable, and the failure mode of a wrong answer here is the step's own view, never a
+  // crash.
+  const selectedSubAction = useMemo<RunDetailSubAction | null>(() => {
     if (!isSubactionSelection(selection) || !selectedStep) return null
-    return selectedStep.subActionsData?.[selection.subIndex] ?? null
+    return selectedStep.subActions?.[selection.subIndex] ?? null
   }, [selection, selectedStep])
-
-  const currentScreenshotPair = useMemo<CurrentScreenshotPair | null>(() => {
-    if (!selectedStep) return null
-
-    if (selectedSubAction) {
-      const beforePath: string | null = selectedSubAction.screenshotBeforePath ?? null
-      const afterPath: string | null = selectedSubAction.screenshotAfterPath ?? null
-      if (!beforePath && !afterPath) return null
-      return {
-        key: [
-          selectedStep.id,
-          'sub',
-          selectedSubAction.index,
-          beforePath ?? '',
-          afterPath ?? '',
-        ].join('|'),
-        beforePath,
-        afterPath,
-      }
-    }
-
-    const beforePath: string | null = selectedStep.screenshotBeforePath ?? null
-    const afterPath: string | null = selectedStep.screenshotPath ?? null
-    if (!beforePath && !afterPath) return null
-    return {
-      key: [
-        selectedStep.id,
-        'step',
-        beforePath ?? '',
-        afterPath ?? '',
-      ].join('|'),
-      beforePath,
-      afterPath,
-    }
-  }, [selectedStep, selectedSubAction])
-
-  const screenshotSide =
-    currentScreenshotPair && screenshotSideSelection?.key === currentScreenshotPair.key
-      ? screenshotSideSelection.side
-      : undefined
 
   type NavItem =
     | { type: 'hook'; logId: string }
@@ -580,16 +522,6 @@ export default function RunDetailPage() {
 
   const TAB_NAMES = ['overview', 'env', 'network', 'console', 'aria', 'a11y'] as const
 
-  const selectScreenshotSide = useCallback((side: ScreenshotSide) => {
-    if (activeTab !== 'overview') return
-    if (!currentScreenshotPair) return
-    const requestedPath = side === 'before'
-      ? currentScreenshotPair.beforePath
-      : currentScreenshotPair.afterPath
-    if (!requestedPath) return
-    setScreenshotSideSelection({ key: currentScreenshotPair.key, side })
-  }, [activeTab, currentScreenshotPair])
-
   const shortcuts = useMemo(() => {
     const map: Record<string, (e: KeyboardEvent) => void> = {
       arrowdown: () => {
@@ -631,8 +563,6 @@ export default function RunDetailPage() {
       '4': () => setActiveTab(TAB_NAMES[3]),
       '5': () => setActiveTab(TAB_NAMES[4]),
       '6': () => setActiveTab(TAB_NAMES[5]),
-      'a': () => selectScreenshotSide("after"),
-      'b': () => selectScreenshotSide("before"),
       i: () => openArtifactDrawer("attributes"),
       c: () => openArtifactDrawer("config"),
       m: () => openArtifactDrawer("memory"),
@@ -648,10 +578,8 @@ export default function RunDetailPage() {
       },
       escape: () => {
         if (artifactDrawerOpen) setArtifactDrawerOpen(false)
-        else if (showVideo) setShowVideo(false)
         else setSelection(null)
       },
-      v: () => { if (run?.videoPath) setShowVideo(true) },
       'shift+?': () => setShortcutsOpen(prev => !prev),
       'shift+!': () => pipelineRef.current?.togglePhase(0),
       'shift+@': () => pipelineRef.current?.togglePhase(1),
@@ -659,7 +587,7 @@ export default function RunDetailPage() {
       'shift+$': () => pipelineRef.current?.togglePhase(3),
     }
     return map
-  }, [navItems, currentNavIdx, selection, run, navigate, artifactDrawerOpen, showVideo, pipelineRef, selectScreenshotSide, openArtifactDrawer])
+  }, [navItems, currentNavIdx, selection, run, navigate, artifactDrawerOpen, pipelineRef, openArtifactDrawer])
 
   useKeyboardShortcuts(shortcuts)
 
@@ -779,15 +707,12 @@ export default function RunDetailPage() {
     )
   }
 
-  const videoSrc = resolveVideoSrc(run.id, run.videoPath)
-  const speeds = [0.5, 1, 1.5, 2, 3, 4]
-
   return (
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <RunNavbar
           run={run}
-          steps={NO_V1_STEP_ROWS}
+          tokens={detail?.tokens}
           shortcutsOpen={shortcutsOpen}
           onToggleShortcuts={() => setShortcutsOpen(prev => !prev)}
           onOpenArtifacts={openArtifactDrawer}
@@ -921,8 +846,6 @@ export default function RunDetailPage() {
                   executionLogs={selectedStepLogs}
                   accessibilitySummary={accessibilitySummary}
                   platform={run.platform}
-                  screenshotSide={screenshotSide}
-                  onScreenshotSideChange={selectScreenshotSide}
                   pipelineRef={pipelineRef}
                 />
               )}
@@ -944,53 +867,6 @@ export default function RunDetailPage() {
           />
         ) : null}
 
-        {showVideo && videoSrc && (
-          <div
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center"
-            onClick={() => setShowVideo(false)}
-          >
-            <Button
-              variant="secondary"
-              size="icon-sm"
-              className="absolute top-4 right-4 h-8 w-8 bg-background/80 backdrop-blur-sm z-10"
-              onClick={() => setShowVideo(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-
-            <div className="flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
-              <video
-                ref={videoRef}
-                src={videoSrc}
-                controls
-                autoPlay
-                className="rounded-lg"
-                style={{ maxWidth: '90vw', maxHeight: 'calc(90vh - 3rem)' }}
-                onLoadedMetadata={() => {
-                  if (videoRef.current) videoRef.current.playbackRate = videoSpeed
-                }}
-              />
-              <div className="flex items-center gap-1 bg-background/80 backdrop-blur-sm rounded-full px-1 py-0.5">
-                {speeds.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => {
-                      setVideoSpeed(s)
-                      if (videoRef.current) videoRef.current.playbackRate = s
-                    }}
-                    className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                      videoSpeed === s
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
-                    }`}
-                  >
-                    {s}x
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </TooltipProvider>
   )

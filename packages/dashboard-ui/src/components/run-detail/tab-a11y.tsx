@@ -1,9 +1,17 @@
+// THE A11Y TAB, ON THE DURABLE STEP (405-11 · D-14).
+//
+// IT READS A FIELD THE BUS DOES NOT CARRY, AND SAYS SO. Accessibility violations were a v1
+// per-step column; the durable projection records none, so on run detail this tab renders its
+// "did not record data" state — an honest absence rather than a deleted tab. The state was already
+// here and is unchanged; only the prop moved off the v1 row.
+
 import { Badge } from "@/components/ui/badge"
-import type { AccessibilitySummary, StepRow } from "@/lib/api"
+import type { AccessibilitySummary } from "@/lib/api"
+import type { DisplayStep } from "@/lib/display-step"
 import { cn } from "@/lib/utils"
 
 interface TabA11yProps {
-  step: StepRow
+  step: Pick<DisplayStep, "accessibilityViolations">
   summary?: AccessibilitySummary | null
 }
 

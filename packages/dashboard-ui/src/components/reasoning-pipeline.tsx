@@ -1,23 +1,24 @@
-import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from "react"
-import {
-  Eye,
-  Brain,
-  Play,
-  ShieldCheck,
-  RefreshCw,
-  ChevronRight,
-} from "lucide-react"
+// THE PHASE ACCORDION, STATIC ONLY (405-11 · D-14 / DETL-06).
+//
+// IT NO LONGER FETCHES. This component used to have a second mode that read a per-step reasoning
+// trace over its own HTTP call and rendered the phases out of it, falling back to the step row when
+// the read failed. That trace table and its route are gone with the v1 projection: the durable
+// projection carries the planner's own sentence, the planned action and the recorded result on the
+// sub-action itself, and the caller already holds them. So the component takes SECTIONS and paints
+// them — one input, no client, no fallback, and no way for the panel to disagree with the tree
+// about what a step did.
+//
+// The self-heal accordion went with the trace. `RunDetailStep` records `selfHealOccurred` — one
+// boolean, which the tree renders as a glyph — and records no per-attempt chain, so a "healing
+// chain" here would have had to invent its attempts.
+
+import { useState, useCallback, useRef, forwardRef, useImperativeHandle } from "react"
+import { ChevronRight } from "lucide-react"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { Skeleton } from "@/components/ui/skeleton"
-import { ConfidenceBadge } from "@/components/confidence-badge"
-import { HealingChain } from "@/components/healing-chain"
-import type { ReasoningTrace } from "@/lib/api"
-import type { DisplayStep } from "@/lib/display-step"
-import { fetchStepReasoning } from "@/lib/api"
 import { cn, formatDuration } from "@/lib/utils"
 
 export interface ReasoningPipelineHandle {
@@ -40,22 +41,15 @@ export interface PhaseConfig {
   icon: React.ComponentType<{ className?: string }>
 }
 
-type ReasoningPipelineProps =
-  | { mode?: 'fetch'; runId: string; stepOrder: number; stepData: DisplayStep }
-  | { mode: 'static'; sections: SectionDef[] }
-
-const PHASES: PhaseConfig[] = [
-  { key: "observe", label: "Observe", icon: Eye },
-  { key: "plan", label: "Plan", icon: Brain },
-  { key: "execute", label: "Execute", icon: Play },
-  { key: "verify", label: "Verify", icon: ShieldCheck },
-  { key: "heal", label: "Heal", icon: RefreshCw },
-]
-
-function formatJson(value: unknown): string {
-  if (value == null) return ""
-  if (typeof value === "string") return value
-  return JSON.stringify(value, null, 2)
+/**
+ * The only shape this component takes.
+ *
+ * `mode` survives as a literal because every call site already spells it and it reads as an
+ * intention at the seam ("these sections are all there is"), not because a second mode exists.
+ */
+interface ReasoningPipelineProps {
+  mode: 'static'
+  sections: SectionDef[]
 }
 
 function PhaseSection({
@@ -132,56 +126,6 @@ function PhaseSection({
   )
 }
 
-function buildFallbackSections(step: DisplayStep): SectionDef[] {
-  const sections: SectionDef[] = []
-  if (step.observation) {
-    sections.push({ key: 'observation', label: 'Observe', icon: PHASES[0].icon, content: step.observation, duration: null })
-  }
-  if (step.reasoning) {
-    sections.push({ key: 'reasoning', label: 'Plan', icon: PHASES[1].icon, content: step.reasoning, duration: null })
-  }
-  if (step.plannedAction != null) {
-    sections.push({
-      key: 'plannedAction', label: 'Execute', icon: PHASES[2].icon, content: null, duration: null,
-      children: (
-        <pre className="min-w-0 max-w-full text-xs font-mono bg-muted/50 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-          {typeof step.plannedAction === "string"
-            ? step.plannedAction
-            : JSON.stringify(step.plannedAction, null, 2)}
-        </pre>
-      ),
-    })
-  }
-  return sections
-}
-
-const FallbackView = forwardRef<ReasoningPipelineHandle, { step: DisplayStep }>(
-  function FallbackView({ step }, ref) {
-    const sections = buildFallbackSections(step)
-
-    if (sections.length === 0 && step.error) {
-      return (
-        <div className="bg-destructive/10 text-destructive rounded p-2 text-sm break-words [overflow-wrap:anywhere]">
-          {step.error}
-        </div>
-      )
-    }
-
-    return (
-      <>
-        <StaticPipeline ref={ref} sections={sections} />
-        {step.error && (
-          <div className="pl-6 pb-2">
-            <div className="bg-destructive/10 text-destructive rounded p-2 text-sm break-words [overflow-wrap:anywhere]">
-              {step.error}
-            </div>
-          </div>
-        )}
-      </>
-    )
-  }
-)
-
 const StaticPipeline = forwardRef<ReasoningPipelineHandle, { sections: SectionDef[] }>(
   function StaticPipeline({ sections }, ref) {
     const [phaseOpen, setPhaseOpen] = useState<boolean[]>(() => sections.map(() => false))
@@ -225,171 +169,8 @@ const StaticPipeline = forwardRef<ReasoningPipelineHandle, { sections: SectionDe
   }
 )
 
-const FetchPipeline = forwardRef<ReasoningPipelineHandle, { runId: string; stepOrder: number; stepData: DisplayStep }>(
-  function FetchPipeline({ runId, stepOrder, stepData }, ref) {
-    const [trace, setTrace] = useState<ReasoningTrace | null>(null)
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState<string | null>(null)
-
-    const [phaseOpen, setPhaseOpen] = useState<boolean[]>([false, false, false, false])
-    const phaseRefs = useRef<(HTMLButtonElement | null)[]>([null, null, null, null])
-
-    const togglePhase = useCallback((index: number) => {
-      setPhaseOpen(prev => {
-        const next = [...prev]
-        const wasOpen = next[index]
-        next[index] = !wasOpen
-        if (!wasOpen) {
-          requestAnimationFrame(() => {
-            phaseRefs.current[index]?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-          })
-        }
-        return next
-      })
-    }, [])
-
-    useImperativeHandle(ref, () => ({ togglePhase }), [togglePhase])
-
-    useEffect(() => {
-      let cancelled = false
-
-      fetchStepReasoning(runId, stepOrder)
-        .then((res) => {
-          if (!cancelled) {
-            setTrace(res.trace)
-            setLoading(false)
-          }
-        })
-        .catch((err) => {
-          if (!cancelled) {
-            setError(err instanceof Error ? err.message : "Failed to load reasoning")
-            setLoading(false)
-          }
-        })
-
-      return () => {
-        cancelled = true
-      }
-    }, [runId, stepOrder])
-
-    if (loading) {
-      return (
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-4 w-1/2" />
-          <Skeleton className="h-4 w-2/3" />
-        </div>
-      )
-    }
-
-    if (!trace && error) {
-      return <FallbackView ref={ref} step={stepData} />
-    }
-
-    if (!trace) {
-      return <FallbackView ref={ref} step={stepData} />
-    }
-
-    const hasHealAttempts = trace.healAttempts && trace.healAttempts.length > 0
-
-    return (
-      <div className="relative space-y-0">
-        <div className="absolute left-[7px] top-4 bottom-4 w-px bg-border" />
-
-        <PhaseSection
-          config={PHASES[0]}
-          content={trace.observeText}
-          duration={trace.observeDuration}
-          open={phaseOpen[0]}
-          onOpenChange={(o) => setPhaseOpen(prev => { const n = [...prev]; n[0] = o; return n })}
-          sectionRef={(el) => { phaseRefs.current[0] = el }}
-        />
-
-        <PhaseSection
-          config={PHASES[1]}
-          content={trace.planReasoning}
-          duration={trace.planDuration}
-          outcome={
-            trace.planConfidence != null ? (
-              <ConfidenceBadge confidence={trace.planConfidence} />
-            ) : undefined
-          }
-          open={phaseOpen[1]}
-          onOpenChange={(o) => setPhaseOpen(prev => { const n = [...prev]; n[1] = o; return n })}
-          sectionRef={(el) => { phaseRefs.current[1] = el }}
-        >
-          {trace.planAction != null && (
-            <div>
-              <p className="text-xs text-muted-foreground font-medium mb-0.5">
-                Planned Action
-              </p>
-              <pre className="min-w-0 max-w-full text-xs font-mono bg-muted/50 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                {formatJson(trace.planAction)}
-              </pre>
-            </div>
-          )}
-        </PhaseSection>
-
-        <PhaseSection
-          config={PHASES[2]}
-          content={null}
-          duration={trace.executeDuration}
-          open={phaseOpen[2]}
-          onOpenChange={(o) => setPhaseOpen(prev => { const n = [...prev]; n[2] = o; return n })}
-          sectionRef={(el) => { phaseRefs.current[2] = el }}
-        >
-          {trace.executeAction != null && (
-            <div>
-              <p className="text-xs text-muted-foreground font-medium mb-0.5">
-                Executed Action
-              </p>
-              <pre className="min-w-0 max-w-full text-xs font-mono bg-muted/50 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                {formatJson(trace.executeAction)}
-              </pre>
-            </div>
-          )}
-        </PhaseSection>
-
-        <PhaseSection
-          config={PHASES[3]}
-          content={trace.verifyReasoning}
-          duration={trace.verifyDuration}
-          outcome={
-            trace.verifySuccess != null ? (
-              <span
-                className={cn(
-                  "text-xs font-medium",
-                  trace.verifySuccess ? "text-emerald-500" : "text-red-500"
-                )}
-              >
-                {trace.verifySuccess ? "Passed" : "Failed"}
-              </span>
-            ) : undefined
-          }
-          open={phaseOpen[3]}
-          onOpenChange={(o) => setPhaseOpen(prev => { const n = [...prev]; n[3] = o; return n })}
-          sectionRef={(el) => { phaseRefs.current[3] = el }}
-        />
-
-        {hasHealAttempts && (
-          <PhaseSection
-            config={PHASES[4]}
-            content={null}
-            duration={null}
-          >
-            <HealingChain attempts={trace.healAttempts} />
-          </PhaseSection>
-        )}
-      </div>
-    )
-  }
-)
-
 export const ReasoningPipeline = forwardRef<ReasoningPipelineHandle, ReasoningPipelineProps>(
-  function ReasoningPipeline(props, ref) {
-    if (props.mode === 'static') {
-      return <StaticPipeline sections={props.sections} ref={ref} />
-    }
-    return <FetchPipeline runId={props.runId} stepOrder={props.stepOrder} stepData={props.stepData} ref={ref} />
+  function ReasoningPipeline({ sections }, ref) {
+    return <StaticPipeline sections={sections} ref={ref} />
   }
 )

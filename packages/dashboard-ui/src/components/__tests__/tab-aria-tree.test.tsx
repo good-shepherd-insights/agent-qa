@@ -1,29 +1,47 @@
 // @vitest-environment jsdom
 
+// THE ARIA TAB'S CELLS, AFTER ITS PRODUCER WENT (405-11 · D-14 / DETL-06).
+//
+// WHAT THESE USED TO PIN. A before/after toggle over two accessibility snapshots, fetched by the
+// tab itself over a per-step reasoning trace, inside a contained scroll frame. That trace table and
+// its route are gone with the v1 projection, and the bus collapses a screen state to a sha256
+// before it reaches the wire — so no durable row carries this text and the toggle has nothing to
+// toggle between.
+//
+// WHAT THEY PIN NOW. The tab renders its not-captured state, says so in a machine-readable posture,
+// and — the cell that actually has teeth — asks for NOTHING. A tab that still opened a request for
+// a route nobody serves would spend a round-trip per selection to arrive at the same empty screen.
+
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { TabAriaTree } from "@/components/run-detail/tab-aria-tree"
+import { NO_ARIA_TREE_LABEL, TabAriaTree } from "@/components/run-detail/tab-aria-tree"
+import { fromRunDetailStep } from "@/lib/display-step"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-vi.mock("@/components/ui/skeleton", () => ({
-  Skeleton: () => <div>loading</div>,
-}))
-vi.mock("@/lib/api", () => ({
-  fetchStepReasoning: vi.fn(),
-}))
+const fetchSpy = vi.fn()
+
+vi.stubGlobal("fetch", fetchSpy)
 
 let container: HTMLDivElement | null = null
 let root: Root | null = null
 
-async function flushRender() {
-  await act(async () => {
-    await Promise.resolve()
-    await Promise.resolve()
-  })
-}
+const STEP = fromRunDetailStep(
+  {
+    testIndex: 0,
+    stepIndex: 0,
+    stepText: "Open login",
+    cacheStatus: "miss",
+    verifierVerdict: { pass: true, reasoning: "the login form is up" },
+    selfHealOccurred: false,
+    briefDigest: "d00",
+    status: "passed",
+    durationMs: 1000,
+  },
+  [],
+)
 
 async function renderTree() {
   container = document.createElement("div")
@@ -31,102 +49,40 @@ async function renderTree() {
   root = createRoot(container)
 
   await act(async () => {
-    root!.render(
-      <TabAriaTree
-        step={{
-          id: "step-1",
-          name: "Open login",
-          status: "passed",
-          duration: 1000,
-          subActionsData: null,
-          originalStepName: null,
-          variableSnapshot: null,
-          screenshotPath: null,
-          screenshotBeforePath: null,
-          annotationData: null,
-          observation: null,
-          reasoning: null,
-          plannedAction: null,
-          action: null,
-          error: null,
-          confidence: null,
-          runId: "run-1",
-          stepOrder: 0,
-          consoleLogs: null,
-          networkLogs: null,
-          screenContextBefore: null,
-          screenContextAfter: null,
-          rawRunId: "run-1",
-          rawStepOrder: 0,
-          displayStepOrder: 1,
-          displayStepTotal: 1,
-        }}
-        subAction={{
-          index: 0,
-          observation: "raw",
-          reasoning: "",
-          plannedAction: null,
-          result: "success",
-          screenStateBefore: "before:\n  - button \"Checkout\" [ref=e1]\n  - text \"Total\"",
-          screenStateAfter: "after:\n  - button \"Checkout\" [ref=e1]\n  - text \"Paid\"",
-          cached: false,
-        }}
-        runId="run-1"
-      />,
-    )
+    root!.render(<TabAriaTree step={STEP} />)
   })
 
-  await flushRender()
   return container
 }
 
 afterEach(() => {
-  if (root) {
-    act(() => root!.unmount())
-  }
+  if (root) act(() => root!.unmount())
   root = null
-  if (container) container.remove()
+  container?.remove()
   container = null
   vi.clearAllMocks()
 })
 
 describe("TabAriaTree", () => {
-  it("keeps the raw snapshot content inside a vertically contained scroll frame", async () => {
+  it("says no snapshot was captured, in its own words and in a readable posture", async () => {
     const view = await renderTree()
-    const beforeButton = Array.from(view.querySelectorAll("button")).find((button) => button.textContent === "Before") as HTMLButtonElement
-    const afterButton = Array.from(view.querySelectorAll("button")).find((button) => button.textContent === "After") as HTMLButtonElement
 
-    const rootSurface = view.firstElementChild as HTMLDivElement | null
-    const frame = Array.from(view.querySelectorAll("div")).find((element) =>
-      element.className.includes("flex-1")
-      && element.className.includes("overflow-hidden")
-      && element.className.includes("border-border/60")
-      && element.className.includes("bg-muted/20"),
-    ) as HTMLDivElement | undefined
-    const wrapper = frame?.querySelector(".overflow-auto") as HTMLDivElement | null
-    const pre = view.querySelector("pre")
+    expect(view.textContent).toContain(NO_ARIA_TREE_LABEL)
+    expect(view.querySelector('[data-aria-tree-state="not-captured"]')).not.toBeNull()
+  })
 
-    expect(rootSurface?.className).toContain("min-h-0")
-    expect(rootSurface?.className).toContain("overflow-hidden")
-    expect(beforeButton.className).toContain("bg-primary/10")
-    expect(beforeButton.className).toContain("ring-primary/30")
-    expect(afterButton.className).toContain("hover:bg-muted")
-    expect(frame?.className).toContain("overflow-hidden")
-    expect(wrapper).not.toBeNull()
-    expect(wrapper?.className).toContain("overscroll-contain")
-    expect(pre?.textContent).toBe(
-      'before:\n  - button "Checkout" [ref=e1]\n  - text "Total"',
-    )
+  it("offers no before/after toggle over snapshots nothing recorded", async () => {
+    const view = await renderTree()
 
-    await act(async () => {
-      afterButton.click()
-    })
-    await flushRender()
+    expect(view.querySelector("pre")).toBeNull()
+    expect(Array.from(view.querySelectorAll("button")).map((b) => b.textContent)).toEqual([])
+  })
 
-    expect(afterButton.className).toContain("bg-primary/10")
-    expect(afterButton.className).toContain("ring-primary/30")
-    expect(view.querySelector("pre")?.textContent).toBe(
-      'after:\n  - button "Checkout" [ref=e1]\n  - text "Paid"',
-    )
+  // The teeth: an absence rendered after a request is a different (and worse) thing than an
+  // absence that costs nothing to state.
+  it("asks nobody for a snapshot that has no producer", async () => {
+    await renderTree()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
