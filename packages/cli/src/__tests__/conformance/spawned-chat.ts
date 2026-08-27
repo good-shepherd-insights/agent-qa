@@ -41,6 +41,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -50,7 +51,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { generateTestId } from '@vostride/agent-qa-ids'
+import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 
 /** This directory. */
 export const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url))
@@ -721,4 +722,116 @@ export function runServiceFixtureProject(label: string, declareToken = true): {
     'utf8',
   )
   return { root, configPath }
+}
+
+// ---- The DRAINABLE fixture: a project whose dashboard-started run reaches a real verdict (404-08)
+//
+// WHY A FOURTH RECIPE RATHER THAN A FLAG ON THE THIRD. `runServiceFixtureProject` above states, in
+// its own words, that "THE RUN IS EXPECTED TO FAIL, and that is fine" — every claim its two frames
+// make is about WIRE SHAPE, and a run that reaches no verdict is adequate for all of them. This
+// recipe's whole purpose is the opposite property, so it is built ON that one rather than beside
+// it: same workspace, same locally-classified target, same empty secret files, same minted test.
+// What it adds is exactly the two facts that turn "the run refuses" into "the run is drained".
+//
+// FACT 1 — THE MEMBER IS ADDRESSED THROUGH A SUITE. The direct-test producer wraps its member
+// executor in a catch that records a FRAMEWORK error and cancels the session, and
+// `in-process-run-execution.ts` re-throws that error four statements ABOVE the line that starts
+// the detached post-run tail. So on a machine with no Playwright browser a DIRECT run can never
+// reach its own tail — the structural fact 404-04 D-6 and 404-05 D-6 each recorded one door apart,
+// and the reason `post-processing-anchors.test.ts` gave up its terminal arm. The SUITE producer
+// carries no such wrapper (its `takeFrameworkError` answers undefined by construction), so the
+// member's throw arrives at the shell as a member ERROR: a `runWarning`, a failed member, a real
+// `verdict`, a real `runFinished` — and the tail runs. The browser is still absent; what changed
+// is that its absence is now a test failure instead of a framework error.
+//
+// FACT 2 — A MODEL IS DECLARED AND NOTHING IS AUTHENTICATED. The suite path resolves the LLM auth
+// before it prepares anything, and the default provider has an auth plugin, so a project that
+// declares no model at all is REFUSED before the run starts ("requires an auth plugin") — measured,
+// and it is why this recipe exists rather than a one-line suite file. A compatible provider with no
+// saved credential resolves `unauthenticated` and OPTIONAL instead, which is the shipped
+// zero-token posture: the run proceeds, the analysis floor is projected deterministically, and no
+// token is stored anywhere. The base URL points at a port nothing serves, so a composition that
+// silently reached for a model would fail loudly rather than quietly succeed.
+//
+// NOTHING SECRET IS PLANTED, on `fixtureProject`'s argument, unchanged: the config declares a
+// provider name and a dead address, and no credential exists for either.
+
+/** The name the declared model entry carries. One spelling, referenced by the config it writes. */
+export const DRAINABLE_MODEL_NAME = 'conformance-model'
+
+/**
+ * The address the declared model points at: a port nothing is listening on.
+ *
+ * PORT 1 IS RESERVED AND UNSERVED, so a reach for this model is an immediate connection refusal
+ * rather than a timeout somebody would read as a slow test. The deterministic analysis floor never
+ * calls it; a build that started calling it would announce itself in seconds.
+ */
+export const DRAINABLE_MODEL_BASE_URL = 'http://127.0.0.1:1/v1'
+
+/** The suite file a drainable run is triggered against, relative to the project root. */
+export const DRAINABLE_SUITE_PATH = 'suites/probe.suite.yaml'
+
+/**
+ * A project whose dashboard-triggered SUITE run reaches a verdict, a `runFinished` and a real tail.
+ *
+ * Returns data and asserts nothing, on this module's own law.
+ */
+export function drainableSuiteFixtureProject(label: string): {
+  root: string
+  configPath: string
+  suitePath: string
+} {
+  const project = runServiceFixtureProject(label, false)
+
+  // The suite addresses the test by the id that file MINTED. Read back rather than re-minted: two
+  // ids would be a suite entry naming a test this project does not contain, which the suite parser
+  // refuses with a message about ids rather than about the fixture.
+  const planted = readFileSync(join(project.root, 'tests', 'probe.test.yaml'), 'utf8')
+  const testId = /^test-id: (.+)$/mu.exec(planted)?.[1]
+  if (testId === undefined) {
+    throw new Error('the run-service fixture no longer writes a `test-id:` line for the suite to address')
+  }
+  // ONE MEMBER, AND NOT BECAUSE MORE WOULD BE HARDER. A twenty-member suite was written and
+  // measured first, to widen the post-verdict window a browser has to open a page in: it does not.
+  // The member's throw poisons the suite's fail-fast group, every remaining member is SKIPPED, and
+  // the chain still folds exactly one verdict — the window is identical and the run is slower. The
+  // cells that need a longer window solve it on their own side.
+  const entries: string[] = [`  - test: tests/probe.test.yaml\n    id: ${testId}\n`]
+  mkdirSync(join(project.root, 'suites'), { recursive: true })
+  writeFileSync(
+    join(project.root, DRAINABLE_SUITE_PATH),
+    'name: The post-processing conformance suite\n'
+    + `suite-id: ${generateSuiteId()}\n`
+    + 'target: conformance\n'
+    + 'tests:\n'
+    + entries.join(''),
+    'utf8',
+  )
+
+  // The declared model, folded into the recipe above rather than written as a fifth config: the
+  // three frames that share `runServiceFixtureProject` must keep the zero-declaration posture,
+  // because "a project that declares nothing is refused" is itself a measured fact one of them
+  // depends on.
+  const config = JSON.parse(readFileSync(project.configPath, 'utf8')) as Record<string, unknown>
+  const registry = (config.registry ?? {}) as Record<string, unknown>
+  config.registry = {
+    ...registry,
+    llms: [
+      {
+        name: DRAINABLE_MODEL_NAME,
+        provider: 'openai-compatible',
+        model: 'stub-model',
+        baseURL: DRAINABLE_MODEL_BASE_URL,
+      },
+    ],
+  }
+  config.use = { ...((config.use ?? {}) as Record<string, unknown>), llm: DRAINABLE_MODEL_NAME }
+  writeFileSync(project.configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+
+  // The knowledge root, created rather than left to the first writer. A real `agent-qa daemon`
+  // acquires its writer lease over this directory before it serves anything, and a daemon that had
+  // to create it would be racing the run whose lease decision this fixture is about.
+  mkdirSync(join(project.root, 'agent-qa-knowledge'), { recursive: true })
+
+  return { ...project, suitePath: DRAINABLE_SUITE_PATH }
 }
