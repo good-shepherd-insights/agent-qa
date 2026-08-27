@@ -17,6 +17,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { createMaskingContext } from '../masking/context.js'
+import type { RegisteredMaskingEntry } from '../masking/context.js'
 
 describe('createMaskingContext().snapshotRegistered() (405-02, D-08)', () => {
   it('enumerates SECRET registrations in registration order with their placeholders and values', () => {
@@ -69,8 +70,10 @@ describe('createMaskingContext().snapshotRegistered() (405-02, D-08)', () => {
     const ctx = createMaskingContext()
     ctx.register('hunter22', 'SECRET')
 
-    const first = ctx.snapshotRegistered() as Array<{ placeholder: string; value: string }>
-    first.push({ placeholder: '<SECRET_99>', value: 'not-a-registration' })
+    // The declared return is ReadonlyArray, so the mutation a caller could still attempt at
+    // runtime is reached through `unknown` — the cell measures the runtime freshness, not the type.
+    const first = ctx.snapshotRegistered() as unknown as RegisteredMaskingEntry[]
+    first.push({ placeholder: '<SECRET_99>', category: 'SECRET', value: 'not-a-registration' })
 
     expect(ctx.snapshotRegistered()).toEqual([
       { placeholder: '<SECRET_0>', category: 'SECRET', value: 'hunter22' },

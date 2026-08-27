@@ -76,6 +76,10 @@ export type {
 export type { FirstPartySafetyDeps, FirstPartySafetyHooks } from './hooks/first-party'
 export type { PolicyGateHookDeps } from './policy/gate-hook'
 export type { MaskCategory } from './masking/categories'
+// 405-02 (D-08): the row `snapshotRegistered()` reports. Type-only — the enumeration exists for
+// the run-scoped digest sidecar writer, which turns each value into a keyed HMAC and never
+// persists the value itself.
+export type { RegisteredMaskingEntry } from './masking/context'
 export type { MaskingContextResolver } from './masking/resolver'
 export type { AuditSinkResolver } from './policy/audit-sink-resolver'
 export type { MaskingSeedSources } from './masking/seed'
