@@ -18,14 +18,14 @@
 // page's snapshot-then-poll is the floor), so a cell that published before the subscription existed
 // would be measuring the miss rather than the relay — and would do it flakily.
 
-import type { Server } from 'node:http'
+import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import type {
   PostProcessingStatus,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { DashboardDatabase } from '../db/database.js'
 import type { AgentHost, AgentRegistryHandle } from '../chat/host.js'
@@ -33,6 +33,10 @@ import {
   createPostProcessingRelay,
   type PostProcessingRelay,
 } from '../execution/post-processing-relay.js'
+import {
+  POST_PROCESSING_STREAM_HEARTBEAT_MS,
+  servePostProcessingStream,
+} from '../run-service/post-processing-routes.js'
 import { startServer } from '../server/server.js'
 
 const PP_ID = 'test:planted-post-processing-op'
@@ -143,26 +147,28 @@ afterEach(async () => {
   }
 })
 
-async function serve(options: {
-  readonly status: PostProcessingStatus
-  readonly events?: readonly RunEventEnvelope[]
-  readonly withHost?: boolean
-  readonly withRelay?: boolean
-}): Promise<Fixture> {
-  let status = options.status
-  let events = options.events ?? []
-  const relay = createPostProcessingRelay()
-  const host: AgentHost = {
+/**
+ * The two planted ops behind both doors, read through a LIVE view of what the cell has set.
+ *
+ * One spelling, because the direct-call cells below and the server-framed cells above must be
+ * asking the same host the same questions — a second fixture would be free to answer differently
+ * and the difference would read as a defect in the door.
+ */
+function plantedHost(read: {
+  status(): PostProcessingStatus
+  events(): readonly RunEventEnvelope[]
+}): AgentHost {
+  return {
     registry: REGISTRY,
     caller: CALLER,
     agentAskFunctionId: 'test:planted-ask-op',
     runsPostProcessingFunctionId: PP_ID,
     runsEventsFunctionId: EVENTS_ID,
     invokeFunction: (_registry, functionId): Promise<unknown> => {
-      if (functionId === PP_ID) return Promise.resolve(status)
+      if (functionId === PP_ID) return Promise.resolve(read.status())
       if (functionId === EVENTS_ID) {
         const replay = async function* (): AsyncGenerator<RunEventEnvelope> {
-          for (const one of events) yield one
+          for (const one of read.events()) yield one
         }
         return Promise.resolve(replay())
       }
@@ -173,6 +179,18 @@ async function serve(options: {
     onSessionEvent: () => () => undefined,
     unmaskForDisplay: (text) => text,
   }
+}
+
+async function serve(options: {
+  readonly status: PostProcessingStatus
+  readonly events?: readonly RunEventEnvelope[]
+  readonly withHost?: boolean
+  readonly withRelay?: boolean
+}): Promise<Fixture> {
+  let status = options.status
+  let events = options.events ?? []
+  const relay = createPostProcessingRelay()
+  const host = plantedHost({ status: () => status, events: () => events })
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   const started = await startServer({
     db,
@@ -400,4 +418,288 @@ describe('the stream refuses BEFORE the head, by name', () => {
     expect(JSON.parse(answer.body)).toEqual({ error: 'invalid_run_id' })
     expect(answer.contentType, 'never a half-open text/event-stream').not.toContain('text/event-stream')
   })
+})
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// UF-01 — A DOOR THAT ANSWERS ITS OWN THROW, INSTEAD OF TAKING THE PROCESS DOWN.
+//
+// `void readPostProcessing(…).then(onOk)` with no failure arm made every throw inside `onOk` an
+// UNHANDLED REJECTION, which Node ≥ 15 turns into a process exit by default: one viewer closing a
+// tab at the wrong moment stops the whole dashboard server, for every other viewer. The window is
+// ordinary rather than exotic — two awaited op calls sit between the request arriving and the head
+// going out, and a socket that died inside it makes the very next `writeHead`/`write` throw.
+//
+// THE ASYMMETRY IS WHAT THESE CELLS PIN. The 204 arm already guarded with
+// `if (res.headersSent || res.writableEnded)`; the 200 arm one screen down did not, and the sibling
+// READ door already passed both arms to `.then` while this one passed only the first.
+//
+// THEY DRIVE THE DOOR DIRECTLY, at a response object that can be made to fail the way a real one
+// does. The server-framed cells above cannot reach this: a `fetch` client that aborts leaves a
+// response Node answers by EMITTING an error rather than throwing, so the frame that proves the
+// crash is unreachable through a real socket. Direct is the level the defect lives at.
+//
+// AND THEY ASSERT THE OUTCOME, NOT A SPY. What was answered on the wire, whether the socket is
+// still half-open, whether the relay still holds a listener, whether the heartbeat is still ticking
+// — a cell that only counted a handler call would have stayed green through the entire defect.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+
+interface FakeResponse {
+  readonly res: ServerResponse
+  /** Every chunk that reached the wire, in order. */
+  readonly writes: string[]
+  readonly heads: Array<{ status: number; headers: Record<string, string> }>
+  headersSent(): boolean
+  ended(): boolean
+  destroyed(): boolean
+  /** Everything this response put on the wire — head values included. */
+  wire(): string
+}
+
+/**
+ * A response that can die the way a real one dies.
+ *
+ * `breakAfterWrites` is the abort: the socket survives that many frames and every write after it
+ * throws, which is what a client that closed its tab mid-stream leaves behind. `refuseHead` is the
+ * other shape — ONE head the socket layer rejects before marking the response as sent, named by
+ * its status because header rejection is per-value: a `text/event-stream` head can be refused by a
+ * layer that would take the JSON refusal that follows it.
+ *
+ * THE THROWN MESSAGE DELIBERATELY QUOTES A PATH. T-404-01's masking discipline is that an
+ * unclassified throw travels as a NAME and never as its prose, and a fixture whose message carried
+ * nothing worth withholding would make that assertion vacuous.
+ */
+function fakeResponse(options: {
+  readonly breakAfterWrites?: number
+  readonly refuseHead?: number
+  readonly headersAlreadySent?: boolean
+} = {}): FakeResponse {
+  const writes: string[] = []
+  const heads: Array<{ status: number; headers: Record<string, string> }> = []
+  let headersSent = options.headersAlreadySent === true
+  let ended = false
+  let destroyed = false
+  const socketFault = (): Error => Object.assign(
+    new Error('write after end: /Users/planted/.agent-qa/agent-jobs.db row 41 (r_pp_stream)'),
+    { name: 'Error' },
+  )
+  const res = {
+    get headersSent() { return headersSent },
+    get writableEnded() { return ended },
+    get destroyed() { return destroyed },
+    writeHead(status: number, headers: Record<string, string>) {
+      if (headersSent) {
+        throw Object.assign(new Error('Cannot write headers after they are sent to the client'), {
+          name: 'ERR_HTTP_HEADERS_SENT',
+        })
+      }
+      if (options.refuseHead === status) throw socketFault()
+      headersSent = true
+      heads.push({ status, headers })
+      return res
+    },
+    write(chunk: string) {
+      if (options.breakAfterWrites !== undefined && writes.length >= options.breakAfterWrites) {
+        throw socketFault()
+      }
+      writes.push(chunk)
+      return true
+    },
+    end(chunk?: string) {
+      if (chunk !== undefined) writes.push(chunk)
+      ended = true
+      return res
+    },
+    destroy() {
+      destroyed = true
+      ended = true
+      return res
+    },
+  }
+  return {
+    res: res as unknown as ServerResponse,
+    writes,
+    heads,
+    headersSent: () => headersSent,
+    ended: () => ended,
+    destroyed: () => destroyed,
+    wire: () => [
+      ...heads.map((one) => `${String(one.status)} ${JSON.stringify(one.headers)}`),
+      ...writes,
+    ].join('\n'),
+  }
+}
+
+/** A request that never closes on its own — the cell decides when the socket dies. */
+function fakeRequest(): IncomingMessage {
+  return { on: () => undefined } as unknown as IncomingMessage
+}
+
+/**
+ * Run something with NOBODY willing to absorb a stranded rejection, and prove none was stranded.
+ *
+ * This is the claim, not a proxy for it: the listener is Node's own report, and on a default
+ * Node ≥ 15 the absence of one is the difference between an answered request and a dead server.
+ * The two `setImmediate` hops are the observation window — a rejection is reported at the end of
+ * the turn it happened in, so asserting before the boundary would assert nothing.
+ */
+async function withNoStrandedRejection(what: () => Promise<void>): Promise<void> {
+  const stranded: unknown[] = []
+  const watch = (reason: unknown): void => { stranded.push(reason) }
+  process.on('unhandledRejection', watch)
+  try {
+    await what()
+    await new Promise<void>((tick) => { setImmediate(tick) })
+    await new Promise<void>((tick) => { setImmediate(tick) })
+    expect(
+      stranded.map((one) => String(one)),
+      'an unhandled rejection is a process exit on Node >= 15 — the whole dashboard, for one tab',
+    ).toEqual([])
+  } finally {
+    process.off('unhandledRejection', watch)
+  }
+}
+
+/** Let the door's two awaited op calls and everything they schedule settle. */
+async function settle(): Promise<void> {
+  for (let hop = 0; hop < 12; hop += 1) await Promise.resolve()
+  await new Promise<void>((tick) => { setImmediate(tick) })
+}
+
+describe('UF-01 — the stream door answers its own throw and unwinds what it built', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('a write that throws on a dead socket is ANSWERED (destroyed), never stranded as a rejection',
+    async () => {
+      // The tab closed during the two awaited op calls. The head goes out onto a socket that is
+      // already gone and the snapshot write is what discovers it.
+      const relay = createPostProcessingRelay()
+      const openStreams = new Set<() => void>()
+      const fake = fakeResponse({ breakAfterWrites: 0 })
+
+      await withNoStrandedRejection(async () => {
+        expect(() => {
+          servePostProcessingStream(fakeRequest(), fake.res, {
+            runId: RUN_ID,
+            host: plantedHost({ status: () => chips('running', 'pending'), events: () => [] }),
+            relay,
+            openStreams,
+          })
+        }, 'the door is a void function; it may never throw at its caller').not.toThrow()
+        await settle()
+      })
+
+      expect(fake.writes, 'the frame never reached the wire').toEqual([])
+      expect(
+        fake.destroyed(),
+        'a 200 text/event-stream cannot be told it failed — destroy is the only honest close',
+      ).toBe(true)
+      expect(relay.listenerCount(RUN_ID), 'and no subscription is left behind it').toBe(0)
+      expect(openStreams.size, 'nor a teardown a shutdown would later call at a dead socket').toBe(0)
+    })
+
+  it('a throw AFTER the stream opened unwinds the heartbeat, the subscription and the openStreams entry',
+    async () => {
+      // The real one. The stream opened, the page watched, the chain went terminal, and by the
+      // time the trigger's re-read came back with the final snapshot the viewer was gone. This is
+      // the leg where the unwind has something to unwind: without it the interval keeps firing at
+      // a dead socket every 15s, the relay keeps delivering to it, and `openStreams` keeps a
+      // teardown for a stream nothing will ever close.
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+      const relay = createPostProcessingRelay()
+      const openStreams = new Set<() => void>()
+      let status = chips('running', 'pending')
+      // Three frames survive: the opening snapshot, the relayed envelope, and then nothing.
+      const fake = fakeResponse({ breakAfterWrites: 2 })
+
+      await withNoStrandedRejection(async () => {
+        servePostProcessingStream(fakeRequest(), fake.res, {
+          runId: RUN_ID,
+          host: plantedHost({ status: () => status, events: () => [] }),
+          relay,
+          openStreams,
+        })
+        await settle()
+        expect(relay.listenerCount(RUN_ID), 'the stream is open and subscribed').toBe(1)
+        expect(openStreams.size).toBe(1)
+        expect(vi.getTimerCount(), 'and its heartbeat is ticking').toBe(1)
+
+        status = chips('done', 'done')
+        relay.publish(envelope(42, 'curationCompleted', { runId: RUN_ID }))
+        await settle()
+      })
+
+      expect(fake.writes.map(nameOf), 'the two frames that made it, and no third').toEqual([
+        'snapshot',
+        'curationCompleted',
+      ])
+      expect(fake.destroyed(), 'the half-open stream did not survive the throw').toBe(true)
+      expect(relay.listenerCount(RUN_ID), 'the subscription was released').toBe(0)
+      expect(openStreams.size, 'the registered teardown was removed').toBe(0)
+      expect(vi.getTimerCount(), 'the heartbeat was cleared').toBe(0)
+      vi.advanceTimersByTime(POST_PROCESSING_STREAM_HEARTBEAT_MS * 4)
+      expect(fake.writes.length, 'and nothing writes at the dead socket ever again').toBe(2)
+    })
+
+  it('a failure BEFORE the head is the sibling read door\'s refusal — a NAME, never the message (T-404-01)',
+    async () => {
+      // The other side of the guard: nothing has been sent, so the request is still owed an
+      // answer, and the answer is the shape `servePostProcessingRead` gives an unclassified throw.
+      const relay = createPostProcessingRelay()
+      const openStreams = new Set<() => void>()
+      const fake = fakeResponse({ refuseHead: 200 })
+
+      await withNoStrandedRejection(async () => {
+        servePostProcessingStream(fakeRequest(), fake.res, {
+          runId: RUN_ID,
+          host: plantedHost({ status: () => chips('running', 'pending'), events: () => [] }),
+          relay,
+          openStreams,
+        })
+        await settle()
+      })
+
+      const refusal = JSON.stringify({ error: 'post_processing_unavailable', reason: 'Error' })
+      expect(fake.heads, 'the request is still owed an answer, and it gets one').toEqual([{
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(refusal),
+        },
+      }])
+      expect(fake.writes, 'classified by NAME, exactly as the unclassified arm at :144 does')
+        .toEqual([refusal])
+      expect(
+        fake.wire(),
+        'the throw quoted a database path and a row — none of it may reach a client',
+      ).not.toContain('agent-jobs.db')
+      expect(fake.wire(), 'never a half-open text/event-stream').not.toContain('text/event-stream')
+      expect(relay.listenerCount(RUN_ID)).toBe(0)
+      expect(openStreams.size).toBe(0)
+    })
+
+  it('a response another layer already answered is DESTROYED, the way the 204 arm already did',
+    async () => {
+      // The guard itself. `writeHead` on a response whose headers are out throws
+      // ERR_HTTP_HEADERS_SENT, and this arm must never reach it — the 204 arm one screen up has
+      // read exactly this pair of flags since the day it shipped.
+      const relay = createPostProcessingRelay()
+      const openStreams = new Set<() => void>()
+      const fake = fakeResponse({ headersAlreadySent: true })
+
+      await withNoStrandedRejection(async () => {
+        servePostProcessingStream(fakeRequest(), fake.res, {
+          runId: RUN_ID,
+          host: plantedHost({ status: () => chips('running', 'pending'), events: () => [] }),
+          relay,
+          openStreams,
+        })
+        await settle()
+      })
+
+      expect(fake.heads, 'the head was never attempted — the guard read the flags first').toEqual([])
+      expect(fake.writes).toEqual([])
+      expect(fake.destroyed()).toBe(true)
+      expect(relay.listenerCount(RUN_ID)).toBe(0)
+      expect(openStreams.size).toBe(0)
+    })
 })

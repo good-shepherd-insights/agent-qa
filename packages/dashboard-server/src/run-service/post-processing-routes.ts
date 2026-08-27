@@ -332,6 +332,58 @@ export function servePostProcessingStream(
   res: ServerResponse,
   deps: PostProcessingStreamDeps,
 ): void {
+  /**
+   * The half-built stream's resource release, hoisted so the failure arm can unwind it (UF-01).
+   *
+   * Assigned in the same breath the stream's state is declared and BEFORE the head goes out, so a
+   * throw anywhere from `writeHead(200)` onwards is unwound rather than abandoned: without it a
+   * failure between the head and `req.on('close', …)` leaves the 15s heartbeat ticking, the relay
+   * subscription registered and this stream's teardown inside `openStreams`, behind a socket
+   * nothing will ever close. It releases resources and TOUCHES THE RESPONSE NOT AT ALL — ending it
+   * here would answer an empty 200 to a request the arm below still owes a refusal.
+   */
+  let unwindStream: (() => void) | undefined
+
+  /**
+   * THE ARM UF-01 NAMED, and the sibling read door at `servePostProcessingRead` already carries.
+   *
+   * `void promise.then(onOk)` with no failure arm turns any throw inside `onOk` into an unhandled
+   * rejection — process-fatal by default on Node ≥ 15, so one closed tab takes the whole dashboard
+   * server down with it. The throw is ordinary rather than exotic: two awaited op calls sit between
+   * the request arriving and the head going out, and a client that aborts inside that window leaves
+   * a response a later `writeHead`/`write` throws on.
+   *
+   * IT ANSWERS THE SAME FAILURE SHAPE THE SIBLING DOOR ANSWERS WITH, for the same reason — anything
+   * reaching here is this module failing, and `refusalFor`'s unclassified arm travels as a NAME and
+   * never a message (T-404-01), because an arbitrary throw's prose may quote a path or a row.
+   *
+   * AND IT LEAVES NOTHING HALF-OPEN. A response already carrying `200 text/event-stream` cannot be
+   * told it failed, so once headers are out the only honest close is `destroy()`; before they are
+   * out the request still gets its named refusal.
+   */
+  const failStream = (error: unknown): void => {
+    try {
+      unwindStream?.()
+    } catch {
+      // An unwind that throws may not become the second rejection this arm exists to prevent —
+      // and the request below is still owed an answer.
+    }
+    try {
+      if (res.headersSent || res.writableEnded) {
+        res.destroy()
+        return
+      }
+      respondJson(res, 500, refusalFor(error).body)
+    } catch {
+      try {
+        res.destroy()
+      } catch {
+        // The socket is already past answering. There is nothing left to do and nothing left to
+        // throw at: this function is the end of the chain.
+      }
+    }
+  }
+
   void readPostProcessing(deps.host, deps.runId).then((outcome) => {
     if (outcome.kind === 'refused') {
       respondJson(res, outcome.status, outcome.body)
@@ -352,17 +404,34 @@ export function servePostProcessingStream(
       return
     }
 
+    // THE SAME GUARD THE 204 ARM ABOVE CARRIES, on the arm that OPENS a socket rather than closing
+    // one (UF-01). The asymmetry was the bug: both arms are reached after the same two awaited op
+    // calls, so both face the same already-answered response — and `writeHead` on one throws
+    // `ERR_HTTP_HEADERS_SENT`, which is the throw that became the process-fatal rejection. Guarded
+    // before any state is built, so this leg registers nothing it would then have to unwind.
+    if (res.headersSent || res.writableEnded) {
+      res.destroy()
+      return
+    }
+
     let closed = false
     let unsubscribe: (() => void) | undefined
     let heartbeat: ReturnType<typeof setInterval> | undefined
-    const teardown = (): void => {
+    // What `teardown` releases, with no opinion about the response — the failure arm needs exactly
+    // this half, because it decides `destroy()` vs a named refusal for itself.
+    const releaseStream = (): void => {
       if (closed) return
       closed = true
       if (heartbeat !== undefined) clearInterval(heartbeat)
       unsubscribe?.()
       deps.openStreams?.delete(teardown)
+    }
+    const teardown = (): void => {
+      if (closed) return
+      releaseStream()
       if (!res.writableEnded) res.end()
     }
+    unwindStream = releaseStream
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -396,13 +465,20 @@ export function servePostProcessingStream(
         // A failed re-read is not a reason to close a live channel: the next envelope will trigger
         // another, and the page's own poll is the floor underneath both.
         () => undefined,
-      )
+      // …but a throw from the arm ABOVE is not a failed re-read, it is a dead socket, and `.then`'s
+      // failure arm never sees its own fulfilment arm's throw (UF-01, on the nested chain).
+      ).catch(failStream)
     })
 
     heartbeat = setInterval(() => { res.write(':\n\n') }, POST_PROCESSING_STREAM_HEARTBEAT_MS)
     deps.openStreams?.add(teardown)
     req.on('close', teardown)
-  })
+    // THE SECOND ARGUMENT is the READ's own rejection — `readPostProcessing` swallows what it can
+    // degrade past, so anything arriving there is this module failing. THE TRAILING `.catch` is the
+    // FULFILMENT ARM'S OWN THROW, and it is a separate arm because `.then(onOk, onError)` answers
+    // only for the promise it is attached to: a throw inside `onOk` rejects the DERIVED promise,
+    // which `void` would strand as the process-fatal unhandled rejection UF-01 named.
+  }, failStream).catch(failStream)
 }
 
 /**
