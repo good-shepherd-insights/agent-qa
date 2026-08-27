@@ -1,10 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile, stat, readdir, rm } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
-import { join, isAbsolute, basename, resolve, dirname, relative } from 'node:path'
+import { join, isAbsolute, basename, resolve, dirname } from 'node:path'
 
-import type { AttributePredicate, DashboardDatabase, InsightsBreakdownDimension, RunArtifactRow, RunRow, StepRow } from '../db/database.js'
+import type { AttributePredicate, DashboardDatabase, InsightsBreakdownDimension, RunArtifactRow, RunRow } from '../db/database.js'
 import type { ExecutionBackend } from '../execution/execution-backend.js'
 import type { JobQueue } from '../queue/job-queue.js'
 import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
@@ -552,23 +551,10 @@ function buildAuthStateSaveErrorMessage(
   }
 }
 
-function getPathInsideDir(candidatePath: string, rootDir: string): string | null {
-  const relativePath = relative(rootDir, candidatePath)
-  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
-    return null
-  }
-  return relativePath
-}
-
-function isPlainFileName(value: string): boolean {
-  const fileName = value.trim()
-  return fileName.length > 0
-    && fileName !== '.'
-    && fileName !== '..'
-    && !isAbsolute(fileName)
-    && fileName === basename(fileName)
-    && !/[\\/\0]/.test(fileName)
-}
+// 2026-08-27 (405-07, D-14): a containment predicate and a plain-filename predicate stood here.
+// Both existed for the deleted path-serving routes and the deleted run-deletion sweep, which were
+// their only callers. The containment rule for artifact bytes is the evidence store's own now,
+// reached through the `runs.artifact` op — one rule, in the place that owns the layout.
 
 function createHookRegistryManager(configManager?: ConfigManager, configPath?: string): HookRegistryManager | null {
   if (!configManager || !configPath) {
@@ -1235,7 +1221,10 @@ export function sanitizeQueuedExecutionTimeout(value: unknown): number | undefin
  *     a CLIENT, which is a different question from whether a reader may see the server's own.
  *   - `timeout`, `timeoutSource`, `timeoutBaseMs`, `timeoutBufferMs` — the resolved execution
  *     budget and where it came from, written by `toExecutionTimeoutMetadata`.
- *   - `suiteIndex` — read by the run-detail timeline (`live-timeline.ts`).
+ *   - `suiteIndex` — which member of a suite this run's queued row belongs to. (2026-08-27,
+ *     405-07: this line used to name the run-detail timeline module that read it, which 405-03
+ *     deleted; that plan's scope boundary kept it out of server code, so the dangling reference
+ *     was carried here as a deferred item and is scrubbed with the rest of the retired feed.)
  *   - `farmSessionUrl`, `runDevice` — read by the run navbar for a device-farm run.
  *
  * WHAT IS DELIBERATELY OFF IT: `confirmScope`, the leak this closes — and everything a caller
@@ -1318,7 +1307,6 @@ export const RESPONSE_SAFE_RUN_READ_METHODS = [
   'getRunArtifact',
   'getRunArtifactBundle',
   'getRuns',
-  'getRunsByParent',
   'getRunsBySuiteId',
   'getRunsByTestName',
 ] as const
@@ -1334,8 +1322,7 @@ export const RESPONSE_SAFE_RUN_READ_METHODS = [
  *
  * Each name and why it carries no run metadata to a reader:
  *   - `insertRun`, `insertPendingRun`, `insertRunArtifact`, `updateRun`, `updateRunMetadata`,
- *     `updateRunStatus`, `updateRunRetryInfo`, `deleteRun`, `deleteStepsForRun` — WRITES. They
- *     return an id, a delete tally, or nothing.
+ *     `updateRunStatus`, `deleteRun` — WRITES. They return an id, a delete tally, or nothing.
  *   - `stageRunArtifact`, `finalizeRunArtifact` — writes that ECHO the row they just wrote, to the
  *     writer that supplied it (`server.ts`, on the raw handle). This router never calls them;
  *     `routes.runs.test.ts` pins that absence, because the echo would otherwise be a door.
@@ -1362,7 +1349,6 @@ const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
   'readRunDetailRows',
   'upsertRunMember',
   'deleteRun',
-  'deleteStepsForRun',
   'finalizeRunArtifact',
   'getRunsBySuiteIdCount',
   'getRunsByTestNameCount',
@@ -1374,7 +1360,6 @@ const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
   'stageRunArtifact',
   'updateRun',
   'updateRunMetadata',
-  'updateRunRetryInfo',
   'updateRunStatus',
 ])
 
@@ -1474,6 +1459,15 @@ function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
     return { ...record, metadata: sanitizeRunMetadataForResponse(record.metadata) } as unknown as T
   }
   const scrubRows = <T>(rows: readonly T[]): T[] => rows.map(scrubRow)
+  // ONE artifact scrub, named once and reached by both artifact reads below, so the bare-row door
+  // and the bundle door cannot drift into two allowlists.
+  const scrubArtifact = (artifact: RunArtifactRow | null): RunArtifactRow | null => {
+    if (artifact === null || !isRecord(artifact.payload)) return artifact
+    return {
+      ...artifact,
+      payload: sanitizeArtifactPayloadMetadata(artifact.payload) as unknown as RunArtifactRow['payload'],
+    }
+  }
   const overrides: Record<string, PropertyDescriptor> = {
     getNextPendingRun: { value: () => scrubRow(db.getNextPendingRun()) },
     getPendingRuns: { value: () => scrubRows(db.getPendingRuns()) },
@@ -1481,7 +1475,6 @@ function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
     getRuns: {
       value: (...args: Parameters<DashboardDatabase['getRuns']>) => scrubRows(db.getRuns(...args)),
     },
-    getRunsByParent: { value: (parentRunId: string) => scrubRows(db.getRunsByParent(parentRunId)) },
     getRunsBySuiteId: {
       value: (...args: Parameters<DashboardDatabase['getRunsBySuiteId']>) =>
         scrubRows(db.getRunsBySuiteId(...args)),
@@ -1494,18 +1487,13 @@ function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
     // the payload through `getRunArtifactBundle` and serializes it with
     // `sanitizeArtifactForResponse`; a caller reaching for the bare row has no such step, so the
     // projection is its only choke point. Same allowlist, so the two cannot drift.
-    getRunArtifact: {
-      value: (runId: string) => {
-        const artifact = db.getRunArtifact(runId)
-        if (artifact === null || !isRecord(artifact.payload)) return artifact
-        return { ...artifact, payload: sanitizeArtifactPayloadMetadata(artifact.payload) }
-      },
-    },
+    getRunArtifact: { value: (runId: string) => scrubArtifact(db.getRunArtifact(runId)) },
+    // 405-07 (D-02): the bundle is ONE artifact now. It used to carry the child runs of a suite
+    // parent, whose `run` rows this override scrubbed; nothing has written a child row since
+    // 402-09, and the shape went with the column. `getRunArtifact` above remains the choke point
+    // for the payload itself, and this wrapper delegates to it.
     getRunArtifactBundle: {
-      value: (runId: string) => {
-        const bundle = db.getRunArtifactBundle(runId)
-        return { ...bundle, children: bundle.children.map((child) => ({ ...child, run: scrubRow(child.run) })) }
-      },
+      value: (runId: string) => ({ artifact: scrubArtifact(db.getRunArtifact(runId)) }),
     },
   }
   // OVERRIDE ONLY WHAT THE GIVEN DATABASE ACTUALLY HAS. Defining a descriptor for an absent method
@@ -1518,132 +1506,20 @@ function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
   return Object.create(db, present) as DashboardDatabase
 }
 
-function resolveArtifactPath(
-  candidatePath: string,
-  rootDir: string,
-  apiPrefix: '/api/screenshots/' | '/api/videos/',
-): string | null {
-  const normalizedCandidate = candidatePath.trim()
-  if (!normalizedCandidate) return null
-  const resolvedRootDir = resolve(rootDir)
-
-  if (isAbsolute(normalizedCandidate)) {
-    const resolvedAbsolute = resolve(normalizedCandidate)
-    return getPathInsideDir(resolvedAbsolute, resolvedRootDir) ? resolvedAbsolute : null
-  }
-
-  const relativePath = normalizedCandidate.startsWith(apiPrefix)
-    ? normalizedCandidate.slice(apiPrefix.length)
-    : normalizedCandidate
-  const resolvedPath = resolve(resolvedRootDir, relativePath)
-  return getPathInsideDir(resolvedPath, resolvedRootDir) ? resolvedPath : null
-}
-
-/**
- * Why a REQUESTED artifact path was not served (402-05, D-16 — T-402-17).
- *
- * A REASON AND NOT A BARE `null`, because the refusal cells have to be able to say WHICH door
- * refused. A payload like `../../etc/passwd` is turned away by path normalization, by a segment
- * check and by a 404 on a missing file all at once; a guard that answered `null` to all three
- * would leave the suite unable to tell a guard that fired from a file that happened not to exist,
- * which is how a traversal suite passes against a guard that was deleted.
- *
- * None of these reasons discloses whether a file exists. They name the shape of the request.
- */
-type ArtifactPathRefusal = 'malformed_escape' | 'outside_root' | 'not_a_plain_segment'
-
-type ArtifactPathVerdict =
-  | { readonly kind: 'resolved'; readonly path: string }
-  | { readonly kind: 'refused'; readonly reason: ArtifactPathRefusal }
-
-/**
- * THE ONE PREDICATE THE ARTIFACT SERVING ROUTES RESOLVE THROUGH (402-05, D-16).
- *
- * Before this existed the two serving routes each carried their own inline containment check and
- * neither was `resolveArtifactPath` — the predicate the CLEANUP path uses. The screenshots route's
- * was `resolved.startsWith(resolve(root))`, a STRING prefix compare that accepts
- * `<artifacts>/screenshots-evil/...` for a root of `<artifacts>/screenshots`. Serving and cleanup
- * now share one containment spelling, so a fix to either is a fix to both.
- *
- * ---- THE ORDER OF THE THREE DOORS, AND WHY IT IS THIS ORDER ----------------------------------
- *
- * DECODE EXACTLY ONCE, FIRST. The classic hole is resolve-then-decode: a check that runs before
- * the decode is a check on bytes the filesystem will never see. A malformed escape is a REFUSAL
- * here rather than a pass-through of the raw bytes — the alternative is serving a path the caller
- * did not ask for.
- *
- * CONTAINMENT SECOND, through `resolveArtifactPath`. This is the door that owns escapes: anything
- * whose decoded, resolved form lands outside the root is refused here, including the sibling
- * directory whose NAME is a string prefix of the root.
- *
- * THE ROUTE'S OWN SHAPE CONTRACT THIRD. These routes address exactly `:runId/:filename` — two
- * plain segments. A decoded segment carrying a separator, a NUL, a dot-dot or an absolute path is
- * not a filename this route can be asked for, whatever containment made of it. It is defence in
- * depth and it is ordered last deliberately: with containment first, each door is the ONLY refuser
- * of at least one shipped payload class, so deleting either one reddens a cell. A shape check
- * placed first would swallow every escape and leave containment unmeasurable.
- */
-function resolveServedArtifactPath(
-  rawRunId: string,
-  rawFilename: string,
-  rootDir: string,
-  apiPrefix: '/api/screenshots/' | '/api/videos/',
-): ArtifactPathVerdict {
-  let runId: string
-  let filename: string
-  try {
-    runId = decodeURIComponent(rawRunId)
-    filename = decodeURIComponent(rawFilename)
-  } catch {
-    return { kind: 'refused', reason: 'malformed_escape' }
-  }
-  const resolved = resolveArtifactPath(`${runId}/${filename}`, rootDir, apiPrefix)
-  if (resolved === null) return { kind: 'refused', reason: 'outside_root' }
-  if (!isPlainFileName(runId) || !isPlainFileName(filename)) {
-    return { kind: 'refused', reason: 'not_a_plain_segment' }
-  }
-  return { kind: 'resolved', path: resolved }
-}
-
-/** The refusal an artifact serving route answers with. Fixed shape, request bytes never echoed. */
-function refuseArtifactPath(res: ServerResponse, reason: ArtifactPathRefusal): void {
-  json(res, { error: 'Invalid artifact path', reason }, 400)
-}
-
-async function cleanupDeletedRunArtifacts(
-  deletedRunIds: string[],
-  screenshotPaths: string[],
-  videoPaths: string[],
-  dirs: {
-    screenshotsDir?: string
-    videosDir?: string
-  },
-): Promise<void> {
-  const cleanupTargets = new Set<string>()
-
-  for (const runId of deletedRunIds) {
-    if (dirs.screenshotsDir) cleanupTargets.add(join(dirs.screenshotsDir, runId))
-    if (dirs.videosDir) cleanupTargets.add(join(dirs.videosDir, runId))
-  }
-
-  if (dirs.screenshotsDir) {
-    for (const screenshotPath of screenshotPaths) {
-      const resolvedPath = resolveArtifactPath(screenshotPath, dirs.screenshotsDir, '/api/screenshots/')
-      if (resolvedPath) cleanupTargets.add(resolvedPath)
-    }
-  }
-
-  if (dirs.videosDir) {
-    for (const videoPath of videoPaths) {
-      const resolvedPath = resolveArtifactPath(videoPath, dirs.videosDir, '/api/videos/')
-      if (resolvedPath) cleanupTargets.add(resolvedPath)
-    }
-  }
-
-  await Promise.allSettled(
-    [...cleanupTargets].map((targetPath) => rm(targetPath, { recursive: true, force: true })),
-  )
-}
+// 2026-08-27 (405-07, D-14) — THE PATH-BASED ARTIFACT MACHINERY IS DELETED.
+//
+// Four functions and a cleanup routine stood here: a containment resolver, a three-door serving
+// verdict over an encoded `:runId/:filename` pair, its fixed-shape refusal, and the filesystem
+// sweep a run deletion performed. All five existed to serve or remove artifacts ADDRESSED BY PATH.
+//
+// Refs are the only artifact addressing now (D-14). A sub-action carries `artifactRefs`, the page
+// mints `\`/api/runs/<runId>/artifacts/<sha>\`` from one total route map, and the bytes are reached
+// through the `runs.artifact` op — whose containment rule is the evidence store's own, written
+// once, rather than a second path assembly in this file that is free to be the weaker one.
+//
+// AND THE DELETION SWEEP IS NOT REPLACED. `DELETE /api/runs/:id` removes rows and touches nothing
+// under the run directory: the event log and the content-addressed blobs there are the run's own
+// record, which this server projects and does not own (T-405-27).
 
 async function readWorkspaceHooks(
   configManager: ConfigManager | undefined,
@@ -1812,13 +1688,14 @@ function summarizeHookNetworkLogs(
 
 interface RouterDeps {
   db: DashboardDatabase
-  artifactsDir?: string
   workspacePaths?: ResolvedWorkspacePaths
   /**
-   * The injected run backend (401-07, D-09). Typed against the INTERFACE rather than a concrete
-   * class — which is what it always meant to be, and was not: the SSE route below depended on
-   * `getBufferedEvents`, a method the interface did not declare, so the seam had exactly one
-   * possible implementation.
+   * The injected run backend (401-07, D-09).
+   *
+   * TYPED AGAINST THE INTERFACE, AND NOW ACTUALLY SEPARABLE. It always meant to be, and was not:
+   * the retired live-event route reached past the interface for a per-run replay buffer only the
+   * concrete class declared, so the seam had exactly one possible implementation. That route and
+   * that buffer are gone (405-07, D-19); what this router asks of a backend is the interface.
    */
   executionBackend?: ExecutionBackend
   jobQueue?: JobQueue
@@ -1897,11 +1774,11 @@ interface RouterDeps {
 }
 
 export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: ServerResponse) => void
-export function createRouter(db: DashboardDatabase, artifactsDir?: string): (req: IncomingMessage, res: ServerResponse) => void
-export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifactsDir?: string): (req: IncomingMessage, res: ServerResponse) => void {
+export function createRouter(db: DashboardDatabase): (req: IncomingMessage, res: ServerResponse) => void
+export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: IncomingMessage, res: ServerResponse) => void {
   const deps: RouterDeps = 'db' in dbOrDeps && typeof (dbOrDeps as RouterDeps).db === 'object' && 'getRuns' in ((dbOrDeps as RouterDeps).db ?? {})
     ? dbOrDeps as RouterDeps
-    : { db: dbOrDeps as DashboardDatabase, artifactsDir }
+    : { db: dbOrDeps as DashboardDatabase }
   const { executionBackend, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
   // CR-02 (401-18): the response layer reads run rows through the projection, never raw. The host's
   // own reconciliation and the queue keep `deps.db` — see `withResponseSafeRunReads`.
@@ -1911,8 +1788,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
   // a second answer to what the door is.
   const chatRouter = createChatRouter(deps.agentHost)
   const pluginOAuthSessions = new Map<string, PluginOAuthSession>()
-  const ssDir = deps.artifactsDir ? join(deps.artifactsDir, 'screenshots') : undefined
-  const vidDir = deps.artifactsDir ? join(deps.artifactsDir, 'videos') : undefined
 
   return (req: IncomingMessage, res: ServerResponse) => {
     // 400-16 (gap 7): the SAME guarded parse `server.ts`'s listener uses, not a second copy. In the
@@ -1999,13 +1874,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             to,
             attributePredicates: attributePredicatesResult.predicates,
           })
-          const enrichedRuns = allRuns.map(run => {
-            if (run.suiteId && !run.parentRunId) {
-              const tests = db.getRunsByParent(run.id).map(test => enrichRunRow(test, targetPlatforms))
-              return enrichRunRow(run, targetPlatforms, tests)
-            }
-            return enrichRunRow(run, targetPlatforms)
-          })
+          // 405-07 (D-02): a suite row used to be enriched with its child runs as `tests`. Nothing
+          // has written a child run row since 402-09 — the members of a suite run are `run_members`
+          // on the one row — so this branch could only ever attach an empty array.
+          const enrichedRuns = allRuns.map(run => enrichRunRow(run, targetPlatforms))
           const platformFilteredRuns = enrichedRuns.filter(run =>
             matchesPlatformFilter(run, normalizeSupportedPlatform(platform)),
           )
@@ -2073,69 +1945,22 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       json(res, sanitizeAuthStateForResponse({
         run,
         artifact: sanitizeArtifactForResponse(bundle.artifact),
-        children: bundle.children.map((child) => ({
-          ...child,
-          artifact: sanitizeArtifactForResponse(child.artifact),
-        })),
         missingSections: getArtifactMissingSections(bundle.artifact),
       }))
       return
     }
 
-    // GET /api/runs/:id/accessibility
-    if (path.startsWith('/api/runs/') && path.endsWith('/accessibility') && req.method === 'GET') {
-      const segments = path.split('/')
-      const id = segments[3]
-      const run = db.getRun(id)
-      if (!run) {
-        notFound(res, 'Run not found')
-        return
-      }
-      const summary = db.getAccessibilitySummary(id)
-      json(res, summary)
-      return
-    }
-
-    // GET /api/runs/:id/steps/:n/reasoning — structured reasoning trace for a step
-    const reasoningMatch = path.match(/^\/api\/runs\/([^/]+)\/steps\/(\d+)\/reasoning$/)
-    if (reasoningMatch && req.method === 'GET') {
-      const [, runId, stepOrderStr] = reasoningMatch
-      const run = db.getRun(runId)
-      if (!run) { notFound(res, 'Run not found'); return }
-      const stepOrder = parseInt(stepOrderStr, 10)
-      const trace = db.getReasoningTrace(runId, stepOrder)
-      if (trace) {
-        json(res, sanitizeAuthStateForResponse({ trace }))
-        return
-      }
-      // Fallback: construct legacy trace from step data for backward compatibility
-      const steps = db.getSteps(runId)
-      const step = steps.find(s => s.stepOrder === stepOrder)
-      if (!step) { notFound(res, 'Step not found'); return }
-      json(res, sanitizeAuthStateForResponse({
-        trace: {
-          id: null,
-          stepId: step.id,
-          observeText: step.observation,
-          observeDuration: null,
-          planReasoning: step.reasoning,
-          planConfidence: step.confidence,
-          planAction: step.plannedAction,
-          planDuration: null,
-          executeAction: step.action,
-          executeDuration: null,
-          verifyReasoning: null,
-          verifySuccess: step.result === 'success' ? true : step.result === 'failure' ? false : null,
-          verifyDuration: null,
-          healAttempts: null,
-          totalDuration: step.duration,
-          screenStateBefore: null,
-          screenStateAfter: null,
-          createdAt: step.createdAt,
-        },
-      }))
-      return
-    }
+    // 2026-08-27 (405-07, D-03/D-19) — FOUR READ ARMS WERE DELETED FROM THIS BLOCK.
+    //
+    // The accessibility summary, the per-step reasoning trace, the log page and the step list each
+    // answered off a v1 projection table with no producer left. `runs.detail` supersedes them: it is ONE read,
+    // through the function layer, over the bus-shaped projection the subscriber actually writes —
+    // which is D-03's whole point, that the page's read is a read the CLI, MCP and chat can make
+    // too. Keeping these beside it would have kept a second, private read path the function layer
+    // cannot see, answering from tables nothing fills.
+    //
+    // They are not redirected and not stubbed. The router's generic 404 answers them, because a
+    // route that no longer exists is the honest thing for a client to discover.
 
     // GET /api/runs/:id/execution-logs
     if (path.startsWith('/api/runs/') && path.endsWith('/execution-logs') && req.method === 'GET') {
@@ -2149,52 +1974,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       const stepId = url.searchParams.get('stepId') ?? undefined
       const type = url.searchParams.get('type') ?? undefined
 
-      if (run.suiteId && !run.parentRunId) {
-        const childRuns = db.getRunsByParent(id)
-        const allRunIds = [id, ...childRuns.map((c: any) => c.id)]
-        let allLogs: any[] = []
-        for (const rid of allRunIds) {
-          allLogs.push(...db.getExecutionLogs({ runId: rid, stepId, type }))
-        }
-        json(res, sanitizeAuthStateForResponse({ logs: allLogs }))
-        return
-      }
-
+      // 405-07 (D-02): a suite run's logs used to be gathered across its child run rows. There are
+      // no child rows — one `runs` row per run since 402-09 — and a suite's hook logs are written
+      // against that one id, carrying `test_index`/`step_index` to say where in the run they ran.
       const logs = db.getExecutionLogs({ runId: id, stepId, type })
       json(res, sanitizeAuthStateForResponse({ logs }))
-      return
-    }
-
-    // GET /api/runs/:id/logs
-    if (path.startsWith('/api/runs/') && path.endsWith('/logs') && req.method === 'GET') {
-      const segments = path.split('/')
-      const id = segments[3]
-      const run = db.getRun(id)
-      if (!run) {
-        notFound(res, 'Run not found')
-        return
-      }
-      const stepId = url.searchParams.get('stepId') ?? undefined
-      const level = url.searchParams.get('level') ?? undefined
-      const source = url.searchParams.get('source') ?? undefined
-      const limit = url.searchParams.has('limit') ? parseInt(url.searchParams.get('limit')!, 10) : 500
-      const offset = url.searchParams.has('offset') ? parseInt(url.searchParams.get('offset')!, 10) : 0
-      const logs = db.getLogs({ runId: id, stepId, level, source, limit, offset })
-      json(res, sanitizeAuthStateForResponse({ logs, total: logs.length }))
-      return
-    }
-
-    // GET /api/runs/:id/steps
-    if (path.startsWith('/api/runs/') && path.endsWith('/steps') && req.method === 'GET') {
-      const segments = path.split('/')
-      const id = segments[3]
-      const run = db.getRun(id)
-      if (!run) {
-        notFound(res, 'Run not found')
-        return
-      }
-      const steps = db.getSteps(id)
-      json(res, sanitizeAuthStateForResponse({ steps }))
       return
     }
 
@@ -2247,17 +2031,12 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           return
         }
 
-        void cleanupDeletedRunArtifacts(
-          deletedRun.deletedRunIds,
-          deletedRun.screenshotPaths,
-          deletedRun.videoPaths,
-          {
-            screenshotsDir: ssDir,
-            videosDir: vidDir,
-          },
-        ).finally(() => {
-          json(res, { deleted: true, deletedRunIds: deletedRun.deletedRunIds })
-        })
+        // 405-07 (D-14 · T-405-27): ROWS ONLY. A filesystem sweep ran here first, removing the
+        // run's screenshot and video directories and every path the step rows named. Both the
+        // paths and the sweep are gone: what lives under the run directory is the event log and
+        // the content-addressed blobs — the run's own record, which this server projects and does
+        // not own. A dashboard delete removes the dashboard's projection of a run, nothing more.
+        json(res, { deleted: true, deletedRunIds: deletedRun.deletedRunIds })
       } catch {
         json(res, { error: 'Failed to delete run' }, 500)
       }
@@ -2473,14 +2252,13 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         notFound(res, 'Run not found')
         return
       }
-      const steps = db.getSteps(id)
-      const attempts = db.getRunsByParent(id)
-      if (run.suiteId && !run.parentRunId) {
-        const tests = db.getRunsByParent(id)
-        json(res, sanitizeAuthStateForResponse({ run, steps, attempts, tests }))
-      } else {
-        json(res, sanitizeAuthStateForResponse({ run, steps, attempts }))
-      }
+      // 405-07 (D-03/D-02): `{ run }` AND NOTHING ELSE. This body carried three more keys —
+      // `steps` off a v1 projection with no producer, and `attempts`/`tests` off a child-run walk
+      // over a column nothing writes. Every one of them was structurally empty on a run this build
+      // produced, so a page rendering them rendered an empty tree that looked like a bug rather
+      // than like an absence. The run's members, steps and sub-actions are `GET /api/runs/:id/detail`'s,
+      // through `runs.detail`.
+      json(res, sanitizeAuthStateForResponse({ run }))
       return
     }
 
@@ -2541,86 +2319,14 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // GET /api/screenshots/:runId/:filename
-    if (path.startsWith('/api/screenshots/') && req.method === 'GET') {
-      const segments = path.split('/')
-      if (segments.length !== 5 || !ssDir) {
-        notFound(res)
-        return
-      }
-      const verdict = resolveServedArtifactPath(segments[3], segments[4], ssDir, '/api/screenshots/')
-      if (verdict.kind === 'refused') {
-        refuseArtifactPath(res, verdict.reason)
-        return
-      }
-      const filePath = verdict.path
-
-      stat(filePath).then(s => {
-        if (!s.isFile()) {
-          notFound(res, 'Screenshot not found')
-          return
-        }
-        readFile(filePath).then(buffer => {
-          res.writeHead(200, {
-            'Content-Type': 'image/png',
-            'Content-Length': buffer.length,
-            'Access-Control-Allow-Origin': '*',
-          })
-          res.end(buffer)
-        }).catch(() => notFound(res, 'Screenshot not found'))
-      }).catch(() => notFound(res, 'Screenshot not found'))
-      return
-    }
-
-    // GET /api/videos/:runId/:filename
-    if (path.startsWith('/api/videos/') && req.method === 'GET') {
-      const segments = path.split('/')
-      if (segments.length !== 5 || !vidDir) {
-        notFound(res)
-        return
-      }
-      const verdict = resolveServedArtifactPath(segments[3], segments[4], vidDir, '/api/videos/')
-      if (verdict.kind === 'refused') {
-        refuseArtifactPath(res, verdict.reason)
-        return
-      }
-      const videoPath = verdict.path
-
-      const tryServe = (filePath: string) => stat(filePath).then(s => {
-        if (!s.isFile()) {
-          notFound(res, 'Video not found')
-          return
-        }
-
-        const contentType = filePath.endsWith('.mp4') ? 'video/mp4' : 'video/webm'
-        const range = req.headers.range
-        if (range) {
-          const parts = range.replace(/bytes=/, '').split('-')
-          const start = parseInt(parts[0], 10)
-          const end = parts[1] ? parseInt(parts[1], 10) : s.size - 1
-          const chunkSize = end - start + 1
-
-          res.writeHead(206, {
-            'Content-Range': `bytes ${start}-${end}/${s.size}`,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': chunkSize,
-            'Content-Type': contentType,
-            'Access-Control-Allow-Origin': '*',
-          })
-          createReadStream(filePath, { start, end }).pipe(res)
-        } else {
-          res.writeHead(200, {
-            'Content-Type': contentType,
-            'Content-Length': s.size,
-            'Accept-Ranges': 'bytes',
-            'Access-Control-Allow-Origin': '*',
-          })
-          createReadStream(filePath).pipe(res)
-        }
-      })
-      tryServe(videoPath).catch(() => notFound(res, 'Video not found'))
-      return
-    }
+    // 2026-08-27 (405-07, D-14) — THE TWO PATH-SERVING ARMS ARE DELETED.
+    //
+    // They served bytes addressed as `<runId>/<filename>` under a screenshots or a videos root.
+    // Refs are the only artifact addressing now: `GET /api/runs/:runId/artifacts/:sha` above
+    // resolves a content address through the `runs.artifact` op, and the store's own containment
+    // rule is the one rule those bytes are reached through. There is no video surface at all,
+    // because no producer mints a recording ref — an honest absence rather than a surviving path
+    // (T-405-28).
 
     // GET /api/run-readiness — the LOCAL half of D-15's one-predicate-two-doors.
     //
@@ -2925,58 +2631,14 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // GET /api/execution/events — SSE stream for live execution events
-    if (path === '/api/execution/events' && req.method === 'GET') {
-      if (!executionBackend) {
-        json(res, { error: 'Execution not available' }, 503)
-        return
-      }
-
-      const runId = url.searchParams.get('runId') ?? undefined
-      const lastEventId = req.headers['last-event-id'] as string | undefined
-
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-      })
-      res.write(':ok\n\n')
-
-      // Replay buffered events for reconnection
-      if (lastEventId && runId) {
-        const lastId = parseInt(lastEventId, 10)
-        const buffered = executionBackend.getBufferedEvents(runId)
-        for (const evt of buffered) {
-          if (evt.id > lastId) {
-            res.write(`id: ${evt.id}\nevent: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`)
-          }
-        }
-      } else if (runId) {
-        // New connection — replay all buffered events
-        const buffered = executionBackend.getBufferedEvents(runId)
-        for (const evt of buffered) {
-          res.write(`id: ${evt.id}\nevent: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`)
-        }
-      }
-
-      const onEvent = (evtRunId: string, event: { id: number; type: string; [key: string]: unknown }) => {
-        if (runId && evtRunId !== runId) return
-        res.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-      }
-
-      executionBackend.on('execution-event', onEvent)
-
-      const heartbeat = setInterval(() => {
-        res.write(':\n\n')
-      }, 15_000)
-
-      req.on('close', () => {
-        clearInterval(heartbeat)
-        executionBackend.removeListener('execution-event', onEvent)
-      })
-      return
-    }
+    // 2026-08-27 (405-07, D-19) — THE LEGACY LIVE-EVENT SSE ARM IS DELETED.
+    //
+    // It streamed a re-minted frame shape out of the backend's per-run replay buffer, with a
+    // `Last-Event-ID` replay and a heartbeat. 405-03 removed the browser half; this removes the
+    // route, the buffer and the emission behind it. A live reader attaches to
+    // `GET /api/run-stream/:runId`, which frames the run's OWN frozen envelopes; a finished run is
+    // read durably through `runs.detail`. One live wire, one durable read — and no second spelling
+    // of the wire to drift from the first.
 
     // POST /api/suites/validate — validate suite YAML content
     if (path === '/api/suites/validate' && req.method === 'POST') {
@@ -4931,20 +4593,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // Variable suggestions: captured variable names from prior runs
-    const capturedMatch = path.match(/^\/api\/variables\/captured\/([^/]+)$/)
-    if (capturedMatch && req.method === 'GET') {
-      ;(async () => {
-        try {
-          const testId = decodeURIComponent(capturedMatch[1])
-          const names = db.getCapturedVariableNames(testId)
-          json(res, { names })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read captured variables' }, 500)
-        }
-      })()
-      return
-    }
+    // 2026-08-27 (405-07, D-02): the captured-variable-name suggestion arm was deleted with its
+    // reader. It scanned a `captured_variables` column on the v1 projection, which no producer has
+    // filled since the subscriber was rebuilt on the bus payloads — so the endpoint answered an
+    // empty list on every real workspace while looking like a working suggestion source. The hook
+    // and workspace suggestion arms above are unaffected: their producers are live.
 
     // Unknown API route
     if (path.startsWith('/api/')) {

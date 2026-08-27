@@ -2,18 +2,14 @@ import type { RunAttributes } from '@vostride/agent-qa-core'
 import type { GateRemedy } from '@vostride/agent-qa-schema'
 import type { EventEmitter } from 'node:events'
 
-/**
- * One live-execution event as the SSE route serves it (`GET /api/execution/events`).
- *
- * DECLARED HERE SINCE 401-07 rather than beside a producer. It is the consumer-facing shape — an
- * `id` the browser sends back as `Last-Event-ID`, a `type` it selects on, and whatever the producer
- * pushed — so it belongs with the interface both producers implement, not with either one of them.
- */
-export interface LiveExecutionEvent {
-  id: number
-  type: string
-  [key: string]: unknown
-}
+// 2026-08-27 (405-07, D-19) — THE LEGACY LIVE-EVENT SHAPE IS GONE FROM THIS INTERFACE.
+//
+// A consumer-facing event type and a per-run replay-buffer getter stood at the top of this file
+// since 401-07, both there to serve one retired SSE route. 405-03 removed the browser half of that
+// feed and this plan removes the server half, so the type had no consumer and the getter had no
+// caller. What replaces them for a live reader is the run-stream SSE over the frozen envelope
+// shape; what replaces them for a finished run is the durable `runs.detail` read. One live wire,
+// one durable read — which is the whole of D-19.
 
 export interface ExecuteOptions {
   runId: string
@@ -53,7 +49,8 @@ export interface ExecuteOptions {
  * off the process exit — but the status is now the bus's own ground truth and the `details` carry
  * the failure's REASON rather than a scraped tail of stderr.
  *
- * `'run-settled'` and `'execution-event'` are the whole of this emitter's contract.
+ * `'run-settled'` is now the WHOLE of this emitter's contract. A second event carried the retired
+ * live feed's frames and went with it (405-07, D-19).
  */
 export interface RunSettledDetails {
   /** A human-readable reason when the run did not simply finish. */
@@ -115,13 +112,23 @@ export interface ExecutionBackend extends EventEmitter {
   execute(opts: ExecuteOptions): void
   kill(runId: string): boolean
   killAll(): void
-  getActiveExecutions(): { runId: string; status: string; startedAt: string; duration: number }[]
   /**
-   * The per-run replay buffer the SSE route serves on connect and on `Last-Event-ID` reconnect.
+   * The runs this backend currently has in flight, as `GET /api/execution/active` serves them.
    *
-   * ON THE INTERFACE SINCE 401-07. `routes.ts` has always depended on it; it just depended on it
-   * through the CONCRETE class, which is how a seam that reads as an adapter boundary turns out to
-   * have one implementation it cannot be swapped away from.
+   * `testName` IS ON THE INTERFACE (405-07, D-19). It used to be produced by scanning a per-run
+   * event buffer for a `testStarted` frame — a read that only the concrete class could perform,
+   * through a member the interface did not declare. It is now recorded on the run handle by the
+   * backend's own bus subscription, so the field is part of the contract every implementation
+   * answers rather than a property of one implementation's internal storage.
+   *
+   * ABSENT MEANS NO MEMBER HAS STARTED YET, which is a real state on a run between its start and
+   * its first `testStarted`; it is never filled with the run id or a placeholder.
    */
-  getBufferedEvents(runId: string): LiveExecutionEvent[]
+  getActiveExecutions(): {
+    runId: string
+    status: string
+    startedAt: string
+    duration: number
+    testName?: string
+  }[]
 }

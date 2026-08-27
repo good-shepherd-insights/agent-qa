@@ -13,7 +13,6 @@ export {
 export type {
   ExecuteOptions,
   ExecutionBackend,
-  LiveExecutionEvent,
   RunSettledDetails,
   RunSettledStatus,
 } from './execution/execution-backend.js'

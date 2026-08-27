@@ -126,6 +126,16 @@ interface StartServerOptions {
    */
   host?: string
   uiDir?: string
+  /**
+   * Where this workspace writes run artifacts (`services.dashboard.artifactsDir`).
+   *
+   * ACCEPTED AND NOT READ BY THIS SERVER SINCE 405-07 (D-14). It used to be resolved into a
+   * screenshots and a videos root that two path-serving routes and the run-deletion sweep read.
+   * Refs are the only artifact addressing now, and the bytes are reached through the
+   * `runs.artifact` op over the evidence store's own layout. The option stays declared because it
+   * is a user-facing config key the RECORDING path still writes under; the dashboard simply no
+   * longer serves or deletes anything by path.
+   */
   artifactsDir?: string
   workspacePaths?: ResolvedWorkspacePaths
   configPath?: string
@@ -233,7 +243,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
   port: number
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness, liveView, postProcessingRelay } = opts
+  const { db, port = 3470, uiDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness, liveView, postProcessingRelay } = opts
   // 403 D-14: the explicit port wins; the pre-403 derivation is the fallback for legacy callers.
   const runServiceAttach = opts.runServiceAttach ?? runService?.attach
   const host = opts.host?.trim() || DEFAULT_DASHBOARD_HOST
@@ -571,7 +581,6 @@ export async function startServer(opts: StartServerOptions): Promise<{
 
   const apiRouter = createRouter({
     db,
-    artifactsDir,
     workspacePaths,
     // 401-07: conditionally spread on the same house rule `agentHost` follows — an absent
     // dependency is an ABSENT field, never a present `undefined`, so the router's own 503 arm is

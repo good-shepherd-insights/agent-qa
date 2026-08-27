@@ -8,12 +8,14 @@
 // started run's `RunSession` bus. There is no child, so there is nothing to scrape, nothing to
 // SIGKILL and no process group to walk.
 //
-// THE CONSUMER SURFACE IS UNTOUCHED, AND THAT IS THE POINT (D-09's build-order pin). The per-run
-// buffer, the monotonic `id`, the `run-start` / `run-complete` bookends and the `execution-event`
-// emission are byte-for-byte what the scrape produced — pinned by a golden captured from the OLD
-// wire before it was deleted (`__tests__/__fixtures__/envelope-parity-golden.json`). The queue, the
-// db writes, the live SSE and the CURRENT step projection consume the same events they consumed
-// yesterday; 405 rebuilds the projection against the bus directly.
+// 2026-08-27 (405-07, D-19) — THE LEGACY CONSUMER SURFACE IS GONE. This backend used to keep a
+// per-run replay buffer with a monotonic `id`, synthesise `run-start` / `run-complete` bookends
+// around the real envelopes, and re-emit every frame on a second event for one SSE route. That
+// shape existed to be byte-for-byte what the retired stdout scrape produced, so the retirement
+// could be measured rather than argued — and it did its job: the parity golden proved the swap.
+// 405-03 then removed the browser that read the feed and this plan removes the route, so all of it
+// is deleted. What survives is `'run-settled'`, which the HOST reconciles the db row from, and the
+// bus subscription itself, which now records exactly one derived fact on the handle: `testName`.
 //
 // ENVELOPES ARE CARRIED, NEVER RE-MINTED (T-401-20). The bus already publishes the frozen §2.2
 // shape `{seq, ts, runId, type, payload}`. This module adds the buffer's `id` and copies; it parses
@@ -51,11 +53,10 @@ import type { GateRemedy, RunEventEnvelope, RunSession } from '@vostride/agent-q
 import type {
   ExecuteOptions,
   ExecutionBackend,
-  LiveExecutionEvent,
   RunSettledDetails,
 } from './execution-backend.js'
 
-/** How long a finished run's replay buffer stays available to a reconnecting SSE client. */
+/** How long a settled run's handle stays readable before it is dropped. */
 const DEFAULT_HANDLE_RETENTION_MS = 5 * 60 * 1000
 
 /**
@@ -154,7 +155,7 @@ export interface InProcessExecutionBackendOptions {
   readonly invokeRun: InProcessRunStarter
   /** Applied when an `ExecuteOptions` carries no `timeout` of its own. */
   readonly defaultTimeout?: number
-  /** How long a finished run's replay buffer survives. */
+  /** How long a settled run's handle survives before it is dropped. */
   readonly retentionMs?: number
 }
 
@@ -164,6 +165,18 @@ interface RunHandle {
   startedAt: Date
   output: string[]
   session?: RunSession
+  /**
+   * The name of the member this run most recently started (405-07, D-19 · RESEARCH D7).
+   *
+   * RECORDED OFF THE SESSION'S OWN `testStarted`, on the subscription this backend already holds.
+   * `/api/execution/active` used to derive it by scanning a per-run event buffer for the same
+   * envelope; the buffer is gone, and the scan was the only thing keeping it alive. One string on
+   * the handle answers the same question without retaining every frame of every run.
+   *
+   * UNSET UNTIL THE FIRST MEMBER STARTS. A run between its start and its first `testStarted` has
+   * no member name, and that absence is served as an absent field.
+   */
+  testName?: string
   completionReason?: string
   /** Set the moment a cancel is requested, so the settle path cannot overwrite it with a verdict. */
   cancelRequested: boolean
@@ -181,8 +194,6 @@ interface RunHandle {
 export class InProcessExecutionBackend extends EventEmitter implements ExecutionBackend {
   private readonly options: InProcessExecutionBackendOptions
   private readonly handles = new Map<string, RunHandle>()
-  private readonly eventBuffers = new Map<string, LiveExecutionEvent[]>()
-  private readonly eventCounters = new Map<string, number>()
   private readonly retentionMs: number
 
   constructor(options: InProcessExecutionBackendOptions) {
@@ -200,10 +211,6 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
       cancelRequested: false,
     }
     this.handles.set(opts.runId, handle)
-    this.eventBuffers.set(opts.runId, [])
-    this.eventCounters.set(opts.runId, 0)
-
-    this.pushEvent(opts.runId, { type: 'run-start', runId: opts.runId, status: 'running' })
 
     // D-12: a per-run timeout aborts the SESSION. There is no process to signal and no grace period
     // to wait out — `cancel()` is the run's own orderly stop, and the run's terminal verdict then
@@ -232,7 +239,13 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
           session.subscribe(REPLAY_FROM_START, (envelope) => {
             const mapped = runStatusFromEnvelope(envelope)
             if (mapped !== undefined && !handle.cancelRequested) handle.status = mapped
-            this.pushEvent(handle.runId, envelope as unknown as Record<string, unknown>)
+            // 405-07 (D-19 · RESEARCH D7): the ONE fact this subscription still derives. The
+            // envelope type is `testStarted` and its `payload.name` is the member's name — read
+            // here, on the session's own frames, rather than by scanning a buffer of them later.
+            if (envelope.type === 'testStarted') {
+              const startedName = (envelope.payload as { name?: unknown } | undefined)?.name
+              if (typeof startedName === 'string') handle.testName = startedName
+            }
           })
           // A cancel or a timeout that landed BEFORE the session existed still has to be honoured;
           // otherwise a run cancelled during startup runs to completion.
@@ -265,10 +278,6 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     }
   }
 
-  getBufferedEvents(runId: string): LiveExecutionEvent[] {
-    return this.eventBuffers.get(runId) ?? []
-  }
-
   getActiveExecutions(): {
     runId: string
     status: string
@@ -285,31 +294,19 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
     }[] = []
     for (const handle of this.handles.values()) {
       if (handle.status !== 'running') continue
-      // 401-07 (Rule 1): the retiring class looked this up as `test-start`, a v1 reporter name the
-      // frozen §2.2 vocabulary does not emit — so `/api/execution/active` has been serving
-      // `testName: undefined` for every run since the bus wire landed. The envelope type is
-      // `testStarted`, and its `payload.name` is the test's name.
-      const events = this.eventBuffers.get(handle.runId) ?? []
-      const started = events.find((event) => event.type === 'testStarted')
-      const payload = started?.payload as Record<string, unknown> | undefined
-      const testName = typeof payload?.name === 'string' ? payload.name : undefined
+      // 405-07 (D-19): read straight off the handle the subscription writes. This used to scan a
+      // per-run buffer for the `testStarted` frame — and before 401-07 it scanned for `test-start`,
+      // a v1 reporter name the frozen §2.2 vocabulary never emits, so the field was `undefined` on
+      // every run for as long as the derivation lived away from the producer.
       active.push({
         runId: handle.runId,
         status: handle.status,
         startedAt: handle.startedAt.toISOString(),
         duration: Date.now() - handle.startedAt.getTime(),
-        ...(testName === undefined ? {} : { testName }),
+        ...(handle.testName === undefined ? {} : { testName: handle.testName }),
       })
     }
     return active
-  }
-
-  private pushEvent(runId: string, payload: Record<string, unknown>): void {
-    const counter = (this.eventCounters.get(runId) ?? 0) + 1
-    this.eventCounters.set(runId, counter)
-    const event = { ...payload, id: counter } as LiveExecutionEvent
-    this.eventBuffers.get(runId)?.push(event)
-    this.emit('execution-event', runId, event)
   }
 
   private settle(handle: RunHandle, error?: unknown): void {
@@ -340,20 +337,11 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
       handle.completionReason = handle.completionReason ?? 'Run ended before a verdict was reached'
     }
 
-    const duration = Date.now() - handle.startedAt.getTime()
-    this.pushEvent(handle.runId, {
-      type: 'run-complete',
-      runId: handle.runId,
-      status: handle.status,
-      duration,
-      ...(handle.completionReason ? { reason: handle.completionReason } : {}),
-      // 401-09 (D-15): on the buffered envelope as well as in the settle details, because these are
-      // two different readers — the SSE stream a browser is watching live, and the host's own
-      // reconciliation. A refusal that reached only one of them would be visible to whichever
-      // surface happened to be connected.
-      ...(remedies === undefined ? {} : { remedies }),
-    })
-
+    // 405-07 (D-19): a synthetic `run-complete` frame was pushed here, carrying the same status,
+    // duration, reason and remedies the settle details below carry. It existed because the retired
+    // feed and the host's reconciliation were two different readers of the same fact. There is one
+    // reader now, so the fact is stated once.
+    //
     // `'run-settled'` rather than a constructor callback, so the HOST that owns the db, the queue
     // and the Appium leases can subscribe to a backend somebody else composed — which is the whole
     // shape of the injection (`startServer`'s `agentHost` precedent).
@@ -368,8 +356,6 @@ export class InProcessExecutionBackend extends EventEmitter implements Execution
 
     const cleanup = setTimeout(() => {
       this.handles.delete(handle.runId)
-      this.eventBuffers.delete(handle.runId)
-      this.eventCounters.delete(handle.runId)
     }, this.retentionMs)
     cleanup.unref()
   }
