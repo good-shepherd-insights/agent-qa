@@ -411,38 +411,40 @@ export const DEBRIS_REGISTER: readonly DebrisSite[] = [
     token: 'suite-parent',
     line: "export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'",
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: `${KEEP_RETAINED_UNION} 405-11 owns the UI-side narrowing.`,
+    after: 0,
+    disposition: 'delete',
+    why: `${KEEP_RETAINED_UNION} 405-07 recorded this as a KEEP because the drawer switches on the `
+      + 'value to paint a badge and narrowing a union a render site reads belongs with that render '
+      + 'site. 405-11 rebuilt that render site and narrowed it there, closing the deferral.',
   },
   {
     file: 'packages/dashboard-ui/src/lib/api.ts',
     token: 'suite-child',
     line: "export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'",
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: 'Same UI-side union (the suite-child arm).',
+    after: 0,
+    disposition: 'delete',
+    why: 'Same UI-side union (the suite-child arm), narrowed by 405-11.',
   },
   {
     file: 'packages/schema/src/run/run-artifact.ts',
     token: 'suite-parent',
     line: "export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'",
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: `${KEEP_RETAINED_UNION} This is the canonical union; D-11 deleted the PRODUCERS of the `
-      + 'value and 405-07 deleted the STORE\'s admission of it. Narrowing the union itself belongs '
-      + 'with the render site that switches on it (405-11).',
+    after: 0,
+    disposition: 'delete',
+    why: `${KEEP_RETAINED_UNION} The canonical union; D-11 deleted the PRODUCERS of the value and `
+      + "405-07 deleted the STORE's admission of it, leaving both members unreachable breadth on "
+      + 'every reader. 405-11 narrowed it with the render site, so no reader can name the value.',
   },
   {
     file: 'packages/schema/src/run/run-artifact.ts',
     token: 'suite-child',
     line: "export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'",
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: 'Same canonical union (the suite-child arm).',
+    after: 0,
+    disposition: 'delete',
+    why: 'Same canonical union (the suite-child arm), narrowed by 405-11.',
   },
 ]
 
@@ -1361,6 +1363,14 @@ const PARENT_CHILD_PRODUCERS: readonly string[] = []
 
 /** Delete-dispositioned sites no behavioural surface can reach, each with its reason recorded. */
 const UNOBSERVABLE_DELETES: readonly string[] = [
+  // 2026-08-28 (405-11): the four `RunArtifactKind` union arms. A TYPE has no behavioural surface
+  // to observe — no request can make a union member appear — so their deletion is measured
+  // lexically (predicate A) rather than by a probe. 405-07 deleted the STORE's admission of both
+  // values, which is the behavioural half, and its own surface still records that.
+  "packages/dashboard-ui/src/lib/api.ts | suite-child | export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'",
+  "packages/dashboard-ui/src/lib/api.ts | suite-parent | export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'",
+  "packages/schema/src/run/run-artifact.ts | suite-child | export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'",
+  "packages/schema/src/run/run-artifact.ts | suite-parent | export type RunArtifactKind = 'test' | 'suite-parent' | 'suite-child' | 'unknown'",
   "packages/cli/src/commands/run.ts | getRunsByParent | const children = activeSuiteDb.getRunsByParent(run.id)",
   "packages/cli/src/commands/run.ts | suite-child | kind: 'test' | 'suite-parent' | 'suite-child'",
   "packages/cli/src/commands/run.ts | suite-child | }) as { artifact: Record<string, unknown> & { kind: 'test' | 'suite-parent' | 'suite-child' } }",
