@@ -391,6 +391,12 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
         ...(payload.status === undefined ? {} : { status: payload.status }),
         ...(payload.durationMs === undefined ? {} : { durationMs: payload.durationMs }),
         ...(payload.error === undefined ? {} : { error: payload.error }),
+        // 2026-08-27 (405 plan 04, D-05/D-06): the producer landed this plan, so the three token
+        // columns 405-01 declared stop being always-NULL. Spread-when-defined, like every other
+        // optional above it — the DB layer writes NULL for all three when the key is absent, and
+        // a NULL row is what makes `runs.detail` able to say "M of K steps unmeasured" instead of
+        // reporting a zero nobody measured.
+        ...(payload.tokenUsage === undefined ? {} : { tokenUsage: payload.tokenUsage }),
       })
     } catch {
       // Step rows are progress detail — a projection row that will not write must not

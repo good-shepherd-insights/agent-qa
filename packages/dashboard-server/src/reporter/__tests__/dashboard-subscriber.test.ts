@@ -415,16 +415,22 @@ describe('createDashboardRunIngest', () => {
     // The read mapper could hide a zero-fill, so this asserts the COLUMN. `absent ≠ zero` has to
     // be true at rest, not just on the way out: a `0` here would be a measurement nobody made.
     const raw = db as unknown as { db: { prepare(sql: string): { all(...p: unknown[]): unknown[] } } }
-    const rows = raw.db
-      .prepare('SELECT step_index, prompt_tokens, completion_tokens, total_tokens FROM run_steps WHERE run_id = ? ORDER BY step_index')
-      .all(runId) as Array<{ step_index: number; prompt_tokens: number | null; completion_tokens: number | null; total_tokens: number | null }>
-    expect(rows).toHaveLength(2)
-    expect(rows[0].prompt_tokens).toBe(10)
-    expect(rows[0].completion_tokens).toBe(5)
-    expect(rows[0].total_tokens).toBe(15)
-    expect(rows[1].prompt_tokens).toBeNull()
-    expect(rows[1].completion_tokens).toBeNull()
-    expect(rows[1].total_tokens).toBeNull()
+
+    // The parts persisted separately — not one blob, and not a re-derived total.
+    const parts = raw.db
+      .prepare('SELECT prompt_tokens, completion_tokens, total_tokens FROM run_steps WHERE run_id = ? AND step_index = 0')
+      .all(runId) as Array<{ prompt_tokens: number | null; completion_tokens: number | null; total_tokens: number | null }>
+    expect(parts[0]).toEqual({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 })
+
+    // And the unmeasured step is NULL at rest, in every one of the three columns.
+    const totals = raw.db
+      .prepare('SELECT total_tokens FROM run_steps WHERE run_id = ? ORDER BY step_index')
+      .all(runId) as Array<{ total_tokens: number | null }>
+    expect(totals.map(r => r.total_tokens)).toEqual([15, null])
+    const unmeasured = raw.db
+      .prepare('SELECT prompt_tokens, completion_tokens, total_tokens FROM run_steps WHERE run_id = ? AND step_index = 1')
+      .all(runId) as Array<{ prompt_tokens: number | null; completion_tokens: number | null; total_tokens: number | null }>
+    expect(unmeasured[0]).toEqual({ prompt_tokens: null, completion_tokens: null, total_tokens: null })
   })
 
   it('a thin member — testFinished with no testStarted — still gets a row (405 D-18)', () => {
