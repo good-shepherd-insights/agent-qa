@@ -33,6 +33,7 @@ const OTHER_RUN_ID = "r_chips_two"
 
 const {
   fetchRunMock,
+  fetchRunDetailMock,
   fetchRunArtifactMock,
   fetchExecutionLogsMock,
   fetchAccessibilitySummaryMock,
@@ -41,6 +42,7 @@ const {
   navbarProps,
 } = vi.hoisted(() => ({
   fetchRunMock: vi.fn(),
+  fetchRunDetailMock: vi.fn(),
   fetchRunArtifactMock: vi.fn(),
   fetchExecutionLogsMock: vi.fn(),
   fetchAccessibilitySummaryMock: vi.fn(),
@@ -54,6 +56,10 @@ vi.mock("@/lib/api", async () => {
   return {
     ...actual,
     fetchRun: fetchRunMock,
+    // 2026-08-28 (405-08): the page's second read, stubbed to RESOLVE. Left unstubbed it would hit
+    // the real one against a `fetch` these cells do not provide, and the page would sit in its
+    // could-not-load posture while the chip client under test was measured on a broken screen.
+    fetchRunDetail: fetchRunDetailMock,
     fetchRunArtifact: fetchRunArtifactMock,
     fetchExecutionLogs: fetchExecutionLogsMock,
     fetchAccessibilitySummary: fetchAccessibilitySummaryMock,
@@ -216,7 +222,14 @@ beforeEach(() => {
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
   fetchRunArtifactMock.mockResolvedValue({ run: { id: RUN_ID }, artifact: null, children: [], missingSections: ["artifact"] })
   fetchAccessibilitySummaryMock.mockResolvedValue({ enabled: null, total: 0, violations: [], byImpact: {}, steps: [] })
-  fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id), steps: [], tests: [], attempts: [] }))
+  fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id) }))
+  fetchRunDetailMock.mockImplementation(async (id: string) => ({
+    runId: id,
+    members: [],
+    steps: [],
+    subActions: [],
+    tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
+  }))
 })
 
 afterEach(() => {

@@ -5,12 +5,19 @@ import { createRoot, type Root } from "react-dom/client"
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import type { RunDetailProjection } from "@vostride/agent-qa-schema"
+import { asRef } from "@vostride/agent-qa-schema"
+
+import { displayStepsForGroups } from "@/lib/display-step"
+import type { RunDetailGroup } from "@/lib/run-detail-view"
+
 import RunDetailPage from "@/pages/run-detail"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const {
   fetchRunMock,
+  fetchRunDetailMock,
   fetchRunArtifactMock,
   fetchActiveExecutionsMock,
   fetchExecutionLogsMock,
@@ -21,6 +28,7 @@ const {
   let latest: Record<string, (event: KeyboardEvent) => void> | null = null
   return {
     fetchRunMock: vi.fn(),
+    fetchRunDetailMock: vi.fn(),
     fetchRunArtifactMock: vi.fn(),
     fetchActiveExecutionsMock: vi.fn(),
     fetchExecutionLogsMock: vi.fn(),
@@ -37,6 +45,11 @@ const {
 
 vi.mock("@/lib/api", () => ({
   fetchRun: fetchRunMock,
+  // 405-08: the page reads its steps and sub-actions from `runs.detail`, not from the run row.
+  // A whole-module mock that omitted this export would leave it `undefined` at the call site, and
+  // the page would render its could-not-load posture — these cells would then pass while pinning
+  // nothing about the drawer.
+  fetchRunDetail: fetchRunDetailMock,
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
@@ -146,11 +159,14 @@ vi.mock("@/components/run-detail/artifact-drawer", () => ({
 }))
 
 vi.mock("@/components/run-detail/step-tree", () => ({
+  // 405-08: the tree takes the member-grouped projection now, not a flat step list. The double
+  // flattens it through the SAME helper the page uses, so the ids it renders are the ids the page
+  // selects by — a second flattening here would let this file pass on keys nobody can click.
   StepTree: ({
-    steps,
+    groups,
     selection,
   }: {
-    steps: Array<{ id: string; name: string; rawRunId: string | null; rawStepOrder: number }>
+    groups: readonly RunDetailGroup[]
     selection: { type: string; stepId?: string; subIndex?: number } | null
   }) => {
     const selectionLabel = selection
@@ -158,7 +174,7 @@ vi.mock("@/components/run-detail/step-tree", () => ({
       : ""
     return (
       <div data-testid="step-tree" data-selection={selectionLabel}>
-        {steps.map((step) => (
+        {displayStepsForGroups(groups).map((step) => (
           <div key={step.id} data-step-id={step.id}>
             {step.name}
           </div>
@@ -210,52 +226,35 @@ vi.mock("@/components/ui/button", () => ({
   ),
 }))
 
-function makeSubAction(index: number) {
+function makeProjection(runId: string): RunDetailProjection {
   return {
-    index,
-    observation: "Observed checkout screen",
-    reasoning: "Need to inspect artifacts",
-    plannedAction: { type: "click", ref: "checkout" },
-    result: "success" as const,
-    screenStateBefore: "",
-    confidence: 0.9,
-    cached: false,
-  }
-}
-
-function makeStep() {
-  return {
-    id: "step-1",
-    runId: "run-1",
-    name: "Inspect artifact behavior",
-    status: "passed",
-    duration: 1000,
-    action: null,
-    observation: null,
-    reasoning: null,
-    plannedAction: null,
-    result: null,
-    error: null,
-    screenshotPath: null,
-    screenshotBeforePath: null,
-    retryCount: 0,
-    capturedVariables: null,
-    stepOrder: 0,
-    annotationData: null,
-    healingScreenshotPaths: null,
-    accessibilityViolations: null,
-    consoleLogs: null,
-    networkLogs: null,
-    confidence: null,
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    subActionsData: [makeSubAction(0)],
-    variableSnapshot: null,
-    originalStepName: null,
-    screenContextBefore: null,
-    screenContextAfter: null,
-    createdAt: "2026-04-18T00:00:00.000Z",
+    runId,
+    members: [{ testIndex: 0, name: "Artifact test", attempts: 1 }],
+    steps: [
+      {
+        testIndex: 0,
+        stepIndex: 0,
+        stepText: "Inspect artifact behavior",
+        cacheStatus: "miss",
+        verifierVerdict: { pass: true, reasoning: "the artifact panel is open" },
+        selfHealOccurred: false,
+        briefDigest: "d00",
+        status: "passed",
+        durationMs: 1000,
+      },
+    ],
+    subActions: [
+      {
+        testIndex: 0,
+        stepIndex: 0,
+        subActionIndex: 0,
+        plan: "Need to inspect artifacts",
+        plannedAction: { type: "click", ref: asRef("checkout") },
+        result: { success: true },
+        screenStateHash: "abcdef0123456789".repeat(4),
+      },
+    ],
+    tokens: { measuredSteps: 0, unmeasuredSteps: 1 },
   }
 }
 
@@ -324,7 +323,7 @@ function LocationProbe() {
 function NavigationProbe() {
   const navigate = useNavigate()
   return (
-    <button type="button" data-testid="navigate-run-2" onClick={() => navigate("/runs/run-2?step=0&sub=0")}>
+    <button type="button" data-testid="navigate-run-2" onClick={() => navigate("/runs/run-2?step=0:0&sub=0")}>
       run 2
     </button>
   )
@@ -379,6 +378,7 @@ function searchParams(view: HTMLElement) {
 beforeEach(() => {
   document.title = ""
   fetchRunMock.mockReset()
+  fetchRunDetailMock.mockReset()
   fetchRunArtifactMock.mockReset()
   fetchActiveExecutionsMock.mockReset()
   fetchExecutionLogsMock.mockReset()
@@ -397,11 +397,8 @@ beforeEach(() => {
     unscannedSteps: 0,
     totalSteps: 0,
   })
-  fetchRunMock.mockImplementation(async (id: string) => ({
-    run: makeRun(id),
-    steps: [makeStep()],
-    attempts: [],
-  }))
+  fetchRunMock.mockImplementation(async (id: string) => ({ run: makeRun(id) }))
+  fetchRunDetailMock.mockImplementation(async (id: string) => makeProjection(id))
   fetchRunArtifactMock.mockImplementation(async (id: string) => makeArtifactResponse(id))
 })
 
@@ -417,7 +414,7 @@ afterEach(() => {
 
 describe("RunDetailPage artifact drawer", () => {
   it("opens Attributes with I and renders run attributes", async () => {
-    const view = await renderAt("/runs/run-1?step=0&sub=0")
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
 
     await act(async () => {
       latestShortcuts().i(new KeyboardEvent("keydown", { key: "i" }))
@@ -438,7 +435,7 @@ describe("RunDetailPage artifact drawer", () => {
   })
 
   it("opens Config with C without changing URL params or selected sub-action", async () => {
-    const view = await renderAt("/runs/run-1?step=0&sub=0&tab=network")
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0&tab=network")
     const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
 
     await act(async () => {
@@ -450,15 +447,15 @@ describe("RunDetailPage artifact drawer", () => {
     expect(drawer).not.toBeNull()
     expect(drawer.getAttribute("data-tab")).toBe("config")
     expect(fetchRunArtifactMock).toHaveBeenCalledWith("run-1")
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-    expect(searchParams(view).get("step")).toBe("0")
+    expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
+    expect(searchParams(view).get("step")).toBe("0:0")
     expect(searchParams(view).get("sub")).toBe("0")
     expect(searchParams(view).get("run")).toBeNull()
     expect(searchParams(view).get("tab")).toBe("network")
   })
 
   it("opens Memory with M and keeps navigation state stable", async () => {
-    const view = await renderAt("/runs/run-1?step=0&sub=0")
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
     const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
 
     await act(async () => {
@@ -470,15 +467,15 @@ describe("RunDetailPage artifact drawer", () => {
     expect(drawer).not.toBeNull()
     expect(drawer.getAttribute("data-tab")).toBe("memory")
     expect(fetchRunArtifactMock).toHaveBeenCalledWith("run-1")
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-    expect(searchParams(view).get("step")).toBe("0")
+    expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
+    expect(searchParams(view).get("step")).toBe("0:0")
     expect(searchParams(view).get("sub")).toBe("0")
     expect(searchParams(view).get("run")).toBeNull()
     expect(searchParams(view).get("tab")).toBeNull()
   })
 
   it("closes the drawer on first Escape before clearing selection", async () => {
-    const view = await renderAt("/runs/run-1?step=0&sub=0")
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
     const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
 
     await act(async () => {
@@ -494,13 +491,13 @@ describe("RunDetailPage artifact drawer", () => {
     await flushRender()
 
     expect(view.querySelector('[data-testid="artifact-drawer"]')).toBeNull()
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-    expect(searchParams(view).get("step")).toBe("0")
+    expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
+    expect(searchParams(view).get("step")).toBe("0:0")
     expect(searchParams(view).get("sub")).toBe("0")
   })
 
   it("opens from the navbar action on Attributes", async () => {
-    const view = await renderAt("/runs/run-1?step=0&sub=0")
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
 
     await act(async () => {
       ;(view.querySelector('[data-testid="navbar-artifacts"]') as HTMLButtonElement).click()
@@ -517,7 +514,7 @@ describe("RunDetailPage artifact drawer", () => {
     fetchRunArtifactMock
       .mockRejectedValueOnce(new Error("server down"))
       .mockResolvedValueOnce(makeArtifactResponse("run-1"))
-    const view = await renderAt("/runs/run-1?step=0&sub=0")
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
 
     await act(async () => {
       latestShortcuts().c(new KeyboardEvent("keydown", { key: "c" }))
@@ -550,7 +547,7 @@ describe("RunDetailPage artifact drawer", () => {
       ...makeArtifactResponse("run-1"),
       artifact: null,
     })
-    const view = await renderAt("/runs/run-1?step=0&sub=0")
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
 
     await act(async () => {
       latestShortcuts().c(new KeyboardEvent("keydown", { key: "c" }))
@@ -566,7 +563,7 @@ describe("RunDetailPage artifact drawer", () => {
   })
 
   it("switches drawer tabs without refetching or mutating navigation state", async () => {
-    const view = await renderAt("/runs/run-1?step=0&sub=0&tab=network")
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0&tab=network")
     const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
 
     await act(async () => {
@@ -582,14 +579,14 @@ describe("RunDetailPage artifact drawer", () => {
     const drawer = view.querySelector('[data-testid="artifact-drawer"]') as HTMLElement
     expect(drawer.getAttribute("data-tab")).toBe("memory")
     expect(fetchRunArtifactMock).toHaveBeenCalledTimes(1)
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-    expect(searchParams(view).get("step")).toBe("0")
+    expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
+    expect(searchParams(view).get("step")).toBe("0:0")
     expect(searchParams(view).get("sub")).toBe("0")
     expect(searchParams(view).get("tab")).toBe("network")
   })
 
   it("resets artifact state and fetches again when a different run is rendered", async () => {
-    const view = await renderAt("/runs/run-1?step=0&sub=0")
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
 
     await act(async () => {
       latestShortcuts().c(new KeyboardEvent("keydown", { key: "c" }))
@@ -609,7 +606,7 @@ describe("RunDetailPage artifact drawer", () => {
     expect(drawer.getAttribute("data-artifact")).toBe("present")
     expect(fetchRunArtifactMock).toHaveBeenCalledTimes(2)
     expect(fetchRunArtifactMock).toHaveBeenNthCalledWith(2, "run-2")
-    expect(searchParams(view).get("step")).toBe("0")
+    expect(searchParams(view).get("step")).toBe("0:0")
     expect(searchParams(view).get("sub")).toBe("0")
   })
 })

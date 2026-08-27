@@ -34,6 +34,7 @@ const RUN_ID = "r_bounce"
 
 const {
   fetchRunMock,
+  fetchRunDetailMock,
   fetchRunArtifactMock,
   fetchActiveExecutionsMock,
   fetchExecutionLogsMock,
@@ -41,6 +42,7 @@ const {
   navigateMock,
 } = vi.hoisted(() => ({
   fetchRunMock: vi.fn(),
+  fetchRunDetailMock: vi.fn(),
   fetchRunArtifactMock: vi.fn(),
   fetchActiveExecutionsMock: vi.fn(),
   fetchExecutionLogsMock: vi.fn(),
@@ -53,6 +55,11 @@ const {
 // import fail, which is a different fact wearing the same green.
 vi.mock("@/lib/api", () => ({
   fetchRun: fetchRunMock,
+  // 2026-08-28 (405-08): the page's second read. It is STUBBED TO RESOLVE, not left off the mock:
+  // an omitted export is `undefined` at the call site, the page catches that and renders its
+  // could-not-load posture, and every cell below would then pass while the page was in an error
+  // state nobody asked for. The bounce must be measured on a page that loaded.
+  fetchRunDetail: fetchRunDetailMock,
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
@@ -223,6 +230,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn()
   observedPath = ""
   fetchRunMock.mockReset()
+  fetchRunDetailMock.mockReset()
   fetchRunArtifactMock.mockReset()
   fetchActiveExecutionsMock.mockReset()
   fetchExecutionLogsMock.mockReset()
@@ -231,6 +239,13 @@ beforeEach(() => {
 
   fetchActiveExecutionsMock.mockResolvedValue({ executions: [] })
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
+  fetchRunDetailMock.mockResolvedValue({
+    runId: RUN_ID,
+    members: [],
+    steps: [],
+    subActions: [],
+    tokens: { measuredSteps: 0, unmeasuredSteps: 0 },
+  })
   fetchRunArtifactMock.mockResolvedValue({ run: { id: RUN_ID }, artifact: null, children: [], missingSections: ["artifact"] })
   fetchAccessibilitySummaryMock.mockResolvedValue({
     enabled: null,
