@@ -4,7 +4,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GripVertical, X, Play, Loader2, Square, CheckCircle2, XCircle, Ban, ChevronRight } from 'lucide-react'
 import { StepTreeItem } from '@/components/run-detail/step-tree-item'
-import { SubActionTreeItem } from '@/components/run-detail/sub-action-tree-item'
+import type { SubActionData } from '@/lib/api'
 import { cn, formatDuration } from '@/lib/utils'
 import type { DisplayStep } from '@/lib/display-step'
 import type { EditorStep } from '@/hooks/use-live-editor'
@@ -23,6 +23,52 @@ interface EditableStepWrapperProps {
   onDelete: (index: number) => void
   onCancel: () => void
   runningStepId: string | null
+}
+
+// THE LIVE EDITOR'S OWN SUB-ACTION ROW (405-08).
+//
+// It used to borrow run detail's `SubActionTreeItem`. That item now takes the DURABLE
+// `RunDetailSubAction` — the projection's row, carrying the planner's own `plan` sentence, a
+// screen-state hash and a recorded result — and the editor holds `SubActionData`, the live shape,
+// which has none of those and does have an `in-progress` state the durable row cannot be in.
+//
+// SHARING ONE COMPONENT ACROSS BOTH WOULD MEAN FABRICATING THE DIFFERENCE: a `screenStateHash` the
+// editor never computed, or a `plan` reverse-engineered out of the action blob — which is exactly
+// the `JSON.parse`-and-guess the durable rewrite deleted. Two shapes, two rows, no invented facts.
+function EditorSubActionRow({ sub, index, stepId, isSelected, onSelect }: {
+  sub: SubActionData
+  index: number
+  stepId: string
+  isSelected: boolean
+  onSelect: () => void
+}) {
+  const glyph = sub.result === 'in-progress' ? (
+    <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-500" />
+  ) : (
+    <span
+      className={cn(
+        'h-1.5 w-1.5 shrink-0 rounded-full',
+        sub.result === 'success' ? 'bg-emerald-500' : 'bg-red-500',
+      )}
+    />
+  )
+
+  return (
+    <li role="treeitem" aria-level={2} aria-selected={isSelected} data-sub-action-id={`${stepId}-${String(index)}`}>
+      <button
+        className={cn(
+          'flex w-full items-center gap-2 rounded-[2px] px-3 py-1.5 text-left text-sm',
+          'transition-colors hover:bg-muted/50',
+          isSelected && 'bg-primary/10 ring-1 ring-primary/30',
+        )}
+        onClick={onSelect}
+      >
+        <span className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center">{glyph}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">#{index + 1}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{sub.reasoning}</span>
+      </button>
+    </li>
+  )
 }
 
 function CompletedStatusIcon({ status }: { status: string }) {
@@ -233,7 +279,7 @@ export function EditableStepWrapper({
             {subActionsExpanded && (
               <ul role="group" className="border-t border-border/40">
                 {step.subActionsData!.map((sub, subIdx) => (
-                  <SubActionTreeItem
+                  <EditorSubActionRow
                     key={subIdx}
                     sub={sub}
                     index={subIdx}

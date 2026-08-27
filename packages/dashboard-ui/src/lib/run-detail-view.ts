@@ -182,6 +182,32 @@ export function memberNote(
 }
 
 /**
+ * What a member header calls the member (D-16).
+ *
+ * A member row carries a `name` only when the producer knew one; a thin member whose stream began
+ * with a terminal event may carry nothing but its handle (D-18). The fallback names the member by
+ * its ORDINAL POSITION rather than by an invented identity — "Test 2" is a statement about where
+ * this member sits in the run, which is true, where a synthesised title would be a claim about
+ * what the test was, which nobody recorded.
+ */
+export function memberDisplayName(member: Pick<RunDetailMember, 'testIndex' | 'name'>): string {
+  return member.name ?? `Test ${String(member.testIndex + 1)}`
+}
+
+/**
+ * The member's handle, as a person reads it (402 D-10, RESEARCH D4).
+ *
+ * `testIndex` IS the handle — `handleId(runId, testIndex)` is how the product spells run-scoped
+ * member identity — so the header shows the index itself rather than a second numbering. It is
+ * NOT `+ 1`: a reader who copies this number into a `?handle=` observation must get the handle the
+ * product answers to, and a display ordinal that quietly differed from the addressable one would
+ * be the kind of off-by-one nobody can debug from the screen.
+ */
+export function memberHandleLabel(testIndex: number): string {
+  return `#${String(testIndex)}`
+}
+
+/**
  * What the member header says about a re-run (D-17).
  *
  * `attempts` is an ORDINAL that starts at 1; the phrase counts RE-RUNS, so it is one less. A member

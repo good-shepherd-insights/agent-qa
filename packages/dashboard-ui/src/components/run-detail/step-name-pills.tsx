@@ -228,7 +228,7 @@ export function parseSegments(
 
 export function StepNameWithPills({ step }: { step: DisplayStep }) {
   const segments = step.originalStepName
-    ? parseSegments(step.originalStepName, step.name, step.variableSnapshot)
+    ? parseSegments(step.originalStepName, step.name, step.variableSnapshot ?? null)
     : parseRedactedSecretSegments(step.name)
 
   return (

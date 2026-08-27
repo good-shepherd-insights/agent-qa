@@ -1,18 +1,40 @@
+// THE RUN-DETAIL STEP TREE, GROUPED BY MEMBER (405-08 · D-16 / D-18).
+//
+// WHAT THIS REPLACED. Until 405-08 the tree took a flat `DisplayStep[]` plus a second prop holding
+// the suite's child RUN ROWS — fetched by walking the parent's child list and re-reading each child
+// run — and grouped by `step.runId`. 405-07 deleted that walk and the v1 step table it read, and
+// 402 D-10 replaced child runs with per-member HANDLES on one run. So the tree now takes the
+// durable projection's own grouping: one group per member, in handle order, and no second read.
+//
+// ONE FLATTENING, TWO SURFACES. The page needs the same numbered `DisplayStep[]` this tree draws —
+// for selection, hotkeys, deep links and the panels — so both call `displayStepsForGroups`. Two
+// independent flattenings that agreed today would be two that can disagree tomorrow, and the
+// disagreement would show as a deep link selecting a row the tree is not highlighting.
+//
+// INLINE LOGS ARE ATTACHED ONLY WHEN THERE IS ONE MEMBER, and that is a refusal to guess rather
+// than a limitation. `ExecutionLogEntry` carries a `stepId` that is a step ORDINAL and a `runId`
+// that is now the one run — it carries no member handle. On a multi-member run an ordinal names one
+// step per member, so attaching by ordinal would show the same log under every member's step of
+// that index. A log shown in no place is an absence; a log shown in three wrong places is a lie.
+
 import { useMemo } from "react"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CheckCircle2, Circle, XCircle, Webhook } from "lucide-react"
 import { cn, formatDuration } from "@/lib/utils"
+import { MemberGroup } from "./member-group"
 import { StepTreeItem } from "./step-tree-item"
-import type { RunRow, ExecutionLogEntry } from "@/lib/api"
-import type { DisplayStep } from "@/lib/display-step"
+import type { ExecutionLogEntry } from "@/lib/api"
+import { displayStepsForGroups, type DisplayStep } from "@/lib/display-step"
+import type { RunDetailGroup } from "@/lib/run-detail-view"
 import { hasStepId, type Selection } from "@/lib/selection"
 
 interface StepTreeProps {
-  steps: DisplayStep[]
+  /** The member-grouped projection, already narrowed by the page's member filter (D-16). */
+  groups: readonly RunDetailGroup[]
+  /** Whether the RUN has more than one member — not whether the filter left more than one. */
+  showMemberChrome?: boolean
   selection: Selection | null
   onSelect: (sel: Selection | null) => void
-  suiteTests?: RunRow[]
-  suiteSelectedView?: string
   setupHooks?: ExecutionLogEntry[]
   teardownHooks?: ExecutionLogEntry[]
   inlineLogs?: ExecutionLogEntry[]
@@ -83,27 +105,51 @@ function HookSection({ title, hooks, selection, onSelect }: {
   )
 }
 
-export function StepTree({ steps, selection, onSelect, suiteTests, suiteSelectedView, setupHooks = [], teardownHooks = [], inlineLogs = [] }: StepTreeProps) {
-  const expandedStepId = hasStepId(selection) ? selection.stepId : null
+/** The groups paired with the numbered display steps the page and the tree both read. */
+interface DisplayGroup {
+  group: RunDetailGroup
+  steps: DisplayStep[]
+}
+
+export function StepTree({
+  groups,
+  showMemberChrome = false,
+  selection,
+  onSelect,
+  setupHooks = [],
+  teardownHooks = [],
+  inlineLogs = [],
+}: StepTreeProps) {
+  const displayGroups = useMemo<DisplayGroup[]>(() => {
+    const flat = displayStepsForGroups(groups)
+    let cursor = 0
+    return groups.map((group) => {
+      const steps = flat.slice(cursor, cursor + group.steps.length)
+      cursor += group.steps.length
+      return { group, steps }
+    })
+  }, [groups])
 
   const logsByStep = useMemo(() => {
     const map = new Map<string, ExecutionLogEntry[]>()
+    if (groups.length !== 1) return map
+    const [only] = displayGroups
+    if (!only) return map
     for (const log of inlineLogs) {
       if (!log.stepId) continue
       const stepOrder = Number(log.stepId)
-      const stepAtIndex = steps.find((step) => {
-        if (step.rawRunId && log.runId && step.rawRunId !== log.runId) return false
-        return step.rawStepOrder === stepOrder
-      })
+      const stepAtIndex = only.steps.find((step) => step.rawStepOrder === stepOrder)
       const key = stepAtIndex?.id ?? log.stepId
       const existing = map.get(key) ?? []
       existing.push(log)
       map.set(key, existing)
     }
     return map
-  }, [inlineLogs, steps])
+  }, [inlineLogs, displayGroups, groups.length])
 
-  if (steps.length === 0) {
+  const hasAnyStep = displayGroups.some((entry) => entry.steps.length > 0)
+
+  if (groups.length === 0 && !hasAnyStep) {
     if (setupHooks.length > 0 || teardownHooks.length > 0) {
       return (
         <ScrollArea className="flex-1">
@@ -122,80 +168,6 @@ export function StepTree({ steps, selection, onSelect, suiteTests, suiteSelected
     )
   }
 
-  if (suiteTests && suiteTests.length > 0 && suiteSelectedView === 'all') {
-    const grouped = new Map<string, DisplayStep[]>()
-    for (const step of steps) {
-      const key = step.runId ?? step.id
-      const existing = grouped.get(key) ?? []
-      existing.push(step)
-      grouped.set(key, existing)
-    }
-
-    const childRunIds = new Set(suiteTests.map(t => t.id))
-    const suiteSetupHooks = setupHooks.filter(h => !childRunIds.has(h.runId))
-    const suiteTeardownHooks = teardownHooks.filter(h => !childRunIds.has(h.runId))
-
-    return (
-      <ScrollArea className="flex-1">
-        <div>
-          <HookSection title="Setup" hooks={suiteSetupHooks} selection={selection} onSelect={onSelect} />
-
-          <SectionHeading title="Steps" />
-          <ul role="tree" aria-label="Test steps" className="py-1">
-            {suiteTests.map((test) => {
-              const runId = test.id
-              const groupSteps = grouped.get(runId) ?? []
-              const testName = test.name ?? 'Unknown Test'
-              const testSetupHooks = setupHooks.filter(h => h.runId === runId)
-              const testTeardownHooks = teardownHooks.filter(h => h.runId === runId)
-              return (
-                <li key={runId} role="none">
-                  <div className="mt-3 mb-1 flex items-center justify-between bg-muted/30 px-3 py-1.5 text-xs font-medium text-muted-foreground first:mt-0">
-                    <span className="min-w-0 truncate">{testName}</span>
-                    <span className="ml-2 shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                      {test.status}
-                    </span>
-                  </div>
-                  {testSetupHooks.length > 0 && (
-                    <HookSection title="Setup" hooks={testSetupHooks} selection={selection} onSelect={onSelect} />
-                  )}
-                  {groupSteps.length > 0 ? (
-                    <ul role="group">
-                      {groupSteps.map((step) => (
-                        <StepTreeItem
-                          key={step.id}
-                          step={step}
-                          isSelected={hasStepId(selection) && selection.stepId === step.id}
-                          isExpanded={true}
-                          selection={selection}
-                          onSelect={onSelect}
-                        inlineLogs={logsByStep.get(step.id) ?? []}
-                      />
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="mx-2 mb-1.5 rounded-[2px] border border-border/60 bg-muted/10 px-3 py-2 text-xs text-muted-foreground">
-                      {test.status === 'skipped'
-                        ? 'Skipped'
-                        : test.status === 'cancelled'
-                          ? 'Cancelled'
-                          : 'Pending'}
-                    </div>
-                  )}
-                  {testTeardownHooks.length > 0 && (
-                    <HookSection title="Teardown" hooks={testTeardownHooks} selection={selection} onSelect={onSelect} />
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-
-          <HookSection title="Teardown" hooks={suiteTeardownHooks} selection={selection} onSelect={onSelect} />
-        </div>
-      </ScrollArea>
-    )
-  }
-
   return (
     <ScrollArea className="flex-1">
       <div>
@@ -203,16 +175,24 @@ export function StepTree({ steps, selection, onSelect, suiteTests, suiteSelected
 
         <SectionHeading title="Steps" />
         <ul role="tree" aria-label="Test steps" className="py-1">
-          {steps.map((step) => (
-            <StepTreeItem
-              key={step.id}
-              step={step}
-              isSelected={hasStepId(selection) && selection.stepId === step.id}
-              isExpanded={true}
-              selection={selection}
-              onSelect={onSelect}
-              inlineLogs={logsByStep.get(step.id) ?? []}
-            />
+          {displayGroups.map(({ group, steps }) => (
+            <MemberGroup
+              key={group.member.testIndex}
+              group={group}
+              showChrome={showMemberChrome}
+            >
+              {steps.map((step) => (
+                <StepTreeItem
+                  key={step.id}
+                  step={step}
+                  isSelected={hasStepId(selection) && selection.stepId === step.id}
+                  isExpanded={true}
+                  selection={selection}
+                  onSelect={onSelect}
+                  inlineLogs={logsByStep.get(step.id) ?? []}
+                />
+              ))}
+            </MemberGroup>
           ))}
         </ul>
 

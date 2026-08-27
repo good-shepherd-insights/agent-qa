@@ -172,9 +172,13 @@ export function TabOverview({
     )
   }
 
-  const beforePath = step.screenshotBeforePath
-  const afterPath = step.screenshotPath
-  const annotation = hasMultiSub ? null : step.annotationData
+  // 405-08: these three are v1-only fields with no producer on the durable page, so they are
+  // OPTIONAL on `DisplayStep` now and absent in practice. 405-11 repoints the screenshot pair onto
+  // content-addressed refs and deletes them; until then `undefined` is normalized to the `null`
+  // this component already renders as "no screenshot", never to a broken image element.
+  const beforePath = step.screenshotBeforePath ?? null
+  const afterPath = step.screenshotPath ?? null
+  const annotation = hasMultiSub ? null : (step.annotationData ?? null)
   const refLabel = hasMultiSub ? undefined : (step.action && typeof step.action === 'object' && step.action !== null && 'ref' in step.action ? (step.action as Record<string, unknown>).ref as string : undefined)
   const actionInfo = formatAction(step.action)
 
@@ -185,8 +189,8 @@ export function TabOverview({
         afterPath={afterPath}
         annotation={annotation}
         refLabel={refLabel}
-        screenContextBefore={step.screenContextBefore}
-        screenContextAfter={step.screenContextAfter}
+        screenContextBefore={step.screenContextBefore ?? null}
+        screenContextAfter={step.screenContextAfter ?? null}
         screenshotSide={screenshotSide}
         onScreenshotSideChange={onScreenshotSideChange}
         emptyState={screenshotEmptyState}

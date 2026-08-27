@@ -1,4 +1,13 @@
+import type {
+  RunDetailStep,
+  RunDetailSubAction,
+  RunStepTokenUsage,
+  VerifierVerdict,
+} from '@vostride/agent-qa-schema'
+
 import type { StepRow, SubActionData, StepAnnotation } from './api'
+import type { RunDetailGroup } from './run-detail-view'
+import { runDetailStepKey } from './selection'
 import type { EditorStep } from '@/hooks/use-live-editor'
 import { normalizeStepStatus } from '@/lib/status'
 
@@ -17,32 +26,62 @@ export interface LivePhase {
   timestamp: string
 }
 
+/**
+ * What a step looks like to the run-detail tree and panels.
+ *
+ * TWO PRODUCERS, ONE SHAPE, MID-MIGRATION (405-08). {@link fromRunDetailStep} builds this from the
+ * durable projection — the rebuilt page's only source — while {@link fromStepRow} and
+ * {@link fromEditorStep} still build it from the v1 row and the live editor. The v1-only fields are
+ * therefore OPTIONAL rather than null-filled: a durable step genuinely has no
+ * `screenshotPath`, no `variableSnapshot` and no `accessibilityViolations`, and filling them with
+ * `null` would spell "the v1 read happened and found nothing" where the truth is "that read no
+ * longer exists". 405-11 deletes them together with their consumers.
+ */
 export interface DisplayStep {
+  /** `<testIndex>:<stepIndex>` for a durable step (see `runDetailStepKey`); the row id for a v1 one. */
   id: string
   name: string
   status: string
   duration: number
-  subActionsData: SubActionData[] | null
-  originalStepName: string | null
-  variableSnapshot: Record<string, { value: string; source: string }> | null
-  screenshotPath: string | null
-  screenshotBeforePath: string | null
-  annotationData: StepAnnotation | null
-  observation: string | null
-  reasoning: string | null
-  plannedAction: unknown | null
-  action: unknown | null
-  error: string | null
-  confidence: number | null
-  runId: string | null
+  error?: string | null
   stepOrder: number
-  consoleLogs: Array<{
+  rawStepOrder: number
+  displayStepOrder: number
+  displayStepTotal: number | null
+
+  // ---- the durable projection's own fields (405-08) ----
+  /** The member handle this step belongs to — present only on a durable step. */
+  testIndex?: number
+  /** The step's ordinal within its member — present only on a durable step. */
+  stepIndex?: number
+  /** The sub-actions recorded under this step, in the producer's order. */
+  subActions?: readonly RunDetailSubAction[]
+  cacheStatus?: RunDetailStep['cacheStatus']
+  verifierVerdict?: VerifierVerdict
+  selfHealOccurred?: boolean
+  /** ABSENT when the step reported no usage — never a zero (D-05/D-06). */
+  tokenUsage?: RunStepTokenUsage
+
+  // ---- v1 / live-editor fields, deleted with their consumers by 405-11 ----
+  subActionsData?: SubActionData[] | null
+  originalStepName?: string | null
+  variableSnapshot?: Record<string, { value: string; source: string }> | null
+  screenshotPath?: string | null
+  screenshotBeforePath?: string | null
+  annotationData?: StepAnnotation | null
+  observation?: string | null
+  reasoning?: string | null
+  plannedAction?: unknown | null
+  action?: unknown | null
+  confidence?: number | null
+  runId?: string | null
+  consoleLogs?: Array<{
     level: string
     text: string
     location?: { url: string; lineNumber: number; columnNumber: number }
     timestamp: number
   }> | null
-  networkLogs: Array<{
+  networkLogs?: Array<{
     url: string
     method: string
     status: number
@@ -55,12 +94,66 @@ export interface DisplayStep {
     timing?: Record<string, number>
   }> | null
   accessibilityViolations?: StepRow['accessibilityViolations']
-  screenContextBefore: string | null
-  screenContextAfter: string | null
-  rawRunId: string | null
-  rawStepOrder: number
-  displayStepOrder: number
-  displayStepTotal: number | null
+  screenContextBefore?: string | null
+  screenContextAfter?: string | null
+  rawRunId?: string | null
+}
+
+/** What a step with no recorded text is called, so the tree never renders a blank row. */
+export const UNNAMED_STEP_LABEL = 'Untitled step'
+
+/**
+ * Build a display step out of the DURABLE projection (405-08 · D-16).
+ *
+ * THE STATUS FALLS BACK TO THE VERDICT, NOT TO A GUESS. `status` is optional on the wire because a
+ * producer may finalize a step without one; the verifier's own `pass` is the next most direct fact
+ * about the same step, and it is a fact the projection actually carries. Nothing here invents a
+ * `running` or a `skipped` the read did not report.
+ *
+ * A SELF-HEALED STEP KEEPS ITS OWN WORD. `selfHealOccurred` is carried through rather than folded
+ * into `status`, so the tree can show the heal without the panels losing whether the step passed.
+ *
+ * `tokenUsage` IS FORWARDED AS-IS, absent and all (D-06). There is no `?? 0` on this path: a step
+ * that reported nothing must not read as a step that spent nothing.
+ */
+export function fromRunDetailStep(
+  step: RunDetailStep,
+  subActions: readonly RunDetailSubAction[],
+): DisplayStep {
+  return {
+    id: runDetailStepKey(step.testIndex, step.stepIndex),
+    name: step.stepText ?? UNNAMED_STEP_LABEL,
+    status: step.status ?? (step.verifierVerdict.pass ? 'passed' : 'failed'),
+    duration: step.durationMs ?? 0,
+    error: step.error,
+    stepOrder: step.stepIndex,
+    rawStepOrder: step.stepIndex,
+    displayStepOrder: step.stepIndex + 1,
+    displayStepTotal: null,
+    testIndex: step.testIndex,
+    stepIndex: step.stepIndex,
+    subActions,
+    cacheStatus: step.cacheStatus,
+    verifierVerdict: step.verifierVerdict,
+    selfHealOccurred: step.selfHealOccurred,
+    tokenUsage: step.tokenUsage,
+  }
+}
+
+/**
+ * Flatten the member-grouped tree into the page's ONE numbered step list (405-08).
+ *
+ * The tree and the page must agree on both the ids and the "step N of M" counters, so there is one
+ * producer of both and both surfaces call it. Two independent flattenings that happened to agree
+ * today are two flattenings that can disagree tomorrow, and the disagreement would show up as a
+ * deep link selecting a row the tree is not highlighting.
+ */
+export function displayStepsForGroups(groups: readonly RunDetailGroup[]): DisplayStep[] {
+  return withDisplayStepProgress(
+    groups.flatMap((group) =>
+      group.steps.map((stepGroup) => fromRunDetailStep(stepGroup.step, stepGroup.subActions)),
+    ),
+  )
 }
 
 export function fromStepRow(step: StepRow): DisplayStep {

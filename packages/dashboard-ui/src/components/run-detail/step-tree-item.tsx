@@ -33,31 +33,28 @@ interface StepTreeItemProps {
 }
 
 export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect, inlineLogs = [], embedded = false }: StepTreeItemProps) {
-  const subActions = step.subActionsData ?? []
+  // THE DURABLE SUB-ACTIONS, NOT THE v1 BLOB (405-08). `subActionsData` has no producer on this
+  // page any more; it stays on the type until 405-11 deletes it with the overview's readers.
+  const subActions = step.subActions ?? []
   const hasSubActions = subActions.length > 0
-  const cachedCount = subActions.filter(s => s.cached).length
-  const cacheStatus = subActions.length === 0 ? 'none'
-    : cachedCount === subActions.length ? 'all'
-    : cachedCount > 0 ? 'some'
-    : 'none'
+
+  // THE STEP OWNS THE CACHE ANSWER, AND IT IS THREE-VALUED (D-01). `hit` means this step was served
+  // from cache — every action under it with it. `miss` and `bypass` mean it was not, and there is
+  // no partial state to render: the v1 shape counted cached sub-actions, and the projection that
+  // replaced it records nothing per sub-action, so a "2 of 5" here would be a measurement nobody
+  // took.
+  const servedFromCache = step.cacheStatus === 'hit'
 
   const hasChildren = hasSubActions || inlineLogs.length > 0
-  const stepStatusIcon = <StepStatusIcon status={step.status} />
-  const statusIconWithCacheMarker = cacheStatus === 'all' ? (
+  // A self-heal is a fact about the step the verdict alone does not carry, so it wins the glyph:
+  // a step that passed only after healing is not the same story as one that just passed.
+  const stepStatusIcon = <StepStatusIcon status={step.selfHealOccurred ? 'healed' : step.status} />
+  const statusIconWithCacheMarker = servedFromCache ? (
     <CacheStatusIconWrapper
       marker="step-status"
       state="all"
       tone="primary"
       label="All actions cached"
-    >
-      {stepStatusIcon}
-    </CacheStatusIconWrapper>
-  ) : cacheStatus === 'some' ? (
-    <CacheStatusIconWrapper
-      marker="step-status"
-      state="some"
-      tone="amber"
-      label={`${cachedCount} of ${subActions.length} actions cached`}
     >
       {stepStatusIcon}
     </CacheStatusIconWrapper>
@@ -111,18 +108,18 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, onSelect
               onSelect={() => onSelect({ type: 'execution', stepId: step.id, logId: log.id })}
             />
           ))}
-          {subActions.map((sub, i) => (
+          {subActions.map((sub) => (
             <SubActionTreeItem
-              key={i}
+              key={sub.subActionIndex}
               sub={sub}
-              index={i}
               stepId={step.id}
+              cached={servedFromCache}
               isSelected={
                 selection?.type === 'subaction' &&
                 selection.stepId === step.id &&
-                selection.subIndex === i
+                selection.subIndex === sub.subActionIndex
               }
-              onSelect={() => onSelect({ type: 'subaction', stepId: step.id, subIndex: i })}
+              onSelect={() => onSelect({ type: 'subaction', stepId: step.id, subIndex: sub.subActionIndex })}
             />
           ))}
         </ul>
