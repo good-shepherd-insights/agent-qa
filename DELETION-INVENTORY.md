@@ -232,3 +232,95 @@ resolution — reword the prose, do not widen the guard.
 `pnpm build` · `pnpm test --force` · `pnpm validate:arch` · the conformance suite on the rebuilt
 dist. Every workspace package green; the ONE red is the pre-existing `tools/embedding-bench`
 `tau-lex` receipt failure, which predates this phase and is untouched by it.
+
+---
+
+## 2026-08-27 — the v1 run projection, the path-addressed artifacts and the legacy live feed (Phase 405 plan 07, D-02 / D-03 / D-14 / D-19 / D-20)
+
+**Owner's ruling, verbatim (405-CONTEXT.md D-02):** *"hard cut, no migration etc, as there are no
+users and users need to delete the existing run date so you do what's right also bump the version to
+v2 for the DDLs etc"*
+
+**The predicate, unchanged from 402-09's:** "required" = a PRODUCER on the shipped in-process core
+AND a READER on the rebuilt page. Anything scoring zero on either leaves with its readers. What
+changed is not the instrument but the ground: 405-01 rewrote the dashboard subscriber on the bus's
+own payload types, which left three whole tables and five `runs` columns with no writer at all.
+
+### What was deleted
+
+| Item | Producer measured | Reader measured | Disposition |
+|---|---|---|---|
+| the v1 wide step table, the reasoning-trace table, the log table, and their eight indexes | none since 405-01 | none once the read arms below went | **DELETE** |
+| the repository members over them — the step insert/readers, the trace pair, the log pair, the per-run step delete, the captured-variable-name reader, the accessibility summary and its private config probe, the three row mappers | — | — | **DELETE** |
+| the run row's recording-path column and its `RunRow` field | none at all | none (D-14: no ref producer mints a recording, so the honest state is no surface) | **DELETE** |
+| the run row's parent-link, attempt-ordinal and two retry columns, their index, the child reader, the retry-info writer, and the recursive delete cascade | none since 402-09 | none | **DELETE** |
+| `RunArtifactBundle.children` and the `children` key on `GET /api/runs/:id/artifact` | — | structurally empty | **DELETE** |
+| every `parent_run_id IS NULL` top-level filter (twelve sites, raw SQL) | — | — | **DELETE** — see the disposition change below |
+| the `run_artifacts.kind` CHECK's two suite kinds | only `'test'` minted | — | **NARROW** to `('test','unknown')` |
+| `db/run-id-migration.ts`, its test and its barrel export | no production caller since it was written | — | **DELETE** |
+| the two path-addressed artifact routes, the containment resolver, the served-path verdict, its refusal helper, the run-deletion filesystem sweep, and the screenshots/videos dir wiring | — | — | **DELETE** (D-14) |
+| the superseded read arms — the step list, the per-step reasoning trace, the log page, the accessibility summary, the captured-variable suggestion | — | superseded by `runs.detail` | **DELETE** (D-03) |
+| the legacy `/api/execution/events` SSE arm, the live-event type, the backend's per-run replay buffers and counters, the push helper, the second event emission, and the synthetic `run-start` / `run-complete` bookends | — | none since 405-03 | **DELETE** (D-19) |
+
+### What was RETAINED, and the measurement that kept it
+
+| Item | Producer | Reader | Disposition |
+|---|---|---|---|
+| `token_events`, `/api/token-events/stats`, the live-editor ws route | the live-editor ws handler (`server.ts`) — it executes IN-PROCESS and never used the retired spawn | the insights page | **KEEP** — D-20's census verdict, measured rather than assumed |
+| `execution_logs` and its two handle columns | the subscriber's `hookFinished` arm | the hook panel | **KEEP** |
+| the construction-data `runs` columns (metadata, environment, priority, parallel, test-file content, model name, provider) | the queue/enqueue and settle writes | the runs list and insights | **KEEP** — written by the composition, never bus-projected, so outside the "no producer on the bus" clause |
+| `runs.error_log` | `server.ts`'s run-settled handler | the run list's error posture | **KEEP** |
+| `RunArtifactKind`'s two suite members in `packages/schema` and `dashboard-ui/lib/api.ts` | none | the UI's artifact badge switches on the value | **KEEP as unreachable breadth** — the STORE refuses them now; narrowing a union a render site switches on is 405-11's edit |
+
+### The disposition that changed, and why it could only change now
+
+402-09 kept every parent-link reader on ONE argument: the one-run model produced no new children,
+but an operator's database still held rows written before it, and the run list and run detail had to
+keep rendering them. That argument had a lifetime. D-02 ends it — v2 is a hard cut, and a database
+stamped at any older version is REFUSED BY NAME on open rather than migrated. There is no such thing
+as a pre-405 row in a database this build will open, so a read that exists to render one reads a
+shape that cannot be present, and a filter that excludes one filters nothing.
+
+The same argument retires 402-09's T-402-29 mitigation ("historical rows still render"). It is moot
+rather than abandoned, and the census file says so in the terms the mitigation was written in: two
+cells now assert the refusal by name and the store's refusal of the two retired artifact kinds.
+
+### What happened to predicate B
+
+**Its discriminator was deleted, so the differential is retired and replaced by a structural claim.**
+Predicate B worked by seeding two byte-identical databases differing in exactly one fact — whether a
+member row pointed at its parent — and walking every prototype member and every run route against
+both. That is why the twelve raw-SQL filters and the delete cascade were found at all: predicate A
+cannot see a query. With the column gone there is no second database to seed, and a differential run
+over an absent discriminator can only ever report "no difference" — precisely the vacuous instrument
+the census exists to refuse. Keeping it would have meant keeping the column alive so its own test
+could still run.
+
+What replaces it is stronger for the claim it now has to make. The differential proved "these
+members read the link"; the successor proves "no member CAN read it", at the storage layer: the
+table has no such column, and the store refuses the two artifact kinds the parent/child model
+minted. A reader reintroduced under any name would have to reintroduce the column first, and that
+reds before any behaviour is written.
+
+### Operational notes for the next reader
+
+**A debris token inside a retirement comment still reds the lexical arm.** Every dated note this
+plan left where deleted code stood was written to avoid spelling a scanned token, and the cells that
+DO have to name one build it from two halves (`'ste' + 'ps'`) so an assertion cannot satisfy the
+inventory by matching itself. Same class as WINDOWS #241, same resolution.
+
+**Two pins over the retired feed were inverted rather than deleted.** `routes.test.ts` asserted the
+legacy SSE route was PRESENT (the phase-225 guardrail's way of saying live state lives on the wire,
+not in the schema) — it now asserts its absence. `routes.run-stream.test.ts`'s known-positive control
+for "the predicate can see frame formatting" was that same handler; it moved to
+`run-service/run-service-routes.ts`, which is where the frames are actually written.
+
+**Where this census does NOT reach.** The dashboard UI still imports the four-member
+`RunArtifactKind` and still carries the retired path/step field names; 405-11 owns that half. The
+`agent-qa dashboard` binary is not started end to end by anything here — 405-12 owns that.
+
+### Gate at the time of writing (2026-08-27)
+
+`pnpm typecheck` (44/44) · the whole `@vostride/agent-qa-dashboard` suite (48 files, 950 passed,
+1 skipped) · the four CLI run-door suites · `pnpm validate:arch` (43 cells). The standing red is
+`tools/embedding-bench` `tau-lex`, which predates this phase and is untouched by it.

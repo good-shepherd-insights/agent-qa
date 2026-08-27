@@ -3,8 +3,14 @@
 // WHAT IS UNDER TEST is the whole door a browser click reaches: the queue's backend →
 // `createDashboardRunDoor`'s starter → the shipped `invokeFunction` → the 384 registry → the REAL
 // op-level gate → the composed host's default run execution → the in-process drive → the core's ONE
-// `evaluate()` → a real run → the bus, bridged back into the buffer the SSE route serves. Nothing
-// on that path is substituted. `composeDashboardDoor` and `createDashboardRunDoor` are the SAME
+// `evaluate()` → a real run → the bus. Nothing on that path is substituted.
+//
+// 2026-08-27 (405-07, D-19): THE OBSERVATION SURFACE MOVED TO THE BUS ITSELF. These cells used to
+// read the backend's per-run replay buffer — a re-minted frame shape kept alive for one SSE route,
+// deleted with that route. They now subscribe to the run's OWN `RunSession` through the door's
+// published `observeSessions`, so what a cell asserts is the frozen §2.2 envelope the run actually
+// published rather than a copy of it with an added `id`. Per-run isolation is measured the same way
+// and means more: the sessions are distinct objects, not two entries in one map. `composeDashboardDoor` and `createDashboardRunDoor` are the SAME
 // composers the `agent-qa dashboard` command calls, which is the whole reason they are published:
 // a cell that assembled its own starter would be measuring a door this product does not ship.
 //
@@ -75,8 +81,8 @@ interface Settled {
 }
 
 interface Driven {
-  /** Everything the SSE/db consumers received, per run. */
-  buffered(runId: string): { id: number; type: string; [key: string]: unknown }[]
+  /** The run's OWN bus envelopes, in seq order, recorded off its session. */
+  envelopes(runId: string): { seq: number; type: string; runId: string; [key: string]: unknown }[]
   settled: Settled[]
   backend: Awaited<ReturnType<typeof createDashboardRunDoor>>['backend']
   db: DashboardDatabase
@@ -102,8 +108,20 @@ async function composeDoor(fixture: Fixture): Promise<Driven> {
     settled.push({ runId, status, details })
   })
 
+  // 405-07 (D-19): the run's own bus, watched through the door's published fan-out. `subscribe(1,
+  // …)` is replay-then-live from the first seq — the same constant the backend attaches at — so a
+  // recorder registered before `execute` sees every envelope regardless of when the door names the
+  // session.
+  const recorded = new Map<string, { seq: number; type: string; runId: string }[]>()
+  runDoor.observeSessions((session) => {
+    const id = session.id as unknown as string
+    const own: { seq: number; type: string; runId: string }[] = []
+    recorded.set(id, own)
+    session.subscribe(1, (envelope) => { own.push(envelope as unknown as { seq: number; type: string; runId: string }) })
+  })
+
   return {
-    buffered: (runId) => runDoor.backend.getBufferedEvents(runId),
+    envelopes: (runId) => recorded.get(runId) ?? [],
     settled,
     backend: runDoor.backend,
     db,
@@ -202,12 +220,12 @@ describe('a dashboard-triggered run is one more caller of runs.start (401-07, D-
       expect(runRows[0]!.outcome).toBe('proceeded')
       expect(runRows[0]!.riskTier).toBe('mutating-local')
 
-      // (c) the envelopes reached the consumer surface the SSE route and the db writes read
-      const buffered = driven.buffered(runId)
-      expect(buffered[0]!.type).toBe('run-start')
-      expect(buffered.map((event) => event.type)).toContain('runStarted')
-      expect(buffered.at(-1)!.type).toBe('run-complete')
-      expect(buffered.map((event) => event.id)).toEqual(buffered.map((_, index) => index + 1))
+      // (c) the run's own envelopes reached the door's subscribers, whole and in seq order
+      const envelopes = driven.envelopes(runId)
+      expect(envelopes[0]!.type).toBe('runStarted')
+      expect(envelopes.map((event) => event.type)).toContain('runFinished')
+      expect(envelopes.every((event) => event.runId === runId)).toBe(true)
+      expect(envelopes.map((event) => event.seq)).toEqual(envelopes.map((_, index) => index + 1))
 
       // (d) the enqueued ROW was adopted rather than duplicated — the correlation that used to be
       // `AGENT_QA_RUN_ID` in a child's environment is construction data now
@@ -253,9 +271,11 @@ describe('a dashboard-triggered run is one more caller of runs.start (401-07, D-
       //     exited before test completed".
       expect(settled.status).toBe('failed')
       expect(settled.details.reason).toContain(row.reason)
-      expect(driven.buffered(runId).at(-1)!.reason).toContain(row.reason)
-      // The bookends are the only two events — a denial is not a run.
-      expect(driven.buffered(runId).map((event) => event.type)).toEqual(['run-start', 'run-complete'])
+      // A DENIAL IS NOT A RUN, and the claim is now structural rather than a count of bookends: no
+      // session was ever named, so there are no envelopes at all. The synthetic `run-start` /
+      // `run-complete` pair this used to compare against was minted by the backend, not by the run.
+      expect(driven.envelopes(runId)).toEqual([])
+      expect(settled.details.refusedBeforeStart).toBe(true)
     } finally {
       await target.close()
     }
@@ -303,17 +323,13 @@ describe('two concurrent dashboard runs are isolated (401-07, INVK-01 concurrenc
           .toEqual([runA, runB].sort())
       })
       await waitFor(() => {
-        expect(driven.buffered(runA).some((event) => event.type === 'runStarted')).toBe(true)
-        expect(driven.buffered(runB).some((event) => event.type === 'runStarted')).toBe(true)
+        expect(driven.envelopes(runA).some((event) => event.type === 'runStarted')).toBe(true)
+        expect(driven.envelopes(runB).some((event) => event.type === 'runStarted')).toBe(true)
       })
 
-      // Each buffer holds only its own run's envelopes.
+      // Each session carries only its own run's envelopes.
       for (const [runId, other] of [[runA, runB], [runB, runA]] as const) {
-        const runIds = new Set(
-          driven.buffered(runId)
-            .filter((event) => typeof event.seq === 'number')
-            .map((event) => event.runId),
-        )
+        const runIds = new Set(driven.envelopes(runId).map((event) => event.runId))
         expect(runIds).toEqual(new Set([runId]))
         expect(runIds.has(other)).toBe(false)
       }
@@ -381,8 +397,6 @@ describe('two concurrent dashboard runs are isolated (401-07, INVK-01 concurrenc
       // `cancel()` can be counted, where killing A leaves B's count at zero.
       expect(byRun.get(cancelled)!.details.reason).toBe('cancelled')
       expect(byRun.get(survivor)!.details.reason).toBeUndefined()
-      expect(driven.buffered(cancelled).at(-1)!.reason).toBe('cancelled')
-      expect(driven.buffered(survivor).at(-1)!.reason).toBeUndefined()
 
       // The survivor ran to its own verdict, in its own directory.
       expect(runDirs(fixture).map((dir) => dir.split('/').pop())).toContain(survivor)

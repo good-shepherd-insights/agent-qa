@@ -1493,7 +1493,7 @@ function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
     // 402-09, and the shape went with the column. `getRunArtifact` above remains the choke point
     // for the payload itself, and this wrapper delegates to it.
     getRunArtifactBundle: {
-      value: (runId: string) => ({ artifact: scrubArtifact(db.getRunArtifact(runId)) }),
+      value: (runId: string) => ({ artifact: scrubArtifact(db.getRunArtifactBundle(runId).artifact) }),
     },
   }
   // OVERRIDE ONLY WHAT THE GIVEN DATABASE ACTUALLY HAS. Defining a descriptor for an absent method

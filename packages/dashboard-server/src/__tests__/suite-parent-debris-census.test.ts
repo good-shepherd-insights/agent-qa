@@ -33,7 +33,8 @@
  * its own scan output is the self-certifying guard 401-10 warned about and can never fail.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { IncomingMessage, type ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
 import { dirname, join, relative, sep } from 'node:path'
@@ -42,6 +43,7 @@ import { describe, expect, it } from 'vitest'
 import type { RunEventEnvelope, RunEventType } from '@vostride/agent-qa-schema'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import { DashboardDatabase } from '../db/database.js'
+import { createDashboardSqliteDatabase } from '../db/sqlite.js'
 import { JobQueue } from '../queue/job-queue.js'
 import { createDashboardRunIngest } from '../reporter/dashboard-subscriber.js'
 import { createRouter } from '../server/routes.js'
@@ -90,12 +92,27 @@ export interface DebrisSite {
 }
 
 const KEEP_RETAINED_UNION =
-  'RETAINED union member (396-01 D-10 precedent): existing run_artifacts rows carry these kinds '
-  + 'and must keep parsing. Deleting the value orphans every historical row.'
+  'RETAINED union member, now as UNREACHABLE BREADTH (405-07). The v2 DDL narrowed its CHECK to '
+  + 'the two kinds anything mints, so the store refuses these values and no row can carry one. The '
+  + 'TYPE keeps them because the UI renders the field verbatim as a badge, and narrowing a union a '
+  + 'render site switches on is 405-11\'s edit, not this plan\'s. Recorded here so the next reader '
+  + 'finds a disposition rather than a survival.'
 
-const KEEP_HISTORICAL_READ =
-  'Historical-row read. The one-run model produces no new children, but operator databases hold '
-  + 'rows written before 402 and the pre-405 run list / run detail must keep rendering them.'
+/**
+ * 2026-08-27 (405-07, D-02): the disposition that flipped, and why it could only flip now.
+ *
+ * 402-09 kept every parent-link READ on one argument: the one-run model produced no new children,
+ * but an OPERATOR's database still held rows written before it, and the run list and run detail had
+ * to keep rendering them. That argument had a lifetime, and D-02 ended it — the v2 schema is a hard
+ * cut with no migration, and a database stamped at any older version is refused by name on open.
+ * There is no such thing as a pre-405 row in a database this build will open, so a read that exists
+ * to render one reads a shape that cannot be present. The column, its index, its readers and the
+ * response keys they filled all left together.
+ */
+const DELETE_HISTORICAL_READ =
+  'A historical-row read retained by 402-09 for operator databases written before the one-run '
+  + 'model. D-02 makes v2 a hard cut refused by name below its version, so no database this build '
+  + 'opens can hold the rows this read existed to serve.'
 
 export const DEBRIS_REGISTER: readonly DebrisSite[] = [
   // ---- cli ----------------------------------------------------------------------------------
@@ -261,57 +278,57 @@ export const DEBRIS_REGISTER: readonly DebrisSite[] = [
     token: 'getRunsByParent',
     line: "'getRunsByParent',",
     before: 1,
-    after: 1,
-    disposition: 'keep',
+    after: 0,
+    disposition: 'delete',
     why: 'RESPONSE_SAFE_RUN_READ_METHODS membership. The 401-23 allowlist asserts SET EQUALITY with '
-      + 'the database\'s run reads at construction; dropping the name while the method survives '
-      + 'throws at router build.',
+      + 'the database\'s run reads at construction, so the name leaves in the same commit as the '
+      + 'method — keeping either alone throws at router build.',
   },
   {
     file: 'packages/dashboard-server/src/server/routes.ts',
     token: 'getRunsByParent',
     line: 'getRunsByParent: { value: (parentRunId: string) => scrubRows(db.getRunsByParent(parentRunId)) },',
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: 'The metadata-scrubbing override for the same read. A surviving read that lost its scrub '
-      + 'would leak server-derived run metadata (401-23).',
+    after: 0,
+    disposition: 'delete',
+    why: 'The metadata-scrubbing override for the same read. It goes with the read it wrapped — a '
+      + 'scrub for a method nobody can call is not a door, it is dead policy (401-23).',
   },
   {
     file: 'packages/dashboard-server/src/server/routes.ts',
     token: 'getRunsByParent',
     line: 'const tests = db.getRunsByParent(run.id).map(test => enrichRunRow(test, targetPlatforms))',
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: `GET /api/runs — the run-LIST read. ${KEEP_HISTORICAL_READ}`,
+    after: 0,
+    disposition: 'delete',
+    why: `GET /api/runs — the run-LIST enrich. ${DELETE_HISTORICAL_READ}`,
   },
   {
     file: 'packages/dashboard-server/src/server/routes.ts',
     token: 'getRunsByParent',
     line: 'const childRuns = db.getRunsByParent(id)',
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: `GET /api/runs/:id/execution-logs aggregates a historical suite's member logs. ${KEEP_HISTORICAL_READ}`,
+    after: 0,
+    disposition: 'delete',
+    why: `GET /api/runs/:id/execution-logs aggregated a suite's member logs across child rows. ${DELETE_HISTORICAL_READ} A suite's hook logs are written against the one run id, carrying the member handle.`,
   },
   {
     file: 'packages/dashboard-server/src/server/routes.ts',
     token: 'getRunsByParent',
     line: 'const attempts = db.getRunsByParent(id)',
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: `GET /api/runs/:id — the run-DETAIL read. ${KEEP_HISTORICAL_READ}`,
+    after: 0,
+    disposition: 'delete',
+    why: `GET /api/runs/:id — the run-DETAIL attempts key. ${DELETE_HISTORICAL_READ}`,
   },
   {
     file: 'packages/dashboard-server/src/server/routes.ts',
     token: 'getRunsByParent',
     line: 'const tests = db.getRunsByParent(id)',
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: `GET /api/runs/:id member list for a historical suite parent. ${KEEP_HISTORICAL_READ}`,
+    after: 0,
+    disposition: 'delete',
+    why: `GET /api/runs/:id — the run-DETAIL tests key for a suite parent. ${DELETE_HISTORICAL_READ}`,
   },
 
   // ---- dashboard-server: server ----------------------------------------------------------------
@@ -353,36 +370,40 @@ export const DEBRIS_REGISTER: readonly DebrisSite[] = [
     token: 'getRunsByParent',
     line: 'getRunsByParent(parentRunId: string): RunRow[] {',
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: `The declaration of the historical read the run list and run detail serve. ${KEEP_HISTORICAL_READ}`,
+    after: 0,
+    disposition: 'delete',
+    why: `The declaration of the read every site above called. ${DELETE_HISTORICAL_READ}`,
   },
   {
     file: 'packages/dashboard-server/src/db/database.ts',
     token: 'getRunsByParent',
     line: 'const children = this.getRunsByParent(runId).map((run) => ({',
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: `getRunArtifactBundle's child section, served by GET /api/runs/:id/artifact. ${KEEP_HISTORICAL_READ}`,
+    after: 0,
+    disposition: 'delete',
+    why: `getRunArtifactBundle's child section, served by GET /api/runs/:id/artifact. ${DELETE_HISTORICAL_READ} `
+      + 'The bundle is one run\'s artifact now, and the response key went with it — a structurally '
+      + 'empty array on a response is worse than an absent one.',
   },
   {
     file: 'packages/dashboard-server/src/db/schema.ts',
     token: 'suite-parent',
     line: "kind TEXT NOT NULL CHECK(kind IN ('test', 'suite-parent', 'suite-child', 'unknown')),",
     before: 1,
-    after: 1,
-    disposition: 'keep',
-    why: `${KEEP_RETAINED_UNION} Narrowing the CHECK would additionally require a table rebuild `
-      + 'migration on every operator database.',
+    after: 0,
+    disposition: 'delete',
+    why: '402-09 kept this CHECK because narrowing it would have needed a table-rebuild migration '
+      + 'on every operator database. D-02 removes that cost entirely: v2 is a hard cut, the table '
+      + 'is CREATEd at its final shape and an older database is refused rather than rebuilt. So the '
+      + 'store now admits only the two kinds anything mints (RESEARCH Open Q4).',
   },
   {
     file: 'packages/dashboard-server/src/db/schema.ts',
     token: 'suite-child',
     line: "kind TEXT NOT NULL CHECK(kind IN ('test', 'suite-parent', 'suite-child', 'unknown')),",
     before: 1,
-    after: 1,
-    disposition: 'keep',
+    after: 0,
+    disposition: 'delete',
     why: 'Same CHECK constraint (the suite-child arm).',
   },
   {
@@ -392,8 +413,7 @@ export const DEBRIS_REGISTER: readonly DebrisSite[] = [
     before: 1,
     after: 1,
     disposition: 'keep',
-    why: `${KEEP_RETAINED_UNION} The UI renders this value verbatim as the artifact badge, so a `
-      + 'historical row whose kind the type does not admit stops type-checking at the render site.',
+    why: `${KEEP_RETAINED_UNION} 405-11 owns the UI-side narrowing.`,
   },
   {
     file: 'packages/dashboard-ui/src/lib/api.ts',
@@ -411,8 +431,9 @@ export const DEBRIS_REGISTER: readonly DebrisSite[] = [
     before: 1,
     after: 1,
     disposition: 'keep',
-    why: `${KEEP_RETAINED_UNION} This is the canonical union; the D-11 ruling deletes the PRODUCERS `
-      + 'of the value, not the value.',
+    why: `${KEEP_RETAINED_UNION} This is the canonical union; D-11 deleted the PRODUCERS of the `
+      + 'value and 405-07 deleted the STORE\'s admission of it. Narrowing the union itself belongs '
+      + 'with the render site that switches on it (405-11).',
   },
   {
     file: 'packages/schema/src/run/run-artifact.ts',
@@ -511,6 +532,26 @@ function describeCounts(counts: Map<string, number>): string[] {
 
 // ---------------------------------------------------------------------------------------------
 // PREDICATE B — the structural surface walk
+//
+// 2026-08-27 (405-07, D-02): THE DIFFERENTIAL IS RETIRED BECAUSE ITS DISCRIMINATOR WAS DELETED, AND
+// SAYING SO IS THE WHOLE POINT OF RECORDING IT HERE.
+//
+// The arm worked by seeding two byte-identical databases that differed in exactly one fact —
+// whether a member row's parent link pointed at the parent — and calling every prototype member and
+// every run route against both. A member whose observable output or database effect differed read
+// the link, under any name, in any file, however it was spelled. That instrument is why the twelve
+// raw-SQL top-level filters and the cascade were found at all: predicate A cannot see a query.
+//
+// The column is gone. There is no second database to seed, because the fact the two differed in is
+// no longer expressible — and a differential run over an absent discriminator can only ever report
+// "no difference", which is precisely the vacuous instrument this file exists to refuse. Keeping it
+// would have meant keeping the column alive so its own test could still run.
+//
+// WHAT REPLACES IT IS STRICTLY STRONGER FOR THE CLAIM IT NOW HAS TO MAKE. The differential proved
+// "these members read the link"; the successor proves "no member CAN read it", structurally, at the
+// storage layer — the table has no such column, and the store refuses the two artifact kinds the
+// parent/child model minted. A reader reintroduced under any name would have to reintroduce the
+// column first, and that reddens here before any behaviour is written.
 // ---------------------------------------------------------------------------------------------
 
 const PARENT_ID = 'r_parent-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
@@ -518,152 +559,64 @@ const CHILD_A = 'r_childa-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-indi
 const CHILD_B = 'r_childb-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
 const SUITE_ID = 's_suite-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
 
-/**
- * Two databases identical in every byte except the one fact under test: whether the two member rows
- * point at the parent through `parent_run_id`. Everything else — ids, names, statuses, timestamps,
- * suite ids, steps, artifacts — is written from the same literals in the same order.
- */
-function seedPair(): { linked: DashboardDatabase; unlinked: DashboardDatabase } {
-  const build = (linked: boolean): DashboardDatabase => {
-    const db = new DashboardDatabase({ dbPath: ':memory:' })
-    db.insertRun({
-      id: PARENT_ID,
-      name: 'Checkout Suite',
-      filePath: 'suites/checkout.suite.yaml',
-      status: 'running',
-      duration: 0,
-      startedAt: '2026-08-01T00:00:00.000Z',
-      endedAt: '2026-08-01T00:00:00.000Z',
-      suiteId: SUITE_ID,
-    })
-    db.insertRunArtifact({ runId: PARENT_ID, kind: 'suite-parent' })
-    for (const childId of [CHILD_A, CHILD_B]) {
-      db.insertRun({
-        id: childId,
-        name: `Member ${childId === CHILD_A ? 'A' : 'B'}`,
-        filePath: 'tests/member.yaml',
-        status: 'running',
-        duration: 0,
-        startedAt: '2026-08-01T00:00:01.000Z',
-        endedAt: '2026-08-01T00:00:01.000Z',
-        suiteId: SUITE_ID,
-        ...(linked ? { parentRunId: PARENT_ID } : {}),
-      })
-      db.insertRunArtifact({ runId: childId, kind: 'suite-child' })
-      db.insertStep({
-        runId: childId,
-        name: 'open the page',
-        status: 'passed',
-        duration: 10,
-        stepOrder: 0,
-      })
-      db.insertExecutionLog({
-        id: `log-${childId}`,
-        runId: childId,
-        type: 'hook',
-        name: 'setup',
-        phase: 'setup',
-        status: 'passed',
-        duration: 1,
-      })
-    }
-    return db
-  }
-  return { linked: build(true), unlinked: build(false) }
-}
-
-/**
- * Drops the one fact the two seeded databases differ by, plus every clock-derived field, so a
- * difference the differential reports is a difference in what the member DID with the link.
- */
-function normalizeObservation(value: unknown): string {
-  const seen = new WeakSet<object>()
-  return JSON.stringify(value, (key, val) => {
-    if (key === 'parentRunId' || key === 'parent_run_id') return undefined
-    if (/at$/i.test(key)) return undefined
-    if (typeof val === 'object' && val !== null) {
-      if (seen.has(val as object)) return '[circular]'
-      seen.add(val as object)
-    }
-    if (typeof val === 'bigint') return val.toString()
-    if (typeof val === 'function') return '[function]'
-    return val
-  }) ?? 'undefined'
-}
-
-function runsSnapshot(db: DashboardDatabase): string {
-  const rows = (db as unknown as { db: { prepare(sql: string): { all(): unknown[] } } }).db
-    .prepare('SELECT * FROM runs ORDER BY id')
-    .all()
-  const artifacts = (db as unknown as { db: { prepare(sql: string): { all(): unknown[] } } }).db
-    .prepare('SELECT run_id, kind FROM run_artifacts ORDER BY run_id')
-    .all()
-  return normalizeObservation({ rows, artifacts })
-}
-
-function invokeSafely(fn: () => unknown): unknown {
-  try {
-    const out = fn()
-    if (out instanceof Promise) return '[promise]'
-    return out
-  } catch (error) {
-    return `[threw:${error instanceof Error ? error.name : typeof error}]`
-  }
-}
-
-/** Argument tuples every walked member is offered, in order, on the same seeded pair. */
-const ARG_TUPLES: readonly unknown[][] = [
-  [PARENT_ID],
-  [SUITE_ID],
-  ['Member A'],
-  [],
-  [{}],
-  [{ suiteId: SUITE_ID }],
-  ['suite', {}],
-  [PARENT_ID, {}],
+/** The tokens no `runs` column may spell, split so this file is not its own scan hit. */
+const FORBIDDEN_RUN_COLUMNS: readonly string[] = [
+  'parent_run' + '_id',
+  'attempt_' + 'number',
+  'max_' + 'retries',
+  'video_' + 'path',
 ]
 
+/** The two artifact kinds the parent/child model minted, split for the same reason. */
+const RETIRED_ARTIFACT_KINDS: readonly string[] = ['suite-' + 'parent', 'suite-' + 'child']
+
+function runColumnNames(db: DashboardDatabase): string[] {
+  const rows = (db as unknown as { db: { prepare(sql: string): { all(): unknown[] } } }).db
+    .prepare('PRAGMA table_info(runs)')
+    .all() as Array<{ name: string }>
+  return rows.map((row) => row.name)
+}
+
 /**
- * Members skipped by the walk, with the reason. Both would break the walk itself rather than tell
- * it anything: `close` tears down the database the remaining tuples run against, and `start` arms a
- * polling interval that would outlive the test.
+ * ONE database seeded the way the retired fixture seeded its `linked` half — a suite run and two
+ * members — MINUS the link, because the link cannot be written. It is what an operator's database
+ * now looks like for a suite: one row per run, members on `run_members`.
  */
-const WALK_SKIPPED = new Set(['constructor', 'close', 'start'])
-
-function walkPrototype(
-  ctor: { prototype: object },
-  instantiate: (db: DashboardDatabase) => object,
-): string[] {
-  const discovered: string[] = []
-  for (const name of Object.getOwnPropertyNames(ctor.prototype)) {
-    if (WALK_SKIPPED.has(name)) continue
-    const descriptor = Object.getOwnPropertyDescriptor(ctor.prototype, name)
-    if (typeof descriptor?.value !== 'function') continue
-
-    const { linked, unlinked } = seedPair()
-    try {
-      const linkedTarget = instantiate(linked) as Record<string, unknown>
-      const unlinkedTarget = instantiate(unlinked) as Record<string, unknown>
-      const observations: string[] = []
-      for (const args of ARG_TUPLES) {
-        const l = invokeSafely(() => (linkedTarget[name] as (...a: unknown[]) => unknown)(...args))
-        const u = invokeSafely(() => (unlinkedTarget[name] as (...a: unknown[]) => unknown)(...args))
-        observations.push(
-          `${normalizeObservation(l)}::${normalizeObservation(u)}`,
-          `${runsSnapshot(linked)}::${runsSnapshot(unlinked)}`,
-        )
-      }
-      const differs = observations.some((pair) => {
-        const [a, b] = pair.split('::')
-        return a !== b
-      })
-      if (differs) discovered.push(name)
-    } finally {
-      linked.close()
-      unlinked.close()
-    }
+function seedSuiteShapedDatabase(): DashboardDatabase {
+  const db = new DashboardDatabase({ dbPath: ':memory:' })
+  db.insertRun({
+    id: PARENT_ID,
+    name: 'Checkout Suite',
+    filePath: 'suites/checkout.suite.yaml',
+    status: 'running',
+    duration: 0,
+    startedAt: '2026-08-01T00:00:00.000Z',
+    endedAt: '2026-08-01T00:00:00.000Z',
+    suiteId: SUITE_ID,
+  })
+  db.insertRunArtifact({ runId: PARENT_ID, kind: 'test' })
+  let index = 0
+  for (const childId of [CHILD_A, CHILD_B]) {
+    db.upsertRunMember({
+      runId: PARENT_ID,
+      testIndex: index,
+      name: `Member ${childId === CHILD_A ? 'A' : 'B'}`,
+      filePath: 'tests/member.yaml',
+      suiteId: SUITE_ID,
+    })
+    db.insertExecutionLog({
+      id: `log-${childId}`,
+      runId: PARENT_ID,
+      testIndex: index,
+      type: 'hook',
+      name: 'setup',
+      phase: 'setup',
+      status: 'passed',
+      duration: 1,
+    })
+    index += 1
   }
-  return discovered.sort()
+  return db
 }
 
 // --- routes -----------------------------------------------------------------------------------
@@ -714,7 +667,7 @@ async function probeRoute(
 
     const res = {
       writeHead(code: number) { status = code; return this },
-      setHeader() { /* headers are not part of the differential */ },
+      setHeader() { /* headers are not part of the census */ },
       getHeader() { return undefined },
       write(chunk: string | Buffer) {
         body += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : chunk
@@ -742,77 +695,6 @@ async function probeRoute(
   })
 }
 
-/**
- * The run routes the census drives. DECLARED, and honestly so: the router is a long if-chain with
- * no enumerable route table, so this corpus is the one part of predicate B that is not discovered.
- * Two things keep it from being the fold-from-a-declaration failure 402-07 measured — `routes.ts`
- * issues no SQL of its own (every parent-link read it can make goes through the database surface
- * the walk above enumerates TOTALLY), and the non-vacuity cell below requires the corpus to contain
- * routes that actually differ.
- */
-const ROUTE_CORPUS: ReadonlyArray<{ id: string; url: string; method?: string; body?: string }> = [
-  { id: 'GET /api/runs', url: '/api/runs' },
-  { id: 'GET /api/runs/:id', url: `/api/runs/${PARENT_ID}` },
-  { id: 'GET /api/runs/:id/artifact', url: `/api/runs/${PARENT_ID}/artifact` },
-  { id: 'GET /api/runs/:id/execution-logs', url: `/api/runs/${PARENT_ID}/execution-logs` },
-  { id: 'GET /api/runs/:id/logs', url: `/api/runs/${PARENT_ID}/logs` },
-  { id: 'GET /api/runs/:id/steps', url: `/api/runs/${PARENT_ID}/steps` },
-  { id: 'POST /api/runs/:id/cancel', url: `/api/runs/${PARENT_ID}/cancel`, method: 'POST', body: '{}' },
-  { id: 'DELETE /api/runs/:id', url: `/api/runs/${PARENT_ID}`, method: 'DELETE' },
-]
-
-/**
- * FREEZES `Date.now` ACROSS ONE PROBE PAIR, and the differential is unusable without it.
- *
- * This arm calls a route a link reader when its observation differs between a linked and an
- * unlinked database. Some routes WRITE a clock reading into the row they answer from —
- * `POST /api/runs/:id/cancel` stores `duration = Date.now() - startedAt`, and `runsSnapshot`
- * selects `*` — so a millisecond ticking between the two probes manufactures a difference that has
- * nothing to do with `parent_run_id`. Measured before this guard: 6 false discoveries of
- * `POST /api/runs/:id/cancel` in 27 isolated runs (~22%), one batch at 5/15.
- *
- * A FROZEN CLOCK RATHER THAN A WIDER `normalizeObservation`. Stripping `duration` (or every
- * numeric-looking key) would blind the arm to a route that genuinely reads the link INTO a field
- * of that shape — it would trade a false positive for a possible false negative, and this arm's
- * whole value is that it sees what the lexical arm cannot. Freezing the clock removes the
- * nondeterminism at its source and narrows nothing: both probes still run the real handler over
- * the real database, and any difference that survives is a difference the link caused.
- */
-async function withFrozenClock<T>(fn: () => Promise<T>): Promise<T> {
-  const realNow = Date.now
-  const frozen = realNow.call(Date)
-  Date.now = () => frozen
-  try {
-    return await fn()
-  } finally {
-    Date.now = realNow
-  }
-}
-
-async function walkRouteCorpus(): Promise<string[]> {
-  const discovered: string[] = []
-  for (const route of ROUTE_CORPUS) {
-    const { linked, unlinked } = seedPair()
-    try {
-      const { l, u } = await withFrozenClock(async () => ({
-        l: await probeRoute(buildRouter(linked), route.url, route),
-        u: await probeRoute(buildRouter(unlinked), route.url, route),
-      }))
-      const observedL = `${l.status}|${normalizeObservation(safeParse(l.body))}|${runsSnapshot(linked)}`
-      const observedU = `${u.status}|${normalizeObservation(safeParse(u.body))}|${runsSnapshot(unlinked)}`
-      if (observedL !== observedU) discovered.push(route.id)
-    } finally {
-      linked.close()
-      unlinked.close()
-    }
-  }
-  return discovered.sort()
-}
-
-function safeParse(body: string): unknown {
-  try { return JSON.parse(body) } catch { return body }
-}
-
 // --- production channels ------------------------------------------------------------------------
 
 function envelope(runId: string, type: RunEventType, payload: Record<string, unknown> = {}, seq = 1): RunEventEnvelope {
@@ -821,8 +703,12 @@ function envelope(runId: string, type: RunEventType, payload: Record<string, unk
 
 /**
  * Every channel through which this process can create a run record today. A channel counts as a
- * PRODUCER when, driven against an empty database, it leaves behind a run row carrying a non-null
- * `parent_run_id` or a run artifact of a parent/child kind.
+ * PRODUCER when, driven against an empty database, it leaves behind a run artifact of a
+ * parent/child kind.
+ *
+ * 2026-08-27 (405-07): the linked-row half of that predicate is gone with the column. It is not
+ * weakened — the store now REFUSES a parent/child kind outright, so a channel that tried to mint
+ * one would fail its write rather than quietly produce a row this walk then has to notice.
  *
  * `JobQueue.enqueue` is deliberately absent: it stores whatever `kind` its caller hands it, so the
  * mint lives at the CALLERS (the two routes below), which is what this probes. A future caller
@@ -869,6 +755,8 @@ const PRODUCTION_CHANNELS: ReadonlyArray<{ id: string; drive: (db: DashboardData
     drive: async (db) => {
       const ingest = createDashboardRunIngest({
         db,
+        // The retired retry correlation shape, still handed in verbatim: the claim is that the
+        // ingest does nothing with it, and a channel that stopped OFFERING it would stop measuring.
         correlationEnv: { parentRunId: PARENT_ID, runId: CHILD_A, attemptNumber: 2 } as never,
         sourceSnapshot: { kind: 'test', name: 'Member A' },
         now: () => '2026-08-01T00:00:00.000Z',
@@ -880,7 +768,7 @@ const PRODUCTION_CHANNELS: ReadonlyArray<{ id: string; drive: (db: DashboardData
   },
 ]
 
-interface ProducerFinding { channel: string; linkedRows: number; parentKinds: string[] }
+interface ProducerFinding { channel: string; parentKinds: string[] }
 
 async function walkProductionChannels(): Promise<ProducerFinding[]> {
   const findings: ProducerFinding[] = []
@@ -889,14 +777,11 @@ async function walkProductionChannels(): Promise<ProducerFinding[]> {
     try {
       await channel.drive(db)
       const raw = db as unknown as { db: { prepare(sql: string): { all(...a: unknown[]): unknown[] } } }
-      const linkedRows = (raw.db
-        .prepare('SELECT id FROM runs WHERE parent_run_id IS NOT NULL')
-        .all() as unknown[]).length
       const parentKinds = (raw.db
-        .prepare("SELECT kind FROM run_artifacts WHERE kind IN ('suite-parent','suite-child')")
-        .all() as Array<{ kind: string }>).map((r) => r.kind).sort()
-      if (linkedRows > 0 || parentKinds.length > 0) {
-        findings.push({ channel: channel.id, linkedRows, parentKinds })
+        .prepare('SELECT kind FROM run_artifacts WHERE kind IN (?, ?)')
+        .all(...RETIRED_ARTIFACT_KINDS) as Array<{ kind: string }>).map((r) => r.kind).sort()
+      if (parentKinds.length > 0) {
+        findings.push({ channel: channel.id, parentKinds })
       }
     } finally {
       db.close()
@@ -920,116 +805,154 @@ export interface DebrisSurface {
 
 const S = (file: string, token: string, line: string): string => siteKey({ file, token, line })
 
-const TOP_LEVEL_RUN_FILTER = 'A `parent_run_id IS NULL` top-level-run filter in raw SQL. Predicate A is structurally blind to these — they name no debris token — and predicate B found all ten by differential. KEEP, and required: a child row admitted as a top-level run would double-count every historical suite in the list, the counts and the trend series.'
+const DELETE_LINK_FILTER = 'A top-level-run filter over the parent link, spelled in raw SQL. '
+  + 'Predicate A was structurally blind to these — they name no debris token — and predicate B '
+  + 'found all of them by differential. 402-09 kept them because a linked row admitted as a '
+  + 'top-level run would have double-counted every historical suite in the list, the counts and '
+  + 'the trend series. D-02 makes such a row unreachable, and a predicate over a column the table '
+  + 'does not have is an error rather than a filter, so each one is deleted with the column.'
 
 const ROUTES = 'packages/dashboard-server/src/server/routes.ts'
 const DATABASE = 'packages/dashboard-server/src/db/database.ts'
 const SUBSCRIBER = 'packages/dashboard-server/src/reporter/dashboard-subscriber.ts'
 const QUEUE = 'packages/dashboard-server/src/queue/job-queue.ts'
+const SCHEMA_FILE = 'packages/dashboard-server/src/db/schema.ts'
+const CHECK_LINE = "kind TEXT NOT NULL CHECK(kind IN ('test', 'suite-parent', 'suite-child', 'unknown')),"
 
+/**
+ * 2026-08-27 (405-07, D-02): EVERY SURFACE ON THIS TABLE IS NOW `delete`, AND THAT IS THE TERMINAL
+ * STATE OF THE CENSUS RATHER THAN A LOSS OF COVERAGE.
+ *
+ * 402-09 recorded fourteen KEEP surfaces here: two link READS the run list and run detail served
+ * for pre-402 rows, and twelve top-level-run filters spelled `parent_run_id IS NULL` in raw SQL —
+ * which predicate A was structurally blind to (they name no debris token) and predicate B found by
+ * differential. Every one of them was kept on the same argument: an operator's database still held
+ * linked rows, and admitting a child row as a top-level run would double-count every historical
+ * suite in the list, the counts and the trend series.
+ *
+ * D-02 ends that argument. v2 is a hard cut refused by name below its version, so no database this
+ * build opens holds a linked row — and the twelve filters were therefore filtering nothing. Each
+ * one is deleted rather than left as a predicate over an absent column, which SQLite would answer
+ * with an error rather than with `true`.
+ */
 export const DEBRIS_SURFACES: readonly DebrisSurface[] = [
   {
     id: 'db:getRunsByParent',
     kind: 'reader',
-    disposition: 'keep',
-    sites: [S(DATABASE, 'getRunsByParent', 'getRunsByParent(parentRunId: string): RunRow[] {')],
-    why: KEEP_HISTORICAL_READ,
+    disposition: 'delete',
+    sites: [
+      S(DATABASE, 'getRunsByParent', 'getRunsByParent(parentRunId: string): RunRow[] {'),
+      // The router's accounting for the same read. Both exist ONLY because the read did, and both
+      // must go in the same commit: `assertRunReadsAccountedFor` compares the allowlist to the
+      // database's live run-named surface at construction, so a name left behind throws at router
+      // build and a name removed early throws the same way (401-23).
+      S(ROUTES, 'getRunsByParent', "'getRunsByParent',"),
+      S(ROUTES, 'getRunsByParent', 'getRunsByParent: { value: (parentRunId: string) => scrubRows(db.getRunsByParent(parentRunId)) },'),
+    ],
+    why: DELETE_HISTORICAL_READ,
+  },
+  {
+    id: 'db:run_artifacts kind CHECK',
+    kind: 'reader',
+    disposition: 'delete',
+    sites: [
+      S(SCHEMA_FILE, 'suite-parent', CHECK_LINE),
+      S(SCHEMA_FILE, 'suite-child', CHECK_LINE),
+    ],
+    why: 'The store\'s admission of the two parent/child artifact kinds. Observable directly — the '
+      + 'predicate-B cell writes each kind and reads the refusal — which is why it is a surface and '
+      + 'not an unobservable delete. 402-09 kept it because narrowing a CHECK meant a table rebuild '
+      + 'on every operator database; D-02 removes that cost (RESEARCH Open Q4).',
   },
   {
     id: 'db:getRunArtifactBundle',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [S(DATABASE, 'getRunsByParent', 'const children = this.getRunsByParent(runId).map((run) => ({')],
-    why: `${KEEP_HISTORICAL_READ} Served by GET /api/runs/:id/artifact.`,
+    why: `${DELETE_HISTORICAL_READ} The bundle answers one run's artifact; the child section and the `
+      + 'response key it filled are gone.',
   },
   {
     id: 'db:deleteRun',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'The recursive `run_tree` cascade. Deleting a historical suite parent must still delete '
-      + 'its members, or the rows this census orphans become undeletable through the UI. Reads the '
-      + 'link in raw SQL, which is why predicate A never saw it and predicate B did.',
+    why: 'The recursive `run_tree` cascade. 402-09 kept it so a historical suite parent could still '
+      + 'take its members with it; with no linked row reachable the walk returns the one row it was '
+      + 'seeded with, and every table that references a run declares ON DELETE CASCADE. '
+      + `${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:getRuns',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'The run-list query itself: `parent_run_id IS NULL` is its first condition. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: `The run-list query's first condition. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:getRunsBySuiteId',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'Suite drill-down listing. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: `Suite drill-down listing. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:getRunsBySuiteIdCount',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'The paging total for the same listing. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: `The paging total for the same listing. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:getRunsByTestName',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'Test-history listing. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: `Test-history listing. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:getRunsByTestNameCount',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'The paging total for the same listing. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: `The paging total for the same listing. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:getStats',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'Dashboard headline counters. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: `Dashboard headline counters. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:getSuiteTrends',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'Suite trend series. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: `Suite trend series. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:getTestTrends',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'Test trend series. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: `Test trend series. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:getInsightsBreakdown',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'Insights breakdowns; its suite/platform dimensions split on the link. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: 'Insights breakdowns. Its `test` dimension additionally used the link to exclude suite '
+      + 'PARENT rows, whose name is a suite\'s and not a test\'s; that exclusion survives, spelled '
+      + `over the suite id alone. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'db:listRunsForInsights',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'The private row source getInsightsBreakdown folds; on the prototype, so the walk reaches it directly. '
-      + TOP_LEVEL_RUN_FILTER,
+    why: `The private row source getInsightsBreakdown folds. ${DELETE_LINK_FILTER}`,
   },
   {
     id: 'queue:cancel',
@@ -1040,44 +963,44 @@ export const DEBRIS_SURFACES: readonly DebrisSurface[] = [
       S(QUEUE, 'cancelChildRuns', 'private cancelChildRuns(parentRunId: string, endedAt: string): void {'),
       S(QUEUE, 'getRunsByParent', 'for (const child of this.db.getRunsByParent(parentRunId)) {'),
     ],
-    why: 'The child-cancellation fan-out D-11 names. Its link-reading effect is what the queue walk '
-      + 'observes; after the deletion cancelling a parent leaves historical members untouched.',
+    why: 'The child-cancellation fan-out D-11 names. Deleted by 402-09; cancelling a run now reaches '
+      + 'the run it names and nothing else.',
   },
   {
     id: 'route:GET /api/runs',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [S(ROUTES, 'getRunsByParent', 'const tests = db.getRunsByParent(run.id).map(test => enrichRunRow(test, targetPlatforms))')],
-    why: KEEP_HISTORICAL_READ,
+    why: DELETE_HISTORICAL_READ,
   },
   {
     id: 'route:GET /api/runs/:id',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [
       S(ROUTES, 'getRunsByParent', 'const attempts = db.getRunsByParent(id)'),
       S(ROUTES, 'getRunsByParent', 'const tests = db.getRunsByParent(id)'),
     ],
-    why: KEEP_HISTORICAL_READ,
+    why: `${DELETE_HISTORICAL_READ} The arm answers only the run row (D-03).`,
   },
   {
     id: 'route:GET /api/runs/:id/artifact',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
-    why: 'Serves getRunArtifactBundle, whose child section is registered above.',
+    why: 'Serves getRunArtifactBundle and inherits its disposition.',
   },
   {
     id: 'route:GET /api/runs/:id/execution-logs',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [S(ROUTES, 'getRunsByParent', 'const childRuns = db.getRunsByParent(id)')],
-    why: KEEP_HISTORICAL_READ,
+    why: DELETE_HISTORICAL_READ,
   },
   {
     id: 'route:DELETE /api/runs/:id',
     kind: 'reader',
-    disposition: 'keep',
+    disposition: 'delete',
     sites: [],
     why: 'Serves db:deleteRun and inherits its disposition.',
   },
@@ -1086,7 +1009,7 @@ export const DEBRIS_SURFACES: readonly DebrisSurface[] = [
     kind: 'reader',
     disposition: 'delete',
     sites: [S(QUEUE, 'cancelChildRuns', 'this.cancelChildRuns(runId, now)')],
-    why: 'The HTTP door onto queue:cancel. It stays a route; what goes is its link-reading effect.',
+    why: 'The HTTP door onto queue:cancel. It stays a route; what went is its link-reading effect.',
   },
   {
     id: 'route:POST /api/queue/enqueue (suite file)',
@@ -1118,10 +1041,9 @@ export const DEBRIS_SURFACES: readonly DebrisSurface[] = [
     kind: 'producer',
     disposition: 'delete',
     sites: [],
-    why: 'Already producer-less before this plan — 401-07 (D-12) retired the machinery that set '
-      + 'AGENT_QA_PARENT_RUN_ID, so nothing can reach this mode. "Anything the one-run model leaves '
-      + 'producer-less goes too" (D-11). Predicate A never saw it (it spells no debris token); '
-      + 'predicate B found it by producing a linked row.',
+    why: 'Already producer-less before 402-09 — 401-07 (D-12) retired the machinery that set '
+      + 'AGENT_QA_PARENT_RUN_ID, so nothing could reach this mode. "Anything the one-run model '
+      + 'leaves producer-less goes too" (D-11).',
   },
 ]
 
@@ -1195,41 +1117,134 @@ describe('predicate A — the lexical debris census', () => {
 })
 
 describe('predicate B — the structural surface walk (no source text is read)', () => {
-  it('the differential is not vacuous: the two seeded databases differ only in the parent link', () => {
-    const { linked, unlinked } = seedPair()
+  it('the parent link is not a column any more — the discriminator the differential needed is gone', () => {
+    const db = seedSuiteShapedDatabase()
     try {
-      expect(runsSnapshot(linked)).toBe(runsSnapshot(unlinked))
-      expect(linked.getRunsByParent(PARENT_ID).map((r) => r.id).sort()).toEqual([CHILD_A, CHILD_B].sort())
-      expect(unlinked.getRunsByParent(PARENT_ID)).toEqual([])
+      const columns = runColumnNames(db)
+      // NON-VACUITY BEFORE ANY VERDICT: the reader must be seeing a real column list, or the
+      // absence claim below is an absence of evidence. These four are the shape's own columns.
+      expect(columns).toEqual(expect.arrayContaining(['id', 'name', 'status', 'suite_id']))
+
+      for (const forbidden of FORBIDDEN_RUN_COLUMNS) {
+        expect(columns, `runs still carries ${forbidden}`).not.toContain(forbidden)
+      }
     } finally {
-      linked.close()
-      unlinked.close()
+      db.close()
     }
-  }, 30_000)
+  })
 
-  it('walks the WHOLE DashboardDatabase prototype and discovers its link-reading members', () => {
-    const discovered = walkPrototype(DashboardDatabase, (db) => db)
-    const registered = DEBRIS_SURFACES
-      .filter((s) => s.id.startsWith('db:'))
-      .map((s) => s.id.slice('db:'.length))
-      .sort()
-    expect(discovered).toEqual(registered)
-  }, 120_000)
+  it('the store refuses the two artifact kinds the parent/child model minted', () => {
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
+    try {
+      const runId = db.insertRun({
+        name: 'kind check',
+        status: 'passed',
+        duration: 1,
+        startedAt: '2026-08-01T00:00:00.000Z',
+        endedAt: '2026-08-01T00:00:01.000Z',
+      })
+      // The control first: the kind the product DOES mint is accepted, so the refusals below are
+      // refusals of these two values and not of every write.
+      db.insertRunArtifact({ runId, kind: 'test' })
+      expect(db.getRunArtifact(runId)?.kind).toBe('test')
 
-  it('walks the WHOLE JobQueue prototype and discovers its link-reading members', () => {
-    const discovered = walkPrototype(JobQueue, (db) => new JobQueue({ db, concurrency: 1 }))
-    expect(discovered).toEqual(QUEUE_LINK_READERS.slice().sort())
+      for (const kind of RETIRED_ARTIFACT_KINDS) {
+        const refusedRunId = db.insertRun({
+          name: `refused ${kind}`,
+          status: 'passed',
+          duration: 1,
+          startedAt: '2026-08-01T00:00:00.000Z',
+          endedAt: '2026-08-01T00:00:01.000Z',
+        })
+        expect(() => db.insertRunArtifact({ runId: refusedRunId, kind: kind as never }))
+          .toThrow(`Run artifact ${refusedRunId} was not created`)
+        expect(db.getRunArtifact(refusedRunId)).toBeNull()
+      }
+    } finally {
+      db.close()
+    }
+  })
+
+  it('a suite-shaped database serves the run list and the run detail with no link anywhere', async () => {
+    const db = seedSuiteShapedDatabase()
+    try {
+      const router = buildRouter(db)
+
+      const list = await probeRoute(router, '/api/runs')
+      expect(list.status).toBe(200)
+      const listBody = JSON.parse(list.body) as { runs: Array<Record<string, unknown>> }
+      const row = listBody.runs.find((r) => r.id === PARENT_ID)
+      expect(row, 'the suite run vanished from the run list').toBeTruthy()
+      // The list used to attach a `tests` array walked off the link. It attaches nothing now, and
+      // an absent key is the honest answer where a structurally empty array was a misleading one.
+      expect(row).not.toHaveProperty('tests')
+
+      const detail = await probeRoute(router, `/api/runs/${PARENT_ID}`)
+      expect(detail.status).toBe(200)
+      const detailBody = JSON.parse(detail.body) as Record<string, unknown>
+      expect(Object.keys(detailBody)).toEqual(['run'])
+
+      const artifact = await probeRoute(router, `/api/runs/${PARENT_ID}/artifact`)
+      expect(artifact.status).toBe(200)
+      const artifactBody = JSON.parse(artifact.body) as Record<string, unknown>
+      expect(artifactBody).not.toHaveProperty('children')
+
+      // The member logs are on the ONE run id, carrying the handle — no child walk required.
+      const logs = await probeRoute(router, `/api/runs/${PARENT_ID}/execution-logs`)
+      expect(logs.status).toBe(200)
+      const logsBody = JSON.parse(logs.body) as { logs: Array<{ testIndex: number | null }> }
+      expect(logsBody.logs.map((entry) => entry.testIndex).sort()).toEqual([0, 1])
+    } finally {
+      db.close()
+    }
   }, 60_000)
 
-  it('drives the run route corpus and discovers the routes that read the parent link', async () => {
-    const discovered = await walkRouteCorpus()
-    expect(discovered).toEqual(ROUTE_LINK_READERS.slice().sort())
-  }, 120_000)
+  it('the superseded read arms are gone from the router, not merely unused', async () => {
+    const db = seedSuiteShapedDatabase()
+    try {
+      const router = buildRouter(db)
+      // 405-07 (D-03/D-14/D-19): each of these answered off a table or a path this census deleted.
+      // A route that no longer exists is what a client should discover, so each is the router's
+      // generic 404 — never a 200 with an empty body, which reads as "nothing happened here".
+      for (const url of [
+        `/api/runs/${PARENT_ID}/steps`,
+        `/api/runs/${PARENT_ID}/steps/0/reasoning`,
+        `/api/runs/${PARENT_ID}/logs`,
+        `/api/runs/${PARENT_ID}/accessibility`,
+        `/api/screenshots/${PARENT_ID}/shot.png`,
+        `/api/videos/${PARENT_ID}/recording.webm`,
+        '/api/execution/events',
+        `/api/variables/captured/${PARENT_ID}`,
+      ]) {
+        const answer = await probeRoute(router, url)
+        expect(answer.status, `${url} still answers ${String(answer.status)}`).toBe(404)
+      }
 
-  it('the route corpus is not vacuous — it contains routes that DO read the link', async () => {
-    const discovered = await walkRouteCorpus()
-    expect(discovered.length).toBeGreaterThan(2)
-  }, 120_000)
+      // The controls: the surviving arms on the same router still answer.
+      expect((await probeRoute(router, `/api/runs/${PARENT_ID}`)).status).toBe(200)
+      expect((await probeRoute(router, '/api/token-events/stats')).status).toBe(200)
+      expect((await probeRoute(router, `/api/runs/${PARENT_ID}/execution-logs`)).status).toBe(200)
+    } finally {
+      db.close()
+    }
+  }, 60_000)
+
+  it('deleting a run removes its rows and nothing beside them', async () => {
+    const db = seedSuiteShapedDatabase()
+    try {
+      const router = buildRouter(db)
+      const deleted = await probeRoute(router, `/api/runs/${PARENT_ID}`, { method: 'DELETE' })
+      expect(deleted.status).toBe(200)
+      expect(JSON.parse(deleted.body)).toEqual({ deleted: true, deletedRunIds: [PARENT_ID] })
+
+      expect(db.getRun(PARENT_ID)).toBeUndefined()
+      expect(db.getRunArtifact(PARENT_ID)).toBeNull()
+      expect(db.readRunDetailRows(PARENT_ID)).toBeUndefined()
+      expect(db.getExecutionLogs({ runId: PARENT_ID })).toEqual([])
+    } finally {
+      db.close()
+    }
+  }, 60_000)
 
   it('drives every production channel and reports which still mint parent/child run records', async () => {
     const findings = await walkProductionChannels()
@@ -1280,50 +1295,42 @@ describe('reconciliation — the two predicates meet in the register', () => {
   }, 60_000)
 })
 
-describe('historical rows still render (T-402-29)', () => {
-  it('serves the run list and the run detail for an operator database holding parent/child rows', async () => {
-    const { linked } = seedPair()
+describe('the historical-row argument is retired, by name (405-07, D-02 · T-402-29)', () => {
+  // 402-09's T-402-29 mitigation was "historical rows still render": every parent-link read was
+  // kept, and a cell drove the run list, the run detail and the artifact door against a seeded
+  // operator database to prove it. The mitigation was correct for its phase and is now MOOT rather
+  // than abandoned — the two cells below say why in the terms the mitigation was written in.
+  it('a database written before v2 is REFUSED by name, so no pre-405 row is ever rendered', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'agent-qa-census-')), 'runs.db')
+    const raw = createDashboardSqliteDatabase(file)
     try {
-      const router = buildRouter(linked)
-
-      const list = await probeRoute(router, '/api/runs')
-      expect(list.status).toBe(200)
-      const listBody = JSON.parse(list.body) as { runs: Array<{ id: string; tests?: Array<{ id: string }> }> }
-      const parentRow = listBody.runs.find((r) => r.id === PARENT_ID)
-      expect(parentRow, 'the historical suite parent vanished from the run list').toBeTruthy()
-      expect((parentRow?.tests ?? []).map((t) => t.id).sort()).toEqual([CHILD_A, CHILD_B].sort())
-
-      const detail = await probeRoute(router, `/api/runs/${PARENT_ID}`)
-      expect(detail.status).toBe(200)
-      const detailBody = JSON.parse(detail.body) as { tests?: Array<{ id: string }>; attempts?: Array<{ id: string }> }
-      expect((detailBody.tests ?? []).map((t) => t.id).sort()).toEqual([CHILD_A, CHILD_B].sort())
-
-      const artifact = await probeRoute(router, `/api/runs/${PARENT_ID}/artifact`)
-      expect(artifact.status).toBe(200)
-      // The RETAINED union member: a historical row's kind still round-trips out of the door.
-      expect(artifact.body).toContain('suite-parent')
-
-      const memberDetail = await probeRoute(router, `/api/runs/${CHILD_A}`)
-      expect(memberDetail.status).toBe(200)
+      raw.pragma('user_version = 1')
     } finally {
-      linked.close()
+      raw.close()
     }
-  }, 60_000)
 
-  it('the retained RunArtifactKind values are still writable and readable', () => {
+    // The refusal names BOTH versions, so an operator knows which file to remove.
+    expect(() => new DashboardDatabase({ dbPath: file }))
+      .toThrow(/user_version 1 predates schema version 2/)
+  })
+
+  it('the retired artifact kinds are no longer writable — the union member is unreachable breadth', () => {
     const db = new DashboardDatabase({ dbPath: ':memory:' })
     try {
-      for (const kind of ['suite-parent', 'suite-child'] as const) {
-        const id = db.insertRun({
-          name: `historical ${kind}`,
-          status: 'passed',
-          duration: 1,
-          startedAt: '2026-08-01T00:00:00.000Z',
-          endedAt: '2026-08-01T00:00:01.000Z',
-        })
-        db.insertRunArtifact({ runId: id, kind })
-        expect(db.getRunArtifact(id)?.kind).toBe(kind)
+      const id = db.insertRun({
+        name: 'historical shape',
+        status: 'passed',
+        duration: 1,
+        startedAt: '2026-08-01T00:00:00.000Z',
+        endedAt: '2026-08-01T00:00:01.000Z',
+      })
+      for (const kind of RETIRED_ARTIFACT_KINDS) {
+        expect(() => db.insertRunArtifact({ runId: id, kind: kind as never })).toThrow()
       }
+      // The TYPE still admits them (405-11 owns the UI-side narrowing), which is why this is a
+      // recorded disposition rather than a survival: the STORE is what refuses.
+      db.insertRunArtifact({ runId: id, kind: 'test' })
+      expect(db.getRunArtifact(id)?.kind).toBe('test')
     } finally {
       db.close()
     }
@@ -1339,20 +1346,15 @@ describe('historical rows still render (T-402-29)', () => {
 // the D-11 deletion flips it, and every constant below, in one auditable diff.
 // ---------------------------------------------------------------------------------------------
 
-/** `before` = the tree as 402-08 left it. `after` = the tree the D-11 deletion produces. */
+/** `before` = the tree as 402-08 left it. `after` = the tree the deletion produces. */
 const CENSUS_PHASE: 'before' | 'after' = 'after'
 
-/** JobQueue members whose behaviour depends on the parent link. */
-const QUEUE_LINK_READERS: readonly string[] = []
-
-/** Run routes whose response or database effect depends on the parent link. */
-const ROUTE_LINK_READERS: readonly string[] = [
-  'DELETE /api/runs/:id',
-  'GET /api/runs',
-  'GET /api/runs/:id',
-  'GET /api/runs/:id/artifact',
-  'GET /api/runs/:id/execution-logs',
-]
+// 2026-08-27 (405-07, D-02): the two link-reader sets that stood here are gone with the
+// differential that discovered them. `QUEUE_LINK_READERS` was already empty; `ROUTE_LINK_READERS`
+// named the five routes whose response or database effect depended on the parent link, and every
+// one of those dependencies was deleted with the column. A set expected to be empty, computed by a
+// walk whose discriminator no longer exists, would be green for the wrong reason — so the claim is
+// made structurally instead (predicate B's first cell), where re-adding the column is what reds.
 
 /** Channels that still mint parent/child run records. */
 const PARENT_CHILD_PRODUCERS: readonly string[] = []

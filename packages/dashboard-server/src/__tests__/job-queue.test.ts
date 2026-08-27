@@ -159,9 +159,14 @@ describe('JobQueue', () => {
 
     // 2026-08-24 (402-09, D-11): the cell that stood here asserted the child-cancellation fan-out.
     // The fan-out is deleted with the model that minted its children; this is the same claim with
-    // the opposite sign, driven against a database seeded as an OPERATOR's would be — historical
-    // linked rows, no live producer. See DELETION-INVENTORY.md.
-    it('leaves historical linked rows alone when the run they were parented to is cancelled', () => {
+    // the opposite sign. See DELETION-INVENTORY.md.
+    //
+    // 2026-08-27 (405-07, D-02): and it no longer seeds LINKED rows, because the link is gone. The
+    // 402-09 version wrote two rows carrying the cancelled run's id in a parent column, to prove
+    // the cancel reached neither. That column and its reader were deleted by this plan's census —
+    // an operator's historical database is refused by version now, not carried — so the claim is
+    // made over two unrelated in-flight rows: a cancel reaches the run it names and nothing else.
+    it('leaves every other in-flight run alone when one run is cancelled', () => {
       const parentId = queue.enqueue({ name: 'Historical Suite' })
       queue.processNext()
       const startedAt = '2026-05-02T10:00:00.000Z'
@@ -171,7 +176,6 @@ describe('JobQueue', () => {
         duration: 0,
         startedAt,
         endedAt: startedAt,
-        parentRunId: parentId,
       })
       const pendingChildId = db.insertRun({
         name: 'Member 2',
@@ -179,7 +183,6 @@ describe('JobQueue', () => {
         duration: 0,
         startedAt,
         endedAt: startedAt,
-        parentRunId: parentId,
       })
       db.insertRunArtifact({ runId: runningChildId, kind: 'test', payload: { runtime: { status: 'running' } } })
       db.insertRunArtifact({ runId: pendingChildId, kind: 'test', payload: { runtime: { status: 'pending' } } })
@@ -192,8 +195,8 @@ describe('JobQueue', () => {
       // ...and reaches nothing else. The rows are still there, unchanged and still readable.
       expect(db.getRun(runningChildId)?.status).toBe('running')
       expect(db.getRun(pendingChildId)?.status).toBe('pending')
-      expect(db.getRunsByParent(parentId).map((r) => r.id).sort())
-        .toEqual([pendingChildId, runningChildId].sort())
+      expect(db.getRunArtifact(runningChildId)?.finalizedAt).toBeNull()
+      expect(db.getRunArtifact(pendingChildId)?.finalizedAt).toBeNull()
     })
 
     it('returns false for a completed run', () => {

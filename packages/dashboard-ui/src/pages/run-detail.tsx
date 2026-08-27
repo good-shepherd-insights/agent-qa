@@ -311,7 +311,7 @@ export default function RunDetailPage() {
             try {
               const childData = await fetchRun(child.id)
               if (cancelled) return
-              allSteps.push(...childData.steps)
+              allSteps.push(...(childData.steps ?? []))
             } catch {
               // skip
             }
@@ -321,7 +321,7 @@ export default function RunDetailPage() {
           const displaySteps = buildDisplaySteps(allSteps, data.tests, "all", true)
           setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, true))
         } else {
-          setSteps(data.steps)
+          setSteps(data.steps ?? [])
           const fetchedAttempts = data.attempts ?? []
           setAttempts(fetchedAttempts)
           if (fetchedAttempts.length > 0) {
@@ -329,12 +329,12 @@ export default function RunDetailPage() {
             setSelectedAttemptId(lastAttempt.id)
             const attemptData = await fetchRun(lastAttempt.id)
             if (!cancelled) {
-              setSteps(attemptData.steps)
-              const displaySteps = buildDisplaySteps(attemptData.steps, [], "", false)
+              setSteps(attemptData.steps ?? [])
+              const displaySteps = buildDisplaySteps(attemptData.steps ?? [], [], "", false)
               setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, false))
             }
           } else {
-            const displaySteps = buildDisplaySteps(data.steps, [], "", false)
+            const displaySteps = buildDisplaySteps(data.steps ?? [], [], "", false)
             setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, false))
           }
         }
@@ -802,8 +802,8 @@ export default function RunDetailPage() {
     setSelectedAttemptId(attemptId)
     try {
       const data = await fetchRun(attemptId)
-      setSteps(data.steps)
-      const displaySteps = buildDisplaySteps(data.steps, [], "", false)
+      setSteps(data.steps ?? [])
+      const displaySteps = buildDisplaySteps(data.steps ?? [], [], "", false)
       setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, false))
     } catch {
       toast.error("Failed to load attempt")
@@ -822,10 +822,10 @@ export default function RunDetailPage() {
     } else {
       try {
         const data = await fetchRun(value)
-        setSteps(data.steps)
+        setSteps(data.steps ?? [])
         const { logs } = await fetchExecutionLogs(value)
         setAllExecutionLogs(logs)
-        const displaySteps = buildDisplaySteps(data.steps, [], value, false)
+        const displaySteps = buildDisplaySteps(data.steps ?? [], [], value, false)
         setSelection(getSelectionFromUrlOrFirst(displaySteps, searchParams, false))
       } catch {
         toast.error("Failed to load test steps")

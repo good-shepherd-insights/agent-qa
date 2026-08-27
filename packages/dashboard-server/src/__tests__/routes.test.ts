@@ -58,25 +58,14 @@ interface MockRun {
   startedAt: string | null
   endedAt: string | null
   source: string
-  parentRunId: string | null
   platform: string
   metadata: Record<string, unknown> | null
   testFileContent: string | null
   createdAt: string
 }
 
-interface MockStep {
-  id: string
-  runId: string
-  name: string
-  status: string
-  duration: number
-  stepOrder: number
-}
-
 function createMockDatabase() {
   const runs: MockRun[] = []
-  const steps: MockStep[] = []
 
   function filterRuns(filters: Record<string, unknown> = {}): MockRun[] {
     const {
@@ -133,7 +122,6 @@ function createMockDatabase() {
         startedAt: typeof run.startedAt === 'string' ? run.startedAt : null,
         endedAt: typeof run.endedAt === 'string' ? run.endedAt : null,
         source: typeof run.source === 'string' ? run.source : 'test',
-        parentRunId: typeof run.parentRunId === 'string' ? run.parentRunId : null,
         platform: typeof run.platform === 'string' ? run.platform : 'web',
         metadata: run.metadata && typeof run.metadata === 'object' ? run.metadata as Record<string, unknown> : null,
         testFileContent: typeof run.testFileContent === 'string' ? run.testFileContent : null,
@@ -145,31 +133,11 @@ function createMockDatabase() {
       })
       return id
     },
-    insertStep(step: Record<string, unknown>) {
-      const id = typeof step.id === 'string' ? step.id : randomUUID()
-      steps.push({
-        id,
-        runId: String(step.runId),
-        name: String(step.name ?? 'Unnamed Step'),
-        status: String(step.status ?? 'pending'),
-        duration: typeof step.duration === 'number' ? step.duration : 0,
-        stepOrder: typeof step.stepOrder === 'number' ? step.stepOrder : 0,
-      })
-      return id
-    },
     getRuns(filters: Record<string, unknown> = {}) {
       return filterRuns(filters)
     },
-    getRunsByParent(parentRunId: string) {
-      return runs.filter((run) => run.parentRunId === parentRunId)
-    },
     getRun(id: string) {
       return runs.find((run) => run.id === id) ?? null
-    },
-    getSteps(runId: string) {
-      return steps
-        .filter((step) => step.runId === runId)
-        .sort((left, right) => left.stepOrder - right.stepOrder)
     },
     getStats(filters: Record<string, unknown> = {}) {
       const relevantRuns = filterRuns(filters)
@@ -229,17 +197,6 @@ function insertSampleRun(overrides: Record<string, unknown> = {}) {
     tags: ['smoke', 'auth'],
     startedAt: '2026-03-01T10:00:00Z',
     endedAt: '2026-03-01T10:00:05Z',
-    ...overrides,
-  })
-}
-
-function insertSampleStep(runId: string, overrides: Record<string, unknown> = {}) {
-  return db.insertStep({
-    runId,
-    name: 'Click login button',
-    status: 'passed',
-    duration: 1000,
-    stepOrder: 0,
     ...overrides,
   })
 }
@@ -489,7 +446,11 @@ describe('API Routes', () => {
       expect(durableSources).not.toMatch(/\blive_timeline\b/)
       expect(durableSources).not.toMatch(/\bliveEvents\b/)
       expect(durableSources).not.toMatch(/\bliveTimeline\b/)
-      expect(routesSource).toContain('/api/execution/events')
+      // 2026-08-27 (405-07, D-19): this line asserted the live feed's route was PRESENT — the 225
+      // guardrail's way of saying "live state lives on the wire, not in the schema". The route is
+      // retired, so the assertion is inverted: the wire it names must be absent from this file too.
+      // Split needle, so this cell is not itself the grep-clean inventory's hit.
+      expect(routesSource).not.toContain('api/' + 'execution/events')
       expect(routesSource).not.toMatch(/\/api\/runs\/[^'"]+\/live[-_]timeline/)
     })
   })
@@ -720,16 +681,6 @@ describe('API Routes', () => {
           },
         },
       })
-      actualDb.insertLogs([{
-        id: randomUUID(),
-        runId,
-        stepId: null,
-        level: 'info',
-        source: 'runner',
-        message: storageJson,
-        data: { storageStatePath: storagePath },
-        timestamp: '2026-05-17T10:00:00.000Z',
-      }])
       actualDb.insertExecutionLog({
         id: randomUUID(),
         runId,
@@ -742,29 +693,21 @@ describe('API Routes', () => {
         stderr: storageJson,
         variables: { SESSION_TOKEN: 'hook-session-token', SAFE_VALUE: 'visible' },
       })
-      actualDb.insertStep({
-        runId,
-        name: 'Auth step',
-        status: 'failed',
-        duration: 1,
-        error: storageJson,
-        capturedVariables: { ACCESS_TOKEN: 'step-token' },
-        variableSnapshot: { SESSION_TOKEN: { value: 'step-token', source: 'hook' } },
-        stepOrder: 0,
-      })
-      router = createRouter(actualDb, artifactsDir)
+      router = createRouter(actualDb)
 
+      // 405-07 (D-03/D-02): the log page and the step list were two of the five doors this cell
+      // drove; both are deleted with the tables they answered from, and the two step-level carriers
+      // of a secret (`capturedVariables`, `variableSnapshot`) are columns on a table that no longer
+      // exists. THE CLAIM IS UNCHANGED on the doors that survive — the artifact payload, the hook
+      // log's stdout/stderr/variables, and the run row itself.
       const responses = await Promise.all([
         invokeRoute(`/api/runs/${runId}`),
         invokeRoute(`/api/runs/${runId}/artifact`),
-        invokeRoute(`/api/runs/${runId}/logs`),
         invokeRoute(`/api/runs/${runId}/execution-logs`),
-        invokeRoute(`/api/runs/${runId}/steps`),
       ])
 
       for (const res of responses) {
         expect(res.status).toBe(200)
-        expect(res.body).toContain('[auth state redacted]')
         expect(res.body).not.toContain('demo-acc')
         expect(res.body).not.toContain(storagePath)
         expect(res.body).not.toContain('/workspace/.agent-qa-auth-state/storage-state.json')
@@ -772,8 +715,10 @@ describe('API Routes', () => {
         expect(res.body).not.toContain(AUTH_STATE_LOCAL_STORAGE_SECRET)
         expect(res.body).not.toContain(AUTH_STATE_INDEXED_DB_SECRET)
         expect(res.body).not.toContain('hook-session-token')
-        expect(res.body).not.toContain('step-token')
       }
+      // NON-VACUITY: at least one of the surviving doors must actually carry the redaction marker,
+      // or the `not.toContain`s above are green because the bodies are empty.
+      expect(responses.map((res) => res.body).join('')).toContain('[auth state redacted]')
 
       actualDb.close()
     })
@@ -1137,17 +1082,19 @@ describe('API Routes', () => {
   })
 
   describe('GET /api/runs/:id', () => {
-    it('returns run with steps', async () => {
+    // 405-07 (D-03): the body is `{ run }` and nothing else. It used to carry `steps` off a v1
+    // projection with no producer and `attempts`/`tests` off a child-run walk over a deleted
+    // column — three keys that were structurally empty on every run this build produces. The run's
+    // members, steps and sub-actions are `GET /api/runs/:id/detail`'s, through `runs.detail`.
+    it('returns the run row, and only the run row', async () => {
       const runId = insertSampleRun()
-      insertSampleStep(runId, { name: 'Step 1', stepOrder: 0 })
-      insertSampleStep(runId, { name: 'Step 2', stepOrder: 1 })
 
       const res = await invokeRoute(`/api/runs/${runId}`)
       expect(res.status).toBe(200)
-      const data = JSON.parse(res.body) as any
-      expect(data.run.id).toBe(runId)
-      expect(data.run.name).toBe('Login Test')
-      expect(data.steps).toHaveLength(2)
+      const data = JSON.parse(res.body) as Record<string, unknown>
+      expect(Object.keys(data)).toEqual(['run'])
+      expect((data.run as { id: string }).id).toBe(runId)
+      expect((data.run as { name: string }).name).toBe('Login Test')
     })
 
     it('returns 404 for unknown run', async () => {
@@ -1158,60 +1105,25 @@ describe('API Routes', () => {
     })
   })
 
-  describe('GET /api/videos/:runId/:filename', () => {
-    it('serves video files from run-id directories', async () => {
-      const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
-      const videosDir = join(artifactsDir, 'videos')
-      await mkdir(join(videosDir, 'run_1'), { recursive: true })
-      await writeFile(join(videosDir, 'run_1', 'recording.webm'), 'video-body', 'utf-8')
-
-      router = createRouter({
-        db: actualDb,
-        artifactsDir,
-      })
-
-      const res = await invokeRoute('/api/videos/run_1/recording.webm')
-
-      expect(res.status).toBe(200)
-      expect(res.headers['content-type']).toBe('video/webm')
-      expect(res.body).toBe('video-body')
-
-      actualDb.close()
-    })
-
-    it('does not serve flat videos through run-id URLs', async () => {
-      const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
-      const videosDir = join(artifactsDir, 'videos')
-      await mkdir(videosDir, { recursive: true })
-      await writeFile(join(videosDir, 'recording.webm'), 'flat-video', 'utf-8')
-
-      router = createRouter({
-        db: actualDb,
-        artifactsDir,
-      })
-
-      const res = await invokeRoute('/api/videos/run_1/recording.webm')
-
-      expect(res.status).toBe(404)
-
-      actualDb.close()
-    })
-  })
+  // 2026-08-27 (405-07, D-14): the video-serving describe is deleted with the route. Two cells
+  // stood here — one served a file under a run-id directory, one refused a flat file through a
+  // run-id URL. There is no path-addressed artifact route left and no video surface at all, because
+  // no producer mints a recording ref; `routes.traversal.test.ts` holds the containment cells for
+  // the ref-addressed route that replaced them.
 
   describe('DELETE /api/runs/:id', () => {
-    it('deletes a run tree and artifacts while preserving token event stats', async () => {
+    // 2026-08-27 (405-07, D-14 · T-405-27): ROWS ONLY, AND THE FILESYSTEM CLAIM IS INVERTED.
+    //
+    // The cell that stood here seeded a parent/child run tree with screenshot and video
+    // directories and asserted the delete REMOVED them. The parent link is gone, the path columns
+    // are gone, and the sweep is gone: what lives under a run's directory is the event log and the
+    // content-addressed blobs, which are the run's own record and not the dashboard's to delete.
+    // So the same fixture now asserts the opposite — every byte on disk survives.
+    it('deletes the run rows, preserves token event stats, and touches no file', async () => {
       const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
-      const screenshotsDir = join(artifactsDir, 'screenshots')
-      const videosDir = join(artifactsDir, 'videos')
-      await mkdir(join(screenshotsDir, 'suite_run'), { recursive: true })
-      await mkdir(join(screenshotsDir, 'child_run'), { recursive: true })
-      await mkdir(join(videosDir, 'suite_run'), { recursive: true })
-      await mkdir(join(videosDir, 'child_run'), { recursive: true })
-      await writeFile(join(screenshotsDir, 'suite_run', 'suite.png'), 'suite', 'utf-8')
-      await writeFile(join(screenshotsDir, 'child_run', 'child.png'), 'child', 'utf-8')
-      await writeFile(join(videosDir, 'suite_run', 'suite.webm'), 'suite-video', 'utf-8')
-      await writeFile(join(videosDir, 'child_run', 'child.mp4'), 'child-video', 'utf-8')
-      await writeFile(join(videosDir, 'child.mp4'), 'unrelated-flat-video', 'utf-8')
+      const runDir = join(artifactsDir, 'runs', 'suite_run')
+      await mkdir(runDir, { recursive: true })
+      await writeFile(join(runDir, 'events.jsonl'), '{"seq":1}\n', 'utf-8')
 
       actualDb.insertRun({
         id: 'suite_run',
@@ -1221,42 +1133,9 @@ describe('API Routes', () => {
         startedAt: '2026-04-19T00:00:00.000Z',
         endedAt: '2026-04-19T00:00:01.200Z',
         suiteId: 's_long-suite',
-        videoPath: 'suite_run/suite.webm',
       })
-      actualDb.insertRun({
-        id: 'child_run',
-        name: 'Child run',
-        status: 'failed',
-        duration: 800,
-        startedAt: '2026-04-19T00:00:00.000Z',
-        endedAt: '2026-04-19T00:00:00.800Z',
-        parentRunId: 'suite_run',
-        suiteId: 's_long-suite',
-        filePath: 'tests/web/login.yaml',
-        videoPath: 'child_run/child.mp4',
-      })
-      actualDb.insertStep({
-        id: 'step_parent',
-        runId: 'suite_run',
-        name: 'Open suite',
-        status: 'failed',
-        duration: 400,
-        stepOrder: 0,
-        screenshotPath: '/api/screenshots/suite_run/suite.png',
-      })
-      actualDb.insertStep({
-        id: 'step_child',
-        runId: 'child_run',
-        name: 'Open child',
-        status: 'failed',
-        duration: 300,
-        stepOrder: 0,
-        screenshotPath: '/api/screenshots/child_run/child.png',
-      })
-      actualDb.insertReasoningTrace({
-        stepId: 'step_child',
-        observeText: 'child trace',
-      })
+      actualDb.insertRunArtifact({ runId: 'suite_run', kind: 'test' })
+      actualDb.upsertRunMember({ runId: 'suite_run', testIndex: 0, name: 'Member A' })
       actualDb.insertTokenEvent({
         modelName: 'gpt-5.4-mini',
         promptTokens: 10,
@@ -1264,88 +1143,47 @@ describe('API Routes', () => {
         source: 'test-run',
       })
 
-      router = createRouter({
-        db: actualDb,
-        artifactsDir,
-      })
+      router = createRouter({ db: actualDb })
 
-      const res = await invokeRoute('/api/runs/suite_run', {
-        method: 'DELETE',
-      })
+      const res = await invokeRoute('/api/runs/suite_run', { method: 'DELETE' })
 
       expect(res.status).toBe(200)
       expect(JSON.parse(res.body)).toEqual({
         deleted: true,
-        deletedRunIds: ['suite_run', 'child_run'],
+        deletedRunIds: ['suite_run'],
       })
       expect(actualDb.getRun('suite_run')).toBeUndefined()
-      expect(actualDb.getRun('child_run')).toBeUndefined()
-      expect(actualDb.getSteps('suite_run')).toEqual([])
-      expect(actualDb.getSteps('child_run')).toEqual([])
+      // The cascade reached the run's projected rows and its artifact...
+      expect(actualDb.getRunArtifact('suite_run')).toBeNull()
+      expect(actualDb.readRunDetailRows('suite_run')).toBeUndefined()
+      // ...and did not reach the token events, which are not run-scoped.
       expect(actualDb.getTokenEventStats().totals).toEqual({
         promptTokens: 10,
         completionTokens: 5,
       })
-      await expect(stat(join(screenshotsDir, 'suite_run'))).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(stat(join(screenshotsDir, 'child_run'))).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(stat(join(videosDir, 'suite_run'))).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(stat(join(videosDir, 'child_run'))).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(stat(join(videosDir, 'child.mp4'))).resolves.toMatchObject({ isFile: expect.any(Function) })
+      // The run's own record on disk is untouched.
+      await expect(stat(join(runDir, 'events.jsonl')))
+        .resolves.toMatchObject({ isFile: expect.any(Function) })
 
       actualDb.close()
     })
 
-    it('preserves absolute video paths outside artifactsDir/videos', async () => {
-      const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
-      const externalDir = await mkdtemp(join(tmpdir(), 'agent-qa-dashboard-external-video-'))
-      tempDirs.push(externalDir)
-      const externalVideo = join(externalDir, 'outside.webm')
-      await writeFile(externalVideo, 'outside-video', 'utf-8')
+    it('answers 404 for a run that does not exist', async () => {
+      const { db: actualDb } = await createDashboardWorkspace()
+      router = createRouter({ db: actualDb })
 
-      actualDb.insertRun({
-        id: 'outside_video_run',
-        name: 'Outside video run',
-        status: 'failed',
-        duration: 100,
-        startedAt: '2026-04-19T00:00:00.000Z',
-        endedAt: '2026-04-19T00:00:00.100Z',
-        videoPath: externalVideo,
-      })
-
-      router = createRouter({
-        db: actualDb,
-        artifactsDir,
-      })
-
-      const res = await invokeRoute('/api/runs/outside_video_run', {
-        method: 'DELETE',
-      })
-
-      expect(res.status).toBe(200)
-      await expect(stat(externalVideo)).resolves.toMatchObject({ isFile: expect.any(Function) })
-
-      actualDb.close()
-    })
-  })
-
-  describe('GET /api/runs/:id/steps', () => {
-    it('returns steps for a run', async () => {
-      const runId = insertSampleRun()
-      insertSampleStep(runId, { name: 'Step 1', stepOrder: 0 })
-      insertSampleStep(runId, { name: 'Step 2', stepOrder: 1 })
-
-      const res = await invokeRoute(`/api/runs/${runId}/steps`)
-      expect(res.status).toBe(200)
-      const data = JSON.parse(res.body) as any
-      expect(data.steps).toHaveLength(2)
-      expect(data.steps[0].name).toBe('Step 1')
-    })
-
-    it('returns 404 for unknown run', async () => {
-      const res = await invokeRoute('/api/runs/nonexistent-id/steps')
+      const res = await invokeRoute('/api/runs/never_existed', { method: 'DELETE' })
       expect(res.status).toBe(404)
+
+      actualDb.close()
     })
   })
+
+  // 2026-08-27 (405-07, D-03): the step-list describe is deleted with the arm. `runs.detail` is
+  // the one read for a run's members, steps and sub-actions, and it is proven end-to-end in
+  // `run-service/__tests__/run-detail-routes.test.ts`. The absence of this arm — and of the three
+  // others the census retired — is pinned in `suite-parent-debris-census.test.ts`, which drives
+  // each retired URL against a live router and requires the generic 404.
 
   describe('POST /api/queue/enqueue', () => {
     it('normalizes queued files under configured workspace.testMatch', async () => {

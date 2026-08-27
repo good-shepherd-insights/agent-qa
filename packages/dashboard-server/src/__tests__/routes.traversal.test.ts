@@ -5,75 +5,133 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { AgentHost } from '../chat/host.js'
 import { DashboardDatabase } from '../db/database.js'
 import { startServer } from '../server/server.js'
 
 /**
- * THE ARTIFACT-SERVING TRAVERSAL GUARD, DRIVEN AT THE RAW WIRE (402-05, D-16 — T-402-17).
+ * THE ARTIFACT-SERVING GUARD, DRIVEN AT THE RAW WIRE (402-05 D-16 → 405-07 D-14 — T-402-17/T-405-28).
+ *
+ * ---- WHAT THIS FILE MEASURES NOW -------------------------------------------------------------
+ *
+ * 2026-08-27 (405-07): the two PATH-addressed artifact routes these cells were written against are
+ * deleted, with the containment resolver, the three-door serving verdict and the run-deletion
+ * filesystem sweep that shared it. Refs are the only artifact addressing (D-14): a run's evidence
+ * is reached as `GET /api/runs/:runId/artifacts/:sha`, and the containment rule for those bytes is
+ * the evidence store's own, reached through the `runs.artifact` op rather than reassembled here.
+ *
+ * The escape payloads did not go away with the routes — they arrive at whatever route serves
+ * artifacts — so this file keeps every one of them and re-aims it at the successor. What changed is
+ * WHERE the refusal comes from: it is no longer a path check this package wrote, it is a content
+ * ADDRESS contract. A sha is 64 characters drawn from `[0-9a-f]`, so every payload below fails to
+ * be one, and the door refuses before it has any path to resolve.
  *
  * ---- WHY A SOCKET AND NOT `fetch` ------------------------------------------------------------
  *
  * Every HTTP client in Node builds its request target through the WHATWG URL parser, and that
  * parser REMOVES double-dot path segments before a byte leaves the process. `fetch` cannot send
- * `GET /api/screenshots/run-1/../../canary.txt` — it sends `GET /canary.txt`. A cell that used
+ * `GET /api/runs/run-1/artifacts/../../canary.txt` — it sends `GET /canary.txt`. A cell that used
  * `fetch` for the literal form would therefore be measuring its own client, and would report a
  * refusal the server never made. These cells write the request line onto a `net.Socket` directly,
- * so the bytes on the wire are the bytes the cell chose.
+ * so the bytes on the wire are the bytes the cell chose. That is this file's whole reason to exist
+ * alongside `run-service/__tests__/run-detail-routes.test.ts`, which drives the same route through
+ * `fetch` over a real store.
  *
  * ---- WHERE NORMALIZATION ACTUALLY HAPPENS, MEASURED ------------------------------------------
  *
- * With the raw socket in hand the server's own layers become observable, and the measured facts
- * are worth writing down because they decide which payload class reaches which guard:
- *
  *  - A LITERAL `../` reaches this process and is then collapsed by `tryParseRequestUrl`'s
- *    `new URL(...)` — the request lands on a different route entirely, never on the artifact
- *    guard. The `documents where normalization happens` cell below measures exactly this.
- *  - A WHOLE-SEGMENT `%2e%2e` is ALSO collapsed there: the URL spec counts `%2e%2e` as a
- *    double-dot path segment, so it is removed exactly as `..` is. That class cannot reach the
- *    guard from any client, and a cell claiming to have driven it would be claiming a payload the
- *    process never sees.
+ *    `new URL(...)` — the request lands on a different route entirely, never on the artifact arm.
+ *  - A WHOLE-SEGMENT `%2e%2e` is ALSO collapsed there: the URL spec counts it as a double-dot path
+ *    segment. That class cannot reach the arm from any client.
  *  - `..%2f`, `..%5c` and `%2f`-prefixed segments are NOT collapsed — the encoded separator keeps
  *    the dot-dot inside one segment, so it survives the parse intact and arrives at the route.
- *    THOSE are the payloads below, and they are the ones the guard is the only thing refusing.
+ *    THOSE are the payloads below, and the address contract is the only thing refusing them.
  *
  * ---- THE CANARY ------------------------------------------------------------------------------
  *
- * Every refusal cell targets a real file planted OUTSIDE the artifact root and asserts its bytes
+ * Every refusal cell targets a real file planted OUTSIDE any artifact root and asserts its bytes
  * never appear in any response. A 4xx alone would be satisfied by a route that refused for the
- * wrong reason; the canary is what makes "no file outside the root is ever opened" a measurement.
+ * wrong reason. The claim is now STRONGER than it was: the arm opens no path at all, so a canary
+ * appearing in a body would mean a filesystem read this layer is no longer capable of making.
+ *
+ * ---- THE PLANTED HOST, AND WHAT IT IS AND IS NOT PROOF OF ------------------------------------
+ *
+ * `serveRunArtifact` validates the address with the SHIPPED `RunsArtifactInputSchema` BEFORE it
+ * dispatches, so every refusal below is the shipped contract's and not this file's. The host here
+ * is a stub that THROWS if it is ever invoked with a refused address — so a route that stopped
+ * validating would surface as a 500 rather than quietly pass this suite.
+ *
+ * The 200 control is planted bytes, deliberately: what it proves is that the door is not refusing
+ * everything, and that the address it accepted is the one it echoed as the validator. The bytes of
+ * a blob actually WRITTEN through `FsEvidenceArtifactStore` are 405-05's cell in
+ * `run-detail-routes.test.ts`, over a real composed registry; a second registry composition here
+ * would be a second thing to keep in step with the first.
  */
 
 const CANARY = 'agent-qa-traversal-canary-8f3a1c'
 
+/** A well-formed content address: 64 lowercase hex characters. */
+const GOOD_SHA = 'a'.repeat(64)
+const PLANTED_BYTES = 'planted-artifact-bytes'
+const RUN_ID = 'r_traversal-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
+
 let tempDir: string
-let artifactsDir: string
 let outsideCanaryPath: string
 let port: number
 let close: (() => void) | undefined
 let db: DashboardDatabase | undefined
+/** Every address the planted op was asked for. A refused address must never appear here. */
+const dispatchedShas: string[] = []
+
+/**
+ * A host that answers ONLY for the one well-formed address, and throws for anything else.
+ *
+ * The throw is the instrument: `serveRunArtifact` refuses a malformed address before it dispatches,
+ * so a payload below reaching this function at all means the validation was skipped — and the 500
+ * that follows is louder than the 400 the cell expected.
+ */
+function plantedHost(): AgentHost {
+  return {
+    registry: {} as never,
+    caller: { surface: 'test', actor: 'traversal' },
+    runsArtifactFunctionId: 'test:planted-artifact-op',
+    // The chat door subscribes at router build; a host handed to `startServer` has to satisfy it.
+    onSessionEvent: () => () => undefined,
+    listDeclarations: () => [],
+    unmaskForDisplay: (text: string) => text,
+    invokeFunction: (_registry: unknown, _id: string, input: unknown) => {
+      const { sha } = input as { sha: string }
+      dispatchedShas.push(sha)
+      if (sha !== GOOD_SHA) throw new Error(`planted op reached with an address it must never see: ${sha}`)
+      return Promise.resolve({
+        runId: RUN_ID,
+        sha: GOOD_SHA,
+        contentType: 'image/png',
+        byteLength: PLANTED_BYTES.length,
+        bytesBase64: Buffer.from(PLANTED_BYTES, 'utf8').toString('base64'),
+      })
+    },
+  } as unknown as AgentHost
+}
 
 beforeAll(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'agent-qa-traversal-'))
-  artifactsDir = join(tempDir, 'artifacts')
-  mkdirSync(join(artifactsDir, 'screenshots', 'run-1'), { recursive: true })
-  mkdirSync(join(artifactsDir, 'videos', 'run-1'), { recursive: true })
-  // A legitimate artifact under each root — the control the unification must not break.
-  writeFileSync(join(artifactsDir, 'screenshots', 'run-1', 'shot.png'), 'legit-screenshot-bytes')
-  writeFileSync(join(artifactsDir, 'videos', 'run-1', 'recording.webm'), 'legit-video-bytes')
-  // Canary 1: one level out of the screenshots root, still inside the artifacts dir.
-  writeFileSync(join(artifactsDir, 'canary.txt'), CANARY)
-  // Canary 2: a SIBLING DIRECTORY whose name has the root's name as a string prefix. This is the
-  // file a `resolved.startsWith(root)` containment check serves and a path-relative one refuses.
-  mkdirSync(join(artifactsDir, 'screenshots-evil'), { recursive: true })
-  writeFileSync(join(artifactsDir, 'screenshots-evil', 'canary.txt'), CANARY)
-  // Canary 3: reached only by smuggling an ABSOLUTE path in as the filename.
+  // Canary 1: inside the workspace, one level out of anywhere an artifact could live.
+  mkdirSync(join(tempDir, 'artifacts'), { recursive: true })
+  writeFileSync(join(tempDir, 'artifacts', 'canary.txt'), CANARY)
+  // Canary 2: a SIBLING DIRECTORY whose name has an artifact root's name as a string prefix. This
+  // is the file a `resolved.startsWith(root)` containment check served and a path-relative one
+  // refused — the class that motivated the unified resolver the ref address now replaces.
+  mkdirSync(join(tempDir, 'artifacts', 'screenshots-evil'), { recursive: true })
+  writeFileSync(join(tempDir, 'artifacts', 'screenshots-evil', 'canary.txt'), CANARY)
+  // Canary 3: reached only by smuggling an ABSOLUTE path in as the address.
   outsideCanaryPath = join(tempDir, 'absolute-canary.txt')
   writeFileSync(outsideCanaryPath, CANARY)
 
   const configPath = join(tempDir, 'agent-qa.config.yaml')
   writeFileSync(configPath, 'testDir: tests\n')
   db = new DashboardDatabase({ dbPath: ':memory:' })
-  const started = await startServer({ db, port: 0, artifactsDir, configPath })
+  const started = await startServer({ db, port: 0, configPath, agentHost: plantedHost() })
   close = started.close
   port = (started.server.address() as AddressInfo).port
 })
@@ -114,104 +172,106 @@ async function rawRequest(target: string): Promise<RawResponse> {
   })
 }
 
-/** The refusal reason the artifact guard published, or undefined when it was not the responder. */
-function refusalReason(response: RawResponse): string | undefined {
-  return /"reason":"([a-z_]+)"/.exec(response.raw)?.[1]
+/** The refusal word the artifact door published, or undefined when it was not the responder. */
+function refusal(response: RawResponse): string | undefined {
+  return /"error":"([a-z_]+)"/.exec(response.raw)?.[1]
 }
 
 function expectNoCanary(response: RawResponse): void {
   expect(response.raw).not.toContain(CANARY)
 }
 
-describe('the artifact serving routes refuse encoded traversal at the raw wire (D-16)', () => {
-  it('documents where normalization happens: a LITERAL ../ never reaches the artifact guard', async () => {
+describe('the ref-addressed artifact route refuses encoded traversal at the raw wire (405-07, D-14)', () => {
+  it('documents where normalization happens: a LITERAL ../ never reaches the artifact door', async () => {
     // Sent as raw bytes — no client could produce this. The server's own `tryParseRequestUrl`
-    // collapses it, so the request lands somewhere that is not the screenshots route at all. This
-    // cell exists so the encoded payloads below are read as the ones that DO reach the guard.
-    const response = await rawRequest('/api/screenshots/run-1/../../canary.txt')
-    expect(refusalReason(response)).toBeUndefined()
+    // collapses it, so the request lands somewhere that is not the artifact route at all. This cell
+    // exists so the encoded payloads below are read as the ones that DO reach the door.
+    const response = await rawRequest(`/api/runs/${RUN_ID}/artifacts/../../canary.txt`)
+    expect(refusal(response)).toBeUndefined()
     expectNoCanary(response)
   })
 
-  it('refuses an encoded-separator dot-dot escape out of the screenshots root', async () => {
-    const response = await rawRequest('/api/screenshots/run-1/..%2f..%2fcanary.txt')
+  it('refuses an encoded-separator dot-dot escape presented as the content address', async () => {
+    const response = await rawRequest(`/api/runs/${RUN_ID}/artifacts/..%2f..%2fcanary.txt`)
     expect(response.status).toBe(400)
-    expect(refusalReason(response)).toBe('outside_root')
+    expect(refusal(response)).toBe('malformed_sha')
     expectNoCanary(response)
   })
 
   it('refuses a BACKSLASH-separated escape (a separator on win32, a forbidden byte everywhere)', async () => {
-    const response = await rawRequest('/api/screenshots/run-1/..%5c..%5ccanary.txt')
+    const response = await rawRequest(`/api/runs/${RUN_ID}/artifacts/..%5c..%5ccanary.txt`)
     expect(response.status).toBe(400)
-    expect(refusalReason(response)).toBe('not_a_plain_segment')
+    expect(refusal(response)).toBe('malformed_sha')
     expectNoCanary(response)
   })
 
-  it('refuses an ABSOLUTE path smuggled in as the filename', async () => {
+  it('refuses an ABSOLUTE path smuggled in as the content address', async () => {
     const response = await rawRequest(
-      `/api/screenshots/run-1/${encodeURIComponent(outsideCanaryPath)}`,
+      `/api/runs/${RUN_ID}/artifacts/${encodeURIComponent(outsideCanaryPath)}`,
     )
     expect(response.status).toBe(400)
-    expect(refusalReason(response)).toBe('not_a_plain_segment')
+    expect(refusal(response)).toBe('malformed_sha')
     expectNoCanary(response)
   })
 
-  it('refuses a SIBLING DIRECTORY whose name is a string prefix of the artifact root', async () => {
-    // `<artifacts>/screenshots-evil/canary.txt` starts with `<artifacts>/screenshots` as a STRING
-    // and is outside it as a PATH. A prefix-compare containment check serves this file.
+  it('refuses a SIBLING DIRECTORY whose name is a string prefix of an artifact root', async () => {
+    // The class a prefix-compare containment check served: `<artifacts>/screenshots-evil/...`
+    // starts with `<artifacts>/screenshots` as a STRING and is outside it as a PATH. There is no
+    // prefix compare left to fool — the address is not a path.
     const response = await rawRequest(
-      '/api/screenshots/run-1/..%2f..%2fscreenshots-evil%2fcanary.txt',
+      `/api/runs/${RUN_ID}/artifacts/..%2f..%2fscreenshots-evil%2fcanary.txt`,
     )
     expect(response.status).toBe(400)
-    expect(refusalReason(response)).toBe('outside_root')
+    expect(refusal(response)).toBe('malformed_sha')
     expectNoCanary(response)
   })
 
-  it('refuses a malformed percent escape rather than passing the raw bytes through', async () => {
-    const response = await rawRequest('/api/screenshots/run-1/%zz.png')
+  it('refuses a malformed percent escape rather than decoding the address at all', async () => {
+    // THE SHA IS NEVER DECODED, and that is the contract rather than an oversight: a content
+    // address contains nothing percent-encoding could represent differently, so a segment that
+    // needed decoding is already not one. The raw bytes go straight to the address regex.
+    const response = await rawRequest(`/api/runs/${RUN_ID}/artifacts/%zz.png`)
     expect(response.status).toBe(400)
-    expect(refusalReason(response)).toBe('malformed_escape')
+    expect(refusal(response)).toBe('malformed_sha')
   })
 
-  it('CONTROL: a legitimate screenshot under the root still serves 200', async () => {
-    const response = await rawRequest('/api/screenshots/run-1/shot.png')
+  it('refuses an escape in the RUN ID segment, and blames the run id rather than the address', async () => {
+    const response = await rawRequest(`/api/runs/..%2f..%2fcanary.txt/artifacts/${GOOD_SHA}`)
+    expect(response.status).toBe(400)
+    expect(refusal(response)).toBe('invalid_run_id')
+    expectNoCanary(response)
+  })
+
+  it('refuses UPPERCASE hex — a content address has exactly one spelling', async () => {
+    const response = await rawRequest(`/api/runs/${RUN_ID}/artifacts/${GOOD_SHA.toUpperCase()}`)
+    expect(response.status).toBe(400)
+    expect(refusal(response)).toBe('malformed_sha')
+  })
+
+  it('does not reassemble a path split across REAL separators into an address', async () => {
+    // The arm's regex is anchored with `[^/]+` on both captures, so a target carrying an extra
+    // separator matches nothing here rather than being rejoined into something that does. It falls
+    // through to the four-segment run catch-all, which refuses it as a run id.
+    const response = await rawRequest(`/api/runs/${RUN_ID}/artifacts/${GOOD_SHA}/extra`)
+    expect(response.status).toBe(404)
+    expect(refusal(response)).toBeUndefined()
+  })
+
+  it('NON-VACUITY: every refusal above stopped before the op was ever asked', () => {
+    // The planted host throws for any address but the good one. If a refusal had dispatched, the
+    // cell above it would have seen a 500 — and this asserts the same fact directly, so a future
+    // change that moved validation after dispatch cannot pass by accident.
+    expect(dispatchedShas.filter((sha) => sha !== GOOD_SHA)).toEqual([])
+  })
+
+  it('CONTROL: a well-formed content address reaches the op and its bytes are served', async () => {
+    const response = await rawRequest(`/api/runs/${RUN_ID}/artifacts/${GOOD_SHA}`)
     expect(response.status).toBe(200)
-    expect(response.raw).toContain('legit-screenshot-bytes')
-  })
-
-  it('applies the SAME guard to the videos root — one containment spelling, both routes', async () => {
-    const escape = await rawRequest('/api/videos/run-1/..%2f..%2fcanary.txt')
-    expect(escape.status).toBe(400)
-    expect(refusalReason(escape)).toBe('outside_root')
-    expectNoCanary(escape)
-
-    const sibling = await rawRequest('/api/videos/run-1/..%2f..%2fscreenshots-evil%2fcanary.txt')
-    expect(sibling.status).toBe(400)
-    expect(refusalReason(sibling)).toBe('outside_root')
-    expectNoCanary(sibling)
-
-    const absolute = await rawRequest(`/api/videos/run-1/${encodeURIComponent(outsideCanaryPath)}`)
-    expect(absolute.status).toBe(400)
-    expect(refusalReason(absolute)).toBe('not_a_plain_segment')
-    expectNoCanary(absolute)
-  })
-
-  it('CONTROL: a legitimate video under the root still serves 200', async () => {
-    const response = await rawRequest('/api/videos/run-1/recording.webm')
-    expect(response.status).toBe(200)
-    expect(response.raw).toContain('legit-video-bytes')
-  })
-
-  it('serves a percent-encoded legitimate filename — the decode happens EXACTLY once', async () => {
-    // `0 Step.png` on disk, `0%20Step.png` on the wire. Before the unification the route looked the
-    // literal `0%20Step.png` up on disk and 404'd; a decode-twice implementation would resolve
-    // `0%2520Step.png` too, which the second half of this cell refuses.
-    writeFileSync(join(artifactsDir, 'screenshots', 'run-1', '0 Step.png'), 'spaced-name-bytes')
-    const once = await rawRequest('/api/screenshots/run-1/0%20Step.png')
-    expect(once.status).toBe(200)
-    expect(once.raw).toContain('spaced-name-bytes')
-
-    const twice = await rawRequest('/api/screenshots/run-1/0%2520Step.png')
-    expect(twice.status).toBe(404)
+    expect(response.raw).toContain(PLANTED_BYTES)
+    // The address IS the validator, and the door promises it will never go stale.
+    expect(response.raw).toContain(`ETag: "${GOOD_SHA}"`)
+    expect(response.raw).toContain('X-Content-Type-Options: nosniff')
+    expect(dispatchedShas).toContain(GOOD_SHA)
+    expectNoCanary(response)
   })
 })

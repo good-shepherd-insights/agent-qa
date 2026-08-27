@@ -1,16 +1,23 @@
 // THE IN-PROCESS BACKEND'S BRIDGE (Phase 401 plan 07 — D-04/D-09/D-12, INVK-01).
 //
 // WHAT IS UNDER TEST is the half of INVK-01 that lives in `packages/dashboard-server`: the bridge
-// from a started run's `RunSession` bus to the per-run buffer + `execution-event` surface the db
-// writes, the live SSE and the current step projection consume. The run-starter is injected here
+// from a started run's `RunSession` bus to the two things the host actually consumes — the settle
+// event it reconciles the db row from, and the active-run list. The run-starter is injected here
 // (it is the CLI's, and this package may not name it), so what these cells range is the bridge, the
-// buffer, the lifecycle mapping and the completion vocabulary.
+// lifecycle mapping and the completion vocabulary.
 //
-// THE PARITY CELL'S EXPECTED VALUE IS AN ANCHOR, NOT AN OPINION. `__fixtures__/envelope-parity-
-// golden.json` was captured in commit `bc5e6c25` by driving the SHIPPED `TestRunner` — spawn, child,
-// `AGENT_QA_EVENT:` scrape and all — over the same envelope sequence, before that class was deleted.
-// A golden written by hand from this implementation would be this implementation agreeing with
-// itself.
+// 2026-08-27 (405-07, D-19) — THE PARITY ANCHOR AND ITS CELLS ARE GONE, AND THAT IS THE RIGHT
+// OUTCOME RATHER THAN A LOSS. The anchor was a golden captured from the SHIPPED spawn-and-scrape
+// wire before that class was deleted, and five cells compared this bridge's per-run replay buffer
+// against it. Its whole job was to make one producer swap measurable while the consumer surface
+// held still — and it did that job. That consumer surface is now deleted with the route it fed, so
+// the golden anchors a shape nothing produces and nothing reads. Keeping the cells would have kept
+// a buffer alive purely so its own test could pass.
+//
+// WHAT REPLACES THE SUBSCRIPTION'S COVERAGE. Replay-then-live is still load-bearing — it is how the
+// status mapping and `testName` see a run whose first envelopes preceded the attach — so it is
+// measured through the two facts that survive: the settled status, and the member name on the
+// active list.
 //
 // THE FAKE SESSION MODELS THE BUS'S REFUSAL, DELIBERATELY. `RunEventBus.subscribe` resolves
 // `fromSeq ?? 1` and raises `ReplayIncompleteError` for any `fromSeq` below the earliest seq it can
@@ -29,21 +36,10 @@ import type { RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
 import { createInProcessExecutionBackend } from '../in-process-backend.js'
 import type {
   ExecuteOptions,
-  LiveExecutionEvent,
   RunSettledDetails,
   RunSettledStatus,
 } from '../execution-backend.js'
-import {
-  PARITY_ENVELOPES,
-  PARITY_RUN_ID,
-  scrubParityEvents,
-} from './envelope-parity-fixture.js'
-
-const GOLDEN_PATH = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '__fixtures__',
-  'envelope-parity-golden.json',
-)
+import { PARITY_ENVELOPES, PARITY_RUN_ID } from './envelope-parity-fixture.js'
 
 /** Raised where `RunEventBus` raises it, and with its own name, so a cell can recognise it. */
 class ReplayIncompleteError extends Error {
@@ -115,8 +111,6 @@ function recordSettles(
 }
 
 interface Drive {
-  buffered: LiveExecutionEvent[]
-  emitted: { runId: string; event: LiveExecutionEvent }[]
   settled: Settled[]
   session?: FakeRunSession
 }
@@ -168,7 +162,7 @@ async function driveOneRun(input: {
   const runId = input.runId ?? PARITY_RUN_ID
   const envelopes = input.envelopes ?? PARITY_ENVELOPES
   const preAttach = input.preAttach ?? 3
-  const drive: Drive = { buffered: [], emitted: [], settled: [] }
+  const drive: Drive = { settled: [] }
 
   const backend = createInProcessExecutionBackend({
     invokeRun: async ({ opts, onSession }) => {
@@ -186,13 +180,9 @@ async function driveOneRun(input: {
     },
   })
   recordSettles(backend, drive.settled)
-  backend.on('execution-event', (eventRunId: string, event: LiveExecutionEvent) => {
-    drive.emitted.push({ runId: eventRunId, event })
-  })
 
   backend.execute({ ...baseOpts(runId), ...input.opts })
   await waitFor(() => { expect(drive.settled).toHaveLength(1) })
-  drive.buffered = backend.getBufferedEvents(runId)
   return drive
 }
 
@@ -212,32 +202,87 @@ async function waitFor(assertion: () => void, timeoutMs = 2_000): Promise<void> 
   throw new Error('Timed out waiting for assertion')
 }
 
-describe('the bus bridge feeds the consumers exactly what the scrape fed them (401-07, D-09)', () => {
-  it('ENVELOPE PARITY — the anchor captured from the RETIRED wire, reproduced by the new one', async () => {
-    const golden = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8')) as unknown[]
-    // NON-VACUITY BEFORE ANY VERDICT: a truncated golden would make the comparison below pass
-    // while ranging nothing.
-    expect(golden.length).toBe(PARITY_ENVELOPES.length + 2)
+/**
+ * Hold one run OPEN so the active list can be read while it is still running, then release it.
+ *
+ * The settle-driven helper above cannot answer questions about a LIVE run — by the time it returns,
+ * the handle has already reached a terminal status and dropped off the active list. These cells
+ * need the in-flight state, so they drive the session by hand.
+ */
+async function driveOpenRun(input: {
+  runId: string
+  envelopes: readonly RunEventEnvelope[]
+  preAttach: number
+}): Promise<{
+  backend: ReturnType<typeof createInProcessExecutionBackend>
+  session: FakeRunSession
+  release: () => void
+  settled: Settled[]
+}> {
+  const settled: Settled[] = []
+  let session: FakeRunSession | undefined
+  let release: (() => void) | undefined
+  const backend = createInProcessExecutionBackend({
+    invokeRun: async ({ opts, onSession }) => {
+      const live = new FakeRunSession(opts.runId as RunSession['id'])
+      session = live
+      for (const envelope of input.envelopes.slice(0, input.preAttach)) live.publish(envelope)
+      onSession(live)
+      for (const envelope of input.envelopes.slice(input.preAttach)) live.publish(envelope)
+      await new Promise<void>((resolve) => { release = resolve })
+    },
+  })
+  recordSettles(backend, settled)
+  backend.execute(baseOpts(input.runId))
+  await waitFor(() => { expect(session).toBeDefined() })
+  return { backend, session: session!, release: () => release?.(), settled }
+}
 
-    const drive = await driveOneRun({})
-    expect(scrubParityEvents(drive.buffered)).toEqual(golden)
+describe('the bus subscription answers the active list (405-07, D-19 · RESEARCH D7)', () => {
+  it('`testName` COMES OFF THE SESSION, not off a buffer of its frames', async () => {
+    const { backend, release } = await driveOpenRun({
+      runId: PARITY_RUN_ID,
+      envelopes: PARITY_ENVELOPES.slice(0, 4),
+      preAttach: 0,
+    })
+
+    const active = backend.getActiveExecutions()
+    expect(active).toHaveLength(1)
+    expect(active[0]!.runId).toBe(PARITY_RUN_ID)
+    // The Rule-1 fix carried forward: the retiring class looked for a `test-start` event the frozen
+    // §2.2 vocabulary never emits, so this field was `undefined` for every run. The envelope type
+    // is `testStarted` and the name is its payload's.
+    expect(active[0]!.testName).toBe('the parity test')
+    release()
   })
 
-  it('THE EMITTED STREAM IS THE BUFFER — one push, two surfaces, same order, run-scoped', async () => {
-    const drive = await driveOneRun({})
-    expect(scrubParityEvents(drive.emitted.map((entry) => entry.event)))
-      .toEqual(scrubParityEvents(drive.buffered))
-    expect(new Set(drive.emitted.map((entry) => entry.runId))).toEqual(new Set([PARITY_RUN_ID]))
+  it('REPLAY THEN LIVE — a member that started BEFORE the attach is still named', async () => {
+    // Every envelope, including the `testStarted`, is published before the door names the session.
+    // A bridge that attached live-only would see none of them, so the name would be absent — which
+    // is exactly the failure `REPLAY_FROM_START` exists to prevent.
+    const { backend, release } = await driveOpenRun({
+      runId: 'replayed-run',
+      envelopes: PARITY_ENVELOPES.slice(0, 4).map((envelope) =>
+        ({ ...envelope, runId: 'replayed-run' }) as RunEventEnvelope),
+      preAttach: 4,
+    })
+
+    expect(backend.getActiveExecutions()[0]!.testName).toBe('the parity test')
+    release()
   })
 
-  it('REPLAY THEN LIVE — envelopes published before the attach arrive FIRST, in seq order', async () => {
-    // Six of the eight are published before the door names the session, so a bridge that attached
-    // live-only would deliver two envelopes and a bridge that replayed out of order would show it.
-    const drive = await driveOneRun({ preAttach: 6 })
-    const seqs = drive.buffered
-      .filter((event) => typeof event.seq === 'number')
-      .map((event) => event.seq as number)
-    expect(seqs).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+  it('A RUN WITH NO MEMBER YET CARRIES NO NAME — absence is served as an absent field', async () => {
+    const { backend, release } = await driveOpenRun({
+      runId: 'unnamed-run',
+      envelopes: PARITY_ENVELOPES.slice(0, 1).map((envelope) =>
+        ({ ...envelope, runId: 'unnamed-run' }) as RunEventEnvelope),
+      preAttach: 0,
+    })
+
+    const active = backend.getActiveExecutions()
+    expect(active).toHaveLength(1)
+    expect('testName' in active[0]!).toBe(false)
+    release()
   })
 
   it('THE ATTACH SEQ IS SERVEABLE — the bus refuses a prefix it cannot produce, and the bridge asks for one it can', async () => {
@@ -250,16 +295,18 @@ describe('the bus bridge feeds the consumers exactly what the scrape fed them (4
     expect(JSON.stringify(drive.settled[0]!.details)).not.toContain('ReplayIncomplete')
   })
 
-  it('ENVELOPES ARE CARRIED, NEVER RE-MINTED — the payload object survives the bridge intact', async () => {
-    const drive = await driveOneRun({})
-    const stepFinalized = drive.buffered.find((event) => event.type === 'stepFinalized')
-    expect(stepFinalized?.payload).toEqual(PARITY_ENVELOPES[4]!.payload)
+  it('THE RUN-LEVEL STATUS IS LAST-WRITER-WINS OVER THE WHOLE SUBSCRIPTION', async () => {
+    // The fixture says `testFinished: failed` at seq 6 and `verdict: passed` at seq 7 precisely so
+    // a bridge that stopped at the first terminal envelope is discriminated from one that reads
+    // them all. Six of the eight are published before the attach, so this ranges the replay too.
+    const drive = await driveOneRun({ preAttach: 6 })
+    expect(drive.settled[0]!.status).toBe('completed')
   })
 })
 
 describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12)', () => {
   it('KILL ABORTS THE SESSION — no signal, no grace timer, no process group', async () => {
-    const drive: Drive = { buffered: [], emitted: [], settled: [] }
+    const drive: Drive = { settled: [] }
     let session: FakeRunSession | undefined
     let release: (() => void) | undefined
     const backend = createInProcessExecutionBackend({
@@ -279,9 +326,7 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
     release?.()
     await waitFor(() => { expect(drive.settled).toHaveLength(1) })
     expect(drive.settled[0]!.status).toBe('cancelled')
-    const complete = backend.getBufferedEvents('cancel-me').at(-1)
-    expect(complete?.type).toBe('run-complete')
-    expect(complete?.status).toBe('cancelled')
+    expect(drive.settled[0]!.details.reason).toBe('cancelled')
   })
 
   it('KILLING A RUN THAT IS NOT RUNNING IS FALSE, AND ABORTS NOTHING', async () => {
@@ -348,11 +393,10 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
     // them in a child's stderr.
     expect(drive.settled[0]!.details.reason).toContain('mutating-shared')
     expect(drive.settled[0]!.details.output.join('\n')).toContain('Run denied')
-    const complete = drive.buffered.at(-1)
-    expect(complete?.type).toBe('run-complete')
-    expect(complete?.reason).toContain('Run denied')
-    // No run happened: the bookends are the ONLY two events.
-    expect(drive.buffered.map((event) => event.type)).toEqual(['run-start', 'run-complete'])
+    // NO RUN HAPPENED, and the settle says so by name rather than by the absence of frames between
+    // two synthetic bookends — which is what this used to read (405-07, D-19).
+    expect(drive.settled[0]!.details.refusedBeforeStart).toBe(true)
+    expect(drive.session).toBeUndefined()
   })
 
   it('A POST-START FAILURE IS A RUN THAT HAPPENED — the reason says so, and the envelopes survive', async () => {
@@ -361,7 +405,8 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
       rejectWith: new Error('agent-qa browser support is not installed for Chromium'),
     })
     expect(drive.settled[0]!.details.reason).toContain('Run failed after start')
-    expect(drive.buffered.map((event) => event.type)).toContain('runStarted')
+    // A session existed, which is the fact that separates this from a refusal.
+    expect(drive.session).toBeDefined()
   })
 
   // ---- 401-18 (G-401-16): A REFUSAL TRAVELS AS A FACT, NOT AS PROSE THE READER RE-DERIVES ------
@@ -431,11 +476,10 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
 })
 
 describe('two concurrent runs are isolated at the consumer surface (401-07, INVK-01 concurrency edge)', () => {
-  it('EACH BUFFER HOLDS ONLY ITS OWN RUN, AND KILLING ONE ABORTS ONLY THAT SESSION', async () => {
+  it('EACH HANDLE HOLDS ONLY ITS OWN RUN, AND KILLING ONE ABORTS ONLY THAT SESSION', async () => {
     const sessions = new Map<string, FakeRunSession>()
     const settled: Settled[] = []
     const releases = new Map<string, () => void>()
-    const emitted: { runId: string; event: LiveExecutionEvent }[] = []
 
     const backend = createInProcessExecutionBackend({
       invokeRun: async ({ opts, onSession }) => {
@@ -446,9 +490,6 @@ describe('two concurrent runs are isolated at the consumer surface (401-07, INVK
       },
     })
     recordSettles(backend, settled)
-    backend.on('execution-event', (runId: string, event: LiveExecutionEvent) => {
-      emitted.push({ runId, event })
-    })
 
     backend.execute(baseOpts('run-A'))
     backend.execute(baseOpts('run-B'))
@@ -461,25 +502,22 @@ describe('two concurrent runs are isolated at the consumer surface (401-07, INVK
       sessions.get('run-B')!.publish({ ...envelope, runId: 'run-B' } as RunEventEnvelope)
     }
 
-    const runIdsIn = (runId: string): Set<unknown> =>
-      new Set(backend.getBufferedEvents(runId).map((event) => event.runId))
-    expect(runIdsIn('run-A')).toEqual(new Set(['run-A']))
-    expect(runIdsIn('run-B')).toEqual(new Set(['run-B']))
-    expect(backend.getBufferedEvents('run-A')).toHaveLength(5)
-    expect(backend.getBufferedEvents('run-B')).toHaveLength(5)
-
-    // Each surface's `id` sequence is its OWN, starting at 1 — the SSE `Last-Event-ID` contract is
-    // per run, so a shared counter would hand a reconnecting client somebody else's cursor.
-    expect(backend.getBufferedEvents('run-A').map((event) => event.id)).toEqual([1, 2, 3, 4, 5])
-    expect(backend.getBufferedEvents('run-B').map((event) => event.id)).toEqual([1, 2, 3, 4, 5])
-    for (const entry of emitted) expect(entry.event.runId).toBe(entry.runId)
+    // 405-07 (D-19): the per-run buffers this cell used to compare are gone. What remains per-run
+    // is the HANDLE, and the isolation claim is made over the one derived fact it carries. The
+    // interleaved publishing above is what makes it a claim: a bridge with one shared handle map
+    // keyed on anything but the run id would cross the two names here.
+    sessions.get('run-B')!.publish({
+      ...PARITY_ENVELOPES[1]!,
+      runId: 'run-B',
+      payload: { ...(PARITY_ENVELOPES[1]!.payload as object), name: 'the other test' },
+    } as RunEventEnvelope)
 
     expect(backend.getActiveExecutions().map((execution) => execution.runId).sort())
       .toEqual(['run-A', 'run-B'])
-    // The Rule-1 fix: the retiring class looked for a `test-start` event the frozen vocabulary
-    // never emits, so this field was `undefined` for every run.
-    expect(backend.getActiveExecutions().find((execution) => execution.runId === 'run-A')?.testName)
-      .toBe('the parity test')
+    const nameOf = (runId: string): string | undefined =>
+      backend.getActiveExecutions().find((execution) => execution.runId === runId)?.testName
+    expect(nameOf('run-A')).toBe('the parity test')
+    expect(nameOf('run-B')).toBe('the other test')
 
     expect(backend.kill('run-A')).toBe(true)
     expect(sessions.get('run-A')!.cancels).toBe(1)
@@ -544,6 +582,22 @@ describe('the spawn vocabulary is gone from this module (401-07, INVK-01 source 
     expect(code).not.toContain('treeKill')
     expect(code).not.toContain('tree-kill')
     expect(code).not.toContain('SIGKILL')
+  })
+
+  // 2026-08-27 (405-07, D-19/D-21): the retired live-feed machinery, pinned absent in the module
+  // that used to hold it. Each needle is two halves so this assertion cannot be the hit that
+  // satisfies the phase's grep-clean inventory — a pin that matches itself proves nothing.
+  it('NO PER-RUN EVENT BUFFER, NO COUNTER, NO SECOND EMISSION', () => {
+    expect(code).not.toContain('event' + 'Buffers')
+    expect(code).not.toContain('event' + 'Counters')
+    expect(code).not.toContain('push' + 'Event')
+    expect(code).not.toContain('getBuffered' + 'Events')
+    expect(code).not.toContain('execution-' + 'event')
+    expect(code).not.toContain('run-' + 'complete')
+    expect(code).not.toContain('run-' + 'start\'')
+    // The control: what the module DOES still emit, and the one fact the subscription derives.
+    expect(code).toContain("'run-settled'")
+    expect(code).toContain('handle.testName =')
   })
 
   it('THE REFUSAL FACTS ARE READ STRUCTURALLY — no class name, no regex over the message (401-18)', () => {

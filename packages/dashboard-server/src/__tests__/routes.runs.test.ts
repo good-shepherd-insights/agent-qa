@@ -40,10 +40,6 @@ interface MockRun {
   modelName: string | null
   llmProvider: string | null
   parallel: boolean
-  parentRunId: string | null
-  attemptNumber: number
-  retryCount: number
-  maxRetries: number
   createdAt: string
 }
 
@@ -73,7 +69,9 @@ function createMockDatabase() {
       attributePredicates,
     } = filters
 
-    let filtered = runs.filter((run) => run.parentRunId === null)
+    // 405-07 (D-02): the real `getRuns` no longer filters on a parent link, because there is no
+    // parent link. Every row is top-level, so the mock starts from all of them.
+    let filtered = [...runs]
 
     if (typeof status === 'string') {
       filtered = filtered.filter((run) => run.status === status)
@@ -144,10 +142,6 @@ function createMockDatabase() {
         modelName: run.modelName ?? null,
         llmProvider: run.llmProvider ?? null,
         parallel: run.parallel ?? false,
-        parentRunId: run.parentRunId ?? null,
-        attemptNumber: run.attemptNumber ?? 1,
-        retryCount: run.retryCount ?? 0,
-        maxRetries: run.maxRetries ?? 0,
         createdAt: run.createdAt ?? '2026-04-18T00:00:00Z',
       })
       return id
@@ -158,17 +152,11 @@ function createMockDatabase() {
     getRun(id: string) {
       return runs.find((run) => run.id === id)
     },
-    getRunsByParent(parentRunId: string) {
-      return runs.filter((run) => run.parentRunId === parentRunId)
-    },
     getPendingRuns() {
       return runs.filter((run) => run.status === 'pending')
     },
     getNextPendingRun() {
       return runs.find((run) => run.status === 'pending')
-    },
-    getSteps() {
-      return []
     },
     getRunsByTestName(name: string) {
       return runs.filter((run) => run.name === name)
@@ -222,12 +210,9 @@ function createMockDatabase() {
       return artifact
     },
     getRunArtifactBundle(runId: string) {
-      return {
-        artifact: artifacts.get(runId) ?? null,
-        children: runs
-          .filter((run) => run.parentRunId === runId)
-          .map((run) => ({ run, artifact: artifacts.get(run.id) ?? null })),
-      }
+      // 405-07 (D-02): one run's artifact. The `children` walk over the parent link went with the
+      // column, so the mock's shape follows the real member's.
+      return { artifact: artifacts.get(runId) ?? null }
     },
     close() {},
   }
@@ -558,56 +543,49 @@ describe('GET /api/runs route contract', () => {
     expect(JSON.parse(valuesRes.body).values).toEqual([{ value: 'phase223-main', count: 2 }])
   })
 
-  it('enriches suite parent rows and child rows with the same target contract', async () => {
+  // 2026-08-27 (405-07, D-02): a suite row is ONE row. This cell used to seed a parent and two
+  // linked children and assert the list attached them as `tests`, each enriched with the same
+  // target contract. Nothing has written a child row since 402-09; the link, the walk and the
+  // response key are gone, and a suite run's members are `run_members` on the one row. What the
+  // cell still has to prove is that the enrichment reaches a SUITE row exactly as it reaches a
+  // test row — the same target contract, from the same snapshot.
+  it('enriches a suite row with the same target contract as a test row, and attaches no member list', async () => {
     db.insertRun({
       id: 'suite-run',
       name: 'Checkout Suite',
       suiteId: 'checkout-suite',
       platform: 'web',
+      testFileContent: ['name: Checkout Suite', 'target: sample-target', 'steps: []'].join('\n'),
     })
     db.insertRun({
-      id: 'suite-child-1',
-      parentRunId: 'suite-run',
-      suiteId: 'checkout-suite',
-      name: 'Child 1',
+      id: 'plain-run',
+      name: 'Plain Test',
       platform: 'web',
-      metadata: { runDestination: 'Local' },
-      testFileContent: ['name: Child 1', 'target: sample-target', 'steps: []'].join('\n'),
-    })
-    db.insertRun({
-      id: 'suite-child-2',
-      parentRunId: 'suite-run',
-      suiteId: 'checkout-suite',
-      name: 'Child 2',
-      platform: 'web',
-      metadata: { runDestination: 'Local' },
-      testFileContent: ['name: Child 2', 'target: sample-target', 'steps: []'].join('\n'),
+      testFileContent: ['name: Plain Test', 'target: sample-target', 'steps: []'].join('\n'),
     })
 
     const res = await invokeRoute(router, '/api/runs')
     expect(res.status).toBe(200)
 
     const data = JSON.parse(res.body) as {
-      runs: Array<{
-        id: string
-        targetName: string | null
-        tests?: Array<{ id: string; targetName: string | null }>
-      }>
+      runs: Array<{ id: string; targetName: string | null; tests?: unknown }>
       total: number
     }
 
-    expect(data.total).toBe(1)
-    expect(data.runs[0]).toMatchObject({
-      id: 'suite-run',
-      targetName: 'sample-target',
-      tests: [
-        expect.objectContaining({ id: 'suite-child-1', targetName: 'sample-target' }),
-        expect.objectContaining({ id: 'suite-child-2', targetName: 'sample-target' }),
-      ],
-    })
+    expect(data.total).toBe(2)
+    const suiteRow = data.runs.find((run) => run.id === 'suite-run')
+    const plainRow = data.runs.find((run) => run.id === 'plain-run')
+    expect(suiteRow?.targetName).toBe('sample-target')
+    expect(plainRow?.targetName).toBe('sample-target')
+    // No `tests` key on either — an absent key rather than a structurally empty array.
+    expect(suiteRow).not.toHaveProperty('tests')
+    expect(plainRow).not.toHaveProperty('tests')
   })
 
-  it('paginates top-level parent runs only and does not count child suite rows toward total', async () => {
+  // 405-07 (D-02): "top-level only" is no longer a filter, because every row is top-level. The
+  // paging claim it rode on is unchanged and is what this cell keeps: the page is 50 and the total
+  // counts every matching row rather than the page.
+  it('pages at 50 and reports the whole matching count as the total', async () => {
     for (let index = 0; index < 55; index += 1) {
       db.insertRun({
         id: `parent-${index}`,
@@ -615,12 +593,6 @@ describe('GET /api/runs route contract', () => {
         testFileContent: [`name: Parent ${index}`, `target: target-${index}`, 'steps: []'].join('\n'),
       })
     }
-    db.insertRun({
-      id: 'child-a',
-      parentRunId: 'parent-0',
-      name: 'Nested Child',
-      testFileContent: ['name: Nested Child', 'target: target-0', 'steps: []'].join('\n'),
-    })
 
     const res = await invokeRoute(router, '/api/runs')
     expect(res.status).toBe(200)
@@ -785,27 +757,23 @@ describe('GET /api/runs route contract', () => {
     expect(data.artifact.payload.source.rawYaml).toBe('name: preserved')
   })
 
-  it('returns suite parent artifact children and missing artifact sections', async () => {
+  // 2026-08-27 (405-07, D-02): the artifact body is one run's artifact. The `children` array it
+  // used to carry walked the deleted parent link, so it was structurally empty on every run this
+  // build produces. `missingSections` — the half of this cell that was never about children — is
+  // what it now measures on its own.
+  it('reports the artifact sections a run has not written', async () => {
     db.insertRun({ id: 'suite-run', name: 'Suite', source: 'suite' })
-    db.insertRun({ id: 'suite-child', name: 'Child', parentRunId: 'suite-run', source: 'suite' })
     db.insertRunArtifact({
       runId: 'suite-run',
-      kind: 'suite-parent',
-      payload: {
-        source: { kind: 'suite', members: [{ index: 0, childRunId: 'suite-child' }] },
-      },
+      kind: 'test',
+      payload: { source: { kind: 'suite', members: [{ index: 0 }] } },
     })
 
     const res = await invokeRoute(router, '/api/runs/suite-run/artifact')
     expect(res.status).toBe(200)
-    const data = JSON.parse(res.body) as {
-      children: Array<{ run: { id: string }; artifact: null }>
-      missingSections: string[]
-    }
+    const data = JSON.parse(res.body) as Record<string, unknown>
 
-    expect(data.children).toHaveLength(1)
-    expect(data.children[0].run.id).toBe('suite-child')
-    expect(data.children[0].artifact).toBeNull()
+    expect(data).not.toHaveProperty('children')
     expect(data.missingSections).toEqual(['config'])
   })
 
@@ -875,40 +843,48 @@ describe('CR-02 — no run-reading response hands out the confirm scope', () => 
     expect((JSON.parse(res.body) as { runs: unknown[] }).runs).toHaveLength(1)
   })
 
-  it('DOOR 1 (nested) — the list’s suite `tests` array carries none EITHER', async () => {
+  // 2026-08-27 (405-07, D-02): the nested `tests` door is CLOSED rather than clean. The list used
+  // to attach a suite row's child runs, each a full run row that needed its own strip; the array
+  // and the column it walked are gone. The strongest thing this cell can say now is that the door
+  // is not there — a nested run row would be a NEW serialization site, and the 401-23 construction
+  // assertion is what would catch one being added without a scrub.
+  it('DOOR 1 (nested) — the list serves no nested run rows at all any more', async () => {
     seedScopedRun(db, { id: 'run-suite-parent', suiteId: 'suite-a' })
-    seedScopedRun(db, { id: 'run-suite-child', suiteId: 'suite-a', parentRunId: 'run-suite-parent' })
+    seedScopedRun(db, { id: 'run-suite-sibling', suiteId: 'suite-a' })
     const res = await invokeRoute(router, '/api/runs')
     expect(res.status).toBe(200)
     const data = JSON.parse(res.body) as {
-      runs: Array<{ id: string; metadata: Record<string, unknown> | null; tests?: Array<{ id: string; metadata: Record<string, unknown> | null }> }>
+      runs: Array<Record<string, unknown>>
     }
-    // ASSERTED ON THE CHILD ITSELF, not on the parent's serialization: one assertion covering both
-    // would let a strip that only reached the top level pass.
-    const parent = data.runs.find((run) => run.id === 'run-suite-parent')
-    expect(parent?.tests?.map((test) => test.id)).toEqual(['run-suite-child'])
-    expect(parent?.tests?.[0]?.metadata).not.toHaveProperty('confirmScope')
+    // Both rows are served — an empty list would satisfy every assertion below.
+    expect(data.runs.map((run) => run.id).sort()).toEqual(['run-suite-parent', 'run-suite-sibling'])
+    for (const run of data.runs) {
+      expect(run).not.toHaveProperty('tests')
+      expect(run.metadata).not.toHaveProperty('confirmScope')
+    }
     expect(res.body).not.toContain(LEAKED_SCOPE)
   })
 
-  it('DOOR 2 — GET /api/runs/:id (the detail) carries none, in `run`, `attempts` and `tests`', async () => {
+  // 405-07 (D-03/D-02): the detail body is `{ run }`. `attempts` and `tests` were two more run-row
+  // serialization sites, both walked off the deleted parent link; the door narrows to one row and
+  // the strip on it is what remains to prove.
+  it('DOOR 2 — GET /api/runs/:id (the detail) carries none, and serves one run row only', async () => {
     seedScopedRun(db, { id: 'run-detail', suiteId: 'suite-b' })
-    seedScopedRun(db, { id: 'run-detail-child', suiteId: 'suite-b', parentRunId: 'run-detail' })
     const res = await invokeRoute(router, '/api/runs/run-detail')
     expect(res.status).toBe(200)
     const data = JSON.parse(res.body) as {
-      run: { metadata: Record<string, unknown> | null }
-      attempts: Array<{ id: string; metadata: Record<string, unknown> | null }>
-      tests: Array<{ id: string; metadata: Record<string, unknown> | null }>
+      run: { id: string; metadata: Record<string, unknown> | null }
     }
+    expect(Object.keys(data)).toEqual(['run'])
+    // The row really was served, so the strip below is a strip and not an empty body.
+    expect(data.run.id).toBe('run-detail')
+    expect(data.run.metadata).toMatchObject({ args: ['/w/tests/scoped.yaml'] })
     expect(data.run.metadata).not.toHaveProperty('confirmScope')
-    expect(data.attempts).toHaveLength(1)
-    expect(data.attempts[0]!.metadata).not.toHaveProperty('confirmScope')
-    expect(data.tests[0]!.metadata).not.toHaveProperty('confirmScope')
     expect(res.body).not.toContain(LEAKED_SCOPE)
+    expect(res.body).not.toContain(FUTURE_FIELD_VALUE)
   })
 
-  it('DOOR 3 — GET /api/runs/:id/artifact carries none, in `run`, in `children[].run` AND in the artifact PAYLOAD', async () => {
+  it('DOOR 3 — GET /api/runs/:id/artifact carries none, in `run` AND in the artifact PAYLOAD', async () => {
     // THE SEVENTH DOOR (G-401-18-CR01). The 401-18 version of this cell seeded
     // `db.insertRunArtifact({ runId, kind: 'test' })` — an artifact with NO PAYLOAD — so its
     // `not.toContain(LEAKED_SCOPE)` was structurally incapable of failing on the very field its
@@ -916,7 +892,6 @@ describe('CR-02 — no run-reading response hands out the confirm scope', () => 
     // (`job-queue.ts:75-78`: `metadata: { ...opts.metadata, attributes }`), which is the only way
     // this cell can be about the door that leaked rather than about an empty object.
     seedScopedRun(db, { id: 'run-artifact-scope' })
-    seedScopedRun(db, { id: 'run-artifact-child', parentRunId: 'run-artifact-scope' })
     const writerShapedPayload = {
       runtime: { platform: 'web', queued: true },
       source: { name: 'Scoped Run', filePath: '/w/tests/scoped.yaml', loadStatus: 'queued' },
@@ -928,20 +903,15 @@ describe('CR-02 — no run-reading response hands out the confirm scope', () => 
       },
     }
     db.insertRunArtifact({ runId: 'run-artifact-scope', kind: 'test', payload: writerShapedPayload })
-    db.insertRunArtifact({ runId: 'run-artifact-child', kind: 'test', payload: writerShapedPayload })
     const res = await invokeRoute(router, '/api/runs/run-artifact-scope/artifact')
     expect(res.status).toBe(200)
     const data = JSON.parse(res.body) as {
       run: { metadata: Record<string, unknown> | null }
       artifact: { payload: Record<string, unknown> } | null
-      children: Array<{
-        run: { id: string; metadata: Record<string, unknown> | null }
-        artifact: { payload: Record<string, unknown> } | null
-      }>
     }
     expect(data.run.metadata).not.toHaveProperty('confirmScope')
-    expect(data.children).toHaveLength(1)
-    expect(data.children[0]!.run.metadata).not.toHaveProperty('confirmScope')
+    // 405-07 (D-02): the child artifact this cell also drove is gone with the `children` key.
+    expect(data).not.toHaveProperty('children')
 
     // THE PAYLOAD REALLY WAS SERVED before anything is claimed about what it does not contain.
     expect(data.artifact, 'the artifact door served no artifact — the cell would be vacuous').not.toBeNull()
@@ -953,10 +923,6 @@ describe('CR-02 — no run-reading response hands out the confirm scope', () => 
     // by the queue beside the client's keys and the run-detail drawer reads it.
     expect(served['attributes']).toEqual({ 'ci.provider': 'local' })
     expect(served['args']).toEqual(['/w/tests/scoped.yaml'])
-
-    // The child artifact goes through the same sanitizer at its own call site.
-    const childServed = data.children[0]!.artifact!.payload['metadata'] as Record<string, unknown>
-    expect(childServed).not.toHaveProperty('confirmScope')
 
     expect(res.body).not.toContain(LEAKED_SCOPE)
     expect(res.body).not.toContain(FUTURE_FIELD_VALUE)

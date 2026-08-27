@@ -84,17 +84,11 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     rationale: 'Allows slow local prompt processing during connectivity checks without affecting real test execution.',
     allowed: true,
   },
-  {
-    id: 'dashboard-sse-comment-heartbeat',
-    file: 'packages/dashboard-server/src/server/routes.ts',
-    literal: '15_000',
-    contextIncludes: 'setInterval',
-    owner: 'dashboard routes',
-    scope: 'SSE keepalive comments',
-    lifecycleAffecting: false,
-    rationale: 'Keeps browser SSE connections alive and does not terminate execution.',
-    allowed: true,
-  },
+  // 2026-08-27 (405-07, D-19): the `15_000` SSE keepalive interval in `routes.ts` is gone with the
+  // legacy live-event route it kept open. The surviving stream — `GET /api/run-stream/:runId` —
+  // heartbeats from `run-service-routes.ts`, which carries its own inventoried literal; this row
+  // named a file that no longer holds one, and an inventory entry with no site is a claim nothing
+  // measures.
   {
     id: 'dashboard-retired-openai-oauth-session-retention',
     file: 'packages/dashboard-server/src/server/routes.ts',

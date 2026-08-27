@@ -24,7 +24,6 @@ interface RunnerInstance {
   execute: Mock
   kill: Mock
   killAll: Mock
-  getBufferedEvents: Mock
   getActiveExecutions: Mock
   closeRun: (runId: string, status: CloseStatus, output?: string[]) => void
   /** 401-18: a run the gate or the host refused before it began — never a `closeRun` with a flag. */
@@ -68,7 +67,6 @@ class FakeExecutionBackend extends EventEmitter {
   killAll = vi.fn(() => {
     mockState.events.push('killAll')
   })
-  getBufferedEvents = vi.fn(() => [])
   getActiveExecutions = vi.fn(() => [])
   /** Drive the terminal state the host reconciles on — the successor to the child's `close`. */
   closeRun = (runId: string, status: CloseStatus, output: string[] = []): void => {
@@ -400,12 +398,20 @@ describe('dashboard Appium ownership', () => {
 
     const runner = currentRunner()
     await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
-    currentDb!.insertStep({
+    // 405-07 (D-02): the projected step is written through the v2 member-scoped write now. The
+    // claim is unchanged and is the point of the cell: a run whose every PERSISTED step passed
+    // still fails when the run itself timed out — the run's verdict is not a fold of its steps.
+    currentDb!.insertRunStep({
       runId: run.runId,
-      name: 'Step already passed',
+      testIndex: 0,
+      stepIndex: 0,
+      stepText: 'Step already passed',
+      cacheStatus: 'miss',
+      verifierVerdict: { pass: true, reasoning: 'ok' },
+      selfHealOccurred: false,
+      briefDigest: 'step already passed',
       status: 'passed',
-      duration: 25,
-      stepOrder: 0,
+      durationMs: 25,
     })
 
     runner.closeRun(run.runId, 'timeout')

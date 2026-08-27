@@ -82,6 +82,7 @@ interface Scene {
   readonly fixture: Fixture
   readonly db: DashboardDatabase
   settled(): { runId: string; status: string; details: Record<string, unknown> }[]
+  /** The run's OWN bus envelopes, in seq order, recorded off its session (405-07). */
   buffered(runId: string): Record<string, unknown>[]
   /**
    * Every `ExecuteOptions` the queue handed the SHIPPED execution backend, in order.
@@ -161,6 +162,18 @@ async function openScene(input: {
     agentHost: door.agentHost,
   })
 
+  // 2026-08-27 (405-07, D-19): the run's OWN bus, watched through the door's published
+  // `observeSessions`. This used to read the backend's per-run replay buffer, which existed for one
+  // SSE route and was deleted with it; `subscribe(1, …)` is replay-then-live from the first seq, so
+  // a recorder registered here sees every envelope of every run this door starts.
+  const recordedEnvelopes = new Map<string, Record<string, unknown>[]>()
+  runDoor.observeSessions((session) => {
+    const id = session.id as unknown as string
+    const own: Record<string, unknown>[] = []
+    recordedEnvelopes.set(id, own)
+    session.subscribe(1, (envelope) => { own.push(envelope as unknown as Record<string, unknown>) })
+  })
+
   // `startServer` echoes back the port it was ASKED for, so an ephemeral bind (`port: 0`) has to be
   // read off the socket — `server.appium-ownership.test.ts` does the same, for the same reason.
   const address = started.server.address()
@@ -172,7 +185,7 @@ async function openScene(input: {
     fixture,
     db,
     settled: () => settled,
-    buffered: (runId) => runDoor.backend.getBufferedEvents(runId) as unknown as Record<string, unknown>[],
+    buffered: (runId) => recordedEnvelopes.get(runId) ?? [],
     executed: () => executed,
     close: async () => {
       started.close()
@@ -417,11 +430,12 @@ describe('an ask-tier run-button run asks the browser that triggered it (D-11)',
       // D-15: the STRUCTURED remedies, projected for this surface. Asserted as kinds and params —
       // never as prose, which is the whole reason the vocabulary is typed.
       expect(settled.details['remedies']).toEqual([{ kind: 'answer-confirm' }])
-      expect(scene.buffered(runId).at(-1)!['remedies']).toEqual([{ kind: 'answer-confirm' }])
 
-      // The bookends are the only two events — a denial is not a run.
-      expect(scene.buffered(runId).map((event) => event['type']))
-        .toEqual(['run-start', 'run-complete'])
+      // A DENIAL IS NOT A RUN, and the claim is structural now rather than a count of bookends: no
+      // session was ever named, so there are no envelopes at all. The pair this used to compare
+      // against was minted by the backend around the run, not published by it (405-07, D-19).
+      expect(scene.buffered(runId)).toEqual([])
+      expect(settled.details['refusedBeforeStart']).toBe(true)
       // And the op-level gate left its own row, on one click, exactly as the allow arm does.
       expect(opAuditRows(fixture).filter((r) => r.action === 'fn:runs.start')).toHaveLength(1)
 

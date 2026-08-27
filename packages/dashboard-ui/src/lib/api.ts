@@ -393,7 +393,17 @@ export async function fetchRunAttributeValues(key: string, opts: { q?: string; l
   return request(`/api/runs/attributes/values${query}`)
 }
 
-export async function fetchRun(id: string): Promise<{ run: RunRow; steps: StepRow[]; attempts: RunRow[]; tests?: RunRow[] }> {
+/**
+ * `GET /api/runs/:id` — the run ROW, and after 405-07 nothing else.
+ *
+ * `steps`, `attempts` and `tests` are OPTIONAL AND NOW ALWAYS ABSENT. The server stopped serving
+ * them with the v1 projection they read and the parent-run walk they came from (405-07, D-02/D-03);
+ * the run's members, steps and sub-actions are `fetchRunDetail`'s, through `runs.detail`. They stay
+ * on the type as optional rather than being deleted outright because 405-11 owns the page rebuild
+ * that removes the readers — an absent key a caller defaults is an honest empty tree, where a
+ * declared-but-missing array is a `TypeError` on first render.
+ */
+export async function fetchRun(id: string): Promise<{ run: RunRow; steps?: StepRow[]; attempts?: RunRow[]; tests?: RunRow[] }> {
   return request(`/api/runs/${encodeURIComponent(id)}`)
 }
 

@@ -817,15 +817,22 @@ describe('the PRODUCTION frame threads the attach port (server.ts, not the route
  *
  * The extractor brace-matches the handler block containing a given needle out of `routes.ts`. The
  * predicate then asks whether SSE frame formatting appears inside that block. Run over the local
- * run-stream handler the answer must be NO — and the SAME extractor and SAME predicate are run
- * over the legacy `/api/execution/events` handler, where the answer must be YES, because an
- * extractor that returned nothing (or a predicate that could not see frame formatting) would
- * satisfy the first assertion for free (WINDOWS #253).
+ * run-stream handler the answer must be NO — and the SAME predicate is run over a body where the
+ * answer must be YES, because an extractor that returned nothing (or a predicate that could not
+ * see frame formatting) would satisfy the first assertion for free (WINDOWS #253).
+ *
+ * 2026-08-27 (405-07, D-19): THE CONTROL MOVED, AND MOVED TOWARDS THE THING IT IS ABOUT. It used
+ * to be the legacy `/api/execution/events` handler in this same file — a second SSE spelling that
+ * happened to contain the framing. That route is retired, and the honest control is the module the
+ * run-stream handler DELEGATES to: `run-service-routes.ts`, where every one of these patterns has
+ * to appear because that is where the frames are actually written. A control inside the file under
+ * test could only ever prove the extractor worked; this one proves the framing exists somewhere
+ * and that `routes.ts` is not the somewhere.
  */
 const FRAME_FORMATTING: readonly (readonly [string, RegExp])[] = Object.freeze([
   ['the event-stream content type', /text\/event-stream/u],
   ['an id frame', /id: \$\{/u],
-  ['an event frame', /event: \$\{/u],
+  ['an event frame', /\\nevent: \$\{/u],
   ['the stream preamble', /:ok\\n\\n/u],
   ['a heartbeat timer', /setInterval/u],
 ] as const)
@@ -850,7 +857,10 @@ describe('routes.ts delegates the stream rather than re-spelling it', () => {
   it('has NO frame formatting in the run-stream handler, and the control proves the predicate sees it elsewhere', async () => {
     const source = await readFile(new URL('../server/routes.ts', import.meta.url), 'utf8')
 
-    const control = handlerBlockAt(source, "path === '/api/execution/events'")
+    const control = await readFile(
+      new URL('../run-service/run-service-routes.ts', import.meta.url),
+      'utf8',
+    )
     const matchedInControl = FRAME_FORMATTING.filter(([, pattern]) => pattern.test(control))
     // THE CONTROL FIRST. If this fails the cell below means nothing at all.
     expect(control.length).toBeGreaterThan(200)

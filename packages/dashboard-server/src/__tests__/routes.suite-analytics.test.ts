@@ -65,19 +65,10 @@ function seedSuiteAnalyticsRuns() {
     endedAt: '2026-03-03T10:00:03Z',
   })
 
-  db.insertRun({
-    id: 'suite-alpha-child',
-    name: 'Child Attempt',
-    filePath: 'tests/alpha-child.yaml',
-    status: 'failed',
-    duration: 600,
-    startedAt: '2026-03-02T09:30:00Z',
-    endedAt: '2026-03-02T09:30:01Z',
-    platform: 'web',
-    suiteId: 's_alpha',
-    parentRunId: secondRunId,
-    testId: 't_alpha-child',
-  })
+  // 2026-08-27 (405-07, D-02): the child row this fixture seeded is gone with the parent link it
+  // carried. It existed to prove the suite readers filtered it out; nothing has written such a row
+  // since 402-09, so the filter it exercised had no input on any real database. The standalone-test
+  // and other-suite rows below still make the real claim: these readers answer for ONE suite id.
 
   db.insertRun({
     id: 'suite-alpha-standalone-test',

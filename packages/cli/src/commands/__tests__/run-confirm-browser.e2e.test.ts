@@ -264,6 +264,7 @@ interface Scene {
   readonly fixture: Fixture
   readonly db: DashboardDatabase
   settled(): { runId: string; status: string; details: Record<string, unknown> }[]
+  /** The run's OWN bus envelopes, in seq order, recorded off its session (405-07). */
   buffered(runId: string): Record<string, unknown>[]
   close(): Promise<void>
 }
@@ -328,6 +329,18 @@ async function openScene(input: { fixture: Fixture; timeoutMs: number }): Promis
     executionBackend: runDoor.backend,
     agentHost: door.agentHost,
   })
+  // 2026-08-27 (405-07, D-19): the run's OWN bus, watched through the door's published
+  // `observeSessions`. This used to read the backend's per-run replay buffer, which existed for one
+  // SSE route and was deleted with it; `subscribe(1, …)` is replay-then-live from the first seq, so
+  // a recorder registered here sees every envelope of every run this door starts.
+  const recordedEnvelopes = new Map<string, Record<string, unknown>[]>()
+  runDoor.observeSessions((session) => {
+    const id = session.id as unknown as string
+    const own: Record<string, unknown>[] = []
+    recordedEnvelopes.set(id, own)
+    session.subscribe(1, (envelope) => { own.push(envelope as unknown as Record<string, unknown>) })
+  })
+
   // `startServer` echoes the port it was ASKED for, so an ephemeral bind is read off the socket.
   const address = started.server.address()
   if (address === null || typeof address === 'string') throw new TypeError('the server bound no port')
@@ -338,7 +351,7 @@ async function openScene(input: { fixture: Fixture; timeoutMs: number }): Promis
     fixture,
     db,
     settled: () => settled,
-    buffered: (runId) => runDoor.backend.getBufferedEvents(runId) as unknown as Record<string, unknown>[],
+    buffered: (runId) => recordedEnvelopes.get(runId) ?? [],
     close: async () => {
       started.close()
       await door.host.close()

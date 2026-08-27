@@ -149,8 +149,20 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
       runDoor.backend.on('run-settled', (runId: string, status: string, details: RunSettledDetails) => {
         settled.push({ runId, status, details })
       })
-      const buffered = (runId: string): Envelope[] =>
-        runDoor.backend.getBufferedEvents(runId) as unknown as Envelope[]
+      // 2026-08-27 (405-07, D-19): the run's OWN bus, watched through the door's published
+      // `observeSessions` fan-out. This used to read the backend's per-run replay buffer, which
+      // existed for one SSE route and was deleted with it. `subscribe(1, …)` is replay-then-live
+      // from the first seq, so a recorder registered here sees every envelope of every run the
+      // door starts — and each list is a different SESSION, which is a stronger isolation claim
+      // than two entries in one map.
+      const recorded = new Map<string, Envelope[]>()
+      runDoor.observeSessions((session) => {
+        const id = session.id as unknown as string
+        const own: Envelope[] = []
+        recorded.set(id, own)
+        session.subscribe(1, (envelope) => { own.push(envelope as unknown as Envelope) })
+      })
+      const buffered = (runId: string): Envelope[] => recorded.get(runId) ?? []
       const enqueue = (name: string): string => db.insertRun({
         name,
         status: 'pending',
@@ -211,9 +223,10 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
       expect(runDoor.backend.getActiveExecutions().map((execution) => execution.runId)).toEqual([survivor])
       const survivorMidFlight = buffered(survivor).map((event) => event.type)
       expect(survivorMidFlight).not.toContain('runFinished')
-      expect(survivorMidFlight).not.toContain('run-complete')
       expect(survivorMidFlight).not.toContain('testFinished')
-      expect(buffered(survivor).at(-1)!.reason).toBeUndefined()
+      // Nothing has settled for the survivor either — the terminal fact now lives only on the
+      // settle event, where the synthetic completion frame used to duplicate it.
+      expect(settled.map((entry) => entry.runId)).not.toContain(survivor)
 
       // ---- (5) RELEASE THE SURVIVOR — IT REACHES ITS OWN VERDICT ------------------------------
       browsers.release(1)
@@ -285,10 +298,8 @@ describe('cancelling one of two concurrently executing dashboard runs (401 UAT 1
         // The other run's id appears NOWHERE in this run's log — not as an owner, not in a payload.
         expect(readFileSync(join(fixture.agentQaRoot, 'runs', runId, 'events.jsonl'), 'utf8'))
           .not.toContain(other)
-        const bufferedOwners = new Set(
-          buffered(runId).filter((event) => typeof event.seq === 'number').map((event) => event.runId),
-        )
-        expect(bufferedOwners).toEqual(new Set([runId]))
+        const sessionOwners = new Set(buffered(runId).map((event) => event.runId))
+        expect(sessionOwners).toEqual(new Set([runId]))
       }
       // Two db rows, each adopted by the run that was enqueued as it — no third row, and no swap.
       expect(db.getRuns({}).map((row) => row.id).sort()).toEqual([cancelled, survivor].sort())
