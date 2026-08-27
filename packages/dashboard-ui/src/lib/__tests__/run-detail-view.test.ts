@@ -18,6 +18,7 @@ import type {
   RunDetailStep,
   RunDetailSubAction,
 } from '@vostride/agent-qa-schema'
+import { asRef } from '@vostride/agent-qa-schema'
 
 import { formatTokens } from '@/lib/format'
 import { DID_NOT_RUN_NOTE } from '@/lib/run-stream-reducer'
@@ -48,10 +49,10 @@ function step(testIndex: number, stepIndex: number): RunDetailStep {
     testIndex,
     stepIndex,
     cacheStatus: 'miss',
-    verifierVerdict: 'pass',
+    verifierVerdict: { pass: true, reasoning: 'looks right' },
     selfHealOccurred: false,
     briefDigest: `d${String(testIndex)}${String(stepIndex)}`,
-  } as RunDetailStep
+  }
 }
 
 function subAction(
@@ -65,11 +66,11 @@ function subAction(
     stepIndex,
     subActionIndex,
     plan: 'click it',
-    plannedAction: { type: 'click' },
-    result: { status: 'ok' },
+    plannedAction: { type: 'click', ref: asRef('e1') },
+    result: { success: true },
     screenStateHash: 'abcdef0123456789'.repeat(4),
     ...extra,
-  } as unknown as RunDetailSubAction
+  }
 }
 
 function projection(over: Partial<RunDetailProjection> = {}): RunDetailProjection {
