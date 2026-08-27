@@ -170,15 +170,6 @@ const REASON_ABSENT_HANDED_OFF =
 const PENDING_POSTURE_HANDED_OFF =
   publishedRecordSentence('lib/post-processing-view.ts', 'PENDING_POSTURE_TEXT', 'handedOff')
 
-/**
- * The push window: how close to a stream frame a chip transition must land to be a PUSH.
- *
- * A CEILING WELL BELOW THE POLL FLOOR, not a tight bound on the render. What the cell claims is
- * "sooner than the next poll tick could have delivered it", and any number materially below
- * `POST_PROCESSING_POLL_MS` says that. One second is the plan's figure and it is a third of the
- * floor, so a transition inside it cannot be a poll's work under any scheduling this suite sees.
- */
-const PUSH_WINDOW_MS = 1_000
 
 interface ChipTransition {
   readonly at: number
@@ -1084,20 +1075,25 @@ afterAll(async () => {
   cleanupTempRoots()
 }, 120_000)
 
-/** The lag from a transition back to the most recent stream frame before it. */
-function lagToPreviousStreamFrame(observation: PageObservation, at: number): number | undefined {
-  const frames = observation.responses.filter(isStream).map((event) => event.at)
-  const priorOpen = frames.filter((frameAt) => frameAt <= at)
-  if (priorOpen.length === 0) return undefined
-  return at - Math.max(...priorOpen)
-}
+/**
+ * How long after the read that could have carried it a chip transition was painted.
+ *
+ * THE TWO STAMPS ARE TAKEN IN DIFFERENT PROCESSES FOR THE SAME MILLISECOND, and the tolerance below
+ * is that fact rather than slack. The response stamp is this process's clock at the moment
+ * Playwright reports headers; the transition stamp is the page's clock at the moment React commits.
+ * The measured lags here are 0–1 ms — the paint really is that close to the bytes — so the two
+ * orderings interleave, and a strict `readAt <= at` reported NO timed transition on roughly one run
+ * in three (measured, twice inside a mutation leg, which is how it was found). A paint cannot
+ * precede the bytes that caused it, so an inversion of a few milliseconds is measurement noise and
+ * is clamped rather than dropped; anything larger still reads as the real lag it is.
+ */
+const STAMP_INTERLEAVE_TOLERANCE_MS = 50
 
-/** The lag from a transition back to the most recent READ response before it. */
 function lagToPreviousRead(observation: PageObservation, at: number): number | undefined {
   const reads = observation.responses.filter(isRead).map((event) => event.at)
-  const prior = reads.filter((readAt) => readAt <= at)
+  const prior = reads.filter((readAt) => readAt <= at + STAMP_INTERLEAVE_TOLERANCE_MS)
   if (prior.length === 0) return undefined
-  return at - Math.max(...prior)
+  return Math.max(0, at - Math.max(...prior))
 }
 
 /** Transitions that actually MOVED a chip — the initial empty snapshot is not one. */
@@ -1230,6 +1226,13 @@ describePosix('D-19 on the built bundle behind the shipped dashboard (LIFE-03 / 
       + `the push arms painted: ${JSON.stringify(recorded.inProcess.map((arm) => arm.painted))}`,
     )
     for (const [index, arm] of recorded.noSocket.entries()) {
+      // THE ROUTE IS INSTALLED BEFORE THE FIRST NAVIGATION AND STAYS FOR THE PAGE'S WHOLE LIFE, so
+      // the push channel is unreachable for every millisecond this arm exists. Whether the client
+      // ATTEMPTS one is its own decision and is printed above: on a chain that is already terminal
+      // at the first read it correctly attempts nothing, which makes this particular assertion a
+      // guard rather than a measurement. The non-vacuous "settles with no socket" proof is cell (3)
+      // — a real daemon draining for seconds while the page opens ZERO streams and moves its chips
+      // on its own interval — and cell (4) for the return visit.
       expect(
         arm.responses.filter(isStream).length,
         `arm ${String(index)} (${arm.runId}) received a response on the aborted stream, so the abort did not take `
