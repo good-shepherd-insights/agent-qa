@@ -63,9 +63,10 @@ import { createServer } from 'node:http'
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
+import { chromium } from 'playwright-core'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 import { RUN_SERVICE_ANCHORED_BUILDS, trackTempRoot } from './spawned-chat.js'
@@ -174,14 +175,58 @@ export const POPULATED_RUN_ANCHORED_BUILDS: readonly {
 ])
 
 /**
+ * Where the browser binaries this machine actually has are rooted.
+ *
+ * WHY THIS IS NEEDED AT ALL, MEASURED RATHER THAN GUESSED. `hermeticEnv` points the child's `HOME`
+ * INTO the fixture project so nothing it writes escapes the directory the cleanup deletes — which
+ * is exactly right, and it also relocates the default Playwright browser cache (`$HOME/Library/
+ * Caches/ms-playwright` on macOS, `$HOME/.cache/ms-playwright` on Linux) to an empty directory
+ * inside the temp root. The first draft of this fixture therefore reached a verdict in 233ms with
+ * `member-executor-error: agent-qa browser support is not installed for Chromium` on a machine
+ * where Chromium is plainly installed. The child inherits the ROOT this process resolves so its
+ * `HOME` can stay hermetic without lying to it about the browsers.
+ *
+ * DERIVED FROM THE RESOLVER RATHER THAN REBUILT. `chromium.executablePath()` is Playwright's own
+ * answer, and the browsers root is the parent of the revision directory inside it; walking up to
+ * the first `chromium`-prefixed segment finds it without this file owning a second copy of the
+ * platform-by-platform cache layout. An explicit `PLAYWRIGHT_BROWSERS_PATH` in this process wins,
+ * because a caller who set one meant it.
+ */
+function playwrightBrowsersRoot(): string | undefined {
+  const declared = process.env.PLAYWRIGHT_BROWSERS_PATH
+  if (declared !== undefined && declared.trim() !== '') return declared
+  let executable: string
+  try {
+    executable = chromium.executablePath()
+  } catch {
+    // No installed browser to point at. The child is handed nothing and reds with the install
+    // instruction the run itself prints — which is the honest answer, not a fabricated path.
+    return undefined
+  }
+  let current = dirname(executable)
+  for (;;) {
+    const parent = dirname(current)
+    if (parent === current) return undefined
+    if (basename(current).startsWith('chromium')) return parent
+    current = parent
+  }
+}
+
+/**
  * The extra environment the spawned dashboard is handed.
  *
  * A FUNCTION RATHER THAN A CONSTANT so a caller cannot mutate the map every cell shares, and so
  * the one place that decides which variables the child inherits stays here rather than being
- * spelled out in each cell that spawns one.
+ * spelled out in each cell that spawns one. Two variables, for two unrelated reasons: the
+ * credential-shaped one is the fixture's masking seed (see this file's header), and the browsers
+ * root undoes the one side effect of the hermetic `HOME` that this run cannot live with.
  */
 export function populatedRunSpawnEnv(): Record<string, string> {
-  return { [POPULATED_SECRET_ENV_VAR]: POPULATED_SECRET_VALUE }
+  const browsersRoot = playwrightBrowsersRoot()
+  return {
+    [POPULATED_SECRET_ENV_VAR]: POPULATED_SECRET_VALUE,
+    ...(browsersRoot === undefined ? {} : { PLAYWRIGHT_BROWSERS_PATH: browsersRoot }),
+  }
 }
 
 // ---- The target page ----------------------------------------------------------------------------
