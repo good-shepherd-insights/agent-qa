@@ -773,6 +773,12 @@ describe('agent-qa fn (generic function invoker)', () => {
       },
       // 391 D-16: BOUND on every local host, through the same proposals-inbox dep the four
       // `proposals.` verbs use. Read-tier, so it survives safe mode.
+      // 405 D-03: UNBOUND from this composition, and that is the honest answer rather than an
+      // oversight — the same shape `runs.liveurl` carries below and for the same kind of reason.
+      // The run-detail projection lives in the dashboard's SQLite database, which only
+      // `agent-qa dashboard` holds; a plain CLI host has handoff documents and no projection at
+      // all, so it says so BY NAME rather than answering an empty run.
+      'runs.detail': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'unbound' },
       'runs.digest': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },
       'runs.events': { requiredScopes: ['read'], resultKind: 'stream', bindingStatus: 'bound' },
       'runs.get': { requiredScopes: ['read'], resultKind: 'unary', bindingStatus: 'bound' },

@@ -75,6 +75,13 @@ vi.mock('@vostride/agent-qa-dashboard', async () => {
     // thing this file should be stubbing: it is an in-memory `Map` of listeners, with no server,
     // no socket and no database in it.
     createPostProcessingRelay: actual.createPostProcessingRelay,
+    // 405-01: THE REAL READER FACTORY, on the relay's own reasoning one line up. The command
+    // destructures it from this same lazily imported package, so a mock without it leaves
+    // `createDashboardRunDetailReader(db)` a call on `undefined` — which the command's own catch
+    // turns into `process.exit`, and every cell in this file dies before it asserts. It is also
+    // not a thing this file should be stubbing: it is a one-method object over a database handle,
+    // with no server and no socket in it.
+    createDashboardRunDetailReader: actual.createDashboardRunDetailReader,
     isRunTriggerConfirmScope: actual.isRunTriggerConfirmScope,
     resolveDashboardDbPath: mockResolveDashboardDbPath,
     startServer: mockStartServer,
