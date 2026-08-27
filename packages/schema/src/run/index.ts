@@ -85,6 +85,10 @@ export {
   projectTestRetryScheduled,
 } from './bus-projections'
 export type { MaskFn } from './bus-projections'
+// 405-06 D-10: the masked-marker vocabulary — ONE spelling shared by the dashboard host's display
+// seam (405-10) and the dashboard-ui chip parser (405-11), so the two cannot drift.
+export { MASKED_MARKER_DELIMITER, MASKED_MARKER_PATTERN, PLACEHOLDER_PATTERN, maskedMarker } from './masked-marker'
+export type { MaskedCategory } from './masked-marker'
 // 402-04 D-10/D-14: handle identity — the TOTAL event-scope classification, the one filter
 // predicate, the composite id spelling and the additive runStarted roster reader.
 export {

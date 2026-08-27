@@ -423,6 +423,10 @@ export {
   projectTestRetryScheduled,
 } from './run/index'
 export type { MaskFn } from './run/index'
+// 405-06 D-10: the masked-marker vocabulary (DETL-02) — minted once here so the server display
+// seam and the UI chip parser import one spelling instead of writing two.
+export { MASKED_MARKER_DELIMITER, MASKED_MARKER_PATTERN, PLACEHOLDER_PATTERN, maskedMarker } from './run/index'
+export type { MaskedCategory } from './run/index'
 // 402-04 D-10/D-14: handle identity — the TOTAL event-scope classification, the one filter
 // predicate, the composite id spelling and the additive runStarted roster reader.
 export {
