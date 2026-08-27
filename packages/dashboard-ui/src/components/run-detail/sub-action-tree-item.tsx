@@ -12,9 +12,17 @@
 // `data-sub-action-result` CARRIES THE RAW WORD, not the presentation, because 405-12's Playwright
 // cells address the built bundle and a page that painted the right word into the wrong element
 // would still pass a text assertion.
+//
+// THE LABEL IS A PRODUCER STRING AND THEREFORE GOES THROUGH `MaskedText` (D-10, T-405-40). It was
+// rendered raw here until 405-12 drove the shipped bundle against a real masked run and read a
+// marker delimiter out of a text node in this row — the exact state D-10 forbids, invisible to
+// every cell in the repository because they all supplied unmasked fixture text. The overview beside
+// it has painted every producer string through the seam since 405-11; this row is the same class of
+// string and had simply never been asked.
 
 import type { RunDetailSubAction } from "@vostride/agent-qa-schema"
 
+import { MaskedText } from "@/components/run-detail/masked-text"
 import { CacheStatusIconWrapper } from "./cache-status-marker"
 import { cn } from "@/lib/utils"
 
@@ -76,7 +84,9 @@ export function SubActionTreeItem({ sub, stepId, cached, isSelected, onSelect }:
           statusHost
         )}
         <span className="text-xs text-muted-foreground shrink-0">#{sub.subActionIndex + 1}</span>
-        <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground">{sub.plan}</span>
+        <span className="flex-1 min-w-0 truncate text-xs text-muted-foreground">
+          <MaskedText text={sub.plan} />
+        </span>
       </button>
     </li>
   )
