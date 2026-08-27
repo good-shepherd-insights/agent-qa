@@ -61,6 +61,7 @@ import { quarantineReleaseSpec } from '../functions/ops/quarantine-release.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { runsLiveUrlSpec } from '../functions/ops/runs-live-url.js'
 import { runsDigestSpec } from '../functions/ops/runs-digest.js'
+import { runsDetailSpec } from '../functions/ops/runs-detail.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
 import { runsPostProcessingSpec } from '../functions/ops/runs-post-processing.js'
@@ -178,6 +179,12 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   'quarantine.add': quarantineAddSpec,
   'quarantine.list': quarantineListSpec,
   'quarantine.release': quarantineReleaseSpec,
+  // 405-01 D-03. Paired here the day it is registered, on the growth seam's own rule. Its output
+  // is the first in this map carrying THREE nested arrays of objects plus an object whose three
+  // numeric members are OPTIONAL BY DESIGN (`RunTokenTotals` — absent means unmeasured, never
+  // zero), so an unchecked projection is exactly where a published catalogue could start
+  // declaring those sums as required and turn "nobody measured" into "the value is 0".
+  'runs.detail': runsDetailSpec,
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,
   'runs.list': runsListSpec,

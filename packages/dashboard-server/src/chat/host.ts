@@ -122,6 +122,21 @@ export interface AgentHost {
    */
   readonly runsEventsFunctionId: string
   /**
+   * The agent package's `runs.detail` id, on `runsPostProcessingFunctionId`'s exact footing (405
+   * D-03).
+   *
+   * SUPPLIED BY THE COMPOSITION, NEVER SPELLED HERE, for the reason its two neighbours are: the
+   * op id is the agent package's constant, a string literal in this package would be a second
+   * declaration of a capability's name free to drift from the spec that answers to it, and this
+   * package may not import `@vostride/agent-qa-agent` at all (validate:arch) — so there is nowhere
+   * here the real constant could come from.
+   *
+   * WHAT IT REPLACES is worth naming: run detail used to be assembled by reading SQLite from
+   * inside the router. Routing it through this id is what makes the same durable read available
+   * to the CLI, MCP and chat instead of to the browser alone.
+   */
+  readonly runsDetailFunctionId: string
+  /**
    * `invokeFunction`, bound by the composer. THE one door call.
    *
    * `input` IS `unknown` (404-05). It was `AgentAskInput` while `agent.ask` was the only op this

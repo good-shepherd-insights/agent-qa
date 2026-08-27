@@ -233,6 +233,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // constants around it. The CLI's `digest` verb and the tail's fetch pointer both have to put
   // this name on the wire, and the alternative is a literal in the CLI — a second declaration of
   // a capability's name. A string is not a dispatch handle.
+  // 405-01 (D-03): the durable run-detail read's id, on the footing of every op-id constant
+  // around it. `packages/dashboard-server` may not import the agent package at all, so the route
+  // that serves `GET /api/runs/:id/detail` receives this name as DATA from the composition that
+  // knows it. A string is not a dispatch handle — and its SPEC is deliberately not on this list,
+  // because a spec carries its own `invoke`.
+  'RUNS_DETAIL_FUNCTION_ID',
   'RUNS_DIGEST_FUNCTION_ID',
   // 404 plan 05 (D-22): the recorded-event stream's id, on the footing of every op-id constant
   // around it. The dashboard's post-processing read joins chip truth with the run's own recorded
@@ -860,6 +866,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'RepairSessionOptions',
   'ReplayedRunEvent',
   'ResolvedClause',
+  // 405-01 (D-03): the durable run-detail projection read port's shape. A TYPE, because a host
+  // BINDS one — the CLI dashboard composition supplies a reader over the one `DashboardDatabase`
+  // that server holds, and it has to be able to name what it is supplying. Nothing carrying a
+  // database crosses this barrel. In ASCII SORT position; this list is compared positionally.
+  'RunDetailReaderPort',
   'RunInvocationPort',
   'RunNextJobInput',
   'RunNextJobOutcome',

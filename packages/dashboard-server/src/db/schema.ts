@@ -1,4 +1,20 @@
-export const SCHEMA_VERSION = 1
+// The dashboard's durable schema (Phase 405 plan 01, D-01/D-02).
+//
+// 2026-08-27 — SCHEMA VERSION 2, AS A HARD CUT AND NOT A MIGRATION. The v1 DDL below was
+// REWRITTEN IN PLACE as the single version-2 entry: the three bus-shaped projection tables land,
+// `execution_logs` gains the two handle columns, and there is no version-1 entry left to run. A
+// database stamped `user_version = 1` is REFUSED BY NAME on open (`runSqliteMigrations`), never
+// migrated — running `CREATE TABLE IF NOT EXISTS` over the old wide shape is a no-op that leaves
+// the app talking to a half-old schema, which is RESEARCH Pitfall 4 and the reason the refusal is
+// explicit rather than implied by the version comparison.
+//
+// THE V1 DEBRIS IS STILL SPELLED HERE ON PURPOSE. `steps`, `reasoning_traces`, `logs` and the
+// unfed `runs` columns remain in the version-2 sql list until plan 405-07's two-predicate census
+// deletes them with their readers. That is a FUNCTIONALITY gap, not an architectural one: from
+// this plan on the rebuilt subscriber writes NONE of them, so they are dormant rather than
+// competing — and deleting a table in the same commit that adds three would have made the census
+// a guess taken under time pressure.
+export const SCHEMA_VERSION = 2
 
 export interface DashboardMigration {
   version: number
@@ -7,7 +23,7 @@ export interface DashboardMigration {
 
 export const MIGRATIONS: DashboardMigration[] = [
   {
-    version: 1,
+    version: 2,
     sql: [
       `CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
@@ -116,7 +132,12 @@ export const MIGRATIONS: DashboardMigration[] = [
         return_data TEXT,
         variables TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        hook_id TEXT
+        hook_id TEXT,
+        -- 405 D-01: where in the run tree this hook ran. Sourced from HookFinishedPayload's own
+        -- optional testIndex/stepIndex; NULL means a run-scoped hook, which is a real state and
+        -- not a missing value.
+        test_index INTEGER,
+        step_index INTEGER
       )`,
       `CREATE TABLE IF NOT EXISTS token_events (
         id TEXT PRIMARY KEY,
@@ -135,6 +156,76 @@ export const MIGRATIONS: DashboardMigration[] = [
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
+      // ---- The v2 bus-shaped projection (405 D-01) ----------------------------------------
+      //
+      // THE COLUMNS ARE THE PAYLOAD'S OWN NAMES, snake_cased and nothing else. No field is
+      // re-derived, renamed or re-interpreted on the way in — that is D-01's whole claim, and
+      // it is what makes the read a mirror rather than a second opinion. Nested payload objects
+      // (`planned_action`, `grounding`, `result`, `artifact_refs`) are `JSON.stringify` of the
+      // field VERBATIM; the projection never reaches inside one.
+      //
+      // `test_index` IS THE HANDLE (RESEARCH D4). `handleId(runId, testIndex)` is how this
+      // product spells run-scoped member identity, so minting a second id here would be a
+      // second spelling of the same fact.
+      `CREATE TABLE IF NOT EXISTS run_members (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        test_index INTEGER NOT NULL,
+        test_id TEXT,
+        name TEXT,
+        file_path TEXT,
+        suite_id TEXT,
+        suite_name TEXT,
+        suite_index INTEGER,
+        total_steps INTEGER,
+        outcome TEXT,
+        duration_ms INTEGER,
+        failure_summary TEXT,
+        retry_count INTEGER,
+        -- D-17 ordinal. Starts at 1 and rises on testRetryScheduled; never reset by an upsert.
+        attempts INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (run_id, test_index)
+      )`,
+      // The token columns are NULLABLE AND NEVER DEFAULT 0 (D-05/D-06). The v1 `steps` table
+      // above declares `prompt_tokens INTEGER DEFAULT 0`, and that zero is a measurement nobody
+      // made — the exact lie this shape refuses to be able to tell. They are written by 405-04,
+      // which lands the producer; until then every row carries NULL, which is honest.
+      `CREATE TABLE IF NOT EXISTS run_steps (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        test_index INTEGER NOT NULL,
+        step_index INTEGER NOT NULL,
+        step_text TEXT,
+        cache_status TEXT NOT NULL,
+        verifier_verdict TEXT NOT NULL,
+        self_heal_occurred INTEGER NOT NULL,
+        brief_digest TEXT NOT NULL,
+        status TEXT,
+        duration_ms INTEGER,
+        error TEXT,
+        prompt_tokens INTEGER,
+        completion_tokens INTEGER,
+        total_tokens INTEGER,
+        PRIMARY KEY (run_id, test_index, step_index)
+      )`,
+      // NO FOREIGN KEY TO `run_steps`, deliberately: `subActionRecorded` envelopes PRECEDE the
+      // `stepFinalized` for their own step by construction, so a constraint pointing at a row
+      // that does not exist yet would drop every sub-action of every step.
+      `CREATE TABLE IF NOT EXISTS run_sub_actions (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        test_index INTEGER NOT NULL,
+        step_index INTEGER NOT NULL,
+        sub_action_index INTEGER NOT NULL,
+        plan TEXT NOT NULL,
+        planned_action TEXT NOT NULL,
+        grounding TEXT,
+        result TEXT NOT NULL,
+        screen_state_hash TEXT NOT NULL,
+        screen_state_hash_after TEXT,
+        artifact_refs TEXT,
+        PRIMARY KEY (run_id, test_index, step_index, sub_action_index)
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_run_members_run ON run_members(run_id)',
+      'CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, test_index)',
+      'CREATE INDEX IF NOT EXISTS idx_run_sub_actions_run ON run_sub_actions(run_id, test_index, step_index)',
       'CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)',
       'CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at)',
       'CREATE INDEX IF NOT EXISTS idx_runs_name ON runs(name)',

@@ -125,6 +125,10 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // certifying nothing about the `liveView` binding it exists to measure.
   'runs.liveurl': { runId: 'run-alpha' },
   'runs.postprocessing': { runId: 'run-alpha' },
+  // 405 D-03: a PARSING input on its `runs.` siblings' reasoning — `runId` is required, so the
+  // `{}` default would report an input error and this case would read that as `dispatched`,
+  // certifying nothing about the `runDetail` binding it exists to measure.
+  'runs.detail': { runId: 'run-alpha' },
   // 391 D-16: a PARSING input for the same reason its `runs.` siblings carry one — the digest
   // names a run, so the `{}` default fails its contract and turns an unbound refusal into an
   // input error, which the parity case below would read as `dispatched`.

@@ -56,6 +56,7 @@ import { quarantineReleaseSpec } from './ops/quarantine-release.js'
 import { runsEventsSpec } from './ops/runs-events.js'
 import { runsLiveUrlSpec } from './ops/runs-live-url.js'
 import { runsDigestSpec } from './ops/runs-digest.js'
+import { runsDetailSpec } from './ops/runs-detail.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
 import { runsPostProcessingSpec } from './ops/runs-post-processing.js'
@@ -114,6 +115,13 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // durable queue lists it `unbound` BY NAME instead of answering all-pending about a chain it
   // cannot see.
   runsPostProcessingSpec as FunctionSpec,
+  // 2026-08-27 (405 D-03): THE durable run-detail read — members, steps, sub-actions and the D-06
+  // token sum in ONE result. Registered here rather than beside the dashboard because it is the
+  // fourth-door law applied to the page that used to read SQLite from inside a route handler: the
+  // browser, the CLI, MCP and chat now ask one registry the same question. Bound through the
+  // OPTIONAL `runDetail` dep, so a host that owns no dashboard projection database lists it
+  // `unbound` BY NAME instead of answering an empty run about a projection it cannot see.
+  runsDetailSpec as FunctionSpec,
   // 389 D-11: THE analysis read — resolved verdicts, rendered sentences, clusters, one
   // producer for the CLI print, the run page and chat. Bound through the OPTIONAL `analysis`
   // dep (the artifact reader), so a host that cannot see run directories lists it `unbound`

@@ -38,6 +38,22 @@ export {
   type PostProcessingReadBody,
   type PostProcessingStageFailure,
 } from './run-service/post-processing-routes.js'
+// 405-01 (D-03): the durable run-detail read and the reader adapter the CLI composition binds.
+//
+// `createDashboardRunDetailReader` is published because the composition root that owns this
+// server's ONE database handle lives in `packages/cli` — this package cannot reach the function
+// layer to bind itself, which is the whole of the storage/composition split. `readRunDetail` is
+// published on `readPostProcessing`'s footing: a second door answers with byte-identical bytes by
+// CALLING it, never by a second spelling that agrees today.
+export {
+  createDashboardRunDetailReader,
+  type DashboardRunDetailReader,
+} from './run-service/run-detail-reader.js'
+export {
+  readRunDetail,
+  serveRunDetailRead,
+  type RunDetailReadOutcome,
+} from './run-service/run-detail-routes.js'
 export { TestFileManager } from './tests/test-file-manager.js'
 export type { TestFileInfo, TestValidationResult, TestValidationError } from './tests/test-file-manager.js'
 // 402-01 (D-02/D-06/D-13 · INVK-03): the authed run service — a mountable module whose every

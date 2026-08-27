@@ -1,5 +1,8 @@
 import { z } from 'zod'
 
+import type { Action } from '../action/index'
+import type { VerifierVerdict } from '../handoff/step-evidence'
+import type { ArtifactRef } from '../ids/artifact-ref'
 import type { ScopeKey, ScopeTier } from '../identity/scope-key'
 import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '../notification/run-notification'
 import type { RunNotification } from '../notification/run-notification'
@@ -9,7 +12,9 @@ import { LiveStreamDeclarationSchema } from '../run/live-stream'
 import { RUN_EVENT_TYPES } from '../run/bus-events'
 import type { RunEventEnvelope, RunEventPayload } from '../run/bus-events'
 import type { MemberTestOutcome } from '../run/member-outcome'
+import type { RecordedActionResult } from '../result/index'
 import { runIdSchema } from '../run/run-id'
+import type { GroundingEvidence } from '../screen/target-descriptor'
 import type { RunId } from '../run/run-id'
 import { EXECUTION_CONTEXT_VALUES } from '../run/run-status'
 import type { ExecutionContext, RunStatus } from '../run/run-status'
@@ -424,3 +429,218 @@ export const RunEventEnvelopeSchema = z.object({
   type: z.enum(RUN_EVENT_TYPES),
   payload: z.record(z.string(), z.unknown()).transform((value) => value as RunEventPayload),
 }).strict() satisfies z.ZodType<RunEventEnvelope>
+
+// ---- `runs.detail` — the durable run-detail projection (Phase 405 plan 01, D-03) ---------------
+//
+// THE WIRE MIRRORS THE BUS, FIELD FOR FIELD. Every name below is the name the producing payload
+// already uses (`testIndex`, `cacheStatus`, `verifierVerdict`, `selfHealOccurred`, `briefDigest`,
+// `screenStateHash`, `artifactRefs`), and that is D-01's "no field is re-derived, renamed or
+// re-interpreted on the way in" applied on the way OUT. A projection that renamed anything here
+// would be a second vocabulary for one run, free to drift from the events the same run recorded.
+
+/**
+ * One member test of a run, as the dashboard projection persisted it (D-01, D-18).
+ *
+ * `testIndex` IS THE HANDLE (RESEARCH D4): `handleId(runId, testIndex)` is how the product spells
+ * run-scoped member identity, and minting a second id here would be a second spelling of it.
+ *
+ * EVERY DESCRIPTIVE FIELD IS OPTIONAL AND `attempts` IS NOT, which is the D-18 thin-member shape
+ * stated as a type: a member whose stream begins with a terminal event has an outcome and nothing
+ * else, and it must still be renderable. `attempts` is an ordinal that starts at 1 and rises on
+ * `testRetryScheduled` (D-17), so it is always known.
+ */
+export interface RunDetailMember {
+  testIndex: number
+  testId?: string
+  name?: string
+  filePath?: string
+  suiteId?: string
+  suiteName?: string
+  suiteIndex?: number
+  totalSteps?: number
+  outcome?: MemberTestOutcome
+  durationMs?: number
+  failureSummary?: string
+  retryCount?: number
+  attempts: number
+}
+
+/**
+ * The per-step model spend (D-05), ABSENT when nothing was measured.
+ *
+ * Three numbers rather than one, mirroring the additive-optional field 405-04 appends to
+ * `stepFinalized`. A cache hit, a bypass or a provider that reports no usage carries NO
+ * `tokenUsage` at all — never a zero, which would be a measurement nobody made.
+ */
+export interface RunStepTokenUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
+/** One finalized step, carrying the whole `StepFinalizedPayload` as persisted (D-01). */
+export interface RunDetailStep {
+  testIndex: number
+  stepIndex: number
+  /** The instruction text, cached from this step's own `stepStarted`. */
+  stepText?: string
+  cacheStatus: 'hit' | 'miss' | 'bypass'
+  verifierVerdict: VerifierVerdict
+  selfHealOccurred: boolean
+  briefDigest: string
+  status?: 'passed' | 'failed' | 'healed' | 'skipped' | 'cancelled'
+  durationMs?: number
+  error?: string
+  tokenUsage?: RunStepTokenUsage
+}
+
+/** One recorded sub-action, carrying the whole `SubActionRecordedPayload` as persisted (D-01). */
+export interface RunDetailSubAction {
+  testIndex: number
+  stepIndex: number
+  subActionIndex: number
+  plan: string
+  plannedAction: Action
+  grounding?: GroundingEvidence
+  result: RecordedActionResult
+  screenStateHash: string
+  screenStateHashAfter?: string
+  artifactRefs?: readonly ArtifactRef[]
+}
+
+/**
+ * The run-level token sum, computed at READ time from the step rows (D-06).
+ *
+ * THE THREE SUMS ARE ABSENT WHEN `measuredSteps === 0`, and that asymmetry is the whole point:
+ * "no step reported usage" and "every step reported zero" are different facts about a run, and a
+ * page that printed `0 tokens` for the first would be reporting a measurement nobody took. The two
+ * counts are always present, so a surface can honestly render "N tokens across M of K steps".
+ */
+export interface RunTokenTotals {
+  measuredSteps: number
+  unmeasuredSteps: number
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+}
+
+/**
+ * What the run-detail READ PORT answers with — the rows and nothing derived (D-03).
+ *
+ * The token sum is DELIBERATELY NOT HERE. It is computed in the op by the exported pure
+ * `projectRunTokenTotals`, so the sum has one producer in the layer that owns the contract rather
+ * than one per composition root that happens to hold a database.
+ */
+export interface RunDetailRows {
+  runId: string
+  members: readonly RunDetailMember[]
+  steps: readonly RunDetailStep[]
+  subActions: readonly RunDetailSubAction[]
+}
+
+/** The `runs.detail` result: the rows plus the D-06 sum, in ONE unpaged answer. */
+export interface RunDetailProjection extends RunDetailRows {
+  tokens: RunTokenTotals
+}
+
+/**
+ * `runs.detail` addresses exactly one run by id — the same one-field shape `runs.get` takes.
+ *
+ * Deliberately so: run detail is a fact about a RUN, derived from its id alone. A filter, a handle
+ * or a page cursor on this contract would be a second way to address one page, and the projection
+ * rests on there being exactly one.
+ */
+export const RunsDetailInputSchema = z.object({
+  runId: runIdSchema,
+}).strict()
+
+export type RunsDetailInput = z.infer<typeof RunsDetailInputSchema>
+
+/**
+ * The bus's own nested objects, carried VERBATIM across the wire.
+ *
+ * An open record with a cast rather than a re-declaration of `Action` / `RecordedActionResult` /
+ * `GroundingEvidence` in zod: those three unions are the runner's contracts, they are large, and a
+ * second declaration here would be a second answer to what an action IS — free to fall behind the
+ * type the runner actually emits. This is the `RunEventEnvelopeSchema.payload` idiom in this same
+ * file, for the same reason: the envelope contract describes the frame, and a consumer narrows the
+ * payload against the exported union.
+ */
+const opaqueBusObject = <T>(): z.ZodType<T> =>
+  z.record(z.string(), z.unknown()).transform((value) => value as T) as unknown as z.ZodType<T>
+
+const ArtifactRefSchema = z.object({
+  id: z.string(),
+  sha: z.string(),
+  evidenceIncomplete: z.boolean().optional(),
+}).strict() satisfies z.ZodType<ArtifactRef>
+
+const VerifierVerdictSchema = z.object({
+  pass: z.boolean(),
+  reasoning: z.string(),
+}).strict() satisfies z.ZodType<VerifierVerdict>
+
+export const RunDetailMemberSchema = z.object({
+  testIndex: z.number().int().nonnegative(),
+  testId: z.string().optional(),
+  name: z.string().optional(),
+  filePath: z.string().optional(),
+  suiteId: z.string().optional(),
+  suiteName: z.string().optional(),
+  suiteIndex: z.number().int().nonnegative().optional(),
+  totalSteps: z.number().int().nonnegative().optional(),
+  outcome: z.enum(memberTestOutcomeValues).optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+  failureSummary: z.string().optional(),
+  retryCount: z.number().int().nonnegative().optional(),
+  attempts: z.number().int().positive(),
+}).strict() satisfies z.ZodType<RunDetailMember>
+
+export const RunStepTokenUsageSchema = z.object({
+  promptTokens: z.number().int().nonnegative(),
+  completionTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+}).strict() satisfies z.ZodType<RunStepTokenUsage>
+
+export const RunDetailStepSchema = z.object({
+  testIndex: z.number().int().nonnegative(),
+  stepIndex: z.number().int().nonnegative(),
+  stepText: z.string().optional(),
+  cacheStatus: z.enum(['hit', 'miss', 'bypass']),
+  verifierVerdict: VerifierVerdictSchema,
+  selfHealOccurred: z.boolean(),
+  briefDigest: z.string(),
+  status: z.enum(['passed', 'failed', 'healed', 'skipped', 'cancelled']).optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+  error: z.string().optional(),
+  tokenUsage: RunStepTokenUsageSchema.optional(),
+}).strict() satisfies z.ZodType<RunDetailStep>
+
+export const RunDetailSubActionSchema = z.object({
+  testIndex: z.number().int().nonnegative(),
+  stepIndex: z.number().int().nonnegative(),
+  subActionIndex: z.number().int().nonnegative(),
+  plan: z.string(),
+  plannedAction: opaqueBusObject<Action>(),
+  grounding: opaqueBusObject<GroundingEvidence>().optional(),
+  result: opaqueBusObject<RecordedActionResult>(),
+  screenStateHash: z.string(),
+  screenStateHashAfter: z.string().optional(),
+  artifactRefs: z.array(ArtifactRefSchema).optional(),
+}).strict() satisfies z.ZodType<RunDetailSubAction>
+
+export const RunTokenTotalsSchema = z.object({
+  measuredSteps: z.number().int().nonnegative(),
+  unmeasuredSteps: z.number().int().nonnegative(),
+  promptTokens: z.number().int().nonnegative().optional(),
+  completionTokens: z.number().int().nonnegative().optional(),
+  totalTokens: z.number().int().nonnegative().optional(),
+}).strict() satisfies z.ZodType<RunTokenTotals>
+
+export const RunDetailProjectionSchema = z.object({
+  runId: z.string(),
+  members: z.array(RunDetailMemberSchema),
+  steps: z.array(RunDetailStepSchema),
+  subActions: z.array(RunDetailSubActionSchema),
+  tokens: RunTokenTotalsSchema,
+}).strict() satisfies z.ZodType<RunDetailProjection>

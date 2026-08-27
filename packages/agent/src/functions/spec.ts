@@ -41,6 +41,7 @@ import type {
   RecordChange,
   RiskActionDescriptor,
   RunAnalysisArtifact,
+  RunDetailRows,
   RunId,
   RunNotification,
   RunsStartInput,
@@ -124,6 +125,7 @@ export type OptionalFunctionDepKey =
   | 'runInvocation'
   | 'knowledgeReview'
   | 'postProcessing'
+  | 'runDetail'
   | 'analysis'
   | 'recurrence'
   | 'quarantine'
@@ -807,6 +809,32 @@ export interface PostProcessingReaderPort {
 }
 
 /**
+ * Injected read port over ONE run's durable dashboard projection (Phase 405, D-03).
+ *
+ * `packages/agent` is `storageNeutral`: no host builtin is importable here, so every row arrives
+ * through this port, built at the composition root over the concrete dashboard SQLite database.
+ * The port answers ROWS — members, steps, sub-actions — and nothing derived; the D-06 token sum is
+ * the op's, computed once in the layer that owns the contract rather than once per host that
+ * happens to hold a database.
+ *
+ * ABSENCE IS A RESULT, NEVER A PATH JOIN ON CALLER INPUT (the `RunsReaderPort.get` law, T-384-08).
+ * A run id that names nothing answers `undefined`, and turning that into the layer's typed refusal
+ * is `runs.detail`'s job — so the "not found" vocabulary lives here in one place rather than in
+ * every composition root. An implementation resolves the id against the rows it already
+ * enumerates; joining a caller-supplied string onto a filesystem path is the one thing it may
+ * never do.
+ *
+ * OPTIONAL on {@link FunctionDeps} for the reason `postProcessing` is: a host with no dashboard
+ * database genuinely cannot say what a run's steps were, and the alternative to reporting that by
+ * name is answering an empty projection about a run it has never been able to see — a wrong answer
+ * wearing a correct one's clothes.
+ */
+export interface RunDetailReaderPort {
+  /** One run's projected rows, or `undefined` when no such run is recorded. */
+  read(runId: RunId): Promise<RunDetailRows | undefined>
+}
+
+/**
  * Injected read port over a run's persisted analysis artifact (Phase 389, D-10/D-11).
  *
  * `analysis.json` is the analyze-run job's own receipt; the only legal reader routes its
@@ -935,6 +963,13 @@ export interface FunctionDeps {
    * wrong answer wearing a correct one's clothes.
    */
   postProcessing?: PostProcessingReaderPort
+  /**
+   * 405 D-03: the durable run-detail projection read. See {@link RunDetailReaderPort} — absent
+   * means this host owns no dashboard projection database, and `runs.detail` refuses BY NAME
+   * rather than answering an empty run about a projection it cannot observe. Bound in the CLI
+   * dashboard composition over the one `DashboardDatabase` that server holds.
+   */
+  runDetail?: RunDetailReaderPort
   /**
    * 389 D-10/D-11: the analysis-artifact read. `analysis.get` binds through it and refuses
    * by name where it is absent; `runs.get` reads it opportunistically and treats an unbound

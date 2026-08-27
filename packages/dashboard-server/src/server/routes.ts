@@ -31,6 +31,9 @@ import {
   servePostProcessingRead,
   servePostProcessingStream,
 } from '../run-service/post-processing-routes.js'
+// 405-01 (D-03): the durable run-detail read. One arm below, above the `/api/runs/:id` catch-all,
+// formatting nothing and opening no database.
+import { serveRunDetailRead } from '../run-service/run-detail-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -1339,6 +1342,23 @@ export const RESPONSE_SAFE_RUN_READ_METHODS = [
  *     the database from the `attributes` column; they never touch `metadata`.
  */
 const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
+  // 2026-08-27 (405-01, D-01/D-03): the v2 projection's six members.
+  //
+  // The five WRITES return nothing; they are here for the same reason `insertRun` is.
+  //
+  // `readRunDetailRows` IS A READ AND IS STILL HERE, and that is the judgement this set exists to
+  // make explicit rather than to hide. It returns members, steps and sub-actions — the bus
+  // payloads as the subscriber MASKED them (T-363-05) — and NO `RunRow` and no
+  // `RunArtifactRow`. It therefore carries none of the run metadata the 401-23 scrub law exists
+  // to strip, so wrapping it would be wrapping a shape that has nothing to strip. This router
+  // does not call it either: the detail arm dispatches through the injected host, which is the
+  // whole of D-03.
+  'deleteMemberProjection',
+  'incrementRunMemberAttempts',
+  'insertRunStep',
+  'insertRunSubAction',
+  'readRunDetailRows',
+  'upsertRunMember',
   'deleteRun',
   'deleteStepsForRun',
   'finalizeRunArtifact',
@@ -2302,6 +2322,36 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           jsonNoCors(res, { error: 'live_url_mint_failed' }, 500)
         },
       )
+      return
+    }
+
+    // GET /api/runs/:id/detail — the durable run-detail projection (405-01, D-03).
+    //
+    // ABOVE THE `GET /api/runs/:id` CATCH-ALL BELOW, on the live-url and post-processing arms'
+    // measured precedent (RESEARCH Pitfall 2): that arm claims EVERY GET under the prefix and
+    // answers `Not found` for anything that is not exactly four segments — and
+    // `/api/runs/<id>/detail` is four segments, so registered after it this route would be looked
+    // up as a run id and refused.
+    //
+    // IT DISPATCHES AND FORMATS NOTHING. No `db.` call appears in this arm, deliberately: the
+    // whole point of D-03 is that the page's read crosses the function layer, where it can be
+    // audited and where the CLI and MCP can reach the same answer. Everything below the 503 is
+    // `serveRunDetailRead`'s — the op call, the refusal vocabulary, the body.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/detail$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let detailRunId: string
+      try {
+        detailRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/detail'.length))
+      } catch {
+        // An undecodable segment names no run, and the honest answer is the one the op's own
+        // input schema gives for an id it refuses.
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      serveRunDetailRead(req, res, { runId: detailRunId, host: deps.agentHost })
       return
     }
 

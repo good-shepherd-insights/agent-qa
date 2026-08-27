@@ -21,6 +21,16 @@ export {
   RunsPostProcessingInputSchema,
   RunNotificationSchema,
   PostProcessingStatusSchema,
+  // 405 D-03: the run-detail read op's contracts — the input, the three row schemas, the D-06
+  // token sum and the whole projection. They live beside `runs.postprocessing`'s because they
+  // answer the same question about the same noun: what is durably true of ONE run.
+  RunsDetailInputSchema,
+  RunDetailMemberSchema,
+  RunStepTokenUsageSchema,
+  RunDetailStepSchema,
+  RunDetailSubActionSchema,
+  RunTokenTotalsSchema,
+  RunDetailProjectionSchema,
   RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION,
   RunStartAcknowledgementSchema,
   RUN_EVENT_ENVELOPE_SCHEMA_VERSION,
@@ -38,6 +48,17 @@ export type {
   RunsLiveUrlResult,
   RunsPostProcessingInput,
   RunStartAcknowledgement,
+  // 405 D-03: the run-detail shapes. `RunDetailRows` is the PORT's answer (rows only); the
+  // projection adds the token sum the op computes, so the two names keep "what a store holds" and
+  // "what a caller receives" separately sayable.
+  RunsDetailInput,
+  RunDetailMember,
+  RunStepTokenUsage,
+  RunDetailStep,
+  RunDetailSubAction,
+  RunTokenTotals,
+  RunDetailRows,
+  RunDetailProjection,
 } from './runs'
 // 389 D-11: the analysis.get op's contracts — verdicts + sentences + clusters, one producer.
 export {

@@ -1,6 +1,7 @@
 import type { RunAttributes } from '@vostride/agent-qa-core'
 import type {
   ArtifactRecord,
+  HookFinishedPayload,
   RunArtifactConfigSnapshot,
   RunArtifactKind,
   RunArtifactMemorySnapshot,
@@ -8,6 +9,12 @@ import type {
   RunArtifactSuiteSourceSnapshot,
   RunArtifactTestSourceSnapshot,
   RunEventEnvelope,
+  StepFinalizedPayload,
+  StepStartedPayload,
+  SubActionRecordedPayload,
+  TestFinishedPayload,
+  TestRetryScheduledPayload,
+  TestStartedPayload,
 } from '@vostride/agent-qa-schema'
 import type { DashboardDatabase } from '../db/database.js'
 
@@ -25,6 +32,28 @@ import type { DashboardDatabase } from '../db/database.js'
  *
  * NOTE: Plan 06 (363-06) relocated the `RunArtifact*` payload family from core to
  * @vostride/agent-qa-schema (D-08); these imports now point at their canonical home.
+ *
+ * 2026-08-27 (Phase 405 plan 01, D-01/D-17/D-18): THE PROJECTION IS REBUILT ON THE BUS'S OWN
+ * SHAPE. Until this date every step landed in the v1 wide `steps` row through `insertStep`, which
+ * kept five of `StepFinalizedPayload`'s fields and dropped the rest — because the local `*Like`
+ * interfaces this module declared only named five. There was no `subActionRecorded` arm at all, so
+ * the sub-action timeline, the screenshots and the screen-state hashes reached no reader.
+ *
+ * What replaced them: the real schema payload types (so a field added to a payload is a compile
+ * error here rather than a silent drop), `run_members` per handle from `testStarted`/`testFinished`
+ * (D-18: a thin member whose stream begins with a terminal event still gets a row), `run_steps`
+ * carrying the WHOLE `stepFinalized` payload with `status` stored as the payload's own word, and
+ * `run_sub_actions` carrying the whole `subActionRecorded` payload with its nested objects
+ * stringified verbatim. `toRunStatus` survives for exactly one job — the `runs.status` CHECK
+ * constraint — and is applied nowhere else (D-01: no field is re-interpreted on the way in).
+ *
+ * `testRetryScheduled` now drops only THAT HANDLE's rows (D-17). It used to call the v1
+ * whole-run step delete, which wiped every step of the RUN — so in a suite, one member's
+ * abandoned attempt deleted the completed history of every member before it.
+ *
+ * THE NON-DARKENING `try {} catch {}` AROUND EVERY PROJECTION INSERT IS UNCHANGED and is
+ * load-bearing: a projection row that fails to write must never darken the `runs` row. A dropped
+ * step is visible as an absent step; a darkened run is a wrong verdict.
  */
 
 type SourceSnapshot =
@@ -83,57 +112,14 @@ export interface DashboardRunIngest {
   finalize(extra?: DashboardRunIngestFinalizeExtra): Promise<void>
 }
 
-interface TestStartedLike {
-  testId?: string
-  testIndex?: number
-  name?: string
-  filePath?: string
-  suiteId?: string
-  suiteName?: string
-  suiteIndex?: number
-  totalSteps?: number
-}
-
-interface TestFinishedLike {
-  testId?: string
-  testIndex?: number
-  outcome?: string
-  durationMs?: number
-  failureSummary?: string
-  retryCount?: number
-}
-
-interface StepStartedLike {
-  testIndex?: number
-  stepIndex?: number
-  stepText?: string
-}
-
-interface StepFinalizedLike {
-  testIndex?: number
-  stepIndex?: number
-  status?: string
-  durationMs?: number
-  error?: string
-}
-
-interface HookFinishedLike {
-  hookName?: string
-  phase?: string
-  hookExecutionId?: string
-  hookId?: string
-  testIndex?: number
-  status?: string
-  durationMs?: number
-  stdout?: string
-  stderr?: string
-  variables?: Record<string, string>
-  kind?: string
-}
-
-interface TestRetryScheduledLike {
-  testIndex?: number
-}
+// 405-01 (D-01): the six `*Like` interfaces that stood here are GONE. They were the mechanism of
+// the drop this plan closes — `StepFinalizedLike` named five of the payload's eleven fields, so the
+// other six could not be written even in principle, and nothing could tell you that by reading the
+// arm. The arms below take the SCHEMA'S OWN payload types, so a payload that grows a field is a
+// compile error here rather than a silent hole in the page.
+//
+// The two below survive because they are genuinely narrow reads of one word each off a terminal
+// envelope, and neither feeds a projection row.
 
 interface VerdictLike {
   verdict?: string
@@ -290,7 +276,7 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     onRunCreated?.(id)
   }
 
-  function handleTestStarted(payload: TestStartedLike): void {
+  function handleTestStarted(payload: TestStartedPayload): void {
     // Every member refreshes the ONE adopted row with the resolved test identity. Under the
     // one-run model there is nothing else to write it to.
     if (runId) {
@@ -299,6 +285,26 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
         ...(name ? { name } : {}),
         ...(readString(payload.testId) ? { testId: readString(payload.testId) } : {}),
       })
+    }
+    // 405 D-01: AND the member row, keyed by the handle. This is the per-member split 402-09
+    // deleted with the child run rows, restored from 402-04's handles rather than from a second
+    // `runs` row — the identity half; `testFinished` supplies the outcome half.
+    const id = targetForTest(payload)
+    if (!id) return
+    try {
+      db.upsertRunMember({
+        runId: id,
+        testIndex: payload.testIndex,
+        ...(payload.testId === undefined ? {} : { testId: payload.testId }),
+        ...(payload.name === undefined ? {} : { name: payload.name }),
+        ...(payload.filePath === undefined ? {} : { filePath: payload.filePath }),
+        ...(payload.suiteId === undefined ? {} : { suiteId: payload.suiteId }),
+        ...(payload.suiteName === undefined ? {} : { suiteName: payload.suiteName }),
+        ...(payload.suiteIndex === undefined ? {} : { suiteIndex: payload.suiteIndex }),
+        ...(payload.totalSteps === undefined ? {} : { totalSteps: payload.totalSteps }),
+      })
+    } catch {
+      // Projection rows are progress detail — the non-darkening rule.
     }
   }
 
@@ -309,9 +315,27 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     return runId
   }
 
-  function handleTestFinished(payload: TestFinishedLike): void {
+  function handleTestFinished(payload: TestFinishedPayload): void {
     const id = targetForTest(payload)
     if (!id) return
+    // 405 D-18: THE MEMBER ROW IS WRITTEN FROM `testFinished` ALONE if that is all there was. A
+    // member whose stream begins with a terminal event — skipped by fail-fast, budget exhausted —
+    // still has an outcome and a reason, and the page must show it with an explicit "did not run"
+    // state rather than omitting it. The upsert coalesces, so this cannot blank the identity
+    // fields `testStarted` wrote when both arrived.
+    try {
+      db.upsertRunMember({
+        runId: id,
+        testIndex: payload.testIndex,
+        ...(payload.testId === undefined ? {} : { testId: payload.testId }),
+        outcome: payload.outcome,
+        ...(payload.durationMs === undefined ? {} : { durationMs: payload.durationMs }),
+        ...(payload.failureSummary === undefined ? {} : { failureSummary: payload.failureSummary }),
+        ...(payload.retryCount === undefined ? {} : { retryCount: payload.retryCount }),
+      })
+    } catch {
+      // Non-darkening: a member row that will not write must not change the run row below.
+    }
     const status = toRunStatus(payload.outcome)
     const duration = typeof payload.durationMs === 'number' ? payload.durationMs : Date.now() - startedAtMs
     const endedAt = now()
@@ -329,37 +353,83 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     })
   }
 
-  function stepNameKey(testIndex: number | undefined, stepIndex: number): string {
-    return `${testIndex ?? 0}:${stepIndex}`
+  function stepNameKey(testIndex: number, stepIndex: number): string {
+    return `${String(testIndex)}:${String(stepIndex)}`
   }
 
-  function handleStepStarted(payload: StepStartedLike): void {
+  function handleStepStarted(payload: StepStartedPayload): void {
     const stepText = readString(payload.stepText)
     if (stepText === undefined) return
-    const stepIndex = typeof payload.stepIndex === 'number' ? payload.stepIndex : 0
-    stepNames.set(stepNameKey(payload.testIndex, stepIndex), stepText)
+    stepNames.set(stepNameKey(payload.testIndex, payload.stepIndex), stepText)
   }
 
-  function handleStepFinalized(payload: StepFinalizedLike): void {
+  /**
+   * 405 D-01: the WHOLE `StepFinalizedPayload`, passed through verbatim.
+   *
+   * `status` IS THE PAYLOAD'S OWN WORD and never `toRunStatus(...)`. A step that healed is
+   * `healed` on its row; collapsing it to `passed` here is precisely the re-interpretation D-01
+   * forbids, and the reason the v1 row could not tell a reader that a step self-healed.
+   *
+   * `stepText` comes from the `stepStarted` cache and is genuinely ABSENT when no `stepStarted`
+   * was seen — the v1 arm substituted `Step N`, which is a label nobody wrote pretending to be an
+   * instruction somebody did.
+   */
+  function handleStepFinalized(payload: StepFinalizedPayload): void {
     const id = targetForTest(payload)
     if (!id) return
-    const stepIndex = typeof payload.stepIndex === 'number' ? payload.stepIndex : 0
+    const stepText = stepNames.get(stepNameKey(payload.testIndex, payload.stepIndex))
     try {
-      db.insertStep({
+      db.insertRunStep({
         runId: id,
-        name: stepNames.get(stepNameKey(payload.testIndex, stepIndex)) ?? `Step ${stepIndex + 1}`,
-        status: payload.status ?? 'passed',
-        duration: typeof payload.durationMs === 'number' ? payload.durationMs : 0,
-        error: readString(payload.error),
-        stepOrder: stepIndex,
+        testIndex: payload.testIndex,
+        stepIndex: payload.stepIndex,
+        ...(stepText === undefined ? {} : { stepText }),
+        cacheStatus: payload.cacheStatus,
+        verifierVerdict: payload.verifierVerdict,
+        selfHealOccurred: payload.selfHealOccurred,
+        briefDigest: payload.briefDigest,
+        ...(payload.status === undefined ? {} : { status: payload.status }),
+        ...(payload.durationMs === undefined ? {} : { durationMs: payload.durationMs }),
+        ...(payload.error === undefined ? {} : { error: payload.error }),
       })
     } catch {
-      // Step rows are progress detail — a projection status the CHECK rejects must not
+      // Step rows are progress detail — a projection row that will not write must not
       // darken the run row (Pitfall 1 protects runs/run_artifacts, not steps).
     }
   }
 
-  function handleHookFinished(payload: HookFinishedLike): void {
+  /**
+   * 405 D-01 / D-14: THE ARM THAT DID NOT EXIST. Every `subActionRecorded` envelope becomes a row
+   * keyed by `(run_id, test_index, step_index, sub_action_index)`, carrying the payload's nested
+   * objects as JSON verbatim — including the `artifactRefs` the bus fold now populates from the
+   * decision screenshot the runner already minted. This is the whole of "screenshots and the
+   * sub-action timeline render populated": before it, nothing persisted them at all.
+   */
+  function handleSubActionRecorded(payload: SubActionRecordedPayload): void {
+    const id = targetForTest(payload)
+    if (!id) return
+    try {
+      db.insertRunSubAction({
+        runId: id,
+        testIndex: payload.testIndex,
+        stepIndex: payload.stepIndex,
+        subActionIndex: payload.subActionIndex,
+        plan: payload.plan,
+        plannedAction: payload.plannedAction,
+        ...(payload.grounding === undefined ? {} : { grounding: payload.grounding }),
+        result: payload.result,
+        screenStateHash: payload.screenStateHash,
+        ...(payload.screenStateHashAfter === undefined
+          ? {}
+          : { screenStateHashAfter: payload.screenStateHashAfter }),
+        ...(payload.artifactRefs === undefined ? {} : { artifactRefs: payload.artifactRefs }),
+      })
+    } catch {
+      // Same non-darkening rule as step rows.
+    }
+  }
+
+  function handleHookFinished(payload: HookFinishedPayload): void {
     // `skipped` hooks carry no output and the execution_logs CHECK only admits
     // passed|failed — the deleted DashboardReporter had the same contract.
     if (payload.status !== 'passed' && payload.status !== 'failed') return
@@ -379,23 +449,35 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
         stdout: readString(payload.stdout) ?? null,
         stderr: readString(payload.stderr) ?? null,
         variables: payload.variables ?? null,
+        // 405 D-01: where in the run tree this hook ran. Absent stays NULL — a run-scoped hook
+        // is a real state, and inventing handle 0 for it would put a setup hook inside a test.
+        ...(payload.testIndex === undefined ? {} : { testIndex: payload.testIndex }),
+        ...(payload.stepIndex === undefined ? {} : { stepIndex: payload.stepIndex }),
       })
     } catch {
       // Hook rows are progress detail — same non-darkening rule as step rows.
     }
   }
 
-  function handleTestRetryScheduled(payload: TestRetryScheduledLike): void {
-    // Only the final attempt emits the authoritative testFinished; step rows from the
-    // abandoned attempt would otherwise duplicate the re-run stepIndexes (§2.2).
+  /**
+   * 405 D-17: drop only THIS HANDLE's abandoned-attempt rows, and raise its attempt ordinal.
+   *
+   * The v1 arm called the store's whole-run step delete, which removed every step of the RUN.
+   * Under the one-run-row model that is every member's history: a suite where test 3 retried lost the
+   * completed step trees of tests 0-2, and the page rendered them as members that ran nothing.
+   * Only the final attempt emits the authoritative `testFinished`, so the abandoned attempt's
+   * rows must go — but only the abandoned attempt's.
+   */
+  function handleTestRetryScheduled(payload: TestRetryScheduledPayload): void {
     const id = targetForTest(payload)
     if (!id) return
     try {
-      db.deleteStepsForRun(id)
+      db.deleteMemberProjection(id, payload.testIndex)
+      db.incrementRunMemberAttempts(id, payload.testIndex)
     } catch {
       // Same non-darkening rule.
     }
-    const prefix = `${payload.testIndex ?? 0}:`
+    const prefix = `${String(payload.testIndex)}:`
     for (const key of stepNames.keys()) {
       if (key.startsWith(prefix)) stepNames.delete(key)
     }
@@ -416,22 +498,25 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
           handleRunStarted()
           break
         case 'testStarted':
-          handleTestStarted(envelope.payload as TestStartedLike)
+          handleTestStarted(envelope.payload as TestStartedPayload)
           break
         case 'testFinished':
-          handleTestFinished(envelope.payload as TestFinishedLike)
+          handleTestFinished(envelope.payload as TestFinishedPayload)
           break
         case 'stepStarted':
-          handleStepStarted(envelope.payload as StepStartedLike)
+          handleStepStarted(envelope.payload as StepStartedPayload)
           break
         case 'stepFinalized':
-          handleStepFinalized(envelope.payload as StepFinalizedLike)
+          handleStepFinalized(envelope.payload as StepFinalizedPayload)
+          break
+        case 'subActionRecorded':
+          handleSubActionRecorded(envelope.payload as SubActionRecordedPayload)
           break
         case 'hookFinished':
-          handleHookFinished(envelope.payload as HookFinishedLike)
+          handleHookFinished(envelope.payload as HookFinishedPayload)
           break
         case 'testRetryScheduled':
-          handleTestRetryScheduled(envelope.payload as TestRetryScheduledLike)
+          handleTestRetryScheduled(envelope.payload as TestRetryScheduledPayload)
           break
         case 'verdict':
           // Terminal aggregate; runFinished performs the finalize sweep.

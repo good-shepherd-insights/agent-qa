@@ -15,6 +15,10 @@ import {
 } from './sqlite.js'
 import {
   RUN_ARTIFACT_SCHEMA_VERSION,
+  type RunDetailMember,
+  type RunDetailRows,
+  type RunDetailStep,
+  type RunDetailSubAction,
   type RunArtifactFinalizeInput,
   type RunArtifactKind,
   type RunArtifactPayload,
@@ -127,6 +131,12 @@ interface ExecutionLogRow {
   id: string
   runId: string
   stepId: string | null
+  /**
+   * 405 D-01: where in the run tree this hook ran, from `HookFinishedPayload`'s own optional
+   * fields. `null` means a RUN-SCOPED hook — a real state, not a missing value.
+   */
+  testIndex: number | null
+  stepIndex: number | null
   type: 'hook' | 'appium-script' | 'runjs'
   name: string
   hookId: string | null
@@ -144,6 +154,9 @@ interface InsertExecutionLogInput {
   id: string
   runId: string
   stepId?: string | null
+  /** 405 D-01: the handle and step this hook belongs to; absent means run-scoped. */
+  testIndex?: number | null
+  stepIndex?: number | null
   type: 'hook' | 'appium-script' | 'runjs'
   name: string
   hookId?: string | null
@@ -233,6 +246,97 @@ export interface AttributeValueSuggestion {
   count: number
 }
 
+// ---- v2 projection row mappers (Phase 405 plan 01, D-01) -------------------------------------
+//
+// THE INVERSE OF THE WRITE AND NOTHING MORE. A column that is NULL becomes an ABSENT key, never a
+// `null` and never a substituted default — a reader that had to tell `null` from missing would be
+// learning a distinction the bus never made, and the token columns' whole point (D-05) is that
+// unmeasured is absent rather than zero.
+
+const optionalText = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined
+
+const optionalInt = (value: unknown): number | undefined =>
+  typeof value === 'number' ? value : undefined
+
+/** JSON columns are read back with the same permissiveness they were written with. */
+function parseJsonColumn(value: unknown): unknown {
+  if (typeof value !== 'string') return undefined
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function mapRunMemberRow(row: Record<string, unknown>): RunDetailMember {
+  const outcome = optionalText(row.outcome)
+  return {
+    testIndex: row.test_index as number,
+    ...(optionalText(row.test_id) === undefined ? {} : { testId: row.test_id as string }),
+    ...(optionalText(row.name) === undefined ? {} : { name: row.name as string }),
+    ...(optionalText(row.file_path) === undefined ? {} : { filePath: row.file_path as string }),
+    ...(optionalText(row.suite_id) === undefined ? {} : { suiteId: row.suite_id as string }),
+    ...(optionalText(row.suite_name) === undefined ? {} : { suiteName: row.suite_name as string }),
+    ...(optionalInt(row.suite_index) === undefined ? {} : { suiteIndex: row.suite_index as number }),
+    ...(optionalInt(row.total_steps) === undefined ? {} : { totalSteps: row.total_steps as number }),
+    ...(outcome === undefined ? {} : { outcome: outcome as RunDetailMember['outcome'] }),
+    ...(optionalInt(row.duration_ms) === undefined ? {} : { durationMs: row.duration_ms as number }),
+    ...(optionalText(row.failure_summary) === undefined
+      ? {}
+      : { failureSummary: row.failure_summary as string }),
+    ...(optionalInt(row.retry_count) === undefined ? {} : { retryCount: row.retry_count as number }),
+    attempts: (optionalInt(row.attempts) ?? 1),
+  }
+}
+
+function mapRunStepRow(row: Record<string, unknown>): RunDetailStep {
+  // ALL THREE OR NONE. A row with a total but no prompt count is a write nobody makes; reading it
+  // as a partial usage object would let a page render a sum whose parts are missing.
+  const totalTokens = optionalInt(row.total_tokens)
+  const tokenUsage = totalTokens === undefined
+    ? undefined
+    : {
+      promptTokens: optionalInt(row.prompt_tokens) ?? 0,
+      completionTokens: optionalInt(row.completion_tokens) ?? 0,
+      totalTokens,
+    }
+  return {
+    testIndex: row.test_index as number,
+    stepIndex: row.step_index as number,
+    ...(optionalText(row.step_text) === undefined ? {} : { stepText: row.step_text as string }),
+    cacheStatus: row.cache_status as RunDetailStep['cacheStatus'],
+    verifierVerdict: (parseJsonColumn(row.verifier_verdict) ?? { pass: false, reasoning: '' }) as RunDetailStep['verifierVerdict'],
+    selfHealOccurred: row.self_heal_occurred === 1,
+    briefDigest: (optionalText(row.brief_digest) ?? ''),
+    ...(optionalText(row.status) === undefined ? {} : { status: row.status as RunDetailStep['status'] }),
+    ...(optionalInt(row.duration_ms) === undefined ? {} : { durationMs: row.duration_ms as number }),
+    ...(optionalText(row.error) === undefined ? {} : { error: row.error as string }),
+    ...(tokenUsage === undefined ? {} : { tokenUsage }),
+  }
+}
+
+function mapRunSubActionRow(row: Record<string, unknown>): RunDetailSubAction {
+  const grounding = parseJsonColumn(row.grounding)
+  const artifactRefs = parseJsonColumn(row.artifact_refs)
+  return {
+    testIndex: row.test_index as number,
+    stepIndex: row.step_index as number,
+    subActionIndex: row.sub_action_index as number,
+    plan: (optionalText(row.plan) ?? ''),
+    plannedAction: parseJsonColumn(row.planned_action) as RunDetailSubAction['plannedAction'],
+    ...(grounding === undefined ? {} : { grounding: grounding as RunDetailSubAction['grounding'] }),
+    result: parseJsonColumn(row.result) as RunDetailSubAction['result'],
+    screenStateHash: (optionalText(row.screen_state_hash) ?? ''),
+    ...(optionalText(row.screen_state_hash_after) === undefined
+      ? {}
+      : { screenStateHashAfter: row.screen_state_hash_after as string }),
+    ...(Array.isArray(artifactRefs)
+      ? { artifactRefs: artifactRefs as RunDetailSubAction['artifactRefs'] }
+      : {}),
+  }
+}
+
 export function runSqliteMigrations(
   db: DashboardSqliteDatabase,
   migrations: readonly DashboardMigration[],
@@ -247,30 +351,47 @@ export function runSqliteMigrations(
   }
   if (currentVersion === schemaVersion) return
 
-  const runnableMigrations = migrations.filter(migration => migration.version <= schemaVersion)
-  if (runnableMigrations.length !== schemaVersion) {
-    throw new Error(`Expected ${schemaVersion} SQLite migration(s), found ${runnableMigrations.length}`)
+  // 2026-08-27 (Phase 405 plan 01, D-02 · RESEARCH Pitfall 4): AN OLDER DATABASE IS REFUSED BY
+  // NAME, NEVER MIGRATED.
+  //
+  // This arm did not exist before, and its absence was a silent corruption rather than a missing
+  // nicety. With `SCHEMA_VERSION` at 2 and a v1 file on disk, the old code saw `1 < 2` and ran the
+  // v2 sql ON TOP of the v1 shape — where every statement is `CREATE TABLE IF NOT EXISTS`, so the
+  // wide v1 `steps` table survived untouched and the app came up talking to a half-old schema with
+  // no error anywhere. The v43 hard-cut rule says a schema change is a hard cut; this is that rule
+  // made mechanical, and it names BOTH versions so an operator knows which file to remove.
+  if (currentVersion !== 0 && currentVersion !== schemaVersion) {
+    throw new Error(
+      `SQLite database user_version ${currentVersion} predates schema version ${schemaVersion}, `
+      + 'and this build performs no migration. '
+      + 'Remove the dashboard database or use a compatible agent-qa version.',
+    )
   }
-  runnableMigrations.forEach((migration, index) => {
-    const expectedVersion = index + 1
-    if (migration.version !== expectedVersion) {
-      throw new Error(`SQLite migrations must be contiguous and sorted: expected version ${expectedVersion}, got ${migration.version}`)
-    }
-  })
+
+  // ONE TERMINAL ENTRY, and the single-entry contract is the other half of the refusal above.
+  // Because no database is ever migrated FROM an older shape, a chain of intermediate versions
+  // would be a chain nothing can ever walk — dead sql that still has to be reviewed and kept
+  // consistent. `MIGRATIONS` is therefore exactly one entry stamped at `SCHEMA_VERSION`, applied
+  // only to a database at version 0.
+  const runnableMigrations = migrations.filter(migration => migration.version <= schemaVersion)
+  const terminal = runnableMigrations.length === 1 ? runnableMigrations[0] : undefined
+  if (terminal === undefined || terminal.version !== schemaVersion) {
+    const found = runnableMigrations.map(migration => migration.version).join(', ')
+    throw new Error(
+      `Expected exactly 1 SQLite migration at version ${schemaVersion}, `
+      + `found ${runnableMigrations.length} at [${found}]`,
+    )
+  }
 
   db.pragma('foreign_keys = OFF')
   try {
-    for (const migration of runnableMigrations) {
-      if (migration.version > currentVersion) {
-        const runAll = db.transaction(() => {
-          for (const sql of migration.sql) {
-            db.exec(sql)
-          }
-          db.pragma(`user_version = ${migration.version}`)
-        })
-        runAll()
+    const runAll = db.transaction(() => {
+      for (const sql of terminal.sql) {
+        db.exec(sql)
       }
-    }
+      db.pragma(`user_version = ${terminal.version}`)
+    })
+    runAll()
   } finally {
     db.pragma('foreign_keys = ON')
   }
@@ -544,6 +665,214 @@ export class DashboardDatabase {
       step.screenContextAfter ?? null,
     )
     return id
+  }
+
+  // ---- The v2 bus-shaped projection (Phase 405 plan 01, D-01) ---------------------------------
+  //
+  // SIX MEMBERS, AND EVERY ONE OF THEM MIRRORS. The columns are the bus payload's own names; the
+  // nested objects are `JSON.stringify` of the field verbatim. Nothing in this block decides what
+  // a status means, re-derives a duration or fills a token count — a projection that interpreted
+  // would be a second opinion about a run the event log already settled.
+
+  /**
+   * Write or refresh ONE member row, keyed by the handle `(run_id, test_index)`.
+   *
+   * AN UPSERT AND NOT TWO WRITES, because the member row is fed by two events at two times:
+   * `testStarted` knows the identity fields and `testFinished` knows the outcome — and D-18
+   * requires a member whose stream begins with a terminal event to render anyway, so the second
+   * one alone has to be able to create the row.
+   *
+   * ONLY SUPPLIED FIELDS MOVE. `COALESCE(excluded.x, run_members.x)` on every optional column, so
+   * a `testFinished` that carries no name cannot blank the name `testStarted` wrote. `attempts` is
+   * excluded from the update entirely: it is the D-17 retry ordinal, owned by
+   * `incrementRunMemberAttempts`, and an upsert that reset it would erase the fact the header
+   * renders.
+   */
+  upsertRunMember(member: {
+    runId: string
+    testIndex: number
+    testId?: string
+    name?: string
+    filePath?: string
+    suiteId?: string
+    suiteName?: string
+    suiteIndex?: number
+    totalSteps?: number
+    outcome?: string
+    durationMs?: number
+    failureSummary?: string
+    retryCount?: number
+  }): void {
+    this.db.prepare(`
+      INSERT INTO run_members (
+        run_id, test_index, test_id, name, file_path, suite_id, suite_name, suite_index,
+        total_steps, outcome, duration_ms, failure_summary, retry_count
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id, test_index) DO UPDATE SET
+        test_id = COALESCE(excluded.test_id, run_members.test_id),
+        name = COALESCE(excluded.name, run_members.name),
+        file_path = COALESCE(excluded.file_path, run_members.file_path),
+        suite_id = COALESCE(excluded.suite_id, run_members.suite_id),
+        suite_name = COALESCE(excluded.suite_name, run_members.suite_name),
+        suite_index = COALESCE(excluded.suite_index, run_members.suite_index),
+        total_steps = COALESCE(excluded.total_steps, run_members.total_steps),
+        outcome = COALESCE(excluded.outcome, run_members.outcome),
+        duration_ms = COALESCE(excluded.duration_ms, run_members.duration_ms),
+        failure_summary = COALESCE(excluded.failure_summary, run_members.failure_summary),
+        retry_count = COALESCE(excluded.retry_count, run_members.retry_count)
+    `).run(
+      member.runId,
+      member.testIndex,
+      member.testId ?? null,
+      member.name ?? null,
+      member.filePath ?? null,
+      member.suiteId ?? null,
+      member.suiteName ?? null,
+      member.suiteIndex ?? null,
+      member.totalSteps ?? null,
+      member.outcome ?? null,
+      member.durationMs ?? null,
+      member.failureSummary ?? null,
+      member.retryCount ?? null,
+    )
+  }
+
+  /**
+   * Raise ONE member's attempt ordinal (D-17). A no-op when the member row does not exist yet —
+   * a retry scheduled before any identity event is a real ordering, and inventing a row here
+   * would put a member on the page that nothing has said anything about.
+   */
+  incrementRunMemberAttempts(runId: string, testIndex: number): void {
+    this.db.prepare(
+      'UPDATE run_members SET attempts = attempts + 1 WHERE run_id = ? AND test_index = ?',
+    ).run(runId, testIndex)
+  }
+
+  /**
+   * Drop ONE HANDLE's projected step and sub-action rows (D-17).
+   *
+   * SCOPED TO THE HANDLE, which is the whole change from `deleteStepsForRun`: that member wiped
+   * every step of the RUN on any member's retry, so in a suite the abandoned attempt of test 3
+   * deleted the completed history of tests 0-2. The member row itself survives — its outcome and
+   * its attempt count are facts about the member, not about the attempt.
+   */
+  deleteMemberProjection(runId: string, testIndex: number): void {
+    this.db.prepare('DELETE FROM run_steps WHERE run_id = ? AND test_index = ?').run(runId, testIndex)
+    this.db.prepare('DELETE FROM run_sub_actions WHERE run_id = ? AND test_index = ?').run(runId, testIndex)
+  }
+
+  /**
+   * Write ONE finalized step row. `INSERT OR REPLACE` because a re-run of the same handle re-emits
+   * the same `(test_index, step_index)` and the LAST attempt is the one the page renders (D-17).
+   *
+   * The three token columns stay NULL when `tokenUsage` is absent — never 0 (D-05).
+   */
+  insertRunStep(step: {
+    runId: string
+    testIndex: number
+    stepIndex: number
+    stepText?: string
+    cacheStatus: string
+    verifierVerdict: unknown
+    selfHealOccurred: boolean
+    briefDigest: string
+    status?: string
+    durationMs?: number
+    error?: string
+    tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO run_steps (
+        run_id, test_index, step_index, step_text, cache_status, verifier_verdict,
+        self_heal_occurred, brief_digest, status, duration_ms, error,
+        prompt_tokens, completion_tokens, total_tokens
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      step.runId,
+      step.testIndex,
+      step.stepIndex,
+      step.stepText ?? null,
+      step.cacheStatus,
+      JSON.stringify(step.verifierVerdict ?? null),
+      step.selfHealOccurred ? 1 : 0,
+      step.briefDigest,
+      step.status ?? null,
+      step.durationMs ?? null,
+      step.error ?? null,
+      step.tokenUsage?.promptTokens ?? null,
+      step.tokenUsage?.completionTokens ?? null,
+      step.tokenUsage?.totalTokens ?? null,
+    )
+  }
+
+  /**
+   * Write ONE sub-action row. The four nested payload fields are stringified VERBATIM — this
+   * method never reaches inside `plannedAction`, `grounding`, `result` or `artifactRefs`.
+   */
+  insertRunSubAction(subAction: {
+    runId: string
+    testIndex: number
+    stepIndex: number
+    subActionIndex: number
+    plan: string
+    plannedAction: unknown
+    grounding?: unknown
+    result: unknown
+    screenStateHash: string
+    screenStateHashAfter?: string
+    artifactRefs?: readonly unknown[]
+  }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO run_sub_actions (
+        run_id, test_index, step_index, sub_action_index, plan, planned_action, grounding,
+        result, screen_state_hash, screen_state_hash_after, artifact_refs
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      subAction.runId,
+      subAction.testIndex,
+      subAction.stepIndex,
+      subAction.subActionIndex,
+      subAction.plan,
+      JSON.stringify(subAction.plannedAction ?? null),
+      subAction.grounding === undefined ? null : JSON.stringify(subAction.grounding),
+      JSON.stringify(subAction.result ?? null),
+      subAction.screenStateHash,
+      subAction.screenStateHashAfter ?? null,
+      subAction.artifactRefs === undefined ? null : JSON.stringify(subAction.artifactRefs),
+    )
+  }
+
+  /**
+   * THE run-detail read (D-03). `undefined` when no `runs` row exists — absence is a RESULT here,
+   * and turning it into a typed refusal is the `runs.detail` op's job, so the "not found"
+   * vocabulary lives in the function layer rather than in this store.
+   *
+   * A run that exists and projected nothing answers three empty arrays, which is a DIFFERENT fact
+   * and stays a different answer.
+   */
+  readRunDetailRows(runId: string): RunDetailRows | undefined {
+    const run = this.db.prepare('SELECT id FROM runs WHERE id = ?').get(runId) as { id: string } | undefined
+    if (run === undefined) return undefined
+
+    const memberRows = this.db.prepare(
+      'SELECT * FROM run_members WHERE run_id = ? ORDER BY test_index',
+    ).all(runId) as Record<string, unknown>[]
+    const stepRows = this.db.prepare(
+      'SELECT * FROM run_steps WHERE run_id = ? ORDER BY test_index, step_index',
+    ).all(runId) as Record<string, unknown>[]
+    const subActionRows = this.db.prepare(
+      'SELECT * FROM run_sub_actions WHERE run_id = ? ORDER BY test_index, step_index, sub_action_index',
+    ).all(runId) as Record<string, unknown>[]
+
+    return {
+      runId,
+      members: memberRows.map(row => mapRunMemberRow(row)),
+      steps: stepRows.map(row => mapRunStepRow(row)),
+      subActions: subActionRows.map(row => mapRunSubActionRow(row)),
+    }
   }
 
   private appendAttributePredicateConditions(
@@ -1648,8 +1977,8 @@ export class DashboardDatabase {
 
   insertExecutionLog(data: InsertExecutionLogInput): void {
     const stmt = this.db.prepare(`
-      INSERT INTO execution_logs (id, run_id, step_id, type, name, hook_id, phase, status, duration, stdout, stderr, return_data, variables)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO execution_logs (id, run_id, step_id, type, name, hook_id, phase, status, duration, stdout, stderr, return_data, variables, test_index, step_index)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       data.id,
@@ -1665,6 +1994,8 @@ export class DashboardDatabase {
       data.stderr ?? null,
       data.returnData != null ? JSON.stringify(data.returnData) : null,
       data.variables != null ? JSON.stringify(data.variables) : null,
+      data.testIndex ?? null,
+      data.stepIndex ?? null,
     )
   }
 
@@ -1680,6 +2011,8 @@ export class DashboardDatabase {
       id: r.id as string,
       runId: r.run_id as string,
       stepId: r.step_id as string | null,
+      testIndex: (r.test_index as number | null) ?? null,
+      stepIndex: (r.step_index as number | null) ?? null,
       type: r.type as 'hook' | 'appium-script' | 'runjs',
       name: r.name as string,
       hookId: r.hook_id as string | null,

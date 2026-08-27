@@ -301,6 +301,12 @@ const ALL_FUNCTION_IDS = [
   // 391 D-16: the per-run digest, in SORT position ahead of its `runs.` siblings. Read-tier, so
   // it survives safe-mode filtering and the derived non-read set below is unchanged — which is
   // what keeps the filter assertion a test of the RULE rather than of a frozen list.
+  // 405-01 D-03: in SORT position BEFORE `runs.digest` (`detail` precedes `digest`), not
+  // appended — this list is compared against the registry's lexicographic listing, so an appended
+  // id would fail on ORDER while every member was present. It declares `read` ALONE, so it
+  // survives safe-mode filtering and the derived drop-out set below is unchanged, which is what
+  // keeps the filter assertion a claim about the RULE rather than about a frozen list.
+  'runs.detail',
   'runs.digest',
   'runs.events',
   'runs.get',

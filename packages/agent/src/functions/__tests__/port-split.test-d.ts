@@ -158,12 +158,20 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // origin could mint a URL that resolves to nothing, which is a wrong answer wearing a correct one's
 // clothes; its absence is the genuine host fact that a terminal serves no HTTP, and `runs.liveurl`
 // says so BY NAME rather than inventing a link.
+// 405-01 D-03 extends it a TWENTY-FOURTH time, by name: `runDetail` — ONE run's durable projection
+// rows, read from the dashboard database the composing host owns. It is a key of its own rather
+// than a verb on `runs` for the read/write-independent reason the union keeps splitting on: that
+// port reads the RUNNER's handoff documents, this one reads the DASHBOARD's projection of the same
+// run's bus, and the two exist in different hosts — a CLI holds handoffs and no dashboard
+// database, a dashboard holds both. Folding them would make "this host can list runs" and "this
+// host can render a run's step tree" one claim, and only the second is what `runs.detail` needs.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'liveView'
     | 'runInvocation'
     | 'knowledgeReview'
     | 'postProcessing'
+    | 'runDetail'
     | 'analysis'
     | 'recurrence'
     | 'quarantine'

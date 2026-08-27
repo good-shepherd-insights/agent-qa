@@ -79,6 +79,14 @@ export type {
 // clause above is already at that bound — a twenty-fifth name would not annotate the export, it
 // would delete EVERY export in that statement from the pinned set. Split, both are read.
 export type { LiveViewPort } from './functions/spec.js'
+// 405 D-03: the run-detail projection read port's shape — a host BINDS one, so it must be able to
+// name what it supplies. Its own statement for the reason `LiveViewPort` above is: the clause
+// scanner's continuation bound (`evaluate-pin.ts` MAX_CLAUSE_LINES) is already reached by the
+// block above, and a name added there would delete that whole statement from the pinned set. A
+// TYPE, so nothing carrying a database crosses this barrel — the only value that ever implements
+// it is built in the one package sqlite is legal in, and `invokeFunction` is still the only
+// dispatch.
+export type { RunDetailReaderPort } from './functions/spec.js'
 // Caller-facing refusals a surface may legitimately catch and report. Op-level errors live
 // with the op that throws them; only the error CLASS crosses the barrel, never the spec.
 export { RunNotFoundError } from './functions/ops/runs-get.js'
@@ -128,6 +136,14 @@ export { RUNS_POST_PROCESSING_FUNCTION_ID } from './functions/ops/runs-post-proc
 // all, so the alternative is not a literal there but a literal it cannot type-check; the id is
 // handed to it by the composition, exactly as `agent.ask`'s is.
 export { RUNS_EVENTS_FUNCTION_ID } from './functions/ops/runs-events.js'
+// 405 D-03: the fifth op id a surface must be able to NAME, on exactly the footing above. The
+// dashboard's run-detail route dispatches the durable projection read through the injected host,
+// and `packages/dashboard-server` may not import this package at all — so the id reaches it the
+// only way an id can, as data from the composition that already knows it. An ID IS NOT A DISPATCH
+// HANDLE: the spec itself stays inside `functions/`, so `runs.detail` remains reachable only
+// through `invokeFunction`, and neither the pure `projectRunTokenTotals` nor `runsDetailSpec`
+// joins this barrel (a spec carries its own `invoke`, which is the private power SC1 abolishes).
+export { RUNS_DETAIL_FUNCTION_ID } from './functions/ops/runs-detail.js'
 // 389 D-11: the third op id a surface must be able to NAME, on the same footing as the two
 // above. Plan 07's CLI sentence block and the D-12 exit-line fetch hint both dispatch the
 // analysis read through the registry, and the alternative is a string literal in the CLI — a

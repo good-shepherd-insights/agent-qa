@@ -542,7 +542,13 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // 2026-08-25 (403-01 D-03): 36. `runs.liveurl` arrives with its own `classify` member, and it
     // is a fold this scan MUST range — the whole reason it declares one explicitly is that its
     // result carries a live credential its outcome sentence may never interpolate.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(36)
+    //
+    // 2026-08-27 (405-01 D-03): 37. `runs.detail` arrives with its own `classify` member, and it
+    // is a fold this scan MUST range for a reason of its own: its result is a whole run's
+    // projection — plan text, planned actions, error strings, sha-keyed refs — so a fold that
+    // reached into that payload for its outcome sentence would put a run's content on a receipt.
+    // It counts the three collections and interpolates nothing from inside them.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(37)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {

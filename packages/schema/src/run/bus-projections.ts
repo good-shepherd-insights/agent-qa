@@ -1,4 +1,5 @@
 import { screenStateHash } from '../determinism/screen-hash'
+import type { ArtifactRef } from '../ids/artifact-ref'
 import type { PerTestOutcome } from '../handoff/per-test-outcome'
 import type { StepEvidence } from '../handoff/step-evidence'
 import type { SubActionEvidence } from '../handoff/sub-action-evidence'
@@ -84,6 +85,26 @@ export function projectStepFinalized(
  * `stateAfter` are collapsed to `screenStateHash` identity strings and destructured away
  * (the `toRecordedActionResult` idiom — never `delete`); `result` is already a
  * `RecordedActionResult` by evidence construction so no live screenshot bytes ride the bus.
+ *
+ * 2026-08-27 (Phase 405 plan 01, D-14 · RESEARCH D1): `decisionScreenshotRef` STOPS BEING
+ * DISCARDED. Until this date it was destructured out and voided beside `stateBefore`, and the
+ * consequence was measured rather than suspected: `artifactRefs` is declared on the payload,
+ * no runner code sets `evidence.artifactRefs`, and the ONE ref the runner does mint per live
+ * decision — the sha-keyed decision screenshot the v50 `FsEvidenceArtifactStore` already
+ * writes — reached the handoff and the analysis jobs and never the wire. So the dashboard's
+ * projection had nothing to persist and the run-detail page had no screenshot to render.
+ *
+ * THIS IS CONTENT ON A FROZEN SHAPE, not a shape change (the 363 D-01 class, and RESEARCH
+ * Open Q1 recorded here as the dated decision it is). The payload TYPE, the envelope and the
+ * event NAME are untouched; an existing optional field acquires its first producer. The ref
+ * is APPENDED to whatever `artifactRefs` the evidence already carried rather than replacing
+ * it, because the two are different claims — "everything this sub-action produced" and "the
+ * frame the planner decided from" — and a decision screenshot that silently displaced a
+ * store-written ref would lose evidence to gain evidence.
+ *
+ * The array is spread in only when NON-EMPTY (the absent-is-spread-away idiom every optional
+ * on this payload follows): an empty array would be a second spelling of "no artifacts", and
+ * a reader that had to tell `[]` from missing would be learning a distinction nothing means.
  */
 export function projectSubActionRecorded(
   evidence: SubActionEvidence,
@@ -93,8 +114,12 @@ export function projectSubActionRecorded(
   const { stateBefore, stateAfter, decisionScreenshotRef, localEffect, ...rest } = evidence
   void stateBefore
   void stateAfter
-  void decisionScreenshotRef
   void localEffect
+
+  const artifactRefs: readonly ArtifactRef[] = [
+    ...(rest.artifactRefs ?? []),
+    ...(decisionScreenshotRef === undefined ? [] : [decisionScreenshotRef]),
+  ]
 
   const payload: SubActionRecordedPayload = {
     testIndex: ids.testIndex,
@@ -108,7 +133,7 @@ export function projectSubActionRecorded(
     ...(evidence.stateAfter !== undefined
       ? { screenStateHashAfter: screenStateHash(evidence.stateAfter) }
       : {}),
-    ...(rest.artifactRefs !== undefined ? { artifactRefs: rest.artifactRefs } : {}),
+    ...(artifactRefs.length > 0 ? { artifactRefs } : {}),
   }
   return maskPayloadStrings(payload, mask)
 }
