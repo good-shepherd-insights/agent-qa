@@ -384,8 +384,47 @@ describe('createDashboardRunIngest', () => {
     expect(step?.status).toBe('failed')
     expect(step?.error).toBe('assertion failed')
     expect(step?.stepText).toBe('Save it')
-    // D-05: nothing on this bus carries usage yet, so the row carries NO tokenUsage — not zeros.
+    // D-05: this fixture measured nothing, so the row carries NO tokenUsage — not zeros.
     expect(step?.tokenUsage).toBeUndefined()
+  })
+
+  it('a measured stepFinalized persists its tokenUsage; an unmeasured one leaves the columns NULL (405 D-05/D-06)', () => {
+    const runId = 'r_tokens-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-in'
+    const ingest = createDashboardRunIngest({
+      db,
+      sourceSnapshot: testSource(),
+      attributes,
+      correlationEnv: { runId },
+      now: () => '2026-08-27T00:00:00.000Z',
+    })
+    ingest.handler(ev('run-bus', 'runStarted', {}))
+    ingest.handler(ev('run-bus', 'testStarted', { testId: 't-1', testIndex: 0 }))
+    ingest.handler(ev('run-bus', 'stepFinalized', stepFinalized({
+      stepIndex: 0,
+      tokenUsage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+    })))
+    // A cache hit: the loop made no model call, so the payload carries no tokenUsage at all.
+    ingest.handler(ev('run-bus', 'stepFinalized', stepFinalized({ stepIndex: 1, cacheStatus: 'hit' })))
+
+    const steps = db.readRunDetailRows(runId)?.steps ?? []
+    expect(steps).toHaveLength(2)
+    expect(steps[0].tokenUsage).toEqual({ promptTokens: 10, completionTokens: 5, totalTokens: 15 })
+    expect('tokenUsage' in steps[0]).toBe(true)
+    expect('tokenUsage' in steps[1]).toBe(false)
+
+    // The read mapper could hide a zero-fill, so this asserts the COLUMN. `absent ≠ zero` has to
+    // be true at rest, not just on the way out: a `0` here would be a measurement nobody made.
+    const raw = db as unknown as { db: { prepare(sql: string): { all(...p: unknown[]): unknown[] } } }
+    const rows = raw.db
+      .prepare('SELECT step_index, prompt_tokens, completion_tokens, total_tokens FROM run_steps WHERE run_id = ? ORDER BY step_index')
+      .all(runId) as Array<{ step_index: number; prompt_tokens: number | null; completion_tokens: number | null; total_tokens: number | null }>
+    expect(rows).toHaveLength(2)
+    expect(rows[0].prompt_tokens).toBe(10)
+    expect(rows[0].completion_tokens).toBe(5)
+    expect(rows[0].total_tokens).toBe(15)
+    expect(rows[1].prompt_tokens).toBeNull()
+    expect(rows[1].completion_tokens).toBeNull()
+    expect(rows[1].total_tokens).toBeNull()
   })
 
   it('a thin member — testFinished with no testStarted — still gets a row (405 D-18)', () => {

@@ -106,6 +106,29 @@ describe('projectRunTokenTotals — absent is not zero (D-06)', () => {
     })
   })
 
+  it('sums a mixed run step-by-step — the parts are summed independently, never re-derived', () => {
+    // Small asymmetric counts on purpose: a transposed prompt/completion accumulator would still
+    // produce the right `totalTokens` with the symmetric fixtures above, and would be invisible.
+    const totals = projectRunTokenTotals([
+      step({ stepIndex: 0, tokenUsage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } }),
+      step({ stepIndex: 1, tokenUsage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }),
+      step({ stepIndex: 2 }),
+    ])
+    expect(totals).toEqual({
+      measuredSteps: 2,
+      unmeasuredSteps: 1,
+      promptTokens: 11,
+      completionTokens: 6,
+      totalTokens: 17,
+    })
+  })
+
+  it('two unmeasured steps answer two counts and no sum keys at all', () => {
+    const totals = projectRunTokenTotals([step({ stepIndex: 0 }), step({ stepIndex: 1 })])
+    expect(totals).toEqual({ measuredSteps: 0, unmeasuredSteps: 2 })
+    expect(Object.keys(totals).sort()).toEqual(['measuredSteps', 'unmeasuredSteps'])
+  })
+
   it('a measured step that genuinely spent zero is still MEASURED', () => {
     // The distinction the whole shape exists for, from the other side: a provider that reported
     // a zero-token call is a measurement, and it must not be counted as an absent one.
