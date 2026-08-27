@@ -900,103 +900,6 @@ export async function purgeCache(opts: { file?: string; all?: boolean }): Promis
   return postJson('/api/cache/purge', opts)
 }
 
-export interface ExecutionLiveIdentity {
-  eventId?: string
-  runId: string
-  parentRunId?: string | null
-  suiteIndex?: number
-  suiteTotal?: number
-  testIndex?: number
-  stepIndex?: number
-  stepId?: string
-}
-
-export interface ExecutionTestStartEvent extends ExecutionLiveIdentity {
-  type: 'test-start'
-  testName: string
-  filePath: string
-  totalSteps: number
-  timestamp?: string
-}
-
-export interface ExecutionTestCompleteEvent extends ExecutionLiveIdentity {
-  type: 'test-complete'
-  testName: string
-  status: string
-  duration: number
-}
-
-export interface ExecutionStepStartEvent extends ExecutionLiveIdentity {
-  type: 'step-start'
-  stepName: string
-  testName: string
-  timestamp: string
-}
-
-export interface ExecutionStepCompleteEvent extends ExecutionLiveIdentity {
-  type: 'step-complete'
-  stepName: string
-  testName?: string
-  status: string
-  duration: number
-  screenshot?: string
-  screenshotBefore?: string
-  observation?: string
-  reasoning?: string
-  plannedAction?: unknown
-  result?: string
-  error?: string
-  annotation?: unknown
-}
-
-export interface ExecutionStepPhaseEvent extends ExecutionLiveIdentity {
-  type: 'step-phase'
-  stepName: string
-  testName: string
-  phase: 'observe' | 'plan' | 'execute' | 'verify' | 'heal'
-  subActionIndex?: number
-  phaseOrdinal?: number
-  text?: string
-  confidence?: number
-  action?: unknown
-  success?: boolean
-  duration?: number
-  timestamp: string
-}
-
-export interface ExecutionHookStartEvent extends Partial<ExecutionLiveIdentity> {
-  type: 'hook-start'
-  hookId?: string
-  hookName: string
-  phase: 'setup' | 'teardown' | 'inline'
-  hookExecutionId: string
-  timestamp: string
-}
-
-export interface ExecutionHookEndEvent extends Partial<ExecutionLiveIdentity> {
-  type: 'hook-end'
-  hookId?: string
-  hookName: string
-  phase: 'setup' | 'teardown' | 'inline'
-  hookExecutionId: string
-  status: 'passed' | 'failed'
-  duration: number
-  stdout?: string
-  stderr?: string
-  variables?: Record<string, string>
-  error?: string
-  logType?: 'hook' | 'appium-script' | 'runjs'
-  timestamp: string
-}
-
-export interface ExecutionRunCompleteEvent {
-  type: 'run-complete'
-  eventId?: string
-  runId: string
-  status: string
-  duration: number
-}
-
 // Test analytics API
 
 export interface TestAnalyticsEntry {
@@ -1184,24 +1087,6 @@ export async function fetchAccessibilitySummary(runId: string): Promise<Accessib
   return request(`/api/runs/${encodeURIComponent(runId)}/accessibility`)
 }
 
-export function subscribeToAllExecutionEvents(
-  callbacks: {
-    onRunStart?: (data: { runId: string; status: string; eventId?: string }) => void
-    onRunComplete?: (data: ExecutionRunCompleteEvent) => void
-  },
-): EventSource {
-  const source = new EventSource(`${API_BASE}/api/execution/events`)
-
-  source.addEventListener('run-start', (e) => {
-    callbacks.onRunStart?.(JSON.parse((e as MessageEvent).data))
-  })
-  source.addEventListener('run-complete', (e) => {
-    callbacks.onRunComplete?.(JSON.parse((e as MessageEvent).data))
-  })
-
-  return source
-}
-
 // Config & LLM settings API
 
 export interface ConfigResponse {
@@ -1336,64 +1221,6 @@ export async function exchangePluginAuthCode(
 
 export async function deleteAuthCredential(configName: string): Promise<{ deleted: boolean }> {
   return postJson(`/api/auth/${encodeURIComponent(configName)}`, undefined, 'DELETE')
-}
-
-export function subscribeToExecutionEvents(
-  runId: string,
-  callbacks: {
-    onRunStart?: (data: { runId: string; status: string; eventId?: string }) => void
-    onTestStart?: (data: ExecutionTestStartEvent) => void
-    onHookStart?: (data: ExecutionHookStartEvent) => void
-    onHookEnd?: (data: ExecutionHookEndEvent) => void
-    onStepStart?: (data: ExecutionStepStartEvent) => void
-    onStepComplete?: (data: ExecutionStepCompleteEvent) => void
-    onStepPhase?: (data: ExecutionStepPhaseEvent) => void
-    onTestComplete?: (data: ExecutionTestCompleteEvent) => void
-    onRunComplete?: (data: ExecutionRunCompleteEvent) => void
-    onRunError?: (data: { runId: string; error: string; eventId?: string }) => void
-  },
-): EventSource {
-  const source = new EventSource(`${API_BASE}/api/execution/events?runId=${encodeURIComponent(runId)}`)
-  const parseExecutionEvent = <T extends { eventId?: string }>(e: Event): T => {
-    const message = e as MessageEvent
-    const parsed = JSON.parse(message.data) as T
-    return message.lastEventId ? { ...parsed, eventId: message.lastEventId } : parsed
-  }
-
-  source.addEventListener('run-start', (e) => {
-    callbacks.onRunStart?.(parseExecutionEvent<{ runId: string; status: string; eventId?: string }>(e))
-  })
-  source.addEventListener('test-start', (e) => {
-    callbacks.onTestStart?.(parseExecutionEvent(e))
-  })
-  source.addEventListener('hook-start', (e) => {
-    callbacks.onHookStart?.(parseExecutionEvent(e))
-  })
-  source.addEventListener('hook-end', (e) => {
-    callbacks.onHookEnd?.(parseExecutionEvent(e))
-  })
-  source.addEventListener('step-start', (e) => {
-    callbacks.onStepStart?.(parseExecutionEvent(e))
-  })
-  source.addEventListener('step-complete', (e) => {
-    callbacks.onStepComplete?.(parseExecutionEvent(e))
-  })
-  source.addEventListener('step-phase', (e) => {
-    callbacks.onStepPhase?.(parseExecutionEvent(e))
-  })
-  source.addEventListener('test-complete', (e) => {
-    callbacks.onTestComplete?.(parseExecutionEvent(e))
-  })
-  source.addEventListener('run-complete', (e) => {
-    callbacks.onRunComplete?.(parseExecutionEvent(e))
-    source.close()
-  })
-  source.addEventListener('run-error', (e) => {
-    callbacks.onRunError?.(parseExecutionEvent<{ runId: string; error: string; eventId?: string }>(e))
-    source.close()
-  })
-
-  return source
 }
 
 // Variables API
