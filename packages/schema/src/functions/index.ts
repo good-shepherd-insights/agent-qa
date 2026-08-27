@@ -31,6 +31,11 @@ export {
   RunDetailSubActionSchema,
   RunTokenTotalsSchema,
   RunDetailProjectionSchema,
+  // 405-05 D-12/D-13: the ref-resolving read op's two contracts. Beside the run-detail block
+  // because they are the two halves of one claim — the projection carries a ref, and this is how
+  // that ref becomes bytes.
+  RunsArtifactInputSchema,
+  RunsArtifactResultSchema,
   RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION,
   RunStartAcknowledgementSchema,
   RUN_EVENT_ENVELOPE_SCHEMA_VERSION,
@@ -59,6 +64,11 @@ export type {
   RunTokenTotals,
   RunDetailRows,
   RunDetailProjection,
+  // 405-05 D-12/D-13/D-15: the artifact read's shapes. `EvidenceBlobLookup` is the PORT's answer
+  // and its two absences are kept APART on purpose — see the type's own doc.
+  RunsArtifactInput,
+  RunsArtifactResult,
+  EvidenceBlobLookup,
 } from './runs'
 // 389 D-11: the analysis.get op's contracts — verdicts + sentences + clusters, one producer.
 export {

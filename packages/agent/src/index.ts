@@ -87,6 +87,11 @@ export type { LiveViewPort } from './functions/spec.js'
 // it is built in the one package sqlite is legal in, and `invokeFunction` is still the only
 // dispatch.
 export type { RunDetailReaderPort } from './functions/spec.js'
+// 405-05 D-12/D-13: the evidence-blob read port's shape, on the line above's exact footing — a
+// host BINDS one, so it must be able to name what it supplies. Its own statement for the same
+// clause-continuation reason. A TYPE, so nothing carrying a filesystem crosses this barrel: the
+// only value that ever implements it is built in the one package `node:fs` is legal in.
+export type { EvidenceBlobReaderPort } from './functions/spec.js'
 // Caller-facing refusals a surface may legitimately catch and report. Op-level errors live
 // with the op that throws them; only the error CLASS crosses the barrel, never the spec.
 export { RunNotFoundError } from './functions/ops/runs-get.js'
@@ -144,6 +149,18 @@ export { RUNS_EVENTS_FUNCTION_ID } from './functions/ops/runs-events.js'
 // through `invokeFunction`, and neither the pure `projectRunTokenTotals` nor `runsDetailSpec`
 // joins this barrel (a spec carries its own `invoke`, which is the private power SC1 abolishes).
 export { RUNS_DETAIL_FUNCTION_ID } from './functions/ops/runs-detail.js'
+// 405-05 D-12/D-13: the sixth op id a surface must be able to NAME, on the line above's exact
+// footing. The dashboard's artifact arm — on BOTH doors — dispatches the ref-resolving read
+// through the injected host, and `packages/dashboard-server` may not import this package at all.
+// The refusal class travels beside it because a surface must be able to tell "no such run" from
+// "that run holds no such blob" (D-15), and a name is the only thing that distinction can be
+// carried by across a boundary neither package's types cross. `runsArtifactSpec` and the sniffer
+// stay inside `functions/` — a spec carries its own `invoke`, which is the private power SC1
+// abolishes, and the sniffer is a detail of what the op serves rather than of what a caller reads.
+export {
+  EvidenceBlobAbsentError,
+  RUNS_ARTIFACT_FUNCTION_ID,
+} from './functions/ops/runs-artifact.js'
 // 389 D-11: the third op id a surface must be able to NAME, on the same footing as the two
 // above. Plan 07's CLI sentence block and the D-12 exit-line fetch hint both dispatch the
 // analysis read through the registry, and the alternative is a string literal in the CLI — a

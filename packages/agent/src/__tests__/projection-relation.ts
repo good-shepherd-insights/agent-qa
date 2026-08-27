@@ -61,6 +61,7 @@ import { quarantineReleaseSpec } from '../functions/ops/quarantine-release.js'
 import { runsEventsSpec } from '../functions/ops/runs-events.js'
 import { runsLiveUrlSpec } from '../functions/ops/runs-live-url.js'
 import { runsDigestSpec } from '../functions/ops/runs-digest.js'
+import { runsArtifactSpec } from '../functions/ops/runs-artifact.js'
 import { runsDetailSpec } from '../functions/ops/runs-detail.js'
 import { runsGetSpec } from '../functions/ops/runs-get.js'
 import { runsListSpec } from '../functions/ops/runs-list.js'
@@ -184,6 +185,12 @@ export const CONTRACTS_BY_ID: Readonly<Record<string, DeclaredContracts>> = {
   // numeric members are OPTIONAL BY DESIGN (`RunTokenTotals` — absent means unmeasured, never
   // zero), so an unchecked projection is exactly where a published catalogue could start
   // declaring those sums as required and turn "nobody measured" into "the value is 0".
+  // 405-05 D-12/D-13. Paired here the day it is registered, on the growth seam's own rule. Its
+  // input is the first in this map carrying a REGEX-constrained string, and that constraint is
+  // load-bearing rather than cosmetic: the 64-lowercase-hex shape is what makes a malformed sha a
+  // refusal before any path exists, so a projection that dropped it would publish a contract under
+  // which `../../etc/passwd` is a well-formed request.
+  'runs.artifact': runsArtifactSpec,
   'runs.detail': runsDetailSpec,
   'runs.events': runsEventsSpec,
   'runs.get': runsGetSpec,

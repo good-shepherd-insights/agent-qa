@@ -177,6 +177,13 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // barrel's sorted export set by exact positional equality.
   'EXPLAIN_FUNCTION_ID',
   'EntityNotFoundError',
+  // 405-05 (D-15): the caller-facing refusal for a run that EXISTS and holds no blob under that
+  // content address, on the exact footing of its siblings here — an error CLASS, not a dispatch
+  // path, so a surface holding it can run nothing. It crosses because "no such run" and "no such
+  // blob" are different things a page must render, and across a boundary neither package's types
+  // cross, a NAME is the only carrier that distinction has. In SORT position; this list is
+  // compared against the barrel's sorted export set by exact positional equality.
+  'EvidenceBlobAbsentError',
   'FunctionDeniedError',
   'FunctionInputError',
   'FunctionNotBoundError',
@@ -238,6 +245,12 @@ export const EXPECTED_AGENT_BARREL_VALUE_EXPORTS: readonly string[] = [
   // that serves `GET /api/runs/:id/detail` receives this name as DATA from the composition that
   // knows it. A string is not a dispatch handle — and its SPEC is deliberately not on this list,
   // because a spec carries its own `invoke`.
+  // 405-05 (D-12/D-13): the ref-resolving read's id, on the footing of every op-id constant around
+  // it. BOTH doors' artifact arms live in `packages/dashboard-server`, which may not import the
+  // agent package at all, so the name reaches them as DATA from the composition that knows it. A
+  // string is not a dispatch handle — and its SPEC is deliberately not on this list, because a
+  // spec carries its own `invoke`.
+  'RUNS_ARTIFACT_FUNCTION_ID',
   'RUNS_DETAIL_FUNCTION_ID',
   'RUNS_DIGEST_FUNCTION_ID',
   // 404 plan 05 (D-22): the recorded-event stream's id, on the footing of every op-id constant
@@ -767,6 +780,11 @@ export const EXPECTED_AGENT_BARREL_TYPE_EXPORTS: readonly string[] = [
   'DraftShelfPortLike',
   'DraftStageOutcome',
   'EntityDirectoryPort',
+  // 405-05 (D-12/D-13): the evidence-blob read port's shape. A TYPE, because a host BINDS one —
+  // every local composition supplies a reader over the same `FsEvidenceArtifactStore` the runner
+  // wrote through, and it has to be able to name what it is supplying. Nothing carrying a
+  // filesystem crosses this barrel. In ASCII SORT position; this list is compared positionally.
+  'EvidenceBlobReaderPort',
   // 398 D-11: the coverage record a host appends to the local log. A TYPE, and the SHAPE is the
   // feature: a verbatim query and the deterministic closest set, and nothing that could carry it to
   // a network sink. Pinned beside the port because a record gaining a destination field would be

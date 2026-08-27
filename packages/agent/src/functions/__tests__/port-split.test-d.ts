@@ -165,6 +165,12 @@ expectTypeOf<KnowledgeReaderPort>().not.toMatchTypeOf<KnowledgeReviewPort>()
 // run's bus, and the two exist in different hosts — a CLI holds handoffs and no dashboard
 // database, a dashboard holds both. Folding them would make "this host can list runs" and "this
 // host can render a run's step tree" one claim, and only the second is what `runs.detail` needs.
+// 405-05 D-12/D-13 extends it a TWENTY-FIFTH time, by name: `evidenceBlobs` — one run's
+// content-addressed evidence bytes, read through the same store the runner wrote them with. A key
+// of its own rather than a verb on `runs` for the blast-radius reason: `RunsReaderPort` is
+// REQUIRED, so a blob verb on it would make every daemon, MCP and test implementer satisfy a
+// method most of them have no storage for — and a host that could list runs but hold no blobs
+// would have to answer that verb with something. Optional, it is instead an honest `unbound`.
 expectTypeOf<OptionalFunctionDepKey>()
   .toEqualTypeOf<
     | 'liveView'
@@ -172,6 +178,7 @@ expectTypeOf<OptionalFunctionDepKey>()
     | 'knowledgeReview'
     | 'postProcessing'
     | 'runDetail'
+    | 'evidenceBlobs'
     | 'analysis'
     | 'recurrence'
     | 'quarantine'

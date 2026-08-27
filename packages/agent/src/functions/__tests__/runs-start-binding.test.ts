@@ -129,6 +129,11 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
   // `{}` default would report an input error and this case would read that as `dispatched`,
   // certifying nothing about the `runDetail` binding it exists to measure.
   'runs.detail': { runId: 'run-alpha' },
+  // 405-05 D-12/D-13: a PARSING input on the same reasoning, and the sha carries a second reason
+  // of its own — it is REGEX-constrained to 64 lowercase hex, so any placeholder shorter than
+  // that would fail the contract and this case would read the resulting input error as
+  // `dispatched`, certifying nothing about the `evidenceBlobs` binding it exists to measure.
+  'runs.artifact': { runId: 'run-alpha', sha: 'a'.repeat(64) },
   // 391 D-16: a PARSING input for the same reason its `runs.` siblings carry one — the digest
   // names a run, so the `{}` default fails its contract and turns an unbound refusal into an
   // input error, which the parity case below would read as `dispatched`.

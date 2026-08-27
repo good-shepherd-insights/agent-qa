@@ -35,6 +35,7 @@ import type {
   KnowledgeRecordsDiffInput,
   KnowledgeRecordsInspectInput,
   KnowledgeRejectInput,
+  EvidenceBlobLookup,
   MaskedResolvedConfig,
   ProposalsInboxPort,
   QuarantineOperationsPort,
@@ -126,6 +127,7 @@ export type OptionalFunctionDepKey =
   | 'knowledgeReview'
   | 'postProcessing'
   | 'runDetail'
+  | 'evidenceBlobs'
   | 'analysis'
   | 'recurrence'
   | 'quarantine'
@@ -835,6 +837,37 @@ export interface RunDetailReaderPort {
 }
 
 /**
+ * Injected read port over ONE run's content-addressed evidence blobs (Phase 405, D-12/D-13).
+ *
+ * `packages/agent` is `storageNeutral`: no filesystem is importable here, so the bytes arrive
+ * through this port, built at the composition root over the SAME `FsEvidenceArtifactStore` the
+ * runner wrote them with. The port answers BYTES and nothing derived — the content-type sniff is
+ * `runs.artifact`'s, computed once in the layer that owns the contract rather than once per host
+ * that happens to hold a runtime root.
+ *
+ * ABSENCE IS A RESULT, AND IT IS TWO RESULTS (D-15). See {@link EvidenceBlobLookup}: the concrete
+ * store collapses "no such run" and "no such blob" into one `undefined`, and an implementation of
+ * this port is where that distinction is recovered — because above it the two are different things
+ * a page has to render. Turning either arm into a typed refusal is the op's job, so the "not
+ * found" vocabulary lives in one place rather than in every composition root.
+ *
+ * THE PORT NEVER JOINS CALLER INPUT ONTO A PATH (the `RunsReaderPort.get` law, T-384-08 /
+ * T-405-14). Containment is the STORE's own rule — `slugBranch` over the runId and a
+ * 64-lowercase-hex check over the sha, both inside `FsEvidenceArtifactStore` — and an
+ * implementation that assembled a path itself would be a second containment rule, free to be
+ * weaker than the one the runner writes through.
+ *
+ * OPTIONAL on {@link FunctionDeps} for the reason `postProcessing` is, and for a sharper one: the
+ * alternative was widening the REQUIRED {@link RunsReaderPort} with a blob verb, which every
+ * daemon, MCP and test implementer of that port would then have to satisfy with storage most of
+ * them do not have.
+ */
+export interface EvidenceBlobReaderPort {
+  /** One blob's bytes, or which KIND of absence this host is reporting. */
+  read(runId: RunId, sha: string): Promise<EvidenceBlobLookup>
+}
+
+/**
  * Injected read port over a run's persisted analysis artifact (Phase 389, D-10/D-11).
  *
  * `analysis.json` is the analyze-run job's own receipt; the only legal reader routes its
@@ -970,6 +1003,13 @@ export interface FunctionDeps {
    * dashboard composition over the one `DashboardDatabase` that server holds.
    */
   runDetail?: RunDetailReaderPort
+  /**
+   * 405 D-12/D-13: the run-scoped evidence-blob read. See {@link EvidenceBlobReaderPort} — absent
+   * means this host owns no runtime root, and `runs.artifact` refuses BY NAME rather than
+   * answering `blob_absent` about every artifact in the product, which would read to an operator
+   * as storage loss. Bound on every LOCAL host, which is exactly the set that has run directories.
+   */
+  evidenceBlobs?: EvidenceBlobReaderPort
   /**
    * 389 D-10/D-11: the analysis-artifact read. `analysis.get` binds through it and refuses
    * by name where it is absent; `runs.get` reads it opportunistically and treats an unbound

@@ -644,3 +644,70 @@ export const RunDetailProjectionSchema = z.object({
   subActions: z.array(RunDetailSubActionSchema),
   tokens: RunTokenTotalsSchema,
 }).strict() satisfies z.ZodType<RunDetailProjection>
+
+/**
+ * `runs.artifact` addresses ONE content-addressed evidence blob, run-scoped (405 D-12/D-13).
+ *
+ * TWO FIELDS AND NO PATH, EVER. The sha is the whole of the artifact's address inside the run, and
+ * the regex here is the CONTRACT rather than a route guard: a malformed sha is refused by this
+ * schema at the door, so the op never receives one and `FsEvidenceArtifactStore.getBlob` — which
+ * answers `undefined` for a malformed sha and for an absent file alike — is never asked to
+ * distinguish the two. Lowercase only, because the store content-addresses with
+ * `createHash('sha256').digest('hex')` and an uppercase spelling would name a file that does not
+ * exist while looking like a legitimate miss.
+ *
+ * RUN-SCOPED BY CONSTRUCTION (D-12, T-405-16). There is no global `artifacts/:sha` shape here,
+ * because the store keeps no sha→run index and a route that pretended otherwise would be reading
+ * one run's evidence under another run's authority.
+ */
+export const RunsArtifactInputSchema = z.object({
+  runId: runIdSchema,
+  sha: z.string().regex(/^[0-9a-f]{64}$/),
+}).strict()
+
+export type RunsArtifactInput = z.infer<typeof RunsArtifactInputSchema>
+
+/**
+ * What `runs.artifact` answers with — the bytes, base64'd, under a SNIFFED content type.
+ *
+ * BASE64 AND UNARY rather than a stream, because a decision screenshot is bounded by the runner's
+ * own capture and a stream kind would buy a few hundred kilobytes nothing at the cost of a second
+ * result vocabulary (RESEARCH Pattern 2). The adapter decodes once and writes the bytes.
+ *
+ * `contentType` IS DERIVED FROM THE BYTES, not from a name, an extension or anything the caller
+ * said: the store keeps no metadata, and the only honest source for "what is this" is the head of
+ * the blob itself. The op's sniffer answers PNG, JPEG or the opaque default and NOTHING a browser
+ * renders as markup (T-405-15).
+ *
+ * `byteLength` IS THE DECODED SIZE, DECLARED RATHER THAN DERIVABLE. It is here so that neither the
+ * op's own receipt fold nor the route's `Content-Length` has to reach into `bytesBase64` to learn
+ * how big the blob is — reading a payload's content to compose a receipt is exactly what the fold
+ * census in `refusal-classifiers.test.ts` refuses, and a size a consumer must decode to discover is
+ * a size two consumers will compute two ways.
+ */
+export const RunsArtifactResultSchema = z.object({
+  runId: z.string(),
+  sha: z.string(),
+  contentType: z.string(),
+  byteLength: z.number().int().nonnegative(),
+  bytesBase64: z.string(),
+}).strict()
+
+export type RunsArtifactResult = z.infer<typeof RunsArtifactResultSchema>
+
+/**
+ * What the evidence-blob READ PORT answers with — three arms, and absence is TWO of them.
+ *
+ * THE SPLIT IS THE WHOLE POINT (D-15). `FsEvidenceArtifactStore.getBlob` returns `undefined` for a
+ * run that never existed and for a run that exists and holds no such blob, and those are different
+ * operator situations: the first is a bad link, the second is a GC'd or never-written artifact that
+ * the page must render as a visible "screenshot unavailable" state. A port that answered one word
+ * for both would make that distinction unrecoverable above it.
+ *
+ * NEITHER ABSENCE IS AN ERROR HERE. Turning an arm into the layer's typed refusal is the op's job,
+ * so the "not found" vocabulary lives in one place rather than in every composition root.
+ */
+export type EvidenceBlobLookup =
+  | { readonly status: 'found'; readonly bytes: Uint8Array }
+  | { readonly status: 'blob_absent' }
+  | { readonly status: 'unknown_run' }

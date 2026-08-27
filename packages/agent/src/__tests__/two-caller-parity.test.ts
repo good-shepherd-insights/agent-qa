@@ -306,6 +306,11 @@ const ALL_FUNCTION_IDS = [
   // id would fail on ORDER while every member was present. It declares `read` ALONE, so it
   // survives safe-mode filtering and the derived drop-out set below is unchanged, which is what
   // keeps the filter assertion a claim about the RULE rather than about a frozen list.
+  // 405-05 D-12/D-13: in SORT position BEFORE `runs.detail` (`artifact` precedes `detail`), not
+  // appended — this list is compared against the registry's lexicographic listing, so an appended
+  // id would fail on ORDER while every member was present. Read-tier like its `runs.` siblings, so
+  // the derived non-read drop-out set below is unchanged.
+  'runs.artifact',
   'runs.detail',
   'runs.digest',
   'runs.events',

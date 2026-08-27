@@ -95,6 +95,7 @@ describe('found bytes travel whole, under a content type sniffed from their own 
     expect(result.runId).toBe(RUN_ID)
     expect(result.sha).toBe(SHA)
     expect(result.contentType).toBe('image/png')
+    expect(result.byteLength).toBe(PNG_MAGIC.length)
     expect(bytesOf(result.bytesBase64)).toEqual(PNG_MAGIC)
   })
 
@@ -125,6 +126,7 @@ describe('found bytes travel whole, under a content type sniffed from their own 
         { runId: RUN_ID, sha: SHA },
         answering({ status: 'found', bytes: slice }),
       )
+      expect(result.byteLength, `length ${String(length)}`).toBe(length)
       expect(bytesOf(result.bytesBase64), `length ${String(length)}`).toEqual(slice)
     }
   })
@@ -186,15 +188,15 @@ describe('the spec is a member of this catalogue in good standing', () => {
   })
 
   it('classifies a served blob by its type and size, never by its bytes', () => {
-    const verdict = runsArtifactSpec.classify?.(
-      { runId: RUN_ID, sha: SHA, contentType: 'image/png', bytesBase64: 'AAAA' },
-      { runId: RUN_ID, sha: SHA },
+    const verdict = runsArtifactSpec.classify(
+      { runId: RUN_ID, sha: SHA, contentType: 'image/png', byteLength: 3, bytesBase64: 'AAAA' },
     )
-    expect(verdict?.status).toBe('executed')
-    expect(verdict?.outcome).toContain('image/png')
-    expect(verdict?.outcome).toContain(RUN_ID)
+    expect(verdict.status).toBe('executed')
+    expect(verdict.outcome).toContain('image/png')
+    expect(verdict.outcome).toContain('3 bytes')
+    expect(verdict.outcome).toContain(RUN_ID)
     // The receipt line never quotes the payload: a base64 body in an audit row would be the blob
     // written a second time, into the one record that is kept forever.
-    expect(verdict?.outcome).not.toContain('AAAA')
+    expect(verdict.outcome).not.toContain('AAAA')
   })
 })

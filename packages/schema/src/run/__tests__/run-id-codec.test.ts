@@ -102,8 +102,8 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
   Record<string, { hardened: number; plainString: number; verdict: string }>
 > = {
   'functions/runs.ts': {
-    hardened: 9,
-    plainString: 4,
+    hardened: 10,
+    plainString: 5,
     verdict:
       'hardened here — `RunsStartInput.runId` is the caller-supplied id the run executes under and '
       + 'becomes `runs/<slugBranch(runId)>/`. 2026-08-25 (403-01 D-03) adds the EIGHTH: '
@@ -114,9 +114,14 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
       + 'path segment of `GET /api/runs/:id/detail` and is the id the dashboard projection is read '
       + 'under — the read resolves it against rows it enumerates rather than a path join, and the '
       + 'codec is what makes an id the path layer would REWRITE a refusal instead (T-405-01). '
-      + 'The four plain fields are ACKNOWLEDGEMENT/EVENT/PROJECTION '
-      + 'projections (`RunStartAcknowledgement`, the bus envelope, `PostProcessingStatus`, and '
-      + '405-01\'s `RunDetailProjection.runId`) whose '
+      + '2026-08-27 (405-05 D-12/D-13) adds the TENTH: `RunsArtifactInput.runId` arrives as an '
+      + 'untrusted path segment of `GET /api/runs/:runId/artifacts/:sha` on both doors and is the '
+      + 'run the evidence store is scoped to — the codec refuses the ids `slugBranch` would '
+      + 'REWRITE, so a rewritten id can never address another run\'s blobs (T-405-14). Its `sha` '
+      + 'is NOT a run-identifying field and carries its own 64-lowercase-hex regex instead. '
+      + 'The five plain fields are ACKNOWLEDGEMENT/EVENT/PROJECTION/RESULT '
+      + 'projections (`RunStartAcknowledgement`, the bus envelope, `PostProcessingStatus`, '
+      + '405-01\'s `RunDetailProjection.runId` and 405-05\'s `RunsArtifactResult.runId`) whose '
       + 'interfaces declare `string`: they echo an id a run already recorded, and none is an input.',
   },
   'functions/analysis-get.ts': {

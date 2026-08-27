@@ -56,6 +56,7 @@ import { quarantineReleaseSpec } from './ops/quarantine-release.js'
 import { runsEventsSpec } from './ops/runs-events.js'
 import { runsLiveUrlSpec } from './ops/runs-live-url.js'
 import { runsDigestSpec } from './ops/runs-digest.js'
+import { runsArtifactSpec } from './ops/runs-artifact.js'
 import { runsDetailSpec } from './ops/runs-detail.js'
 import { runsGetSpec } from './ops/runs-get.js'
 import { runsListSpec } from './ops/runs-list.js'
@@ -122,6 +123,15 @@ const BUILT_IN_FUNCTION_SPECS: readonly FunctionSpec[] = [
   // OPTIONAL `runDetail` dep, so a host that owns no dashboard projection database lists it
   // `unbound` BY NAME instead of answering an empty run about a projection it cannot see.
   runsDetailSpec as FunctionSpec,
+  // 2026-08-27 (405-05 D-12/D-13): THE ref-resolving read — one run's content-addressed evidence
+  // blob, by sha, with the content type sniffed from the bytes themselves. Registered beside
+  // `runs.detail` because the two are the halves of one claim: the projection carries an
+  // `artifactRef`, and this is how that ref becomes an image on a page. It is here rather than in
+  // a route for `runs.detail`'s reason — a route constructing the evidence store would be a
+  // private store read no roster row covers, and 408's embed and MCP would each need their own.
+  // Bound through the OPTIONAL `evidenceBlobs` dep, so a host with no runtime root lists it
+  // `unbound` BY NAME instead of reporting every artifact in the product as absent.
+  runsArtifactSpec as FunctionSpec,
   // 389 D-11: THE analysis read — resolved verdicts, rendered sentences, clusters, one
   // producer for the CLI print, the run page and chat. Bound through the OPTIONAL `analysis`
   // dep (the artifact reader), so a host that cannot see run directories lists it `unbound`

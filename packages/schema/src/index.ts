@@ -834,6 +834,9 @@ export {
   RunDetailSubActionSchema,
   RunTokenTotalsSchema,
   RunDetailProjectionSchema,
+  // 405-05 D-12/D-13: the artifact read op's two contracts.
+  RunsArtifactInputSchema,
+  RunsArtifactResultSchema,
   RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION,
   RunStartAcknowledgementSchema,
   RUN_EVENT_ENVELOPE_SCHEMA_VERSION,
@@ -905,6 +908,10 @@ export type {
   RunTokenTotals,
   RunDetailRows,
   RunDetailProjection,
+  // 405-05 D-12/D-13/D-15: the artifact read's shapes and the port's three-arm lookup answer.
+  RunsArtifactInput,
+  RunsArtifactResult,
+  EvidenceBlobLookup,
   AnalysisGetInput,
   AnalysisGetOutput,
   AnalysisResolvedVerdict,

@@ -548,7 +548,13 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // projection — plan text, planned actions, error strings, sha-keyed refs — so a fold that
     // reached into that payload for its outcome sentence would put a run's content on a receipt.
     // It counts the three collections and interpolates nothing from inside them.
-    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(37)
+    //
+    // 2026-08-27 (405-05 D-12/D-13): 38. `runs.artifact` arrives with its own `classify` member,
+    // and it is a fold this scan MUST range for the sharpest reason on this list: its result IS a
+    // payload — a base64 blob — so a fold that reached into it would put a screenshot's bytes on a
+    // receipt kept forever. It interpolates the sniffed type, the DECLARED `byteLength` and the
+    // run id, which is why that length is a field on the result rather than something to measure.
+    expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(38)
   })
 
   it('control: the body extractor and the scan both FIRE on a fold that sniffs', () => {
