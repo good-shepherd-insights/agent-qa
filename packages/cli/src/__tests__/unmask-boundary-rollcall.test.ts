@@ -26,6 +26,7 @@
 // masking egress hook, the REAL cache-key floor helpers, and the REAL debug-logging middleware.
 
 import { describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,14 +38,39 @@ import {
 } from '@vostride/agent-qa-safety'
 import type { ConfirmPort, ProviderRequestParams } from '@vostride/agent-qa-safety'
 import { debugLoggingMiddleware } from '@vostride/agent-qa-model'
-import { createChatRouter, recordStreamedEvent } from '@vostride/agent-qa-dashboard'
+// 405-10 (D-09): the shipped subscriber, database, detail adapter and BOTH routers. A cell that
+// mounted its own would be measuring a door this product does not ship.
+import {
+  DashboardDatabase,
+  createChatRouter,
+  createDashboardRunDetailReader,
+  createDashboardRunIngest,
+  createRouter,
+  createRunServiceRoutes,
+  recordStreamedEvent,
+} from '@vostride/agent-qa-dashboard'
 import type { AgentHost, SessionStreamWindow } from '@vostride/agent-qa-dashboard'
+// 405-10: the shipped registry and dispatcher — `runs.detail` is where the projection is computed
+// and where `RunNotFoundError` is minted, so a fixture that answered it would be a second
+// implementation of both. DEV-only edges, on `run-detail-routes.test.ts`'s own reasoning:
+// `validate:arch` walks `src` with `__tests__` excluded, so the production firewall stands.
+import {
+  RUNS_ARTIFACT_FUNCTION_ID,
+  RUNS_DETAIL_FUNCTION_ID,
+  createFunctionRegistry,
+  invokeFunction,
+  type FunctionDeps,
+  type FunctionRegistry,
+} from '@vostride/agent-qa-agent'
+import { createEvidenceBlobReader } from '@vostride/agent-qa-agent-local'
 import { createServer, request as httpRequest } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { renderClauseResults } from '../commands/result-render.js'
 import {
   ARTIFACT_FILE,
   EVENTS_FILE,
   FsEventLog,
+  FsEvidenceArtifactStore,
   FsHandoffStore,
   FsRunArtifactStore,
   HANDOFF_FILE,
@@ -55,6 +81,7 @@ import {
   computeCacheKey,
   relevantEnvDigest,
   RUN_ARTIFACT_SCHEMA_VERSION,
+  RUN_SERVICE_CONTRACT_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CacheableStepInput,
@@ -490,6 +517,257 @@ async function renderDashboardChatFrame(): Promise<string> {
   }
 }
 
+
+// ---- 405-10 (D-09 · DETL-02): THE DASHBOARD'S RUN READS, BOTH SIDES --------------------------
+//
+// WHAT THIS BLOCK ADDS AND WHY IT IS NINE ENTRIES RATHER THAN ONE. 400-06 enrolled the fourth
+// door's CHAT emits. The run-detail rebuild opened five more human reads on the same door — the
+// detail page, the run list, one run's row, its execution logs and its artifact drawer — and every
+// one of them serves text a run masked. D-09's claim is that ONE seam is applied at each of them,
+// and the enrollment rule below is what stops the sixth from forgetting: a new dashboard read
+// route that does not enrol reds the guard.
+//
+// THE MASKED HALF IS THE OTHER HALF OF THE SAME CLAIM. A seam applied on the way OUT is only safe
+// if nothing durable or machine-facing gained cleartext on the way in, so the four masked entries
+// scan exactly the sinks a restoration could have leaked into: the SQLite rows the page reads
+// from, the run-stream SSE frames a client persists, the authed REMOTE door's detail body (which
+// stays masked BY CONSTRUCTION — `serveRunDetailRead`'s `boundary` defaults to machine, 405-05),
+// and the artifact bytes, which are never text to begin with.
+//
+// NOTHING BELOW THE ROUTE IS FAKED. `createDashboardRunIngest` is the shipped subscriber writing a
+// real `:memory:` v2 database; `createDashboardRunDetailReader` is the shipped adapter;
+// `createFunctionRegistry` + `invokeFunction` are the shipped registry and dispatcher;
+// `createRouter` / `createRunServiceRoutes` are the shipped routers, mounted on real sockets. What
+// is SUPPLIED is the host's `unmaskForDisplay`, which is `unmaskForHumanOutput(FIXTURE.ctx, text)`
+// — the production binding's SHAPE (one call per emitted string) over this file's one fixture, so
+// the cell can see a restoration at all without dragging a workspace and a digest sidecar in. The
+// seam's own matching mechanism is measured where it lives, in
+// `packages/cli/src/composition/__tests__/display-unmask.test.ts`.
+
+/** The bearer this file's remote-door fixture accepts. Never a real credential. */
+const ROLLCALL_SERVICE_TOKEN = 'rollcall-service-token'
+
+/** The four REQUIRED read ports, minimal by construction — `runs.detail` reaches none of them. */
+function rollCallFunctionDeps(
+  runDetail: unknown,
+  evidenceBlobs: unknown,
+): FunctionDeps {
+  return {
+    runs: {
+      list: () => Promise.resolve([]),
+      get: () => Promise.resolve(undefined),
+      readEvents: () => Promise.resolve([]),
+      readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+    },
+    knowledge: {
+      listBundles: () => Promise.resolve([]),
+      inspectRecords: () => Promise.resolve([]),
+      diffSince: () => Promise.resolve([]),
+      showRecord: (input: { recordId: string }) =>
+        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId: input.recordId } as const),
+    },
+    entities: {
+      resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+      get: () => Promise.resolve(undefined),
+    },
+    config: {
+      getMasked: () => Promise.resolve({
+        schemaVersion: 1,
+        configPath: 'agent-qa.config.yaml',
+        entries: [],
+      }),
+    },
+    runDetail,
+    evidenceBlobs,
+  } as unknown as FunctionDeps
+}
+
+/**
+ * The roll-call host for the RUN reads: the chat host above, with a real registry behind it.
+ *
+ * `dashboardRollCallHost` answers every dispatch with a planted chat turn, which is right for the
+ * chat entries and useless for these — `runs.detail` is where the projection is computed, where
+ * the token sum is folded and where `RunNotFoundError` is minted, so a fixture that answered it
+ * would be a second implementation of all three. This one DISPATCHES, through the shipped
+ * `invokeFunction`, and keeps the same one-call-per-emit `unmaskForDisplay`.
+ */
+function dashboardRunRollCallHost(registry: FunctionRegistry): AgentHost {
+  return {
+    ...dashboardRollCallHost(),
+    registry: registry as unknown as AgentHost['registry'],
+    caller: {
+      surface: 'dashboard',
+      grantedScopes: ['read'],
+      safeMode: false,
+      origin: 'human',
+    } as unknown as AgentHost['caller'],
+    runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
+    runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
+    invokeFunction: (
+      handle: unknown,
+      functionId: string,
+      input: unknown,
+      caller: unknown,
+    ): Promise<unknown> =>
+      invokeFunction(handle as FunctionRegistry, functionId, input, caller as never),
+  } as unknown as AgentHost
+}
+
+interface DashboardRunRollCall {
+  readonly db: DashboardDatabase
+  readonly host: AgentHost
+  /** The content address the shipped store minted for the masked blob below. */
+  readonly artifactSha: string
+  /** The bytes that store holds, as it holds them. */
+  readonly artifactBytes: Buffer
+}
+
+let dashboardRunRollCallOnce: Promise<DashboardRunRollCall> | undefined
+
+/**
+ * Drive THIS FILE'S ONE ENVELOPE STREAM through the shipped subscriber into a real v2 database,
+ * write one masked artifact blob through the shipped evidence store, and compose the host both
+ * doors dispatch through. Built once and shared by all nine entries — D-12's one-fixture rule.
+ */
+function dashboardRunRollCall(): Promise<DashboardRunRollCall> {
+  dashboardRunRollCallOnce ??= (async (): Promise<DashboardRunRollCall> => {
+    const db = new DashboardDatabase({ dbPath: ':memory:' })
+    const ingest = createDashboardRunIngest({
+      db,
+      sourceSnapshot: {
+        kind: 'test',
+        testId: 't0',
+        name: 'Login test',
+        filePath: 'tests/login.yaml',
+        loadStatus: 'loaded',
+      },
+      correlationEnv: { runId: RUN_ID },
+      now: () => '2026-08-28T00:00:00.000Z',
+    })
+    for (const envelope of FIXTURE.envelopes) ingest.handler(envelope)
+    await ingest.finalize()
+
+    // ONE BLOB, WHOSE BYTES ARE A PNG HEADER FOLLOWED BY MASKED TEXT. A real screenshot has no text
+    // to restore, which would make "the bytes were not rewritten" unfalsifiable — so this blob
+    // CARRIES a placeholder. The masked-side assertion then has something to see, and the sha
+    // comparison inside `render` is the byte-identity claim on top of it.
+    const artifactBytes = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from(FIXTURE.ctx.mask(`config token ${SECRETS.summary}`), 'utf8'),
+    ])
+    const ref = new FsEvidenceArtifactStore({ root: TMP_ROOT, runId: RUN_ID })
+      .persistDecisionScreenshot(new Uint8Array(artifactBytes))
+
+    const registry = createFunctionRegistry({
+      deps: rollCallFunctionDeps(
+        createDashboardRunDetailReader(db),
+        createEvidenceBlobReader({ agentQaRoot: TMP_ROOT }),
+      ),
+      // Discards every row: this file asserts on emitted bytes, never on the audit trail.
+      auditSink: { appendExecutionAudit() {}, appendGuardrailAudit() {} },
+      resolveExecutionContext: () => 'local-interactive',
+    })
+
+    return { db, host: dashboardRunRollCallHost(registry), artifactSha: ref.sha, artifactBytes }
+  })()
+  return dashboardRunRollCallOnce
+}
+
+/** Mount a handler on a real socket, drive one request, return the body, close the socket. */
+async function overOneSocket(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+  path: string,
+  init: RequestInit = {},
+): Promise<string> {
+  const server = createServer(handler)
+  await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
+  const address = server.address()
+  const port = typeof address === 'object' && address !== null ? address.port : 0
+  try {
+    const response = await fetch(`http://127.0.0.1:${String(port)}${path}`, init)
+    return await response.text()
+  } finally {
+    await new Promise<void>((closed) => server.close(() => { closed() }))
+  }
+}
+
+/**
+ * The same, answering BYTES.
+ *
+ * A binary body cannot travel through `response.text()` and come back whole — a PNG's own header
+ * is not valid UTF-8, so the decode substitutes replacement characters and the sha of what comes
+ * out is a sha of the decoding rather than of the transfer. The artifact entry's whole claim is
+ * byte identity, so it reads the buffer.
+ */
+async function bytesOverOneSocket(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+  path: string,
+): Promise<Buffer> {
+  const server = createServer(handler)
+  await new Promise<void>((ready) => server.listen(0, '127.0.0.1', ready))
+  const address = server.address()
+  const port = typeof address === 'object' && address !== null ? address.port : 0
+  try {
+    const response = await fetch(`http://127.0.0.1:${String(port)}${path}`)
+    return Buffer.from(await response.arrayBuffer())
+  } finally {
+    await new Promise<void>((closed) => server.close(() => { closed() }))
+  }
+}
+
+/** One LOCAL-door read, over the SHIPPED router with the roll-call host bound. */
+async function localDashboardRead(path: string): Promise<string> {
+  const fixture = await dashboardRunRollCall()
+  return overOneSocket(
+    createRouter({ db: fixture.db, agentHost: fixture.host } as never),
+    path,
+  )
+}
+
+/** A planted session that replays THIS FILE'S envelope stream — the run-stream door's input. */
+function rollCallRunSession(): unknown {
+  return {
+    id: RUN_ID,
+    status: 'failed',
+    executionContext: 'local-headless',
+    subscribe(fromSeq: number, handler: (envelope: RunEventEnvelope) => void) {
+      for (const envelope of FIXTURE.envelopes) {
+        if (envelope.seq >= fromSeq) handler(envelope)
+      }
+      return () => undefined
+    },
+    subscribeFrames() { return undefined },
+    streamCapabilityOf() { return { kind: 'none' as const } },
+    cancel() { /* nothing to cancel on a planted session */ },
+    done: Promise.resolve({ verdict: 'failed' }),
+  }
+}
+
+/** The authed REMOTE door's ports — enough to reach the two READ rows and nothing more. */
+async function rollCallServicePorts(): Promise<unknown> {
+  const fixture = await dashboardRunRollCall()
+  return {
+    verifyBearer: (header: string | null | undefined) =>
+      header === `Bearer ${ROLLCALL_SERVICE_TOKEN}`
+        ? { kind: 'token', clientId: 'rollcall', trustScope: { project: 'rollcall' } }
+        : { kind: 'refused', reason: header === undefined ? 'missing_authorization' : 'invalid_token' },
+    invokeRunStart: () => Promise.reject(new Error('this fixture starts no runs')),
+    attach: (runId: string) => (runId === RUN_ID ? rollCallRunSession() : undefined),
+    readiness: () => ({
+      service: 'up',
+      hostComposed: true,
+      authConfigured: true,
+      contractVersion: RUN_SERVICE_CONTRACT_VERSION,
+    }),
+    mintLiveUrl: () => Promise.reject(
+      Object.assign(new Error('no live-view port is bound on this fixture'), {
+        name: 'LiveViewUnavailableError',
+      }),
+    ),
+    agentHost: fixture.host,
+  }
+}
+
 // ---- HUMAN registry: surfaces that MUST restore the original secrets (D-11) ------------------
 
 interface HumanSurface {
@@ -561,6 +839,42 @@ const HUMAN_SURFACES: HumanSurface[] = [
     name: 'dashboard:chat-sse-frame',
     originals: [SECRETS.opResult],
     render: renderDashboardChatFrame,
+  },
+  {
+    // 405-10 (D-09): THE REBUILT PAGE'S ONE DURABLE READ. Members carry the failure summary, steps
+    // carry the step text and the step error — three different channels of one projection, so a
+    // seam applied to only part of the tree reds here rather than in review.
+    name: 'dashboard:run-detail',
+    originals: [SECRETS.step, SECRETS.error, SECRETS.summary],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}/detail`),
+  },
+  {
+    // The run LIST. Its rows are a person's first sight of a failure, and the summary on each is
+    // exactly where a masked value lands. The seam is applied PER ROW under that row's own id.
+    name: 'dashboard:run-list',
+    originals: [SECRETS.summary],
+    render: () => localDashboardRead('/api/runs'),
+  },
+  {
+    // One run's ROW, on the arm the page reads before the projection arrives.
+    name: 'dashboard:run-row',
+    originals: [SECRETS.summary],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}`),
+  },
+  {
+    // EXECUTION LOGS — hook stdout, which is the surface a person opens when a run failed in setup.
+    // The hook's `variables.TOKEN` is NOT among this entry's originals on purpose: the auth-state
+    // redactor removes it after the seam restores it, which is Pitfall 7's order proving itself.
+    name: 'dashboard:execution-logs',
+    originals: [SECRETS.hook],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}/execution-logs`),
+  },
+  {
+    // THE ARTIFACT DRAWER's JSON — the run row plus the artifact snapshot. The artifact BYTES are a
+    // different surface entirely and are enrolled on the masked side, where they belong (D-09).
+    name: 'dashboard:artifact-drawer',
+    originals: [SECRETS.summary],
+    render: () => localDashboardRead(`/api/runs/${RUN_ID}/artifact`),
   },
 ]
 
@@ -735,6 +1049,82 @@ const MASKED_SURFACES: MaskedSurface[] = [
       return JSON.stringify([...windows.values()])
     },
   },
+  {
+    // 405-10 (D-09): THE ROWS THE PAGE READS FROM. This is the pairing every human dashboard entry
+    // above needs: those five restore, so the tempting shortcut is to unmask on the way IN — at
+    // ingest — which would satisfy every response assertion in this file while turning the
+    // dashboard database into a cleartext store that outlives the request, survives a backup and
+    // is read by every other query in the product. The four run-shaped tables are dumped whole.
+    name: 'durable:dashboard-sqlite-rows',
+    render: async () => {
+      const fixture = await dashboardRunRollCall()
+      // The raw handle, deliberately: the claim is about what is IN the columns, and every typed
+      // reader is a projection that could hide a column the claim ranges over.
+      const raw = (fixture.db as unknown as {
+        db: { prepare(query: string): { all(): unknown[] } }
+      }).db
+      return JSON.stringify(
+        ['runs', 'run_members', 'run_steps', 'run_sub_actions', 'execution_logs']
+          .map((table) => raw.prepare(`SELECT * FROM ${table}`).all()),
+      )
+    },
+  },
+  {
+    // THE RUN-STREAM SSE. A machine wire whose consumer is its own display boundary, and the
+    // channel a client persists — a frame that carried a restored value would put a credential in
+    // whatever buffered it. The SHIPPED local router serves it over a real socket.
+    name: 'machine:run-stream-sse',
+    render: async () => {
+      const fixture = await dashboardRunRollCall()
+      return overOneSocket(
+        createRouter({
+          db: fixture.db,
+          agentHost: fixture.host,
+          runServiceAttach: (runId: string) =>
+            (runId === RUN_ID ? rollCallRunSession() : undefined),
+        } as never),
+        `/api/run-stream/${RUN_ID}`,
+      )
+    },
+  },
+  {
+    // THE AUTHED REMOTE DOOR'S DETAIL BODY, which stays masked BY CONSTRUCTION (405-05's recorded
+    // decision): the remote dispatch calls `serveRunDetailRead` with no `boundary`, and the option
+    // defaults to `'machine'`. A bearer token authenticates a CLIENT, not a person's browser
+    // session, so restoring there would hand declared secrets to every token holder and every
+    // intermediary. THIS ENTRY IS WHERE THAT DECISION IS HELD: adding `boundary: 'human'` to that
+    // dispatch reds it, which is exactly the review the reversal deserves.
+    name: 'machine:remote-run-detail',
+    render: async () => {
+      const ports = await rollCallServicePorts()
+      return overOneSocket(
+        createRunServiceRoutes(ports as never),
+        `/run/${RUN_ID}/detail`,
+        { headers: { Authorization: `Bearer ${ROLLCALL_SERVICE_TOKEN}` } },
+      )
+    },
+  },
+  {
+    // ARTIFACT BYTES — served exactly as stored, on every door (D-09: the seam never unmasks a
+    // blob). The blob this fixture wrote carries a placeholder so the masked assertion has
+    // something to see; the sha comparison INSIDE this render is the byte-identity claim, and it
+    // is made against the address the SHIPPED store minted rather than against two hex strings
+    // this file chose.
+    name: 'machine:artifact-bytes',
+    render: async () => {
+      const fixture = await dashboardRunRollCall()
+      const servedBytes = await bytesOverOneSocket(
+        createRouter({ db: fixture.db, agentHost: fixture.host } as never),
+        `/api/runs/${RUN_ID}/artifacts/${fixture.artifactSha}`,
+      )
+      expect(createHash('sha256').update(servedBytes).digest('hex'), 'bytes served === bytes stored')
+        .toBe(fixture.artifactSha)
+      expect(servedBytes.equals(fixture.artifactBytes)).toBe(true)
+      // `latin1` is a byte-for-byte decoding, so the placeholder-present / original-absent scan the
+      // masked registry runs over this string is a scan of the BYTES rather than of a re-encoding.
+      return servedBytes.toString('latin1')
+    },
+  },
 ]
 
 describe('SEAM-05 unmask boundary roll-call — MASKED side keeps placeholders (D-11/D-12)', () => {
@@ -773,6 +1163,16 @@ const SURFACE_ROLLCALL = [
   'dashboard:chat-turn-response',
   'dashboard:chat-sse-frame',
   'machine:dashboard-chat-replay-window',
+  // 405-10 (D-09): the dashboard's five human RUN reads and the four surfaces that must stay masked.
+  'dashboard:run-detail',
+  'dashboard:run-list',
+  'dashboard:run-row',
+  'dashboard:execution-logs',
+  'dashboard:artifact-drawer',
+  'durable:dashboard-sqlite-rows',
+  'machine:run-stream-sse',
+  'machine:remote-run-detail',
+  'machine:artifact-bytes',
 ] as const
 
 describe('SEAM-05 unmask boundary roll-call — enrollment guard (T-363-31)', () => {
