@@ -9,6 +9,7 @@ import {
   foldFunctionResult,
   invokeFunction,
   LiveViewUnavailableError,
+  RUNS_ARTIFACT_FUNCTION_ID,
   RUNS_DETAIL_FUNCTION_ID,
   RUNS_EVENTS_FUNCTION_ID,
   RUNS_POST_PROCESSING_FUNCTION_ID,
@@ -207,6 +208,10 @@ export function composeDashboardAgentHost(
     // same reason. `packages/dashboard-server` may not import this package (validate:arch), so the
     // id reaches it the only way an id can — as data from the composition that already knows it.
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
+    // 405-05 (D-12/D-13): the fourth id the run-service routes dispatch, on the same footing and
+    // for the same reason — with the sharper one that this route serves BYTES, and the alternative
+    // to an id is `packages/dashboard-server` constructing an evidence store from two URL segments.
+    runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
     // 400-15: THE ONE PLACE THE ASKING CONVERSATION IS KNOWN AND STILL AHEAD OF EVERYTHING THAT
     // NEEDS IT. `handleTurn` makes exactly one call here per turn, carrying the browser's
     // `sessionId`; the gate's context resolver and the confirm port are both further down this same

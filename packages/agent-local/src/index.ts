@@ -148,6 +148,12 @@ export type { RunTargetClass } from './composition/run-risk.js'
 // 401-08 (D-08): the dispatch-scoped grant overlay. Published because a composition ROOT — not
 // only `composeLocalAgent` — may own the dispatch scope: the 394 authoring confirm is answered at
 // the root, and a root composing several agents holds ONE approval across them.
+// 405-05 (D-12/D-13): the evidence-blob read port's binding — ONE lambda over the store the
+// runner wrote through, shared by the analysis job and by `runs.artifact`. Published because the
+// dashboard's own suite composes it directly: a reader written there would be a second answer to
+// where a run's blobs live.
+export { createEvidenceBlobReader, lookupEvidenceBlob, readEvidenceBlobBytes } from './composition/evidence-blob-reader.js'
+export type { CreateEvidenceBlobReaderInput } from './composition/evidence-blob-reader.js'
 export { createDispatchGrants } from './composition/dispatch-grants.js'
 export type { DispatchGrants } from './composition/dispatch-grants.js'
 

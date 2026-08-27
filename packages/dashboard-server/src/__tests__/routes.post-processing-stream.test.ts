@@ -167,6 +167,8 @@ function plantedHost(read: {
     // 405-01: the seam carries a fourth op id. This fixture dispatches only the two above, so
     // this one is NAMED and never reached — the SHAPE is what has to be complete.
     runsDetailFunctionId: 'test:planted-run-detail-op',
+    // 405-05: a fifth. Same posture — named so the SHAPE is complete, never reached from here.
+    runsArtifactFunctionId: 'test:planted-run-artifact-op',
     invokeFunction: (_registry, functionId): Promise<unknown> => {
       if (functionId === PP_ID) return Promise.resolve(read.status())
       if (functionId === EVENTS_ID) {

@@ -137,6 +137,18 @@ export interface AgentHost {
    */
   readonly runsDetailFunctionId: string
   /**
+   * The agent package's `runs.artifact` id, on `runsDetailFunctionId`'s exact footing (405 D-13).
+   *
+   * SUPPLIED BY THE COMPOSITION, NEVER SPELLED HERE, for the reason its four neighbours are — and
+   * for one more that is specific to this route: the artifact arm serves BYTES, and the alternative
+   * to dispatching them through the function layer is this package constructing the evidence store
+   * and reading a file. That would be a private store read no roster row covers and no audit sink
+   * sees, on a path whose two inputs both arrive from a URL. Routing it through an id is what makes
+   * the containment rule the store's own and the capability one the CLI, MCP and 408's embed reach
+   * the same way.
+   */
+  readonly runsArtifactFunctionId: string
+  /**
    * `invokeFunction`, bound by the composer. THE one door call.
    *
    * `input` IS `unknown` (404-05). It was `AgentAskInput` while `agent.ask` was the only op this

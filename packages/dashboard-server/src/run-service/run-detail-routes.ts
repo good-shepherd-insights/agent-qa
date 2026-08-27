@@ -17,8 +17,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import {
+  RunsArtifactInputSchema,
   RunsDetailInputSchema,
   type RunDetailProjection,
+  type RunsArtifactResult,
 } from '@vostride/agent-qa-schema'
 
 import type { AgentHost } from '../chat/host.js'
@@ -140,5 +142,172 @@ export function serveRunDetailRead(
     // The read classifies every refusal it can name; anything reaching here is this module
     // failing, which is a 500 by name and never a body that looks like an answer.
     (error: unknown) => { respondJson(res, 500, refusalFor(error).body) },
+  )
+}
+
+// ---- 405-05 (D-12/D-13/D-15 · DETL-03): the ref-RESOLVING arm, on both doors ---------------------
+//
+// `GET /api/runs/:runId/artifacts/:sha` locally, `GET /run/:runId/artifacts/:sha` on the authed
+// remote door, and BOTH call the one function below. The run-detail read hands a page a `sha`; this
+// is where that sha becomes an image, and if the two doors resolved it through two implementations
+// then "the same artifact" would mean two things depending on which credential asked.
+//
+// THE BYTES CROSS THE FUNCTION LAYER (D-13). This module constructs no store, joins no path and
+// imports nothing that can read a file. Containment is `FsEvidenceArtifactStore`'s own rule —
+// `slugBranch` over the runId, a 64-lowercase-hex check over the sha — reached through the op, so
+// there is exactly one place in the product where a caller-supplied string becomes a path segment.
+//
+// THE SHA IS VALIDATED BY THE OP'S OWN INPUT SCHEMA, AND WHICH FIELD FAILED IS THE ANSWER. A
+// malformed run id and a malformed sha are different mistakes a caller can fix, so the parse's
+// failure paths are read apart rather than collapsed into one 400.
+//
+// NOTHING ECHOES THE REQUEST. Every refusal body is a fixed shape carrying a closed word; a body
+// that quoted the sha would reflect attacker-chosen bytes back through a door that has no reason
+// to offer one (T-405-18).
+
+/** The immutable-caching header set a CONTENT ADDRESS earns (D-12). */
+const ARTIFACT_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+
+export type RunArtifactReadOutcome =
+  | {
+    readonly kind: 'ok'
+    readonly sha: string
+    readonly contentType: string
+    readonly bytes: Buffer
+  }
+  | RunDetailRefusal
+
+/**
+ * The op's refusals, classified into this door's vocabulary.
+ *
+ * `EvidenceBlobAbsentError` AND `RunNotFoundError` ARE BOTH 404 AND THEY ARE NOT THE SAME 404
+ * (D-15). One says the link names a run nothing recorded; the other says the run is right there and
+ * holds no blob under that address — a screenshot the evidence diet collected, a ref that declared
+ * itself incomplete, or an artifact never written. The page renders the second as a visible
+ * "unavailable" state and the first as a broken link, and it can only do that because the words
+ * differ. Neither body carries the sha.
+ */
+function artifactRefusalFor(error: unknown): RunDetailRefusal {
+  const name = errorNameOf(error)
+  if (name === 'RunNotFoundError') {
+    return { kind: 'refused', status: 404, body: { error: 'unknown_run' } }
+  }
+  if (name === 'EvidenceBlobAbsentError') {
+    return { kind: 'refused', status: 404, body: { error: 'blob_absent' } }
+  }
+  if (name === 'FunctionNotBoundError') {
+    return {
+      kind: 'refused',
+      status: 503,
+      body: { error: 'agent_host_unavailable', reason: errorMessageOf(error) },
+    }
+  }
+  return { kind: 'refused', status: 500, body: { error: 'read_failed', reason: name } }
+}
+
+/**
+ * THE READ. Exported so a cell can measure the outcome without a socket, and so the authed remote
+ * door answers with byte-identical bytes by CALLING this rather than by a second spelling.
+ */
+export async function readRunArtifact(
+  host: AgentHost,
+  runId: string,
+  sha: string,
+): Promise<RunArtifactReadOutcome> {
+  const parsed = RunsArtifactInputSchema.safeParse({ runId, sha })
+  if (!parsed.success) {
+    // WHICH FIELD, not merely THAT it failed. `runIdSchema` refuses exactly the ids the path layer
+    // would have to rewrite, and the sha regex refuses everything that is not a content address;
+    // telling a caller which of the two it got wrong costs one issue-path read and is the whole
+    // difference between an actionable 400 and a shrug.
+    const blamesSha = parsed.error.issues.some((issue) => issue.path[0] === 'sha')
+    return {
+      kind: 'refused',
+      status: 400,
+      body: { error: blamesSha ? 'malformed_sha' : 'invalid_run_id' },
+    }
+  }
+
+  try {
+    const result = await host.invokeFunction(
+      host.registry,
+      host.runsArtifactFunctionId,
+      parsed.data,
+      host.caller,
+    ) as RunsArtifactResult
+    return {
+      kind: 'ok',
+      sha: result.sha,
+      contentType: result.contentType,
+      // The ONE decode in the product. The op encodes without a host API because its package may
+      // not name one; this package may, and this is the layer whose job is bytes on a socket.
+      bytes: Buffer.from(result.bytesBase64, 'base64'),
+    }
+  } catch (error) {
+    return artifactRefusalFor(error)
+  }
+}
+
+export interface RunArtifactReadDeps {
+  /** The DECODED run id. Decoding can throw, and that throw is the caller's refusal to answer. */
+  readonly runId: string
+  /** The RAW sha segment. Never decoded: a content address contains nothing percent-encoding
+   * could represent, so a segment that needed decoding is already not one. */
+  readonly sha: string
+  /** The injected host. Its absence is the ROUTER'S 503, not this function's. */
+  readonly host: AgentHost
+}
+
+/**
+ * `GET /api/runs/:runId/artifacts/:sha` — a ref, resolved (D-12).
+ *
+ * THE HEADERS ARE THE FEATURE AS MUCH AS THE BYTES.
+ * - `ETag: "<sha>"` — the content address IS the validator; there is nothing else it could be, and
+ *   nothing that could make it stale, because bytes cannot change under a hash of themselves.
+ * - `Cache-Control: public, max-age=31536000, immutable` — for the same reason. A revalidation of
+ *   an immutable resource is a round trip that can only ever answer "yes, still".
+ * - `X-Content-Type-Options: nosniff` — the second half of the T-405-15 mitigation. The op refuses
+ *   to NAME a type a browser executes; this refuses to let the browser guess one anyway.
+ * - `Content-Length` — from the op's own declared `byteLength` by way of the decoded buffer.
+ *
+ * `If-None-Match` IS HONOURED because it is three lines against a header set that promises a year
+ * of caching, and a client that revalidates anyway should not be made to re-download a screenshot.
+ */
+export function serveRunArtifact(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: RunArtifactReadDeps,
+): void {
+  void readRunArtifact(deps.host, deps.runId, deps.sha).then(
+    (outcome) => {
+      if (outcome.kind === 'refused') {
+        respondJson(res, outcome.status, outcome.body)
+        return
+      }
+      if (res.headersSent || res.writableEnded) {
+        res.destroy()
+        return
+      }
+      const etag = `"${outcome.sha}"`
+      // THE VALIDATOR IS COMPARED WHOLE, against the quoted form this door writes. No weak-match
+      // and no list parse: this door mints exactly one validator per resource and a request that
+      // presents anything else has not seen this resource.
+      if (req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag, 'Cache-Control': ARTIFACT_CACHE_CONTROL })
+        res.end()
+        return
+      }
+      res.writeHead(200, {
+        'Content-Type': outcome.contentType,
+        'Content-Length': outcome.bytes.byteLength,
+        ETag: etag,
+        'Cache-Control': ARTIFACT_CACHE_CONTROL,
+        'X-Content-Type-Options': 'nosniff',
+      })
+      res.end(outcome.bytes)
+    },
+    // The read classifies every refusal it can name; anything reaching here is this module
+    // failing, which is a 500 by name and never a body that looks like an answer.
+    (error: unknown) => { respondJson(res, 500, artifactRefusalFor(error).body) },
   )
 }

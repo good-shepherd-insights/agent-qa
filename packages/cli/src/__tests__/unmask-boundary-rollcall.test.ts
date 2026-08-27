@@ -391,6 +391,9 @@ function dashboardRollCallHost(
     // 405-01: the seam carries a fourth op id. This fixture dispatches only the ask, so this one
     // is named and never reached — the SHAPE is what has to be complete.
     runsDetailFunctionId: 'runs.detail',
+    // 405-05: a fifth. Same posture — the SHAPE has to be complete; this fixture reaches only the
+    // ask, and artifact BYTES are masked on every door anyway (D-09: the seam never unmasks a blob).
+    runsArtifactFunctionId: 'runs.artifact',
     invokeFunction: () => Promise.resolve({
       sessionId: 'chat-20260821-000000-r0ll',
       turnId: 'turn-1',

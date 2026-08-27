@@ -31,9 +31,11 @@ import {
   servePostProcessingRead,
   servePostProcessingStream,
 } from '../run-service/post-processing-routes.js'
+// 405-05 (D-12/D-13): the ref-resolving artifact read, on the arm below's own footing — the bytes
+// cross the function layer and this file constructs no evidence store.
 // 405-01 (D-03): the durable run-detail read. One arm below, above the `/api/runs/:id` catch-all,
 // formatting nothing and opening no database.
-import { serveRunDetailRead } from '../run-service/run-detail-routes.js'
+import { serveRunArtifact, serveRunDetailRead } from '../run-service/run-detail-routes.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, TimeoutConfigSchema, CacheConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, KnowledgeConfigSchema } from '@vostride/agent-qa-core'
@@ -2323,6 +2325,50 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         },
       )
       return
+    }
+
+    // GET /api/runs/:runId/artifacts/:sha — a minted ref, resolved to bytes (405-05, D-12/D-13).
+    //
+    // ABOVE THE DETAIL ARM AND THEREFORE ABOVE THE `/api/runs/:id` CATCH-ALL, on the same
+    // measured precedent (RESEARCH Pitfall 2): that arm claims EVERY GET under the prefix.
+    //
+    // AN ANCHORED TWO-CAPTURE REGEX, and `[^/]+` on both segments so a path with an extra
+    // separator matches nothing here rather than being reassembled into something that does.
+    //
+    // THE RUN ID IS DECODED AND THE SHA IS NOT. A content address is 64 characters drawn from
+    // `[0-9a-f]`, none of which percent-encoding can represent differently — so a sha segment that
+    // needed decoding is already not a sha, and decoding it would turn `%2e%2e%2f` into a string
+    // the contract has to refuse a second time. It is passed RAW to a schema whose regex refuses
+    // everything that is not a content address.
+    //
+    // IT DISPATCHES AND FORMATS NOTHING. The concrete evidence store is not imported by this file
+    // and must never be — a source cell in `run-detail-routes.test.ts` asserts that its NAME does
+    // not occur here at all, which is why this comment does not spell it either. The containment
+    // rule for these bytes is the store's own, reached through the op; a second path assembly here
+    // would be a second rule, free to be the weaker one.
+    if (req.method === 'GET') {
+      const artifactMatch = /^\/api\/runs\/([^/]+)\/artifacts\/([^/]+)$/.exec(path)
+      if (artifactMatch) {
+        if (!deps.agentHost) {
+          json(res, { error: 'agent_host_unavailable' }, 503)
+          return
+        }
+        let artifactRunId: string
+        try {
+          artifactRunId = decodeURIComponent(artifactMatch[1] ?? '')
+        } catch {
+          // An undecodable segment names no run, and the honest answer is the one the op's own
+          // input schema gives for an id it refuses.
+          json(res, { error: 'invalid_run_id' }, 400)
+          return
+        }
+        serveRunArtifact(req, res, {
+          runId: artifactRunId,
+          sha: artifactMatch[2] ?? '',
+          host: deps.agentHost,
+        })
+        return
+      }
     }
 
     // GET /api/runs/:id/detail — the durable run-detail projection (405-01, D-03).

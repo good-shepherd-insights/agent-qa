@@ -219,6 +219,7 @@ import type {
 
 import { createKnowledgeReaderPort } from './knowledge-review-reader.js'
 import type { SightMemoryEntities } from './knowledge-review-reader.js'
+import { createEvidenceBlobReader, readEvidenceBlobBytes } from './evidence-blob-reader.js'
 import { createDispatchGrants } from './dispatch-grants.js'
 import type { DispatchGrants } from './dispatch-grants.js'
 import { buildRunPorts } from './run-composition.js'
@@ -2234,8 +2235,14 @@ export function postRunCapabilities(
     // `FsEvidenceArtifactStore.getBlob` validates the lowercase 64-hex shape BEFORE any
     // path use (T-389-14) and answers ENOENT as honest absence; the runId becomes a path
     // segment only through `slugBranch` inside the store's own constructor.
+    //
+    // 405-05: THROUGH THE SHARED RULE, not a lambda of its own. `runs.artifact` binds a port over
+    // the same `lookupEvidenceBlob` below, and two lambdas over one store would be two answers to
+    // where a run's blobs live — agreeing on the day the second is written and diverging the first
+    // time either side changes a root. This job wants only the found bytes, so the three-arm
+    // lookup collapses here; the SPLIT is what the op needs and what this caller does not.
     readEvidenceBlob: (runId, sha) =>
-      new FsEvidenceArtifactStore({ root: input.agentQaRoot, runId }).getBlob(sha),
+      readEvidenceBlobBytes({ agentQaRoot: input.agentQaRoot }, runId, sha),
     // Host-resolved and passed through untouched (386 D-15): the budget derives from the
     // same profile resolution as the job model, and this composition adds no knob of its own.
     ...(analysisTokenBudget === undefined ? {} : { analysisTokenBudget }),
@@ -2917,6 +2924,13 @@ export function composeLocalAgent(input: ComposeLocalAgentInput): LocalAgentHost
       // `agentQaRoot` alone, but a run's projected step tree lives in a dashboard database that
       // only the dashboard process holds.
       ...(input.runDetail === undefined ? {} : { runDetail: input.runDetail }),
+      // 405-05 D-12/D-13: the run-scoped evidence-blob read, on EVERY local host and NOT
+      // conditionally spread — unlike `runDetail` one line up, which needs a dashboard database
+      // this host may not hold, every local composition has a runtime root and therefore has the
+      // run directories these blobs live in. It is the SAME reader the analysis job's
+      // `readEvidenceBlob` is built over, so "resolve this ref" and "diet this evidence" cannot
+      // disagree about where a blob is.
+      evidenceBlobs: createEvidenceBlobReader({ agentQaRoot: input.agentQaRoot }),
       // Present iff this host can execute a run. The registry reads the SAME record to
       // decide what `runs.start` lists as, so the declaration and the dispatch cannot
       // disagree about whether this composition can run it (D-16).
