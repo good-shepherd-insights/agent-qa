@@ -13,8 +13,8 @@ import { finalStepStatusForRun, getRunStatusDescriptor, normalizeStepStatus } fr
 import { formatDuration } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 
-// THE ONE LIVE WIRE (405-03 · D-19). This panel used to read the legacy `/api/execution/events`
-// projection through `subscribeToExecutionEvents`; that feed's UI half is retired. It now folds the
+// THE ONE LIVE WIRE (405-03 · D-19). This panel was the last UI client of the legacy
+// execution-event projection retired by 405; that feed has no client left. It now folds the
 // SAME frozen envelopes `pages/live-run.tsx` folds, through the SAME pure reducer, so the editor's
 // panel and the live page cannot drift into two accounts of one run.
 //

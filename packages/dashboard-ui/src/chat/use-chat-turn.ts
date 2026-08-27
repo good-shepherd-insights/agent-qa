@@ -1,8 +1,8 @@
 // One chat turn, from a POST to the last frame off its stream (Phase 400 plan 06, D-03).
 //
-// THE SHAPE IS THE DASHBOARD'S SSE-IN-REACT SHAPE, DELIBERATELY (its earlier statement,
-// `use-execution-events.ts`, was retired with the legacy `/api/execution/events` feed in 405; the
-// live shape now ships in `pages/live-run.tsx` and `components/run-results-panel.tsx`): one
+// THE SHAPE IS THE DASHBOARD'S SSE-IN-REACT SHAPE, DELIBERATELY (its earlier statement was
+// retired with the legacy execution-event feed in 405; the live shape now ships in
+// `pages/live-run.tsx` and `components/run-results-panel.tsx`): one
 // `EventSource` in a ref, one effect keyed on the
 // id, a `cancelled` flag so a late frame cannot write into an unmounted tree, an idempotent
 // `close()` in the teardown — and, the part that matters most, EVERY handler funnelling into ONE

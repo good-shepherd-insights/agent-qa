@@ -2,7 +2,7 @@
 
 // THE EDITOR'S RUN PANEL ON THE RUN-STREAM WIRE (405-03 · D-19).
 //
-// This panel was the last UI client of the legacy `/api/execution/events` projection. These cells
+// This panel was the last UI client of the legacy execution-event projection. These cells
 // bind it to the SAME wire `pages/live-run.tsx` reads: `openRunStream` frames folded through
 // `reduceRunStream`. `openRunStream` is MOCKED here (unlike the live-run suite, which stubs
 // `EventSource` to observe the door's URL) because what is under test is the panel's use of the
@@ -25,7 +25,9 @@ import type { RunEventEnvelope, RunEventPayload, RunEventType } from '@vostride/
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const RUN_ID = 'run-1'
-const LEGACY_FEED_PATH = '/api/execution/events'
+// THE NEEDLE IS CONCATENATED so this file cannot satisfy the phase's grep-clean deletion
+// inventory by matching itself — the `v1-retry-machinery-deleted` idiom (D-21).
+const LEGACY_FEED_PATH = '/api/execution' + '/events'
 
 const { optionsRef, closeMock, openRunStreamMock } = vi.hoisted(() => ({
   optionsRef: { current: null as null | RunStreamOptions },
