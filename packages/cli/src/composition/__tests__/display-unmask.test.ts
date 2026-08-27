@@ -45,6 +45,7 @@ import {
 } from '@vostride/agent-qa-runner-local'
 import { maskedMarker } from '@vostride/agent-qa-schema'
 
+import { composeDashboardDoor } from '../../commands/dashboard.js'
 import { createDisplayUnmasker } from '../display-unmask.js'
 
 /** A secret store over a plain name→value record, in the shape the door's stores publish. */
@@ -282,3 +283,63 @@ function writeMaskingDigestsRaw(root: string, runId: string, entries: Record<str
     'utf8',
   )
 }
+
+// ---- The SHIPPED composition, end to end (405-10, D-08 truth 1) -------------------------------
+//
+// THE CELLS ABOVE MEASURE THE SEAM; THIS ONE MEASURES THAT PRODUCTION HAS IT. `composeDashboardDoor`
+// is the function `agent-qa dashboard` calls, and `AgentHost.unmaskForDisplay` is what every local
+// human read reaches through. Until 405-10 that member was a fresh empty masking context — a
+// no-op that restored nothing — and every response-shape cell in this repository was green about
+// it, because a no-op returns its input and an input with no placeholder in it looks fine. So the
+// claim "the shipped host restores" cannot be made by any cell that supplies its own host, and
+// this one supplies none: it composes the real door over a real runtime root, plants a sidecar
+// through the shipped writer, and asks the composed `agentHost` directly.
+
+describe('composeDashboardDoor binds the real display seam (D-08)', () => {
+  it('restores a scoped placeholder from the door\'s own masking stores, and stays the identity without a scope', () => {
+    const root = freshRoot()
+    const configPath = join(root, 'agent-qa.config.yaml')
+    writeFileSync(
+      configPath,
+      `${JSON.stringify({
+        workspace: {
+          testMatch: ['tests/**/*.test.yaml'],
+          suiteMatch: ['suites/**/*.suite.yaml'],
+          hooksFile: 'hooks.yaml',
+          envFile: '.env',
+          secretsFile: '.env.secrets.local',
+        },
+        use: { mobile: { appState: 'reset' } },
+        registry: { targets: {} },
+      })}\n`,
+      'utf8',
+    )
+    const agentQaRoot = join(root, '.agent-qa')
+
+    // A run that masked one declared secret, recorded through the SHIPPED writer under the SHIPPED
+    // key resolution — the same pair `in-process-run-execution.ts` calls at `onSession`.
+    seedSidecar(agentQaRoot, RUN_ID, { DOOR_KEY: 'sk-door-alpha-value' })
+
+    const { host, agentHost } = composeDashboardDoor({
+      agentQaRoot,
+      configPath,
+      boundOrigin: () => undefined,
+      resolveExecutionContext: () => 'local-interactive',
+      // The accessor `createDashboardRunDoor` publishes and the command threads — the stores every
+      // run through this door was seeded from, read live.
+      maskingSecretStores: () => [storeOf({ DOOR_KEY: 'sk-door-alpha-value' })],
+    })
+
+    try {
+      expect(agentHost.unmaskForDisplay('token <SECRET_0>', { runId: RUN_ID }))
+        .toBe('token sk-door-alpha-value')
+      // A placeholder this host cannot account for is a chip, never a raw placeholder.
+      expect(agentHost.unmaskForDisplay('<SECRET_9>', { runId: RUN_ID })).toBe(maskedMarker('secret'))
+      // And chat's one-argument call is byte-for-byte what it was before this plan.
+      expect(agentHost.unmaskForDisplay('token <SECRET_0>')).toBe('token <SECRET_0>')
+    } finally {
+      void host.close()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
