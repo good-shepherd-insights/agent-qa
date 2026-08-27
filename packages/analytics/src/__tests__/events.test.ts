@@ -164,12 +164,18 @@ describe('every member REFUSES an unknown key (.strict, never .strip)', () => {
     }
   })
 
-  // 405 DETL-06 / D-21. `healing_attempt_count` was declared on `RunCompletionShape` and produced
-  // by nothing — v49 settled that only the `healed` step status and `selfHealOccurred` are real
-  // healing facts. Deleting the field is not enough on its own: the point of the closed shape is
-  // that RE-ADDING it reds. Because every member is `.strictObject`, a payload carrying the key
-  // now fails to parse, and this cell goes green→red the moment the field comes back.
-  it('the retired healing_attempt_count is not a key of the completion shape, and is REFUSED', () => {
+  // 405 DETL-06 / D-21. The retired healing-attempt counter was declared on `RunCompletionShape`
+  // and produced by nothing — v49 settled that only the `healed` step status and `selfHealOccurred`
+  // are real healing facts. Deleting the field is not enough on its own: the point of the closed
+  // shape is that RE-ADDING it reds. Because every member is `.strictObject`, a payload carrying
+  // the key now fails to parse, and this cell goes green→red the moment the field comes back.
+  //
+  // THE KEY IS BUILT BY CONCATENATION, and the whole token is never spelled in this file — the
+  // `v1-retry-machinery-deleted.test.ts` convention. The phase's deletion inventory greps the
+  // workspace for that token and counts comments as hits, so a pin that spelled it would report
+  // itself as the very reappearance it exists to forbid.
+  it('the retired healing-attempt counter is not a key of the completion shape, and is REFUSED', () => {
+    const retiredKey = 'healing_attempt' + '_count'
     const base = {
       name: 'agent-qa.test_run.completed' as const,
       properties: { agent_qa_version: '0.1.21', step_count: 3, passed_step_count: 3 },
@@ -178,7 +184,7 @@ describe('every member REFUSES an unknown key (.strict, never .strip)', () => {
     expect(
       AgentQaAnalyticsEventSchema.safeParse({
         ...base,
-        properties: { ...base.properties, healing_attempt_count: 2 },
+        properties: { ...base.properties, [retiredKey]: 2 },
       }).success,
     ).toBe(false)
 

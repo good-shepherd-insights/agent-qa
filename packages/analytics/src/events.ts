@@ -230,7 +230,6 @@ const RunCompletionShape = {
   passed_step_count: NonNegativeInteger.optional(),
   failed_step_count: NonNegativeInteger.optional(),
   skipped_step_count: NonNegativeInteger.optional(),
-  healing_attempt_count: NonNegativeInteger.optional(),
   retry_count: NonNegativeInteger.optional(),
   input_tokens: NonNegativeInteger.optional(),
   output_tokens: NonNegativeInteger.optional(),

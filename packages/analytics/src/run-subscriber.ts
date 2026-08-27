@@ -92,6 +92,14 @@ interface MemberStepTally {
   passed_step_count: number
   failed_step_count: number
   skipped_step_count: number
+  /**
+   * 2026-08-27 (Phase 405 plan 04, D-07): the member's measured model-call usage, accumulated ONLY
+   * from steps whose `stepFinalized` carried a `tokenUsage`. Absent while no step has been
+   * measured — which is why it is optional rather than a zeroed triple: `captureTestRun` spreads
+   * the three analytics fields in only when this member exists, so a run nobody measured reports
+   * no cost at all instead of reporting a cost of zero.
+   */
+  tokens?: { input: number; output: number; total: number }
 }
 
 interface MemberRecord {
@@ -240,6 +248,17 @@ export function createAnalyticsRunSubscriber(
       default:
         break
     }
+    // 405 D-07: the fields `analytics/src/events.ts` has declared since v33 with no producer get
+    // one here. A step with no `tokenUsage` is a step nobody measured (a cache hit, a bypass, a
+    // provider that reports none) and contributes NOTHING — not a zero.
+    const usage = payload.tokenUsage
+    if (usage !== undefined) {
+      const tokens = tally.tokens ?? { input: 0, output: 0, total: 0 }
+      tokens.input += usage.promptTokens
+      tokens.output += usage.completionTokens
+      tokens.total += usage.totalTokens
+      tally.tokens = tokens
+    }
   }
 
   function handleTestFinished(payload: TestFinishedPayload): void {
@@ -260,6 +279,10 @@ export function createAnalyticsRunSubscriber(
   function captureTestRun(record: MemberRecord): void {
     const status = outcomeToAnalyticsStatus(record.outcome)
     const testId = analyticsTestId(record.testId)
+    // The four flat counts are analytics property names verbatim and spread as-is; `tokens` is an
+    // accumulator, NOT a property, so it is destructured away rather than allowed to ride into the
+    // bag as a nested object the strict schema would refuse.
+    const { tokens: _tokens, ...steps } = record.steps
     const properties = definedProperties({
       ...standard,
       run_id: runId,
@@ -272,7 +295,18 @@ export function createAnalyticsRunSubscriber(
       is_flaky: record.retryCount !== undefined
         ? status === 'passed' && record.retryCount > 0
         : undefined,
-      ...record.steps,
+      ...steps,
+      // 405 D-07. Spread in only when the member measured at least one step. `definedProperties`
+      // would drop three `undefined`s anyway, but building them unconditionally would mean writing
+      // `input_tokens: tokens?.input ?? 0` somewhere — and that `?? 0` is exactly the fabricated
+      // measurement this whole path refuses to make.
+      ...(record.steps.tokens === undefined
+        ? {}
+        : {
+          input_tokens: record.steps.tokens.input,
+          output_tokens: record.steps.tokens.output,
+          total_tokens: record.steps.tokens.total,
+        }),
     }) as CompletionEvent<'agent-qa.test_run.completed'>['properties']
 
     port.capture({ name: 'agent-qa.test_run.completed', properties })
