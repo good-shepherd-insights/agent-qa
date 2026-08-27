@@ -52,5 +52,21 @@ export interface ParityGolden {
 
 export declare function captureInvocation(invocation: ParityInvocation): Promise<ParityReading>
 export declare function captureParityReadings(): Promise<ParityReading[]>
+/**
+ * A run-directory member added on purpose after the golden was captured (405-02 onward).
+ * See the generator for why this exists and what it deliberately does not weaken.
+ */
+export interface PostGoldenRunDirAddition {
+  readonly file: string
+  readonly addedBy: string
+  readonly reason: string
+}
+
+export declare const POST_GOLDEN_RUN_DIR_ADDITIONS: readonly PostGoldenRunDirAddition[]
+export declare function withoutDeclaredRunDirAdditions(files: readonly string[]): string[]
+export declare function staleDeclaredAdditions(
+  observedFiles: readonly string[],
+): readonly PostGoldenRunDirAddition[]
+
 export declare function assertGoldenNonVacuous(golden: ParityGolden): ParityGolden
 export declare function loadGolden(): ParityGolden

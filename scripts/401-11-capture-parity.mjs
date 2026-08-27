@@ -315,6 +315,70 @@ function runDirFiles(project) {
 }
 
 /**
+ * RUN-DIRECTORY MEMBERS ADDED ON PURPOSE AFTER THE GOLDEN WAS CAPTURED.
+ *
+ * WHY THIS EXISTS AT ALL. The golden is a PRE-EXTRACTION capture from 401-11 and regenerating it
+ * is a plan-level failure, because a wholesale re-capture blinds the instrument to exactly the
+ * drift it was built to catch. But `runDirFiles` is an inventory, and a later phase that ships a
+ * new run-directory member on purpose is not drift — it is a ratified change to what a run leaves
+ * behind. Without a way to say that, the only two moves available are "regenerate the golden"
+ * (blind the instrument) or "never add a run-dir member again" (freeze the product). This list is
+ * the third move: each addition is named, dated to its plan, and justified, and the comparison
+ * subtracts these names FROM BOTH SIDES before asserting.
+ *
+ * WHAT IT DOES NOT WEAKEN. Only the `runDirFiles` axis is filtered, and only by exact file name:
+ *
+ *   - a REMOVAL from the golden inventory still reds (it is gone from the actual side too, and
+ *     nothing here puts it back);
+ *   - an addition NOT on this list still reds (it survives the subtraction on the actual side and
+ *     has no counterpart in the golden);
+ *   - `stdout`, `stderr`, `eventTypes`, `targetHits` and `exitCode` are untouched and stay exact.
+ *
+ * SUBTRACTED FROM BOTH SIDES, deliberately: a future legitimate re-capture would bake these names
+ * into the golden, and a one-sided filter would then red on its own allowance.
+ *
+ * IT SHRINKS THE SAME WAY THE SURFACE-FIREWALL LEDGER DOES. `assertDeclaredAdditionsObserved`
+ * below fails on an entry that no reading actually produces, so a name that stops being written
+ * has to be deleted here in the same commit rather than lingering as a permanent blind spot.
+ */
+export const POST_GOLDEN_RUN_DIR_ADDITIONS = [
+  {
+    file: 'masking-digests.json',
+    addedBy: '405-02',
+    reason:
+      'Phase 405 D-08: the per-run masking value-identity sidecar. Every started run now writes '
+      + 'placeholder -> HMAC-SHA256(hostKey, value) beside events.jsonl so a restarted dashboard '
+      + 'can restore <SECRET_n> placeholders by value identity. It is a ratified new member of the '
+      + 'run-dir family, not extraction drift, and it holds no clear secret.',
+  },
+]
+
+/** The declared names, as a Set — one derivation, used by both helpers below. */
+const declaredAdditionNames = new Set(POST_GOLDEN_RUN_DIR_ADDITIONS.map((entry) => entry.file))
+
+/**
+ * Drop the declared post-golden additions from a run-dir inventory.
+ *
+ * Applied to the golden reading AND the fresh reading, so the comparison ranges exactly the
+ * inventory both trees were supposed to share.
+ */
+export function withoutDeclaredRunDirAdditions(files) {
+  return [...files].filter((name) => !declaredAdditionNames.has(name))
+}
+
+/**
+ * The staleness direction: every declared addition must actually be observed.
+ *
+ * An entry nothing writes any more is a permanent hole in the instrument, so it fails here and has
+ * to be deleted. Returns the stale entries rather than throwing, so the caller decides how to
+ * report — the cell wants a named diff, not an exception.
+ */
+export function staleDeclaredAdditions(observedFiles) {
+  const observed = new Set(observedFiles)
+  return POST_GOLDEN_RUN_DIR_ADDITIONS.filter((entry) => !observed.has(entry.file))
+}
+
+/**
  * Take all six discriminators for one invocation, on a FRESH fixture (its own project dir, its own
  * counting target), so no reading can inherit another's run directory.
  */

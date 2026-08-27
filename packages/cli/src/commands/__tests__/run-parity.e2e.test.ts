@@ -23,6 +23,15 @@
 // RUNS ON `dist`. Every `<verify>` line that includes this file runs `pnpm build --force` first: a
 // reading taken on a stale dist compares two copies of the previous build and calls it a
 // measurement.
+//
+// ONE RATIFIED RELAXATION, AND ONLY ON THE INVENTORY AXIS (405-02). `runDirFiles` is an inventory,
+// and a later phase that ships a new run-directory member ON PURPOSE is not extraction drift. The
+// rule above still holds — the golden was NOT regenerated for it — because a wholesale re-capture
+// would blind this instrument to the drift it exists to catch. Instead the generator carries
+// `POST_GOLDEN_RUN_DIR_ADDITIONS`, an explicitly named list (file + the plan that added it + why),
+// and the inventory comparison below subtracts those names FROM BOTH SIDES. A removal from the
+// golden inventory still reds; an addition nobody declared still reds; the other five
+// discriminators are untouched and stay byte-exact.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -31,9 +40,12 @@ import {
   CLI_DIST,
   PARITY_GOLDEN_PATH,
   PARITY_INVOCATIONS,
+  POST_GOLDEN_RUN_DIR_ADDITIONS,
   assertGoldenNonVacuous,
   captureInvocation,
   scrubTranscript,
+  staleDeclaredAdditions,
+  withoutDeclaredRunDirAdditions,
 } from '../../../../../scripts/401-11-capture-parity.mjs'
 import type { ParityGolden, ParityReading } from '../../../../../scripts/401-11-capture-parity.mjs'
 
@@ -51,6 +63,15 @@ function goldenFor(id: string): ParityReading {
   if (reading === undefined) throw new Error(`no golden reading for "${id}"`)
   return reading
 }
+
+/**
+ * Every run-dir file name any invocation below actually produced, and how many invocations ran.
+ *
+ * The staleness cell needs both: an unobserved declared addition is only meaningful evidence when
+ * every invocation ran, so a filtered run (`-t`) reports nothing rather than a false red.
+ */
+const observedRunDirFiles = new Set<string>()
+let invocationsMeasured = 0
 
 describe('agent-qa run parity across the in-process extraction (401-11)', () => {
   it('the instrument itself is real: the shipped binary exists and the scrubber is the generator’s', () => {
@@ -75,6 +96,12 @@ describe('agent-qa run parity across the in-process extraction (401-11)', () => 
         const expected = goldenFor(invocation.id)
         const actual = await captureInvocation(invocation)
 
+        // RECORDED BEFORE THE ASSERTIONS, not after. The staleness cell below reads these, and a
+        // cell that recorded only on success would let a red inventory assertion silently disarm
+        // the staleness check — the two failures would mask each other exactly when both are true.
+        for (const name of actual.runDirFiles) observedRunDirFiles.add(name)
+        invocationsMeasured += 1
+
         // Six discriminators, asserted separately so a red NAMES the axis that moved rather than
         // dumping one object diff. Exit code LAST is deliberate elsewhere in this phase (a code
         // alone is satisfiable by two different worlds); here the reporter transcript comes first
@@ -83,10 +110,28 @@ describe('agent-qa run parity across the in-process extraction (401-11)', () => 
         expect(actual.stderr).toBe(expected.stderr)
         expect(actual.eventTypes).toEqual([...expected.eventTypes])
         expect(actual.targetHits).toEqual([...expected.targetHits])
-        expect(actual.runDirFiles).toEqual([...expected.runDirFiles])
+        // THE ONE FILTERED AXIS — see the header. Subtracted from BOTH sides, so a removal from
+        // the golden inventory and an undeclared addition each still red.
+        expect(withoutDeclaredRunDirAdditions(actual.runDirFiles))
+          .toEqual(withoutDeclaredRunDirAdditions([...expected.runDirFiles]))
         expect(actual.exitCode).toBe(expected.exitCode)
       },
       180_000,
     )
   }
+
+  it('every declared post-golden run-dir addition is still being written', () => {
+    // THE SHRINKING DIRECTION, on the surface-firewall ledger's reasoning: an allowance for a file
+    // nothing writes any more is a permanent blind spot in the inventory axis — the one place a
+    // real regression could hide behind a name a person once justified. So it fails here, and the
+    // phase that stops writing the file has to delete its entry in the same commit.
+    //
+    // ASSERTED ONLY ON A FULL RUN. Under `-t` some invocations never execute, and an addition that
+    // only one of them produces would look stale for a reason that has nothing to do with the code.
+    if (invocationsMeasured !== PARITY_INVOCATIONS.length) return
+
+    expect(staleDeclaredAdditions([...observedRunDirFiles]).map((entry) => entry.file)).toEqual([])
+    // Non-vacuity: an empty list would make the check above trivially true forever.
+    expect(POST_GOLDEN_RUN_DIR_ADDITIONS.length).toBeGreaterThan(0)
+  })
 })
