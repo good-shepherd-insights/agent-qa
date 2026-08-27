@@ -303,8 +303,12 @@ describe('an interrupted gate run leaves nothing a full rebuild can reconstruct 
         for (const dir of [dirA, dirB]) {
           const runDir = join(fixture.agentQaRoot, 'runs', dir)
           expect(existsSync(join(runDir, HANDOFF_FILE))).toBe(false)
+          // 405-02 (D-08): `masking-digests.json` joined this inventory. It is residue of exactly
+          // the kind this cell pins — an interrupted run's sidecar, written when its session
+          // started — and it carries no contribution a rebuild could count: only HMAC digests of
+          // the placeholders the run minted, keyed by a host-local key.
           expect(readdirSync(runDir).sort())
-            .toEqual(['artifact.json', 'events.jsonl', 'execution_audit.jsonl'])
+            .toEqual(['artifact.json', 'events.jsonl', 'execution_audit.jsonl', 'masking-digests.json'])
           expect(readFileSync(join(runDir, 'events.jsonl'), 'utf8').trim()).not.toBe('')
         }
         expect(existsSync(join(fixture.agentQaRoot, 'runs', runC, HANDOFF_FILE))).toBe(true)
@@ -439,8 +443,12 @@ describe('an interrupted gate run leaves nothing a full rebuild can reconstruct 
           const runDir = join(fixture.agentQaRoot, 'runs', dir)
           expect(existsSync(join(runDir, HANDOFF_FILE))).toBe(false)
           expect(existsSync(join(runDir, ANALYSIS_FILE))).toBe(false)
+          // 405-02 (D-08): `masking-digests.json` joined this inventory. It is residue of exactly
+          // the kind this cell pins — an interrupted run's sidecar, written when its session
+          // started — and it carries no contribution a rebuild could count: only HMAC digests of
+          // the placeholders the run minted, keyed by a host-local key.
           expect(readdirSync(runDir).sort())
-            .toEqual(['artifact.json', 'events.jsonl', 'execution_audit.jsonl'])
+            .toEqual(['artifact.json', 'events.jsonl', 'execution_audit.jsonl', 'masking-digests.json'])
           expect(readFileSync(join(runDir, 'events.jsonl'), 'utf8')).toBe(residueBefore.get(dir))
         }
 

@@ -34,3 +34,26 @@
 export { runSafetyScope } from '@vostride/agent-qa-safety-local'
 export type { SafetyScopeBundle } from '@vostride/agent-qa-safety-local'
 export { mapVerdictToExitCode } from '@vostride/agent-qa-runner'
+
+// 405-02 (D-08): the run-scoped masking digest sidecar, on the SAME hop and for the same reason.
+//
+// The drive is the one place that holds both halves of the D-08 write — the masking context it
+// seeded (so it can enumerate the run's SECRET registrations) and the runtime root the run's
+// events.jsonl is written under (so the sidecar lands in the same run dir). Neither half exists
+// anywhere else at the same moment, so the write belongs to the drive and the drive needs to name
+// these two symbols. `runner-local` is not a package a post-2026-07-28 cli file may name, and the
+// ledger only shrinks; the composition subtree may name it by the arch carve-out, exactly so that
+// edges like this have one legal home. These are re-exports rather than wrappers on
+// `build-ordinals.ts`'s reasoning: a wrapper would be a second definition of what a digest is.
+//
+// The reach this grants a surface is two names, and it grants no new power — the key is host-local
+// and the writer persists only HMACs. A surface still cannot read a secret through this edge.
+// The READ half travels with the write half: 405-10's restore leg and this plan's own acceptance
+// cell both need it, and splitting the pair across two hops would be two answers to one edge.
+export {
+  digestMaskedValue,
+  readMaskingDigests,
+  resolveMaskingHostKey,
+  writeMaskingDigests,
+} from '@vostride/agent-qa-runner-local'
+export type { MaskingDigestEntry, MaskingDigestsFile } from '@vostride/agent-qa-runner-local'

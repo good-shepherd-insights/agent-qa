@@ -64,7 +64,9 @@ import {
   buildRunMaskingContext,
   createRunInvocationCore,
   mapVerdictToExitCode,
+  resolveMaskingHostKey,
   runSafetyScope,
+  writeMaskingDigests,
 } from '@vostride/agent-qa-agent-local'
 import type {
   RunExecutionContext,
@@ -451,6 +453,10 @@ export async function runInProcessCliRun(
         ...(options.inputs === undefined ? {} : { inputs: options.inputs }),
       })
 
+  // HOISTED ABOVE THE MASKING CONTEXT (405-02): `persistMaskingDigests` below is defined the moment
+  // the context exists, and it warns rather than throws, so its renderer has to already be here.
+  const warnByName = options.warn ?? ((): void => { /* a door with no renderer drops the line */ })
+
   const maskingContext = buildRunMaskingContext({
     // THE PRODUCER'S SECRETS AND THE DOOR'S, walked as one store. `buildRunMaskingContext` takes a
     // single `secretStore`, and composing the two here rather than widening its signature keeps
@@ -461,6 +467,66 @@ export async function runInProcessCliRun(
       ? {}
       : { authStatePayloads: [...produced.maskingSeed.authStatePayloads] }),
   })
+
+  /**
+   * Write this run's placeholder→keyed-digest sidecar (405-02, D-08).
+   *
+   * WHY IT EXISTS. The masking map is in-memory and run-scoped by spec (execution-safety §4), so
+   * once this process ends nothing on disk says WHICH declared secret `<SECRET_3>` stood for. A
+   * dashboard restarted after the run can therefore only count placeholders, and counting breaks
+   * the moment the host's secret sources change shape. This sidecar records value IDENTITY —
+   * `HMAC-SHA256(hostKey, value)` per placeholder — so a later reader can match a placeholder to a
+   * value it can re-derive from its own current sources, without the tool ever writing the value.
+   * `snapshotRegistered()` yields only SECRET rows; `<EMAIL_n>` is minted lazily inside `mask()`
+   * from text no host source declared and can never be re-derived, so it is never here (D-10).
+   *
+   * CALLED TWICE, DELIBERATELY. Once the moment the run's SESSION starts, so a run killed
+   * mid-flight still leaves its seeded registrations; once again in `closeOutRun` BEFORE
+   * `dispose()` clears the map, so the auth values 362-06 registers lazily mid-run land too. The
+   * map only ever grows and a placeholder's index never changes, so the second write is always a
+   * superset and replaces the file whole. ONE HELPER RATHER THAN TWO CALL SITES SPELLED OUT: two
+   * spellings of the same write is exactly how the second one drifts.
+   *
+   * WHY NOT EARLIER, DIRECTLY AFTER THE SEED — measured, not assumed. The core's identity check
+   * (`run-invocation-core.ts` step 2, FREEDOM) refuses a caller-supplied runId whose run DIRECTORY
+   * already exists, and this drive always supplies its id. A write between the seed and
+   * `core.execute` therefore mints that directory itself and the run refuses to start with
+   * `RunIdAlreadyInUseError` — the sidecar would have made the run impossible. `onSession` is the
+   * earliest legal moment: the id has passed both refusals, the gate has allowed the run, and the
+   * run dir exists because `runStarted` is already in it.
+   *
+   * A REFUSED OR DENIED RUN GETS NO SIDECAR. `closeOutRun` also runs on those paths, and a run
+   * that never started has no run of its own to describe — so the write is gated on the session,
+   * keeping the denial's artifact set exactly what the gate wrote.
+   *
+   * IT NEVER FAILS THE RUN (T-405-09, the T-367-17 idiom). The run's record is its event log; this
+   * sidecar is display convenience for a later read. A host that cannot write it — read-only root,
+   * full disk — still gets a complete run, and every placeholder simply degrades to a typed masked
+   * chip. The warning is BYTES-FREE: it names the run and the failure, never a value or the key.
+   *
+   * ONLY THIS DOOR WRITES ONE. `buildRunMaskingContext` is also called by
+   * `eval-session-composition.ts` and `commands/mcp.ts`; neither produces a dashboard-visible run
+   * with a run directory to write beside, so neither gets a sidecar.
+   */
+  const persistMaskingDigests = (): void => {
+    if (startedSession === undefined) return
+    try {
+      writeMaskingDigests({
+        root: options.agentQaRoot,
+        runId,
+        key: resolveMaskingHostKey(options.agentQaRoot),
+        entries: maskingContext
+          .snapshotRegistered()
+          .map(({ placeholder, value }) => ({ placeholder, value })),
+      })
+    } catch (error) {
+      warnByName(
+        `Run ${runId}: the masking digest sidecar was not written (`
+        + `${error instanceof Error ? error.message : String(error)}`
+        + '); masked values in this run will render as typed chips.',
+      )
+    }
+  }
   const auditSink = buildRunAuditSink({
     configDir: produced.configDir,
     runId,
@@ -561,6 +627,9 @@ export async function runInProcessCliRun(
     },
     onSession: (session) => {
       startedSession = session
+      // 405-02 (D-08): the FIRST digest write, at the earliest legal moment — see
+      // `persistMaskingDigests` for why "earliest legal" is here and not beside the seed.
+      persistMaskingDigests()
       produced.bindSession(session)
       options.onSession?.(session)
       startedSubscribers = options.subscribers?.({ session, quarantined, maskingContext, live })
@@ -593,7 +662,6 @@ export async function runInProcessCliRun(
     },
   })
 
-  const warnByName = options.warn ?? ((): void => { /* a door with no renderer drops the line */ })
 
   /**
    * The detached post-processing leg, once started. `undefined` for every door without one.
@@ -637,6 +705,10 @@ export async function runInProcessCliRun(
       runId,
       log: { warn: warnByName },
     })
+    // 405-02 (D-08): the SECOND digest write, here and not earlier, because `dispose()` on the very
+    // next line clears the map and 362-06 registers lazily-loaded auth values mid-run. A write
+    // after the dispose would record an empty run.
+    persistMaskingDigests()
     // Dispose LAST, after `done`, finalize, the flush and any detached tail, so every late masker
     // still replaces.
     maskingContext.dispose()

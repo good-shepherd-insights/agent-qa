@@ -135,6 +135,14 @@ export type {
 // 401-11: the two symbols the CLI's one in-process run drive needs and could not legally name.
 // They live in their own composition module — see its header for why not in the core.
 export { mapVerdictToExitCode, runSafetyScope } from './composition/run-drive-vocabulary.js'
+// 405-02 (D-08): the drive's masking digest sidecar edge, published on the same hop.
+export {
+  digestMaskedValue,
+  readMaskingDigests,
+  resolveMaskingHostKey,
+  writeMaskingDigests,
+} from './composition/run-drive-vocabulary.js'
+export type { MaskingDigestEntry, MaskingDigestsFile } from './composition/run-drive-vocabulary.js'
 export { buildRunDisclosure, buildRunRiskDescriptor, RUN_START_RISK_ACTION_NAME } from './composition/run-risk.js'
 export type { RunTargetClass } from './composition/run-risk.js'
 // 401-08 (D-08): the dispatch-scoped grant overlay. Published because a composition ROOT — not

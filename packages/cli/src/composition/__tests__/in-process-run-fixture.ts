@@ -69,6 +69,17 @@ export interface InProcessFixtureInput {
   readonly omitHooksFile?: boolean
   /** Omit the secrets file. */
   readonly omitSecretsFile?: boolean
+  /**
+   * Declare ONE secret with this value in the secrets file (405-02, D-08).
+   *
+   * WHY A KNOB. Every other cell writes the secrets file EMPTY, so a run seeded from it registers
+   * nothing and a masking-digest assertion would be vacuous — an empty sidecar and an absent one
+   * look identical from outside. This plants a value the run provably registers, so "the sidecar
+   * has an entry" and "the sidecar does not contain the value" are both real measurements.
+   *
+   * Ignored when `omitSecretsFile` is set; the two knobs answer opposite questions.
+   */
+  readonly plantedSecret?: string
   /** Write a test file that parses to ZERO runnable tests (the RUNX-06 door). */
   readonly emptyTestFile?: boolean
   /**
@@ -173,6 +184,9 @@ export const IN_PROCESS_TARGET_NAME = 'in-process-thing'
 /** The second target's name, declared only when `secondTarget` is set. Its own one definition. */
 export const SECOND_TARGET_NAME = 'the-second-thing'
 
+/** The name `plantedSecret` declares its value under. One definition, so a cell need not retype it. */
+export const PLANTED_SECRET_NAME = 'AGENT_QA_PLANTED_SECRET'
+
 /**
  * Write a project with one target, one standalone test and one suite over its own member.
  *
@@ -237,7 +251,12 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
   )
   if (input.omitHooksFile !== true) writeFileSync(join(project, 'hooks.yaml'), 'hooks: []\n')
   if (input.omitEnvFile !== true) writeFileSync(join(project, '.env'), '')
-  if (input.omitSecretsFile !== true) writeFileSync(join(project, '.env.secrets.local'), '')
+  if (input.omitSecretsFile !== true) {
+    writeFileSync(
+      join(project, '.env.secrets.local'),
+      input.plantedSecret === undefined ? '' : `${PLANTED_SECRET_NAME}=${input.plantedSecret}\n`,
+    )
+  }
 
   writeFileSync(
     join(project, 'tests', 'direct.yaml'),
